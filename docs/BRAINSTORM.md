@@ -1,17 +1,21 @@
 # snyvi — a fast, beautiful viewer for the documents your agents produce
 
-Brainstorm, 2026-09-10 (revision 2). Nothing here is final; it is a
+Brainstorm, 2026-09-10 (revision 3). Nothing here is final; it is a
 map of the option space with a recommended path marked.
 
 ## 0. What it is, in one paragraph
 
-Every Claude Code session writes documents: plans, reviews, summaries,
-migration notes, READMEs. Today they land in the repo, or in the
-terminal, or nowhere. snyvi is where they all go. Claude Code sends a
-document, snyvi receives it, files it under the right project, and
-shows it beautifully and instantly. Documents are immutable once
-received; the viewer is a library, not an editor and not a live
-scratchpad.
+You ask Claude Code for a plan. It writes one. Today you read it in
+the terminal or open the file by hand. With snyvi, Claude sends the
+document (a path, or the content itself) and replies with a link; the
+document is already open in snyvi, rendered, filed under the project.
+Markdown and every kind of code file. One direction only: agents send,
+snyvi shows. Documents are immutable once received; snyvi is a viewer
+and a library, not an editor and not a live scratchpad.
+
+The channel is push-only by design. The agent never reads back from
+snyvi, so the viewer can never leak one project's documents into
+another session's context.
 
 ## 1. The one constraint that drives everything
 
@@ -51,10 +55,10 @@ Web and desktop are not two products. They are the same rendering core
 behind a tiny local server, with two ways to look at it.
 
 ```
-  Claude Code ──(MCP tool: send_document)──┐
-  Claude Code hook on Write *.md ──────────┤
-  snyvi send file.md ────────────────────┐ │
-                                         ▼ ▼
+  Claude Code ──(MCP: send_document path|content)──┐
+  snyvi send file.md  (CLI) ──────────────────────┤
+  optional hook on Write/Edit ─────────────────┐  │
+                                               ▼  ▼
                  ┌───────────────────────────────────┐
                  │  snyvi (single Rust binary)       │
                  │  ┌─────────┐  ┌───────┐  ┌──────┐ │
@@ -144,73 +148,75 @@ free.
 
 ## 4. How documents get in
 
-Every transport calls the same `receive`. Layer them so the simplest
-works with zero configuration.
+Agents are the only senders. Every path ends in the same `receive`.
 
-### Transport A: CLI (zero config)
+### The primary path: the MCP tool
 
-```
-snyvi send plan.md
-snyvi send --title "Review notes" --workflow "auth refactor" < notes.md
-snyvi send --project ~/code/foo report.md
-```
-
-Claude Code can do this today through its Bash tool.
-
-### Transport B: Claude Code hook (zero agent cooperation)
-
-This is the one that delivers "all the documents we generate in Claude
-Code for any project" without asking the agent to remember anything.
-A `PostToolUse` hook on `Write` (and `Edit`) checks whether the file
-is `*.md` and, if so, runs `snyvi send` with the session's cwd and
-session id. Roughly:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": "Write|Edit",
-      "hooks": [{ "type": "command", "command": "snyvi hook" }]
-    }]
-  }
-}
-```
-
-`snyvi hook` reads the hook JSON on stdin, filters to Markdown paths,
-and calls `receive`. Installed once in `~/.claude/settings.json`, it
-covers every project forever. `snyvi init-claude` can write that
-config for the user.
-
-Open question here: which files count? Every `.md` write is the
-obvious default. Some users will want only files outside the repo
-(e.g. `/tmp/plan.md`) or only files matching a glob. Make it a filter
-in snyvi's config, default "all Markdown".
-
-### Transport C: MCP tool (explicit, richer metadata)
-
-`snyvi mcp` runs a stdio MCP server exposing a deliberately tiny
-surface:
-
-| Tool             | Purpose                                              |
-|------------------|------------------------------------------------------|
-| `send_document`  | title, content, kind/lang, optional workflow and tags |
-| `list_documents` | what snyvi has for this project (optional, see 8.4)   |
-
-That is the whole tool list. Registering with Claude Code:
+`snyvi mcp` runs a stdio MCP server with exactly one tool:
 
 ```
-claude mcp add snyvi -- snyvi mcp
+send_document
+  path      absolute path to a file on disk           (either path
+  content   inline text                                 or content)
+  title     optional; else first H1, else filename
+  workflow  optional name; else the session
+  lang      optional; else inferred from extension
+  -> { url: "http://127.0.0.1:7777/d/8f3a2c" }
 ```
 
-Use the MCP tool when the agent produces a document that is *not* a
-file: a review it would otherwise print to the terminal, a summary at
-the end of a task, a diff it wants the user to look at.
+Sending by `path` is the common case: Claude writes `PLAN.md`, then
+calls `send_document(path)`. snyvi reads the file, snapshots it, and
+renders it. Later edits to the file on disk do not change the
+snapshot; Claude sends again and the workflow shows both versions.
 
-### Transport D (hosted mode only): streamable-HTTP MCP
+Sending by `content` covers documents that are not files: a review
+Claude would otherwise print to the terminal, a summary at the end of
+a task, a diff.
+
+The tool returns a URL. Claude's reply to the user becomes "Plan is
+ready: http://127.0.0.1:7777/d/8f3a2c". Clicking it lands on the
+document; if the snyvi window is already open, the document is
+already showing (section 6, "focus on arrival").
+
+Registering with Claude Code, once, globally:
+
+```
+claude mcp add --scope user snyvi -- snyvi mcp
+```
+
+The tool description should tell the model *when* to use it, so it
+does so without being asked: "Call this whenever you finish writing a
+plan, report, review, summary, or any document the user will want to
+read. Prefer sending the file path."
+
+A CLAUDE.md line in the user's global config reinforces it: "When you
+produce a document for me to read, send it to snyvi and give me the
+link."
+
+### The fallback path: CLI
+
+```
+snyvi send PLAN.md
+snyvi send --title "Review" --lang diff < changes.patch
+```
+
+Same arguments, same result. Lets Claude use it through Bash before
+MCP is configured, and lets scripts and other agents send.
+
+### Optional: automatic send via Claude Code hook
+
+For users who want *everything* Claude writes to appear without the
+model having to decide, a `PostToolUse` hook on `Write` and `Edit`
+can call `snyvi send` for matching files. Off by default; enabled by
+`snyvi init-claude --auto`. The filter (which extensions, which
+directories) lives in snyvi's config. Explicit `send_document` calls
+still work alongside it; duplicates are collapsed by content hash.
+
+### Not now: hosted mode
 
 If snyvi ever runs on a server and is opened from a browser anywhere,
 the MCP transport becomes streamable HTTP with a per-user token. Same
-tool, different transport. Not in the first three milestones.
+single tool, different transport. Not in the first three milestones.
 
 ## 5. What it renders
 
@@ -261,9 +267,13 @@ Three panes, the outer two collapsible:
   the floor; Typora's reading view is the bar.
 - **Right rail**: table of contents, provenance (session, branch,
   time), "compare with previous in workflow", "open source file".
-- Live: when a document arrives, the tree updates via SSE and a quiet
-  toast appears. Clicking it opens the doc. No auto-navigation; the
-  user is reading.
+- **Focus on arrival.** The core flow is "I asked for a plan, I want
+  to read it now", so a newly received document opens immediately in
+  the document pane. If the user is mid-read in another doc (scrolled,
+  text selected, active in the last few seconds), the new doc is
+  queued behind a toast instead. Both behaviours are one setting.
+- When a document arrives for a project that is not the current one,
+  the project badge increments and the inbox updates via SSE.
 
 ## 7. Security notes
 
@@ -283,16 +293,16 @@ Three panes, the outer two collapsible:
 
 1. **What is a workflow?** Session, named task, or branch (section 3).
    Recommendation: session by default, name overridable.
-2. **Which hook-written files count?** All `.md`, or a filter.
+2. **Hook filter** (only if the optional auto-send is used): all
+   `.md`, or a configured filter.
 3. **Is hosted mode ever a goal?** Changes auth and MCP transport.
    Recommendation: not before the local tool is loved.
-4. **Should agents read back?** A `list_documents` tool lets Claude
-   Code say "you already have a plan for this from yesterday, here it
-   is". Powerful, but it means the agent can see documents from other
-   sessions and other projects unless scoped. Recommendation: include
-   it, scoped to the current project, off by default.
-5. **Retention.** Keep everything forever, or prune ephemeral
-   session-scoped docs after N days unless pinned?
+4. **Retention.** Keep everything forever, or prune session-scoped
+   docs after N days unless pinned?
+5. **Which code files are documents?** A plan is obviously one. Is
+   every source file Claude sends one too, or should code files sent
+   by path be shown but not kept in the library? Recommendation: keep
+   everything; disk is cheap and the inbox is time-ordered anyway.
 6. **Name.** Is `snyvi` the product name?
 
 ## 9. Prior art
@@ -311,9 +321,11 @@ Three panes, the outer two collapsible:
 4. Markdown, code, and diff rendering.
 
 **Milestone 2: Claude Code integration.**
-5. `snyvi hook` and `snyvi init-claude` to install it.
-6. `snyvi mcp` with `send_document`.
-7. SSE so open tabs update as documents arrive.
+5. `snyvi mcp` with the single `send_document` tool, returning a URL.
+6. `snyvi init-claude` to register the MCP server (and optionally the
+   hook).
+7. SSE plus focus-on-arrival so the document is showing by the time
+   Claude replies with the link.
 8. "Compare with previous" in a workflow.
 
 **Milestone 3: desktop.**
