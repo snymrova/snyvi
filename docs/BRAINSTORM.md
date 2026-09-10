@@ -1,6 +1,6 @@
 # snyvi — a fast, beautiful viewer for the documents your agents produce
 
-Brainstorm, 2026-09-10 (revision 3). Nothing here is final; it is a
+Brainstorm, 2026-09-10 (revision 4). Nothing here is final; it is a
 map of the option space with a recommended path marked.
 
 ## 0. What it is, in one paragraph
@@ -32,7 +32,9 @@ Concrete budgets (targets, not measurements yet):
 | Render a 1 MB Markdown file         | < 200 ms              |
 | Render a 50k-line code file         | scrolls at 60 fps (virtualized) |
 | Binary size                         | < 15 MB single file   |
-| Network on first load (web)         | < 100 KB, zero webfonts |
+| Network on first load (web)         | < 60 KB gzipped UI, all from localhost |
+| Open an already-received document   | < 30 ms request to first paint |
+| Any interaction                     | < 100 ms, or it is a bug |
 | Library of 10,000 docs              | sidebar and search stay instant |
 
 What these budgets rule out:
@@ -43,7 +45,9 @@ What these budgets rule out:
   TOC, search, theme.
 - Client-side Markdown parsing and syntax highlighting. Do the heavy
   work once, natively, at receive time, and ship pre-rendered HTML.
-- Webfonts. System font stack. Faster and looks native.
+- Remote webfonts. Fonts are either the system stack or embedded in
+  the binary and served from localhost (section 7.2). Nothing is ever
+  fetched from the network.
 
 Immutability helps here too: a document is rendered exactly once, when
 it arrives, and the HTML is cached forever. Opening any doc is a
@@ -275,7 +279,184 @@ Three panes, the outer two collapsible:
 - When a document arrives for a project that is not the current one,
   the project badge increments and the inbox updates via SSE.
 
-## 7. Security notes
+## 7. Beautiful, concretely
+
+"Beautiful" is not a theme picked from a list. It is a hundred small
+decisions made on purpose. The bar: someone opens a plan in snyvi and
+prefers reading it there to anywhere else, and cannot quite say why.
+
+### 7.1 The document is the hero, the chrome recedes
+
+- The document pane gets the light; sidebar and rail are a tone
+  quieter than the page, with no borders, only a faint change of
+  background.
+- Chrome auto-hides: on narrow windows both side panes collapse; on
+  wide windows the TOC rail shows only for documents that have three
+  or more headings.
+- No toolbar. Actions live in a Cmd-K palette and on hover: heading
+  anchors, copy-code buttons, language labels appear when the cursor
+  is near and vanish when it is not.
+
+### 7.2 Typography
+
+- Body 17 px, line-height 1.6, measure 68 to 72 characters, centred.
+- Headings on a modular scale (1.25) with tightened letter-spacing at
+  large sizes and generous space above, less below, so each heading
+  belongs to what follows it.
+- Fonts: the system stack is the fallback, but Linux system fonts are
+  often the reason Linux apps look worse than they are. So snyvi
+  embeds a small set of excellent open fonts in the binary, subsetted
+  to Latin and served from localhost, roughly 30 to 60 KB each as
+  WOFF2: one sans (Inter or IBM Plex Sans), one serif (Source Serif 4
+  or Literata) for users who prefer it, one mono (JetBrains Mono or
+  Berkeley-style alternative, ligatures off). Localhost latency is
+  nothing; this costs no perceptible time and buys most of the
+  "beautiful".
+- Real typographic details: hanging punctuation on blockquotes,
+  tabular figures in tables, proper en and em dashes left as written,
+  `text-wrap: pretty` for paragraphs and `balance` for headings.
+
+### 7.3 Colour
+
+- Two palettes, both designed, neither an inversion of the other.
+  Light is warm paper, near-white not pure white, ink not pure black.
+  Dark is deep grey-blue, never pure black, with text at ~85% white
+  to avoid glare.
+- One accent colour, used sparingly: links, the active sidebar item,
+  focus rings, the arrival toast.
+- The syntax highlighting theme is designed alongside the UI palette
+  so code blocks look like part of the page, not an iframe from
+  another product. One light theme, one dark theme, both ours.
+- Diff colours are muted versions of red and green that sit inside
+  the palette; word-level changes get the stronger tint, line-level
+  the lighter.
+
+### 7.4 Elements
+
+- Code blocks: subtle background, no border, 4 px radius, horizontal
+  scroll rather than wrap by default (toggleable), line numbers in a
+  muted colour that do not get selected with the code, language label
+  top-right on hover.
+- Tables: thin horizontal rules only, header in small caps or medium
+  weight, numeric columns right-aligned automatically.
+- Blockquotes: a thin accent rule on the left, text one shade
+  quieter, no italics.
+- Task lists: real checkbox glyphs, done items dimmed, never
+  interactive (this is a viewer).
+- Footnotes: inline popover on hover, full list at the end.
+- Images: constrained to the measure, click to view full width,
+  captions from alt text.
+- Headings: anchor link on hover; the current section is marked in
+  the TOC as you scroll.
+- Empty states, error states, and the arrival toast are designed with
+  the same care as the document. An empty inbox says something kind
+  and shows the one command to run.
+
+### 7.5 Motion
+
+- Only two things animate: pane collapse and the arrival toast.
+  120 to 160 ms, ease-out, opacity and transform only. Everything else
+  is instant. Respect `prefers-reduced-motion`.
+
+### 7.6 Keyboard
+
+- `j` / `k` next and previous document, `[` / `]` previous and next
+  version in a workflow, `/` search within document, Cmd-K palette,
+  `t` toggle TOC, `\` toggle sidebar, `o` open source in editor.
+- A reader who never touches the mouse should feel the product was
+  made for them.
+
+### 7.7 Reference points
+
+- Steal from: iA Writer (measure, calm), Typora reading view, Bear,
+  Linear's docs, Stripe's docs (code blocks), `delta` (diffs).
+- Avoid: GitHub's heavy chrome, Obsidian's density, anything with a
+  toolbar.
+
+## 8. Fast, concretely
+
+"Super fast" means the user never waits, and never *notices* the
+program between them and the document. Every wait under 100 ms reads
+as instant; that is the line for every interaction.
+
+### 8.1 A resident daemon, so there is no cold start
+
+The single biggest lever. `snyvi` runs as a small background process
+(target under 20 MB resident, zero CPU when idle), started at login
+by a systemd user unit or on first `send`. Receive, render, and serve
+all happen in a process that is already warm. "Open snyvi" then means
+focus an existing window or open a tab, never boot a server.
+
+The Tauri window (or the browser tab) is what the user perceives as
+the app, and that is the only cold-start cost left: ~100 ms on
+WebKitGTK. The desktop face can also stay open and hidden, making
+"open" a window focus, ~0 ms.
+
+### 8.2 Render once, at receive time, never on open
+
+A document is parsed, highlighted, sanitized, and written to disk as
+HTML the moment it arrives, while the user is not yet looking.
+Opening any document later is one file read and one HTTP response
+from localhost. Target: request to first paint under 30 ms.
+
+The document page is server-rendered HTML that is complete and
+readable with JavaScript disabled. JS attaches afterwards for TOC
+highlighting, search, and keyboard shortcuts. First paint never
+waits for a script.
+
+### 8.3 Big files
+
+- Markdown: `comrak` parses on the order of 50 to 100 MB/s. A 1 MB
+  document renders in tens of milliseconds. Not a concern.
+- Code: syntax highlighting is the slow part. `syntect` runs at
+  roughly 1 to 5 MB/s depending on grammar. Policy: highlight up to
+  the first 256 KB synchronously on receive; beyond that, serve the
+  plain text immediately and highlight the remainder in a background
+  thread, swapping in chunks as they finish. A 20 MB log file is
+  readable instantly and fully coloured a few seconds later.
+- Long documents in the browser: `content-visibility: auto` on every
+  top-level section and `contain: content` on every code block so
+  the browser lays out only what is on screen. This alone makes a
+  50k-line file scroll at 60 fps on a weak GPU. For files beyond a
+  few MB, the server pages lines and the client requests them on
+  scroll.
+
+### 8.4 Navigation
+
+- Switching documents fetches an HTML fragment and swaps the pane; no
+  full page load, no flash. Prefetch on sidebar hover.
+- The sidebar tree is one small JSON payload held in memory, updated
+  by SSE events, never re-fetched.
+- Search hits SQLite FTS5 with a 50 ms debounce; results under 10 ms
+  for a library of 10,000 documents.
+- Sidebar and search lists are virtualized past 200 rows.
+
+### 8.5 Page weight
+
+- UI assets embedded with `include_bytes!`, served with immutable
+  cache headers keyed by build hash. After the first open, the
+  browser fetches nothing but the document.
+- Budget: HTML + CSS + JS under 60 KB gzipped. Fonts on top, lazily.
+- Mermaid and KaTeX are vendored and loaded only when a document
+  contains a block that needs them, and only after first paint.
+
+### 8.6 Nothing waits on the network, ever
+
+- No CDN, no analytics, no update check on start, no font fetch. The
+  binary has everything. Air-gapped machines work identically.
+
+### 8.7 Keeping it fast: the budget is a test
+
+- A `snyvi bench` command measures cold daemon start, receive-to-
+  rendered for fixture documents (1 KB, 100 KB, 1 MB Markdown; 10k,
+  100k line code), request-to-response for a document, and total page
+  weight.
+- CI runs the bench in a container limited to 2 vCPU and 2 GB and
+  fails the build if any budget from section 1 is exceeded. Speed
+  regressions are bugs and are caught the same way.
+- Every animation is capped at 160 ms; a lint rule enforces it.
+
+## 9. Security notes
 
 - Bind 127.0.0.1 only. Never 0.0.0.0 by default.
 - Token on every write, stored in `~/.config/snyvi/token`. The hook
@@ -289,7 +470,7 @@ Three panes, the outer two collapsible:
   `~/.local/share/snyvi`, user-readable only. Offer a per-project
   "do not collect" setting.
 
-## 8. Open questions
+## 10. Open questions
 
 1. **What is a workflow?** Session, named task, or branch (section 3).
    Recommendation: session by default, name overridable.
@@ -305,31 +486,35 @@ Three panes, the outer two collapsible:
    everything; disk is cheap and the inbox is time-ordered anyway.
 6. **Name.** Is `snyvi` the product name?
 
-## 9. Prior art
+## 11. Prior art
 
 - `glow`, `bat`, `grip`, `mdbook serve`, Typora, Obsidian reading
   view, VS Code Markdown preview, `delta` for diffs.
 - None of them receive from an agent or organize by project and
   session. That gap is the product.
 
-## 10. Recommended path
+## 12. Recommended path
 
 **Milestone 1: the viewer (MVP).**
-1. Rust binary, `comrak` + `syntect` + `ammonia`, `axum`, inlined UI.
+1. Rust binary, `comrak` + `syntect` + `ammonia`, `axum`, inlined UI,
+   resident daemon with render-on-receive.
 2. Store on disk plus SQLite index. `snyvi send` CLI.
-3. Projects tree, inbox, document pane, dark/light, search.
+3. Projects tree, inbox, document pane, both palettes, embedded
+   fonts, search.
 4. Markdown, code, and diff rendering.
+5. `snyvi bench` and the CI perf budget from day one, so speed is
+   never something to win back later.
 
 **Milestone 2: Claude Code integration.**
-5. `snyvi mcp` with the single `send_document` tool, returning a URL.
-6. `snyvi init-claude` to register the MCP server (and optionally the
+6. `snyvi mcp` with the single `send_document` tool, returning a URL.
+7. `snyvi init-claude` to register the MCP server (and optionally the
    hook).
-7. SSE plus focus-on-arrival so the document is showing by the time
+8. SSE plus focus-on-arrival so the document is showing by the time
    Claude replies with the link.
-8. "Compare with previous" in a workflow.
+9. "Compare with previous" in a workflow.
 
 **Milestone 3: desktop.**
-9. Tauri 2 shell (`snyvi --app`). Same UI, same server, native window.
+10. Tauri 2 shell (`snyvi --app`). Same UI, same server, native window.
 
 **Milestone 4 (only if wanted): hosted.**
-10. Streamable-HTTP MCP, per-user tokens, isolation.
+11. Streamable-HTTP MCP, per-user tokens, isolation.
