@@ -25,6 +25,9 @@ pub struct Doc {
     pub received_at: i64,
     pub source_path: Option<String>,
     pub branch: Option<String>,
+    pub pinned: bool,
+    pub origin: String,
+    pub content_hash: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -33,6 +36,7 @@ pub struct TreeDoc {
     pub title: String,
     pub kind: Kind,
     pub received_at: i64,
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -72,6 +76,7 @@ pub struct NewDoc<'a> {
     pub lang: Option<&'a str>,
     pub source_path: Option<&'a str>,
     pub branch: Option<&'a str>,
+    pub origin: &'a str,
     pub source: &'a str,
     pub html: &'a str,
 }
@@ -107,21 +112,46 @@ CREATE TABLE IF NOT EXISTS docs (
   received_at INTEGER NOT NULL,
   source_path TEXT,
   branch TEXT,
-  content_hash TEXT NOT NULL
+  content_hash TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  origin TEXT NOT NULL DEFAULT 'cli'
 );
 CREATE INDEX IF NOT EXISTS docs_recv ON docs(received_at DESC);
 CREATE INDEX IF NOT EXISTS docs_wf ON docs(workflow_id, received_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(id UNINDEXED, title, body, tokenize='unicode61');
 "#;
 
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash";
+const DOC_FROM: &str =
+    "FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
+
 impl Store {
     pub fn open(paths: &Paths) -> Result<Store> {
         fs::create_dir_all(&paths.data_dir).context("creating data dir")?;
         fs::create_dir_all(&paths.docs_dir).context("creating docs dir")?;
         let conn = Connection::open(&paths.db_path).context("opening database")?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;",
+        )?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Store { conn: Mutex::new(conn), docs_dir: paths.docs_dir.clone() })
+        // Migrations for databases created before these columns existed.
+        for stmt in [
+            "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'",
+        ] {
+            let _ = conn.execute_batch(stmt);
+        }
+        Ok(Store {
+            conn: Mutex::new(conn),
+            docs_dir: paths.docs_dir.clone(),
+        })
+    }
+
+    fn src_path(&self, id: &str) -> PathBuf {
+        self.docs_dir.join(format!("{id}.src"))
+    }
+    fn html_path(&self, id: &str) -> PathBuf {
+        self.docs_dir.join(format!("{id}.html"))
     }
 
     pub fn insert(&self, d: NewDoc) -> Result<Doc> {
@@ -129,8 +159,8 @@ impl Store {
         let hash = blake3::hash(d.source.as_bytes()).to_hex().to_string();
         let id = short_id(&hash, now);
         // Files first, so a crash never leaves a row without a body.
-        fs::write(self.docs_dir.join(format!("{id}.src")), d.source)?;
-        fs::write(self.docs_dir.join(format!("{id}.html")), d.html)?;
+        fs::write(self.src_path(&id), d.source)?;
+        fs::write(self.html_path(&id), d.html)?;
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -139,7 +169,11 @@ impl Store {
              ON CONFLICT(root) DO UPDATE SET name = excluded.name",
             params![d.project_root, d.project_name, now],
         )?;
-        let project_id: i64 = tx.query_row("SELECT id FROM projects WHERE root = ?1", params![d.project_root], |r| r.get(0))?;
+        let project_id: i64 = tx.query_row(
+            "SELECT id FROM projects WHERE root = ?1",
+            params![d.project_root],
+            |r| r.get(0),
+        )?;
         tx.execute(
             "INSERT INTO workflows(project_id, key, title, created_at) VALUES(?1, ?2, ?3, ?4)
              ON CONFLICT(project_id, key) DO NOTHING",
@@ -151,11 +185,14 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash],
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)",
+            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin],
         )?;
-        tx.execute("INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)", params![id, d.title, d.source])?;
+        tx.execute(
+            "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
+            params![id, d.title, d.source],
+        )?;
         tx.commit()?;
         Ok(Doc {
             id,
@@ -171,15 +208,41 @@ impl Store {
             received_at: now,
             source_path: d.source_path.map(str::to_string),
             branch: d.branch.map(str::to_string),
+            pinned: false,
+            origin: d.origin.to_string(),
+            content_hash: hash,
         })
+    }
+
+    /// Overwrite an existing document's content in place (used to coalesce rapid
+    /// hook-driven edits of the same file into one snapshot).
+    pub fn replace(&self, id: &str, d: NewDoc) -> Result<Doc> {
+        let now = now();
+        let hash = blake3::hash(d.source.as_bytes()).to_hex().to_string();
+        fs::write(self.src_path(id), d.source)?;
+        fs::write(self.html_path(id), d.html)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE docs SET title = ?2, kind = ?3, lang = ?4, size = ?5, received_at = ?6, branch = ?7, content_hash = ?8 WHERE id = ?1",
+            params![id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.branch, hash],
+        )?;
+        conn.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
+        conn.execute(
+            "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
+            params![id, d.title, d.source],
+        )?;
+        drop(conn);
+        self.get(id)?.context("replaced document vanished")
+    }
+
+    pub fn replace_html(&self, id: &str, html: &str) -> Result<()> {
+        Ok(fs::write(self.html_path(id), html)?)
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Doc>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch
-             FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id
-             WHERE d.id = ?1",
+            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.id = ?1"),
             params![id],
             row_to_doc,
         )
@@ -188,25 +251,75 @@ impl Store {
     }
 
     pub fn html(&self, id: &str) -> Result<String> {
-        Ok(fs::read_to_string(self.docs_dir.join(format!("{id}.html")))?)
+        Ok(fs::read_to_string(self.html_path(id))?)
     }
 
     pub fn source(&self, id: &str) -> Result<String> {
-        Ok(fs::read_to_string(self.docs_dir.join(format!("{id}.src")))?)
+        Ok(fs::read_to_string(self.src_path(id))?)
     }
 
     /// The document received just before this one in the same workflow.
     pub fn previous(&self, doc: &Doc) -> Result<Option<Doc>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch
-             FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id
-             WHERE d.workflow_id = ?1 AND d.received_at < ?2 ORDER BY d.received_at DESC LIMIT 1",
-            params![doc.workflow_id, doc.received_at],
+            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.workflow_id = ?1 AND d.received_at < ?2 AND d.id != ?3 ORDER BY d.received_at DESC LIMIT 1"),
+            params![doc.workflow_id, doc.received_at, doc.id],
             row_to_doc,
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    /// Most recent document in a project for a given source path.
+    pub fn latest_for_path(&self, project_root: &str, source_path: &str) -> Result<Option<Doc>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE p.root = ?1 AND d.source_path = ?2 ORDER BY d.received_at DESC LIMIT 1"),
+            params![project_root, source_path],
+            row_to_doc,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE docs SET pinned = ?2 WHERE id = ?1",
+            params![id, pinned as i64],
+        )? > 0)
+    }
+
+    /// Delete unpinned documents received before `before`. Returns what was (or would be) removed.
+    pub fn prune(&self, before: i64, dry_run: bool) -> Result<Vec<(String, String)>> {
+        let mut conn = self.conn.lock().unwrap();
+        let victims: Vec<(String, String)> = conn
+            .prepare("SELECT id, title FROM docs WHERE pinned = 0 AND received_at < ?1 ORDER BY received_at")?
+            .query_map(params![before], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        if dry_run || victims.is_empty() {
+            return Ok(victims);
+        }
+        let tx = conn.transaction()?;
+        for (id, _) in &victims {
+            tx.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
+            tx.execute("DELETE FROM docs WHERE id = ?1", params![id])?;
+        }
+        tx.execute(
+            "DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM docs)",
+            [],
+        )?;
+        tx.commit()?;
+        drop(conn);
+        for (id, _) in &victims {
+            let _ = fs::remove_file(self.src_path(id));
+            let _ = fs::remove_file(self.html_path(id));
+        }
+        Ok(victims)
     }
 
     pub fn tree(&self) -> Result<Vec<TreeProject>> {
@@ -219,10 +332,17 @@ impl Store {
             "SELECT id, key, title FROM workflows WHERE project_id = ?1
              ORDER BY (SELECT MAX(received_at) FROM docs WHERE workflow_id = workflows.id) DESC",
         )?;
-        let mut doc_stmt = conn.prepare("SELECT id, title, kind, received_at FROM docs WHERE workflow_id = ?1 ORDER BY received_at DESC")?;
+        let mut doc_stmt = conn.prepare("SELECT id, title, kind, received_at, pinned FROM docs WHERE workflow_id = ?1 ORDER BY received_at DESC")?;
         for p in &mut projects {
             let wfs = wf_stmt
-                .query_map(params![p.id], |r| Ok(TreeWorkflow { id: r.get(0)?, key: r.get(1)?, title: r.get(2)?, docs: vec![] }))?
+                .query_map(params![p.id], |r| {
+                    Ok(TreeWorkflow {
+                        id: r.get(0)?,
+                        key: r.get(1)?,
+                        title: r.get(2)?,
+                        docs: vec![],
+                    })
+                })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             for mut w in wfs {
                 w.docs = doc_stmt
@@ -232,23 +352,25 @@ impl Store {
                             title: r.get(1)?,
                             kind: Kind::parse(&r.get::<_, String>(2)?).unwrap_or(Kind::Text),
                             received_at: r.get(3)?,
+                            pinned: r.get::<_, i64>(4)? != 0,
                         })
                     })?
                     .collect::<std::result::Result<_, _>>()?;
-                p.workflows.push(w);
+                if !w.docs.is_empty() {
+                    p.workflows.push(w);
+                }
             }
         }
+        projects.retain(|p| !p.workflows.is_empty());
         Ok(projects)
     }
 
     pub fn inbox(&self, limit: usize) -> Result<Vec<Doc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(
-                "SELECT d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch
-                 FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id
-                 ORDER BY d.received_at DESC LIMIT ?1",
-            )?
+            .prepare(&format!(
+                "SELECT {DOC_COLS} {DOC_FROM} ORDER BY d.received_at DESC LIMIT ?1"
+            ))?
             .query_map(params![limit as i64], row_to_doc)?
             .collect::<std::result::Result<_, _>>()?;
         Ok(rows)
@@ -310,6 +432,9 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
         received_at: r.get(10)?,
         source_path: r.get(11)?,
         branch: r.get(12)?,
+        pinned: r.get::<_, i64>(13)? != 0,
+        origin: r.get(14)?,
+        content_hash: r.get(15)?,
     })
 }
 
@@ -320,8 +445,128 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// 10 hex chars: content hash mixed with time, so re-sending identical content still gets a new id.
+/// 10 hex chars: content hash mixed with time and a counter, so re-sending identical
+/// content still gets a new id and two sends in the same second never collide.
 fn short_id(hash: &str, now: i64) -> String {
-    let mixed = blake3::hash(format!("{hash}:{now}:{}", std::process::id()).as_bytes());
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let mixed = blake3::hash(format!("{hash}:{now}:{}:{n}", std::process::id()).as_bytes());
     mixed.to_hex()[..10].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store() -> (Store, tempdir::Dir) {
+        let dir = tempdir::Dir::new("snyvi-store");
+        let paths = Paths {
+            data_dir: dir.path.clone(),
+            config_dir: dir.path.clone(),
+            docs_dir: dir.path.join("docs"),
+            db_path: dir.path.join("t.db"),
+            token_path: dir.path.join("token"),
+        };
+        (Store::open(&paths).unwrap(), dir)
+    }
+
+    fn new_doc<'a>(title: &'a str, src: &'a str, wf: &'a str) -> NewDoc<'a> {
+        NewDoc {
+            project_root: "/p",
+            project_name: "p",
+            workflow_key: wf,
+            workflow_title: wf,
+            title,
+            kind: Kind::Markdown,
+            lang: None,
+            source_path: Some("/p/PLAN.md"),
+            branch: None,
+            origin: "cli",
+            source: src,
+            html: "<p>x</p>",
+        }
+    }
+
+    #[test]
+    fn insert_get_previous_search() {
+        let (s, _d) = temp_store();
+        let a = s
+            .insert(new_doc("Plan", "# Plan\n\nalpha bravo", "w"))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let b = s
+            .insert(new_doc("Plan", "# Plan\n\nalpha charlie", "w"))
+            .unwrap();
+        assert_ne!(a.id, b.id);
+        assert_eq!(s.get(&b.id).unwrap().unwrap().title, "Plan");
+        assert_eq!(s.previous(&b).unwrap().unwrap().id, a.id);
+        assert!(s.previous(&a).unwrap().is_none());
+        let hits = s.search("charlie", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, b.id);
+        assert!(
+            s.search("\"unbalanced", 10).is_ok(),
+            "punctuation must not break FTS"
+        );
+        assert_eq!(
+            s.latest_for_path("/p", "/p/PLAN.md").unwrap().unwrap().id,
+            b.id
+        );
+        assert_eq!(s.tree().unwrap()[0].workflows[0].docs.len(), 2);
+    }
+
+    #[test]
+    fn pin_and_prune() {
+        let (s, _d) = temp_store();
+        let a = s.insert(new_doc("A", "aaa", "w")).unwrap();
+        let b = s.insert(new_doc("B", "bbb", "w")).unwrap();
+        assert!(s.set_pinned(&a.id, true).unwrap());
+        let dry = s.prune(now() + 10, true).unwrap();
+        assert_eq!(dry.len(), 1);
+        assert_eq!(s.count().unwrap(), 2, "dry run deletes nothing");
+        let gone = s.prune(now() + 10, false).unwrap();
+        assert_eq!(gone[0].0, b.id);
+        assert_eq!(s.count().unwrap(), 1);
+        assert!(s.get(&b.id).unwrap().is_none());
+        assert!(s.html(&b.id).is_err(), "files removed");
+        assert!(s.get(&a.id).unwrap().unwrap().pinned);
+    }
+
+    #[test]
+    fn replace_keeps_id_and_updates_index() {
+        let (s, _d) = temp_store();
+        let a = s.insert(new_doc("A", "first draft", "w")).unwrap();
+        let r = s
+            .replace(&a.id, new_doc("A2", "second draft", "w"))
+            .unwrap();
+        assert_eq!(r.id, a.id);
+        assert_eq!(r.title, "A2");
+        assert_eq!(s.source(&a.id).unwrap(), "second draft");
+        assert!(s.search("first", 5).unwrap().is_empty());
+        assert_eq!(s.search("second", 5).unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+pub mod tempdir {
+    pub struct Dir {
+        pub path: std::path::PathBuf,
+    }
+    impl Dir {
+        pub fn new(prefix: &str) -> Dir {
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("{prefix}-{}-{n}", std::process::id()));
+            std::fs::create_dir_all(&path).unwrap();
+            Dir { path }
+        }
+    }
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
 }

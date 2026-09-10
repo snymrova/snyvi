@@ -1,0 +1,33 @@
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+jobs:
+  build-test-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --release -- -D warnings
+      - name: Test
+        run: cargo test --release
+      - name: Perf budget
+        # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
+        # regression that triples a case still fails the build.
+        run: SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
+      - name: Smoke test the daemon
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/snyvi-ci SNYVI_CONFIG_DIR=/tmp/snyvi-ci-cfg SNYVI_PORT=7791
+          url=$(./target/release/snyvi send README.md)
+          echo "$url"
+          curl -sf "$url" > /dev/null
+          curl -sf http://127.0.0.1:7791/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"

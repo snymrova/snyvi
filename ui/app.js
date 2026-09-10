@@ -52,7 +52,7 @@
         h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}">${esc(w.title)}</div><ul>`;
         for (const d of w.docs) {
           const active = state.doc && state.doc.id === d.id ? "active" : "";
-          h += `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${kindTag(d.kind)}</span></a></li>`;
+          h += `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
         }
         h += `</ul></li>`;
       }
@@ -175,6 +175,7 @@
     metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span title="${esc(v)}">${esc(v)}</span></div>`).join("") +
       `<div class="actions">` +
       (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd>c</kbd></button>`) : "") +
+      `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       `</div>`;
@@ -185,7 +186,20 @@
     if (b.dataset.act === "compare") showCompare();
     if (b.dataset.act === "back") showDoc(state.doc.id, false);
     if (b.dataset.act === "copypath") { navigator.clipboard?.writeText(state.doc.source_path); toast("Copied", state.doc.source_path); }
+    if (b.dataset.act === "pin") togglePin();
   });
+
+  async function togglePin() {
+    if (!state.doc) return;
+    const pinned = !state.doc.pinned;
+    try {
+      await fetch(`/api/docs/${state.doc.id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
+      state.doc.pinned = pinned; state.cache.delete(state.doc.id);
+      state.tree = await (await fetch("/api/tree")).json();
+      renderTree(); renderMeta(false);
+      toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it");
+    } catch (e) { toast("Could not pin", String(e)); }
+  }
 
   function enhanceCode() {
     for (const pre of docEl.querySelectorAll("pre.code")) {
@@ -235,6 +249,17 @@
         renderTree();
         toast(d.title, `${d.project} · click to open`, () => showDoc(d.id, true));
       }
+    });
+    // A large code file finished highlighting in the background: swap the body in place.
+    es.addEventListener("rendered", async ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      state.cache.delete(j.id);
+      if (!state.doc || state.doc.id !== j.id) return;
+      const top = main.scrollTop;
+      try { const r = await fetchDoc(j.id); docEl.innerHTML = r.html; enhanceCode(); main.scrollTop = top; } catch {}
+    });
+    es.addEventListener("pinned", async () => {
+      try { state.tree = await (await fetch("/api/tree")).json(); renderTree(); } catch {}
     });
     es.onerror = () => { es.close(); setTimeout(connect, 2000); };
   }
@@ -301,6 +326,7 @@
       case "[": if (sib[si + 1]) showDoc(sib[si + 1], true); break;   // sidebar is newest-first, so older is +1
       case "]": if (si > 0) showDoc(sib[si - 1], true); break;
       case "c": showCompare(); break;
+      case "p": togglePin(); break;
       case "i": showInbox(true); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }

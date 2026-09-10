@@ -30,10 +30,22 @@ const APP_CSS: &str = include_str!("../ui/app.css");
 const APP_JS: &str = include_str!("../ui/app.js");
 const FONTS: &[(&str, &[u8])] = &[
     ("inter.woff2", include_bytes!("../ui/fonts/inter.woff2")),
-    ("inter-italic.woff2", include_bytes!("../ui/fonts/inter-italic.woff2")),
-    ("jetbrains-mono.woff2", include_bytes!("../ui/fonts/jetbrains-mono.woff2")),
-    ("source-serif.woff2", include_bytes!("../ui/fonts/source-serif.woff2")),
-    ("source-serif-italic.woff2", include_bytes!("../ui/fonts/source-serif-italic.woff2")),
+    (
+        "inter-italic.woff2",
+        include_bytes!("../ui/fonts/inter-italic.woff2"),
+    ),
+    (
+        "jetbrains-mono.woff2",
+        include_bytes!("../ui/fonts/jetbrains-mono.woff2"),
+    ),
+    (
+        "source-serif.woff2",
+        include_bytes!("../ui/fonts/source-serif.woff2"),
+    ),
+    (
+        "source-serif-italic.woff2",
+        include_bytes!("../ui/fonts/source-serif-italic.woff2"),
+    ),
 ];
 
 pub struct App {
@@ -53,8 +65,17 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let store = Store::open(&paths)?;
     let renderer = Renderer::new();
     let (tx, _) = broadcast::channel(64);
-    let asset_v = blake3::hash(format!("{INDEX_HTML}{APP_CSS}{APP_JS}{VERSION}").as_bytes()).to_hex()[..8].to_string();
-    let app = Arc::new(App { store, renderer, token, events: tx, started: Instant::now(), asset_v });
+    let asset_v = blake3::hash(format!("{INDEX_HTML}{APP_CSS}{APP_JS}{VERSION}").as_bytes())
+        .to_hex()[..8]
+        .to_string();
+    let app = Arc::new(App {
+        store,
+        renderer,
+        token,
+        events: tx,
+        started: Instant::now(),
+        asset_v,
+    });
 
     let router = Router::new()
         .route("/", get(shell_home))
@@ -68,6 +89,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/search", get(search))
         .route("/api/docs", post(receive_doc))
         .route("/api/docs/{id}", get(doc_json))
+        .route("/api/docs/{id}/pin", post(pin))
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/compare/{a}/{b}", get(compare))
         .route("/api/events", get(events))
@@ -101,9 +123,12 @@ fn shell(app: &App, boot: serde_json::Value, initial_html: &str, title: &str) ->
 
 pub fn fmt_time(ts: i64) -> String {
     use time::{format_description::FormatItem, macros::format_description, OffsetDateTime};
-    const F: &[FormatItem] = format_description!("[month repr:short] [day padding:none], [hour]:[minute]");
+    const F: &[FormatItem] =
+        format_description!("[month repr:short] [day padding:none], [hour]:[minute]");
     let local = OffsetDateTime::from_unix_timestamp(ts)
-        .map(|t| t.to_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC)))
+        .map(|t| {
+            t.to_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC))
+        })
         .unwrap_or(OffsetDateTime::UNIX_EPOCH);
     local.format(F).unwrap_or_default()
 }
@@ -150,7 +175,10 @@ fn immutable(content_type: &'static str, body: impl Into<Body>) -> Response {
     (
         [
             (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
-            (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable")),
+            (
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            ),
         ],
         body.into(),
     )
@@ -177,6 +205,7 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         "ok": true,
         "version": VERSION,
         "docs": app.store.count().unwrap_or(0),
+        "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
 }
@@ -218,7 +247,8 @@ async fn doc_json(State(app): S, Path(id): Path<String>) -> Response {
         Ok(Some(doc)) => {
             let body = app.store.html(&id).unwrap_or_default();
             let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
-            Json(json!({ "doc": doc, "html": doc_html(&doc, &body), "previous": previous })).into_response()
+            Json(json!({ "doc": doc, "html": doc_html(&doc, &body), "previous": previous }))
+                .into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
@@ -250,28 +280,98 @@ async fn compare(State(app): S, Path((a, b)): Path<(String, String)>) -> Respons
     Json(json!({ "a": da, "b": db, "html": html })).into_response()
 }
 
+/// Broadcast payloads are "<event name>\n<json>".
 async fn events(State(app): S) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|m| m.ok().map(|data| Ok(Event::default().event("doc").data(data))));
+    let stream = BroadcastStream::new(rx).filter_map(|m| {
+        m.ok().map(|msg| {
+            let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
+            Ok(Event::default().event(name).data(data))
+        })
+    });
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+fn emit(app: &App, name: &str, data: serde_json::Value) {
+    let _ = app.events.send(format!("{name}\n{data}"));
+}
+
+#[derive(Deserialize)]
+struct PinBody {
+    pinned: bool,
+}
+
+/// Pinning is UI state, so it needs no token; it only affects what `prune` keeps.
+async fn pin(State(app): S, Path(id): Path<String>, Json(b): Json<PinBody>) -> Response {
+    match app.store.set_pinned(&id, b.pinned) {
+        Ok(true) => {
+            emit(&app, "pinned", json!({ "id": id, "pinned": b.pinned }));
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
 }
 
 async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payload>) -> Response {
     if !authorized(&app, &headers) {
-        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "missing or invalid token" }))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
     }
     // Rendering is CPU work; keep it off the async executor.
     let app2 = app.clone();
-    let result = tokio::task::spawn_blocking(move || receive::receive(&app2.store, &app2.renderer, payload)).await;
+    let result =
+        tokio::task::spawn_blocking(move || receive::receive(&app2.store, &app2.renderer, payload))
+            .await;
     match result {
-        Ok(Ok(doc)) => {
+        Ok(Ok(received)) => {
+            let doc = received.doc;
             let url = format!("{}/d/{}", config::base_url(), doc.id);
-            let _ = app.events.send(json!({ "doc": doc, "url": url }).to_string());
-            (StatusCode::CREATED, Json(json!({ "id": doc.id, "url": url, "doc": doc }))).into_response()
+            emit(
+                &app,
+                "doc",
+                json!({ "doc": doc, "url": url, "existing": received.existing }),
+            );
+            if received.needs_full_highlight {
+                spawn_full_highlight(app.clone(), doc.id.clone(), doc.lang.clone());
+            }
+            let status = if received.existing {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            };
+            (
+                status,
+                Json(
+                    json!({ "id": doc.id, "url": url, "doc": doc, "existing": received.existing }),
+                ),
+            )
+                .into_response()
         }
-        Ok(Err(e)) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
         Err(e) => err(anyhow::anyhow!(e)),
     }
+}
+
+/// Large code files are stored partly plain for an instant first view; finish the
+/// highlight off the request path and tell open tabs to refetch.
+fn spawn_full_highlight(app: Arc<App>, id: String, lang: Option<String>) {
+    tokio::task::spawn_blocking(move || {
+        let Ok(src) = app.store.source(&id) else {
+            return;
+        };
+        let html = app.renderer.render_code_uncapped(lang.as_deref(), &src);
+        if app.store.replace_html(&id, &html).is_ok() {
+            emit(&app, "rendered", json!({ "id": id }));
+        }
+    });
 }
 
 fn authorized(app: &App, headers: &HeaderMap) -> bool {
@@ -280,14 +380,28 @@ fn authorized(app: &App, headers: &HeaderMap) -> bool {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim);
-    let alt = headers.get("x-snyvi-token").and_then(|v| v.to_str().ok()).map(str::trim);
-    bearer.or(alt).map(|t| constant_eq(t, &app.token)).unwrap_or(false)
+    let alt = headers
+        .get("x-snyvi-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    bearer
+        .or(alt)
+        .map(|t| constant_eq(t, &app.token))
+        .unwrap_or(false)
 }
 
 fn constant_eq(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
 }
 
 fn err(e: anyhow::Error) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response()
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": e.to_string() })),
+    )
+        .into_response()
 }

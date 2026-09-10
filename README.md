@@ -23,9 +23,11 @@ fonts, and syntax grammars.
 snyvi send PLAN.md                 # send a file, print its link
 cat notes.md | snyvi send -t Notes # send stdin
 snyvi open                         # open the viewer in the browser
-snyvi init-claude                  # register with Claude Code (user scope)
+snyvi app                          # native window (see Desktop below)
+snyvi init-claude [--auto]         # register with Claude Code (user scope)
+snyvi prune --days 30 [--dry-run]  # delete unpinned documents older than N days
 snyvi status                       # daemon health
-snyvi bench                        # render speed on synthetic documents
+snyvi bench [--check]              # render speed on synthetic documents
 ```
 
 The first `send` starts the daemon in the background; it stays resident
@@ -42,6 +44,21 @@ when to use it; a line in your global `CLAUDE.md` helps it remember:
 > When you produce a document for me to read (plan, review, summary),
 > send it to snyvi with send_document and give me the link.
 
+`snyvi init-claude --auto` additionally installs a `PostToolUse` hook in
+`~/.claude/settings.json`, so every Markdown file Claude writes or edits
+is sent without the model having to decide. Rapid edits to the same file
+within three minutes overwrite the latest snapshot instead of piling up;
+an explicit `send_document` of the same file always creates a new
+version, and sending unchanged bytes returns the existing document.
+Set `SNYVI_HOOK_EXT=md,txt,rst` to widen the filter.
+
+### Desktop
+
+`snyvi app` opens the viewer in a native window. Built with
+`cargo build --release --features desktop` it is a WebKitGTK window
+(Tauri 2) on top of the daemon; the plain build opens a Chromium-family
+browser in app mode when one is installed, else the default browser.
+
 ### Keys
 
 | Key   | Action                                     |
@@ -50,6 +67,7 @@ when to use it; a line in your global `CLAUDE.md` helps it remember:
 | j / k | next / previous document                    |
 | [ / ] | older / newer version in the same workflow  |
 | c     | compare with the previous version           |
+| p     | pin (kept by `prune`)                       |
 | i     | inbox                                       |
 | t     | toggle contents                             |
 | \     | toggle sidebar                              |
@@ -65,7 +83,18 @@ Project      detected from the sender's working directory (git root)
 ```
 
 Documents are never updated. If the agent revises a plan, it sends it
-again; the workflow shows both, and `c` diffs them.
+again; the workflow shows both, and `c` diffs them. Large code files are
+shown at once with the first 256 KB highlighted; the rest is highlighted
+in the background and swapped in when ready.
+
+## Languages
+
+Everything syntect ships (Rust, Python, JavaScript, Go, C, C++, Java,
+C#, Ruby, PHP, Shell, SQL, YAML, JSON, HTML, CSS, Markdown, and about
+fifty more) plus grammars vendored in `syntaxes/`: TypeScript, TOML,
+Dockerfile, Swift, Zig, GraphQL, Nix, Nim, Fish, Sass, SystemVerilog.
+`cargo test --release build_syntax_pack -- --ignored` regenerates the
+pack after adding a `.sublime-syntax` file there.
 
 ## Where things live
 
@@ -84,20 +113,23 @@ architecture, the performance budgets, and the milestones.
 
 ## Measured so far
 
-Release build on a 4-core container, headless Chromium, warm daemon.
+Release build on a 4-core container, headless Chromium, warm daemon,
+best of three for render rows (`snyvi bench`).
 
-| Case                                        | Result      |
-|---------------------------------------------|-------------|
-| Binary size                                 | 8.7 MB      |
-| Daemon resident memory, 8 documents         | ~25 MB      |
-| `snyvi send` round trip (render + store)    | ~50 ms      |
-| Document page, time to first byte           | 3 to 5 ms   |
-| Document page, first contentful paint       | 65 to 170 ms (cold fonts) |
-| New document visible after send (SSE)       | ~50 ms      |
-| Render Markdown, 100 KB                     | 23 ms       |
-| Render Markdown, 1 MB                       | 265 ms      |
-| Highlight Rust, 10k lines                   | 296 ms      |
+| Case                                        | Result      | Budget |
+|---------------------------------------------|-------------|--------|
+| Binary size (plain / desktop)               | 8.8 MB / 12.1 MB | 15 MB |
+| Daemon resident memory                      | ~25 MB      | 60 MB  |
+| Renderer init (86 grammars from the pack)   | 7 ms        |        |
+| `snyvi send` round trip (render + store)    | ~50 ms      |        |
+| Document page, time to first byte           | 3 to 5 ms   | 30 ms  |
+| Document page, first contentful paint       | 65 to 170 ms (cold fonts) | |
+| New document visible after send (SSE)       | ~50 ms      | 100 ms |
+| Render Markdown, 100 KB                     | 14 ms       | 50 ms  |
+| Render Markdown, 1 MB                       | 159 ms      | 200 ms |
+| Highlight Rust, 10k lines                   | 193 ms      | 500 ms |
 
-`snyvi bench` reproduces the render rows. The Markdown fast path skips the
-HTML sanitizer whenever a document contains no raw HTML, which is nearly
-always for agent output.
+`snyvi bench --check` fails when a case exceeds its budget; CI runs it
+with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
+Markdown fast path skips the HTML sanitizer whenever a document contains
+no raw HTML, which is nearly always for agent output.

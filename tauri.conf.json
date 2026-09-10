@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "snyvi",
+  "version": "0.1.0",
+  "identifier": "rocks.ohmydog.snyvi",
+  "build": {
+    "frontendDist": "desktop-dist"
+  },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}

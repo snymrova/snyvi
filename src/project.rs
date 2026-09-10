@@ -10,7 +10,10 @@ pub struct ProjectInfo {
 
 pub fn resolve(start: &Path) -> ProjectInfo {
     let start = if start.is_file() {
-        start.parent().map(Path::to_path_buf).unwrap_or_else(|| start.to_path_buf())
+        start
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| start.to_path_buf())
     } else {
         start.to_path_buf()
     };
@@ -18,11 +21,17 @@ pub fn resolve(start: &Path) -> ProjectInfo {
     let mut cur: Option<&Path> = Some(&start);
     while let Some(dir) = cur {
         if dir.join(".git").exists() {
-            return ProjectInfo { root: dir.to_path_buf(), name: dir_name(dir) };
+            return ProjectInfo {
+                root: dir.to_path_buf(),
+                name: dir_name(dir),
+            };
         }
         cur = dir.parent();
     }
-    ProjectInfo { name: dir_name(&start), root: start }
+    ProjectInfo {
+        name: dir_name(&start),
+        root: start,
+    }
 }
 
 fn dir_name(p: &Path) -> String {
@@ -36,6 +45,7 @@ fn dir_name(p: &Path) -> String {
 pub fn branch(root: &Path) -> Option<String> {
     let head = std::fs::read_to_string(root.join(".git/HEAD")).ok()?;
     let head = head.trim();
-    head.strip_prefix("ref: refs/heads/").map(str::to_string)
+    head.strip_prefix("ref: refs/heads/")
+        .map(str::to_string)
         .or_else(|| Some(head.chars().take(8).collect()))
 }

@@ -493,7 +493,18 @@ waits for a script.
 - None of them receive from an agent or organize by project and
   session. That gap is the product.
 
-## 12. Recommended path
+## 12. Status (2026-09-10)
+
+Milestones 1 to 3 are built and measured; see README.md for numbers.
+Built: daemon, renderer with sanitizer fast path and compact highlight
+classes, store with FTS5, projects/workflows/documents, inbox, search,
+compare, focus-on-arrival, pin and prune, background highlighting past
+the cap, the `send_document` MCP tool, the optional PostToolUse hook
+with coalescing, the Tauri desktop window, a perf budget in CI, and an
+extra grammar pack (TypeScript, TOML, Dockerfile, ...).
+Not built: hosted mode (milestone 4), Mermaid/KaTeX, image embedding.
+
+## 13. Recommended path
 
 **Milestone 1: the viewer (MVP).**
 1. Rust binary, `comrak` + `syntect` + `ammonia`, `axum`, inlined UI,

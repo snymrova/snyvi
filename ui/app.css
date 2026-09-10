@@ -179,6 +179,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-doc a.active::before { background: var(--accent); }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 .t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
+.t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 .t-empty { padding: 24px 12px; color: var(--fg-3); font-size: 13px; line-height: 1.6; }
 .t-empty code { font-family: var(--mono); font-size: 12px; background: var(--rule); padding: 1px 5px; border-radius: 4px; }
 
@@ -258,10 +259,10 @@ pre.code:hover:has(.copy)::before { opacity: 0; }
 pre.code .copy:hover { color: var(--fg); }
 pre.code .ln { display: inline; }
 pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 3.2ch; margin-right: 1.6ch; padding-left: 14px; box-sizing: content-box; text-align: right; color: var(--fg-3); opacity: .55; user-select: none; -webkit-user-select: none; }
-.prose pre.code .ln::before { display: none; }
-.prose pre.code .ln { padding: 0 16px; }
-.prose pre.code:has(.ln:nth-of-type(12)) .ln::before { display: inline-block; }
-.prose pre.code:has(.ln:nth-of-type(12)) .ln { padding: 0 16px 0 0; }
+.kind-markdown pre.code .ln::before { display: none; }
+.kind-markdown pre.code .ln { padding: 0 16px; }
+.kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln::before { display: inline-block; }
+.kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln { padding: 0 16px 0 0; }
 
 /* standalone code / text / diff documents */
 .kind-code, .kind-text, .kind-diff { font-family: var(--mono); }

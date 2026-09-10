@@ -15,7 +15,9 @@ are supported. The document opens in the viewer immediately; include the returne
 user can click it.";
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().to_string());
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
     let session = session_key();
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
@@ -27,7 +29,10 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
         let msg: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
-                write_msg(&mut out, &json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": format!("parse error: {e}") } }))?;
+                write_msg(
+                    &mut out,
+                    &json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": format!("parse error: {e}") } }),
+                )?;
                 continue;
             }
         };
@@ -44,7 +49,9 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document and share the link."
             }}),
             "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
-            "tools/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [ tool_spec() ] } }),
+            "tools/list" => {
+                json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [ tool_spec() ] } })
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -64,7 +71,9 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                     }
                 }
             }
-            _ => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not found: {method}") } }),
+            _ => {
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not found: {method}") } })
+            }
         };
         write_msg(&mut out, &reply)?;
     }
@@ -91,8 +100,18 @@ fn tool_spec() -> Value {
     })
 }
 
-fn call_send(paths: &Paths, args: Value, cwd: Option<&str>, session: &str) -> anyhow::Result<String> {
-    let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string).filter(|v| !v.trim().is_empty());
+fn call_send(
+    paths: &Paths,
+    args: Value,
+    cwd: Option<&str>,
+    session: &str,
+) -> anyhow::Result<String> {
+    let s = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|v| !v.trim().is_empty())
+    };
     let payload = Payload {
         path: s("path"),
         content: s("content"),
@@ -101,9 +120,14 @@ fn call_send(paths: &Paths, args: Value, cwd: Option<&str>, session: &str) -> an
         lang: s("lang"),
         cwd: cwd.map(str::to_string),
         session: Some(session.to_string()),
+        origin: Some("mcp".into()),
     };
     let resp = client::send(paths, &payload)?;
-    Ok(resp.get("url").and_then(Value::as_str).unwrap_or("").to_string())
+    Ok(resp
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string())
 }
 
 fn write_msg(out: &mut impl Write, v: &Value) -> io::Result<()> {
@@ -115,7 +139,10 @@ fn write_msg(out: &mut impl Write, v: &Value) -> io::Result<()> {
 /// One key per MCP server process, which Claude Code spawns once per session.
 fn session_key() -> String {
     use time::{macros::format_description, OffsetDateTime};
-    let t = OffsetDateTime::now_utc().format(format_description!("[year][month][day]-[hour][minute]")).unwrap_or_default();
-    let tail = blake3::hash(format!("{}-{}", std::process::id(), t).as_bytes()).to_hex()[..4].to_string();
+    let t = OffsetDateTime::now_utc()
+        .format(format_description!("[year][month][day]-[hour][minute]"))
+        .unwrap_or_default();
+    let tail =
+        blake3::hash(format!("{}-{}", std::process::id(), t).as_bytes()).to_hex()[..4].to_string();
     format!("session {t} {tail}")
 }
