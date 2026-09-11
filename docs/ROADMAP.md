@@ -124,7 +124,7 @@ layout rules written for prose:
 
 New: `w` maximises width, overriding the reading measure for prose.
 
-## 0.4 (in progress)
+## 0.4 (released)
 
 Watching, both ways. In browse mode the file on screen refreshes when it
 is saved and the tree follows files being added or removed, with the
@@ -167,7 +167,10 @@ rule that was meant to remove the inset on code documents had been losing on
 specificity since it was written, so the numbers now line up with the title
 above them as intended.
 
-Still to come in this cut: rename workflow and project; JSON and YAML views.
+Cut without two things it had been holding a place for: rename workflow
+and project, and JSON and YAML views. Neither was started, and a cut that
+waits for everything named in it stops being a cut, so both move to the
+next one.
 
 ## Candidates after 0.4
 
@@ -175,10 +178,12 @@ Rename workflow and project, tags from the sender, macOS build, AppImage
 and AUR, tray icon with a global shortcut.
 
 Release hygiene: CI now builds `--features desktop` and opens the window
-under Xvfb, so the Tauri path is no longer unverified. Still open: no
-release has ever been cut, so the install instructions point at an empty
-releases page. Pushing a `v*` tag is the only step, and it has to come
-from a machine that can push tags.
+under Xvfb, so the Tauri path is no longer unverified. `v0.4.0` is the
+first release actually cut, which makes the `.deb` in the install
+instructions something you can download rather than something the README
+promises. Until it ran, the release workflow was the one path proven only
+by proxy: CI builds and installs the package on every push, but nothing
+had ever exercised tagging, the two-architecture matrix, or the upload.
 
 ## Still no purpose-built view
 
