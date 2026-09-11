@@ -95,6 +95,10 @@
     treeEl.innerHTML = h;
   }
 
+  const entryHtml = (rootId, e) => e.dir
+    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${esc(e.name)}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
+    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}"><span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
+
   /** Fetch one directory level the first time its folder is opened. */
   async function fillTree(ul) {
     if (!ul || ul.dataset.loaded) return;
@@ -105,10 +109,31 @@
     try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { ul.dataset.loaded = ""; return; }
     if (!Array.isArray(entries)) { ul.dataset.loaded = ""; return; }
     if (!entries.length) { ul.innerHTML = `<li class="b-empty">empty</li>`; return; }
-    ul.innerHTML = entries.map(e => e.dir
-      ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${esc(e.name)}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
-      : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}"><span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`
-    ).join("");
+    ul.innerHTML = entries.map(e => entryHtml(rootId, e)).join("");
+    markActive();
+  }
+
+  /** The folder changed on disk: re-list it, keeping the nodes that are still there
+   *  so expanded subfolders stay expanded and nothing flickers. */
+  async function reloadTree(ul) {
+    if (!ul || !ul.dataset.loaded) return;
+    const rootId = ul.dataset.root, path = ul.dataset.path || "";
+    let entries;
+    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { return; }
+    if (!Array.isArray(entries) || !ul.isConnected) return;
+    const old = new Map([...ul.children].map(li => [li.querySelector("[data-path]")?.dataset.path, li]));
+    const tpl = document.createElement("template");
+    const nodes = entries.map(e => {
+      const li = old.get(e.path);
+      if (li && li.classList.contains(e.dir ? "b-dir" : "b-file")) {
+        const k = li.querySelector(".k"); if (k) k.textContent = fmtSize(e.size);
+        return li;
+      }
+      tpl.innerHTML = entryHtml(rootId, e);
+      return tpl.content.firstElementChild;
+    });
+    if (!nodes.length) { ul.innerHTML = `<li class="b-empty">empty</li>`; return; }
+    ul.replaceChildren(...nodes);
     markActive();
   }
   treesEl.addEventListener("toggle", e => {
@@ -321,6 +346,57 @@
     renderMermaid();
     renderHistory();
     clearFind();
+  }
+
+  /** The body was swapped under the reader: rebuild what hangs off it, keep the sidebar. */
+  function afterRefresh() {
+    buildToc();
+    renderMeta(false);
+    enhanceCode();
+    renderMermaid();
+    renderHistory();
+    if (!findBar.hidden && findIn.value) runFind(findIn.value); else clearFind();
+  }
+
+  // ---------- live refresh ----------
+  /** A stored document was overwritten (a hook or `snyvi watch` send) or finished
+   *  highlighting: fetch it again and swap the body in place, keeping the scroll. */
+  async function refreshDoc(id) {
+    state.cache.delete(id);
+    if (!state.doc || state.doc.id !== id || state.comparing) return;
+    const top = main.scrollTop;
+    let j; try { j = await fetchDoc(id); } catch { return; }
+    if (!state.doc || state.doc.id !== id) return;
+    state.doc = j.doc; state.previous = j.previous;
+    setPreview(j.preview, j.preview_url, `d:${id}`);
+    docEl.innerHTML = j.html;
+    applyPreview();
+    if (j.doc.kind === "diff" && state.split) await applySplit();
+    main.scrollTop = top;
+    afterRefresh();
+  }
+
+  /** The browsed file on screen changed on disk. */
+  async function refreshBrowsed() {
+    if (!browsing() || !state.browsePath) return;
+    const rootId = state.browseRoot.id, path = state.browsePath;
+    let j;
+    try {
+      const r = await fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      j = await r.json();
+    } catch {
+      toast(`${path.split("/").pop()} is gone`, "removed or renamed on disk; showing the last version");
+      return;
+    }
+    // The reader moved on while this was in flight.
+    if (!browsing() || state.browseRoot.id !== rootId || state.browsePath !== path) return;
+    const top = main.scrollTop;
+    setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
+    docEl.innerHTML = browseHtml(j.file, j.root);
+    applyPreview();
+    main.scrollTop = top;
+    afterRefresh();
   }
 
   // ---------- mermaid (loaded only when a page has a diagram) ----------
@@ -595,6 +671,14 @@
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
       try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+      // An overwrite of a document already here is not an arrival: refresh it where
+      // it is if it is on screen, never navigate to it, and never toast — a file
+      // being watched changes on every save.
+      if (j.existing) {
+        if (state.doc && state.doc.id === d.id) { await refreshDoc(d.id); renderTree(); }
+        else { state.cache.delete(d.id); if (!state.doc || state.doc.project_id !== d.project_id) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); renderTree(); }
+        return;
+      }
       if (state.view === "inbox" || idle()) {
         state.cache.delete(d.id);
         await showDoc(d.id, true);
@@ -606,12 +690,19 @@
       }
     });
     // A large code file finished highlighting in the background: swap the body in place.
-    es.addEventListener("rendered", async ev => {
+    es.addEventListener("rendered", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
-      state.cache.delete(j.id);
-      if (!state.doc || state.doc.id !== j.id) return;
-      const top = main.scrollTop;
-      try { const r = await fetchDoc(j.id); docEl.innerHTML = r.html; enhanceCode(); main.scrollTop = top; } catch {}
+      refreshDoc(j.id);
+    });
+    // Something in a browsed folder changed on disk: the open file, or a listed folder.
+    es.addEventListener("changed", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (j.dir) {
+        reloadTree(browseEl.querySelector(`.b-tree[data-root="${j.root}"][data-path="${CSS.escape(j.path)}"]`));
+        if (browsing() && state.browseRoot.id === j.root && !state.browsePath && j.path === "") showBrowse(j.root, "", false);
+        return;
+      }
+      if (browsing() && state.browseRoot.id === j.root && state.browsePath === j.path) refreshBrowsed();
     });
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }

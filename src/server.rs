@@ -92,6 +92,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         asset_v,
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
     });
+    crate::watch::spawn_browse_watcher(app.clone());
 
     let router = Router::new()
         .route("/", get(shell_home))
@@ -584,7 +585,7 @@ async fn events(State(app): S) -> Sse<impl tokio_stream::Stream<Item = Result<Ev
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-fn emit(app: &App, name: &str, data: serde_json::Value) {
+pub(crate) fn emit(app: &App, name: &str, data: serde_json::Value) {
     let _ = app.events.send(format!("{name}\n{data}"));
 }
 

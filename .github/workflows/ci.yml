@@ -33,6 +33,21 @@ jobs:
           curl -sf "$url" > /dev/null
           curl -sf http://127.0.0.1:7791/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+      - name: Smoke test watch
+        # A save while `snyvi watch` runs must reach the daemon as the same document.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/snyvi-ci SNYVI_CONFIG_DIR=/tmp/snyvi-ci-cfg SNYVI_PORT=7791
+          printf '# Watched\n\nfirst draft\n' > /tmp/watched.md
+          timeout 8 ./target/release/snyvi watch /tmp/watched.md > /tmp/watch.out 2> /tmp/watch.err &
+          sleep 2
+          printf '# Watched\n\nsecond draft\n' > /tmp/watched.md
+          wait %1 || true
+          cat /tmp/watch.err
+          url=$(head -1 /tmp/watch.out)
+          curl -sf "$url" | grep -q "second draft"
+          grep -q "watched.md → $url" /tmp/watch.err
+          ./target/release/snyvi stop
 
   desktop:
     # The Tauri window is behind a feature flag, so nothing else compiles it.

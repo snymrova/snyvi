@@ -10,6 +10,7 @@ mod render;
 mod server;
 mod session;
 mod store;
+mod watch;
 
 use anyhow::{Context, Result};
 
@@ -51,6 +52,26 @@ enum Cmd {
         #[arg(short, long)]
         project: Option<PathBuf>,
         /// Open the link in the browser after sending.
+        #[arg(short, long)]
+        open: bool,
+    },
+    /// Send a file now and again whenever it changes on disk, until interrupted.
+    Watch {
+        /// Files to watch.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Title (meant for a single file).
+        #[arg(short, long)]
+        title: Option<String>,
+        #[arg(short, long)]
+        workflow: Option<String>,
+        /// Format hint: md, diff, rs, py, ...
+        #[arg(short, long)]
+        lang: Option<String>,
+        /// Project directory (defaults to the current directory).
+        #[arg(short, long)]
+        project: Option<PathBuf>,
+        /// Open the link in the browser after the first send.
         #[arg(short, long)]
         open: bool,
     },
@@ -158,6 +179,26 @@ fn main() -> Result<()> {
                 client::open_in_browser(&url);
             }
             Ok(())
+        }
+        Cmd::Watch {
+            files,
+            title,
+            workflow,
+            lang,
+            project,
+            open,
+        } => {
+            let cwd = project
+                .or_else(|| std::env::current_dir().ok())
+                .map(|p| p.to_string_lossy().to_string());
+            let base = receive::Payload {
+                title,
+                workflow,
+                lang,
+                cwd,
+                ..Default::default()
+            };
+            watch::run_cli(&paths, &files, &base, open)
         }
         Cmd::Open { id } => {
             client::ensure_daemon()?;

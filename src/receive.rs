@@ -22,7 +22,8 @@ pub struct Payload {
     pub cwd: Option<String>,
     /// Opaque session key from the sender, used as the default workflow.
     pub session: Option<String>,
-    /// Who sent it: "mcp", "cli", or "hook". Hook sends of the same file are coalesced.
+    /// Who sent it: "mcp", "cli", "hook" or "watch". Hook and watch sends of the same
+    /// file are coalesced.
     pub origin: Option<String>,
 }
 
@@ -36,8 +37,14 @@ pub struct Received {
 }
 
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
-/// Hook-driven edits to the same file within this window overwrite the latest snapshot.
+/// Automatic sends of the same file within this window overwrite the latest snapshot.
 const COALESCE_SECS: i64 = 180;
+
+/// Sends nobody asked for one at a time: the Claude Code hook fires on every edit,
+/// `snyvi watch` on every save. They coalesce with each other.
+fn automatic(origin: &str) -> bool {
+    matches!(origin, "hook" | "watch")
+}
 
 pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
     // `body` is what gets stored; `text` is the decoded view of it, empty when there
@@ -123,8 +130,9 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let _ = &wf_name;
 
     let coalesce_into = match (origin, &latest_same_path) {
-        ("hook", Some(prev))
-            if prev.origin == "hook"
+        (o, Some(prev))
+            if automatic(o)
+                && automatic(&prev.origin)
                 && prev.workflow == wf_key
                 && crate::store::now() - prev.received_at < COALESCE_SECS =>
         {
@@ -280,6 +288,22 @@ mod tests {
         );
         assert_ne!(explicit.doc.id, first.doc.id);
         assert_eq!(s.count().unwrap(), 2);
+
+        // `snyvi watch` is automatic too: its saves overwrite, and it overwrites the
+        // hook's snapshot as readily as its own.
+        std::fs::write(&file, "# Notes\n\nv4").unwrap();
+        let watched = receive(&s, &r, mk("watch")).unwrap();
+        assert!(!watched.existing, "a watch send after an mcp send is new");
+        std::fs::write(&file, "# Notes\n\nv5").unwrap();
+        let again = receive(&s, &r, mk("watch")).unwrap();
+        assert!(again.existing);
+        assert_eq!(again.doc.id, watched.doc.id);
+        std::fs::write(&file, "# Notes\n\nv6").unwrap();
+        let hooked = receive(&s, &r, mk("hook")).unwrap();
+        assert!(hooked.existing, "hook and watch coalesce with each other");
+        assert_eq!(hooked.doc.id, watched.doc.id);
+        assert_eq!(s.source(&watched.doc.id).unwrap(), "# Notes\n\nv6");
+        assert_eq!(s.count().unwrap(), 3);
     }
 
     #[test]

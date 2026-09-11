@@ -72,6 +72,7 @@ systemctl --user enable --now snyvi
 ```
 snyvi send PLAN.md                 # send a file, print its link
 cat notes.md | snyvi send -t Notes # send stdin
+snyvi watch PLAN.md                # send now, and again on every save
 snyvi browse [dir]                 # read a folder from disk, nothing stored
 snyvi open                         # open the viewer in the browser
 snyvi app                          # native window (see Desktop below)
@@ -104,6 +105,25 @@ within three minutes overwrite the latest snapshot instead of piling up;
 an explicit `send_document` of the same file always creates a new
 version, and sending unchanged bytes returns the existing document.
 Set `SNYVI_HOOK_EXT=md,txt,rst` to widen the filter.
+
+### Watching a file
+
+For editors and agents that have no hooks, `snyvi watch` does what the
+hook does from the outside:
+
+```
+snyvi watch PLAN.md            # prints the link, then sends on every save
+snyvi watch notes.md draft.md  # several files, one process
+```
+
+It sends the file at once, prints the link, and sends it again whenever
+the file changes on disk, until you stop it. A file caught halfway
+through a write is left alone until it has held still. Saves coalesce
+exactly like the hook's edits do, with each other and with the hook: a
+tab that has the document open swaps the new version in where it is,
+keeping your place, and a save within three minutes of the last
+overwrites that snapshot rather than adding one. A file that goes away
+is noted and watched for its return.
 
 ### Desktop
 
@@ -193,11 +213,18 @@ snyvi browse ~/code/foo
 
 It honours `.gitignore` and skips hidden files, so `node_modules` and
 `target` stay out of the way. Files render on first open and are cached
-by modification time, so revisiting one is instant and editing it on
-disk shows the new content on refresh. ⌘K finds a file by name inside
-the folder, `j` and `k` step through files, and the folder closes from
-the sidebar or the rail. Images display, binaries and very large files
-are described rather than dumped.
+by modification time, so revisiting one is instant. ⌘K finds a file by
+name inside the folder, `j` and `k` step through files, and the folder
+closes from the sidebar or the rail. Images display, binaries and very
+large files are described rather than dumped.
+
+The folder is live. Save the file you are reading and the page updates
+where it is, scroll position, find and preview included; add or remove
+files and the tree follows. The daemon looks at the files and folders
+you have on screen a few times a second, only while a tab is connected,
+and only once a change has held still, so a file caught mid-write is
+never shown half-way. That is a handful of `stat` calls, not a
+recursive watch, so a repository of any size costs the same.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does

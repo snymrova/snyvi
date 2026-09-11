@@ -18,6 +18,9 @@ const CACHE_ENTRIES: usize = 48;
 /// Entries scanned for quick-open, and how long that scan is reused.
 const FIND_CAP: usize = 40_000;
 const FIND_TTL: Duration = Duration::from_secs(20);
+/// Files and folders remembered per root for the change watcher: the ones most
+/// recently rendered or listed, which is what a reader has on screen.
+const WATCH_CAP: usize = 32;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Root {
@@ -53,10 +56,21 @@ pub struct FileView {
     pub preview_url: Option<String>,
 }
 
+/// Something on screen that the watcher should keep an eye on.
+#[derive(Clone, Debug)]
+pub struct Watched {
+    pub root: String,
+    pub rel: String,
+    pub dir: bool,
+    pub path: PathBuf,
+}
+
 pub struct Browser {
     roots: RwLock<HashMap<String, Root>>,
     cache: Mutex<Vec<(String, String)>>,
     index: Mutex<HashMap<String, (Instant, Vec<String>)>>,
+    /// Per root, most recent first.
+    recent: Mutex<HashMap<String, Vec<Watched>>>,
 }
 
 impl Browser {
@@ -65,6 +79,7 @@ impl Browser {
             roots: RwLock::new(HashMap::new()),
             cache: Mutex::new(Vec::new()),
             index: Mutex::new(HashMap::new()),
+            recent: Mutex::new(HashMap::new()),
         }
     }
 
@@ -98,6 +113,7 @@ impl Browser {
 
     pub fn close(&self, id: &str) -> bool {
         self.index.lock().unwrap().remove(id);
+        self.recent.lock().unwrap().remove(id);
         self.cache
             .lock()
             .unwrap()
@@ -145,6 +161,7 @@ impl Browser {
     pub fn entries(&self, id: &str, rel: &str) -> Result<Vec<Entry>> {
         let dir = self.resolve(id, rel)?;
         let prefix = rel.trim_matches('/');
+        self.note(id, prefix, true, dir.clone());
         let mut out = vec![];
         let walker = ignore::WalkBuilder::new(&dir)
             .max_depth(Some(1))
@@ -187,6 +204,7 @@ impl Browser {
         if meta.is_dir() {
             bail!("{rel} is a directory");
         }
+        self.note(id, rel, false, path.clone());
         let modified = meta
             .modified()
             .ok()
@@ -203,7 +221,16 @@ impl Browser {
             .unwrap_or_default();
         // A page or a PDF can also be shown as itself, framed at its own raw URL so
         // its relative assets resolve. The source view stays the default for pages.
+        // The modification time rides along so a refresh after an edit is not
+        // answered from the browser's cache.
         let preview = render::preview_kind(&ext);
+        let nanos = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let fresh_url = format!("{}?m={nanos}", raw_url(id, rel));
         let view = |kind: &str, lang: Option<String>, html: String| FileView {
             kind: kind.to_string(),
             lang,
@@ -213,7 +240,7 @@ impl Browser {
             size: meta.len(),
             modified,
             preview: preview.map(str::to_string),
-            preview_url: preview.map(|_| raw_url(id, rel)),
+            preview_url: preview.map(|_| fresh_url.clone()),
         };
 
         if render::is_image_ext(&ext) {
@@ -222,7 +249,7 @@ impl Browser {
                 None,
                 format!(
                     "<p class=\"browse-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></p>",
-                    raw_url(id, rel),
+                    fresh_url,
                     html_escape::encode_double_quoted_attribute(&name)
                 ),
             ));
@@ -268,6 +295,34 @@ impl Browser {
         drop(cache);
 
         Ok(view(kind.as_str(), lang, html))
+    }
+
+    /// Remember something as on screen, most recent first, so the watcher looks at it.
+    fn note(&self, id: &str, rel: &str, dir: bool, path: PathBuf) {
+        let rel = rel.trim_matches('/').to_string();
+        let mut recent = self.recent.lock().unwrap();
+        let list = recent.entry(id.to_string()).or_default();
+        list.retain(|w| w.rel != rel);
+        list.insert(
+            0,
+            Watched {
+                root: id.to_string(),
+                rel,
+                dir,
+                path,
+            },
+        );
+        list.truncate(WATCH_CAP);
+    }
+
+    /// Everything the watcher should look at, across every open root.
+    pub fn watched(&self) -> Vec<Watched> {
+        self.recent
+            .lock()
+            .unwrap()
+            .values()
+            .flat_map(|v| v.iter().cloned())
+            .collect()
     }
 
     /// The file a root opens on: a README if there is one, else nothing.
@@ -448,9 +503,10 @@ mod tests {
         let page = b.file(&r.id, "page.html", &rn).unwrap();
         assert_eq!(page.kind, "code");
         assert_eq!(page.preview.as_deref(), Some("html"));
-        assert_eq!(
-            page.preview_url.as_deref(),
-            Some(format!("/api/browse/{}/raw/page.html", r.id).as_str())
+        let purl = page.preview_url.as_deref().unwrap();
+        assert!(
+            purl.starts_with(&format!("/api/browse/{}/raw/page.html?m=", r.id)),
+            "path-shaped, stamped with the mtime: {purl}"
         );
 
         // A PDF is for its viewer, not for reading as text, null byte or not.
@@ -462,6 +518,29 @@ mod tests {
         // Everything else offers no preview at all.
         assert!(md.preview.is_none());
         assert!(bin.preview.is_none());
+    }
+
+    #[test]
+    fn watched_is_what_was_rendered_or_listed_most_recently() {
+        let (b, d) = fixture();
+        let rn = Renderer::new();
+        let r = b.open(&d.path).unwrap();
+        assert!(b.watched().is_empty());
+        b.entries(&r.id, "").unwrap();
+        b.file(&r.id, "src/main.rs", &rn).unwrap();
+        b.file(&r.id, "README.md", &rn).unwrap();
+        b.file(&r.id, "src/main.rs", &rn).unwrap();
+        let w = b.watched();
+        let rels: Vec<(&str, bool)> = w.iter().map(|w| (w.rel.as_str(), w.dir)).collect();
+        assert_eq!(
+            rels,
+            vec![("src/main.rs", false), ("README.md", false), ("", true)],
+            "most recent first, no duplicates, the listed root folder included"
+        );
+        assert!(w[0].path.ends_with("src/main.rs"));
+        assert!(w[2].path.is_dir());
+        assert!(b.close(&r.id));
+        assert!(b.watched().is_empty(), "closing a root forgets its files");
     }
 
     #[test]

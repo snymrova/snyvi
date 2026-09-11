@@ -14,7 +14,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
 | Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. Worth more now that browse mode shows code all day. | M | **done 0.3** |
-| Watch a browsed folder | Refresh the open file when it changes on disk, instead of on manual reload. | S | later |
+| Watch a browsed folder | Refresh the open file when it changes on disk, instead of on manual reload. Listed folders follow too. | S | **done 0.4** |
 | Math (KaTeX) | Rare in engineering docs. Same lazy-load pattern as Mermaid once that exists. | S | later |
 | Structured views for JSON, YAML, CSV | CSV and TSV render as a table (**done 0.3**). JSON folding and YAML remain. | M | later |
 | Preview a page or a PDF | An `.html` file showed as source only and a `.pdf` as "a binary file". Both now show as themselves with `v`: a page in an iframe with an opaque origin, a PDF in the browser's viewer. | M | **done 0.3** |
@@ -41,7 +41,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Feature | Why | Cost | Status |
 |---|---|---|---|
 | Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux. | S | **done 0.2** |
-| `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | later |
+| `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
 | Other agents | Config snippets for Codex CLI, Gemini CLI and Cursor: all speak MCP, so it is docs plus an `init` subcommand per tool. | S | later |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
@@ -123,6 +123,28 @@ layout rules written for prose:
   the grid and everything shifted into the zero-width column.
 
 New: `w` maximises width, overriding the reading measure for prose.
+
+## 0.4 (in progress)
+
+Watching, both ways. In browse mode the file on screen refreshes when it
+is saved and the tree follows files being added or removed, with the
+scroll position, find and preview kept. `snyvi watch FILE` sends a file
+on every save for editors and agents without hooks, and its sends
+coalesce with the hook's.
+
+One mechanism serves both: the daemon stats what a reader has on screen
+a few times a second, only while a tab is connected, and acts once a
+change has held for a tick. Chosen over inotify because the set is tiny,
+no debounce is needed on top, it costs the same on a repository of any
+size, and it needs no dependency in the static build.
+
+An overwritten document (a coalesced hook or watch send) now refreshes
+in place if it is open rather than being treated as a new arrival, so a
+file being saved every few seconds no longer steals the reader's
+position or raises a toast each time.
+
+Still to come in this cut: line wrap toggle, jump to line and `#L120`
+permalinks; rename workflow and project; JSON and YAML views.
 
 ## Other candidates for 0.3
 
