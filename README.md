@@ -185,7 +185,7 @@ run. That costs what embedding a browser engine costs:
 |---|---|---|
 | binary | 12.3 MB | 15.6 MB |
 | download | 5.5 MB | 6.2 MB |
-| dependencies | none | webkit2gtk-4.1, gtk3, glibc 2.35+ |
+| dependencies | none | webkit2gtk-4.1, gtk3, glibc 2.34+ |
 | runs on | any Linux of that architecture | Ubuntu 22.04+, Debian 12+, amd64 |
 | window opens in | browser's own time | ~150 ms to the web process |
 | resident, window open | the browser's, not ours | ~380 MB |

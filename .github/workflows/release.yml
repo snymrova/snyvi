@@ -75,7 +75,7 @@ jobs:
     # dynamically linked and tied to a glibc baseline.
     #
     # Built on the oldest release it supports so that baseline is as low as it
-    # goes: 22.04 records libc6 (>= 2.35), which covers Ubuntu 22.04 and later
+    # goes: 22.04 records libc6 (>= 2.34), which covers Ubuntu 22.04 and later
     # and Debian 12 and later. The dependencies themselves are read out of the
     # binary by dpkg-shlibdeps in packaging/deb.sh, so they are never a guess.
     #

@@ -69,7 +69,7 @@ jobs:
     # Built on the oldest release it supports rather than ubuntu-latest: the
     # window links against the distribution's webkit, so the glibc baseline
     # dpkg-shlibdeps records is whatever the build host had. 22.04 records
-    # libc6 (>= 2.35), which installs on Ubuntu 22.04 and later and on Debian
+    # libc6 (>= 2.34), which installs on Ubuntu 22.04 and later and on Debian
     # 12 and later; building on 24.04 would record 2.39 and silently exclude
     # both.
     runs-on: ubuntu-22.04
