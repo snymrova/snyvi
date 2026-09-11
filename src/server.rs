@@ -61,6 +61,8 @@ pub struct App {
     pub browse: Browser,
     pub token: String,
     pub events: broadcast::Sender<String>,
+    /// Fires when `snyvi stop` asks the daemon to exit.
+    pub shutdown: broadcast::Sender<()>,
     pub started: Instant,
     /// Build hash for immutable asset URLs.
     pub asset_v: String,
@@ -75,6 +77,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let store = Store::open(&paths)?;
     let renderer = Renderer::new();
     let (tx, _) = broadcast::channel(64);
+    let (stop_tx, mut stop_rx) = broadcast::channel::<()>(1);
     let asset_v = blake3::hash(format!("{INDEX_HTML}{APP_CSS}{APP_JS}{VERSION}").as_bytes())
         .to_hex()[..8]
         .to_string();
@@ -84,6 +87,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         browse: Browser::new(),
         token,
         events: tx,
+        shutdown: stop_tx,
         started: Instant::now(),
         asset_v,
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
@@ -111,6 +115,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/history", get(history))
         .route("/api/docs/{id}/split", get(doc_split))
         .route("/api/focus", post(focus))
+        .route("/api/shutdown", post(shutdown))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/{id}/close", post(browse_close))
         .route("/api/browse/{id}/tree", get(browse_tree))
@@ -128,8 +133,23 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("snyvi {VERSION} listening on http://{addr}");
     axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            let term = async {
+                #[cfg(unix)]
+                {
+                    let mut sig =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                            .expect("SIGTERM handler");
+                    sig.recv().await;
+                }
+                #[cfg(not(unix))]
+                std::future::pending::<()>().await;
+            };
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = term => {},
+                _ = stop_rx.recv() => {},
+            }
         })
         .await?;
     Ok(())
@@ -459,6 +479,19 @@ async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
+}
+
+/// Ask the daemon to exit, so a new binary can take over the port.
+async fn shutdown(State(app): S, headers: HeaderMap) -> Response {
+    if !authorized(&app, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
+    }
+    let _ = app.shutdown.send(());
+    Json(json!({ "ok": true, "version": VERSION })).into_response()
 }
 
 /// Open tabs report focus so arrivals only raise a desktop notification when nobody is looking.

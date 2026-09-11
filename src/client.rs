@@ -19,9 +19,136 @@ pub fn health() -> Option<Value> {
         .ok()
 }
 
+/// Ask a running daemon to exit. Returns false when none was running.
+///
+/// Versions before 0.3 have no shutdown endpoint, and an upgrade is exactly when
+/// that matters, so fall back to signalling the process.
+pub fn stop(paths: &Paths) -> Result<bool> {
+    let Some(h) = health() else { return Ok(false) };
+    let running = h
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("?")
+        .to_string();
+    if let Some(token) = config::read_token(paths) {
+        let _ = ureq::post(&format!("{}/api/shutdown", config::base_url()))
+            .header("Authorization", &format!("Bearer {token}"))
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .http_status_as_error(false)
+            .build()
+            .send_empty();
+    }
+    if wait_gone(Duration::from_millis(1200)) {
+        eprintln!("stopped snyvi {running}");
+        return Ok(true);
+    }
+    for sig in ["TERM", "KILL"] {
+        let pids = daemon_pids();
+        if pids.is_empty() {
+            break;
+        }
+        for pid in pids {
+            signal(pid, sig);
+        }
+        if wait_gone(Duration::from_secs(3)) {
+            eprintln!("stopped snyvi {running}");
+            return Ok(true);
+        }
+    }
+    bail!(
+        "could not stop the daemon on {}; stop it by hand and try again",
+        config::base_url()
+    )
+}
+
+fn wait_gone(within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while Instant::now() < deadline {
+        if health().is_none() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    health().is_none()
+}
+
+/// Signal via kill(1), so no libc dependency is needed.
+fn signal(pid: i32, sig: &str) {
+    let _ = Command::new("kill")
+        .arg(format!("-{sig}"))
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Processes that look like `snyvi serve` on the port we are talking to.
+#[cfg(target_os = "linux")]
+fn daemon_pids() -> Vec<i32> {
+    let want_port = config::port().to_string();
+    let me = std::process::id();
+    let mut out = vec![];
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else {
+            continue;
+        };
+        if pid as u32 == me {
+            continue;
+        }
+        let Ok(cmdline) = std::fs::read(e.path().join("cmdline")) else {
+            continue;
+        };
+        let args: Vec<String> = cmdline
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        let is_snyvi = args
+            .first()
+            .map(|a| a.rsplit('/').next().unwrap_or(a) == "snyvi")
+            .unwrap_or(false);
+        if !is_snyvi || !args.iter().any(|a| a == "serve") {
+            continue;
+        }
+        // Only the daemon on our port; another may be serving a different library.
+        let env = std::fs::read(e.path().join("environ")).unwrap_or_default();
+        let their_port = env
+            .split(|b| *b == 0)
+            .filter_map(|s| std::str::from_utf8(s).ok())
+            .find_map(|kv| kv.strip_prefix("SNYVI_PORT=").map(str::to_string))
+            .unwrap_or_else(|| config::DEFAULT_PORT.to_string());
+        if their_port == want_port {
+            out.push(pid);
+        }
+    }
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn daemon_pids() -> Vec<i32> {
+    vec![]
+}
+
+/// Warn when the running daemon is not the binary the user just invoked, which is
+/// what happens after an upgrade: the old process keeps serving the old code.
+fn warn_if_stale(h: &Value) {
+    let running = h.get("version").and_then(Value::as_str).unwrap_or("");
+    if !running.is_empty() && running != crate::server::VERSION {
+        eprintln!(
+            "note: snyvi {running} is still running but this binary is {}. Run `snyvi restart` to pick up the new version.",
+            crate::server::VERSION
+        );
+    }
+}
+
 /// Make sure a daemon is listening; spawn one detached if not.
 pub fn ensure_daemon() -> Result<()> {
-    if health().is_some() {
+    if let Some(h) = health() {
+        warn_if_stale(&h);
         return Ok(());
     }
     let exe = std::env::current_exe().context("locating snyvi binary")?;

@@ -77,7 +77,10 @@ Mermaid, side-by-side diff, find in document, images, file history, one
 workflow per session, search filters, delete from UI, desktop
 notifications, remembered window geometry, CSP header.
 
-## 0.3 (in progress)
+## 0.3 (released)
+
+`snyvi stop` and `snyvi restart`, plus a warning when the running daemon
+is older than the binary you just invoked, so upgrading is one command.
 
 `snyvi browse <dir>`: read a folder straight from disk, rendered on
 demand, nothing persisted and nothing in the inbox. Chosen over bulk

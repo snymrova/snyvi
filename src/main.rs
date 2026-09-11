@@ -84,6 +84,10 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Stop the background daemon.
+    Stop,
+    /// Restart the daemon so a newly installed binary takes over.
+    Restart,
     /// Show daemon status.
     Status,
     /// Measure render speed on synthetic documents.
@@ -206,9 +210,37 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Cmd::Stop => {
+            if !client::stop(&paths)? {
+                println!("not running");
+            }
+            Ok(())
+        }
+        Cmd::Restart => {
+            client::stop(&paths)?;
+            client::ensure_daemon()?;
+            let v = client::health()
+                .and_then(|h| {
+                    h.get("version")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            println!("snyvi {v} running on {}", config::base_url());
+            Ok(())
+        }
         Cmd::Status => {
             match client::health() {
-                Some(h) => println!("{}", serde_json::to_string_pretty(&h)?),
+                Some(h) => {
+                    println!("{}", serde_json::to_string_pretty(&h)?);
+                    let running = h.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                    if running != server::VERSION {
+                        println!(
+                            "\nthis binary is {} but the daemon is {running}; run `snyvi restart`",
+                            server::VERSION
+                        );
+                    }
+                }
                 None => println!("not running (would listen on {})", config::base_url()),
             }
             Ok(())

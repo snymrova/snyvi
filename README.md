@@ -14,11 +14,33 @@ Download the static binary for your architecture from the
 [releases page](https://github.com/snymrova/snyvi/releases), then:
 
 ```
-tar xzf snyvi-*-x86_64-unknown-linux-musl.tar.gz
+tar xzf snyvi-*-linux.tar.gz
 install -m 755 snyvi-*/snyvi ~/.local/bin/snyvi   # or /usr/local/bin
 snyvi send README.md                              # starts the daemon, prints a link
 snyvi init-claude                                 # register with Claude Code
 ```
+
+### Updating
+
+snyvi runs as a background daemon, so a new binary on disk does not take
+effect until the old process exits. Install over the old binary, then:
+
+```
+snyvi restart
+```
+
+That is the whole update. Your documents, database and token are kept,
+and the schema migrates itself. If you forget, any snyvi command tells
+you:
+
+```
+note: snyvi 0.2.0 is still running but this binary is 0.3.0.
+Run `snyvi restart` to pick up the new version.
+```
+
+`snyvi status` shows both versions, `snyvi stop` shuts the daemon down,
+and both work against daemons old enough to predate the stop command.
+Under systemd use `systemctl --user restart snyvi` instead.
 
 It is fully static (musl), so it runs on any x86_64 or aarch64 Linux
 without extra packages. To build from source instead:
@@ -55,7 +77,9 @@ snyvi open                         # open the viewer in the browser
 snyvi app                          # native window (see Desktop below)
 snyvi init-claude [--auto]         # register with Claude Code (user scope)
 snyvi prune --days 30 [--dry-run]  # delete unpinned documents older than N days
-snyvi status                       # daemon health
+snyvi status                       # daemon health and version
+snyvi restart                      # after installing a new binary
+snyvi stop                         # shut the daemon down
 snyvi bench [--check]              # render speed on synthetic documents
 ```
 
