@@ -65,7 +65,14 @@ jobs:
 
   desktop:
     # The Tauri window is behind a feature flag, so nothing else compiles it.
-    runs-on: ubuntu-latest
+    #
+    # Built on the oldest release it supports rather than ubuntu-latest: the
+    # window links against the distribution's webkit, so the glibc baseline
+    # dpkg-shlibdeps records is whatever the build host had. 22.04 records
+    # libc6 (>= 2.35), which installs on Ubuntu 22.04 and later and on Debian
+    # 12 and later; building on 24.04 would record 2.39 and silently exclude
+    # both.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -75,7 +82,8 @@ jobs:
       - name: WebKitGTK
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb \
+                                      dpkg-dev desktop-file-utils
       - name: Build
         run: cargo build --release --features desktop
       - name: Open a window
@@ -86,3 +94,29 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
           ./target/release/snyvi stop
+
+      - name: Package and install the desktop .deb
+        # Same reason the static package is built here: a packaging path that
+        # only runs at release time is broken exactly when it matters. This one
+        # has more to get wrong, because it is the only package that declares
+        # dependencies.
+        run: |
+          set -e
+          deb=$(packaging/deb.sh --desktop target/release/snyvi 0.0.0-ci amd64 /tmp/deb-desktop)
+          dpkg-deb -I "$deb"
+          # The dependencies are read out of the binary, so they must at least
+          # name webkit; a package that forgot it installs and then cannot open.
+          dpkg-deb -f "$deb" Depends | grep -q libwebkit2gtk-4.1-0
+          # apt rather than dpkg -i: it resolves the declared dependencies, so a
+          # Depends line that cannot be satisfied fails here instead of on a user.
+          sudo apt-get install -y -qq "$deb"
+          test "$(command -v snyvi)" = /usr/bin/snyvi
+          snyvi --version
+          desktop-file-validate /usr/share/applications/snyvi.desktop
+          # It replaced the static package's paths, so the window must still open
+          # from the installed copy, not just from target/release.
+          export SNYVI_DATA_DIR=/tmp/s-pkg SNYVI_CONFIG_DIR=/tmp/c-pkg SNYVI_PORT=7813
+          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-pkg.log 2>&1 || code=$?
+          test "${code:-0}" = "124" || { echo "packaged window exited early:"; cat /tmp/app-pkg.log; exit 1; }
+          snyvi stop
+          sudo dpkg -r snyvi-desktop

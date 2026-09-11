@@ -68,3 +68,69 @@ jobs:
             dist/*.deb
             dist/*.sha256
           generate_release_notes: true
+
+  desktop:
+    # The viewer in a native window. This one cannot be the static build: a
+    # WebKitGTK window links against the distribution's webkit and gtk, so it is
+    # dynamically linked and tied to a glibc baseline.
+    #
+    # Built on the oldest release it supports so that baseline is as low as it
+    # goes: 22.04 records libc6 (>= 2.35), which covers Ubuntu 22.04 and later
+    # and Debian 12 and later. The dependencies themselves are read out of the
+    # binary by dpkg-shlibdeps in packaging/deb.sh, so they are never a guess.
+    #
+    # amd64 only for now. The arm64 runners are 24.04, which would record a
+    # glibc baseline that excludes every distribution older than that, and an
+    # arm64 desktop package worth shipping wants its own oldest-host runner.
+    # The static package still covers arm64, in a browser window.
+    #
+    # After `build`, because both jobs upload to the same release: running them
+    # in sequence keeps two writers off one release, and lets the static
+    # package's job be the one that authors the notes.
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: WebKitGTK
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb dpkg-dev
+      - name: Build
+        run: cargo build --release --features desktop
+      - name: Smoke test
+        # 124 is the timeout firing, which means the window stayed up. A release
+        # that ships a window nobody opened is the whole reason this job exists.
+        run: |
+          set -e
+          B=target/release/snyvi
+          file $B
+          export SNYVI_DATA_DIR=/tmp/s-d SNYVI_CONFIG_DIR=/tmp/c-d SNYVI_PORT=7803
+          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 $B app > /tmp/app.log 2>&1 || code=$?
+          test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
+          SNYVI_BENCH_FACTOR=3 $B bench --check
+          $B stop
+      - name: Package
+        run: |
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          version="${version#v}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          name=snyvi-$version-x86_64-linux-desktop
+          mkdir -p dist/$name
+          cp target/release/snyvi README.md dist/$name/
+          tar -C dist -czf dist/$name.tar.gz $name
+          (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
+          deb=$(packaging/deb.sh --desktop target/release/snyvi "$version" amd64 dist)
+          dpkg-deb -I "$deb"
+          sudo apt-get install -y -qq "$PWD/$deb"
+          test "$(command -v snyvi)" = /usr/bin/snyvi
+          snyvi --version
+          (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.sha256

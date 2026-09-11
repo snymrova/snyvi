@@ -26,6 +26,20 @@ installs on any Debian or Ubuntu of that architecture without pulling in
 a library. Besides the command it gives you an application menu entry and
 a systemd user service, neither of them started by default.
 
+For the viewer in a native window rather than a browser one, install
+`snyvi-desktop_<version>_amd64.deb` instead. It is the same snyvi with a
+WebKitGTK window compiled in, so it is not static and asks for the
+webkit and gtk your distribution already has:
+
+```
+sudo apt install ./snyvi-desktop_*.deb   # apt, so the dependencies resolve
+snyvi app                                # the viewer in its own window
+```
+
+The two packages ship the same paths and replace each other, so a machine
+has one or the other. Which to pick is in [Desktop](#desktop) below,
+along with what the window costs.
+
 ### Any other Linux
 
 Download the tarball for your architecture from the same page:
@@ -152,10 +166,36 @@ is noted and watched for its return.
 
 ### Desktop
 
-`snyvi app` opens the viewer in a native window. Built with
-`cargo build --release --features desktop` it is a WebKitGTK window
-(Tauri 2) on top of the daemon; the plain build opens a Chromium-family
-browser in app mode when one is installed, else the default browser.
+`snyvi app` opens the viewer in a window of its own. What kind of window
+depends on which package you installed, and the difference is worth
+knowing before you choose.
+
+The **static build** (`snyvi`, the default) opens a Chromium-family
+browser in app mode when one is installed — no tabs, no address bar,
+its own entry in the task switcher — and the default browser otherwise.
+It costs nothing: the binary is 12.3 MB and depends on nothing.
+
+The **desktop build** (`snyvi-desktop`, or `cargo build --release
+--features desktop`) is a real WebKitGTK window via Tauri 2, on top of
+the same daemon. It needs no browser on the machine at all, and it
+remembers where you left it: size and position are restored on the next
+run. That costs what embedding a browser engine costs:
+
+| | static | desktop |
+|---|---|---|
+| binary | 12.3 MB | 15.6 MB |
+| download | 5.5 MB | 6.2 MB |
+| dependencies | none | webkit2gtk-4.1, gtk3, glibc 2.35+ |
+| runs on | any Linux of that architecture | Ubuntu 22.04+, Debian 12+, amd64 |
+| window opens in | browser's own time | ~150 ms to the web process |
+| resident, window open | the browser's, not ours | ~380 MB |
+
+The window is not a smaller way to read; it is a self-contained one. If
+you already keep a Chromium-family browser on the machine, the static
+package gives you the same viewer for none of that.
+
+Both are the same viewer, the same daemon, the same documents. Switching
+is one `apt install` either way.
 
 ### Keys
 
@@ -331,18 +371,44 @@ best of three for render rows (`snyvi bench`).
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|
-| Binary size (plain / desktop)               | 8.8 MB / 12.1 MB | 15 MB |
-| Daemon resident memory                      | ~25 MB      | 60 MB  |
-| Renderer init (86 grammars from the pack)   | 7 ms        |        |
+| Binary size, static                         | 12.3 MB     | 15 MB  |
+| Binary size, desktop build                  | 15.6 MB     | see below |
+| Download, `.deb` (static / desktop)         | 5.5 MB / 6.2 MB | |
+| Daemon resident, static (1 doc / loaded)    | 34 MB / 41 MB | 60 MB |
+| Daemon resident, desktop build              | 66 MB / 83 MB | over  |
+| Native window, to the web process           | ~150 ms     | 150 ms to first paint |
+| Native window + WebKit, resident            | ~380 MB     | over   |
+| Renderer init (86 grammars from the pack)   | 19 ms       |        |
 | `snyvi send` round trip (render + store)    | ~50 ms      |        |
 | Document page, time to first byte           | 3 to 5 ms   | 30 ms  |
 | Document page, first contentful paint       | 65 to 170 ms (cold fonts) | |
 | New document visible after send (SSE)       | ~50 ms      | 100 ms |
-| Render Markdown, 100 KB                     | 14 ms       | 50 ms  |
-| Render Markdown, 1 MB                       | 159 ms      | 200 ms |
-| Highlight Rust, 10k lines                   | 193 ms      | 500 ms |
+| Render Markdown, 100 KB                     | 10 ms       | 50 ms  |
+| Render Markdown, 1 MB                       | 108 ms      | 400 ms |
+| Highlight Rust, 10k lines                   | 143 ms      | 500 ms |
 
 `snyvi bench --check` fails when a case exceeds its budget; CI runs it
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
 Markdown fast path skips the HTML sanitizer whenever a document contains
 no raw HTML, which is nearly always for agent output.
+
+Three of those rows say "over", and they are all the same fact: a
+browser engine costs what a browser engine costs. The budgets in
+[docs/BRAINSTORM.md](docs/BRAINSTORM.md) — 15 MB, 60 MB resident, 150 ms
+to first paint — were written for one static binary, and the static
+package still meets every one of them. The desktop build does not and
+will not: WebKitGTK is 90 MB of shared library before snyvi's first
+instruction, and no amount of care on our side moves that.
+
+So they are two artifacts with two budgets rather than one budget being
+missed, and the numbers are here rather than absent so the trade is the
+reader's to make. Note also that the desktop build's *daemon* is heavier
+even with no window open, because it is one binary and `serve` carries
+the linked engine either way; splitting the window into its own
+executable would give the desktop package a lean daemon again, and is
+the obvious next thing to do.
+
+What `bench --check` measures is the renderer, in process. It does not
+measure binary size, start-up or resident memory, so none of the rows
+above are enforced by anything — they are hand-measured, and they drift.
+That is the next gap to close.

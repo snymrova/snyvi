@@ -53,7 +53,11 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
 | Tray icon and global shortcut | Summon the window from anywhere; the daemon is resident anyway. | M | later |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
+| Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
+| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. | S | next |
+| Split the window into its own binary | The desktop package is one binary, so `snyvi serve` carries the linked engine even with no window open: 66 MB resident against the static build's 34 MB. A separate executable for the window would give the desktop package a lean daemon again. | M | next |
 | macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. | S | later |
+| AppImage | Measured before choosing: bundling WebKitGTK and its closure is 196 MB raw, 73 MB compressed, so the AppImage is ~80 MB against a 15 MB budget — 13x the `.deb` that does the same job by asking the distribution for webkit. It also puts nothing on `PATH`, which is where `snyvi send` has to be for the hook and the MCP server to call it. Not worth it for this shape of program. | M | **no** |
 
 ## E. Speed and hardening
 
@@ -124,7 +128,7 @@ layout rules written for prose:
 
 New: `w` maximises width, overriding the reading measure for prose.
 
-## 0.4 (awaiting release)
+## 0.4 (never cut; folded into 0.5)
 
 Watching, both ways. In browse mode the file on screen refreshes when it
 is saved and the tree follows files being added or removed, with the
@@ -189,6 +193,38 @@ This cut goes out without the JSON and YAML views it had been holding a
 place for. They were never started, and a cut that waits for everything
 named in it stops being a cut, so they move to the next one.
 
+## 0.5: the window ships
+
+The native window has existed since 0.2 and no release has ever contained
+it. The release builds are static musl binaries, and a WebKitGTK window
+cannot be linked into one, so `snyvi app` from a package has only ever
+opened a browser.
+
+`snyvi-desktop` is that build, packaged: the same snyvi with the window
+compiled in, dynamically linked against the distribution's webkit and gtk.
+Its dependencies are read out of the binary by `dpkg-shlibdeps` rather
+than written by hand, so the package cannot claim a glibc baseline the
+build did not have — and it is built on the oldest release it supports so
+that baseline is as low as it goes. It conflicts with and replaces the
+static package, since both own `/usr/bin/snyvi`; dpkg swaps one for the
+other in a single `apt install`, in both directions.
+
+CI builds the package, installs it with apt so the declared dependencies
+have to resolve, and opens the window from the *installed* copy under
+Xvfb — because the thing that was wrong for four releases was never the
+window, it was that nothing shipped it.
+
+The cost is now measured rather than assumed, and it is in the README
+beside the static build's: 15.6 MB against 12.3 MB, ~380 MB resident with
+the window open, ~150 ms before the web process exists. Three of the
+budgets in BRAINSTORM section 1 do not survive a browser engine and never
+will. They were written for one static binary; that binary still meets all
+of them, and the desktop build is a second artifact with a second budget.
+
+AppImage was considered for the same job and measured first: ~80 MB, a
+FUSE dependency, and nothing on `PATH` for the hook to call. The `.deb`
+does the same work in 6 MB by asking the distribution for the engine.
+
 ## Candidates after 0.4
 
 JSON and YAML views, tags from the sender, macOS build, AppImage and
@@ -210,11 +246,12 @@ write commits but not tags or workflow runs. So it is still one
 command, and it still has to come from a machine with tag permission:
 
 ```
-git tag -a v0.4.0 -m "snyvi 0.4.0" && git push origin v0.4.0
+git tag -a v0.5.0 -m "snyvi 0.5.0" && git push origin v0.5.0
 ```
 
-The version in `Cargo.toml` is already `0.4.0`, so the tag is the only
-step.
+The version in `Cargo.toml` is already `0.5.0`, so the tag is the only
+step. 0.4 was never tagged, so 0.5 is the first release either way, and
+it is the one worth cutting: it is the first that contains the window.
 
 ## Still no purpose-built view
 
