@@ -17,9 +17,11 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
             cc: musl-gcc
+            deb_arch: amd64
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             cc: musl-gcc
+            deb_arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -48,11 +50,21 @@ jobs:
           cp target/${{ matrix.target }}/release/snyvi README.md dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
+      - name: Package .deb
+        run: |
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          deb=$(packaging/deb.sh target/${{ matrix.target }}/release/snyvi "${version#v}" ${{ matrix.deb_arch }} dist)
+          dpkg-deb -I "$deb"
+          sudo dpkg -i "$deb"
+          test "$(command -v snyvi)" = /usr/bin/snyvi
+          snyvi --version
+          (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           files: |
             dist/*.tar.gz
+            dist/*.deb
             dist/*.sha256
           generate_release_notes: true

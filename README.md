@@ -10,20 +10,38 @@ agents send, snyvi shows.
 
 ## Install
 
-Download the static binary for your architecture from the
-[releases page](https://github.com/snymrova/snyvi/releases), then:
+### Debian and Ubuntu
+
+Download `snyvi_<version>_amd64.deb` (or `_arm64.deb`) from the
+[releases page](https://github.com/snymrova/snyvi/releases):
+
+```
+sudo dpkg -i snyvi_*.deb
+snyvi send README.md                              # starts the daemon, prints a link
+snyvi init-claude                                 # register with Claude Code
+```
+
+The package depends on nothing at all — the binary is static — so it
+installs on any Debian or Ubuntu of that architecture without pulling in
+a library. Besides the command it gives you an application menu entry and
+a systemd user service, neither of them started by default.
+
+### Any other Linux
+
+Download the tarball for your architecture from the same page:
 
 ```
 tar xzf snyvi-*-linux.tar.gz
 install -m 755 snyvi-*/snyvi ~/.local/bin/snyvi   # or /usr/local/bin
-snyvi send README.md                              # starts the daemon, prints a link
-snyvi init-claude                                 # register with Claude Code
+snyvi send README.md
+snyvi init-claude
 ```
 
 ### Updating
 
 snyvi runs as a background daemon, so a new binary on disk does not take
-effect until the old process exits. Install over the old binary, then:
+effect until the old process exits. Install over the old one
+(`sudo dpkg -i snyvi_*.deb`, which says the same thing), then:
 
 ```
 snyvi restart
@@ -52,7 +70,14 @@ cargo install --path .
 One binary, no runtime, no network access ever. It embeds its own UI,
 fonts, and syntax grammars.
 
-To start the daemon at login, a user service is enough:
+To keep the daemon resident from login rather than letting the first
+send start it, enable the user service. The `.deb` already ships one:
+
+```
+systemctl --user enable --now snyvi
+```
+
+From the tarball, write it first:
 
 ```
 mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/snyvi.service <<'UNIT'

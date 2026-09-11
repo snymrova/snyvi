@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=snyvi
+GenericName=Document Viewer
+Comment=A fast, beautiful viewer for the documents your agents produce
+Exec=snyvi open
+Icon=snyvi
+Terminal=false
+Categories=Development;
+Keywords=markdown;code;viewer;agent;claude;
+StartupNotify=false

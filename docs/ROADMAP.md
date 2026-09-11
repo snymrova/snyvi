@@ -52,7 +52,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
 | Tray icon and global shortcut | Summon the window from anywhere; the daemon is resident anyway. | M | later |
-| Packages | `.deb`, AppImage and an AUR package from the release workflow; Homebrew tap for the macOS build. | M | later |
+| Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. | S | later |
 
 ## E. Speed and hardening
@@ -143,13 +143,25 @@ in place if it is open rather than being treated as a new arrival, so a
 file being saved every few seconds no longer steals the reader's
 position or raises a toast each time.
 
+Also in this cut: a `.deb`. `dpkg -i` installs `snyvi` on the path, an
+application menu entry, and a systemd user service for people who would
+rather the daemon were resident from login than started by their first
+send. It declares no dependencies, which a static binary has earned, and
+on an upgrade it says the one thing that is easy to miss: the daemon
+keeps running the old binary until it is restarted.
+
+`packaging/deb.sh` builds it from an already-built binary using nothing
+but `dpkg-deb`, so packaging adds no crate to the build and can be run by
+hand. CI builds and installs the package on every push, because a script
+that only runs at release time is broken exactly when it matters.
+
 Still to come in this cut: line wrap toggle, jump to line and `#L120`
 permalinks; rename workflow and project; JSON and YAML views.
 
-## Other candidates for 0.3
+## Candidates after 0.4
 
-`snyvi watch`, rename workflow and project, tags from the sender, macOS
-build, packages (.deb, AppImage), tray icon.
+Rename workflow and project, tags from the sender, macOS build, AppImage
+and AUR, tray icon with a global shortcut.
 
 Release hygiene: CI now builds `--features desktop` and opens the window
 under Xvfb, so the Tauri path is no longer unverified. Still open: no

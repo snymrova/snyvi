@@ -20,6 +20,20 @@ jobs:
         run: cargo test --release
       - name: Build
         run: cargo build --release
+      - name: Package and install the .deb
+        # The packaging script only runs at release time otherwise, which is the
+        # one moment it must not be broken.
+        run: |
+          set -e
+          sudo apt-get install -y -qq desktop-file-utils
+          deb=$(packaging/deb.sh target/release/snyvi 0.0.0-ci amd64 /tmp/deb)
+          dpkg-deb -c "$deb"
+          sudo dpkg -i "$deb"
+          test "$(command -v snyvi)" = /usr/bin/snyvi
+          snyvi --version
+          desktop-file-validate /usr/share/applications/snyvi.desktop
+          systemd-analyze verify /usr/lib/systemd/user/snyvi.service
+          sudo dpkg -r snyvi
       - name: Perf budget
         # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
         # regression that triples a case still fails the build.

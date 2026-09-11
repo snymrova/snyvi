@@ -1,0 +1,12 @@
+[Unit]
+Description=snyvi document viewer
+Documentation=https://github.com/snymrova/snyvi
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/snyvi serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
