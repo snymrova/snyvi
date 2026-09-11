@@ -7,6 +7,7 @@ mod project;
 mod receive;
 mod render;
 mod server;
+mod session;
 mod store;
 
 use anyhow::{Context, Result};
@@ -207,10 +208,14 @@ fn init_claude(auto: bool) -> Result<()> {
     println!(
         "Optional, in ~/.claude/CLAUDE.md:\n\n  When you produce a document for me to read (plan, review, summary), send it to snyvi with send_document and give me the link.\n"
     );
+    let path = hook::install(&exe, auto)?;
     if auto {
-        let path = hook::install(&exe)?;
-        println!("Installed the PostToolUse hook in {} (Markdown files Claude writes are sent automatically).", path.display());
+        println!("Installed SessionStart and PostToolUse hooks in {} (Markdown files Claude writes are sent automatically).", path.display());
     } else {
+        println!(
+            "Installed a SessionStart hook in {} so documents from one session share a workflow.",
+            path.display()
+        );
         println!("Add --auto to also install a PostToolUse hook that sends every Markdown file Claude writes.");
     }
     Ok(())

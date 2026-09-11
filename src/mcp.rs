@@ -112,6 +112,11 @@ fn call_send(
             .map(str::to_string)
             .filter(|v| !v.trim().is_empty())
     };
+    // Prefer Claude's own session id (recorded by the hook) so hook and MCP sends share a workflow.
+    let session = cwd
+        .and_then(|c| crate::session::lookup(paths, c))
+        .map(|id| crate::session::workflow_key(&id))
+        .unwrap_or_else(|| session.to_string());
     let payload = Payload {
         path: s("path"),
         content: s("content"),

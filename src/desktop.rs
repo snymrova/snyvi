@@ -13,12 +13,16 @@ pub fn open(url: &str) -> anyhow::Result<()> {
     }
     let url: tauri::Url = url.parse()?;
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(move |app| {
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+            use tauri_plugin_window_state::{StateFlags, WindowExt};
+            let w = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("snyvi")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(480.0, 320.0)
                 .build()?;
+            // Size and position from the last run, saved by the plugin on close.
+            let _ = w.restore_state(StateFlags::all());
             Ok(())
         })
         .run(tauri::generate_context!())

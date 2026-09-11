@@ -91,6 +91,30 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     let (kind, lang) = renderer.detect(path.as_deref(), p.lang.as_deref(), &content);
     let title = render::title_for(p.title.as_deref(), kind, path.as_deref(), &content);
+
+    let (wf_key, wf_title) = match (&p.workflow, &p.session) {
+        (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
+        (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.clone()),
+        _ => ("manual".to_string(), "Sent manually".to_string()),
+    };
+
+    // A hook firing on every edit would otherwise fill a workflow with near-identical
+    // snapshots; within a short window, overwrite the last one instead.
+    let coalesce_into = match (origin, &latest_same_path) {
+        ("hook", Some(prev))
+            if prev.origin == "hook"
+                && prev.workflow == wf_key
+                && crate::store::now() - prev.received_at < COALESCE_SECS =>
+        {
+            Some(prev.id.clone())
+        }
+        _ => None,
+    };
+    // The id is fixed before rendering so relative image URLs can point at /files/<id>/.
+    let id = coalesce_into
+        .clone()
+        .unwrap_or_else(|| crate::store::new_id(&hash));
+
     // The viewer shows the title as the page heading, so a leading H1 that *is* the title
     // would appear twice. Drop it from the rendered body only; the stored source is untouched.
     let body_src = if kind == Kind::Markdown {
@@ -98,18 +122,14 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     } else {
         None
     };
-    let html = renderer.render(
+    let file_base = path.as_ref().map(|_| format!("/files/{id}/"));
+    let html = renderer.render_with_base(
         kind,
         lang.as_deref(),
         body_src.as_deref().unwrap_or(&content),
+        file_base.as_deref(),
     );
     let needs_full_highlight = kind == Kind::Code && content.len() > HIGHLIGHT_CAP;
-
-    let (wf_key, wf_title) = match (&p.workflow, &p.session) {
-        (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
-        (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.clone()),
-        _ => ("manual".to_string(), "Sent manually".to_string()),
-    };
 
     let new_doc = NewDoc {
         project_root: &root,
@@ -126,26 +146,15 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         html: &html,
     };
 
-    // A hook firing on every edit would otherwise fill a workflow with near-identical
-    // snapshots; within a short window, overwrite the last one instead.
-    if origin == "hook" {
-        if let Some(prev) = &latest_same_path {
-            let same_workflow = prev.workflow == wf_key;
-            if prev.origin == "hook"
-                && same_workflow
-                && crate::store::now() - prev.received_at < COALESCE_SECS
-            {
-                let doc = store.replace(&prev.id, new_doc)?;
-                return Ok(Received {
-                    doc,
-                    needs_full_highlight,
-                    existing: true,
-                });
-            }
-        }
+    if coalesce_into.is_some() {
+        let doc = store.replace(&id, new_doc)?;
+        return Ok(Received {
+            doc,
+            needs_full_highlight,
+            existing: true,
+        });
     }
-
-    let doc = store.insert(new_doc)?;
+    let doc = store.insert(&id, new_doc)?;
     Ok(Received {
         doc,
         needs_full_highlight,

@@ -95,7 +95,10 @@ browser in app mode when one is installed, else the default browser.
 | j / k | next / previous document                    |
 | [ / ] | older / newer version in the same workflow  |
 | c     | compare with the previous version           |
+| s     | split / inline view for diffs               |
+| /     | find in document                            |
 | p     | pin (kept by `prune`)                       |
+| ⌫     | delete document                             |
 | i     | inbox                                       |
 | t     | toggle contents                             |
 | \     | toggle sidebar                              |
@@ -111,9 +114,22 @@ Project      detected from the sender's working directory (git root)
 ```
 
 Documents are never updated. If the agent revises a plan, it sends it
-again; the workflow shows both, and `c` diffs them. Large code files are
-shown at once with the first 256 KB highlighted; the rest is highlighted
-in the background and swapped in when ready.
+again; the workflow shows both, and `c` diffs them. Every snapshot of
+the same file, across sessions, is listed under "Versions" in the rail.
+Large code files are shown at once with the first 256 KB highlighted;
+the rest is highlighted in the background and swapped in when ready.
+
+Mermaid blocks render as diagrams; the library is embedded and loaded
+only on pages that have one, after the text has painted. Relative
+images in a document sent by path are served from the file's directory,
+confined to the project root and to image types.
+
+Search understands `p:project` and `kind:md|code|diff|text` prefixes.
+Documents from one Claude Code session share a workflow whether they
+came from the hook or from `send_document`; a SessionStart hook,
+installed by `init-claude`, records the session for the MCP server.
+When no snyvi tab has focus, a new document raises a desktop
+notification via `notify-send` (set `SNYVI_NOTIFY=0` to disable).
 
 ## Languages
 

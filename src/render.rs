@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::Arc;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
@@ -155,8 +156,20 @@ impl Renderer {
     }
 
     pub fn render(&self, kind: Kind, lang: Option<&str>, source: &str) -> String {
+        self.render_with_base(kind, lang, source, None)
+    }
+
+    /// `file_base` is the URL prefix for relative image paths (`/files/<id>/`), given when
+    /// the document came from a file on disk.
+    pub fn render_with_base(
+        &self,
+        kind: Kind,
+        lang: Option<&str>,
+        source: &str,
+        file_base: Option<&str>,
+    ) -> String {
         match kind {
-            Kind::Markdown => self.markdown(source),
+            Kind::Markdown => self.markdown(source, file_base),
             Kind::Code => self.code(lang, source, HIGHLIGHT_CAP),
             Kind::Diff => diff(source),
             Kind::Text => plain(source),
@@ -168,8 +181,13 @@ impl Renderer {
         self.code(lang, source, usize::MAX)
     }
 
-    fn markdown(&self, source: &str) -> String {
+    fn markdown(&self, source: &str, file_base: Option<&str>) -> String {
         let mut options = Options::default();
+        if let Some(base) = file_base {
+            let base = base.to_string();
+            options.extension.image_url_rewriter =
+                Some(Arc::new(move |url: &str| rewrite_image_url(&base, url)));
+        }
         let ext = &mut options.extension;
         ext.strikethrough = true;
         ext.table = true;
@@ -587,6 +605,13 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
         lang: Option<&str>,
         code: &str,
     ) -> io::Result<()> {
+        if lang
+            .map(|l| l.eq_ignore_ascii_case("mermaid"))
+            .unwrap_or(false)
+        {
+            // Diagram source stays verbatim; the client renders it after first paint.
+            return output.write_all(html_escape::encode_text(code).as_bytes());
+        }
         let syntax = lang
             .filter(|l| !l.is_empty())
             .and_then(|l| self.ss.find_syntax_by_token(l))
@@ -602,6 +627,9 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
         attributes: HashMap<String, String>,
     ) -> io::Result<()> {
         let lang = attributes.get("lang").cloned().unwrap_or_default();
+        if lang.eq_ignore_ascii_case("mermaid") {
+            return output.write_all(b"<pre class=\"mermaid\" data-lang=\"Mermaid\">");
+        }
         let name = self
             .ss
             .find_syntax_by_token(&lang)
@@ -634,6 +662,101 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
             None => output.write_all(b"<code>"),
         }
     }
+}
+
+/// Relative image paths resolve against the source document's directory via `/files/<id>/`.
+fn rewrite_image_url(base: &str, url: &str) -> String {
+    let u = url.trim();
+    let absolute = u.starts_with('/')
+        || u.starts_with('#')
+        || u.contains("://")
+        || u.starts_with("data:")
+        || u.starts_with("mailto:");
+    if absolute || u.is_empty() {
+        return u.to_string();
+    }
+    format!("{base}{}", u.strip_prefix("./").unwrap_or(u))
+}
+
+/// Side-by-side rendering of a unified diff with word-level highlights.
+pub fn diff_split(source: &str) -> String {
+    let mut out = String::with_capacity(source.len() * 3);
+    out.push_str("<div class=\"split\">");
+    let mut dels: Vec<&str> = vec![];
+    let mut adds: Vec<&str> = vec![];
+    let e = |s: &str| html_escape::encode_text(s).to_string();
+    fn flush(out: &mut String, dels: &mut Vec<&str>, adds: &mut Vec<&str>) {
+        let n = dels.len().max(adds.len());
+        for i in 0..n {
+            match (dels.get(i), adds.get(i)) {
+                (Some(d), Some(a)) => {
+                    let (dh, ah) = word_diff(&d[1..], &a[1..]);
+                    out.push_str(&format!(
+                        "<div class=\"l del\">{dh}</div><div class=\"r add\">{ah}</div>"
+                    ));
+                }
+                (Some(d), None) => out.push_str(&format!(
+                    "<div class=\"l del\">{}</div><div class=\"r empty\"></div>",
+                    html_escape::encode_text(&d[1..])
+                )),
+                (None, Some(a)) => out.push_str(&format!(
+                    "<div class=\"l empty\"></div><div class=\"r add\">{}</div>",
+                    html_escape::encode_text(&a[1..])
+                )),
+                (None, None) => {}
+            }
+        }
+        dels.clear();
+        adds.clear();
+    }
+    for line in source.lines() {
+        if line.starts_with("+++")
+            || line.starts_with("---")
+            || line.starts_with("diff ")
+            || line.starts_with("index ")
+        {
+            flush(&mut out, &mut dels, &mut adds);
+            out.push_str(&format!("<div class=\"meta full\">{}</div>", e(line)));
+        } else if line.starts_with("@@") {
+            flush(&mut out, &mut dels, &mut adds);
+            out.push_str(&format!("<div class=\"hunk full\">{}</div>", e(line)));
+        } else if let Some(rest) = line.strip_prefix('-') {
+            let _ = rest;
+            dels.push(line);
+        } else if let Some(rest) = line.strip_prefix('+') {
+            let _ = rest;
+            adds.push(line);
+        } else {
+            flush(&mut out, &mut dels, &mut adds);
+            let text = line.strip_prefix(' ').unwrap_or(line);
+            out.push_str(&format!(
+                "<div class=\"l ctx\">{0}</div><div class=\"r ctx\">{0}</div>",
+                e(text)
+            ));
+        }
+    }
+    flush(&mut out, &mut dels, &mut adds);
+    out.push_str("</div>");
+    out
+}
+
+/// Word-level highlight of a changed line pair: (old html, new html).
+fn word_diff(a: &str, b: &str) -> (String, String) {
+    use similar::{ChangeTag, TextDiff};
+    let d = TextDiff::from_words(a, b);
+    let (mut oa, mut ob) = (String::new(), String::new());
+    for c in d.iter_all_changes() {
+        let t = html_escape::encode_text(c.value());
+        match c.tag() {
+            ChangeTag::Equal => {
+                oa.push_str(&t);
+                ob.push_str(&t);
+            }
+            ChangeTag::Delete => oa.push_str(&format!("<mark>{t}</mark>")),
+            ChangeTag::Insert => ob.push_str(&format!("<mark>{t}</mark>")),
+        }
+    }
+    (oa, ob)
 }
 
 /// Unified diff between two sources, for "compare with previous".
@@ -804,6 +927,59 @@ mod tests {
         assert!(capped.matches("class=\"k\"").count() < full.matches("class=\"k\"").count());
         assert_eq!(capped.matches("<span class=\"ln\">").count(), 20_000);
         assert_eq!(full.matches("<span class=\"ln\">").count(), 20_000);
+    }
+
+    #[test]
+    fn image_urls_rewrite_only_when_relative() {
+        assert_eq!(
+            rewrite_image_url("/files/abc/", "./img/a.png"),
+            "/files/abc/img/a.png"
+        );
+        assert_eq!(
+            rewrite_image_url("/files/abc/", "../x.png"),
+            "/files/abc/../x.png"
+        );
+        assert_eq!(
+            rewrite_image_url("/files/abc/", "https://h/x.png"),
+            "https://h/x.png"
+        );
+        assert_eq!(rewrite_image_url("/files/abc/", "/abs.png"), "/abs.png");
+        let r = Renderer::new();
+        let html = r.render_with_base(
+            Kind::Markdown,
+            None,
+            "![alt](shot.png)",
+            Some("/files/abc/"),
+        );
+        assert!(html.contains("src=\"/files/abc/shot.png\""), "{html}");
+        let plain = r.render(Kind::Markdown, None, "![alt](shot.png)");
+        assert!(plain.contains("src=\"shot.png\""), "{plain}");
+    }
+
+    #[test]
+    fn mermaid_blocks_keep_source_verbatim() {
+        let html =
+            Renderer::new().render(Kind::Markdown, None, "```mermaid\ngraph TD; A-->B\n```\n");
+        assert!(
+            html.contains("<pre class=\"mermaid\" data-lang=\"Mermaid\">"),
+            "{html}"
+        );
+        assert!(html.contains("A--&gt;B"), "{html}");
+        assert!(!html.contains("class=\"ln\""), "{html}");
+    }
+
+    #[test]
+    fn split_diff_pairs_lines_and_marks_words() {
+        let html = diff_split(
+            "--- a\n+++ b\n@@ -1,2 +1,2 @@\n ctx\n-the old value\n+the new value\n+extra\n",
+        );
+        assert!(html.contains("<div class=\"hunk full\">"));
+        assert!(html.contains("<div class=\"l del\">the <mark>old</mark> value</div><div class=\"r add\">the <mark>new</mark> value</div>"), "{html}");
+        assert!(
+            html.contains("<div class=\"l empty\"></div><div class=\"r add\">extra</div>"),
+            "{html}"
+        );
+        assert_eq!(html.matches("class=\"l ctx\"").count(), 1);
     }
 
     #[test]

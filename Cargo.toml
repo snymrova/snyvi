@@ -36,13 +36,17 @@ panic = "abort"
 [features]
 default = []
 # `snyvi app`: a native window (WebKitGTK on Linux) on top of the local daemon.
-desktop = ["dep:tauri", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-window-state"]
 
 [dependencies.tauri]
 version = "2"
 optional = true
 default-features = false
 features = ["wry"]
+
+[dependencies.tauri-plugin-window-state]
+version = "2"
+optional = true
 
 [build-dependencies]
 tauri-build = { version = "2", optional = true }

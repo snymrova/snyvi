@@ -28,6 +28,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_CSS: &str = include_str!("../ui/app.css");
 const APP_JS: &str = include_str!("../ui/app.js");
+const BOOT_JS: &str = include_str!("../ui/boot.js");
+/// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
+const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
+const IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico",
+];
+/// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
+/// needs inline styles for the SVG it produces, and images may be data URIs.
+const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const FONTS: &[(&str, &[u8])] = &[
     ("inter.woff2", include_bytes!("../ui/fonts/inter.woff2")),
     (
@@ -56,6 +65,8 @@ pub struct App {
     pub started: Instant,
     /// Build hash for immutable asset URLs.
     pub asset_v: String,
+    /// Last time any open tab reported having focus; drives desktop notifications.
+    pub last_focus: std::sync::Mutex<Instant>,
 }
 
 type S = State<Arc<App>>;
@@ -75,6 +86,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         events: tx,
         started: Instant::now(),
         asset_v,
+        last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
     });
 
     let router = Router::new()
@@ -82,6 +94,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/d/{id}", get(shell_doc))
         .route("/assets/app.css", get(asset_css))
         .route("/assets/app.js", get(asset_js))
+        .route("/assets/boot.js", get(asset_boot))
+        .route("/assets/mermaid.js", get(asset_mermaid))
+        .route("/files/{id}/{*path}", get(doc_file))
         .route("/assets/fonts/{name}", get(asset_font))
         .route("/api/health", get(health))
         .route("/api/tree", get(tree))
@@ -90,6 +105,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs", post(receive_doc))
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
+        .route("/api/docs/{id}/delete", post(delete_doc))
+        .route("/api/docs/{id}/history", get(history))
+        .route("/api/docs/{id}/split", get(doc_split))
+        .route("/api/focus", post(focus))
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/compare/{a}/{b}", get(compare))
         .route("/api/events", get(events))
@@ -112,13 +131,30 @@ fn escape_json_for_script(s: &str) -> String {
     s.replace("</", "<\\/")
 }
 
-fn shell(app: &App, boot: serde_json::Value, initial_html: &str, title: &str) -> Html<String> {
+fn shell(app: &App, boot: serde_json::Value, initial_html: &str, title: &str) -> Response {
     let page = INDEX_HTML
         .replace("{{V}}", &app.asset_v)
         .replace("{{TITLE}}", &html_escape::encode_text(title))
         .replace("{{INITIAL_HTML}}", initial_html)
         .replace("{{BOOT_JSON}}", &escape_json_for_script(&boot.to_string()));
-    Html(page)
+    (
+        [
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static(CSP),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+            (
+                header::REFERRER_POLICY,
+                HeaderValue::from_static("no-referrer"),
+            ),
+        ],
+        Html(page),
+    )
+        .into_response()
 }
 
 pub fn fmt_time(ts: i64) -> String {
@@ -154,7 +190,7 @@ async fn shell_home(State(app): S) -> Response {
     let tree = app.store.tree().unwrap_or_default();
     let inbox = app.store.inbox(50).unwrap_or_default();
     let boot = json!({ "view": "inbox", "tree": tree, "inbox": inbox, "version": VERSION });
-    shell(&app, boot, "", "snyvi").into_response()
+    shell(&app, boot, "", "snyvi")
 }
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
@@ -166,7 +202,7 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
     let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
     let title = doc.title.clone();
     let boot = json!({ "view": "doc", "tree": tree, "doc": doc, "previous": previous, "version": VERSION });
-    shell(&app, boot, &doc_html(&doc, &body), &title).into_response()
+    shell(&app, boot, &doc_html(&doc, &body), &title)
 }
 
 // ---------- assets ----------
@@ -190,6 +226,73 @@ async fn asset_css() -> Response {
 }
 async fn asset_js() -> Response {
     immutable("application/javascript; charset=utf-8", APP_JS)
+}
+async fn asset_boot() -> Response {
+    immutable("application/javascript; charset=utf-8", BOOT_JS)
+}
+async fn asset_mermaid() -> Response {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/javascript; charset=utf-8"),
+            ),
+            (header::CONTENT_ENCODING, HeaderValue::from_static("gzip")),
+            (
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            ),
+        ],
+        MERMAID_JS_GZ,
+    )
+        .into_response()
+}
+
+/// Images referenced relatively from a document, resolved against the source file's
+/// directory and confined to the project root. Image types only.
+async fn doc_file(State(app): S, Path((id, rel)): Path<(String, String)>) -> Response {
+    let Ok(Some(doc)) = app.store.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(src) = doc.source_path.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(dir) = std::path::Path::new(src).parent() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let target = dir.join(&rel);
+    let ext = target
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !IMAGE_EXTS.contains(&ext.as_str()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let (Ok(canon), Ok(root)) = (
+        target.canonicalize(),
+        crate::project::resolve(dir).root.canonicalize(),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !canon.starts_with(&root) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match tokio::fs::read(&canon).await {
+        Ok(bytes) => {
+            let mime = mime_guess::from_path(&canon)
+                .first_or_octet_stream()
+                .to_string();
+            (
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CACHE_CONTROL, "private, max-age=300".to_string()),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 async fn asset_font(Path(name): Path<String>) -> Response {
     match FONTS.iter().find(|(n, _)| *n == name) {
@@ -262,7 +365,82 @@ async fn doc_raw(State(app): S, Path(id): Path<String>) -> Response {
     }
 }
 
-async fn compare(State(app): S, Path((a, b)): Path<(String, String)>) -> Response {
+#[derive(Deserialize)]
+struct ViewQ {
+    view: Option<String>,
+}
+
+async fn doc_split(State(app): S, Path(id): Path<String>) -> Response {
+    match (app.store.get(&id), app.store.source(&id)) {
+        (Ok(Some(doc)), Ok(src)) if doc.kind == crate::render::Kind::Diff => {
+            Json(json!({ "html": render::diff_split(&src) })).into_response()
+        }
+        (Ok(Some(_)), _) => StatusCode::BAD_REQUEST.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn history(State(app): S, Path(id): Path<String>) -> Response {
+    let Ok(Some(doc)) = app.store.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(path) = doc.source_path.as_deref() else {
+        return Json(Vec::<Doc>::new()).into_response();
+    };
+    match app.store.history(doc.project_id, path) {
+        Ok(h) => Json(h).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
+    match app.store.delete(&id) {
+        Ok(true) => {
+            emit(&app, "deleted", json!({ "id": id }));
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Open tabs report focus so arrivals only raise a desktop notification when nobody is looking.
+async fn focus(State(app): S) -> StatusCode {
+    *app.last_focus.lock().unwrap() = Instant::now();
+    StatusCode::NO_CONTENT
+}
+
+fn notify_desktop(app: &App, doc: &Doc) {
+    if std::env::var("SNYVI_NOTIFY")
+        .map(|v| v == "0")
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let focused_recently =
+        app.last_focus.lock().unwrap().elapsed() < std::time::Duration::from_secs(4);
+    if focused_recently {
+        return;
+    }
+    let _ = std::process::Command::new("notify-send")
+        .args([
+            "-a",
+            "snyvi",
+            "-i",
+            "text-x-generic",
+            &doc.title,
+            &format!("{} · {}", doc.project, doc.workflow_title),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+async fn compare(
+    State(app): S,
+    Path((a, b)): Path<(String, String)>,
+    Query(v): Query<ViewQ>,
+) -> Response {
     let (Ok(Some(da)), Ok(Some(db))) = (app.store.get(&a), app.store.get(&b)) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -274,6 +452,8 @@ async fn compare(State(app): S, Path((a, b)): Path<(String, String)>) -> Respons
     let unified = render::unified(&a_name, &sa, &b_name, &sb);
     let html = if unified.trim().is_empty() {
         "<p class=\"empty\">No changes between these two versions.</p>".to_string()
+    } else if v.view.as_deref() == Some("split") {
+        render::diff_split(&unified)
     } else {
         render::diff(&unified)
     };
@@ -335,6 +515,9 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
                 "doc",
                 json!({ "doc": doc, "url": url, "existing": received.existing }),
             );
+            if !received.existing {
+                notify_desktop(&app, &doc);
+            }
             if received.needs_full_highlight {
                 spawn_full_highlight(app.clone(), doc.id.clone(), doc.lang.clone());
             }

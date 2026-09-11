@@ -154,10 +154,10 @@ impl Store {
         self.docs_dir.join(format!("{id}.html"))
     }
 
-    pub fn insert(&self, d: NewDoc) -> Result<Doc> {
+    pub fn insert(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
         let hash = blake3::hash(d.source.as_bytes()).to_hex().to_string();
-        let id = short_id(&hash, now);
+        let id = id.to_string();
         // Files first, so a crash never leaves a row without a body.
         fs::write(self.src_path(&id), d.source)?;
         fs::write(self.html_path(&id), d.html)?;
@@ -282,6 +282,36 @@ impl Store {
         .map_err(Into::into)
     }
 
+    pub fn delete(&self, id: &str) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
+        let n = tx.execute("DELETE FROM docs WHERE id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM docs)",
+            [],
+        )?;
+        tx.commit()?;
+        drop(conn);
+        let _ = fs::remove_file(self.src_path(id));
+        let _ = fs::remove_file(self.html_path(id));
+        Ok(n > 0)
+    }
+
+    /// Every snapshot of one file in a project, newest first.
+    pub fn history(&self, project_id: i64, source_path: &str) -> Result<Vec<Doc>> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(&format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.project_id = ?1 AND d.source_path = ?2 ORDER BY d.received_at DESC"))?
+            .query_map(params![project_id, source_path], row_to_doc)?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
@@ -376,37 +406,76 @@ impl Store {
         Ok(rows)
     }
 
+    /// Full-text search. `p:name` and `kind:x` prefixes in the query filter by project and kind.
     pub fn search(&self, q: &str, limit: usize) -> Result<Vec<Hit>> {
-        let q = q.trim();
-        if q.is_empty() {
+        let mut project: Option<String> = None;
+        let mut kind: Option<String> = None;
+        let mut terms: Vec<String> = vec![];
+        for t in q.split_whitespace() {
+            if let Some(v) = t.strip_prefix("p:").or_else(|| t.strip_prefix("project:")) {
+                project = Some(v.to_string());
+            } else if let Some(v) = t.strip_prefix("kind:").or_else(|| t.strip_prefix("k:")) {
+                kind = Some(match v {
+                    "md" => "markdown".to_string(),
+                    "txt" => "text".to_string(),
+                    other => other.to_string(),
+                });
+            } else {
+                // Quote each term so punctuation in user input cannot break FTS syntax.
+                terms.push(format!("\"{}\"*", t.replace('"', "\"\"")));
+            }
+        }
+        if terms.is_empty() && project.is_none() && kind.is_none() {
             return Ok(vec![]);
         }
-        // Quote each term so punctuation in user input cannot break FTS syntax.
-        let query: String = q
-            .split_whitespace()
-            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let mut sql =
+            String::from("SELECT d.id, d.title, p.name, w.title, d.kind, d.received_at, ");
+        let filtered_only = terms.is_empty();
+        if filtered_only {
+            sql.push_str("'' FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id WHERE 1=1");
+        } else {
+            sql.push_str(
+                "snippet(docs_fts, 2, '<mark>', '</mark>', '…', 14) FROM docs_fts f JOIN docs d ON d.id = f.id \
+                 JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id WHERE docs_fts MATCH ?1",
+            );
+        }
+        let query = terms.join(" ");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+        if !filtered_only {
+            args.push(Box::new(query));
+        }
+        if let Some(p) = &project {
+            sql.push_str(&format!(" AND p.name LIKE ?{}", args.len() + 1));
+            args.push(Box::new(format!("{p}%")));
+        }
+        if let Some(k) = &kind {
+            sql.push_str(&format!(" AND d.kind = ?{}", args.len() + 1));
+            args.push(Box::new(k.clone()));
+        }
+        sql.push_str(if filtered_only {
+            " ORDER BY d.received_at DESC"
+        } else {
+            " ORDER BY bm25(docs_fts, 4.0, 1.0)"
+        });
+        sql.push_str(&format!(" LIMIT ?{}", args.len() + 1));
+        args.push(Box::new(limit as i64));
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(
-                "SELECT d.id, d.title, p.name, w.title, d.kind, d.received_at,
-                        snippet(docs_fts, 2, '<mark>', '</mark>', '…', 14)
-                 FROM docs_fts f JOIN docs d ON d.id = f.id
-                 JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id
-                 WHERE docs_fts MATCH ?1 ORDER BY bm25(docs_fts, 4.0, 1.0) LIMIT ?2",
+            .prepare(&sql)?
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())),
+                |r| {
+                    Ok(Hit {
+                        id: r.get(0)?,
+                        title: r.get(1)?,
+                        project: r.get(2)?,
+                        workflow_title: r.get(3)?,
+                        kind: Kind::parse(&r.get::<_, String>(4)?).unwrap_or(Kind::Text),
+                        received_at: r.get(5)?,
+                        snippet: r.get(6)?,
+                    })
+                },
             )?
-            .query_map(params![query, limit as i64], |r| {
-                Ok(Hit {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    project: r.get(2)?,
-                    workflow_title: r.get(3)?,
-                    kind: Kind::parse(&r.get::<_, String>(4)?).unwrap_or(Kind::Text),
-                    received_at: r.get(5)?,
-                    snippet: r.get(6)?,
-                })
-            })?
             .collect::<std::result::Result<_, _>>()?;
         Ok(rows)
     }
@@ -447,11 +516,11 @@ pub fn now() -> i64 {
 
 /// 10 hex chars: content hash mixed with time and a counter, so re-sending identical
 /// content still gets a new id and two sends in the same second never collide.
-fn short_id(hash: &str, now: i64) -> String {
+pub fn new_id(hash: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
-    let mixed = blake3::hash(format!("{hash}:{now}:{}:{n}", std::process::id()).as_bytes());
+    let mixed = blake3::hash(format!("{hash}:{}:{}:{n}", now(), std::process::id()).as_bytes());
     mixed.to_hex()[..10].to_string()
 }
 
@@ -492,11 +561,14 @@ mod tests {
     fn insert_get_previous_search() {
         let (s, _d) = temp_store();
         let a = s
-            .insert(new_doc("Plan", "# Plan\n\nalpha bravo", "w"))
+            .insert(&new_id("a"), new_doc("Plan", "# Plan\n\nalpha bravo", "w"))
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let b = s
-            .insert(new_doc("Plan", "# Plan\n\nalpha charlie", "w"))
+            .insert(
+                &new_id("b"),
+                new_doc("Plan", "# Plan\n\nalpha charlie", "w"),
+            )
             .unwrap();
         assert_ne!(a.id, b.id);
         assert_eq!(s.get(&b.id).unwrap().unwrap().title, "Plan");
@@ -519,8 +591,8 @@ mod tests {
     #[test]
     fn pin_and_prune() {
         let (s, _d) = temp_store();
-        let a = s.insert(new_doc("A", "aaa", "w")).unwrap();
-        let b = s.insert(new_doc("B", "bbb", "w")).unwrap();
+        let a = s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap();
+        let b = s.insert(&new_id("b"), new_doc("B", "bbb", "w")).unwrap();
         assert!(s.set_pinned(&a.id, true).unwrap());
         let dry = s.prune(now() + 10, true).unwrap();
         assert_eq!(dry.len(), 1);
@@ -536,7 +608,9 @@ mod tests {
     #[test]
     fn replace_keeps_id_and_updates_index() {
         let (s, _d) = temp_store();
-        let a = s.insert(new_doc("A", "first draft", "w")).unwrap();
+        let a = s
+            .insert(&new_id("a"), new_doc("A", "first draft", "w"))
+            .unwrap();
         let r = s
             .replace(&a.id, new_doc("A2", "second draft", "w"))
             .unwrap();

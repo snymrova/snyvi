@@ -14,6 +14,8 @@
     unread: new Map(),          // project id -> count
     lastActivity: 0,
     cache: new Map(),           // id -> {doc, html, previous}
+    split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),
+    comparing: null,            // {a, b} while a comparison is shown
   };
 
   // ---------- helpers ----------
@@ -96,9 +98,10 @@
   async function showDoc(id, push = true) {
     let j;
     try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
-    state.view = "doc"; state.doc = j.doc; state.previous = j.previous;
+    state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null;
     state.unread.delete(j.doc.project_id);
     docEl.innerHTML = j.html;
+    if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
     if (push) history.pushState({ id }, "", `/d/${id}`);
     main.scrollTo({ top: 0, behavior: "instant" });
@@ -123,14 +126,45 @@
     afterRender();
   }
 
-  async function showCompare() {
-    if (!state.doc || !state.previous) { toast("No previous version", "This is the first document in its workflow."); return; }
-    const cur = state.doc, prevId = state.previous;
+  async function showCompare(aId, bId) {
+    const cur = state.doc;
+    const a = aId || state.previous, b = bId || (cur && cur.id);
+    if (!cur || !a) { toast("No previous version", "This is the first document in its workflow."); return; }
     let j;
-    try { j = await (await fetch(`/api/compare/${prevId}/${cur.id}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
-    docEl.innerHTML = `<header class="doc-head"><h1 class="doc-title">${esc(cur.title)}</h1><p class="doc-sub">changes since ${fmt(j.a.received_at)} → ${fmt(j.b.received_at)}</p></header><article class="prose kind-diff">${j.html}</article>`;
+    try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
+    state.comparing = { a, b };
+    docEl.innerHTML = `<header class="doc-head"><h1 class="doc-title">${esc(cur.title)}</h1><p class="doc-sub">changes ${fmt(j.a.received_at)} → ${fmt(j.b.received_at)}${state.split ? " · split" : " · inline"}</p></header><article class="prose kind-diff">${j.html}</article>`;
     main.scrollTo({ top: 0, behavior: "instant" });
     buildToc(); renderMeta(true); enhanceCode();
+  }
+
+  /** Replace the inline diff body of a diff document with the side-by-side rendering. */
+  async function applySplit() {
+    const art = docEl.querySelector("article.kind-diff");
+    if (!art || !state.doc) return;
+    try { const j = await (await fetch(`/api/docs/${state.doc.id}/split`)).json(); art.innerHTML = j.html; } catch {}
+  }
+
+  async function toggleSplit() {
+    state.split = !state.split;
+    store.set("snyvi.split", state.split ? "1" : "0");
+    if (state.comparing) { await showCompare(state.comparing.a, state.comparing.b); return; }
+    if (state.doc && state.doc.kind === "diff") { state.cache.delete(state.doc.id); await showDoc(state.doc.id, false); }
+    else toast("Split view", state.split ? "on, for diffs" : "off");
+  }
+
+  async function deleteCurrent() {
+    if (!state.doc) return;
+    const d = state.doc;
+    if (!window.confirm(`Delete "${d.title}"? This cannot be undone.`)) return;
+    try {
+      await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
+      state.cache.delete(d.id);
+      state.tree = await (await fetch("/api/tree")).json();
+      toast("Deleted", d.title);
+      const ids = order(); const i = ids.indexOf(d.id);
+      showInbox(true);
+    } catch (e) { toast("Could not delete", String(e)); }
   }
 
   function afterRender() {
@@ -138,7 +172,94 @@
     buildToc();
     renderMeta(false);
     enhanceCode();
+    renderMermaid();
+    renderHistory();
+    clearFind();
   }
+
+  // ---------- mermaid (loaded only when a page has a diagram) ----------
+  let mermaidReady = null;
+  function renderMermaid() {
+    const nodes = [...docEl.querySelectorAll("pre.mermaid:not([data-processed])")];
+    if (!nodes.length) return;
+    if (!mermaidReady) {
+      mermaidReady = new Promise((res, rej) => {
+        const sc = document.createElement("script");
+        sc.src = "/assets/mermaid.js"; sc.onload = res; sc.onerror = rej;
+        document.head.appendChild(sc);
+      });
+    }
+    const dark = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+    // mermaid.run reads innerHTML; strip the <code> wrapper so it sees only the source.
+    for (const n of nodes) n.textContent = n.textContent.trim();
+    mermaidReady.then(() => {
+      window.mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict", fontFamily: "Inter, system-ui, sans-serif" });
+      return window.mermaid.run({ nodes });
+    }).catch(e => { console.warn("mermaid", e); });
+  }
+
+  // ---------- history (every snapshot of the same file) ----------
+  async function renderHistory() {
+    const old = $("#history"); if (old) old.remove();
+    if (!state.doc || !state.doc.source_path) return;
+    let h; try { h = await (await fetch(`/api/docs/${state.doc.id}/history`)).json(); } catch { return; }
+    if (!h || h.length < 2) return;
+    const box = document.createElement("div"); box.id = "history";
+    box.innerHTML = `<h4>Versions · ${h.length}</h4>` + h.map(d => `<a href="/d/${d.id}" data-id="${d.id}" class="${d.id === state.doc.id ? "cur" : ""}" title="${esc(d.workflow_title)}">${fmt(d.received_at)}${d.pinned ? " ●" : ""}</a>`).join("");
+    metaEl.appendChild(box);
+  }
+
+  // ---------- find in document ----------
+  const findBar = $("#find"), findIn = $("#find-input"), findCount = $("#find-count");
+  let findMarks = [], findIdx = -1;
+  function clearFind() {
+    for (const m of findMarks) { const p = m.parentNode; if (!p) continue; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); }
+    findMarks = []; findIdx = -1; findCount.textContent = "";
+  }
+  function runFind(q) {
+    clearFind();
+    if (!q) return;
+    const needle = q.toLowerCase();
+    const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest("script,style,.copy") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const texts = []; let n; while ((n = walker.nextNode())) texts.push(n);
+    for (const t of texts) {
+      let text = t.nodeValue, lower = text.toLowerCase(), pos = lower.indexOf(needle);
+      if (pos < 0) continue;
+      const frag = document.createDocumentFragment(); let last = 0;
+      while (pos >= 0 && findMarks.length < 2000) {
+        frag.appendChild(document.createTextNode(text.slice(last, pos)));
+        const m = document.createElement("mark"); m.className = "find"; m.textContent = text.slice(pos, pos + q.length);
+        frag.appendChild(m); findMarks.push(m);
+        last = pos + q.length; pos = lower.indexOf(needle, last);
+      }
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      t.parentNode.replaceChild(frag, t);
+    }
+    if (findMarks.length) gotoFind(0); else findCount.textContent = "0";
+  }
+  function gotoFind(i) {
+    if (!findMarks.length) return;
+    if (findIdx >= 0) findMarks[findIdx].classList.remove("cur");
+    findIdx = (i + findMarks.length) % findMarks.length;
+    const m = findMarks[findIdx]; m.classList.add("cur");
+    m.scrollIntoView({ block: "center", behavior: "instant" });
+    findCount.textContent = `${findIdx + 1} / ${findMarks.length}`;
+  }
+  function openFind() { findBar.hidden = false; findIn.focus(); findIn.select(); }
+  function closeFind() { findBar.hidden = true; clearFind(); findIn.value = ""; }
+  let findTimer = null;
+  findIn.addEventListener("input", () => { clearTimeout(findTimer); findTimer = setTimeout(() => runFind(findIn.value), 80); });
+  findIn.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); gotoFind(findIdx + (e.shiftKey ? -1 : 1)); }
+    if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+  });
+  $("#find-next").addEventListener("click", () => gotoFind(findIdx + 1));
+  $("#find-prev").addEventListener("click", () => gotoFind(findIdx - 1));
+  $("#find-close").addEventListener("click", closeFind);
+
+  // ---------- focus beacon for desktop notifications ----------
+  const beacon = () => { if (document.hasFocus() && document.visibilityState === "visible") fetch("/api/focus", { method: "POST", keepalive: true }).catch(() => {}); };
+  window.addEventListener("focus", beacon); document.addEventListener("visibilitychange", beacon); setInterval(beacon, 3000); beacon();
 
   // ---------- rail: toc + meta ----------
   let spy = null;
@@ -176,6 +297,8 @@
       `<div class="actions">` +
       (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd>c</kbd></button>`) : "") +
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
+      ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
+      `<button data-act="delete">Delete…<kbd>⌫</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       `</div>`;
@@ -184,9 +307,11 @@
     const b = e.target.closest("[data-act]");
     if (!b) return;
     if (b.dataset.act === "compare") showCompare();
-    if (b.dataset.act === "back") showDoc(state.doc.id, false);
+    if (b.dataset.act === "back") { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); }
     if (b.dataset.act === "copypath") { navigator.clipboard?.writeText(state.doc.source_path); toast("Copied", state.doc.source_path); }
     if (b.dataset.act === "pin") togglePin();
+    if (b.dataset.act === "split") toggleSplit();
+    if (b.dataset.act === "delete") deleteCurrent();
   });
 
   async function togglePin() {
@@ -258,6 +383,12 @@
       const top = main.scrollTop;
       try { const r = await fetchDoc(j.id); docEl.innerHTML = r.html; enhanceCode(); main.scrollTop = top; } catch {}
     });
+    es.addEventListener("deleted", async ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      state.cache.delete(j.id);
+      try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+      if (state.doc && state.doc.id === j.id) showInbox(true); else renderTree();
+    });
     es.addEventListener("pinned", async () => {
       try { state.tree = await (await fetch("/api/tree")).json(); renderTree(); } catch {}
     });
@@ -276,7 +407,7 @@
   // ---------- palette ----------
   const pal = $("#palette"), palIn = $("#palette-input"), palList = $("#palette-list");
   let palSel = 0, palItems = [], palTimer = null;
-  function openPalette() { pal.hidden = false; palIn.value = ""; palIn.focus(); palSearch(""); }
+  function openPalette() { pal.hidden = false; palIn.value = ""; palIn.placeholder = "Search documents…  (p:project  kind:md|code|diff)"; palIn.focus(); palSearch(""); }
   function closePalette() { pal.hidden = true; }
   async function palSearch(q) {
     let items;
@@ -316,7 +447,7 @@
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
-    if (e.key === "Escape") { closePalette(); help.hidden = true; return; }
+    if (e.key === "Escape") { closePalette(); help.hidden = true; if (!findBar.hidden) closeFind(); return; }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
     const ids = order(), i = state.doc ? ids.indexOf(state.doc.id) : -1;
     const sib = siblings(), si = state.doc ? sib.indexOf(state.doc.id) : -1;
@@ -327,6 +458,9 @@
       case "]": if (si > 0) showDoc(sib[si - 1], true); break;
       case "c": showCompare(); break;
       case "p": togglePin(); break;
+      case "s": toggleSplit(); break;
+      case "/": openFind(); break;
+      case "Backspace": case "Delete": deleteCurrent(); break;
       case "i": showInbox(true); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
