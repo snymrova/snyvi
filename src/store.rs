@@ -77,7 +77,11 @@ pub struct NewDoc<'a> {
     pub source_path: Option<&'a str>,
     pub branch: Option<&'a str>,
     pub origin: &'a str,
-    pub source: &'a str,
+    /// The document body as stored. Bytes, not text, so an image or any other
+    /// binary keeps exactly what arrived instead of a lossy decode.
+    pub source: &'a [u8],
+    /// What search indexes. Empty for a body with no text in it.
+    pub search_body: &'a str,
     pub html: &'a str,
 }
 
@@ -156,7 +160,7 @@ impl Store {
 
     pub fn insert(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
-        let hash = blake3::hash(d.source.as_bytes()).to_hex().to_string();
+        let hash = blake3::hash(d.source).to_hex().to_string();
         let id = id.to_string();
         // Files first, so a crash never leaves a row without a body.
         fs::write(self.src_path(&id), d.source)?;
@@ -191,7 +195,7 @@ impl Store {
         )?;
         tx.execute(
             "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
-            params![id, d.title, d.source],
+            params![id, d.title, d.search_body],
         )?;
         tx.commit()?;
         Ok(Doc {
@@ -218,7 +222,7 @@ impl Store {
     /// hook-driven edits of the same file into one snapshot).
     pub fn replace(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
-        let hash = blake3::hash(d.source.as_bytes()).to_hex().to_string();
+        let hash = blake3::hash(d.source).to_hex().to_string();
         fs::write(self.src_path(id), d.source)?;
         fs::write(self.html_path(id), d.html)?;
         let conn = self.conn.lock().unwrap();
@@ -229,7 +233,7 @@ impl Store {
         conn.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
         conn.execute(
             "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
-            params![id, d.title, d.source],
+            params![id, d.title, d.search_body],
         )?;
         drop(conn);
         self.get(id)?.context("replaced document vanished")
@@ -256,6 +260,11 @@ impl Store {
 
     pub fn source(&self, id: &str) -> Result<String> {
         Ok(fs::read_to_string(self.src_path(id))?)
+    }
+
+    /// The stored body exactly as it arrived, for images and anything else binary.
+    pub fn source_bytes(&self, id: &str) -> Result<Vec<u8>> {
+        Ok(fs::read(self.src_path(id))?)
     }
 
     /// The document received just before this one in the same workflow.
@@ -552,7 +561,8 @@ mod tests {
             source_path: Some("/p/PLAN.md"),
             branch: None,
             origin: "cli",
-            source: src,
+            source: src.as_bytes(),
+            search_body: src,
             html: "<p>x</p>",
         }
     }

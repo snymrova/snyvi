@@ -206,8 +206,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .b-file a.active { background: var(--accent-bg); color: var(--accent); }
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
 .b-file .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
-.browse-image { text-align: center; margin: 1.5em 0; }
-.browse-image img { border-radius: var(--radius); }
+.browse-image, .doc-image { text-align: center; margin: 1.5em 0; }
+.browse-image img, .doc-image img { border-radius: var(--radius); max-width: 100%; height: auto; }
 
 /* ---------- document ---------- */
 #doc { max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 56px 48px 120px; }

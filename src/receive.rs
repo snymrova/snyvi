@@ -40,8 +40,11 @@ pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 const COALESCE_SECS: i64 = 180;
 
 pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
-    let (content, path) = match (&p.content, &p.path) {
-        (Some(c), _) => (c.clone(), p.path.clone()),
+    // `body` is what gets stored; `text` is the decoded view of it, empty when there
+    // is no text to decode. Reading a file as UTF-8 unconditionally is how a PNG used
+    // to become a document full of mojibake.
+    let (body, text, path) = match (&p.content, &p.path) {
+        (Some(c), _) => (c.clone().into_bytes(), c.clone(), p.path.clone()),
         (None, Some(path)) => {
             let path = absolutize(path, p.cwd.as_deref());
             let bytes =
@@ -49,14 +52,18 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
             if bytes.len() > MAX_BYTES {
                 bail!("file is larger than {} MB", MAX_BYTES / 1024 / 1024);
             }
-            (
-                String::from_utf8_lossy(&bytes).into_owned(),
-                Some(path.to_string_lossy().to_string()),
-            )
+            let sp = path.to_string_lossy().to_string();
+            let opaque = render::is_image_ext(&render::ext_of(&sp)) || render::looks_binary(&bytes);
+            let text = if opaque {
+                String::new()
+            } else {
+                String::from_utf8_lossy(&bytes).into_owned()
+            };
+            (bytes, text, Some(sp))
         }
         (None, None) => bail!("send_document needs either `path` or `content`"),
     };
-    if content.len() > MAX_BYTES {
+    if body.len() > MAX_BYTES {
         bail!("content is larger than {} MB", MAX_BYTES / 1024 / 1024);
     }
     let origin = p.origin.as_deref().unwrap_or("cli");
@@ -74,7 +81,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     // Same file, same bytes as the latest snapshot: hand back that document rather
     // than storing a duplicate (an explicit send after a hook send, or vice versa).
-    let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+    let hash = blake3::hash(&body).to_hex().to_string();
     let latest_same_path = match &path {
         Some(sp) => store.latest_for_path(&root, sp)?,
         None => None,
@@ -89,8 +96,14 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         }
     }
 
-    let (kind, lang) = renderer.detect(path.as_deref(), p.lang.as_deref(), &content);
-    let title = render::title_for(p.title.as_deref(), kind, path.as_deref(), &content);
+    // An image is known by its extension; anything else undecodable is just binary.
+    let (kind, lang) = match renderer.detect(path.as_deref(), p.lang.as_deref(), &text) {
+        (_, lang) if !text.is_empty() && render::looks_binary(&body) => (Kind::Binary, lang),
+        (Kind::Image, lang) => (Kind::Image, lang),
+        _ if text.is_empty() && !body.is_empty() => (Kind::Binary, None),
+        other => other,
+    };
+    let title = render::title_for(p.title.as_deref(), kind, path.as_deref(), &text);
 
     let (wf_key, wf_title) = match (&p.workflow, &p.session) {
         (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
@@ -118,18 +131,23 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     // The viewer shows the title as the page heading, so a leading H1 that *is* the title
     // would appear twice. Drop it from the rendered body only; the stored source is untouched.
     let body_src = if kind == Kind::Markdown {
-        render::strip_leading_h1(&content, &title)
+        render::strip_leading_h1(&text, &title)
     } else {
         None
     };
     let file_base = path.as_ref().map(|_| format!("/files/{id}/"));
-    let html = renderer.render_with_base(
-        kind,
-        lang.as_deref(),
-        body_src.as_deref().unwrap_or(&content),
-        file_base.as_deref(),
-    );
-    let needs_full_highlight = kind == Kind::Code && content.len() > HIGHLIGHT_CAP;
+    let html = match kind {
+        // The bytes are the document; serve them back rather than rendering them.
+        Kind::Image => render::image_body(&format!("/api/docs/{id}/blob"), &title),
+        Kind::Binary => render::placeholder(&render::describe_bytes(&title, body.len() as u64)),
+        _ => renderer.render_with_base(
+            kind,
+            lang.as_deref(),
+            body_src.as_deref().unwrap_or(&text),
+            file_base.as_deref(),
+        ),
+    };
+    let needs_full_highlight = kind == Kind::Code && text.len() > HIGHLIGHT_CAP;
 
     let new_doc = NewDoc {
         project_root: &root,
@@ -142,7 +160,8 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         source_path: path.as_deref(),
         branch: branch.as_deref(),
         origin,
-        source: &content,
+        source: &body,
+        search_body: &text,
         html: &html,
     };
 
@@ -252,6 +271,59 @@ mod tests {
         );
         assert_ne!(explicit.doc.id, first.doc.id);
         assert_eq!(s.count().unwrap(), 2);
+    }
+
+    #[test]
+    fn images_keep_their_bytes_and_binaries_are_described() {
+        let (s, r, d) = setup();
+        let cwd = d.path.to_string_lossy().to_string();
+        // A 1x1 PNG: a real signature, and a null byte early enough to be seen.
+        let png: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01";
+        let img = d.path.join("shot.png");
+        std::fs::write(&img, png).unwrap();
+        let got = receive(
+            &s,
+            &r,
+            Payload {
+                path: Some(img.to_string_lossy().to_string()),
+                cwd: Some(cwd.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(got.doc.kind, Kind::Image);
+        assert_eq!(
+            s.source_bytes(&got.doc.id).unwrap(),
+            png,
+            "the stored bytes are the file, not a lossy decode"
+        );
+        let html = s.html(&got.doc.id).unwrap();
+        assert!(html.contains("<img"), "an image document displays: {html}");
+        assert!(html.contains(&format!("/api/docs/{}/blob", got.doc.id)));
+
+        // Anything else undecodable is described rather than rendered as mojibake.
+        let blob = d.path.join("sheet.xlsx");
+        std::fs::write(&blob, b"PK\x03\x04\x00\x00rest of a zip").unwrap();
+        let got = receive(
+            &s,
+            &r,
+            Payload {
+                path: Some(blob.to_string_lossy().to_string()),
+                cwd: Some(cwd),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(got.doc.kind, Kind::Binary);
+        let html = s.html(&got.doc.id).unwrap();
+        assert!(
+            html.contains("binary file"),
+            "described, not decoded: {html}"
+        );
+        assert!(
+            !html.contains("PK"),
+            "the bytes never reach the page: {html}"
+        );
     }
 
     #[test]

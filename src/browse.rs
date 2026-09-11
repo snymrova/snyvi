@@ -3,7 +3,7 @@
 //! memory keyed by their modification time, so revisiting one is instant and
 //! editing it on disk shows the new content.
 
-use crate::render::Renderer;
+use crate::render::{self, Renderer};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -197,7 +197,7 @@ impl Browser {
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
 
-        if is_image(&ext) {
+        if render::is_image_ext(&ext) {
             return Ok(FileView {
                 kind: "image".into(),
                 html: format!(
@@ -215,7 +215,7 @@ impl Browser {
         if meta.len() > MAX_RENDER_BYTES {
             return Ok(FileView {
                 kind: "large".into(),
-                html: placeholder(&format!(
+                html: render::placeholder(&format!(
                     "{} is {} MB, too large to display.",
                     name,
                     meta.len() / 1_048_576
@@ -243,14 +243,10 @@ impl Browser {
         }
 
         let bytes = std::fs::read(&path)?;
-        if looks_binary(&bytes) {
+        if render::looks_binary(&bytes) {
             return Ok(FileView {
                 kind: "binary".into(),
-                html: placeholder(&format!(
-                    "{} is a binary file ({} KB).",
-                    name,
-                    meta.len() / 1024
-                )),
+                html: render::placeholder(&render::describe_bytes(&name, meta.len())),
                 lang: None,
                 path: rel.to_string(),
                 name,
@@ -357,22 +353,6 @@ impl Browser {
             .insert(id.to_string(), (Instant::now(), out.clone()));
         Ok(out)
     }
-}
-
-fn placeholder(msg: &str) -> String {
-    format!("<p class=\"empty\">{}</p>", html_escape::encode_text(msg))
-}
-
-fn is_image(ext: &str) -> bool {
-    matches!(
-        ext,
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "bmp" | "ico"
-    )
-}
-
-/// A null byte in the first block is the usual signal, and what git uses.
-fn looks_binary(bytes: &[u8]) -> bool {
-    bytes.iter().take(8000).any(|b| *b == 0)
 }
 
 fn urlencode(s: &str) -> String {

@@ -22,6 +22,10 @@ pub enum Kind {
     Code,
     Diff,
     Text,
+    /// Displayed from its bytes rather than rendered from text.
+    Image,
+    /// Not text at all: described, never decoded.
+    Binary,
 }
 
 impl Kind {
@@ -31,6 +35,8 @@ impl Kind {
             Kind::Code => "code",
             Kind::Diff => "diff",
             Kind::Text => "text",
+            Kind::Image => "image",
+            Kind::Binary => "binary",
         }
     }
     pub fn parse(s: &str) -> Option<Kind> {
@@ -39,6 +45,8 @@ impl Kind {
             "code" => Some(Kind::Code),
             "diff" => Some(Kind::Diff),
             "text" => Some(Kind::Text),
+            "image" => Some(Kind::Image),
+            "binary" => Some(Kind::Binary),
             _ => None,
         }
     }
@@ -146,6 +154,7 @@ impl Renderer {
                         (Kind::Text, None)
                     }
                 }
+                e if is_image_ext(e) => (Kind::Image, Some(ext.clone())),
                 _ => (Kind::Code, Some(ext)),
             };
         }
@@ -173,6 +182,8 @@ impl Renderer {
             Kind::Code => self.code(lang, source, HIGHLIGHT_CAP),
             Kind::Diff => diff(source),
             Kind::Text => plain(source),
+            // Both are built from bytes, by whoever holds them; there is no text to render.
+            Kind::Image | Kind::Binary => placeholder(source),
         }
     }
 
@@ -454,6 +465,55 @@ fn emit(
         *open = class;
     }
     out.push_str(&html_escape::encode_text(text));
+}
+
+/// Extensions snyvi displays as a picture rather than as source.
+pub const IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico",
+];
+
+pub fn is_image_ext(ext: &str) -> bool {
+    IMAGE_EXTS.contains(&ext)
+}
+
+/// The lowercased extension of a path, or "" when it has none.
+pub fn ext_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+/// A null byte in the first block is the usual signal, and what git uses. SVG is
+/// text and is caught by `is_image_ext` before this ever sees it.
+pub fn looks_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|b| *b == 0)
+}
+
+/// A one-line note standing in for a body that cannot be shown.
+pub fn placeholder(msg: &str) -> String {
+    format!("<p class=\"empty\">{}</p>", html_escape::encode_text(msg))
+}
+
+/// Describe a file snyvi will not decode, in the units a reader thinks in.
+pub fn describe_bytes(name: &str, size: u64) -> String {
+    if size >= 1_048_576 {
+        format!(
+            "{name} is a binary file ({:.1} MB).",
+            size as f64 / 1_048_576.0
+        )
+    } else {
+        format!("{name} is a binary file ({} KB).", (size / 1024).max(1))
+    }
+}
+
+/// The `<img>` body for an image document, pointed at wherever its bytes are served.
+pub fn image_body(src_url: &str, alt: &str) -> String {
+    format!(
+        "<p class=\"doc-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></p>",
+        html_escape::encode_double_quoted_attribute(src_url),
+        html_escape::encode_double_quoted_attribute(alt)
+    )
 }
 
 fn plain(source: &str) -> String {

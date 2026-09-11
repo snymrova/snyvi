@@ -32,9 +32,6 @@ const APP_JS: &str = include_str!("../ui/app.js");
 const BOOT_JS: &str = include_str!("../ui/boot.js");
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
-const IMAGE_EXTS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico",
-];
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
 /// needs inline styles for the SVG it produces, and images may be data URIs.
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
@@ -121,6 +118,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/browse/{id}/raw", get(browse_raw))
         .route("/api/browse/{id}/find", get(browse_find))
         .route("/api/docs/{id}/raw", get(doc_raw))
+        .route("/api/docs/{id}/blob", get(doc_blob))
         .route("/api/compare/{a}/{b}", get(compare))
         .route("/api/events", get(events))
         .with_state(app);
@@ -276,7 +274,7 @@ async fn doc_file(State(app): S, Path((id, rel)): Path<(String, String)>) -> Res
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    if !IMAGE_EXTS.contains(&ext.as_str()) {
+    if !render::is_image_ext(&ext) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let (Ok(canon), Ok(root)) = (
@@ -374,6 +372,40 @@ async fn doc_raw(State(app): S, Path(id): Path<String>) -> Response {
         Ok(src) => ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], src).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// A stored document's bytes, as they arrived. This is how an image document's
+/// `<img>` gets its picture; the content type comes from the source file's name so
+/// the browser knows what it is.
+async fn doc_blob(State(app): S, Path(id): Path<String>) -> Response {
+    let Ok(Some(doc)) = app.store.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(bytes) = app.store.source_bytes(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = doc
+        .source_path
+        .as_deref()
+        .map(|p| mime_guess::from_path(p).first_or_octet_stream().to_string())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    (
+        [
+            (header::CONTENT_TYPE, mime),
+            // Documents are immutable, so the bytes behind an id never change.
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000".to_string(),
+            ),
+            // Belt and braces: never let a served document run as a page of ours.
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "sandbox; default-src 'none'".to_string(),
+            ),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
