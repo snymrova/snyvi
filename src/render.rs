@@ -26,6 +26,8 @@ pub enum Kind {
     Image,
     /// Not text at all: described, never decoded.
     Binary,
+    /// Delimited text, laid out as a table.
+    Table,
 }
 
 impl Kind {
@@ -37,6 +39,7 @@ impl Kind {
             Kind::Text => "text",
             Kind::Image => "image",
             Kind::Binary => "binary",
+            Kind::Table => "table",
         }
     }
     pub fn parse(s: &str) -> Option<Kind> {
@@ -47,6 +50,7 @@ impl Kind {
             "text" => Some(Kind::Text),
             "image" => Some(Kind::Image),
             "binary" => Some(Kind::Binary),
+            "table" => Some(Kind::Table),
             _ => None,
         }
     }
@@ -126,6 +130,7 @@ impl Renderer {
                 "md" | "markdown" | "mdx" => (Kind::Markdown, None),
                 "diff" | "patch" => (Kind::Diff, None),
                 "txt" | "text" | "plain" => (Kind::Text, None),
+                "csv" | "tsv" => (Kind::Table, Some(l)),
                 _ => (Kind::Code, Some(l)),
             };
         }
@@ -154,6 +159,7 @@ impl Renderer {
                         (Kind::Text, None)
                     }
                 }
+                "csv" | "tsv" => (Kind::Table, Some(ext.clone())),
                 e if is_image_ext(e) => (Kind::Image, Some(ext.clone())),
                 _ => (Kind::Code, Some(ext)),
             };
@@ -182,6 +188,7 @@ impl Renderer {
             Kind::Code => self.code(lang, source, HIGHLIGHT_CAP),
             Kind::Diff => diff(source),
             Kind::Text => plain(source),
+            Kind::Table => table(source, lang),
             // Both are built from bytes, by whoever holds them; there is no text to render.
             Kind::Image | Kind::Binary => placeholder(source),
         }
@@ -538,6 +545,108 @@ fn plain(source: &str) -> String {
         out.push_str("</span>\n");
     }
     out.push_str("</code></pre>");
+    out
+}
+
+/// Rows past this are dropped. A spreadsheet of any size still opens instantly, and
+/// nobody reads row 3000 of a table in a viewer; `o` opens the whole file.
+const MAX_TABLE_ROWS: usize = 2000;
+
+/// Split delimited text into rows, honouring RFC 4180 quoting: a field wrapped in
+/// quotes may contain the delimiter, a newline, or a doubled quote standing for one.
+fn parse_delimited(source: &str, delim: char, max_rows: usize) -> (Vec<Vec<String>>, bool) {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        if quoted {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                }
+            } else {
+                field.push(c);
+            }
+            continue;
+        }
+        match c {
+            '"' if field.is_empty() => quoted = true,
+            c if c == delim => row.push(std::mem::take(&mut field)),
+            '\r' => {}
+            '\n' => {
+                row.push(std::mem::take(&mut field));
+                // A trailing newline is a line ending, not an empty final row.
+                if !(row.len() == 1 && row[0].is_empty()) {
+                    rows.push(std::mem::take(&mut row));
+                } else {
+                    row.clear();
+                }
+                if rows.len() >= max_rows {
+                    return (rows, chars.peek().is_some());
+                }
+            }
+            c => field.push(c),
+        }
+    }
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        rows.push(row);
+    }
+    (rows, false)
+}
+
+/// A number, so it can be aligned like one. Deliberately narrow: a value that merely
+/// starts with a digit is still text.
+fn is_numeric(s: &str) -> bool {
+    let t = s.trim().trim_start_matches(['-', '+']).replace(',', "");
+    !t.is_empty()
+        && t.chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == '%' || c == 'e' || c == 'E')
+        && t.chars().any(|c| c.is_ascii_digit())
+}
+
+/// Lay delimited text out as a table, first row as the head.
+pub fn table(source: &str, lang: Option<&str>) -> String {
+    let delim = if lang == Some("tsv") { '\t' } else { ',' };
+    let (rows, truncated) = parse_delimited(source, delim, MAX_TABLE_ROWS);
+    if rows.is_empty() {
+        return placeholder("This file has no rows.");
+    }
+    // Ragged rows are common in hand-edited files; pad them so the columns line up.
+    let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let cell = |s: &str| {
+        let class = if is_numeric(s) { " class=\"num\"" } else { "" };
+        format!("<td{class}>{}</td>", html_escape::encode_text(s.trim()))
+    };
+
+    let mut out = String::with_capacity(source.len() * 2);
+    out.push_str("<table class=\"data\"><thead><tr>");
+    for i in 0..width {
+        out.push_str("<th>");
+        out.push_str(&html_escape::encode_text(
+            rows[0].get(i).map(|s| s.trim()).unwrap_or(""),
+        ));
+        out.push_str("</th>");
+    }
+    out.push_str("</tr></thead><tbody>");
+    for row in rows.iter().skip(1) {
+        out.push_str("<tr>");
+        for i in 0..width {
+            out.push_str(&cell(row.get(i).map(String::as_str).unwrap_or("")));
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>");
+    if truncated {
+        out.push_str(&placeholder(&format!(
+            "Showing the first {MAX_TABLE_ROWS} rows. Open the source for the rest."
+        )));
+    }
     out
 }
 
@@ -908,6 +1017,34 @@ mod tests {
             Kind::Diff
         );
         assert_eq!(r.detect(None, None, "# Heading\n\ntext").0, Kind::Markdown);
+    }
+
+    #[test]
+    fn csv_becomes_a_table_with_quotes_and_ragged_rows_handled() {
+        let src = "name,qty,note\n\"Widget, large\",12,\"he said \"\"hi\"\"\"\nBolt,3\n";
+        let html = table(src, Some("csv"));
+        assert!(
+            html.contains("<th>name</th><th>qty</th><th>note</th>"),
+            "{html}"
+        );
+        // A quoted field keeps its delimiter, and a doubled quote becomes one.
+        assert!(html.contains("Widget, large"), "{html}");
+        assert!(html.contains("he said \"hi\""), "{html}");
+        // Numbers are marked so they can be aligned as numbers.
+        assert!(html.contains("<td class=\"num\">12</td>"), "{html}");
+        // A short row is padded rather than shifting the columns.
+        assert!(
+            html.ends_with("<td>Bolt</td><td class=\"num\">3</td><td></td></tr></tbody></table>"),
+            "{html}"
+        );
+
+        // Tabs when the file says so.
+        let tsv = table("a\tb\n1\t2\n", Some("tsv"));
+        assert!(tsv.contains("<th>a</th><th>b</th>"), "{tsv}");
+
+        // A cell that merely starts with a digit is still text.
+        assert!(!table("h\n3 apples\n", Some("csv")).contains("class=\"num\""));
+        assert!(table("", Some("csv")).contains("no rows"));
     }
 
     #[test]

@@ -107,6 +107,13 @@ browser in app mode when one is installed, else the default browser.
 | o     | open source                                 |
 | ?     | show keys                                   |
 
+## Tables
+
+A `.csv` or `.tsv` file is laid out as a table rather than shown as
+text: quoted fields keep their commas and newlines, numbers are aligned
+as numbers, and the head stays put while the body scrolls. Very large
+files show their first 2000 rows with a note; `o` opens the whole file.
+
 ## Pages and PDFs
 
 An `.html` file opens as source, because in a repository the markup is

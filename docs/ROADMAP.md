@@ -16,7 +16,9 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. Worth more now that browse mode shows code all day. | M | next |
 | Watch a browsed folder | Refresh the open file when it changes on disk, instead of on manual reload. | S | later |
 | Math (KaTeX) | Rare in engineering docs. Same lazy-load pattern as Mermaid once that exists. | S | later |
-| Structured views for JSON, YAML, CSV | Fold JSON, render CSV as a table. | M | later |
+| Structured views for JSON, YAML, CSV | CSV and TSV render as a table (**done 0.3**). JSON folding and YAML remain. | M | later |
+| Preview a page or a PDF | An `.html` file showed as source only and a `.pdf` as "a binary file". Both now show as themselves with `v`: a page in an iframe with an opaque origin, a PDF in the browser's viewer. | M | **done 0.3** |
+| Images and binaries in the library | `send_document` of a PNG stored mojibake. Images are kept as bytes and displayed; anything else undecodable is described. | S | **done 0.3** |
 | Line wrap toggle, jump to line, line permalinks | `#L120` links from agents; wrap for long log lines. | S | later |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
@@ -82,7 +84,23 @@ demand, nothing persisted and nothing in the inbox. Chosen over bulk
 import into the library, which would have flooded the inbox, the one
 screen that answers "what did my agents produce".
 
+Browsing a repository all day turned up three gaps that browse mode made
+obvious, all now closed: the library mangled any file that was not text,
+`.html` and `.pdf` could only be read as source, and a `.csv` was a wall
+of commas.
+
 ## Other candidates for 0.3
 
 Code outline in the rail, `snyvi watch`, rename workflow and project,
 tags from the sender, macOS build, packages (.deb, AppImage), tray icon.
+
+Two pieces of release hygiene are worth folding in before 0.3 ships: no
+release has ever been cut, so the install instructions point at an empty
+releases page, and CI never builds `--features desktop`, so the Tauri
+window is unverified code.
+
+## Still no purpose-built view
+
+JSON and YAML (highlighted source only) and Jupyter notebooks (raw JSON
+rather than cells). Notebooks are the most work and the least common in
+this context.
