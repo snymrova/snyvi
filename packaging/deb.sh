@@ -14,7 +14,7 @@ bin=${1:?usage: deb.sh <binary> <version> <arch> [outdir]}
 version=${2:?}
 arch=${3:?}
 out=${4:-dist}
-maintainer=${DEB_MAINTAINER:-"snymrova <sunny@ohmydog.rocks>"}
+maintainer=${DEB_MAINTAINER:-"snymrova <sunny@mrova.rocks>"}
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(dirname "$here")
