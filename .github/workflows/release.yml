@@ -2,6 +2,11 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (creates tag v<version>)"
+        required: true
 permissions:
   contents: write
 jobs:
@@ -35,13 +40,18 @@ jobs:
           SNYVI_BENCH_FACTOR=3 $B bench --check
       - name: Package
         run: |
-          name=snyvi-${GITHUB_REF_NAME#v}-${{ matrix.target }}
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          version="${version#v}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          name=snyvi-$version-${{ matrix.target }}
           mkdir -p dist/$name
           cp target/${{ matrix.target }}/release/snyvi README.md dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           files: |
             dist/*.tar.gz
             dist/*.sha256
