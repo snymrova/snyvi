@@ -53,7 +53,11 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
                 bail!("file is larger than {} MB", MAX_BYTES / 1024 / 1024);
             }
             let sp = path.to_string_lossy().to_string();
-            let opaque = render::is_image_ext(&render::ext_of(&sp)) || render::looks_binary(&bytes);
+            let ext = render::ext_of(&sp);
+            // Images, PDFs and anything that will not decode are kept as bytes.
+            let opaque = render::is_image_ext(&ext)
+                || render::preview_kind(&ext) == Some("pdf")
+                || render::looks_binary(&bytes);
             let text = if opaque {
                 String::new()
             } else {

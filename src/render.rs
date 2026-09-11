@@ -507,6 +507,17 @@ pub fn describe_bytes(name: &str, size: u64) -> String {
     }
 }
 
+/// What a file can be shown as beyond its source: "html" for a page the browser
+/// can lay out, "pdf" for one it has a viewer for. Both are framed with an opaque
+/// origin, never rendered into snyvi's own page.
+pub fn preview_kind(ext: &str) -> Option<&'static str> {
+    match ext {
+        "html" | "htm" | "xhtml" => Some("html"),
+        "pdf" => Some("pdf"),
+        _ => None,
+    }
+}
+
 /// The `<img>` body for an image document, pointed at wherever its bytes are served.
 pub fn image_body(src_url: &str, alt: &str) -> String {
     format!(
@@ -897,6 +908,17 @@ mod tests {
             Kind::Diff
         );
         assert_eq!(r.detect(None, None, "# Heading\n\ntext").0, Kind::Markdown);
+    }
+
+    #[test]
+    fn only_pages_and_pdfs_offer_a_preview() {
+        assert_eq!(preview_kind("html"), Some("html"));
+        assert_eq!(preview_kind("htm"), Some("html"));
+        assert_eq!(preview_kind("xhtml"), Some("html"));
+        assert_eq!(preview_kind("pdf"), Some("pdf"));
+        for ext in ["md", "rs", "svg", "png", "txt", "json", ""] {
+            assert_eq!(preview_kind(ext), None, "{ext} is not previewable");
+        }
     }
 
     #[test]

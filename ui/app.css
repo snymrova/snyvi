@@ -206,6 +206,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .b-file a.active { background: var(--accent-bg); color: var(--accent); }
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
 .b-file .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
+/* A previewed page is somebody else's design; give it the pane and no styling of ours. */
+article.preview { margin: 0; padding: 0; height: calc(100vh - 132px); min-height: 360px; }
+article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: var(--radius); background: #fff; display: block; }
+@media (max-width: 760px) { article.preview { height: calc(100vh - 180px); } }
+
 .browse-image, .doc-image { text-align: center; margin: 1.5em 0; }
 .browse-image img, .doc-image img { border-radius: var(--radius); max-width: 100%; height: auto; }
 

@@ -116,6 +116,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/browse/{id}/tree", get(browse_tree))
         .route("/api/browse/{id}/file", get(browse_file))
         .route("/api/browse/{id}/raw", get(browse_raw))
+        .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
         .route("/api/browse/{id}/find", get(browse_find))
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
@@ -359,8 +360,21 @@ async fn doc_json(State(app): S, Path(id): Path<String>) -> Response {
         Ok(Some(doc)) => {
             let body = app.store.html(&id).unwrap_or_default();
             let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
-            Json(json!({ "doc": doc, "html": doc_html(&doc, &body), "previous": previous }))
-                .into_response()
+            // A stored page or PDF is framed from its own bytes. Only the one file was
+            // snapshotted, so unlike browse mode there are no sibling assets to load.
+            let preview = doc
+                .source_path
+                .as_deref()
+                .map(render::ext_of)
+                .and_then(|e| render::preview_kind(&e));
+            Json(json!({
+                "doc": doc,
+                "html": doc_html(&doc, &body),
+                "previous": previous,
+                "preview": preview,
+                "preview_url": preview.map(|_| format!("/api/docs/{id}/blob")),
+            }))
+            .into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
@@ -389,23 +403,23 @@ async fn doc_blob(State(app): S, Path(id): Path<String>) -> Response {
         .as_deref()
         .map(|p| mime_guess::from_path(p).first_or_octet_stream().to_string())
         .unwrap_or_else(|| "application/octet-stream".to_string());
-    (
-        [
-            (header::CONTENT_TYPE, mime),
-            // Documents are immutable, so the bytes behind an id never change.
-            (
-                header::CACHE_CONTROL,
-                "private, max-age=31536000".to_string(),
-            ),
-            // Belt and braces: never let a served document run as a page of ours.
-            (
-                header::CONTENT_SECURITY_POLICY,
-                "sandbox; default-src 'none'".to_string(),
-            ),
-        ],
-        bytes,
-    )
-        .into_response()
+    let mut headers = HeaderMap::new();
+    if let Ok(v) = HeaderValue::from_str(&mime) {
+        headers.insert(header::CONTENT_TYPE, v);
+    }
+    // Documents are immutable, so the bytes behind an id never change.
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000"),
+    );
+    protect(
+        &mut headers,
+        &doc.source_path
+            .as_deref()
+            .map(render::ext_of)
+            .unwrap_or_default(),
+    );
+    (headers, bytes).into_response()
 }
 
 #[derive(Deserialize)]
@@ -693,25 +707,58 @@ async fn browse_file(State(app): S, Path(id): Path<String>, Query(q): Query<Path
 }
 
 async fn browse_raw(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
-    let Ok(path) = app.browse.resolve(&id, q.path.as_deref().unwrap_or("")) else {
+    serve_browsed(&app, &id, q.path.as_deref().unwrap_or("")).await
+}
+
+/// The same bytes under a path-shaped URL. A framed page is loaded from here so that
+/// its own relative stylesheets, scripts and images resolve against the file's
+/// directory instead of against `/api/browse/<id>/`.
+async fn browse_raw_path(State(app): S, Path((id, rel)): Path<(String, String)>) -> Response {
+    serve_browsed(&app, &id, &rel).await
+}
+
+/// Headers that make a file safe to frame.
+///
+/// A page is somebody else's code: the frame denies it our origin, and this denies it
+/// the network, so it cannot report home with whatever it can see. A PDF is not code
+/// at all — it goes to the browser's own viewer, which refuses to run inside a
+/// sandbox, so it is framed unsandboxed and `nosniff` plus its content type are what
+/// keep it from ever being treated as a page. Anything else is served inert.
+fn protect(headers: &mut HeaderMap, ext: &str) {
+    let policy = match render::preview_kind(ext) {
+        Some("html") => "connect-src 'none'; form-action 'none'; frame-ancestors 'self'",
+        Some("pdf") => "frame-ancestors 'self'",
+        _ => "sandbox; default-src 'none'",
+    };
+    if let Ok(v) = HeaderValue::from_str(policy) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, v);
+    }
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+}
+
+async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str) -> Response {
+    let Ok(path) = app.browse.resolve(id, rel) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => {
-            let mime = mime_guess::from_path(&path)
-                .first_or_octet_stream()
-                .to_string();
-            (
-                [
-                    (header::CONTENT_TYPE, mime),
-                    (header::CACHE_CONTROL, "private, max-age=60".to_string()),
-                ],
-                bytes,
-            )
-                .into_response()
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = mime_guess::from_path(&path)
+        .first_or_octet_stream()
+        .to_string();
+    let mut headers = HeaderMap::new();
+    let mut set = |k: header::HeaderName, v: &str| {
+        if let Ok(v) = HeaderValue::from_str(v) {
+            headers.insert(k, v);
         }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
+    };
+    set(header::CONTENT_TYPE, &mime);
+    set(header::CACHE_CONTROL, "private, max-age=60");
+    protect(&mut headers, &render::ext_of(&path.to_string_lossy()));
+    (headers, bytes).into_response()
 }
 
 async fn browse_find(State(app): S, Path(id): Path<String>, Query(q): Query<FindQ>) -> Response {

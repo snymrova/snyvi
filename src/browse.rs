@@ -46,6 +46,11 @@ pub struct FileView {
     pub size: u64,
     pub modified: i64,
     pub html: String,
+    /// "html" or "pdf" when this file can also be shown as a page, else None.
+    pub preview: Option<String>,
+    /// Where to point the preview frame. Path-shaped, so the page's own relative
+    /// stylesheets and images resolve next to it.
+    pub preview_url: Option<String>,
 }
 
 pub struct Browser {
@@ -196,63 +201,59 @@ impl Browser {
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
+        // A page or a PDF can also be shown as itself, framed at its own raw URL so
+        // its relative assets resolve. The source view stays the default for pages.
+        let preview = render::preview_kind(&ext);
+        let view = |kind: &str, lang: Option<String>, html: String| FileView {
+            kind: kind.to_string(),
+            lang,
+            html,
+            path: rel.to_string(),
+            name: name.clone(),
+            size: meta.len(),
+            modified,
+            preview: preview.map(str::to_string),
+            preview_url: preview.map(|_| raw_url(id, rel)),
+        };
 
         if render::is_image_ext(&ext) {
-            return Ok(FileView {
-                kind: "image".into(),
-                html: format!(
-                    "<p class=\"browse-image\"><img src=\"/api/browse/{id}/raw?path={}\" alt=\"{}\" loading=\"lazy\"></p>",
-                    urlencode(rel),
+            return Ok(view(
+                "image",
+                None,
+                format!(
+                    "<p class=\"browse-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></p>",
+                    raw_url(id, rel),
                     html_escape::encode_double_quoted_attribute(&name)
                 ),
-                lang: None,
-                path: rel.to_string(),
-                name,
-                size: meta.len(),
-                modified,
-            });
+            ));
         }
         if meta.len() > MAX_RENDER_BYTES {
-            return Ok(FileView {
-                kind: "large".into(),
-                html: render::placeholder(&format!(
+            return Ok(view(
+                "large",
+                None,
+                render::placeholder(&format!(
                     "{} is {} MB, too large to display.",
                     name,
                     meta.len() / 1_048_576
                 )),
-                lang: None,
-                path: rel.to_string(),
-                name,
-                size: meta.len(),
-                modified,
-            });
+            ));
         }
 
         let key = format!("{id}\u{0}{rel}\u{0}{modified}\u{0}{}", meta.len());
         if let Some(hit) = self.cache.lock().unwrap().iter().find(|(k, _)| *k == key) {
             let (kind, lang) = renderer.detect(Some(&path.to_string_lossy()), None, "");
-            return Ok(FileView {
-                kind: kind.as_str().to_string(),
-                lang,
-                html: hit.1.clone(),
-                path: rel.to_string(),
-                name,
-                size: meta.len(),
-                modified,
-            });
+            return Ok(view(kind.as_str(), lang, hit.1.clone()));
         }
 
         let bytes = std::fs::read(&path)?;
-        if render::looks_binary(&bytes) {
-            return Ok(FileView {
-                kind: "binary".into(),
-                html: render::placeholder(&render::describe_bytes(&name, meta.len())),
-                lang: None,
-                path: rel.to_string(),
-                name,
-                size: meta.len(),
-                modified,
-            });
+        // A PDF is for its viewer, not for reading as text, whether or not the first
+        // block happens to hold a null byte.
+        if preview == Some("pdf") || render::looks_binary(&bytes) {
+            return Ok(view(
+                "binary",
+                None,
+                render::placeholder(&render::describe_bytes(&name, meta.len())),
+            ));
         }
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let (kind, lang) = renderer.detect(Some(&path.to_string_lossy()), None, &text);
@@ -266,15 +267,7 @@ impl Browser {
         cache.push((key, html.clone()));
         drop(cache);
 
-        Ok(FileView {
-            kind: kind.as_str().to_string(),
-            lang,
-            html,
-            path: rel.to_string(),
-            name,
-            size: meta.len(),
-            modified,
-        })
+        Ok(view(kind.as_str(), lang, html))
     }
 
     /// The file a root opens on: a README if there is one, else nothing.
@@ -355,6 +348,12 @@ impl Browser {
     }
 }
 
+/// The path-shaped raw URL for a file in a browsed root. Path-shaped rather than
+/// `?path=`, so a framed page resolves `./style.css` to the file beside it.
+fn raw_url(id: &str, rel: &str) -> String {
+    format!("/api/browse/{id}/raw/{}", urlencode(rel))
+}
+
 fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
@@ -383,6 +382,9 @@ mod tests {
         std::fs::write(d.path.join("node_modules/junk/x.js"), "junk").unwrap();
         std::fs::write(d.path.join(".hidden/secret"), "shh").unwrap();
         std::fs::write(d.path.join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
+        std::fs::write(d.path.join("page.html"), "<h1>hi</h1>").unwrap();
+        // No null byte in the header, so only the extension marks it as a PDF.
+        std::fs::write(d.path.join("paper.pdf"), b"%PDF-1.4\n1 0 obj\n").unwrap();
         (Browser::new(), d)
     }
 
@@ -440,6 +442,26 @@ mod tests {
         assert_eq!(bin.kind, "binary");
         assert!(bin.html.contains("binary file"));
         assert_eq!(b.landing(&r.id).as_deref(), Some("README.md"));
+
+        // A page keeps its markup as the default view, and offers itself as a preview
+        // at a path-shaped URL so its relative assets resolve beside it.
+        let page = b.file(&r.id, "page.html", &rn).unwrap();
+        assert_eq!(page.kind, "code");
+        assert_eq!(page.preview.as_deref(), Some("html"));
+        assert_eq!(
+            page.preview_url.as_deref(),
+            Some(format!("/api/browse/{}/raw/page.html", r.id).as_str())
+        );
+
+        // A PDF is for its viewer, not for reading as text, null byte or not.
+        let pdf = b.file(&r.id, "paper.pdf", &rn).unwrap();
+        assert_eq!(pdf.kind, "binary");
+        assert_eq!(pdf.preview.as_deref(), Some("pdf"));
+        assert!(pdf.html.contains("binary file"));
+
+        // Everything else offers no preview at all.
+        assert!(md.preview.is_none());
+        assert!(bin.preview.is_none());
     }
 
     #[test]

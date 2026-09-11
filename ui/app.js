@@ -20,6 +20,10 @@
     browse: boot.browse || [],  // folders opened with `snyvi browse`
     browseRoot: boot.browseRoot || null,
     browsePath: boot.browsePath || "",
+    preview: null,              // "html" | "pdf" when the open file can be shown as a page
+    previewUrl: null,
+    previewOn: false,
+    previewKey: null,           // what previewOn belongs to, so a toggle survives a re-render
   };
 
   // ---------- helpers ----------
@@ -136,6 +140,47 @@
     return [];
   };
 
+  // ---------- preview ----------
+  /** Remember the choice per file, and start a PDF in the viewer since its source is bytes. */
+  function setPreview(kind, url, key) {
+    if (state.previewKey !== key) { state.previewKey = key; state.previewOn = kind === "pdf"; }
+    state.preview = kind || null;
+    state.previewUrl = url || null;
+    if (!state.preview) state.previewOn = false;
+  }
+
+  /** Swap the rendered body for the page itself.
+   *
+   *  An HTML page is sandboxed WITHOUT allow-same-origin on purpose: that pair gives
+   *  it an opaque origin, so its scripts run — the preview is faithful — but cannot
+   *  read snyvi's DOM, storage or API responses. Adding allow-same-origin here would
+   *  hand every HTML file in a browsed folder the run of the library.
+   *
+   *  A PDF gets no sandbox attribute, because the browser's own viewer refuses to run
+   *  inside one and shows a broken page instead. That is safe for a different reason:
+   *  the bytes are served as application/pdf with nosniff, so they can only ever reach
+   *  the PDF viewer, never be parsed as a page in our origin. */
+  function applyPreview() {
+    const art = docEl.querySelector("article");
+    if (!art || !state.previewOn || !state.previewUrl) return;
+    const wrap = document.createElement("article");
+    wrap.className = "preview";
+    const frame = document.createElement("iframe");
+    if (state.preview !== "pdf") frame.setAttribute("sandbox", "allow-scripts");
+    frame.setAttribute("referrerpolicy", "no-referrer");
+    frame.setAttribute("title", "Preview");
+    frame.src = state.previewUrl;
+    wrap.appendChild(frame);
+    art.replaceWith(wrap);
+  }
+
+  function togglePreview() {
+    if (!state.preview) return;
+    state.previewOn = !state.previewOn;
+    if (state.doc) showDoc(state.doc.id, false);
+    else if (browsing()) showBrowse(state.browseRoot.id, state.browsePath, false);
+  }
+
   // ---------- documents ----------
   function docHtml(doc, body) {
     let sub = `${esc(doc.project)} · ${esc(doc.workflow_title)}`;
@@ -159,7 +204,9 @@
     try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
     state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null;
     state.unread.delete(j.doc.project_id);
+    setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
+    applyPreview();
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
     if (push) history.pushState({ id }, "", `/d/${id}`);
@@ -180,6 +227,7 @@
       try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=`)).json(); } catch {}
       state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
       state.browseRoot = root || state.browseRoot; state.browsePath = "";
+      setPreview(null, null, `b:${rootId}:`);
       document.title = root ? root.name : "snyvi";
       if (push) history.pushState({ browse: rootId, path: "" }, "", `/b/${rootId}`);
       docEl.innerHTML = `<div class="inbox-head"><h1>${esc(root ? root.name : "Folder")}</h1><p>${esc(root ? root.path : "")}</p></div><ul class="inbox">` +
@@ -196,7 +244,9 @@
     } catch (e) { toast("Could not open file", String(e)); return; }
     state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
     state.browseRoot = j.root; state.browsePath = path;
+    setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
     docEl.innerHTML = browseHtml(j.file, j.root);
+    applyPreview();
     document.title = j.file.name;
     if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
     main.scrollTo({ top: 0, behavior: "instant" });
@@ -396,11 +446,20 @@
       (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd>c</kbd></button>`) : "") +
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
+      previewButton() +
       `<button data-act="delete">Delete…<kbd>⌫</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       `</div>`;
   }
+  const rawUrl = (rootId, path) => `/api/browse/${rootId}/raw/${path.split("/").map(encodeURIComponent).join("/")}`;
+
+  function previewButton() {
+    if (!state.preview) return "";
+    const label = state.previewOn ? "Source" : (state.preview === "pdf" ? "Open in viewer" : "Preview page");
+    return `<button data-act="preview">${label}<kbd>v</kbd></button>`;
+  }
+
   function renderBrowseMeta() {
     const r = state.browseRoot;
     if (!r) { metaEl.innerHTML = ""; return; }
@@ -408,7 +467,8 @@
     const rows = [["Folder", r.name], p ? ["Path", p] : null].filter(Boolean);
     metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span title="${esc(v)}">${esc(v)}</span></div>`).join("") +
       `<div class="actions">` +
-      (p ? `<a href="/api/browse/${r.id}/raw?path=${encodeURIComponent(p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
+      previewButton() +
+      (p ? `<a href="${rawUrl(r.id, p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
       `<button data-act="copybrowse">Copy path</button>` +
       `<a href="/b/${r.id}" data-browse="${r.id}" data-path="">Folder contents</a>` +
       `<button data-act="closebrowse">Close folder</button>` +
@@ -423,6 +483,7 @@
     if (b.dataset.act === "copypath") { navigator.clipboard?.writeText(state.doc.source_path); toast("Copied", state.doc.source_path); }
     if (b.dataset.act === "pin") togglePin();
     if (b.dataset.act === "split") toggleSplit();
+    if (b.dataset.act === "preview") togglePreview();
     if (b.dataset.act === "delete") deleteCurrent();
     if (b.dataset.act === "copybrowse") {
       const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
@@ -611,6 +672,7 @@
       case "c": showCompare(); break;
       case "p": togglePin(); break;
       case "s": toggleSplit(); break;
+      case "v": togglePreview(); break;
       case "/": openFind(); break;
       case "Backspace": case "Delete": deleteCurrent(); break;
       case "i": showInbox(true); break;
@@ -618,7 +680,7 @@
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
       case "o":
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
-        else if (browsing() && state.browsePath) window.open(`/api/browse/${state.browseRoot.id}/raw?path=${encodeURIComponent(state.browsePath)}`, "_blank");
+        else if (browsing() && state.browsePath) window.open(rawUrl(state.browseRoot.id, state.browsePath), "_blank");
         break;
       case "?": help.hidden = !help.hidden; break;
       default: return;

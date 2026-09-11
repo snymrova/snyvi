@@ -97,6 +97,7 @@ browser in app mode when one is installed, else the default browser.
 | [ / ] | older / newer version in the same workflow  |
 | c     | compare with the previous version           |
 | s     | split / inline view for diffs               |
+| v     | preview a page or PDF / back to source      |
 | /     | find in document                            |
 | p     | pin (kept by `prune`)                       |
 | ⌫     | delete document                             |
@@ -105,6 +106,26 @@ browser in app mode when one is installed, else the default browser.
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+
+## Pages and PDFs
+
+An `.html` file opens as source, because in a repository the markup is
+usually what you want; `v` shows the page itself. A `.pdf` opens in the
+browser's own viewer, and `v` goes the other way.
+
+A previewed page runs in an iframe sandboxed **without**
+`allow-same-origin`, so it has an opaque origin: its scripts run and the
+preview is faithful, but they cannot read snyvi's page, its storage, or
+any answer from its API. The page is served with
+`connect-src 'none'`, so it cannot send anywhere what it can see either.
+In browse mode the page is loaded from a path-shaped URL, so its own
+relative stylesheets and images resolve; a page in the library is a
+snapshot of one file, so it has none of those to load.
+
+A PDF is framed without a sandbox, because the browser's viewer refuses
+to run inside one. That is safe for a different reason: the bytes are
+served as `application/pdf` with `nosniff`, so they can only ever reach
+the PDF viewer and can never be parsed as a page.
 
 ## Browsing a folder
 
