@@ -1,0 +1,48 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            cc: musl-gcc
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            cc: musl-gcc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: Build static binary
+        env:
+          CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Smoke test
+        run: |
+          B=target/${{ matrix.target }}/release/snyvi
+          file $B
+          SNYVI_DATA_DIR=/tmp/s SNYVI_CONFIG_DIR=/tmp/c SNYVI_PORT=7802 $B send README.md
+          SNYVI_BENCH_FACTOR=3 $B bench --check
+      - name: Package
+        run: |
+          name=snyvi-${GITHUB_REF_NAME#v}-${{ matrix.target }}
+          mkdir -p dist/$name
+          cp target/${{ matrix.target }}/release/snyvi README.md dist/$name/
+          tar -C dist -czf dist/$name.tar.gz $name
+          (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          generate_release_notes: true

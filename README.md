@@ -10,12 +10,40 @@ agents send, snyvi shows.
 
 ## Install
 
+Download the static binary for your architecture from the
+[releases page](https://github.com/snymrova/snyvi/releases), then:
+
+```
+tar xzf snyvi-*-x86_64-unknown-linux-musl.tar.gz
+install -m 755 snyvi-*/snyvi ~/.local/bin/snyvi   # or /usr/local/bin
+snyvi send README.md                              # starts the daemon, prints a link
+snyvi init-claude                                 # register with Claude Code
+```
+
+It is fully static (musl), so it runs on any x86_64 or aarch64 Linux
+without extra packages. To build from source instead:
+
 ```
 cargo install --path .
 ```
 
 One binary, no runtime, no network access ever. It embeds its own UI,
 fonts, and syntax grammars.
+
+To start the daemon at login, a user service is enough:
+
+```
+mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/snyvi.service <<'UNIT'
+[Unit]
+Description=snyvi document viewer
+[Service]
+ExecStart=%h/.local/bin/snyvi serve
+Restart=on-failure
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user enable --now snyvi
+```
 
 ## Use
 

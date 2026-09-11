@@ -10,6 +10,11 @@ mod server;
 mod store;
 
 use anyhow::{Context, Result};
+
+// musl's allocator is slow under the renderer's allocation pattern; mimalloc keeps the
+// static binary as fast as the glibc build.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::path::PathBuf;

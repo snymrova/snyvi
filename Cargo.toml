@@ -24,6 +24,7 @@ anyhow = "1"
 mime_guess = "2"
 html-escape = "0.2"
 similar = "2"
+mimalloc = { version = "0.1", default-features = false }
 
 [profile.release]
 opt-level = 3
