@@ -75,6 +75,40 @@ pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
     Ok(body)
 }
 
+/// Register a folder with the daemon and return the page that shows it.
+pub fn browse(paths: &Paths, dir: &str) -> Result<String> {
+    ensure_daemon()?;
+    let token = config::read_token(paths).ok_or_else(|| {
+        anyhow!(
+            "no token at {}; is the daemon running as this user?",
+            paths.token_path.display()
+        )
+    })?;
+    let mut resp = ureq::post(&format!("{}/api/browse", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({ "path": dir }))
+        .context("opening the folder in snyvi")?;
+    let status = resp.status().as_u16();
+    let body: Value = resp.body_mut().read_json().unwrap_or(Value::Null);
+    if status >= 300 {
+        bail!(
+            "snyvi could not browse that folder ({status}): {}",
+            body.get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error")
+        );
+    }
+    Ok(body
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
 pub fn open_in_browser(url: &str) {
     for opener in ["xdg-open", "open"] {
         if Command::new(opener)

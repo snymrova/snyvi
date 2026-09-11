@@ -1,5 +1,6 @@
 //! The local HTTP server: UI shell, JSON API, SSE, and the receive endpoint.
 
+use crate::browse::Browser;
 use crate::config::{self, Paths};
 use crate::receive::{self, Payload};
 use crate::render::{self, Renderer};
@@ -60,6 +61,7 @@ const FONTS: &[(&str, &[u8])] = &[
 pub struct App {
     pub store: Store,
     pub renderer: Renderer,
+    pub browse: Browser,
     pub token: String,
     pub events: broadcast::Sender<String>,
     pub started: Instant,
@@ -82,6 +84,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let app = Arc::new(App {
         store,
         renderer,
+        browse: Browser::new(),
         token,
         events: tx,
         started: Instant::now(),
@@ -92,6 +95,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let router = Router::new()
         .route("/", get(shell_home))
         .route("/d/{id}", get(shell_doc))
+        .route("/b/{id}", get(shell_browse))
+        .route("/b/{id}/{*path}", get(shell_browse_file))
         .route("/assets/app.css", get(asset_css))
         .route("/assets/app.js", get(asset_js))
         .route("/assets/boot.js", get(asset_boot))
@@ -109,6 +114,12 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/history", get(history))
         .route("/api/docs/{id}/split", get(doc_split))
         .route("/api/focus", post(focus))
+        .route("/api/browse", get(browse_list).post(browse_open))
+        .route("/api/browse/{id}/close", post(browse_close))
+        .route("/api/browse/{id}/tree", get(browse_tree))
+        .route("/api/browse/{id}/file", get(browse_file))
+        .route("/api/browse/{id}/raw", get(browse_raw))
+        .route("/api/browse/{id}/find", get(browse_find))
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/compare/{a}/{b}", get(compare))
         .route("/api/events", get(events))
@@ -189,7 +200,7 @@ fn doc_html(doc: &Doc, body: &str) -> String {
 async fn shell_home(State(app): S) -> Response {
     let tree = app.store.tree().unwrap_or_default();
     let inbox = app.store.inbox(50).unwrap_or_default();
-    let boot = json!({ "view": "inbox", "tree": tree, "inbox": inbox, "version": VERSION });
+    let boot = json!({ "view": "inbox", "tree": tree, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
     shell(&app, boot, "", "snyvi")
 }
 
@@ -201,7 +212,7 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
     let tree = app.store.tree().unwrap_or_default();
     let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
     let title = doc.title.clone();
-    let boot = json!({ "view": "doc", "tree": tree, "doc": doc, "previous": previous, "version": VERSION });
+    let boot = json!({ "view": "doc", "tree": tree, "doc": doc, "previous": previous, "browse": app.browse.list(), "version": VERSION });
     shell(&app, boot, &doc_html(&doc, &body), &title)
 }
 
@@ -555,6 +566,173 @@ fn spawn_full_highlight(app: Arc<App>, id: String, lang: Option<String>) {
             emit(&app, "rendered", json!({ "id": id }));
         }
     });
+}
+
+// ---------- browse ----------
+
+#[derive(Deserialize)]
+struct OpenBody {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct PathQ {
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FindQ {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+/// Opening a folder exposes its files, so this one needs the token. Reading inside a
+/// root the user already opened does not.
+async fn browse_open(State(app): S, headers: HeaderMap, Json(b): Json<OpenBody>) -> Response {
+    if !authorized(&app, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
+    }
+    match app.browse.open(std::path::Path::new(&b.path)) {
+        Ok(root) => {
+            let url = format!("{}/b/{}", config::base_url(), root.id);
+            emit(&app, "browse", json!({ "roots": app.browse.list() }));
+            (
+                StatusCode::CREATED,
+                Json(json!({ "root": root, "url": url })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn browse_list(State(app): S) -> Response {
+    Json(app.browse.list()).into_response()
+}
+
+async fn browse_close(State(app): S, Path(id): Path<String>) -> Response {
+    if app.browse.close(&id) {
+        emit(&app, "browse", json!({ "roots": app.browse.list() }));
+        Json(json!({ "ok": true })).into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+async fn browse_tree(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+    match app.browse.entries(&id, q.path.as_deref().unwrap_or("")) {
+        Ok(entries) => Json(entries).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn browse_file(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+    let rel = q.path.unwrap_or_default();
+    let app2 = app.clone();
+    let rel2 = rel.clone();
+    let id2 = id.clone();
+    // Rendering is CPU work; keep it off the async executor.
+    let res =
+        tokio::task::spawn_blocking(move || app2.browse.file(&id2, &rel2, &app2.renderer)).await;
+    match res {
+        Ok(Ok(view)) => {
+            let root = app.browse.get(&id);
+            Json(json!({ "file": view, "root": root })).into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
+async fn browse_raw(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+    let Ok(path) = app.browse.resolve(&id, q.path.as_deref().unwrap_or("")) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let mime = mime_guess::from_path(&path)
+                .first_or_octet_stream()
+                .to_string();
+            (
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CACHE_CONTROL, "private, max-age=60".to_string()),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn browse_find(State(app): S, Path(id): Path<String>, Query(q): Query<FindQ>) -> Response {
+    let app2 = app.clone();
+    let query = q.q.unwrap_or_default();
+    let limit = q.limit.unwrap_or(40).min(200);
+    match tokio::task::spawn_blocking(move || app2.browse.find(&id, &query, limit)).await {
+        Ok(Ok(hits)) => Json(hits).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
+async fn shell_browse(State(app): S, Path(id): Path<String>) -> Response {
+    browse_shell(app, id, String::new()).await
+}
+
+async fn shell_browse_file(State(app): S, Path((id, path)): Path<(String, String)>) -> Response {
+    browse_shell(app, id, path).await
+}
+
+async fn browse_shell(app: Arc<App>, id: String, path: String) -> Response {
+    let Some(root) = app.browse.get(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Html("<h1>That folder is no longer open</h1>"),
+        )
+            .into_response();
+    };
+    // Land on the README when no file was asked for.
+    let path = if path.is_empty() {
+        app.browse.landing(&id).unwrap_or_default()
+    } else {
+        path
+    };
+    let title = if path.is_empty() {
+        root.name.clone()
+    } else {
+        path.clone()
+    };
+    let boot = json!({
+        "view": "browse",
+        "tree": app.store.tree().unwrap_or_default(),
+        "browse": app.browse.list(),
+        "browseRoot": root,
+        "browsePath": path,
+        "version": VERSION,
+    });
+    shell(&app, boot, "", &title)
 }
 
 fn authorized(app: &App, headers: &HeaderMap) -> bool {

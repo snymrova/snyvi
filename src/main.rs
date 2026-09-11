@@ -1,3 +1,4 @@
+mod browse;
 mod client;
 mod config;
 mod desktop;
@@ -55,6 +56,14 @@ enum Cmd {
     },
     /// Open the viewer (or a document) in the browser.
     Open { id: Option<String> },
+    /// Read a folder straight from disk. Nothing is stored or added to the library.
+    Browse {
+        /// Directory to browse. Defaults to the current directory.
+        dir: Option<PathBuf>,
+        /// Print the link without opening a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Open the viewer in a native window (needs the `desktop` build feature; falls back to the browser).
     App,
     /// Run the MCP server on stdio (for Claude Code).
@@ -153,6 +162,20 @@ fn main() -> Result<()> {
                 None => config::base_url(),
             };
             client::open_in_browser(&url);
+            Ok(())
+        }
+        Cmd::Browse { dir, no_open } => {
+            let dir = dir
+                .or_else(|| std::env::current_dir().ok())
+                .context("no directory given and no current directory")?;
+            let dir = dir
+                .canonicalize()
+                .with_context(|| format!("no such directory: {}", dir.display()))?;
+            let url = client::browse(&paths, &dir.to_string_lossy())?;
+            println!("{url}");
+            if !no_open {
+                client::open_in_browser(&url);
+            }
             Ok(())
         }
         Cmd::App => {

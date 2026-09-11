@@ -5,6 +5,7 @@
   const boot = JSON.parse($("#boot").textContent || "{}");
   const root = document.documentElement;
   const main = $("#main"), docEl = $("#doc"), treeEl = $("#tree"), tocEl = $("#toc"), metaEl = $("#meta"), rail = $("#rail");
+  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row");
 
   const state = {
     tree: boot.tree || [],
@@ -16,6 +17,9 @@
     cache: new Map(),           // id -> {doc, html, previous}
     split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),
     comparing: null,            // {a, b} while a comparison is shown
+    browse: boot.browse || [],  // folders opened with `snyvi browse`
+    browseRoot: boot.browseRoot || null,
+    browsePath: boot.browsePath || "",
   };
 
   // ---------- helpers ----------
@@ -31,20 +35,44 @@
   };
   const fmt = ts => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const kindTag = k => ({ markdown: "md", code: "code", diff: "diff", text: "txt" }[k] || k);
+  const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
   const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
   const idle = () => Date.now() - state.lastActivity > 2500 && !(window.getSelection() && String(window.getSelection()).length);
   ["scroll", "keydown", "mousedown", "wheel", "touchstart"].forEach(e => window.addEventListener(e, () => { state.lastActivity = Date.now(); }, { passive: true, capture: true }));
 
   // ---------- tree ----------
   const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
+  /** The browse section keeps its own DOM across navigations so expanded folders stay open. */
+  function renderBrowse() {
+    const ids = state.browse.map(r => r.id).join(",");
+    if (browseEl.dataset.ids === ids) return;
+    browseEl.dataset.ids = ids;
+    browseEl.innerHTML = !state.browse.length ? "" : `<div class="b-section"><div class="t-label">Folders</div>` + state.browse.map(r => {
+      const active = state.browseRoot && state.browseRoot.id === r.id;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${esc(r.name)}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+    }).join("") + `</div>`;
+    for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
+  }
+
+  /** Highlight whatever is on screen, without rebuilding either tree. */
+  function markActive() {
+    for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) a.classList.remove("active");
+    if (state.view === "inbox") inboxRowEl.querySelector(".t-inbox")?.classList.add("active");
+    else if (state.view === "browse" && state.browseRoot) browseEl.querySelector(`.b-file a[data-browse="${state.browseRoot.id}"][data-path="${CSS.escape(state.browsePath)}"]`)?.classList.add("active");
+    else if (state.doc) treeEl.querySelector(`a[data-id="${state.doc.id}"]`)?.classList.add("active");
+  }
+
   function renderTree() {
     const projects = state.tree;
+    const total = projects.reduce((n, p) => n + p.workflows.reduce((m, w) => m + w.docs.length, 0), 0);
+    inboxRowEl.innerHTML = `<div class="t-inbox ${state.view === "inbox" ? "active" : ""}" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></div>`;
+    renderBrowse();
     if (!projects.length) {
-      treeEl.innerHTML = `<div class="t-inbox active"><span>Inbox</span></div><div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code></div>`;
+      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
       return;
     }
-    const total = projects.reduce((n, p) => n + p.workflows.reduce((m, w) => m + w.docs.length, 0), 0);
-    let h = `<div class="t-inbox ${state.view === "inbox" ? "active" : ""}" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></div>`;
+    // Labels only earn their space when both kinds of tree are on screen.
+    let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
       const isCur = state.doc && state.doc.project_id === p.id;
       const open = openProjects.has(String(p.id)) || isCur || projects.length === 1;
@@ -62,12 +90,43 @@
     }
     treeEl.innerHTML = h;
   }
-  treeEl.addEventListener("toggle", e => {
+
+  /** Fetch one directory level the first time its folder is opened. */
+  async function fillTree(ul) {
+    if (!ul || ul.dataset.loaded) return;
+    ul.dataset.loaded = "1";
+    ul.innerHTML = `<li class="b-empty">…</li>`;
+    const rootId = ul.dataset.root, path = ul.dataset.path || "";
+    let entries;
+    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { ul.dataset.loaded = ""; return; }
+    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; return; }
+    if (!entries.length) { ul.innerHTML = `<li class="b-empty">empty</li>`; return; }
+    ul.innerHTML = entries.map(e => e.dir
+      ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${esc(e.name)}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
+      : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}"><span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`
+    ).join("");
+    markActive();
+  }
+  treesEl.addEventListener("toggle", e => {
     const d = e.target;
+    if (d.dataset && d.dataset.root && d.open) {
+      fillTree(d.querySelector(":scope > .b-tree"));
+      return;
+    }
     if (!d.classList || !d.classList.contains("t-proj")) return;
     d.open ? openProjects.add(d.dataset.pid) : openProjects.delete(d.dataset.pid);
     store.set("snyvi.open", [...openProjects].join(","));
   }, true);
+
+  treesEl.addEventListener("click", async e => {
+    const b = e.target.closest("[data-close]");
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    const id = b.dataset.close;
+    try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
+    state.browse = state.browse.filter(r => r.id !== id);
+    if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else renderTree();
+  });
 
   /** Flat list of doc ids in sidebar order, for j/k. */
   const order = () => state.tree.flatMap(p => p.workflows.flatMap(w => w.docs.map(d => d.id)));
@@ -108,8 +167,44 @@
     afterRender();
   }
 
+  function browseHtml(f, root) {
+    const sub = `${esc(root.name)} · ${esc(f.path)} · ${fmtSize(f.size)} · ${rel(f.modified)}`;
+    return `<header class="doc-head"><h1 class="doc-title">${esc(f.name)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${f.kind}">${f.html}</article>`;
+  }
+
+  async function showBrowse(rootId, path, push = true) {
+    path = path || "";
+    if (!path) {
+      // No file asked for and no README: show the folder's contents.
+      let entries = [], root = state.browse.find(r => r.id === rootId);
+      try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=`)).json(); } catch {}
+      state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
+      state.browseRoot = root || state.browseRoot; state.browsePath = "";
+      document.title = root ? root.name : "snyvi";
+      if (push) history.pushState({ browse: rootId, path: "" }, "", `/b/${rootId}`);
+      docEl.innerHTML = `<div class="inbox-head"><h1>${esc(root ? root.name : "Folder")}</h1><p>${esc(root ? root.path : "")}</p></div><ul class="inbox">` +
+        entries.map(e => `<li><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}"><span class="title">${e.dir ? "▸ " : ""}${esc(e.name)}</span><span class="time">${e.dir ? "" : fmtSize(e.size)}</span></a></li>`).join("") + `</ul>`;
+      main.scrollTo({ top: 0, behavior: "instant" });
+      afterRender();
+      return;
+    }
+    let j;
+    try {
+      const r = await fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      j = await r.json();
+    } catch (e) { toast("Could not open file", String(e)); return; }
+    state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
+    state.browseRoot = j.root; state.browsePath = path;
+    docEl.innerHTML = browseHtml(j.file, j.root);
+    document.title = j.file.name;
+    if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
+
   async function showInbox(push = true) {
-    state.view = "inbox"; state.doc = null; state.previous = null;
+    state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
     let items = boot.inbox;
     if (!items || push) {
       try { items = await (await fetch("/api/inbox?limit=60")).json(); } catch { items = []; }
@@ -169,6 +264,7 @@
 
   function afterRender() {
     renderTree();
+    markActive();
     buildToc();
     renderMeta(false);
     enhanceCode();
@@ -265,7 +361,8 @@
   let spy = null;
   function buildToc() {
     if (spy) { spy.disconnect(); spy = null; }
-    const hs = state.view === "doc" ? [...docEl.querySelectorAll(".prose h1, .prose h2, .prose h3, .prose h4")] : [];
+    const reading = state.view === "doc" || state.view === "browse";
+    const hs = reading ? [...docEl.querySelectorAll(".prose h1, .prose h2, .prose h3, .prose h4")] : [];
     if (hs.length < 3) { tocEl.innerHTML = ""; }
     else {
       tocEl.innerHTML = `<ul>` + hs.map((h, i) => {
@@ -282,10 +379,11 @@
       }, { root: main, rootMargin: "-100px 0px -60% 0px", threshold: 0 });
       hs.forEach(h => spy.observe(h));
     }
-    rail.classList.toggle("empty", state.view !== "doc");
+    rail.classList.toggle("empty", state.view === "inbox");
   }
 
   function renderMeta(comparing) {
+    if (state.view === "browse") { renderBrowseMeta(); return; }
     const d = state.doc;
     if (!d) { metaEl.innerHTML = ""; return; }
     const rows = [
@@ -303,7 +401,21 @@
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       `</div>`;
   }
-  metaEl.addEventListener("click", e => {
+  function renderBrowseMeta() {
+    const r = state.browseRoot;
+    if (!r) { metaEl.innerHTML = ""; return; }
+    const p = state.browsePath;
+    const rows = [["Folder", r.name], p ? ["Path", p] : null].filter(Boolean);
+    metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span title="${esc(v)}">${esc(v)}</span></div>`).join("") +
+      `<div class="actions">` +
+      (p ? `<a href="/api/browse/${r.id}/raw?path=${encodeURIComponent(p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
+      `<button data-act="copybrowse">Copy path</button>` +
+      `<a href="/b/${r.id}" data-browse="${r.id}" data-path="">Folder contents</a>` +
+      `<button data-act="closebrowse">Close folder</button>` +
+      `</div>`;
+  }
+
+  metaEl.addEventListener("click", async e => {
     const b = e.target.closest("[data-act]");
     if (!b) return;
     if (b.dataset.act === "compare") showCompare();
@@ -312,6 +424,16 @@
     if (b.dataset.act === "pin") togglePin();
     if (b.dataset.act === "split") toggleSplit();
     if (b.dataset.act === "delete") deleteCurrent();
+    if (b.dataset.act === "copybrowse") {
+      const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
+      navigator.clipboard?.writeText(full); toast("Copied", full);
+    }
+    if (b.dataset.act === "closebrowse") {
+      const id = state.browseRoot.id;
+      try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
+      state.browse = state.browse.filter(r => r.id !== id);
+      showInbox(true);
+    }
   });
 
   async function togglePin() {
@@ -342,10 +464,11 @@
 
   // ---------- navigation ----------
   document.addEventListener("click", e => {
-    const a = e.target.closest("a[data-id], [data-nav]");
+    const a = e.target.closest("a[data-id], a[data-browse], [data-nav]");
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
     e.preventDefault();
     if (a.dataset.nav === "inbox") showInbox(true);
+    else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else showDoc(a.dataset.id, true);
     if (window.innerWidth <= 760) root.dataset.side = "0";
   });
@@ -353,9 +476,12 @@
     const a = e.target.closest("a[data-id]");
     if (a && !state.cache.has(a.dataset.id)) fetchDoc(a.dataset.id).catch(() => {});
   });
-  window.addEventListener("popstate", e => {
-    const m = location.pathname.match(/^\/d\/([a-z0-9]+)$/);
-    m ? showDoc(m[1], false) : showInbox(false);
+  window.addEventListener("popstate", () => {
+    const d = location.pathname.match(/^\/d\/([a-z0-9]+)$/);
+    if (d) return showDoc(d[1], false);
+    const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
+    if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false);
+    showInbox(false);
   });
 
   // ---------- live arrivals ----------
@@ -389,6 +515,11 @@
       try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
       if (state.doc && state.doc.id === j.id) showInbox(true); else renderTree();
     });
+    es.addEventListener("browse", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      state.browse = j.roots || [];
+      renderBrowse();
+    });
     es.addEventListener("pinned", async () => {
       try { state.tree = await (await fetch("/api/tree")).json(); renderTree(); } catch {}
     });
@@ -407,9 +538,21 @@
   // ---------- palette ----------
   const pal = $("#palette"), palIn = $("#palette-input"), palList = $("#palette-list");
   let palSel = 0, palItems = [], palTimer = null;
-  function openPalette() { pal.hidden = false; palIn.value = ""; palIn.placeholder = "Search documents…  (p:project  kind:md|code|diff)"; palIn.focus(); palSearch(""); }
+  function openPalette() {
+    pal.hidden = false; palIn.value = "";
+    palIn.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…` : "Search documents…  (p:project  kind:md|code|diff)";
+    palIn.focus(); palSearch("");
+  }
+  const browsing = () => state.view === "browse" && state.browseRoot;
   function closePalette() { pal.hidden = true; }
   async function palSearch(q) {
+    if (browsing()) {
+      let hits = [];
+      try { hits = await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json(); } catch {}
+      palItems = hits.map(p => ({ file: p })); palSel = 0;
+      palList.innerHTML = hits.map((p, i) => `<li class="${i === 0 ? "sel" : ""}" data-i="${i}"><span class="t">${esc(p.split("/").pop())}</span><span class="s">${esc(p)}</span></li>`).join("");
+      return;
+    }
     let items;
     if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
     else items = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
@@ -423,9 +566,10 @@
       palSel = (palSel + (e.key === "ArrowDown" ? 1 : -1) + palItems.length) % Math.max(1, palItems.length);
       palList.querySelectorAll("li").forEach((li, i) => li.classList.toggle("sel", i === palSel));
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
-    } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); showDoc(palItems[palSel].id, true); }
+    } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); showDoc(palItems[+li.dataset.i].id, true); } });
+  const openPalItem = it => it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
+  palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
   $("#btn-search").addEventListener("click", openPalette);
 
@@ -449,6 +593,14 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") { closePalette(); help.hidden = true; if (!findBar.hidden) closeFind(); return; }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (browsing() && (e.key === "j" || e.key === "k")) {
+      const links = [...browseEl.querySelectorAll(".b-file a")];
+      const at = links.findIndex(a => a.dataset.path === state.browsePath);
+      const next = links[at + (e.key === "j" ? 1 : -1)] || (at < 0 ? links[0] : null);
+      if (next) showBrowse(next.dataset.browse, next.dataset.path, true);
+      e.preventDefault();
+      return;
+    }
     const ids = order(), i = state.doc ? ids.indexOf(state.doc.id) : -1;
     const sib = siblings(), si = state.doc ? sib.indexOf(state.doc.id) : -1;
     switch (e.key) {
@@ -464,7 +616,10 @@
       case "i": showInbox(true); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
-      case "o": if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank"); break;
+      case "o":
+        if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
+        else if (browsing() && state.browsePath) window.open(`/api/browse/${state.browseRoot.id}/raw?path=${encodeURIComponent(state.browsePath)}`, "_blank");
+        break;
       case "?": help.hidden = !help.hidden; break;
       default: return;
     }
@@ -473,6 +628,7 @@
 
   // ---------- boot ----------
   if (state.view === "doc" && state.doc) { document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname); }
+  else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();
 })();

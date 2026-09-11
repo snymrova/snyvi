@@ -50,6 +50,7 @@ systemctl --user enable --now snyvi
 ```
 snyvi send PLAN.md                 # send a file, print its link
 cat notes.md | snyvi send -t Notes # send stdin
+snyvi browse [dir]                 # read a folder from disk, nothing stored
 snyvi open                         # open the viewer in the browser
 snyvi app                          # native window (see Desktop below)
 snyvi init-claude [--auto]         # register with Claude Code (user scope)
@@ -104,6 +105,30 @@ browser in app mode when one is installed, else the default browser.
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+
+## Browsing a folder
+
+`snyvi browse` opens the folder you are in as a file tree and renders
+files as you click them. Nothing is stored, nothing joins the library,
+and nothing appears in the inbox. It is a reader for code and notes you
+already have, not an import.
+
+```
+snyvi browse            # the current folder
+snyvi browse ~/code/foo
+```
+
+It honours `.gitignore` and skips hidden files, so `node_modules` and
+`target` stay out of the way. Files render on first open and are cached
+by modification time, so revisiting one is instant and editing it on
+disk shows the new content on refresh. ⌘K finds a file by name inside
+the folder, `j` and `k` step through files, and the folder closes from
+the sidebar or the rail. Images display, binaries and very large files
+are described rather than dumped.
+
+Opening a folder requires the daemon token, because it exposes those
+files to the browser. Reading inside a folder you already opened does
+not, and paths that escape the folder are refused.
 
 ## How it is organised
 

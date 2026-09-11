@@ -13,7 +13,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Side-by-side diff with word-level highlights | "Compare with previous" and sent patches are inline only. Reviews read far better in two columns with changed words emphasised. Toggle with `s`. | M | **done 0.2** |
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
-| Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. | M | later |
+| Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. Worth more now that browse mode shows code all day. | M | next |
+| Watch a browsed folder | Refresh the open file when it changes on disk, instead of on manual reload. | S | later |
 | Math (KaTeX) | Rare in engineering docs. Same lazy-load pattern as Mermaid once that exists. | S | later |
 | Structured views for JSON, YAML, CSV | Fold JSON, render CSV as a table. | M | later |
 | Line wrap toggle, jump to line, line permalinks | `#L120` links from agents; wrap for long log lines. | S | later |
@@ -74,7 +75,14 @@ Mermaid, side-by-side diff, find in document, images, file history, one
 workflow per session, search filters, delete from UI, desktop
 notifications, remembered window geometry, CSP header.
 
-## Candidates for 0.3
+## 0.3 (in progress)
+
+`snyvi browse <dir>`: read a folder straight from disk, rendered on
+demand, nothing persisted and nothing in the inbox. Chosen over bulk
+import into the library, which would have flooded the inbox, the one
+screen that answers "what did my agents produce".
+
+## Other candidates for 0.3
 
 Code outline in the rail, `snyvi watch`, rename workflow and project,
 tags from the sender, macOS build, packages (.deb, AppImage), tray icon.
