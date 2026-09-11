@@ -684,6 +684,15 @@
     store.set("snyvi.theme", next);
     toast("Theme", next || "system");
   });
+  function toggleWide() {
+    const on = root.dataset.wide !== "1";
+    on ? (root.dataset.wide = "1") : delete root.dataset.wide;
+    store.set("snyvi.wide", on ? "1" : "0");
+    $("#btn-wide").classList.toggle("on", on);
+  }
+  $("#btn-wide").addEventListener("click", toggleWide);
+  $("#btn-wide").classList.toggle("on", root.dataset.wide === "1");
+
   $("#btn-font").addEventListener("click", () => {
     const next = root.dataset.font === "serif" ? "" : "serif";
     next ? (root.dataset.font = next) : delete root.dataset.font;
@@ -719,6 +728,7 @@
       case "/": openFind(); break;
       case "Backspace": case "Delete": deleteCurrent(); break;
       case "i": showInbox(true); break;
+      case "w": toggleWide(); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
       case "o":

@@ -684,6 +684,8 @@ fn plain(source: &str) -> String {
 /// Rows past this are dropped. A spreadsheet of any size still opens instantly, and
 /// nobody reads row 3000 of a table in a viewer; `o` opens the whole file.
 const MAX_TABLE_ROWS: usize = 2000;
+/// A column whose longest cell exceeds this is prose, not an identifier.
+const PROSE_COLUMN_CHARS: usize = 44;
 
 /// Split delimited text into rows, honouring RFC 4180 quoting: a field wrapped in
 /// quotes may contain the delimiter, a newline, or a doubled quote standing for one.
@@ -752,25 +754,45 @@ pub fn table(source: &str, lang: Option<&str>) -> String {
     }
     // Ragged rows are common in hand-edited files; pad them so the columns line up.
     let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    let cell = |s: &str| {
-        let class = if is_numeric(s) { " class=\"num\"" } else { "" };
-        format!("<td{class}>{}</td>", html_escape::encode_text(s.trim()))
+    // Identifiers and numbers are scanned down a column and must not wrap; prose
+    // columns are read across and must, or they get cut off at the pane edge.
+    let prose: Vec<bool> = (0..width)
+        .map(|i| {
+            rows.iter()
+                .skip(1)
+                .filter_map(|r| r.get(i))
+                .map(|c| c.trim().len())
+                .max()
+                .unwrap_or(0)
+                > PROSE_COLUMN_CHARS
+        })
+        .collect();
+    let class_for = |i: usize, s: &str| match (prose[i], is_numeric(s)) {
+        (true, _) => " class=\"wrap\"",
+        (_, true) => " class=\"num\"",
+        _ => "",
     };
 
     let mut out = String::with_capacity(source.len() * 2);
     out.push_str("<table class=\"data\"><thead><tr>");
-    for i in 0..width {
-        out.push_str("<th>");
-        out.push_str(&html_escape::encode_text(
-            rows[0].get(i).map(|s| s.trim()).unwrap_or(""),
+    for (i, wraps) in prose.iter().enumerate() {
+        let head = rows[0].get(i).map(|s| s.trim()).unwrap_or("");
+        out.push_str(&format!(
+            "<th{}>{}</th>",
+            if *wraps { " class=\"wrap\"" } else { "" },
+            html_escape::encode_text(head)
         ));
-        out.push_str("</th>");
     }
     out.push_str("</tr></thead><tbody>");
     for row in rows.iter().skip(1) {
         out.push_str("<tr>");
         for i in 0..width {
-            out.push_str(&cell(row.get(i).map(String::as_str).unwrap_or("")));
+            let v = row.get(i).map(String::as_str).unwrap_or("");
+            out.push_str(&format!(
+                "<td{}>{}</td>",
+                class_for(i, v),
+                html_escape::encode_text(v.trim())
+            ));
         }
         out.push_str("</tr>");
     }
@@ -846,7 +868,7 @@ pub fn title_for(explicit: Option<&str>, kind: Kind, path: Option<&str>, content
 }
 
 /// If the first non-blank line is an H1 equal to `title`, return the content without it.
-pub fn strip_leading_h1(content: &str, title: &str) -> Option<String> {
+pub fn strip_leading_h1(content: &str, _title: &str) -> Option<String> {
     let mut lines = content.split_inclusive('\n');
     let mut prefix_len = 0usize;
     for line in lines.by_ref() {
@@ -860,9 +882,11 @@ pub fn strip_leading_h1(content: &str, title: &str) -> Option<String> {
             .trim()
             .trim_end_matches('#')
             .trim();
-        if h != title {
+        if h.is_empty() {
             return None;
         }
+        // The viewer prints the title above the body, so a leading H1 is a second
+        // copy of it whether or not the words match.
         let rest_start = prefix_len + line.len();
         return Some(content[rest_start..].to_string());
     }
@@ -1212,16 +1236,6 @@ mod tests {
     }
 
     #[test]
-    fn strips_only_a_matching_leading_h1() {
-        assert_eq!(
-            strip_leading_h1("\n# T\n\nbody", "T").as_deref(),
-            Some("\nbody")
-        );
-        assert!(strip_leading_h1("# Other\n\nbody", "T").is_none());
-        assert!(strip_leading_h1("intro\n# T\n", "T").is_none());
-    }
-
-    #[test]
     fn markdown_fast_path_and_sanitizer() {
         let r = r();
         let safe = r.render(
@@ -1371,6 +1385,44 @@ mod tests {
         assert!(r
             .outline(Some("txt"), "just words\nmore words\n")
             .is_empty());
+    }
+
+    #[test]
+    fn a_leading_h1_is_dropped_even_when_it_differs_from_the_title() {
+        assert_eq!(
+            strip_leading_h1("\n# Its own heading\n\nbody", "A different title").as_deref(),
+            Some("\nbody")
+        );
+        assert_eq!(
+            strip_leading_h1("# Same\n\nbody", "Same").as_deref(),
+            Some("\nbody")
+        );
+        assert!(
+            strip_leading_h1("intro\n# Later\n", "x").is_none(),
+            "only a leading H1"
+        );
+        assert!(strip_leading_h1("## Smaller\n", "x").is_none());
+    }
+
+    #[test]
+    fn prose_columns_wrap_and_identifier_columns_do_not() {
+        let long = "Configure firewalls and proxy servers so that inbound traffic is filtered";
+        let src =
+            format!("id,status,description\nKSI-CNA-2,modified,{long}\nKSI-CNA-4,same,short\n");
+        let html = table(&src, Some("csv"));
+        assert!(
+            html.contains("<th class=\"wrap\">description</th>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<th>id</th>"),
+            "identifier header stays rigid: {html}"
+        );
+        assert!(
+            html.contains(&format!("<td class=\"wrap\">{long}</td>")),
+            "{html}"
+        );
+        assert!(html.contains("<td>KSI-CNA-2</td>"), "{html}");
     }
 
     #[test]

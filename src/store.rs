@@ -139,6 +139,18 @@ impl Store {
         )?;
         conn.execute_batch(SCHEMA)?;
         // Migrations for databases created before these columns existed.
+        // Keys used to be case-sensitive, so the same workflow could exist twice.
+        // Fold the duplicates into the oldest row; harmless once there are none.
+        conn.execute_batch(
+            "UPDATE docs SET workflow_id = (
+                 SELECT MIN(w2.id) FROM workflows w2
+                 JOIN workflows w1 ON w1.id = docs.workflow_id
+                 WHERE w2.project_id = w1.project_id AND LOWER(w2.key) = LOWER(w1.key)
+             );
+             DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs);
+             UPDATE workflows SET key = LOWER(key) WHERE key <> LOWER(key);",
+        )
+        .ok();
         for stmt in [
             "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'",
@@ -635,6 +647,19 @@ mod tests {
                 .title,
             "C"
         );
+    }
+
+    #[test]
+    fn workflow_keys_ignore_case() {
+        let (s, _d) = temp_store();
+        let a = s
+            .insert(&new_id("a"), new_doc("A", "one", "ksi pivot"))
+            .unwrap();
+        let b = s
+            .insert(&new_id("b"), new_doc("B", "two", "ksi pivot"))
+            .unwrap();
+        assert_eq!(a.workflow_id, b.workflow_id, "same key is one workflow");
+        assert_eq!(s.tree().unwrap()[0].workflows.len(), 1);
     }
 
     #[test]

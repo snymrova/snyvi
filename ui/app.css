@@ -143,6 +143,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 }
 
 #side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; }
+/* Pin each pane to its named area. Without this a hidden sidebar leaves the grid
+   and the document pane slides into the zero-width first column. */
+#side { grid-area: side; }
+#main { grid-area: main; }
+#rail { grid-area: rail; }
 #main { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) { #main { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
 
@@ -153,6 +158,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .brand-mark { width: 14px; height: 14px; border-radius: 4px; background: var(--accent); display: inline-block; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
+.icon.on { color: var(--accent); background: var(--accent-bg); }
 .icon .aa { font-size: 12px; font-weight: 600; letter-spacing: -.02em; font-family: var(--serif); }
 .side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
 .side-foot .spacer { flex: 1; }
@@ -207,9 +213,14 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
 .b-file .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
 /* A previewed page is somebody else's design; give it the pane and no styling of ours. */
-article.preview { margin: 0; padding: 0; height: calc(100vh - 132px); min-height: 360px; }
+/* One scroll region: the frame fills what is left of the pane, so the page itself
+   does not also scroll behind it. */
+#main:has(article.preview) { overflow: hidden; }
+#doc:has(article.preview) { display: flex; flex-direction: column; height: 100%; padding-top: 32px; padding-bottom: 24px; }
+#doc:has(article.preview) .doc-head { margin-bottom: 20px; flex: none; }
+article.preview { margin: 0; padding: 0; flex: 1 1 auto; min-height: 360px; }
 article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: var(--radius); background: #fff; display: block; }
-@media (max-width: 760px) { article.preview { height: calc(100vh - 180px); } }
+@media (max-width: 760px) { #doc:has(article.preview) { padding-top: 20px; } }
 
 .browse-image, .doc-image { text-align: center; margin: 1.5em 0; }
 .browse-image img, .doc-image img { border-radius: var(--radius); max-width: 100%; height: auto; }
@@ -265,9 +276,12 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose tr:last-child td { border-bottom-color: var(--rule-2); }
 .prose td:last-child, .prose th:last-child { padding-right: 0; }
 /* A data table is read by scanning columns, so numbers align and the head stays put. */
-.prose table.data { font-family: var(--mono); font-size: .84em; max-height: calc(100vh - 220px); overflow: auto; }
-.prose table.data thead th { position: sticky; top: 0; background: var(--bg); z-index: 1; white-space: nowrap; }
+/* The page is the only vertical scroll; the table keeps horizontal scroll alone. */
+.prose table.data { font-family: var(--mono); font-size: .84em; }
+.prose table.data thead th { position: sticky; top: 0; background: var(--bg); z-index: 1; white-space: nowrap; box-shadow: 0 1px 0 var(--rule-2); }
 .prose table.data td { white-space: nowrap; padding: .28em 1.1em .28em 0; line-height: 1.45; }
+/* Prose columns wrap instead of running off the edge. */
+.prose table.data td.wrap, .prose table.data th.wrap { white-space: normal; min-width: 28ch; max-width: 70ch; overflow-wrap: anywhere; }
 .prose table.data thead th { padding: .4em 1.1em .4em 0; }
 .prose table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .prose table.data tbody tr:hover td { background: var(--code-bg); }
@@ -307,7 +321,11 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 .kind-code pre.code, .kind-text pre.code, .kind-diff pre.code { margin: 0; background: transparent; padding: 0; font-size: 13px; }
 .kind-code .ln::before, .kind-text .ln::before { padding-left: 0; }
 .diff .ln::before { display: none !important; }
-#doc:has(.kind-code), #doc:has(.kind-text), #doc:has(.kind-diff) { max-width: none; padding-left: 40px; padding-right: 40px; }
+/* Anything that is not prose wants the pane, not the reading measure. */
+#doc:has(.kind-code), #doc:has(.kind-text), #doc:has(.kind-diff),
+#doc:has(.kind-table), #doc:has(.kind-image), #doc:has(article.preview) { max-width: none; padding-left: 40px; padding-right: 40px; }
+/* Maximise width: prose gives up its measure and uses the window. */
+:root[data-wide="1"] #doc { max-width: none; padding-left: 64px; padding-right: 64px; }
 
 /* find bar */
 #find[hidden] { display: none; }
@@ -394,7 +412,9 @@ pre.mermaid[data-processed] { color: inherit; }
 /* ---------- rail ---------- */
 #rail { padding: 60px 20px 20px 8px; overflow-y: auto; font-size: 12.5px; }
 #toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
-#toc li a { display: block; padding: 3px 10px; color: var(--fg-3); border-left: 1px solid transparent; margin-left: -1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; transition: color var(--t), border-color var(--t); }
+#toc li a { display: block; padding: 3px 10px; color: var(--fg-3); border-left: 1px solid transparent; margin-left: -1px; line-height: 1.4; transition: color var(--t), border-color var(--t); overflow-wrap: anywhere; }
+/* Two lines of a heading, then ellipsis: better than cutting every entry mid-word. */
+#toc li a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 #toc li.d3 a { padding-left: 22px; }
 #toc li.d4 a { padding-left: 34px; }
 #toc li a:hover { color: var(--fg); text-decoration: none; }
@@ -411,7 +431,9 @@ pre.code .ln.flash { background: var(--accent-bg); }
 
 #meta { margin-top: 28px; color: var(--fg-3); line-height: 1.7; }
 #meta .row { display: flex; gap: 8px; }
-#meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; }
+#meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; flex: none; }
+/* Long folder and file names wrap inside the rail rather than running off it. */
+#meta .row span { min-width: 0; overflow-wrap: anywhere; }
 #meta .actions { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 #meta .actions button, #meta .actions a { color: var(--fg-2); padding: 3px 0; }
 #meta .actions button:hover, #meta .actions a:hover { color: var(--accent); text-decoration: none; }

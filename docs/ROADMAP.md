@@ -99,6 +99,31 @@ obvious, all now closed: the library mangled any file that was not text,
 `.html` and `.pdf` could only be read as source, and a `.csv` was a wall
 of commas.
 
+## 0.3.2: layout after real use
+
+Screens from a real repository showed the seams where new view types met
+layout rules written for prose:
+
+- Previews and tables were held to the reading measure, so a dashboard
+  built for 1400px rendered in 660px. Everything that is not prose now
+  takes the pane.
+- Every embed brought its own scroll region inside a page that also
+  scrolled. One scroll region per screen now.
+- Table cells never wrapped, so descriptions were cut mid-word. Columns
+  wider than 44 characters are treated as prose and wrap; identifier and
+  numeric columns stay rigid.
+- The rail clipped long folder names and heading titles.
+- A leading H1 was only dropped when it matched the title, so a document
+  whose own heading differed showed two headings.
+- Workflow keys were case-sensitive, so "KSI pivot" and "ksi pivot" were
+  two workflows. Keys now fold case, and existing duplicates merge on
+  first run.
+- Hiding the sidebar collapsed the document pane: the grid named its
+  areas but never assigned the panes to them, so a hidden sidebar left
+  the grid and everything shifted into the zero-width column.
+
+New: `w` maximises width, overriding the reading measure for prose.
+
 ## Other candidates for 0.3
 
 `snyvi watch`, rename workflow and project, tags from the sender, macOS

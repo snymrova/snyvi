@@ -109,7 +109,9 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     };
     let title = render::title_for(p.title.as_deref(), kind, path.as_deref(), &text);
 
-    let (wf_key, wf_title) = match (&p.workflow, &p.session) {
+    // Keys are matched case-insensitively: "KSI pivot" and "ksi pivot" are one
+    // workflow, not two. The title keeps whatever casing arrived first.
+    let (wf_name, wf_title) = match (&p.workflow, &p.session) {
         (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
         (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.clone()),
         _ => ("manual".to_string(), "Sent manually".to_string()),
@@ -117,6 +119,9 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     // A hook firing on every edit would otherwise fill a workflow with near-identical
     // snapshots; within a short window, overwrite the last one instead.
+    let wf_key = wf_name.to_lowercase();
+    let _ = &wf_name;
+
     let coalesce_into = match (origin, &latest_same_path) {
         ("hook", Some(prev))
             if prev.origin == "hook"

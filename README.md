@@ -123,6 +123,7 @@ browser in app mode when one is installed, else the default browser.
 | s     | split / inline view for diffs               |
 | v     | preview a page or PDF / back to source      |
 | /     | find in document                            |
+| w     | maximise width                              |
 | p     | pin (kept by `prune`)                       |
 | ⌫     | delete document                             |
 | i     | inbox                                       |
@@ -157,6 +158,15 @@ A PDF is framed without a sandbox, because the browser's viewer refuses
 to run inside one. That is safe for a different reason: the bytes are
 served as `application/pdf` with `nosniff`, so they can only ever reach
 the PDF viewer and can never be parsed as a page.
+
+## Width
+
+Prose is capped at a comfortable measure, because long lines are hard to
+read. Anything that is not prose ignores that cap and takes the pane:
+code, diffs, tables, images, and previewed pages and PDFs.
+
+`w` overrides the cap for prose too. Combined with `\` and `t`, which
+hide the sidebar and the rail, it gives the document the whole window.
 
 ## The rail
 
