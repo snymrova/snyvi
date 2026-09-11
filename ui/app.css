@@ -310,7 +310,9 @@ pre.code:hover .copy { opacity: 1; }
 pre.code:hover:has(.copy)::before { opacity: 0; }
 pre.code .copy:hover { color: var(--fg); }
 pre.code .ln { display: inline; }
-pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 3.2ch; margin-right: 1.6ch; padding-left: 14px; box-sizing: content-box; text-align: right; color: var(--fg-3); opacity: .55; user-select: none; -webkit-user-select: none; }
+/* The number gutter, written once: the wrap rules below hang continuation lines past it. */
+pre.code { --num-pad: 14px; --num-w: 3.2ch; --num-gap: 1.6ch; --gutter: calc(var(--num-pad) + var(--num-w) + var(--num-gap)); }
+pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: var(--num-w); margin-right: var(--num-gap); padding-left: var(--num-pad); box-sizing: content-box; text-align: right; color: var(--fg-3); opacity: .55; user-select: none; -webkit-user-select: none; }
 .kind-markdown pre.code .ln::before { display: none; }
 .kind-markdown pre.code .ln { padding: 0 16px; }
 .kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln::before { display: inline-block; }
@@ -319,7 +321,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 /* standalone code / text / diff documents */
 .kind-code, .kind-text, .kind-diff { font-family: var(--mono); }
 .kind-code pre.code, .kind-text pre.code, .kind-diff pre.code { margin: 0; background: transparent; padding: 0; font-size: 13px; }
-.kind-code .ln::before, .kind-text .ln::before { padding-left: 0; }
+.kind-code pre.code, .kind-text pre.code { --num-pad: 0px; }   /* the pane already insets these */
 .diff .ln::before { display: none !important; }
 /* Anything that is not prose wants the pane, not the reading measure. */
 #doc:has(.kind-code), #doc:has(.kind-text), #doc:has(.kind-diff),
@@ -428,6 +430,20 @@ pre.mermaid[data-processed] { color: inherit; }
 #toc .outline li a { font-family: var(--mono); font-size: 11.5px; }
 pre.code .ln { scroll-margin-top: 76px; }
 pre.code .ln.flash { background: var(--accent-bg); }
+/* A line the URL points at (#L12, #L12-L20) stays marked while it is being read;
+   clicking the number in the gutter is what writes that URL. */
+pre.code .ln.at { background: var(--accent-bg); }
+pre.code .ln.at::before { opacity: 1; color: var(--accent); }
+pre.code .ln::before { cursor: pointer; }
+
+/* Wrap long lines, for logs and generated code that run off the pane. Where there
+   are line numbers the continuations hang past them, so the code still lines up. */
+:root[data-wrap="1"] pre.code { white-space: pre-wrap; }
+:root[data-wrap="1"] pre.code code { min-width: 0; }
+:root[data-wrap="1"] pre.code .ln { display: inline-block; width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+:root[data-wrap="1"] .kind-code pre.code .ln,
+:root[data-wrap="1"] .kind-text pre.code .ln,
+:root[data-wrap="1"] .kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln { padding-left: var(--gutter); text-indent: calc(-1 * var(--gutter)); }
 
 #meta { margin-top: 28px; color: var(--fg-3); line-height: 1.7; }
 #meta .row { display: flex; gap: 8px; }

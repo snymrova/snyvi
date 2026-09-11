@@ -930,3 +930,37 @@ fn err(e: anyhow::Error) -> Response {
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{APP_JS, BOOT_JS, INDEX_HTML};
+
+    /// `$("#btn-wrap").addEventListener` on an element that is not in the page throws on
+    /// boot and takes the whole UI with it, so every id the script uses without checking
+    /// first must exist in the markup. A guarded `const x = $("#id"); if (x)` is fine.
+    #[test]
+    fn every_id_the_script_uses_unguarded_is_in_the_page() {
+        let mut missing = Vec::new();
+        for (i, _) in APP_JS.match_indices("$(\"#") {
+            let rest = &APP_JS[i + 4..];
+            let end = rest.find('"').expect("unterminated selector");
+            let id = &rest[..end];
+            let used_at_once = rest[end..].starts_with("\").");
+            if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
+                missing.push(id);
+            }
+        }
+        assert!(missing.is_empty(), "not in index.html: {missing:?}");
+    }
+
+    /// The pre-paint script and the app must agree on the keys, or a saved setting is
+    /// written by one and never read by the other.
+    #[test]
+    fn settings_written_by_the_app_are_applied_before_first_paint() {
+        for key in ["theme", "font", "side", "wide", "wrap"] {
+            let k = format!("snyvi.{key}");
+            assert!(APP_JS.contains(&k), "{k} is not used by app.js");
+            assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
+        }
+    }
+}

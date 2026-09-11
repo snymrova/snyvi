@@ -169,6 +169,7 @@ browser in app mode when one is installed, else the default browser.
 | v     | preview a page or PDF / back to source      |
 | /     | find in document                            |
 | w     | maximise width                              |
+| z     | wrap long lines                             |
 | p     | pin (kept by `prune`)                       |
 | ⌫     | delete document                             |
 | i     | inbox                                       |
@@ -176,6 +177,17 @@ browser in app mode when one is installed, else the default browser.
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+
+## Lines
+
+A code or text document addresses its lines. `#L120` opens it at line 120
+with the line marked; `#L120-L140` marks the range. Click a line number to
+get that link, copied to the clipboard; shift-click a second one for a
+range. ⌘K then `:120` jumps without leaving the keyboard.
+
+`z` wraps long lines, for logs and generated code that run off the pane.
+Continuations hang past the line numbers, so the code still lines up. The
+setting is remembered.
 
 ## Tables
 

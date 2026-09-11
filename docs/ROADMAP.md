@@ -19,7 +19,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Structured views for JSON, YAML, CSV | CSV and TSV render as a table (**done 0.3**). JSON folding and YAML remain. | M | later |
 | Preview a page or a PDF | An `.html` file showed as source only and a `.pdf` as "a binary file". Both now show as themselves with `v`: a page in an iframe with an opaque origin, a PDF in the browser's viewer. | M | **done 0.3** |
 | Images and binaries in the library | `send_document` of a PNG stored mojibake. Images are kept as bytes and displayed; anything else undecodable is described. | S | **done 0.3** |
-| Line wrap toggle, jump to line, line permalinks | `#L120` links from agents; wrap for long log lines. | S | later |
+| Line wrap toggle, jump to line, line permalinks | `#L120` and `#L120-L140` open a code document at a line and mark it; clicking a line number writes that link; `z` wraps long lines with the continuations hanging past the numbers. | S | **done 0.4** |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
 ## B. Library and organisation
@@ -144,9 +144,9 @@ file being saved every few seconds no longer steals the reader's
 position or raises a toast each time.
 
 Also in this cut: a `.deb`. `dpkg -i` installs `snyvi` on the path, an
-application menu entry, and a systemd user service for people who would
-rather the daemon were resident from login than started by their first
-send. It declares no dependencies, which a static binary has earned, and
+application menu entry that opens the viewer in its own window, and a
+systemd user service for people who would rather the daemon were resident
+from login than started by their first send. It declares no dependencies, which a static binary has earned, and
 on an upgrade it says the one thing that is easy to miss: the daemon
 keeps running the old binary until it is restarted.
 
@@ -155,8 +155,19 @@ but `dpkg-deb`, so packaging adds no crate to the build and can be run by
 hand. CI builds and installs the package on every push, because a script
 that only runs at release time is broken exactly when it matters.
 
-Still to come in this cut: line wrap toggle, jump to line and `#L120`
-permalinks; rename workflow and project; JSON and YAML views.
+Lines became addressable. A code or text document opens at `#L120`, or at
+`#L120-L140` for a range, with the lines marked while they are read rather
+than flashed once, so a link from an agent lands on something visible. A
+click on a line number writes that link and copies it, shift-click extends
+it to a range, and ⌘K takes `:120` for the same jump from the keyboard.
+
+`z` wraps long lines. Continuations hang past the line numbers so the code
+still lines up, which needed the gutter width to exist in one place; the
+rule that was meant to remove the inset on code documents had been losing on
+specificity since it was written, so the numbers now line up with the title
+above them as intended.
+
+Still to come in this cut: rename workflow and project; JSON and YAML views.
 
 ## Candidates after 0.4
 

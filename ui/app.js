@@ -346,6 +346,7 @@
     renderMermaid();
     renderHistory();
     clearFind();
+    applyLineHash(true);
   }
 
   /** The body was swapped under the reader: rebuild what hangs off it, keep the sidebar. */
@@ -356,6 +357,7 @@
     renderMermaid();
     renderHistory();
     if (!findBar.hidden && findIn.value) runFind(findIn.value); else clearFind();
+    applyLineHash(false);   // the scroll position is restored by the caller
   }
 
   // ---------- live refresh ----------
@@ -551,6 +553,72 @@
     setTimeout(() => el.classList.remove("flash"), 700);
   }
 
+  // ---------- line links ----------
+  /** `#L120` addresses a line of the document, so it only means something where
+   *  the whole document is one block of lines: a code or text file, sent or browsed. */
+  const codePre = () => docEl.querySelector("article.kind-code pre.code, article.kind-text pre.code");
+  function lineHash() {
+    const m = /^#L(\d+)(?:-L?(\d+))?$/.exec(location.hash);
+    if (!m) return null;
+    const a = +m[1], b = m[2] ? +m[2] : a;
+    return a > 0 ? { a: Math.min(a, b), b: Math.max(a, b) } : null;
+  }
+  const frag = (a, b) => (a === b ? `#L${a}` : `#L${a}-L${b}`);
+
+  /** Mark the lines the URL points at. They stay marked while they are being read,
+   *  so a link from an agent lands on something you can see. */
+  function applyLineHash(scroll) {
+    for (const el of docEl.querySelectorAll("pre.code .ln.at")) el.classList.remove("at");
+    const r = lineHash(), pre = codePre();
+    if (!r || !pre) return;
+    const lines = pre.querySelectorAll(".ln");
+    let first = null;
+    for (let n = r.a; n <= r.b; n++) {
+      const el = lines[n - 1];
+      if (!el) break;
+      el.classList.add("at");
+      first = first || el;
+    }
+    if (first && scroll) first.scrollIntoView({ block: "center", behavior: "instant" });
+  }
+
+  function setLines(a, b, scroll) {
+    history.replaceState(history.state, "", location.pathname + frag(a, b));
+    applyLineHash(scroll);
+  }
+
+  function gotoLine(n) {
+    const pre = codePre();
+    if (!pre) { toast("No line numbers here", "Line links work on code and text documents."); return; }
+    if (n > pre.querySelectorAll(".ln").length) { toast(`No line ${n}`, "The document is shorter than that."); return; }
+    setLines(n, n, true);
+  }
+
+  /** Width of the number gutter, or 0 where the numbers are hidden (diffs, short blocks). */
+  function gutterWidth(ln) {
+    const s = getComputedStyle(ln, "::before");
+    if (!s || s.display === "none") return 0;
+    const w = parseFloat(s.paddingLeft) + parseFloat(s.width) + parseFloat(s.marginRight);
+    return isFinite(w) ? w : 0;
+  }
+
+  /** Click a line number for a link to that line; shift-click for a range. */
+  function wireLines(pre) {
+    pre.addEventListener("click", e => {
+      const ln = e.target.closest(".ln");
+      if (!ln || codePre() !== pre) return;
+      const box = ln.getClientRects()[0];
+      if (!box || e.clientX - box.left > gutterWidth(ln)) return;   // the code, not the number
+      e.preventDefault();
+      const n = [...pre.querySelectorAll(".ln")].indexOf(ln) + 1;
+      const prev = e.shiftKey && lineHash();
+      setLines(prev ? Math.min(prev.a, n) : n, prev ? Math.max(prev.a, n) : n, false);
+      navigator.clipboard?.writeText(location.href);
+      toast("Link copied", location.pathname + location.hash);
+    });
+  }
+  window.addEventListener("hashchange", () => applyLineHash(true));
+
   function renderMeta(comparing) {
     if (state.view === "browse") { renderBrowseMeta(); return; }
     const d = state.doc;
@@ -631,6 +699,7 @@
   function enhanceCode() {
     for (const pre of docEl.querySelectorAll("pre.code")) {
       if (pre.querySelector(".copy")) continue;
+      wireLines(pre);
       const b = document.createElement("button");
       b.className = "copy"; b.textContent = "Copy"; b.title = "Copy code";
       b.addEventListener("click", () => {
@@ -735,12 +804,20 @@
   let palSel = 0, palItems = [], palTimer = null;
   function openPalette() {
     pal.hidden = false; palIn.value = "";
-    palIn.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…` : "Search documents…  (p:project  kind:md|code|diff)";
+    palIn.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
+      : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff)";
     palIn.focus(); palSearch("");
   }
   const browsing = () => state.view === "browse" && state.browseRoot;
   function closePalette() { pal.hidden = true; }
   async function palSearch(q) {
+    // A line number is not a search term. `:120` and `L120` jump instead.
+    const g = /^\s*[:lL]\s*(\d+)\s*$/.exec(q);
+    if (g && codePre()) {
+      palItems = [{ line: +g[1] }]; palSel = 0;
+      palList.innerHTML = `<li class="sel" data-i="0"><span class="t">Go to line ${+g[1]}</span><span class="s">${esc(document.title)}</span></li>`;
+      return;
+    }
     if (browsing()) {
       let hits = [];
       try { hits = await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json(); } catch {}
@@ -763,7 +840,7 @@
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  const openPalItem = it => it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
+  const openPalItem = it => it.line ? gotoLine(it.line) : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
   palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
   $("#btn-search").addEventListener("click", openPalette);
@@ -783,6 +860,17 @@
   }
   $("#btn-wide").addEventListener("click", toggleWide);
   $("#btn-wide").classList.toggle("on", root.dataset.wide === "1");
+
+  function toggleWrap() {
+    const on = root.dataset.wrap !== "1";
+    on ? (root.dataset.wrap = "1") : delete root.dataset.wrap;
+    store.set("snyvi.wrap", on ? "1" : "0");
+    $("#btn-wrap").classList.toggle("on", on);
+    // On prose there is nothing to wrap, so say what the setting did instead.
+    if (!docEl.querySelector("pre.code")) toast("Line wrap", on ? "on, for code" : "off");
+  }
+  $("#btn-wrap").addEventListener("click", toggleWrap);
+  $("#btn-wrap").classList.toggle("on", root.dataset.wrap === "1");
 
   $("#btn-font").addEventListener("click", () => {
     const next = root.dataset.font === "serif" ? "" : "serif";
@@ -820,6 +908,7 @@
       case "Backspace": case "Delete": deleteCurrent(); break;
       case "i": showInbox(true); break;
       case "w": toggleWide(); break;
+      case "z": toggleWrap(); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
       case "o":
@@ -833,8 +922,8 @@
   });
 
   // ---------- boot ----------
-  if (state.view === "doc" && state.doc) { document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname); }
-  else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname); }
+  if (state.view === "doc" && state.doc) { document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname + location.hash); }
+  else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();
 })();

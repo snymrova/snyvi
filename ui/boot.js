@@ -6,4 +6,5 @@ try {
   if (f) d.dataset.font = f;
   if (localStorage.getItem("snyvi.side") === "0") d.dataset.side = "0";
   if (localStorage.getItem("snyvi.wide") === "1") d.dataset.wide = "1";
+  if (localStorage.getItem("snyvi.wrap") === "1") d.dataset.wrap = "1";
 } catch (e) {}
