@@ -124,7 +124,7 @@ layout rules written for prose:
 
 New: `w` maximises width, overriding the reading measure for prose.
 
-## 0.4 (released)
+## 0.4 (cut, awaiting release)
 
 Watching, both ways. In browse mode the file on screen refreshes when it
 is saved and the tree follows files being added or removed, with the
@@ -178,12 +178,26 @@ Rename workflow and project, tags from the sender, macOS build, AppImage
 and AUR, tray icon with a global shortcut.
 
 Release hygiene: CI now builds `--features desktop` and opens the window
-under Xvfb, so the Tauri path is no longer unverified. `v0.4.0` is the
-first release actually cut, which makes the `.deb` in the install
-instructions something you can download rather than something the README
-promises. Until it ran, the release workflow was the one path proven only
-by proxy: CI builds and installs the package on every push, but nothing
-had ever exercised tagging, the two-architecture matrix, or the upload.
+under Xvfb, so the Tauri path is no longer unverified. Still open, and
+now with the reason pinned down: no release has ever been cut, so the
+install instructions point at an empty releases page. The release
+workflow is the one path proven only by proxy — CI builds and installs
+the `.deb` on every push, but nothing has ever exercised tagging, the
+two-architecture matrix, or the upload.
+
+Both ways of starting it need a credential an agent session does not
+have. `workflow_dispatch` returns 403 (`Resource not accessible by
+integration`), and pushing `v0.4.0` returns 403 from GitHub while a
+push of ordinary commits to the same branch succeeds — the token can
+write commits but not tags or workflow runs. So it is still one
+command, and it still has to come from a machine with tag permission:
+
+```
+git tag -a v0.4.0 -m "snyvi 0.4.0" && git push origin v0.4.0
+```
+
+The version in `Cargo.toml` is already `0.4.0`, so the tag is the only
+step.
 
 ## Still no purpose-built view
 
