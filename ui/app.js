@@ -413,7 +413,7 @@
     if (spy) { spy.disconnect(); spy = null; }
     const reading = state.view === "doc" || state.view === "browse";
     const hs = reading ? [...docEl.querySelectorAll(".prose h1, .prose h2, .prose h3, .prose h4")] : [];
-    if (hs.length < 3) { tocEl.innerHTML = ""; }
+    if (hs.length < 3) { tocEl.innerHTML = ""; buildOutline(); }
     else {
       tocEl.innerHTML = `<ul>` + hs.map((h, i) => {
         if (!h.id) h.id = `h-${i}`;
@@ -430,6 +430,49 @@
       hs.forEach(h => spy.observe(h));
     }
     rail.classList.toggle("empty", state.view === "inbox");
+  }
+
+  /** Prose has headings; code has declarations. Same rail, fetched after first paint. */
+  let outlineSpy = null;
+  async function buildOutline() {
+    if (outlineSpy) { outlineSpy.disconnect(); outlineSpy = null; }
+    const url = state.view === "doc" && state.doc && state.doc.kind === "code"
+      ? `/api/docs/${state.doc.id}/outline`
+      : (browsing() && state.browsePath ? `/api/browse/${state.browseRoot.id}/outline?path=${encodeURIComponent(state.browsePath)}` : null);
+    if (!url) return;
+    const token = ++outlineToken;
+    let items = [];
+    try { items = await (await fetch(url)).json(); } catch { return; }
+    // A newer document started loading while this was in flight.
+    if (token !== outlineToken || !Array.isArray(items) || !items.length) return;
+    const lines = [...docEl.querySelectorAll("pre.code .ln")];
+    if (!lines.length) return;
+    tocEl.innerHTML = `<ul class="outline">` + items.map((o, i) =>
+      `<li class="d${o.depth + 1}"><a href="#" data-line="${o.line}" data-i="${i}" title="${esc(o.kind)} · line ${o.line}"><span class="ok ok-${o.kind}"></span>${esc(o.name)}</a></li>`
+    ).join("") + `</ul>`;
+    const links = [...tocEl.querySelectorAll("a")];
+    links.forEach(a => a.addEventListener("click", e => {
+      e.preventDefault();
+      const el = lines[+a.dataset.line - 1];
+      if (!el) return;
+      // Land the declaration near the top with its body below, the way an editor
+      // jumps to a symbol. It also keeps the rail's current marker in agreement.
+      el.scrollIntoView({ block: "start", behavior: "instant" });
+      flash(el);
+    }));
+    // Mark whichever declaration the reader has scrolled past.
+    const tops = items.map(o => lines[o.line - 1]).filter(Boolean);
+    outlineSpy = new IntersectionObserver(() => {
+      let cur = -1;
+      items.forEach((o, i) => { const el = lines[o.line - 1]; if (el && el.getBoundingClientRect().top < 140) cur = i; });
+      links.forEach((a, i) => a.classList.toggle("cur", i === cur));
+    }, { root: main, rootMargin: "-120px 0px -60% 0px", threshold: 0 });
+    tops.forEach(el => outlineSpy.observe(el));
+  }
+  let outlineToken = 0;
+  function flash(el) {
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 700);
   }
 
   function renderMeta(comparing) {

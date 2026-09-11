@@ -11,6 +11,56 @@ use std::sync::Arc;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+/// Source scanned for an outline, and the most entries returned.
+const OUTLINE_CAP: usize = 512 * 1024;
+const OUTLINE_ITEMS: usize = 1200;
+
+/// One declaration in a source file.
+#[derive(Debug, Clone, Serialize)]
+pub struct Outline {
+    pub name: String,
+    /// fn | type | impl | mod
+    pub kind: &'static str,
+    /// 1-based, so the client can scroll to the matching line span.
+    pub line: usize,
+    pub depth: usize,
+}
+
+/// Sublime grammars mark a declared name with an `entity.name.*` scope. Call sites
+/// and builtins use `support.*` and `variable.*`, so they stay out of the outline.
+fn definition_kind(stack: &ScopeStack) -> Option<&'static str> {
+    const DEFS: &[(&str, &str)] = &[
+        ("entity.name.function", "fn"),
+        ("entity.name.macro", "fn"),
+        ("entity.name.struct", "type"),
+        ("entity.name.enum", "type"),
+        ("entity.name.union", "type"),
+        ("entity.name.class", "type"),
+        ("entity.name.interface", "type"),
+        ("entity.name.trait", "type"),
+        ("entity.name.type", "type"),
+        ("entity.name.impl", "impl"),
+        ("entity.name.namespace", "mod"),
+        ("entity.name.module", "mod"),
+        ("entity.name.package", "mod"),
+    ];
+    // Built once: Scope::new parses a string on every call otherwise.
+    static TABLE: std::sync::OnceLock<Vec<(Scope, &'static str)>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        DEFS.iter()
+            .filter_map(|(sel, kind)| Scope::new(sel).ok().map(|s| (s, *kind)))
+            .collect()
+    });
+    for scope in stack.as_slice().iter().rev() {
+        for (prefix, kind) in table {
+            if prefix.is_prefix_of(*scope) {
+                return Some(kind);
+            }
+        }
+    }
+    None
+}
+
 /// Highlight synchronously up to this many bytes; the rest is plain until a
 /// background pass replaces it.
 pub const HIGHLIGHT_CAP: usize = 256 * 1024;
@@ -257,16 +307,99 @@ impl Renderer {
         out
     }
 
-    fn code(&self, lang: Option<&str>, source: &str, cap: usize) -> String {
-        let syntax = lang
-            .and_then(|l| {
-                let l = alias(l);
-                self.ss
-                    .find_syntax_by_token(l)
-                    .or_else(|| self.ss.find_syntax_by_extension(l))
+    fn syntax_for(&self, lang: Option<&str>, source: &str) -> &SyntaxReference {
+        lang.and_then(|l| {
+            let l = alias(l);
+            self.ss
+                .find_syntax_by_token(l)
+                .or_else(|| self.ss.find_syntax_by_extension(l))
+        })
+        .or_else(|| self.ss.find_syntax_by_first_line(source))
+        .unwrap_or_else(|| self.ss.find_syntax_plain_text())
+    }
+
+    /// Definitions in a source file, for the rail: the same parse the highlighter
+    /// does, keeping the tokens the grammar marks as names of declared things.
+    pub fn outline(&self, lang: Option<&str>, source: &str) -> Vec<Outline> {
+        let syntax = self.syntax_for(lang, source);
+        let mut state = ParseState::new(syntax);
+        let mut stack = ScopeStack::new();
+        let mut found: Vec<(usize, &'static str, String, usize)> = vec![];
+        let mut consumed = 0usize;
+        for (n, line) in LinesWithEndings::from(source).enumerate() {
+            consumed += line.len();
+            if consumed > OUTLINE_CAP || found.len() >= OUTLINE_ITEMS {
+                break;
+            }
+            let text = line.strip_suffix('\n').unwrap_or(line);
+            let Ok(ops) = state.parse_line(line, &self.ss) else {
+                continue;
+            };
+            // The first run of definition-scoped tokens on a line names what it declares.
+            let mut last = 0usize;
+            let mut run: Option<(&'static str, String)> = None;
+            let mut done: Option<(&'static str, String)> = None;
+            for (idx, op) in &ops {
+                let idx = (*idx).min(text.len());
+                if idx > last {
+                    let seg = &text[last..idx];
+                    match (definition_kind(&stack), run.take()) {
+                        (Some(k), Some((rk, mut name))) if rk == k => {
+                            name.push_str(seg);
+                            run = Some((k, name));
+                        }
+                        (Some(k), _) => run = Some((k, seg.to_string())),
+                        (None, Some(r)) => {
+                            done = Some(r);
+                            break;
+                        }
+                        (None, None) => {}
+                    }
+                    last = idx;
+                }
+                let _ = stack.apply(op);
+            }
+            let item = done.or_else(|| {
+                run.map(|(k, mut name)| {
+                    if last < text.len() && definition_kind(&stack).is_some() {
+                        name.push_str(&text[last..]);
+                    }
+                    (k, name)
+                })
+            });
+            if let Some((kind, name)) = item {
+                let name = name.trim().to_string();
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.')
+                {
+                    let indent: usize = text
+                        .chars()
+                        .take_while(|c| *c == ' ' || *c == '\t')
+                        .map(|c| if c == '\t' { 4 } else { 1 })
+                        .sum();
+                    found.push((n + 1, kind, name, indent));
+                }
+            }
+        }
+        // Turn raw indent columns into nesting levels, so 4-space and 2-space files agree.
+        let mut widths: Vec<usize> = found.iter().map(|(_, _, _, i)| *i).collect();
+        widths.sort_unstable();
+        widths.dedup();
+        found
+            .into_iter()
+            .map(|(line, kind, name, indent)| Outline {
+                depth: widths.iter().position(|w| *w == indent).unwrap_or(0).min(3),
+                line,
+                kind,
+                name,
             })
-            .or_else(|| self.ss.find_syntax_by_first_line(source))
-            .unwrap_or_else(|| self.ss.find_syntax_plain_text());
+            .collect()
+    }
+
+    fn code(&self, lang: Option<&str>, source: &str, cap: usize) -> String {
+        let syntax = self.syntax_for(lang, source);
         let mut out = String::with_capacity(source.len() * 3);
         out.push_str("<pre class=\"code\" data-lang=\"");
         out.push_str(&html_escape::encode_double_quoted_attribute(
@@ -1199,6 +1332,45 @@ mod tests {
             "{html}"
         );
         assert_eq!(html.matches("class=\"l ctx\"").count(), 1);
+    }
+
+    #[test]
+    fn outline_finds_declarations_not_call_sites() {
+        let r = r();
+        let src = "use std::io;\n\npub struct Config {\n    pub name: String,\n}\n\nimpl Config {\n    pub fn load() -> Self {\n        println!(\"x\");\n        Self::default()\n    }\n}\n\nfn main() {\n    load();\n}\n";
+        let rust = r.outline(Some("rs"), src);
+        let got: Vec<(&str, &str, usize)> = rust
+            .iter()
+            .map(|o| (o.name.as_str(), o.kind, o.line))
+            .collect();
+        assert!(got.contains(&("Config", "type", 3)), "{got:?}");
+        assert!(got.contains(&("load", "fn", 8)), "{got:?}");
+        assert!(got.contains(&("main", "fn", 14)), "{got:?}");
+        assert!(
+            !got.iter().any(|(n, _, l)| *n == "load" && *l == 15),
+            "call sites excluded: {got:?}"
+        );
+        let depth = |name: &str, line: usize| {
+            rust.iter()
+                .find(|o| o.name == name && o.line == line)
+                .map(|o| o.depth)
+        };
+        assert_eq!(depth("main", 14), Some(0));
+        assert!(depth("load", 8) > Some(0), "nested one level: {rust:?}");
+
+        let py = r.outline(Some("py"), "import os\n\nclass Store:\n    def get(self, k):\n        return os.path.join(k)\n\ndef main():\n    pass\n");
+        let got: Vec<(&str, &str)> = py.iter().map(|o| (o.name.as_str(), o.kind)).collect();
+        assert!(got.contains(&("Store", "type")), "{got:?}");
+        assert!(got.contains(&("get", "fn")), "{got:?}");
+        assert!(got.contains(&("main", "fn")), "{got:?}");
+        assert!(
+            !got.iter().any(|(n, _)| *n == "join"),
+            "method calls excluded: {got:?}"
+        );
+
+        assert!(r
+            .outline(Some("txt"), "just words\nmore words\n")
+            .is_empty());
     }
 
     #[test]

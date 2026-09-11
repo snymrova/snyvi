@@ -158,6 +158,17 @@ to run inside one. That is safe for a different reason: the bytes are
 served as `application/pdf` with `nosniff`, so they can only ever reach
 the PDF viewer and can never be parsed as a page.
 
+## The rail
+
+Prose gets a table of contents. Code gets an outline of what it declares:
+functions, types, implementations and modules, nested by indentation and
+marked by kind. Clicking one jumps to that line and highlights it.
+
+The outline comes from the same grammar the highlighter uses, so it
+follows the language rather than guessing with patterns, and call sites
+and builtins stay out of it. It is fetched after the page has painted,
+so it never delays reading.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders

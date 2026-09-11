@@ -13,7 +13,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Side-by-side diff with word-level highlights | "Compare with previous" and sent patches are inline only. Reviews read far better in two columns with changed words emphasised. Toggle with `s`. | M | **done 0.2** |
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
-| Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. Worth more now that browse mode shows code all day. | M | next |
+| Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. Worth more now that browse mode shows code all day. | M | **done 0.3** |
 | Watch a browsed folder | Refresh the open file when it changes on disk, instead of on manual reload. | S | later |
 | Math (KaTeX) | Rare in engineering docs. Same lazy-load pattern as Mermaid once that exists. | S | later |
 | Structured views for JSON, YAML, CSV | CSV and TSV render as a table (**done 0.3**). JSON folding and YAML remain. | M | later |
@@ -79,6 +79,13 @@ notifications, remembered window geometry, CSP header.
 
 ## 0.3 (released)
 
+The rail now carries a code outline, taken from the highlighter's own
+parse so it follows the grammar rather than guessing. Ordering also
+learned a tiebreaker: `received_at` counts whole seconds, so two
+documents arriving together used to sort arbitrarily and "compare with
+previous" could skip one.
+
+
 `snyvi stop` and `snyvi restart`, plus a warning when the running daemon
 is older than the binary you just invoked, so upgrading is one command.
 
@@ -94,13 +101,14 @@ of commas.
 
 ## Other candidates for 0.3
 
-Code outline in the rail, `snyvi watch`, rename workflow and project,
-tags from the sender, macOS build, packages (.deb, AppImage), tray icon.
+`snyvi watch`, rename workflow and project, tags from the sender, macOS
+build, packages (.deb, AppImage), tray icon.
 
-Two pieces of release hygiene are worth folding in before 0.3 ships: no
+Release hygiene: CI now builds `--features desktop` and opens the window
+under Xvfb, so the Tauri path is no longer unverified. Still open: no
 release has ever been cut, so the install instructions point at an empty
-releases page, and CI never builds `--features desktop`, so the Tauri
-window is unverified code.
+releases page. Pushing a `v*` tag is the only step, and it has to come
+from a machine that can push tags.
 
 ## Still no purpose-built view
 

@@ -33,3 +33,27 @@ jobs:
           curl -sf "$url" > /dev/null
           curl -sf http://127.0.0.1:7791/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+
+  desktop:
+    # The Tauri window is behind a feature flag, so nothing else compiles it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop
+      - name: WebKitGTK
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb
+      - name: Build
+        run: cargo build --release --features desktop
+      - name: Open a window
+        # 124 is the timeout firing, which means the window stayed up.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/s-desktop SNYVI_CONFIG_DIR=/tmp/c-desktop SNYVI_PORT=7812
+          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
+          test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
+          ./target/release/snyvi stop

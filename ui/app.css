@@ -399,6 +399,16 @@ pre.mermaid[data-processed] { color: inherit; }
 #toc li.d4 a { padding-left: 34px; }
 #toc li a:hover { color: var(--fg); text-decoration: none; }
 #toc li a.cur { color: var(--accent); border-left-color: var(--accent); }
+#toc .outline li a { display: flex; align-items: baseline; gap: 6px; }
+#toc .outline .ok { width: 5px; height: 5px; border-radius: 1px; flex: none; align-self: center; background: var(--fg-3); }
+#toc .outline .ok-fn { background: var(--s-function); border-radius: 50%; }
+#toc .outline .ok-type { background: var(--s-type); }
+#toc .outline .ok-impl { background: var(--s-keyword); transform: rotate(45deg); }
+#toc .outline .ok-mod { background: var(--s-string); }
+#toc .outline li a { font-family: var(--mono); font-size: 11.5px; }
+pre.code .ln { scroll-margin-top: 76px; }
+pre.code .ln.flash { background: var(--accent-bg); }
+
 #meta { margin-top: 28px; color: var(--fg-3); line-height: 1.7; }
 #meta .row { display: flex; gap: 8px; }
 #meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; }

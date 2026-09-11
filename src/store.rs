@@ -271,7 +271,9 @@ impl Store {
     pub fn previous(&self, doc: &Doc) -> Result<Option<Doc>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.workflow_id = ?1 AND d.received_at < ?2 AND d.id != ?3 ORDER BY d.received_at DESC LIMIT 1"),
+            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.workflow_id = ?1 AND d.id != ?3 \
+                 AND (d.received_at < ?2 OR (d.received_at = ?2 AND d.rowid < (SELECT rowid FROM docs WHERE id = ?3))) \
+                 ORDER BY d.received_at DESC, d.rowid DESC LIMIT 1"),
             params![doc.workflow_id, doc.received_at, doc.id],
             row_to_doc,
         )
@@ -283,7 +285,7 @@ impl Store {
     pub fn latest_for_path(&self, project_root: &str, source_path: &str) -> Result<Option<Doc>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE p.root = ?1 AND d.source_path = ?2 ORDER BY d.received_at DESC LIMIT 1"),
+            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE p.root = ?1 AND d.source_path = ?2 ORDER BY d.received_at DESC, d.rowid DESC LIMIT 1"),
             params![project_root, source_path],
             row_to_doc,
         )
@@ -315,7 +317,7 @@ impl Store {
     pub fn history(&self, project_id: i64, source_path: &str) -> Result<Vec<Doc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(&format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.project_id = ?1 AND d.source_path = ?2 ORDER BY d.received_at DESC"))?
+            .prepare(&format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.project_id = ?1 AND d.source_path = ?2 ORDER BY d.received_at DESC, d.rowid DESC"))?
             .query_map(params![project_id, source_path], row_to_doc)?
             .collect::<std::result::Result<_, _>>()?;
         Ok(rows)
@@ -371,7 +373,7 @@ impl Store {
             "SELECT id, key, title FROM workflows WHERE project_id = ?1
              ORDER BY (SELECT MAX(received_at) FROM docs WHERE workflow_id = workflows.id) DESC",
         )?;
-        let mut doc_stmt = conn.prepare("SELECT id, title, kind, received_at, pinned FROM docs WHERE workflow_id = ?1 ORDER BY received_at DESC")?;
+        let mut doc_stmt = conn.prepare("SELECT id, title, kind, received_at, pinned FROM docs WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC")?;
         for p in &mut projects {
             let wfs = wf_stmt
                 .query_map(params![p.id], |r| {
@@ -408,7 +410,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(&format!(
-                "SELECT {DOC_COLS} {DOC_FROM} ORDER BY d.received_at DESC LIMIT ?1"
+                "SELECT {DOC_COLS} {DOC_FROM} ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
             ))?
             .query_map(params![limit as i64], row_to_doc)?
             .collect::<std::result::Result<_, _>>()?;
@@ -462,7 +464,7 @@ impl Store {
             args.push(Box::new(k.clone()));
         }
         sql.push_str(if filtered_only {
-            " ORDER BY d.received_at DESC"
+            " ORDER BY d.received_at DESC, d.rowid DESC"
         } else {
             " ORDER BY bm25(docs_fts, 4.0, 1.0)"
         });
@@ -596,6 +598,43 @@ mod tests {
             b.id
         );
         assert_eq!(s.tree().unwrap()[0].workflows[0].docs.len(), 2);
+    }
+
+    #[test]
+    fn same_second_documents_keep_their_order() {
+        // received_at counts whole seconds, so insertion order is the tiebreaker.
+        let (s, _d) = temp_store();
+        let a = s.insert(&new_id("a"), new_doc("A", "first", "w")).unwrap();
+        let b = s.insert(&new_id("b"), new_doc("B", "second", "w")).unwrap();
+        let c = s.insert(&new_id("c"), new_doc("C", "third", "w")).unwrap();
+        assert_eq!(
+            a.received_at, c.received_at,
+            "this test needs them in one second"
+        );
+        let order: Vec<String> = s.inbox(9).unwrap().into_iter().map(|d| d.title).collect();
+        assert_eq!(
+            order,
+            vec!["C", "B", "A"],
+            "newest first even within a second"
+        );
+        assert_eq!(s.previous(&c).unwrap().unwrap().id, b.id);
+        assert_eq!(s.previous(&b).unwrap().unwrap().id, a.id);
+        assert!(s.previous(&a).unwrap().is_none());
+        assert_eq!(s.tree().unwrap()[0].workflows[0].docs[0].title, "C");
+        let hist: Vec<String> = s
+            .history(a.project_id, "/p/PLAN.md")
+            .unwrap()
+            .into_iter()
+            .map(|d| d.title)
+            .collect();
+        assert_eq!(hist, vec!["C", "B", "A"]);
+        assert_eq!(
+            s.latest_for_path("/p", "/p/PLAN.md")
+                .unwrap()
+                .unwrap()
+                .title,
+            "C"
+        );
     }
 
     #[test]

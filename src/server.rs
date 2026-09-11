@@ -114,6 +114,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/delete", post(delete_doc))
         .route("/api/docs/{id}/history", get(history))
         .route("/api/docs/{id}/split", get(doc_split))
+        .route("/api/docs/{id}/outline", get(doc_outline))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/browse", get(browse_list).post(browse_open))
@@ -123,6 +124,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/browse/{id}/raw", get(browse_raw))
         .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
         .route("/api/browse/{id}/find", get(browse_find))
+        .route("/api/browse/{id}/outline", get(browse_outline))
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
         .route("/api/compare/{a}/{b}", get(compare))
@@ -454,6 +456,26 @@ async fn doc_split(State(app): S, Path(id): Path<String>) -> Response {
         }
         (Ok(Some(_)), _) => StatusCode::BAD_REQUEST.into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Declarations in a stored code document, for the rail.
+async fn doc_outline(State(app): S, Path(id): Path<String>) -> Response {
+    let Ok(Some(doc)) = app.store.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if doc.kind != crate::render::Kind::Code {
+        return Json(Vec::<crate::render::Outline>::new()).into_response();
+    }
+    let Ok(src) = app.store.source(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || app2.renderer.outline(doc.lang.as_deref(), &src))
+        .await
+    {
+        Ok(items) => Json(items).into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
     }
 }
 
@@ -792,6 +814,35 @@ async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str) -> Response {
     set(header::CACHE_CONTROL, "private, max-age=60");
     protect(&mut headers, &render::ext_of(&path.to_string_lossy()));
     (headers, bytes).into_response()
+}
+
+/// Declarations in a browsed file. Parsing is repeated rather than cached: it is
+/// off the first-paint path and the rail asks for it only once per file.
+async fn browse_outline(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+    let rel = q.path.unwrap_or_default();
+    let Ok(path) = app.browse.resolve(&id, &rel) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let app2 = app.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).ok()?;
+        if crate::render::looks_binary(&bytes) {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let (kind, lang) = app2
+            .renderer
+            .detect(Some(&path.to_string_lossy()), None, &text);
+        if kind != crate::render::Kind::Code {
+            return None;
+        }
+        Some(app2.renderer.outline(lang.as_deref(), &text))
+    })
+    .await;
+    match res {
+        Ok(items) => Json(items.unwrap_or_default()).into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
 }
 
 async fn browse_find(State(app): S, Path(id): Path<String>, Query(q): Query<FindQ>) -> Response {
