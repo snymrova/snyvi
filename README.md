@@ -275,6 +275,13 @@ Project      detected from the sender's working directory (git root)
     └── Document   immutable, rendered once on receipt
 ```
 
+Both names are guesses — a project takes the directory's name, a
+workflow the title of the first document its session sent — so either
+can be corrected: hover the name in the sidebar and click the pencil,
+then Enter to keep it or Escape to abandon it. What is underneath does
+not move, so sends keep landing where they did, and a project you have
+named yourself is no longer renamed by the directory it came from.
+
 Documents are never updated. If the agent revises a plan, it sends it
 again; the workflow shows both, and `c` diffs them. Every snapshot of
 the same file, across sessions, is listed under "Versions" in the rail.

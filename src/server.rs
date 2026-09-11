@@ -114,6 +114,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/pin", post(pin))
         .route("/api/docs/{id}/delete", post(delete_doc))
         .route("/api/docs/{id}/history", get(history))
+        .route("/api/projects/{id}/rename", post(rename_project))
+        .route("/api/workflows/{id}/rename", post(rename_workflow))
         .route("/api/docs/{id}/split", get(doc_split))
         .route("/api/docs/{id}/outline", get(doc_outline))
         .route("/api/focus", post(focus))
@@ -594,6 +596,68 @@ struct PinBody {
     pinned: bool,
 }
 
+#[derive(Deserialize)]
+struct RenameBody {
+    name: String,
+}
+
+/// A label the sidebar has to draw on one line, so it is trimmed of the whitespace
+/// an accidental paste brings and cut to a length that cannot push the tree around.
+fn clean_name(raw: &str) -> Option<String> {
+    let name: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.chars().take(120).collect())
+}
+
+/// Renaming is a label, like pinning: it moves nothing on disk and reveals nothing,
+/// so it needs no token. The identity underneath (a project's root, a workflow's key)
+/// is untouched, so what arrives next still lands where it did.
+async fn rename_project(State(app): S, Path(id): Path<i64>, Json(b): Json<RenameBody>) -> Response {
+    let Some(name) = clean_name(&b.name) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "a name cannot be empty" })),
+        )
+            .into_response();
+    };
+    match app.store.rename_project(id, &name) {
+        Ok(true) => {
+            emit(&app, "renamed", json!({ "project": id, "name": name }));
+            Json(json!({ "ok": true, "name": name })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn rename_workflow(
+    State(app): S,
+    Path(id): Path<i64>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    let Some(name) = clean_name(&b.name) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "a name cannot be empty" })),
+        )
+            .into_response();
+    };
+    match app.store.rename_workflow(id, &name) {
+        Ok(true) => {
+            emit(&app, "renamed", json!({ "workflow": id, "name": name }));
+            Json(json!({ "ok": true, "name": name })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// Pinning is UI state, so it needs no token; it only affects what `prune` keeps.
 async fn pin(State(app): S, Path(id): Path<String>, Json(b): Json<PinBody>) -> Response {
     match app.store.set_pinned(&id, b.pinned) {
@@ -951,6 +1015,21 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "not in index.html: {missing:?}");
+    }
+
+    /// A name is drawn on one line in the tree, and it arrives from a field a paste can
+    /// fill with anything.
+    #[test]
+    fn a_name_is_cleaned_before_it_is_stored() {
+        use super::clean_name;
+        assert_eq!(clean_name("  Auth work  ").unwrap(), "Auth work");
+        assert_eq!(clean_name("Auth\n\twork").unwrap(), "Auth work");
+        assert_eq!(clean_name("Auth   work").unwrap(), "Auth work");
+        assert!(clean_name("").is_none());
+        assert!(clean_name("   \n ").is_none(), "whitespace is not a name");
+        // Counted in characters, so a multi-byte name is not cut mid-character.
+        let long = "é".repeat(400);
+        assert_eq!(clean_name(&long).unwrap().chars().count(), 120);
     }
 
     /// The pre-paint script and the app must agree on the keys, or a saved setting is

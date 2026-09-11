@@ -30,7 +30,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | One workflow per Claude Code session | Hook sends and MCP sends from the same session land in two workflows because the MCP server cannot see Claude's session id. A `SessionStart` hook can record `cwd → session` in the config dir; the MCP server reads it. Result: one workflow per session, titled from its first document. | S | **done 0.2** |
 | Search filters | Scope search to a project, a kind, or a date range with prefixes (`p:snyvi kind:diff`). | S | **done 0.2** |
 | Delete a document from the UI | With confirmation. Prune covers bulk; users still want to remove one. | S | **done 0.2** |
-| Rename workflow and project | Session-derived titles are guesses; let the user fix them inline. | S | later |
+| Rename workflow and project | Session-derived titles are guesses; let the user fix them inline. | S | **done 0.4** |
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
 | Unread state persisted | Badges survive restarts. | XS | later |
 | Archive a project | Hide finished projects from the tree without deleting. | S | later |
@@ -124,7 +124,7 @@ layout rules written for prose:
 
 New: `w` maximises width, overriding the reading measure for prose.
 
-## 0.4 (cut, awaiting release)
+## 0.4 (awaiting release)
 
 Watching, both ways. In browse mode the file on screen refreshes when it
 is saved and the tree follows files being added or removed, with the
@@ -167,15 +167,32 @@ rule that was meant to remove the inset on code documents had been losing on
 specificity since it was written, so the numbers now line up with the title
 above them as intended.
 
-Cut without two things it had been holding a place for: rename workflow
-and project, and JSON and YAML views. Neither was started, and a cut that
-waits for everything named in it stops being a cut, so both move to the
-next one.
+Names can be corrected. A project is named after the directory it was
+detected in and a workflow after the first document its session sent,
+which are guesses that are often wrong and, until now, permanent. Hover
+either in the sidebar and a pencil appears; the label becomes a field in
+place, Enter keeps what was typed and Escape abandons it.
+
+What is underneath is untouched: a project is still identified by its
+root and a workflow by its key, so what arrives next lands where it did.
+That left one thing to settle. The derived project name refreshes on
+every send, so a rename would have been undone by the next document; a
+project named by hand now says so, and the derived name stops reclaiming
+it. A workflow needed none of this — its title was only ever written
+once.
+
+The rename reaches the open document too, not just the tree: its header
+and the rail name its project and workflow, and both follow without
+moving the reader off the line they were on.
+
+This cut goes out without the JSON and YAML views it had been holding a
+place for. They were never started, and a cut that waits for everything
+named in it stops being a cut, so they move to the next one.
 
 ## Candidates after 0.4
 
-Rename workflow and project, tags from the sender, macOS build, AppImage
-and AUR, tray icon with a global shortcut.
+JSON and YAML views, tags from the sender, macOS build, AppImage and
+AUR, tray icon with a global shortcut.
 
 Release hygiene: CI now builds `--features desktop` and opens the window
 under Xvfb, so the Tauri path is no longer unverified. Still open, and

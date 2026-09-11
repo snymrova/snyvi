@@ -66,6 +66,11 @@
     else if (state.doc) treeEl.querySelector(`a[data-id="${state.doc.id}"]`)?.classList.add("active");
   }
 
+  /** Both names are guesses — a directory name and a session's first document — so
+   *  each carries the means to correct it, shown when the row is under the cursor. */
+  const renameBtn = (what, id) =>
+    `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
+
   function renderTree() {
     const projects = state.tree;
     const total = projects.reduce((n, p) => n + p.workflows.reduce((m, w) => m + w.docs.length, 0), 0);
@@ -81,9 +86,9 @@
       const isCur = state.doc && state.doc.project_id === p.id;
       const open = openProjects.has(String(p.id)) || isCur || projects.length === 1;
       const unread = state.unread.get(p.id) || 0;
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${esc(p.name)}${unread ? `<span class="badge">${unread}</span>` : ""}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${unread ? `<span class="badge">${unread}</span>` : ""}${renameBtn("project", p.id)}</summary><ul>`;
       for (const w of p.workflows) {
-        h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}">${esc(w.title)}</div><ul>`;
+        h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div><ul>`;
         for (const d of w.docs) {
           const active = state.doc && state.doc.id === d.id ? "active" : "";
           h += `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
@@ -148,6 +153,13 @@
   }, true);
 
   treesEl.addEventListener("click", async e => {
+    const r = e.target.closest("[data-rename]");
+    if (r) {
+      // Inside a <summary>, the default action is toggling the project open.
+      e.preventDefault(); e.stopPropagation();
+      startRename(r);
+      return;
+    }
     const b = e.target.closest("[data-close]");
     if (!b) return;
     e.preventDefault(); e.stopPropagation();
@@ -156,6 +168,70 @@
     state.browse = state.browse.filter(r => r.id !== id);
     if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else renderTree();
   });
+
+  /** Turn a name in the tree into a field, in place. Enter and blur keep what was
+   *  typed, Escape abandons it; the label goes back the moment either happens, so
+   *  the tree is never left holding an input. */
+  function startRename(btn) {
+    const holder = btn.parentElement;
+    const label = holder.querySelector(":scope > .nm");
+    if (!label || holder.querySelector("input.ren-in")) return;
+    const what = btn.dataset.rename, id = +btn.dataset.id, before = label.textContent;
+    const input = document.createElement("input");
+    input.className = "ren-in";
+    input.value = before;
+    input.spellcheck = false;
+    input.setAttribute("aria-label", `Name of this ${what}`);
+    label.replaceWith(input);
+    holder.classList.add("renaming");
+    input.focus(); input.select();
+
+    let settled = false;
+    const finish = async keep => {
+      if (settled) return;
+      settled = true;
+      const next = input.value.trim();
+      const label = document.createElement("span");
+      label.className = "nm";
+      label.textContent = before;
+      input.replaceWith(label);
+      holder.classList.remove("renaming");
+      if (!keep || !next || next === before) return;
+      label.textContent = next;   // stands in until the tree comes back
+      try {
+        const where = what === "project" ? "projects" : "workflows";
+        const r = await fetch(`/api/${where}/${id}/rename`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: next }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        await applyRename(what, id);
+      } catch (e) {
+        label.textContent = before;
+        toast("Could not rename", String(e));
+      }
+    };
+    // The app answers single keys, and Escape closes find and the palette.
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+      else e.stopPropagation();
+    });
+    input.addEventListener("blur", () => finish(true));
+    // A click in the field must not open the document or fold the project.
+    input.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
+  }
+
+  /** Fold a rename into everything showing it: the tree, and the open document,
+   *  whose header and rail name its project and workflow too. */
+  async function applyRename(what, id) {
+    state.cache.clear();
+    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+    renderTree(); markActive();
+    const shown = state.doc && (what === "project" ? state.doc.project_id === id : state.doc.workflow_id === id);
+    if (shown) await refreshDoc(state.doc.id);
+  }
 
   /** Flat list of doc ids in sidebar order, for j/k. */
   const order = () => state.tree.flatMap(p => p.workflows.flatMap(w => w.docs.map(d => d.id)));
@@ -786,6 +862,12 @@
     });
     es.addEventListener("pinned", async () => {
       try { state.tree = await (await fetch("/api/tree")).json(); renderTree(); } catch {}
+    });
+    // Another tab named a project or a workflow.
+    es.addEventListener("renamed", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (j.project != null) applyRename("project", j.project);
+      else if (j.workflow != null) applyRename("workflow", j.workflow);
     });
     es.onerror = () => { es.close(); setTimeout(connect, 2000); };
   }

@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,
   root TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  renamed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS workflows (
   id INTEGER PRIMARY KEY,
@@ -154,6 +155,7 @@ impl Store {
         for stmt in [
             "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'",
+            "ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -180,15 +182,17 @@ impl Store {
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        // The derived name follows the directory, so it refreshes on every send —
+        // unless the user has named this project themselves, which outranks it.
         tx.execute(
             "INSERT INTO projects(root, name, created_at) VALUES(?1, ?2, ?3)
-             ON CONFLICT(root) DO UPDATE SET name = excluded.name",
+             ON CONFLICT(root) DO UPDATE SET name = excluded.name WHERE projects.renamed = 0",
             params![d.project_root, d.project_name, now],
         )?;
-        let project_id: i64 = tx.query_row(
-            "SELECT id FROM projects WHERE root = ?1",
+        let (project_id, project_name): (i64, String) = tx.query_row(
+            "SELECT id, name FROM projects WHERE root = ?1",
             params![d.project_root],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         tx.execute(
             "INSERT INTO workflows(project_id, key, title, created_at) VALUES(?1, ?2, ?3, ?4)
@@ -213,7 +217,7 @@ impl Store {
         Ok(Doc {
             id,
             project_id,
-            project: d.project_name.to_string(),
+            project: project_name,
             workflow_id,
             workflow: d.workflow_key.to_string(),
             workflow_title,
@@ -340,6 +344,27 @@ impl Store {
         Ok(conn.execute(
             "UPDATE docs SET pinned = ?2 WHERE id = ?1",
             params![id, pinned as i64],
+        )? > 0)
+    }
+
+    /// Name a project yourself. The directory it was derived from is its identity and
+    /// does not move, so sends keep landing here; `renamed` stops the derived name
+    /// from reclaiming the label on the next one.
+    pub fn rename_project(&self, id: i64, name: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE projects SET name = ?2, renamed = 1 WHERE id = ?1",
+            params![id, name],
+        )? > 0)
+    }
+
+    /// Title a workflow yourself, replacing the guess taken from its first document.
+    /// The key stays as it was, so the session that owns it still lands here.
+    pub fn rename_workflow(&self, id: i64, title: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE workflows SET title = ?2 WHERE id = ?1",
+            params![id, title],
         )? > 0)
     }
 
@@ -610,6 +635,49 @@ mod tests {
             b.id
         );
         assert_eq!(s.tree().unwrap()[0].workflows[0].docs.len(), 2);
+    }
+
+    #[test]
+    fn a_chosen_project_name_outranks_the_derived_one() {
+        let (s, _d) = temp_store();
+        let a = s.insert(&new_id("a"), new_doc("Plan", "one", "w")).unwrap();
+        assert_eq!(a.project, "p");
+
+        // The derived name follows the directory, so a send still refreshes it...
+        let mut d = new_doc("Plan", "two", "w");
+        d.project_name = "p-moved";
+        let b = s.insert(&new_id("b"), d).unwrap();
+        assert_eq!(b.project, "p-moved");
+
+        // ...until it is named by hand, after which no send may reclaim the label.
+        assert!(s.rename_project(b.project_id, "Auth work").unwrap());
+        let mut d = new_doc("Plan", "three", "w");
+        d.project_name = "p-moved-again";
+        let c = s.insert(&new_id("c"), d).unwrap();
+        assert_eq!(c.project_id, a.project_id, "the root is still the identity");
+        assert_eq!(c.project, "Auth work");
+        assert_eq!(s.tree().unwrap()[0].name, "Auth work");
+        assert!(!s.rename_project(9999, "nobody").unwrap());
+    }
+
+    #[test]
+    fn a_renamed_workflow_keeps_the_key_that_sends_find_it_by() {
+        let (s, _d) = temp_store();
+        let a = s
+            .insert(&new_id("a"), new_doc("Plan", "one", "sess-1"))
+            .unwrap();
+        assert_eq!(a.workflow_title, "sess-1");
+        assert!(s.rename_workflow(a.workflow_id, "Auth refactor").unwrap());
+
+        let b = s
+            .insert(&new_id("b"), new_doc("Plan 2", "two", "sess-1"))
+            .unwrap();
+        assert_eq!(b.workflow_id, a.workflow_id, "same session, same workflow");
+        assert_eq!(b.workflow_title, "Auth refactor");
+        let t = s.tree().unwrap();
+        assert_eq!(t[0].workflows[0].title, "Auth refactor");
+        assert_eq!(t[0].workflows[0].key, "sess-1");
+        assert!(!s.rename_workflow(9999, "nobody").unwrap());
     }
 
     #[test]

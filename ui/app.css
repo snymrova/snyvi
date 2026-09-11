@@ -186,6 +186,17 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 .t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
 .t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
+/* Both names in the tree are guesses, so each carries the means to correct it,
+   kept out of the way until the row is under the cursor. The name takes the free
+   space so the badge and the control sit at the edge. */
+.t-proj > summary > .nm, .t-wf > .wf-name > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
+.ren { color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; letter-spacing: 0; }
+.t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .ren:focus-visible { opacity: 1; }
+.ren:hover { background: var(--rule-2); color: var(--fg); }
+/* The field shows the name as stored, not as the summary styles it. */
+.ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px; }
+.ren-in:focus { outline: none; }
 .t-empty { padding: 24px 12px; color: var(--fg-3); font-size: 13px; line-height: 1.6; }
 .t-empty code { font-family: var(--mono); font-size: 12px; background: var(--rule); padding: 1px 5px; border-radius: 4px; }
 
