@@ -78,7 +78,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: desktop
+          # The distro is part of the key, not just "desktop": this job links
+          # against the host's webkit and gtk, so artifacts built on another
+          # release are not interchangeable. Sharing one key across them
+          # restored 24.04 dependencies here and cargo then skipped rebuilding
+          # tauri whose rlib was not in them.
+          key: desktop-ubuntu-22.04
       - name: WebKitGTK
         run: |
           sudo apt-get update -qq
