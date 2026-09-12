@@ -39,6 +39,20 @@ jobs:
         # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
         # regression that triples a case still fails the build.
         run: SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
+      # Node 22 for the global WebSocket the harness drives Chromium with; the
+      # runner's own Node may be older, and nothing else here uses it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Browser budget
+        # `snyvi bench` measures the daemon. This measures the half the reader
+        # actually waits on, which is where the seconds were: a 220-node diagram
+        # froze the tab for 3.1 s before the scheduler landed. The timings scale
+        # with the same factor; the behaviour checks -- a diagram below the fold
+        # is not drawn, one over the cap is offered rather than spent, find does
+        # not mark text inside an SVG -- do not depend on the clock and hold
+        # exactly. See docs/DIAGRAMS.md.
+        run: SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
       - name: Smoke test the daemon
         run: |
           set -e

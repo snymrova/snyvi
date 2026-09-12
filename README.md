@@ -427,7 +427,8 @@ architecture, the performance budgets, and the milestones.
 ## Measured so far
 
 Release build on a 4-core container, headless Chromium, warm daemon,
-best of three for render rows (`snyvi bench`).
+best of three for render rows (`snyvi bench`); the page rows come from
+`bench/browser.mjs`.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|
@@ -441,6 +442,7 @@ best of three for render rows (`snyvi bench`).
 | `snyvi send` round trip (render + store)    | ~50 ms      |        |
 | Document page, time to first byte           | 3 to 5 ms   | 30 ms  |
 | Document page, first contentful paint       | 65 to 170 ms (cold fonts) | |
+| Longest frozen frame, page with a 220-node diagram | 66 ms (was 3193) | 200 ms |
 | New document visible after send (SSE)       | ~50 ms      | 100 ms |
 | Render Markdown, 100 KB                     | 10 ms       | 50 ms  |
 | Render Markdown, 1 MB                       | 108 ms      | 400 ms |
@@ -450,6 +452,18 @@ best of three for render rows (`snyvi bench`).
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
 Markdown fast path skips the HTML sanitizer whenever a document contains
 no raw HTML, which is nearly always for agent output.
+
+`node bench/browser.mjs --check` is the other half, and covers the part
+the reader actually waits on. It sends a fixture document through the
+CLI, opens it in headless Chromium, and budgets first paint and the
+longest task the page blocks for — separately for booting, for compiling
+Mermaid, and for drawing with it, because three different things are
+slow in those windows. It also checks what no timing can: that a diagram
+below the fold is not drawn, that one too large to draw politely is
+offered rather than spent, and that leaving a document mid-render
+strands nothing. It needs Node 22 and a Chromium, and installs neither.
+See [docs/DIAGRAMS.md](docs/DIAGRAMS.md), which is where the 3193 ms in
+the table above came from and what removing it took.
 
 Only the window row is over, and it is the one fact that will not
 change: WebKitGTK is 90 MB of shared library before snyvi's first
@@ -464,7 +478,7 @@ its own executable put the daemon back to 35 MB and left the engine
 where it belongs: in the process that is showing you something, for as
 long as it is on screen.
 
-What `bench --check` measures is the renderer, in process. It does not
-measure binary size, start-up or resident memory, so none of the rows
-above are enforced by anything — they are hand-measured, and they drift.
-That is the next gap to close.
+What `bench --check` measures is the renderer, in process, and
+`bench/browser.mjs` measures the page. Neither measures binary size,
+start-up or resident memory, so those rows are enforced by nothing —
+they are hand-measured, and they drift. That is the next gap to close.

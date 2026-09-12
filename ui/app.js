@@ -419,7 +419,7 @@
     buildToc();
     renderMeta(false);
     enhanceCode();
-    renderMermaid();
+    prepareMermaid();
     renderHistory();
     clearFind();
     applyLineHash(true);
@@ -430,7 +430,7 @@
     buildToc();
     renderMeta(false);
     enhanceCode();
-    renderMermaid();
+    prepareMermaid();
     renderHistory();
     if (!findBar.hidden && findIn.value) runFind(findIn.value); else clearFind();
     applyLineHash(false);   // the scroll position is restored by the caller
@@ -477,26 +477,245 @@
     afterRefresh();
   }
 
-  // ---------- mermaid (loaded only when a page has a diagram) ----------
-  let mermaidReady = null;
-  function renderMermaid() {
-    const nodes = [...docEl.querySelectorAll("pre.mermaid:not([data-processed])")];
-    if (!nodes.length) return;
+  // ---------- mermaid (loaded only when a diagram is actually wanted) ----------
+  /* A diagram is drawn when the reader is near it, one per task, and never as
+   * part of the render that puts the document on screen. `mermaid.run` drew
+   * every diagram on the page in one unyielding call: a 220-node flowchart
+   * froze the tab for 3.1 seconds, during which it neither scrolled nor
+   * answered a key. docs/DIAGRAMS.md has the measurements; bench/browser.mjs
+   * keeps them honest. */
+  let mermaidReady = null;   // the library, once something has asked for it
+  let mermaidTheme = null;   // the theme it was last initialised with
+  let mmdToken = 0;          // bumped when the body is replaced; queued work checks it
+  let mmdQueue = [];
+  let mmdDraining = false;
+  let mmdSeq = 0;
+  let mmdWatcher = null;
+
+  /** Past this a diagram is offered rather than drawn. The flowchart that
+   *  started all this costs 2.4 s of CPU however it is scheduled, and spending
+   *  that on a reader who was scrolling past is not a thing a scheduler can
+   *  make polite. */
+  const MMD_CAP_LINES = 150, MMD_CAP_BYTES = 20000;
+
+  /** What a diagram will cost, judged from its source: Mermaid draws roughly one
+   *  node or edge per line that is neither blank nor a `%%` comment. */
+  function mmdWeight(src) {
+    let n = 0;
+    for (const line of src.split("\n")) {
+      const t = line.trim();
+      if (t && !t.startsWith("%%")) n++;
+    }
+    return n;
+  }
+
+  const yieldToBrowser = () =>
+    window.scheduler && window.scheduler.yield
+      ? window.scheduler.yield()
+      : new Promise(r => setTimeout(r, 0));
+
+  /** Put something in the frame in place of the diagram: a label, a spinner, a
+   *  button, an error. Replacing the frame's contents wholesale is what makes
+   *  the states exclusive -- there is never a stale spinner under an SVG. */
+  function mmdNote(fig, ...nodes) {
+    const note = document.createElement("div");
+    note.className = "mmd-note";
+    note.append(...nodes);
+    const frame = fig.querySelector(".mmd-frame");
+    frame.textContent = "";
+    frame.append(note);
+    return note;
+  }
+
+  /** Every `<pre class="mermaid">` the server sent becomes a placeholder of about
+   *  the right size, watched for coming near the viewport. Called wherever the
+   *  body changes, and the bumped token is what stops a diagram queued for the
+   *  document the reader just left from being drawn into a detached node. */
+  function prepareMermaid() {
+    mmdToken++;
+    mmdQueue = [];
+    if (mmdWatcher) mmdWatcher.disconnect();
+    mmdWatcher = null;
+    const pres = docEl.querySelectorAll("pre.mermaid");
+    if (!pres.length) return;
+    // Generous, so a diagram is drawn by the time it is scrolled to rather than
+    // after: a screen of margin is roughly a flick of the wheel.
+    mmdWatcher = new IntersectionObserver(entries => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        mmdWatcher.unobserve(e.target);
+        mmdEnqueue(e.target);
+      }
+    }, { root: main, rootMargin: "600px 0px" });
+
+    for (const pre of pres) {
+      const src = pre.textContent.trim();
+      const weight = mmdWeight(src);
+      const fig = document.createElement("figure");
+      fig.className = "mmd";
+      fig.dataset.src = src;
+      fig.dataset.mmdId = `mmd-${++mmdSeq}`;
+      // An estimate and only that: the source says how much there is to draw,
+      // never how tall the drawing will be. Measured on the fixture in
+      // bench/fixture.mjs, a small flowchart lands at 258 px and a nine-line
+      // sequence diagram at 383, so the floor sits between them rather than
+      // under both -- half a screen of settling either way beats a full one in
+      // one direction. Phase 3 is what makes this exact: a diagram in a frame of
+      // a bounded height is a height that can be reserved rather than guessed.
+      fig.style.setProperty("--mmd-reserve", `${Math.min(520, Math.max(240, 170 + weight * 4))}px`);
+      const frame = document.createElement("div");
+      frame.className = "mmd-frame";
+      fig.appendChild(frame);
+      pre.replaceWith(fig);
+      if (weight > MMD_CAP_LINES || src.length > MMD_CAP_BYTES) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "mmd-ask";
+        btn.dataset.mmdRender = "";
+        btn.textContent = "Render diagram";
+        const why = document.createElement("span");
+        why.className = "mmd-why";
+        why.textContent = `${weight} lines — this one takes a moment`;
+        // An offer, not a diagram on its way: it reserves room for itself and
+        // not for the drawing behind it, which arrives only if asked for.
+        fig.style.setProperty("--mmd-reserve", "150px");
+        fig.dataset.state = "held";
+        mmdNote(fig, btn, why);
+      } else {
+        fig.dataset.state = "pending";
+        mmdNote(fig, document.createTextNode("Diagram"));
+        mmdWatcher.observe(fig);
+      }
+    }
+  }
+
+  function mmdEnqueue(fig) {
+    if (fig.dataset.state === "queued" || fig.dataset.state === "rendering" || fig.dataset.state === "done") return;
+    fig.dataset.state = "queued";
+    mmdNote(fig, document.createTextNode("Diagram"));
+    mmdQueue.push(fig);
+    mmdDrain();
+  }
+
+  /** The library, fetched the first time a diagram is actually wanted. The marks
+   *  are what let bench/browser.mjs tell a long task spent compiling 3.57 MB of
+   *  Mermaid from one spent drawing with it -- two different faults with two
+   *  different fixes. */
+  function mermaidLib() {
     if (!mermaidReady) {
+      performance.mark("snyvi:mermaid-load");
       mermaidReady = new Promise((res, rej) => {
         const sc = document.createElement("script");
-        sc.src = "/assets/mermaid.js"; sc.onload = res; sc.onerror = rej;
+        sc.src = "/assets/mermaid.js";
+        sc.onload = () => { performance.mark("snyvi:mermaid-ready"); res(); };
+        sc.onerror = () => rej(new Error("could not load the diagram library"));
         document.head.appendChild(sc);
       });
     }
-    const dark = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-    // mermaid.run reads innerHTML; strip the <code> wrapper so it sees only the source.
-    for (const n of nodes) n.textContent = n.textContent.trim();
-    mermaidReady.then(() => {
-      window.mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict", fontFamily: "Inter, system-ui, sans-serif" });
-      return window.mermaid.run({ nodes });
-    }).catch(e => { console.warn("mermaid", e); });
+    return mermaidReady;
   }
+
+  /** `initialize` decides the theme of the next render and nothing else, so it is
+   *  called when the theme has moved rather than once. Diagrams already drawn
+   *  keep the theme they were drawn in; re-drawing them belongs with the cache. */
+  function mmdInit() {
+    const dark = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+    const theme = dark ? "dark" : "neutral";
+    if (theme === mermaidTheme) return;
+    mermaidTheme = theme;
+    window.mermaid.initialize({ startOnLoad: false, theme, securityLevel: "strict", fontFamily: "Inter, system-ui, sans-serif" });
+  }
+
+  /** One diagram per task, yielding between. A 2433 ms diagram is still 2433 ms
+   *  of CPU -- but it is one diagram's worth, and every slot boundary hands the
+   *  browser back a frame. */
+  async function mmdDrain() {
+    if (mmdDraining) return;
+    mmdDraining = true;
+    const token = mmdToken;
+    try {
+      await mermaidLib();
+      if (token !== mmdToken) return;
+      mmdInit();
+      while (mmdQueue.length && token === mmdToken) {
+        const fig = mmdQueue.shift();
+        if (!fig.isConnected || fig.dataset.state !== "queued") continue;
+        await mmdRender(fig, token);
+        if (mmdQueue.length) await yieldToBrowser();
+      }
+    } catch (e) {
+      console.warn("mermaid", e);
+      if (token === mmdToken) {
+        for (const fig of mmdQueue) if (fig.isConnected) mmdFail(fig, e);
+        mmdQueue = [];
+      }
+    } finally {
+      mmdDraining = false;
+      // Something may have come near the viewport while the library was loading,
+      // or while the diagram before it was drawing. The token is deliberately
+      // not consulted here: when the reader navigates mid-render this loop ends
+      // on the stale token while the new document's diagrams are already queued,
+      // and a restart conditional on the old token would strand them. mmdDrain
+      // reads the current token on the way in, so the restart is the new
+      // document's, not this one's.
+      if (mmdQueue.length) mmdDrain();
+    }
+  }
+
+  async function mmdRender(fig, token) {
+    fig.dataset.state = "rendering";
+    // A spinner only once the wait is long enough to be worth explaining.
+    const slow = setTimeout(() => fig.classList.add("mmd-slow"), 150);
+    const t0 = performance.now();
+    try {
+      const { svg } = await window.mermaid.render(`${fig.dataset.mmdId}-svg`, fig.dataset.src);
+      if (token !== mmdToken || !fig.isConnected) return;
+      const frame = fig.querySelector(".mmd-frame");
+      frame.innerHTML = svg;
+      fig.dataset.state = "done";
+      // Named, so the browser budget can find it.
+      performance.measure("snyvi:diagram", { start: t0, end: performance.now() });
+    } catch (e) {
+      if (token === mmdToken && fig.isConnected) mmdFail(fig, e);
+    } finally {
+      clearTimeout(slow);
+      fig.classList.remove("mmd-slow");
+    }
+  }
+
+  /** Mermaid answers a source it cannot parse with its own error graphic, which
+   *  replaces the source -- at exactly the moment the reader wants to see what
+   *  the agent wrote. Show what it choked on instead. */
+  function mmdFail(fig, e) {
+    fig.dataset.state = "error";
+    fig.style.removeProperty("--mmd-reserve");
+    const msg = document.createElement("p");
+    msg.className = "mmd-err";
+    msg.textContent = `This diagram could not be drawn — ${e && e.message ? e.message : e}`;
+    const pre = document.createElement("pre");
+    pre.className = "mmd-src";
+    pre.textContent = fig.dataset.src;
+    // Not in a .mmd-note: the note is chrome that find skips, and this source is
+    // the one thing on the page a reader would most want to search.
+    const box = document.createElement("div");
+    box.className = "mmd-fail";
+    box.append(msg, pre);
+    const frame = fig.querySelector(".mmd-frame");
+    frame.textContent = "";
+    frame.append(box);
+  }
+
+  docEl.addEventListener("click", e => {
+    const btn = e.target.closest("[data-mmd-render]");
+    if (!btn) return;
+    const fig = btn.closest(".mmd");
+    if (!fig) return;
+    fig.dataset.state = "queued";
+    mmdNote(fig, document.createTextNode("Drawing…"));
+    fig.classList.add("mmd-slow");
+    mmdQueue.push(fig);
+    mmdDrain();
+  });
 
   // ---------- history (every snapshot of the same file) ----------
   async function renderHistory() {
@@ -512,6 +731,13 @@
   // ---------- find in document ----------
   const findBar = $("#find"), findIn = $("#find-input"), findCount = $("#find-count");
   let findMarks = [], findIdx = -1;
+  /* An HTML <mark> inside an <svg> lays out at 0x0, so wrapping a diagram's label
+   * in one does not highlight it -- it erases it, and counts a match the reader
+   * cannot be shown. Diagram text is skipped until there is a way to point at
+   * it, which needs the zoom in phase 3 of docs/DIAGRAMS.md. The placeholder
+   * label is chrome rather than document text, and would otherwise make every
+   * search for "diagram" find one per diagram. */
+  const FIND_SKIP = "script,style,.copy,svg,.mmd-note";
   function clearFind() {
     for (const m of findMarks) { const p = m.parentNode; if (!p) continue; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); }
     findMarks = []; findIdx = -1; findCount.textContent = "";
@@ -520,7 +746,7 @@
     clearFind();
     if (!q) return;
     const needle = q.toLowerCase();
-    const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest("script,style,.copy") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest(FIND_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
     const texts = []; let n; while ((n = walker.nextNode())) texts.push(n);
     for (const t of texts) {
       let text = t.nodeValue, lower = text.toLowerCase(), pos = lower.indexOf(needle);

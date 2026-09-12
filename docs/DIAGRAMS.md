@@ -4,6 +4,11 @@ Written 2026-09-12, after a report that a page with a big Mermaid diagram
 takes seconds to open. Everything in section 1 is measured on this
 machine under headless Chromium, not estimated.
 
+**Status.** Phase 1 has landed, along with the find fix and the parse-error
+fix from the small list. The harness that took section 1's numbers is now
+`bench/browser.mjs`, runs in CI, and section 7 records what it measures.
+Phases 2a, 3, 4 and 2b are still ahead.
+
 ## 1. What is actually slow
 
 | What | Measured |
@@ -67,15 +72,18 @@ Five smaller faults found on the way:
 
 Four phases, cheapest first. Phase 1 is the one the reader feels.
 
-### Phase 1 — never block the reader
+### Phase 1 — never block the reader — **done**
 
 Replace the single `mermaid.run` with a scheduler.
 
 - **Reserve the space first.** Each `pre.mermaid` becomes a placeholder
   box of an estimated height, so the page does not jump when the SVG
-  lands. `render.rs` already emits the `<pre class="mermaid">`; have it
-  emit a size hint (bytes, lines) alongside `data-lang` so the client can
-  size the box and judge the cost without parsing the source itself.
+  lands. *Built without the server-side size hint this asked for: the
+  client already holds the source as text, and counting its lines is
+  microseconds, so a hint in `render.rs` would have bought a change to the
+  renderer and its tests and nothing measurable. The estimate is weak
+  either way — the source says how much there is to draw, never how tall
+  the drawing will be. Phase 3 is what makes it exact.*
 - **Render only what is near the viewport.** An `IntersectionObserver`
   with a generous `rootMargin` queues a diagram as it approaches. Eight
   diagrams become one.
@@ -96,7 +104,7 @@ Replace the single `mermaid.run` with a scheduler.
 Target: first paint unchanged at ~144 ms, longest frame from 3123 ms down
 to one diagram's slice, the page scrollable and navigable throughout.
 
-### Phase 2a — render each diagram once per tab
+### Phase 2a — render each diagram once per tab — **next**
 
 A diagram is a pure function of its source and the theme, and documents
 are immutable. Keep a `Map` from `hash(source) + theme` to the SVG
@@ -140,12 +148,20 @@ About 150 lines of vanilla JavaScript and no new dependency.
   nobody can rebuild is a liability.
 - **Re-theme on toggle.** Cheap once 2a exists: drop the other theme's
   cached SVGs and re-queue what is visible.
-- **Keep find out of diagrams.** Reject anything inside an `svg` in the
-  tree walker, so find stops hiding labels and stops counting matches
-  that cannot be seen. Counting them *and* zooming the diagram to them is
-  better, and belongs after phase 3.
-- **Keep the source on a parse error.** Show Mermaid's error graphic
-  beside a collapsed, copyable copy of what the agent wrote.
+- ~~**Keep find out of diagrams.**~~ **Done, in phase 1.** A one-line
+  rejection in the tree walker, and it was hiding content rather than
+  merely mis-counting it, so it did not earn a wait. Counting diagram
+  matches *and* zooming to them is still better, and still belongs after
+  phase 3. The placeholder label is skipped along with the SVG: it is
+  chrome, and would otherwise put a match in every diagram on the page
+  for anyone searching "diagram".
+- ~~**Keep the source on a parse error.**~~ **Done, in phase 1**, because
+  the placeholder made it compulsory rather than optional: a diagram that
+  throws now has a box of its own to fill, and leaving it empty would
+  have been worse than what Mermaid did. The error message sits above the
+  source, which is shown with ligatures off — JetBrains Mono draws `-->`
+  as a single arrow, and a reader looking at a parse error needs the
+  characters the agent actually typed.
 
 ### Phase 2b — cache SVGs in the daemon (a decision, not a default)
 
@@ -180,20 +196,92 @@ the pain, so this can wait for a considered answer.
 
 ## 5. Order and cost
 
-| | Phase | Cost | Payoff |
+| | Phase | Cost | Payoff | |
+|---|---|---|---|---|
+| 1 | Scheduler, viewport-gated, placeholders, cap | M | 3123 ms freeze → responsive | **done** |
+| 2 | In-tab SVG cache | XS | revisit 2426 ms → nothing | next |
+| 3 | Pan, zoom, fullscreen | M | a big diagram becomes readable | |
+| 4 | Idle prefetch | XS | −523 ms on the first diagram | |
+| 5 | Find, theme, error-source fixes | S | correctness | find and error done |
+| 6 | Trimmed bundle | M | measure before committing | |
+| 7 | Daemon-side SVG cache | M | instant everywhere; needs the call above | |
+
+## 6. How we know
+
+`bench/browser.mjs`, beside `snyvi bench`, and in CI on every push. It
+builds a fixture document, sends it through the CLI so the whole path is
+covered, drives headless Chromium over the DevTools protocol, and checks
+both the clock and the behaviour. No dependencies: Node 22's own
+WebSocket and fetch. A `npm install` in a project whose pitch is one
+static binary would be a poor trade for a wrapper.
+
+    node bench/browser.mjs            report the numbers
+    node bench/browser.mjs --check    and fail if one is over budget
+
+The fixture carries five diagrams, each in the document to settle one
+question: two small ones above the fold that must be drawn, an
+unparseable one that must keep its source, a 40-node one below the fold
+that must be left alone, and the 220-node flowchart that must be offered
+rather than spent. `SNYVI_BENCH_FACTOR` scales the budgets (CI uses 3);
+`SNYVI_BENCH_CPU` throttles the CPU, which is the honest way to see what
+a slower machine would report.
+
+**Three windows, not one longest frame.** The single number the plan
+asked for would have been dominated by Mermaid's own 523 ms of parsing,
+which no scheduler can touch — a budget that phase 1 could not pass and
+phase 4 alone could move. So long tasks are attributed to the window they
+fall in: before the library is fetched, while it compiles, and after it
+is ready. Only the third is phase 1's, and it is the one held tight.
+app.js emits `snyvi:mermaid-load` and `snyvi:mermaid-ready` to draw those
+lines, and a `snyvi:diagram` measure per render.
+
+## 7. What it measures now
+
+Taken with the harness on the machine section 1 was measured on, before
+and after phase 1. "Before" is the same fixture against the `mermaid.run`
+the scheduler replaced.
+
+| | Before | After | Budget |
 |---|---|---|---|
-| 1 | Scheduler, viewport-gated, placeholders, cap | M | 3123 ms freeze → responsive |
-| 2 | In-tab SVG cache | XS | revisit 2426 ms → nothing |
-| 3 | Pan, zoom, fullscreen | M | a big diagram becomes readable |
-| 4 | Idle prefetch | XS | −523 ms on the first diagram |
-| 5 | Find, theme, error-source fixes | S | correctness |
-| 6 | Trimmed bundle | M | measure before committing |
-| 7 | Daemon-side SVG cache | M | instant everywhere; needs the call above |
+| First contentful paint | 160 ms | 76–128 ms | 200 |
+| Longest task, boot | **3193 ms** | 0–66 ms | 200 |
+| Longest task, drawing | — | 0 ms | 250 |
+| First diagram drawn | never (all four at once) | ~550 ms | 2000 |
+| Longest task, Mermaid parse | *(inside the 3193)* | ~310 ms | reported |
+| The 220-node diagram, asked for | 2426 ms, unasked | ~1530 ms, on a click | reported |
 
-## 6. How we will know
+The 3193 ms is section 1's 3123 ms reproduced independently, which is the
+only reason to trust either.
 
-A browser budget in CI, beside the daemon's: load a fixture document
-carrying a 220-node flowchart under headless Chromium and assert first
-contentful paint under 200 ms, longest frame under 200 ms, and the
-diagram present within a stated bound. The numbers in section 1 were
-taken with exactly that harness, so it is a fixture away from existing.
+Four behaviours are checked as well, and they do not depend on the clock:
+a diagram below the fold is not drawn, one over the cap is offered rather
+than spent, find marks nothing inside an SVG while still finding the
+prose, and a reader who leaves a document mid-render strands nothing —
+neither diagrams drawn into the page they left nor diagrams never drawn
+on the page they arrived at.
+
+That last one earned its place. The first scheduler restarted its queue
+only under the token it had captured, so navigating away while the
+library was still loading left the *next* document's diagrams queued
+forever. Every other check passed while it did. The harness holds the
+request for `mermaid.js` open over the DevTools protocol rather than
+racing a `sleep` against it, so the window is the same width every run.
+
+## 8. What phase 1 left for later
+
+Measured on the way, and not fixed here:
+
+- **A big diagram is still unreadable, and now demonstrably so.** The
+  220-node flowchart renders 30 px tall: it is 4738 px wide, `max-width:
+  100%` fits the width into the 630 px column, and `height: auto` takes
+  the height down with it. Phase 3.
+- **The placeholder height is a guess.** A small flowchart lands at
+  258 px and a nine-line sequence diagram at 383, from sources that look
+  alike. The reserve sits between them. Phase 3's bounded frame is what
+  turns the guess into a number.
+- **The theme toggle still leaves drawn diagrams behind.** Unchanged, not
+  worsened: `initialize` runs when the theme has moved, so a diagram
+  drawn after a toggle is drawn in the new theme and one drawn before
+  keeps the old. Re-drawing them is cheap once 2a holds the sources.
+- **`snyvi watch` still redraws on every save**, though it no longer
+  blocks while doing it. 2a removes the work rather than rescheduling it.

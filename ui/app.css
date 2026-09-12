@@ -365,11 +365,48 @@ mark.find.cur { background: var(--accent); color: #fff; }
 .split .empty { background: repeating-linear-gradient(45deg, transparent 0 6px, var(--rule) 6px 7px); }
 #doc:has(.split) { max-width: none; padding-left: 40px; padding-right: 40px; }
 
-/* mermaid */
+/* mermaid.
+   The server sends the source in a <pre class="mermaid">; the client swaps each
+   one for a <figure class="mmd"> before first paint, so the raw `flowchart TD`
+   is never shown to the reader. The rule below is what covers the gap on a page
+   whose script has not run yet -- and the whole of it if scripting is off, where
+   the source is the only thing there is to show. */
 pre.mermaid { background: transparent; text-align: center; padding: 8px 0; overflow: visible; font-family: var(--mono); font-size: 12.5px; color: var(--fg-3); white-space: pre-wrap; }
 pre.mermaid::before { display: none; }
-pre.mermaid svg { max-width: 100%; height: auto; }
-pre.mermaid[data-processed] { color: inherit; }
+
+.mmd { margin: 1.5em 0; }
+.mmd-frame { display: flex; align-items: center; justify-content: center; }
+.mmd-frame svg { max-width: 100%; height: auto; }
+/* Until the diagram lands the figure holds about the space it will want, so the
+   text below it does not jump when it does. An estimate from the source, set by
+   the client -- see mmdWeight in app.js. */
+.mmd:not([data-state="done"]) .mmd-frame {
+  min-height: var(--mmd-reserve, 200px);
+  border-radius: var(--radius);
+  background: linear-gradient(var(--code-bg), var(--code-bg));
+}
+.mmd[data-state="error"] .mmd-frame { min-height: 0; display: block; background: none; }
+.mmd-fail { padding: 2px 0; }
+.mmd-note { font-family: var(--sans); font-size: 12px; letter-spacing: .04em; color: var(--fg-3); text-align: center; padding: 10px; }
+/* The label is for a diagram that is about to appear; a reader who waits long
+   enough to wonder gets a spinner instead of a word that never changes. */
+.mmd-slow .mmd-note::before {
+  content: ""; display: block; width: 18px; height: 18px; margin: 0 auto 8px;
+  border: 2px solid var(--rule-2); border-top-color: var(--fg-3); border-radius: 50%;
+  animation: mmd-spin .7s linear infinite;
+}
+@keyframes mmd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mmd-slow .mmd-note::before { animation-duration: 2.4s; } }
+/* Over the cap: offered, not spent. */
+.mmd-ask { display: block; margin: 0 auto 8px; font-family: var(--sans); font-size: 13px; padding: 7px 14px; border-radius: var(--radius); background: var(--bg-raise); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.mmd-ask:hover { color: var(--accent); }
+.mmd-why { display: block; }
+/* A source Mermaid could not parse is the one the reader most wants to read. */
+.mmd-err { font-family: var(--sans); font-size: 13px; color: var(--del-fg); margin: 0 0 8px; text-align: left; }
+/* Ligatures off, like every other code block: this is shown so the reader can
+   see the characters the agent actually wrote, and JetBrains Mono draws `-->`
+   as a single arrow, which is the one thing it must not do here. */
+.mmd-src { font-feature-settings: "calt" 0, "liga" 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; text-align: left; white-space: pre-wrap; background: var(--code-bg); border-radius: var(--radius); padding: 12px 14px; margin: 0; color: var(--fg-2); overflow-x: auto; }
 
 /* history */
 #history { margin-top: 20px; }
