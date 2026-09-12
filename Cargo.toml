@@ -51,15 +51,27 @@ required-features = ["desktop"]
 [features]
 default = []
 # Builds the `snyvi-app` window executable. Nothing in `snyvi` is conditional on it.
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-window-state"]
+desktop = [
+  "dep:tauri",
+  "dep:tauri-build",
+  "dep:tauri-plugin-window-state",
+  "dep:tauri-plugin-single-instance",
+]
 
 [dependencies.tauri]
 version = "2"
 optional = true
 default-features = false
-features = ["wry"]
+# tray-icon for the tray; image-png to decode the mark that the tray and the
+# window are handed, which is compiled into the binary rather than looked up
+# on disk so a tarball install has no second file to lose.
+features = ["wry", "tray-icon", "image-png"]
 
 [dependencies.tauri-plugin-window-state]
+version = "2"
+optional = true
+
+[dependencies.tauri-plugin-single-instance]
 version = "2"
 optional = true
 

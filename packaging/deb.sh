@@ -55,6 +55,13 @@ if [ "$desktop" = 1 ]; then
     | sed -n 's/^shlibs:Depends=//p')
   rm -rf "$shlib"
   [ -n "$depends" ] || { echo "deb.sh: dpkg-shlibdeps read no dependencies from $bin" >&2; exit 1; }
+
+  # The tray, which shlibdeps cannot see: appindicator is dlopened at runtime
+  # rather than linked, so it is in no NEEDED entry and has to be named here.
+  # The alternative follows the order the code tries: libayatana first, the
+  # older libappindicator second. Both names are checked against the binary in
+  # CI, so a library renamed under us fails the build rather than the tray.
+  depends="$depends, libayatana-appindicator3-1 | libappindicator3-1"
 fi
 
 stage=$(mktemp -d)
