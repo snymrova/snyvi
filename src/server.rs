@@ -79,9 +79,20 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let renderer = Renderer::new();
     let (tx, _) = broadcast::channel(64);
     let (stop_tx, mut stop_rx) = broadcast::channel::<()>(1);
-    let asset_v = blake3::hash(format!("{INDEX_HTML}{APP_CSS}{APP_JS}{VERSION}").as_bytes())
-        .to_hex()[..8]
-        .to_string();
+    // The Mermaid bundle is in the hash as well. It is served immutable for a
+    // year like every other asset, and its URL had no version in it -- so a
+    // browser that had cached one snyvi's bundle would have kept it across
+    // every upgrade, which is exactly what a trimmed bundle would need to
+    // replace. Hashing a megabyte once at startup costs under a millisecond.
+    let asset_v = {
+        let mut h = blake3::Hasher::new();
+        h.update(INDEX_HTML.as_bytes());
+        h.update(APP_CSS.as_bytes());
+        h.update(APP_JS.as_bytes());
+        h.update(VERSION.as_bytes());
+        h.update(MERMAID_JS_GZ);
+        h.finalize().to_hex()[..8].to_string()
+    };
     let app = Arc::new(App {
         store,
         renderer,
@@ -220,7 +231,12 @@ fn escape_json_for_script(s: &str) -> String {
     s.replace("</", "<\\/")
 }
 
-fn shell(app: &App, boot: serde_json::Value, initial_html: &str, title: &str) -> Response {
+fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str) -> Response {
+    // The build hash, for the one asset the client asks for itself rather than
+    // through the markup: the Mermaid bundle.
+    if let Some(o) = boot.as_object_mut() {
+        o.insert("v".into(), serde_json::Value::String(app.asset_v.clone()));
+    }
     let page = INDEX_HTML
         .replace("{{V}}", &app.asset_v)
         .replace("{{TITLE}}", &html_escape::encode_text(title))

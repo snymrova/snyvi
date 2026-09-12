@@ -157,12 +157,20 @@ pub fn ensure_daemon() -> Result<()> {
     }
     let exe = std::env::current_exe().context("locating snyvi binary")?;
     crate::platform::spawn_daemon(&exe).context("starting snyvi daemon")?;
+    // A daemon is listening about 25 ms after it is started -- it reads a
+    // 438 KB grammar dump and opens the database first -- and this used to ask
+    // every 40 ms, so the first answer came at 40 and a cold `snyvi app` waited
+    // about twice as long as it needed to. Ask sooner, then back off, so a
+    // machine slow enough to need the four seconds is not asked 800 times for
+    // them.
     let deadline = Instant::now() + Duration::from_secs(4);
+    let mut wait = Duration::from_millis(5);
     while Instant::now() < deadline {
         if health().is_some() {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(wait);
+        wait = (wait * 2).min(Duration::from_millis(80));
     }
     bail!("snyvi daemon did not come up on {}", config::base_url())
 }

@@ -781,6 +781,7 @@
       pre.replaceWith(fig);
       mmdReserve(fig);
     }
+    mmdPrefetch();
   }
 
   /** The theme moved, so every diagram on the page was drawn in the other one.
@@ -836,6 +837,28 @@
     }
   }
 
+  /** Ask for the library as soon as a page is known to hold a diagram at all,
+   *  in idle time, rather than when a diagram comes near the viewport.
+   *
+   *  Measured: the first diagram on a page lands at ~1170 ms, of which ~490 ms
+   *  is one unbreakable task compiling 3.57 MB of JavaScript -- and none of it
+   *  used to start until the reader had scrolled to the diagram, which is the
+   *  worst possible moment to begin. Spent here it is spent while they are
+   *  still reading the first screen, and by the time they arrive only the
+   *  drawing is left. A page with no diagram asks for nothing, which is most
+   *  pages; a tab that already has the library asks again for nothing at all.
+   *
+   *  `requestIdleCallback` rather than a timer, so this waits for a gap instead
+   *  of making one. The timeout is the floor under a tab that never has a gap:
+   *  the compile is coming either way, and sooner is a better moment than the
+   *  one the reader chose. */
+  function mmdPrefetch() {
+    if (mermaidReady) return;
+    const go = () => { if (!mermaidReady) mermaidLib().catch(() => {}); };
+    if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 2000 });
+    else setTimeout(go, 400);
+  }
+
   function mmdEnqueue(fig) {
     if (fig.dataset.state === "queued" || fig.dataset.state === "rendering" || fig.dataset.state === "done") return;
     fig.dataset.state = "queued";
@@ -856,7 +879,7 @@
         // Versioned like every other asset: the bundle is served immutable for
         // a year, so without this a browser would keep the first one it ever
         // saw across every upgrade.
-        sc.src = "/assets/mermaid.js";
+        sc.src = `/assets/mermaid.js${boot.v ? `?v=${boot.v}` : ""}`;
         sc.onload = () => { performance.mark("snyvi:mermaid-ready"); res(); };
         sc.onerror = () => rej(new Error("could not load the diagram library"));
         document.head.appendChild(sc);
