@@ -128,28 +128,38 @@ jobs:
           # then cannot open a window.
           dpkg-deb -f "$addon" Depends | grep -q libwebkit2gtk-4.1-0
           dpkg-deb -f "$addon" Depends | grep -q 'snyvi (= 0.0.0-ci)'
-          # The add-on must not claim the other package's paths.
-          dpkg-deb -c "$addon" | grep -q usr/bin/snyvi-app
-          dpkg-deb -c "$addon" | grep -qv 'usr/bin/snyvi$'
+          # The add-on ships the window and nothing else: it must not own a path
+          # the main package owns. Listed once into a variable, because `grep -q`
+          # closes the pipe and dpkg-deb's tar then dies mid-write.
+          files=$(dpkg-deb -c "$addon" | awk '{print $NF}')
+          echo "$files" | grep -qx './usr/bin/snyvi-app' || { echo "add-on has no window binary"; exit 1; }
+          echo "$files" | grep -qx './usr/bin/snyvi' && { echo "add-on claims /usr/bin/snyvi"; exit 1; } || true
 
           # This is the order a person does it in: snyvi first, on its own.
           sudo dpkg -i "$main"
           test "$(command -v snyvi)" = /usr/bin/snyvi
           snyvi --version
           desktop-file-validate /usr/share/applications/snyvi.desktop
-          # With no window installed it must still work, falling back to a browser
-          # rather than failing, and must say what would give a native window.
+          # With no window installed it must still open something and return,
+          # rather than fail. Which rung it lands on depends on what browsers the
+          # machine has -- this runner has Chromium, a user may have none -- so
+          # the test is that it succeeded and that no native window ran, not
+          # which fallback it chose.
           export SNYVI_DATA_DIR=/tmp/s-pkg SNYVI_CONFIG_DIR=/tmp/c-pkg SNYVI_PORT=7813
-          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-nowin.log 2>&1 || true
-          grep -q "install snyvi-app" /tmp/app-nowin.log || { echo "no hint about the window package:"; cat /tmp/app-nowin.log; exit 1; }
+          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-nowin.log 2>&1 || code=$?
+          test "${code:-0}" = "0" || { echo "snyvi app failed without the add-on (exit ${code:-0}):"; cat /tmp/app-nowin.log; exit 1; }
+          pgrep -x snyvi-app >/dev/null && { echo "a native window ran with no add-on installed"; exit 1; } || true
           snyvi stop || true
 
           # Then adding the window, which is the whole claim: an addition, not a
           # replacement. apt resolves its dependencies; snyvi stays installed.
           sudo apt-get install -y -qq "$addon"
           dpkg -l snyvi | grep -q '^ii' || { echo "snyvi was removed by the add-on"; exit 1; }
+          # 124 is the timeout firing. It is also the proof that this was the
+          # native window: `snyvi app` execs it and stays in the foreground,
+          # where every browser fallback spawns and returns 0 at once.
+          unset code
           xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-pkg.log 2>&1 || code=$?
-          test "${code:-0}" = "124" || { echo "packaged window exited early:"; cat /tmp/app-pkg.log; exit 1; }
-          grep -q "install snyvi-app" /tmp/app-pkg.log && { echo "still fell back to a browser"; exit 1; } || true
+          test "${code:-0}" = "124" || { echo "packaged window did not hold the foreground (exit ${code:-0}):"; cat /tmp/app-pkg.log; exit 1; }
           snyvi stop
           sudo dpkg -r snyvi-app snyvi
