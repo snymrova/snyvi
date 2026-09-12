@@ -226,29 +226,96 @@ pub fn terminate(pid: u32, force: bool) {
     }
 }
 
-/// Set a command up to outlive the process starting it, and to do so quietly.
-pub fn detach(cmd: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
+/// Start the daemon so that it outlives this process and holds nothing of it.
+///
+/// On Unix that is a process group of its own. The three streams go to
+/// /dev/null and every other descriptor is closed across exec, because Rust
+/// opens them close-on-exec.
+///
+/// Windows has no such default, and this is the whole reason the spawn is
+/// written out by hand. CreateProcess inherits either every inheritable handle
+/// or none at all, and `std`'s Command always asks for every one. So a daemon
+/// started by `url=$(snyvi send FILE)` inherited the write end of that command
+/// substitution's pipe and held it for the rest of its life: `send` returned in
+/// milliseconds, and the shell then waited forever for an end of file that the
+/// daemon alone was keeping from arriving.
+///
+/// Nothing the daemon does needs a handle from whoever started it, so it is
+/// created inheriting none -- which also leaves it without standard streams,
+/// and a write to a stdout or stderr that a process does not have is a write
+/// that goes nowhere rather than an error.
+pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        // Without these the daemon shares the console it was started from: it
-        // dies with that window, and flashes one of its own when started from
-        // a shortcut or by the MCP server.
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            CreateProcessW, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS,
+            PROCESS_INFORMATION, STARTUPINFOW,
+        };
+
+        // CreateProcessW parses the command line itself, and writes into the
+        // buffer while doing it, so it is built here rather than passed as
+        // arguments. The quote is dropped from the path rather than escaped:
+        // a Windows path cannot contain one, so anything that does is not the
+        // executable this process is running as.
+        let mut line: Vec<u16> = vec![b'"' as u16];
+        line.extend(exe.as_os_str().encode_wide().filter(|c| *c != b'"' as u16));
+        line.push(b'"' as u16);
+        line.extend(" serve".encode_utf16());
+        line.push(0);
+
+        let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
+        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: the command line is NUL-terminated and outlives the call,
+        // the two structures are the sizes the call is told they are, and
+        // every pointer that may be null is one the call documents as
+        // optional -- no application name, default security, the parent's
+        // environment, the parent's working directory.
+        let started = unsafe {
+            CreateProcessW(
+                std::ptr::null(),
+                line.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0, // FALSE: inherit nothing. The point of all of this.
+                DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                std::ptr::null(),
+                std::ptr::null(),
+                &si,
+                &mut pi,
+            )
+        };
+        if started == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // Nothing here waits for the daemon; these two handles are this
+        // process's own references to it, and releasing them does not end it.
+        unsafe {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+        return Ok(());
     }
-    #[cfg(not(any(unix, windows)))]
-    let _ = cmd;
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new(exe);
+        cmd.arg("serve")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        cmd.spawn()?;
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-#[cfg(windows)]
-const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-#[cfg(windows)]
-const DETACHED_PROCESS: u32 = 0x0000_0008;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;

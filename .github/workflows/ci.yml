@@ -6,6 +6,7 @@ on:
 jobs:
   build-test-bench:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -73,6 +74,7 @@ jobs:
     # 12 and later; building on 24.04 would record 2.39 and silently exclude
     # both.
     runs-on: ubuntu-22.04
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -187,6 +189,10 @@ jobs:
     # engine and snyvi-app.exe uses WebView2, which ships with the operating
     # system rather than being a package to depend on. So both are built here
     # and both go in one zip.
+    # Every step here either finishes in seconds or is a build; the default
+    # is six hours, which is what a daemon holding a pipe open costs before
+    # anyone notices.
+    timeout-minutes: 35
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

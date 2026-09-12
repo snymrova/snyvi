@@ -4,7 +4,6 @@ use crate::config::{self, Paths};
 use crate::receive::Payload;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn health() -> Option<Value> {
@@ -157,13 +156,7 @@ pub fn ensure_daemon() -> Result<()> {
         return Ok(());
     }
     let exe = std::env::current_exe().context("locating snyvi binary")?;
-    let mut cmd = Command::new(exe);
-    cmd.arg("serve")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    crate::platform::detach(&mut cmd);
-    cmd.spawn().context("starting snyvi daemon")?;
+    crate::platform::spawn_daemon(&exe).context("starting snyvi daemon")?;
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
         if health().is_some() {

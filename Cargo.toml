@@ -84,3 +84,15 @@ tauri-build = { version = "2", optional = true }
 # resolves this at all.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# Only to create the daemon process directly, which is the one thing std's
+# Command cannot be asked to do: start something that inherits no handles.
+[target.'cfg(windows)'.dependencies]
+# Win32_Security is in the list because CreateProcessW takes two security
+# descriptors -- both of them null here -- and the binding is gated on the
+# feature that defines the type rather than on the one that defines the call.
+windows-sys = { version = "0.60", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+] }

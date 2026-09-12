@@ -172,6 +172,7 @@ jobs:
     # writers off it.
     needs: desktop
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
