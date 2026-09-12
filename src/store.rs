@@ -687,9 +687,31 @@ mod tests {
         let a = s.insert(&new_id("a"), new_doc("A", "first", "w")).unwrap();
         let b = s.insert(&new_id("b"), new_doc("B", "second", "w")).unwrap();
         let c = s.insert(&new_id("c"), new_doc("C", "third", "w")).unwrap();
-        assert_eq!(
-            a.received_at, c.received_at,
-            "this test needs them in one second"
+        // Three inserts land in one second on most machines and, on a slow
+        // one, straddle a boundary -- so this asserted its own timing and
+        // failed for it on a Windows runner. Put them in one second on
+        // purpose: a clock that has to cooperate is not a precondition, and
+        // the second they share is not what is being tested. What is, is that
+        // rowid breaks the tie once received_at cannot.
+        let t = a.received_at;
+        s.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE docs SET received_at = ?1", params![t])
+            .unwrap();
+        let (a, b, c) = (
+            Doc {
+                received_at: t,
+                ..a
+            },
+            Doc {
+                received_at: t,
+                ..b
+            },
+            Doc {
+                received_at: t,
+                ..c
+            },
         );
         let order: Vec<String> = s.inbox(9).unwrap().into_iter().map(|d| d.title).collect();
         assert_eq!(
