@@ -25,6 +25,22 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: The tag must name the version in Cargo.toml
+        # v0.6.0 was first pushed onto a commit whose Cargo.toml still said
+        # 0.5.0, from a clone that had not fetched the release it was naming.
+        # The run built the previous release and labelled it as the new one,
+        # and nothing downstream could tell: this workflow reads the version
+        # from the tag, Tauri and the crate read it from Cargo.toml, and each
+        # was individually correct. Checked first, before anything is built.
+        run: |
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          version="${version#v}"
+          manifest=$(sed -n '0,/^version = "/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          test "$version" = "$manifest" || {
+            echo "the tag says $version but Cargo.toml says $manifest."
+            echo "bump Cargo.toml first, then move the tag onto that commit."
+            exit 1; }
+          echo "releasing $version"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -142,4 +158,66 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.deb
+            dist/*.sha256
+
+  windows:
+    # One job and one artifact. The split on Linux exists because a static musl
+    # binary cannot link WebKitGTK; Windows has no such fork -- snyvi.exe links
+    # no engine, and snyvi-app.exe uses WebView2, which is part of the
+    # operating system on Windows 10 and 11 rather than a package to depend on.
+    # So the zip carries both, and installing the window is not a second step.
+    #
+    # After `desktop` for the same reason `desktop` is after `build`: three
+    # jobs upload to one release, and running them in sequence keeps two
+    # writers off it.
+    needs: desktop
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        # Two passes. snyvi must not be built with the desktop feature, so that
+        # tauri's build script cannot follow it into a binary that never opens
+        # a window -- and because build.rs only attaches snyvi.exe's own icon
+        # resource when the feature is off.
+        run: |
+          cargo build --release --bin snyvi
+          cargo build --release --bin snyvi-app --features desktop
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -e
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c" SNYVI_PORT=7804
+          ./target/release/snyvi.exe send README.md
+          SNYVI_BENCH_FACTOR=3 ./target/release/snyvi.exe bench --check
+          # The window, from the copy about to be shipped. A release that
+          # contains a window nobody opened is what the desktop job exists to
+          # prevent, and that goes double for the one platform where the window
+          # is in the same download as everything else.
+          ./target/release/snyvi.exe app > "$RUNNER_TEMP/app.log" 2>&1 &
+          sleep 20
+          tasklist //FI "IMAGENAME eq snyvi-app.exe" | grep -q snyvi-app.exe || {
+            echo "no native window is running:"; cat "$RUNNER_TEMP/app.log"; exit 1; }
+          taskkill //F //IM snyvi-app.exe
+          ./target/release/snyvi.exe stop
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.inputs.version || github.ref_name }}" -replace '^v', ''
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $name = "snyvi-$version-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/release/snyvi.exe, target/release/snyvi-app.exe, README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          # Written as sha256sum writes it -- two spaces, a bare filename, a
+          # single newline -- so `sha256sum -c` reads this one like the others.
+          $file = "dist/$name.zip"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText((Resolve-Path "dist").Path + "\$name.zip.sha256", "$hash  $name.zip`n")
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.zip
             dist/*.sha256

@@ -88,7 +88,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb \
-                                      dpkg-dev desktop-file-utils
+                                      dpkg-dev desktop-file-utils dbus-x11 \
+                                      libayatana-appindicator3-dev
       - name: Build
         # Both: the window executable needs the feature, and snyvi itself must
         # still build here to be the thing the window is installed beside.
@@ -106,7 +107,11 @@ jobs:
         run: |
           set -e
           export SNYVI_DATA_DIR=/tmp/s-desktop SNYVI_CONFIG_DIR=/tmp/c-desktop SNYVI_PORT=7812
-          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
+          # dbus-run-session, because the tray registers on the session bus and
+          # a tray that fails to build fails setup, which exits 1 rather than
+          # timing out. So 124 here now also means the tray came up.
+          xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- \
+            timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
           # It must have been the native window, not a browser fallback: `snyvi
           # app` execs the sibling, so the surviving process is snyvi-app.
@@ -128,6 +133,16 @@ jobs:
           # then cannot open a window.
           dpkg-deb -f "$addon" Depends | grep -q libwebkit2gtk-4.1-0
           dpkg-deb -f "$addon" Depends | grep -q 'snyvi (= 0.0.0-ci)'
+          # The tray's, since 0.7. This one is written by hand, because the
+          # library is dlopened rather than linked and shlibdeps cannot see a
+          # dlopen -- so the risk is that the hand-written name goes stale.
+          # Check it against the name the binary actually asks for.
+          dpkg-deb -f "$addon" Depends | grep -q 'libayatana-appindicator3-1 | libappindicator3-1'
+          # A substring, not a whole line: Rust packs its string literals
+          # together, so this name sits inside a run of others.
+          strings -a target/release/snyvi-app | grep -qF 'libayatana-appindicator3.so.1' || {
+            echo "the tray no longer loads libayatana-appindicator3.so.1; the .deb dependency is stale"
+            exit 1; }
           # The add-on ships the window and nothing else: it must not own a path
           # the main package owns. Listed once into a variable, because `grep -q`
           # closes the pipe and dpkg-deb's tar then dies mid-write.
@@ -146,7 +161,8 @@ jobs:
           # the test is that it succeeded and that no native window ran, not
           # which fallback it chose.
           export SNYVI_DATA_DIR=/tmp/s-pkg SNYVI_CONFIG_DIR=/tmp/c-pkg SNYVI_PORT=7813
-          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-nowin.log 2>&1 || code=$?
+          xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- \
+            timeout 20 snyvi app > /tmp/app-nowin.log 2>&1 || code=$?
           test "${code:-0}" = "0" || { echo "snyvi app failed without the add-on (exit ${code:-0}):"; cat /tmp/app-nowin.log; exit 1; }
           pgrep -x snyvi-app >/dev/null && { echo "a native window ran with no add-on installed"; exit 1; } || true
           snyvi stop || true
@@ -159,7 +175,66 @@ jobs:
           # native window: `snyvi app` execs it and stays in the foreground,
           # where every browser fallback spawns and returns 0 at once.
           unset code
-          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-pkg.log 2>&1 || code=$?
+          xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- \
+            timeout 20 snyvi app > /tmp/app-pkg.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "packaged window did not hold the foreground (exit ${code:-0}):"; cat /tmp/app-pkg.log; exit 1; }
           snyvi stop
           sudo dpkg -r snyvi-app snyvi
+
+  windows:
+    # One job, not two. The split on Linux exists because a static musl binary
+    # cannot link WebKitGTK; Windows has no such fork -- snyvi.exe links no
+    # engine and snyvi-app.exe uses WebView2, which ships with the operating
+    # system rather than being a package to depend on. So both are built here
+    # and both go in one zip.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        # Two passes, the same shape as the release: snyvi must not be built
+        # with the desktop feature, so that tauri's build script cannot follow
+        # it into a binary that never opens a window. It is also what gives
+        # snyvi.exe its own icon resource, which build.rs only attaches when
+        # the feature is off.
+        run: |
+          cargo build --release --bin snyvi
+          cargo build --release --bin snyvi-app --features desktop
+      - name: Smoke test the daemon
+        shell: bash
+        run: |
+          set -e
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c" SNYVI_PORT=7794
+          url=$(./target/release/snyvi.exe send README.md)
+          echo "$url"
+          curl -sf "$url" > /dev/null
+          curl -sf "http://127.0.0.1:7794/api/health"
+          # The daemon was started detached by that send: if the flags were
+          # wrong it would already be gone, or have taken the shell with it.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7794/api/docs \
+            -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+          SNYVI_BENCH_FACTOR=3 ./target/release/snyvi.exe bench --check
+          ./target/release/snyvi.exe stop
+      - name: Open a window
+        shell: bash
+        # Through `snyvi app` rather than by running the window directly,
+        # because the thing worth testing is the lookup: it searches for a
+        # sibling, and on Windows that name ends in .exe.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s2" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c2" SNYVI_PORT=7795
+          ./target/release/snyvi.exe app > "$RUNNER_TEMP/app.log" 2>&1 &
+          launcher=$!
+          sleep 20
+          tasklist //FI "IMAGENAME eq snyvi-app.exe" | grep -q snyvi-app.exe || {
+            echo "no native window is running:"; cat "$RUNNER_TEMP/app.log"; exit 1; }
+          grep -q "install snyvi-app" "$RUNNER_TEMP/app.log" && {
+            echo "fell back to a browser"; exit 1; } || true
+          taskkill //F //IM snyvi-app.exe
+          kill "$launcher" 2>/dev/null || true
+          ./target/release/snyvi.exe stop
