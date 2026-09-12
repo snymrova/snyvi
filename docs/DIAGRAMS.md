@@ -1,4 +1,4 @@
-# Diagrams: where the time goes, and the plan
+# Diagrams: where the time goes, how they look, and the plan
 
 Written 2026-09-12, after a report that a page with a big Mermaid diagram
 takes seconds to open. Everything in section 1 is measured on this
@@ -8,6 +8,10 @@ machine under headless Chromium, not estimated.
 fix from the small list. The harness that took section 1's numbers is now
 `bench/browser.mjs`, runs in CI, and section 7 records what it measures.
 Phases 2a, 3, 4 and 2b are still ahead.
+
+Sections 1 to 8 are about time. Section 9 is about the other half of the
+roadmap's test — whether a diagram looks like it belongs in the document
+around it — and was measured the same way.
 
 ## 1. What is actually slow
 
@@ -205,6 +209,7 @@ the pain, so this can wait for a considered answer.
 | 5 | Find, theme, error-source fixes | S | correctness | find and error done |
 | 6 | Trimmed bundle | M | measure before committing | |
 | 7 | Daemon-side SVG cache | M | instant everywhere; needs the call above | |
+| 8 | Theme the diagrams (section 9) | S | they stop looking borrowed | |
 
 ## 6. How we know
 
@@ -306,3 +311,157 @@ Measured on the way, and not fixed here:
   keeps the old. Re-drawing them is cheap once 2a holds the sources.
 - **`snyvi watch` still redraws on every save**, though it no longer
   blocks while doing it. 2a removes the work rather than rescheduling it.
+
+## 9. How they look
+
+The roadmap asks two questions of every feature: does it make reading
+more beautiful, and does it keep everything instant. Sections 1 to 8
+answered the second one for diagrams. This section is the first, and it
+was measured the same way — rendered under headless Chromium against the
+bundle we actually ship, `ui/mermaid.min.js.gz`, Mermaid 11.17.2.
+
+Today `app.js` asks for `theme: "neutral"` on a light page and
+`theme: "dark"` on a dark one, and that is the whole of it. The result is
+a diagram that is recognisably Mermaid's rather than snyvi's, in a viewer
+whose entire pitch is that the document is the hero:
+
+- **Grey boxes on warm paper.** `neutral` fills nodes `#eeeeee` and
+  strokes them `#999999`, on a page whose paper is `#faf9f6` and whose
+  rules are `#e6e2da`. Nothing else in the viewer is that colour.
+- **Edge labels get a highlight box in dark mode.** `yes`, `no`,
+  `near viewport` and `parse error` each render on `#585858`, which
+  matches neither `--bg` (`#15181f`) nor `--code-bg` (`#1b1f28`). It
+  reads as a selection highlight nobody asked for.
+- **Nothing is emphasised.** Every node in a plan is drawn with equal
+  weight, so a seven-node flowchart has no subject.
+- **The title is Inter at 18px**, where every other heading in the viewer
+  is Source Serif.
+
+### What the reference actually is
+
+`cathrynlavery/diagram-design` was the prompt for this. It is worth being
+precise about what it is, because the obvious reading is wrong: **it is
+not a Mermaid theme.** It is an agent skill — 39 hand-authored SVG
+templates, a `style-guide.md` of semantic tokens (`paper`, `ink`,
+`accent`, `muted`), three typefaces, and a hard rule that coordinates are
+divisible by 4. Its `mermaid_extract.py` is an *importer*: it reads
+Mermaid source and redraws it as bespoke SVG.
+
+So adopting it wholesale means putting a model in the render path, which
+section 4 already rules out for server-side Mermaid and for the same
+reason. What ports is its vocabulary, not its machinery — and snyvi
+already has the vocabulary, in `:root`. `paper` is `--bg`, `ink` is
+`--fg`, `muted` is `--fg-3`, `accent` is `--accent`. The work is joining
+two things that already exist.
+
+### The lever
+
+Mermaid 11 takes `theme: "base"` plus a `themeVariables` map, and a
+`themeCSS` string that it appends to each diagram's own `<style>` block,
+scoped to that diagram's id. That scoping is why this is the right lever
+and `app.css` is not: Mermaid's own rules are `#id`-scoped, so a rule in
+`app.css` written as `.mmd svg .node rect` loses on specificity and a
+rule written to win needs `!important` on every line. `themeCSS` is
+emitted *inside* the same block, after them, and wins by order.
+
+`themeVariables` carries the colours:
+
+| Mermaid | snyvi |
+|---|---|
+| `background`, `edgeLabelBackground` | `--bg` |
+| `mainBkg`, `primaryColor`, `actorBkg`, `stateBkg` | `--bg-raise` |
+| `secondaryColor`, `clusterBkg`, `labelBoxBkgColor` | `--bg-side` |
+| `primaryTextColor`, `textColor`, `nodeTextColor` | `--fg` |
+| `signalColor`, `signalTextColor`, `titleColor` | `--fg-2` |
+| `lineColor` | `--fg-3` |
+| `clusterBorder` | `--rule` |
+| `nodeBorder`, `primaryBorderColor`, `actorBorder` | `--rule-2` |
+| `noteBkgColor`, `activationBkgColor` | `--accent-bg` |
+| `noteBorderColor`, `activationBorderColor` | `--accent` |
+
+`themeCSS` carries everything a colour cannot say: 1px node strokes and
+1.25px edges instead of Mermaid's heavier defaults, `rx: 8px` on
+clusters to match `--radius`, the small positive letter-spacing the rest
+of the UI uses, and the diagram's own title in Source Serif so it reads
+as a heading rather than a caption.
+
+### The accent, spent once
+
+The reference's strongest rule is one accent per diagram and one or two
+focal elements. Mermaid cannot infer a focus, but it does not have to:
+an author writes `B:::focus`, and two rules in `themeCSS` —
+`.node.focus rect` and `.node.focus .nodeLabel` — draw that node in
+`--accent-bg` on `--accent`. A `:::muted` does the reverse for the
+branch that is context rather than subject.
+
+Measured, because the syntax is not obvious: **`B:::focus` needs no
+`classDef` at all.** Mermaid puts the class on the node regardless and
+`themeCSS` styles it. A bare `classDef focus` with no declarations is a
+parse error, and a `classDef focus fill:...` emits an inline `style`
+attribute that beats `themeCSS` on exactly the properties it names — so
+the class must be applied without one. `class B focus` behaves
+identically to `:::`.
+
+### What it costs
+
+Nothing the budget can see. Same two diagrams, same tab:
+
+| | Flowchart | Sequence |
+|---|---|---|
+| Today (`neutral`) | 88 / 45 ms | 34 / 20 ms |
+| `base` + tokens | 45 ms | 20 ms |
+| + `themeCSS` | 40 ms | 19 ms |
+
+The 88 is the first render in the tab warming up; the honest reading of
+that table is that theming is free, which is what one would expect from
+changing the values a renderer already substitutes.
+
+It does add bytes. `themeCSS` is emitted into *every* diagram's `<style>`
+block, so a page with eight diagrams carries eight copies: **+651 bytes
+per diagram** for the block described above. That is worth knowing before
+2b caches SVGs in the daemon, and it is not worth acting on.
+
+`look: "neo"`, Mermaid 11's roomier shape set, was measured alongside and
+is **not** recommended. At reading size it is nearly indistinguishable
+from the tokens alone, and it hardcodes
+`drop-shadow(rgba(185,185,185,1))`, which is a light-grey shadow drawn on
+a dark page.
+
+### Three things found on the way
+
+- **`stateBkg` silently sets the state-diagram label colour.** Mermaid
+  computes `stateLabelColor = stateLabelColor || stateBkg ||
+  primaryTextColor`. Mapping `stateBkg` to `--bg-raise`, which is right
+  for the box, therefore made every state label `#ffffff` on `#ffffff`.
+  The labels were in the DOM the whole time, correctly positioned, and
+  invisible. An explicit `stateLabelColor` fixes it — measured:
+  `rgb(255,255,255)` before, `rgb(31,29,26)` after. The lesson is not the
+  token, it is that tokens leak across diagram families, so this wants a
+  render check per family rather than per token.
+- **A `>` combinator in `themeCSS` survives, but only just.** Mermaid
+  HTML-escapes it, so the SVG *string* contains `&gt;` and anything
+  reading that string as text sees a broken selector. It round-trips
+  correctly through `frame.innerHTML = svg`, which is what `mmdRender`
+  does, because inside foreign content a `<style>` element decodes
+  character references — verified end to end: the rule parses and
+  applies. Descendant selectors avoid the question entirely and cost
+  nothing here.
+- **An author's `classDef` beats `themeCSS`**, per the accent note above.
+  This is ordinary inline-style precedence, and it is the right way
+  round: a diagram that asks for a specific colour should get it.
+
+### What it needs before it lands
+
+- **A render check per diagram family.** The `stateBkg` fault passed
+  every check that existed and would have shipped. Flowchart, sequence,
+  class, state, ER and gantt each need one rendered assertion that their
+  labels are legible against their fills — cheap in `bench/browser.mjs`,
+  which already drives a browser and already checks things the clock
+  cannot see.
+- **2a first, or at least beside it.** Section 8 notes that the theme
+  toggle leaves drawn diagrams behind; re-theming is drop-the-cache and
+  re-queue-what-is-visible, which needs the cache to exist. Landing
+  richer theming before 2a makes a visible fault more visible.
+
+Cost is S: about sixty lines in `app.js`, no new dependency, no build
+step, and no change to `render.rs` or the vendored bundle.
