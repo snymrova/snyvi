@@ -52,6 +52,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
+| Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **next** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
@@ -76,6 +77,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 - Streaming or in-place document updates. Immutability is what keeps it fast and simple.
 - Reading documents back into the agent. The channel is one-way by design.
 - Hosted multi-user mode, until the local tool has real users asking for it.
+- A terminal or a command runner inside snyvi. A viewer that runs what a document told it to run is a one-click path from agent-written content to a side effect on the reader's machine, and it turns a leaked write token from a nuisance into code execution. `docs/TERMINAL.md` has the argument and what is built instead.
 
 ## 0.2 (built)
 
