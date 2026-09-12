@@ -208,9 +208,17 @@ jobs:
         # it into a binary that never opens a window. It is also what gives
         # snyvi.exe its own icon resource, which build.rs only attaches when
         # the feature is off.
+        shell: bash
         run: |
-          cargo build --release --bin snyvi
+          set -e
+          cargo build --release --bin snyvi 2>&1 | tee build.log
           cargo build --release --bin snyvi-app --features desktop
+          # build.rs attaches the icon best-effort, so that a machine without
+          # the SDK's resource compiler still produces a working snyvi.exe --
+          # which means a silent warning is the only sign it did not. This
+          # runner has the SDK, so here it is not allowed to be silent.
+          grep -q "no icon resource" build.log && {
+            echo "snyvi.exe was built without its icon"; exit 1; } || true
       - name: Smoke test the daemon
         shell: bash
         run: |
@@ -244,3 +252,29 @@ jobs:
           taskkill //F //IM snyvi-app.exe
           kill "$launcher" 2>/dev/null || true
           ./target/release/snyvi.exe stop
+      - name: Package the way the release does
+        # Same reason the .deb is built here: a packaging path that only runs
+        # at release time is broken exactly when it matters. These are the
+        # release job's commands against a version that is obviously not one.
+        shell: pwsh
+        run: |
+          $name = "snyvi-0.0.0-ci-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/release/snyvi.exe, target/release/snyvi-app.exe, README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          $file = "dist/$name.zip"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path "dist") "$name.zip.sha256"), "$hash  $name.zip`n")
+      - name: The zip carries both executables, and the checksum reads like the others
+        shell: bash
+        run: |
+          set -e
+          cd dist
+          name=snyvi-0.0.0-ci-x86_64-pc-windows-msvc
+          files=$(unzip -Z1 "$name.zip")
+          echo "$files"
+          echo "$files" | grep -qx "$name/snyvi.exe"
+          echo "$files" | grep -qx "$name/snyvi-app.exe"
+          # Written by PowerShell, read by the tool everyone checks the Linux
+          # assets with: two spaces, a bare filename, one newline and no BOM.
+          sha256sum -c "$name.zip.sha256"
