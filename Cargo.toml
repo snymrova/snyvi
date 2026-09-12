@@ -64,3 +64,10 @@ optional = true
 
 [build-dependencies]
 tauri-build = { version = "2", optional = true }
+
+# Only when building on Windows, and only to stamp the icon onto snyvi.exe.
+# Cargo matches a build-dependency's target section against the host, so a
+# Linux build -- which is every release build of the static binary -- never
+# resolves this at all.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

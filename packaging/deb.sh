@@ -69,7 +69,15 @@ else
   install -Dm755 "$bin"                  "$stage/usr/bin/snyvi"
   install -Dm644 "$here/snyvi.service"   "$stage/usr/lib/systemd/user/snyvi.service"
   install -Dm644 "$here/snyvi.desktop"   "$stage/usr/share/applications/snyvi.desktop"
-  install -Dm644 "$root/icons/icon.png"  "$stage/usr/share/icons/hicolor/256x256/apps/snyvi.png"
+  # Every size the theme spec looks for, plus the scalable master. Icon themes
+  # pick the nearest size rather than scaling the largest one, so shipping only
+  # 256 left the panel and the task switcher downsampling it themselves.
+  for px in 16 24 32 48 64 128 256 512; do
+    install -Dm644 "$root/icons/$px.png" \
+      "$stage/usr/share/icons/hicolor/${px}x${px}/apps/snyvi.png"
+  done
+  install -Dm644 "$root/icons/icon.svg" \
+    "$stage/usr/share/icons/hicolor/scalable/apps/snyvi.svg"
 fi
 install -Dm644 "$here/copyright"         "$stage/usr/share/doc/$pkg/copyright"
 install -Dm644 "$root/README.md"         "$stage/usr/share/doc/$pkg/README.md"
