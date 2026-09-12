@@ -189,7 +189,12 @@ fn terminals(dir: &std::path::Path) -> Vec<Vec<String>> {
         ]);
     }
     #[cfg(target_os = "macos")]
-    out.push(vec!["open".into(), "-a".into(), "Terminal".into(), d.clone()]);
+    out.push(vec![
+        "open".into(),
+        "-a".into(),
+        "Terminal".into(),
+        d.clone(),
+    ]);
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         if let Some(t) = std::env::var_os("TERMINAL") {

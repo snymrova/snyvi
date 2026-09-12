@@ -2,9 +2,9 @@
 
 use crate::browse::Browser;
 use crate::config::{self, Paths};
+use crate::platform;
 use crate::receive::{self, Payload};
 use crate::render::{self, Renderer};
-use crate::platform;
 use crate::store::{Doc, Store};
 use axum::{
     body::Body,
