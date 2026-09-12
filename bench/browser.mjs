@@ -19,7 +19,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fixture, DIAGRAMS } from "./fixture.mjs";
+import { fixture, families, DIAGRAMS } from "./fixture.mjs";
 import * as page from "./page.mjs";
 
 if (typeof WebSocket !== "function") {
@@ -287,7 +287,22 @@ async function main() {
       ? await evaluate(cdp, sessionId, call(page.revisitUsesCache))
       : { ok: false, why: "skipped: the navigation before it never completed" };
 
-    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, throttle });
+    /* The other half of the roadmap's test: not how long a diagram takes but
+     * whether it looks like it belongs in the document around it. A second
+     * document, sent the same way, so none of the timing rows above move -- and
+     * read in both themes, because the token mapping is shared and the faults it
+     * can carry are not. */
+    const famMd = join(tmp, "diagram-families.md");
+    writeFileSync(famMd, families());
+    const famUrl = execFileSync(BIN, ["send", famMd], { env, encoding: "utf8" }).trim().split("\n").pop();
+    const famLoaded = new Promise(res => cdp.on("Page.loadEventFired", (_p, sn) => sn === sessionId && res()));
+    await cdp.send("Page.navigate", { url: famUrl }, sessionId);
+    await famLoaded;
+    const light = await evaluate(cdp, sessionId, call(page.legible, "light"));
+    const toggled = await evaluate(cdp, sessionId, call(page.setTheme, "dark"));
+    const dark = toggled.ok ? await evaluate(cdp, sessionId, call(page.legible, "dark")) : [];
+
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible: [...light, ...dark], toggled, throttle });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -329,7 +344,7 @@ function judge(expect, got) {
   }
 }
 
-function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, throttle }) {
+function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, toggled, throttle }) {
   const mark = n => perf.marks.find(m => m.name === n)?.start ?? null;
   const fcp = perf.paints.find(p => p.name === "first-contentful-paint")?.start ?? null;
   const libStart = mark("snyvi:mermaid-load");
@@ -422,6 +437,28 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   console.log(`  ${"navigate away".padEnd(20)}${revisit.ok ? " ok  " : " FAIL"} ${revisit.why}`);
   failed ||= !cached.ok;
   console.log(`  ${"revisit".padEnd(20)}${cached.ok ? " ok  " : " FAIL"} ${cached.why}`);
+
+  /* 3:1 is the WCAG floor for large text, and diagram labels sit around it in
+   * size. It is a legibility check rather than a design review: what it is here
+   * to catch is a label drawn in the colour of the thing behind it, which lands
+   * at 1.0 and which no other check in this file can see. */
+  console.log("\nhow they look");
+  failed ||= !toggled.ok;
+  console.log(`  ${"theme toggle".padEnd(20)}${toggled.ok ? " ok  " : " FAIL"} ${toggled.why}`);
+  if (!legible.length) {
+    failed = true;
+    console.log(`  ${"legibility".padEnd(20)} FAIL no diagram family was read back at all`);
+  }
+  for (const f of legible) {
+    const ok = f.ratio !== null && f.ratio >= 3 && !f.blank;
+    failed ||= !ok;
+    const ratio = f.ratio === null ? "—" : f.ratio.toFixed(1);
+    const why = f.ratio === null ? `no label could be read (${f.checked} checked, state ${f.state})`
+      : f.blank ? `${f.blank} labels lay out at zero size`
+        : ok ? `${f.checked} labels, worst ${ratio}:1`
+          : `"${f.text}" is ${ratio}:1 against what is behind it`;
+    console.log(`  ${`${f.id} (${f.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);
+  }
 
   console.log(`\nviewport ${viewport}px; ${diagrams.length} diagrams`);
 

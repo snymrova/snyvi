@@ -4,10 +4,10 @@ Written 2026-09-12, after a report that a page with a big Mermaid diagram
 takes seconds to open. Everything in section 1 is measured on this
 machine under headless Chromium, not estimated.
 
-**Status.** Phases 1 and 2a have landed, along with the find fix and the
-parse-error fix from the small list. The harness that took section 1's numbers
-is now `bench/browser.mjs`, runs in CI, and section 7 records what it measures.
-Phases 3, 4 and 2b are still ahead.
+**Status.** Phases 1, 2a and 8 (section 9's theming) have landed, along with
+the find fix and the parse-error fix from the small list. The harness that took
+section 1's numbers is now `bench/browser.mjs`, runs in CI, and section 7
+records what it measures. Phases 3, 4 and 2b are still ahead.
 
 Sections 1 to 8 are about time. Section 9 is about the other half of the
 roadmap's test — whether a diagram looks like it belongs in the document
@@ -234,7 +234,7 @@ the pain, so this can wait for a considered answer.
 | 5 | Find, theme, error-source fixes | S | correctness | find and error done |
 | 6 | Trimmed bundle | M | measure before committing | |
 | 7 | Daemon-side SVG cache | M | instant everywhere; needs the call above | |
-| 8 | Theme the diagrams (section 9) | S | they stop looking borrowed | |
+| 8 | Theme the diagrams (section 9) | S | they stop looking borrowed | **done** |
 
 ## 6. How we know
 
@@ -304,6 +304,12 @@ the scheduler replaced.
 The 3193 ms is section 1's 3123 ms reproduced independently, which is the
 only reason to trust either.
 
+Section 9 adds a pass of its own on a second document, which is not
+timed at all: the theme toggle must actually re-draw what is on screen,
+and every diagram family must come back legible in both themes. It is
+reported as thirteen lines rather than folded into one, because the
+useful thing about "gantt, dark, 1.4:1" is all three parts of it.
+
 Phase 2a adds a row of its own, and it is a count rather than a clock:
 **diagrams drawn again on a revisit**, which must be zero. Counting calls
 into the renderer is the only honest way to ask — a machine fast enough
@@ -340,13 +346,10 @@ Measured on the way, and not fixed here:
   258 px and a nine-line sequence diagram at 383, from sources that look
   alike. The reserve sits between them. Phase 3's bounded frame is what
   turns the guess into a number.
-- **The theme toggle still leaves drawn diagrams behind.** Unchanged, not
-  worsened: `initialize` runs when the theme has moved, so a diagram
-  drawn after a toggle is drawn in the new theme and one drawn before
-  keeps the old. *2a has since made the fix cheap — the theme is half of
-  the cache key, so a toggle is drop-the-other-theme and re-queue-what-is-
-  visible — and section 9 is where it lands, because that is where the
-  colours start being worth re-drawing for.*
+- ~~**The theme toggle still leaves drawn diagrams behind.**~~ **Fixed**
+  with section 9, which is where it belonged: 2a made it cheap, and a
+  toggle is only worth re-drawing for once the colours are the viewer's
+  own. The harness checks it by reading the fills back before and after.
 - ~~**`snyvi watch` still redraws on every save**~~, though it no longer
   blocked while doing it. **Fixed by 2a**, which removed the work rather
   than rescheduling it: the file's diagrams are unchanged across a save,
@@ -490,18 +493,55 @@ a dark page.
   This is ordinary inline-style precedence, and it is the right way
   round: a diagram that asks for a specific colour should get it.
 
-### What it needs before it lands
+### What it needed before it landed, and what happened
 
-- **A render check per diagram family.** The `stateBkg` fault passed
-  every check that existed and would have shipped. Flowchart, sequence,
-  class, state, ER and gantt each need one rendered assertion that their
-  labels are legible against their fills — cheap in `bench/browser.mjs`,
-  which already drives a browser and already checks things the clock
-  cannot see.
-- **2a first, or at least beside it.** Section 8 notes that the theme
-  toggle leaves drawn diagrams behind; re-theming is drop-the-cache and
-  re-queue-what-is-visible, which needs the cache to exist. Landing
-  richer theming before 2a makes a visible fault more visible.
+Both conditions were met, and the first one paid for itself twice.
 
-Cost is S: about sixty lines in `app.js`, no new dependency, no build
-step, and no change to `render.rs` or the vendored bundle.
+**A render check per diagram family.** `bench/browser.mjs` now sends a
+second document — one small flowchart, sequence, class, state, ER and
+gantt — scrolls to each, and reads the colours back off the real render
+in *both* themes. For every label it finds what is actually behind it
+with `elementFromPoint` (text made click-through for the duration, so the
+point lands on the fill rather than on the glyph) and reports the worst
+contrast ratio in the diagram. Alpha is composited rather than ignored:
+half of snyvi's dark tokens are `rgba(255,255,255,…)`, and a ratio taken
+before blending is a number about nothing. The floor is 3:1, WCAG's for
+large text, because what this is here to catch is not a design opinion
+but a label drawn in the colour of the thing behind it — which lands at
+1.0 and which nothing else in the harness can see.
+
+It caught two, both in dark, both of which would have shipped:
+
+- **The focus node's label measured 1.0:1** — the same colour, twice.
+  `--accent-bg` is a pale wash of the accent on paper and reads well
+  there, but in the dark palette it is that same orange at 14% alpha, so
+  the label composited onto the accent fill behind it *is* the accent
+  fill. The label is `--bg` now, which is the one token guaranteed to
+  oppose the accent in both palettes, since the accent is chosen to sit
+  on it.
+- **A gantt drew "Scheduler" at 1.4:1 on its own bar.** A gantt derives
+  none of its colours from the table above — it has its own dozen and a
+  half for bars, section bands, the grid, and text placed inside a bar or
+  beside it depending on room. They are mapped now, all the text to
+  `--fg`, because every bar fill is within a shade of the page.
+
+The check was harder to write than to run, and the fault was the app's:
+`#main` sets `scroll-behavior: smooth`, which a plain `scrollIntoView`
+inherits, so the first version measured while the page was still gliding
+and reported "no label could be read" for whichever families were
+furthest from where it started. It asks for an instant scroll.
+
+**2a first, or at least beside it.** 2a landed first, and made the theme
+toggle a fix rather than a project: the theme is half of the cache key,
+so a toggle is put-every-figure-back-to-a-placeholder and re-queue
+what is near the viewport, and anything this tab has already drawn in
+the theme being returned to costs a string assignment. Nothing is
+dropped, which the plan assumed would be necessary — toggling back is
+free as well, and the byte bound is what keeps holding both from
+mattering. The same fault arrives by a second route, so the page also
+follows the system theme moving under it when no choice is stored.
+
+Cost was as estimated: about sixty lines in `app.js`, no new dependency,
+no build step, and nothing touched in `render.rs` or the vendored bundle.
+The timing rows did not move, which is what the measurements above
+predicted.

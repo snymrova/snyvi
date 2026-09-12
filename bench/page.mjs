@@ -228,3 +228,131 @@ export async function revisitUsesCache() {
     window.mermaid.render = real;
   }
 }
+
+/** Every label in every diagram, and what it is drawn against.
+ *
+ *  Section 9 of docs/DIAGRAMS.md asks for a rendered assertion per diagram
+ *  family rather than per theme token, because tokens leak across families:
+ *  `stateBkg` is right for a state box and also, silently, the colour of the
+ *  label on it. That fault put white text on white boxes, correctly positioned
+ *  and present in the DOM, and passed every check that existed.
+ *
+ *  So the colours are read back off real renders. The shape behind a label is
+ *  found with elementFromPoint rather than guessed from the DOM shape of each
+ *  family -- text is made click-through for the duration, so the point lands on
+ *  the fill rather than on the glyph. Alpha is composited, not ignored: half of
+ *  snyvi's dark tokens are `rgba(255,255,255,.4)` and up, and a contrast ratio
+ *  taken before blending is a number about nothing. */
+export async function legible(label) {
+  const until = async (test, tries = 400) => {
+    for (let i = 0; i < tries; i++) {
+      if (test()) return true;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+  };
+  const st = document.createElement("style");
+  st.textContent = ".mmd svg text, .mmd svg tspan, .mmd svg foreignObject, .mmd svg foreignObject * { pointer-events: none !important; }";
+  document.head.appendChild(st);
+
+  const parse = c => {
+    const m = /rgba?\(([^)]+)\)/.exec(c || "");
+    if (!m) return null;
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    return p.length < 3 || p.some(Number.isNaN) ? null : { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  };
+  const over = (f, b) => ({ r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a), b: f.b * f.a + b.b * (1 - f.a), a: 1 });
+  const lum = c => {
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const ratio = (x, y) => {
+    const a = lum(x), b = lum(y), hi = Math.max(a, b), lo = Math.min(a, b);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const SHAPES = ["rect", "circle", "ellipse", "polygon", "path", "polyline", "line"];
+  const page = parse(getComputedStyle(document.body).backgroundColor) || { r: 255, g: 255, b: 255, a: 1 };
+
+  const out = [];
+  try {
+    /* Scrolled to and read one at a time, in that order. The document is short
+     * but six diagrams still reach past one screen, and a diagram below the
+     * fold is deliberately never drawn -- so bringing them all into view first
+     * and reading afterwards reads most of them from off screen, where
+     * elementFromPoint answers about nothing. */
+    for (const fig of document.querySelectorAll(".mmd")) {
+      const m = /%%\s*id:(\S+)/.exec(fig.dataset.src || "");
+      // `behavior: "instant"` on purpose: #main sets `scroll-behavior: smooth`,
+      // which a plain scrollIntoView inherits, and a measurement taken while the
+      // page is still gliding reads every label as off screen. That is what the
+      // first version of this check did, and it reported "no label could be
+      // read" for whichever families happened to be furthest from the caret.
+      fig.scrollIntoView({ block: "center", behavior: "instant" });
+      await until(() => fig.dataset.state === "done" || fig.dataset.state === "error");
+      await new Promise(r => requestAnimationFrame(r));
+      const svg = fig.querySelector("svg");
+      if (!svg) {
+        out.push({ id: m ? m[1] : "unlabelled", theme: label, checked: 0, blank: 0, ratio: null,
+          text: null, state: fig.dataset.state });
+        continue;
+      }
+      const labels = [...svg.querySelectorAll("text, tspan, span, p, div")]
+        .filter(el => el.children.length === 0 && (el.textContent || "").trim().length > 0);
+      let worst = null, blank = 0, checked = 0;
+      for (const el of labels) {
+        const box = el.getBoundingClientRect();
+        if (!box.width || !box.height) { blank++; continue; }
+        const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+        // Off screen after the scroll above, so nothing can be read about it.
+        if (cx < 0 || cy < 0 || cx > innerWidth || cy > innerHeight) continue;
+        const under = document.elementFromPoint(cx, cy);
+        let bg = null;
+        if (under && under !== el) {
+          const tag = under.tagName.toLowerCase();
+          bg = parse(SHAPES.includes(tag) ? getComputedStyle(under).fill : getComputedStyle(under).backgroundColor);
+        }
+        if (!bg || !bg.a) bg = page; else if (bg.a < 1) bg = over(bg, page);
+        const isSvg = el.namespaceURI === "http://www.w3.org/2000/svg";
+        let fg = parse(isSvg ? getComputedStyle(el).fill : getComputedStyle(el).color);
+        if (!fg) continue;
+        if (fg.a < 1) fg = over(fg, bg);
+        const r = ratio(fg, bg);
+        checked++;
+        if (!worst || r < worst.ratio) worst = { ratio: r, text: (el.textContent || "").trim().slice(0, 24) };
+      }
+      out.push({ id: m ? m[1] : "unlabelled", theme: label, checked, blank, state: fig.dataset.state,
+        ratio: worst ? worst.ratio : null, text: worst ? worst.text : null });
+    }
+  } finally {
+    st.remove();
+  }
+  return out;
+}
+
+/** Click the theme through until it is the one asked for, and report what the
+ *  diagrams on the page look like afterwards. Two things at once on purpose: a
+ *  toggle used to leave every drawn diagram in the theme it was drawn in, so
+ *  the signature changing is the check for that, and the colours read back
+ *  afterwards are the second theme's legibility pass. */
+export async function setTheme(want) {
+  const until = async (test, tries = 400) => {
+    for (let i = 0; i < tries; i++) {
+      if (test()) return true;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+  };
+  const signature = () => [...document.querySelectorAll('.mmd[data-state="done"] svg')]
+    .map(svg => {
+      const shape = svg.querySelector("rect, circle, polygon, path");
+      return shape ? getComputedStyle(shape).fill : "-";
+    }).join("|");
+  const before = signature();
+  const btn = document.querySelector("#btn-theme");
+  for (let i = 0; i < 4 && document.documentElement.dataset.theme !== want; i++) btn.click();
+  if (document.documentElement.dataset.theme !== want) return { ok: false, why: `the theme never became ${want}` };
+  const drew = await until(() => signature() !== before && !document.querySelector('.mmd[data-state="queued"], .mmd[data-state="rendering"]'));
+  return { ok: drew, before, after: signature(),
+    why: drew ? `every drawn diagram was redrawn in ${want}`
+      : `switched to ${want} and the diagrams on screen kept the colours they were drawn in` };
+}

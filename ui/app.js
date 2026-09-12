@@ -590,15 +590,10 @@
    *  the right size, watched for coming near the viewport. Called wherever the
    *  body changes, and the bumped token is what stops a diagram queued for the
    *  document the reader just left from being drawn into a detached node. */
-  function prepareMermaid() {
-    mmdToken++;
-    mmdQueue = [];
+  /** Generous, so a diagram is drawn by the time it is scrolled to rather than
+   *  after: a screen of margin is roughly a flick of the wheel. */
+  function mmdWatch() {
     if (mmdWatcher) mmdWatcher.disconnect();
-    mmdWatcher = null;
-    const pres = docEl.querySelectorAll("pre.mermaid");
-    if (!pres.length) return;
-    // Generous, so a diagram is drawn by the time it is scrolled to rather than
-    // after: a screen of margin is roughly a flick of the wheel.
     mmdWatcher = new IntersectionObserver(entries => {
       for (const e of entries) {
         if (!e.isIntersecting) continue;
@@ -606,48 +601,79 @@
         mmdEnqueue(e.target);
       }
     }, { root: main, rootMargin: "600px 0px" });
+  }
 
+  function prepareMermaid() {
+    mmdToken++;
+    mmdQueue = [];
+    if (mmdWatcher) mmdWatcher.disconnect();
+    mmdWatcher = null;
+    const pres = docEl.querySelectorAll("pre.mermaid");
+    if (!pres.length) return;
+    mmdWatch();
     for (const pre of pres) {
-      const src = pre.textContent.trim();
-      const weight = mmdWeight(src);
       const fig = document.createElement("figure");
       fig.className = "mmd";
-      fig.dataset.src = src;
+      fig.dataset.src = pre.textContent.trim();
       fig.dataset.mmdId = `mmd-${++mmdSeq}`;
-      // An estimate and only that: the source says how much there is to draw,
-      // never how tall the drawing will be. Measured on the fixture in
-      // bench/fixture.mjs, a small flowchart lands at 258 px and a nine-line
-      // sequence diagram at 383, so the floor sits between them rather than
-      // under both -- half a screen of settling either way beats a full one in
-      // one direction. Phase 3 is what makes this exact: a diagram in a frame of
-      // a bounded height is a height that can be reserved rather than guessed.
-      fig.style.setProperty("--mmd-reserve", `${Math.min(520, Math.max(240, 170 + weight * 4))}px`);
       const frame = document.createElement("div");
       frame.className = "mmd-frame";
       fig.appendChild(frame);
       pre.replaceWith(fig);
-      // The cap is about cost, and a diagram already drawn in this tab has
-      // none: a reader who asked for this one once is not asked again on the
-      // way back.
-      if ((weight > MMD_CAP_LINES || src.length > MMD_CAP_BYTES) && !mmdCached(src)) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "mmd-ask";
-        btn.dataset.mmdRender = "";
-        btn.textContent = "Render diagram";
-        const why = document.createElement("span");
-        why.className = "mmd-why";
-        why.textContent = `${weight} lines — this one takes a moment`;
-        // An offer, not a diagram on its way: it reserves room for itself and
-        // not for the drawing behind it, which arrives only if asked for.
-        fig.style.setProperty("--mmd-reserve", "150px");
-        fig.dataset.state = "held";
-        mmdNote(fig, btn, why);
-      } else {
-        fig.dataset.state = "pending";
-        mmdNote(fig, document.createTextNode("Diagram"));
-        mmdWatcher.observe(fig);
-      }
+      mmdReserve(fig);
+    }
+  }
+
+  /** The theme moved, so every diagram on the page was drawn in the other one.
+   *  Put them all back to placeholders and queue what is near the viewport
+   *  again: for anything this tab has already drawn in the theme being returned
+   *  to, that costs a string assignment, since the theme is half of the cache
+   *  key. Nothing is dropped -- toggling back is free as well, and the byte
+   *  bound is what keeps holding both from mattering. */
+  function mmdRetheme() {
+    const figs = [...docEl.querySelectorAll(".mmd")];
+    if (!figs.length) return;
+    mmdToken++;
+    mmdQueue = [];
+    mmdWatch();
+    for (const fig of figs) mmdReserve(fig);
+  }
+
+  /** A figure, in the state it starts in: a box of about the right size, and
+   *  either a place in the queue or an offer to draw it. Shared by the first
+   *  pass over a document and by a theme change, which starts them all over. */
+  function mmdReserve(fig) {
+    const src = fig.dataset.src;
+    const weight = mmdWeight(src);
+    fig.classList.remove("mmd-slow");
+    // An estimate and only that: the source says how much there is to draw,
+    // never how tall the drawing will be. Measured on the fixture in
+    // bench/fixture.mjs, a small flowchart lands at 258 px and a nine-line
+    // sequence diagram at 383, so the floor sits between them rather than
+    // under both -- half a screen of settling either way beats a full one in
+    // one direction. Phase 3 is what makes this exact: a diagram in a frame of
+    // a bounded height is a height that can be reserved rather than guessed.
+    fig.style.setProperty("--mmd-reserve", `${Math.min(520, Math.max(240, 170 + weight * 4))}px`);
+    // The cap is about cost, and a diagram already drawn in this tab has none:
+    // a reader who asked for this one once is not asked again on the way back.
+    if ((weight > MMD_CAP_LINES || src.length > MMD_CAP_BYTES) && !mmdCached(src)) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mmd-ask";
+      btn.dataset.mmdRender = "";
+      btn.textContent = "Render diagram";
+      const why = document.createElement("span");
+      why.className = "mmd-why";
+      why.textContent = `${weight} lines — this one takes a moment`;
+      // An offer, not a diagram on its way: it reserves room for itself and
+      // not for the drawing behind it, which arrives only if asked for.
+      fig.style.setProperty("--mmd-reserve", "150px");
+      fig.dataset.state = "held";
+      mmdNote(fig, btn, why);
+    } else {
+      fig.dataset.state = "pending";
+      mmdNote(fig, document.createTextNode("Diagram"));
+      mmdWatcher.observe(fig);
     }
   }
 
@@ -682,14 +708,98 @@
    *  keep the theme they were drawn in; re-drawing them belongs with the cache. */
   function mmdCurrentTheme() {
     const dark = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-    return dark ? "dark" : "neutral";
+    return dark ? "dark" : "light";
+  }
+
+  /** The diagram is drawn in the viewer's own palette, read off `:root` rather
+   *  than written out again here -- so a token changed in app.css moves the
+   *  diagrams with it and the two cannot drift.
+   *
+   *  `theme: "base"` is the lever: it is the only theme that takes
+   *  `themeVariables` at all, which is why `neutral` could never be nudged into
+   *  the palette one value at a time. What a colour cannot say goes in
+   *  `themeCSS`, which Mermaid emits inside each diagram's own `#id`-scoped
+   *  <style> block, after its own rules -- so it wins by order, where the same
+   *  rules in app.css would lose on specificity and need `!important` on every
+   *  line. */
+  function mmdTheme() {
+    const cs = getComputedStyle(root);
+    const v = n => cs.getPropertyValue(n).trim();
+    const bg = v("--bg"), raise = v("--bg-raise"), side = v("--bg-side");
+    const fg = v("--fg"), fg2 = v("--fg-2"), fg3 = v("--fg-3");
+    const rule = v("--rule"), rule2 = v("--rule-2");
+    const accent = v("--accent"), accentBg = v("--accent-bg");
+    return {
+      fontFamily: v("--sans"),
+      themeVariables: {
+        background: bg, edgeLabelBackground: bg,
+        mainBkg: raise, primaryColor: raise, actorBkg: raise, stateBkg: raise,
+        secondaryColor: side, clusterBkg: side, labelBoxBkgColor: side,
+        primaryTextColor: fg, textColor: fg, nodeTextColor: fg,
+        // Mermaid computes `stateLabelColor = stateLabelColor || stateBkg ||
+        // primaryTextColor`, so mapping stateBkg to the box's own fill -- which
+        // is right for the box -- paints every state label the colour of the
+        // thing behind it. Measured: white on white, labels present in the DOM,
+        // correctly positioned, invisible. Named explicitly, it cannot happen.
+        stateLabelColor: fg,
+        signalColor: fg2, signalTextColor: fg2, titleColor: fg2,
+        lineColor: fg3,
+        clusterBorder: rule,
+        nodeBorder: rule2, primaryBorderColor: rule2, actorBorder: rule2,
+        noteBkgColor: accentBg, activationBkgColor: accentBg,
+        noteBorderColor: accent, activationBorderColor: accent,
+        /* A gantt draws its own everything: bars, section bands, a grid, and
+         * text placed inside a bar or beside it depending on how much room
+         * there is. None of it derives from the values above, which is how
+         * "Scheduler" came to sit at 1.4:1 on its own bar. The text colours are
+         * all `--fg` because every bar fill here is within a shade of the page.
+         */
+        sectionBkgColor: bg, altSectionBkgColor: side, sectionBkgColor2: bg,
+        taskBkgColor: raise, taskBorderColor: rule2,
+        activeTaskBkgColor: accentBg, activeTaskBorderColor: accent,
+        doneTaskBkgColor: side, doneTaskBorderColor: rule2,
+        critBkgColor: accentBg, critBorderColor: accent,
+        taskTextColor: fg, taskTextDarkColor: fg, taskTextLightColor: fg,
+        taskTextOutsideColor: fg2, taskTextClickableColor: accent,
+        gridColor: rule, todayLineColor: accent,
+      },
+      /* Descendant selectors throughout: a `>` comes back HTML-escaped in the
+       * SVG string, and while it round-trips correctly through `innerHTML`,
+       * anything reading that string as text sees a broken selector. Nothing
+       * here needs one.
+       *
+       * Terse on purpose, and explained here rather than in the string: Mermaid
+       * copies themeCSS into every diagram's own <style> block, so a page with
+       * eight diagrams carries eight copies of whatever is written below. The
+       * rules are measured at ~651 bytes; a paragraph of reasoning would be
+       * larger than the rules.
+       *
+       * The focus label is the paper colour rather than --accent-bg. On paper
+       * the accent is a dark orange and --accent-bg a pale wash of it, which
+       * reads well; in the dark palette the accent is a *light* orange and
+       * --accent-bg is that same orange at 14% alpha, so a label composited
+       * onto the fill behind it measured 1.0:1 -- the same colour, twice.
+       * --bg is the one token guaranteed to oppose the accent in both
+       * palettes, because the accent is chosen to sit on it. */
+      themeCSS: `
+        .node rect, .node circle, .node ellipse, .node polygon, .node path { stroke-width: 1px; }
+        .edgePath .path, .flowchart-link { stroke-width: 1.25px; }
+        .cluster rect { rx: 8px; ry: 8px; }
+        .nodeLabel, .edgeLabel, .label, .messageText, .loopText, .noteText { letter-spacing: .01em; }
+        text.title, .titleText { font-family: ${v("--serif")}; font-size: 18px; font-weight: 600; }
+        .node.focus rect, .node.focus circle, .node.focus ellipse, .node.focus polygon, .node.focus path { fill: ${accent}; stroke: ${accent}; }
+        .node.focus .nodeLabel { color: ${bg}; fill: ${bg}; }
+        .node.muted rect, .node.muted circle, .node.muted ellipse, .node.muted polygon, .node.muted path { fill: ${bg}; stroke: ${rule}; }
+        .node.muted .nodeLabel { color: ${fg3}; fill: ${fg3}; }
+      `,
+    };
   }
 
   function mmdInit() {
     const theme = mmdCurrentTheme();
     if (theme === mermaidTheme) return;
     mermaidTheme = theme;
-    window.mermaid.initialize({ startOnLoad: false, theme, securityLevel: "strict", fontFamily: "Inter, system-ui, sans-serif" });
+    window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "base", ...mmdTheme() });
   }
 
   /** One diagram per task, yielding between. A 2433 ms diagram is still 2433 ms
@@ -1249,6 +1359,12 @@
     next ? (root.dataset.theme = next) : delete root.dataset.theme;
     store.set("snyvi.theme", next);
     toast("Theme", next || "system");
+    mmdRetheme();
+  });
+  // The same fault by a different route: with no explicit choice stored the page
+  // follows the system, and the diagrams on it were drawn before it moved.
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (!root.dataset.theme) mmdRetheme();
   });
   function toggleWide() {
     const on = root.dataset.wide !== "1";
