@@ -52,8 +52,11 @@
    *  put the rest back out of reach while they are still reading it. */
   const liftedCaps = new Set();
   const liftedWorkflows = new Set();
-  /** Fills in flight, so a project expanded twice in a second is fetched once. */
+  /** Fills in flight, so a project expanded twice in a second is fetched once,
+   *  and fills already attempted, so a fetch that failed is not retried by the
+   *  render it would trigger. Expanding the project by hand asks again. */
   const filling = new Set();
+  const tried = new Set();
 
   /** The browse section keeps its own DOM across navigations so expanded folders stay open. */
   function renderBrowse() {
@@ -140,8 +143,9 @@
    *  until the library moves under it. */
   async function fillProject(pid, force) {
     pid = String(pid);
-    if (filling.has(pid) || (state.sub.has(pid) && !force)) return;
+    if (filling.has(pid) || (!force && (state.sub.has(pid) || tried.has(pid)))) return;
     filling.add(pid);
+    tried.add(pid);
     // The workflow on screen comes back whole in the same answer, so an arrival
     // cannot re-cap the session a reader is stepping through.
     const q = new URLSearchParams();
@@ -252,12 +256,36 @@
       return;
     }
     if (!d.classList || !d.classList.contains("t-proj")) return;
-    d.open ? openProjects.add(d.dataset.pid) : openProjects.delete(d.dataset.pid);
+    const pid = d.dataset.pid;
+    d.open ? openProjects.add(pid) : openProjects.delete(pid);
     store.set("snyvi.open", [...openProjects].join(","));
     // Opening draws what this tab already holds and fetches what it does not;
     // closing takes the rows back out of the page, which is the bound.
-    if (d.open && !state.sub.has(d.dataset.pid)) fillProject(d.dataset.pid);
-    else { renderTree(); markActive(); }
+    //
+    // The rows go straight into this project's list rather than through
+    // renderTree, and that is not a shortcut: an element created with `open`
+    // fires `toggle` in Chrome, so rebuilding the whole sidebar from here
+    // creates the <details open> that called us and the two render each other
+    // for as long as the tab is open. Measured before this was written: the
+    // page never fired its load event at all, and the browser bench, which
+    // waits for it, hung rather than failed.
+    const ul = d.querySelector(":scope > ul");
+    if (!ul) return;
+    if (!d.open) {
+      ul.innerHTML = "";
+      return;
+    }
+    // Already drawn -- this is the event that a render fires at itself.
+    if (ul.firstChild) return;
+    const p = state.tree.find(x => String(x.id) === pid);
+    if (!p) return;
+    if (state.sub.has(pid)) {
+      ul.innerHTML = projectRows(p);
+      markActive();
+    } else {
+      // Asked for by hand, so a project whose fill failed earlier is tried again.
+      fillProject(pid, true);
+    }
   }, true);
 
   treesEl.addEventListener("click", async e => {
@@ -825,6 +853,9 @@
       performance.mark("snyvi:mermaid-load");
       mermaidReady = new Promise((res, rej) => {
         const sc = document.createElement("script");
+        // Versioned like every other asset: the bundle is served immutable for
+        // a year, so without this a browser would keep the first one it ever
+        // saw across every upgrade.
         sc.src = "/assets/mermaid.js";
         sc.onload = () => { performance.mark("snyvi:mermaid-ready"); res(); };
         sc.onerror = () => rej(new Error("could not load the diagram library"));
