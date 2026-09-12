@@ -39,6 +39,25 @@ jobs:
         # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
         # regression that triples a case still fails the build.
         run: SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
+      # Node 22 for the global WebSocket the harness drives Chromium with; the
+      # runner's own Node may be older, and nothing else here uses it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Browser budget
+        # `snyvi bench` measures the daemon. This measures the half the reader
+        # actually waits on, which is where the seconds were: a 220-node diagram
+        # froze the tab for 3.1 s before the scheduler landed.
+        #
+        # SNYVI_BENCH_SHARED because a hosted runner's speed is not snyvi's to
+        # promise: two of them reported 444 ms and 1404 ms of first paint for
+        # the same commit. Those rows are printed and not enforced here. What is
+        # enforced is the behaviour -- a diagram below the fold is not drawn, one
+        # over the cap is offered rather than spent, find marks nothing inside an
+        # SVG, leaving a document mid-render strands nothing -- none of which
+        # depends on the clock, plus the one timing that does not either:
+        # whether drawing is cut into slices. See docs/DIAGRAMS.md.
+        run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
       - name: Smoke test the daemon
         run: |
           set -e
@@ -48,6 +67,30 @@ jobs:
           curl -sf "$url" > /dev/null
           curl -sf http://127.0.0.1:7791/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+      - name: The terminal button opens nothing it should not
+        # The one endpoint in snyvi whose effect is a process, so the one worth
+        # checking from the outside. A runner has no display, which is the
+        # guard's whole case -- a daemon reached over ssh declines rather than
+        # fails -- and it is also the only place guaranteed not to have one.
+        # See docs/TERMINAL.md.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/snyvi-ci SNYVI_CONFIG_DIR=/tmp/snyvi-ci-cfg SNYVI_PORT=7791
+          docid=$(./target/release/snyvi send README.md | tail -1); docid=${docid##*/}
+          post() { curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'content-type: application/json' "$@" \
+            -d "{\"doc\":\"$docid\"}" http://127.0.0.1:7791/api/terminal; }
+          # The page has no token, so the gate is the Origin: a foreign page is
+          # refused, and so is a request carrying neither.
+          test "$(post)" = "403"
+          test "$(post -H 'Origin: https://evil.example')" = "403"
+          test "$(post -H 'Origin: http://127.0.0.1:7791' -H 'Sec-Fetch-Site: cross-site')" = "403"
+          # Allowed through, and still opens nothing, because there is no screen.
+          test "$(post -H 'Origin: http://127.0.0.1:7791')" = "503"
+          # On the process name and not the command line: `pgrep -f` matches the
+          # pattern where it appears in this script's own arguments, which is a
+          # green check that would have gone red for the wrong reason.
+          ! ps -e -o comm= | grep -qxE 'gnome-terminal|konsole|xfce4-terminal|alacritty|kitty|foot|ptyxis|wezterm|x-terminal-emulator'
       - name: Smoke test watch
         # A save while `snyvi watch` runs must reach the daemon as the same document.
         run: |
