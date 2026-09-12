@@ -245,7 +245,7 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .browse-image img, .doc-image img { border-radius: var(--radius); max-width: 100%; height: auto; }
 
 /* ---------- document ---------- */
-#doc { max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 56px 48px 120px; }
+#doc { --doc-pad: 48px; max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 56px var(--doc-pad) 120px; }
 .doc-head { margin-bottom: 40px; }
 .doc-title { font-size: 34px; line-height: 1.15; letter-spacing: -.022em; font-weight: 650; margin: 0 0 10px; text-wrap: balance; font-family: var(--sans); }
 .doc-sub { color: var(--fg-3); font-size: 13px; margin: 0; }
@@ -346,7 +346,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 #doc:has(.kind-code), #doc:has(.kind-text), #doc:has(.kind-diff),
 #doc:has(.kind-table), #doc:has(.kind-image), #doc:has(article.preview) { max-width: none; padding-left: 40px; padding-right: 40px; }
 /* Maximise width: prose gives up its measure and uses the window. */
-:root[data-wide="1"] #doc { max-width: none; padding-left: 64px; padding-right: 64px; }
+:root[data-wide="1"] #doc { --doc-pad: 64px; max-width: none; }
 
 /* find bar */
 #find[hidden] { display: none; }
@@ -382,9 +382,39 @@ mark.find.cur { background: var(--accent); color: #fff; }
 pre.mermaid { background: transparent; text-align: center; padding: 8px 0; overflow: visible; font-family: var(--mono); font-size: 12.5px; color: var(--fg-3); white-space: pre-wrap; }
 pre.mermaid::before { display: none; }
 
-.mmd { margin: 1.5em 0; }
+/* A drawn diagram is not prose, so it takes what the reading measure is not
+   using: the column's own padding, which is as much as can be given without
+   reflowing the text around it. The pane itself is one keystroke away (`w`) and
+   the screen is another (`f`). */
+.mmd { margin: 1.5em 0; position: relative; }
+.mmd[data-state="done"] { margin-inline: calc(-1 * var(--doc-pad, 0px)); }
 .mmd-frame { display: flex; align-items: center; justify-content: center; }
 .mmd-frame svg { max-width: 100%; height: auto; }
+/* Once it has a viewport the frame owns the box and the SVG fills it, so the
+   viewBox is the only thing that decides what is shown. */
+.mmd[data-zoom] .mmd-frame { overflow: hidden; border-radius: var(--radius); }
+.mmd[data-zoom] .mmd-frame svg { width: 100%; height: 100%; max-width: none; display: block; }
+.mmd[data-zoom="in"] .mmd-frame { cursor: grab; }
+.mmd[data-grab] .mmd-frame { cursor: grabbing; }
+/* The controls: present when the diagram is under the cursor or holds the
+   focus, absent from a page being read -- the bargain the rename pencils in the
+   tree make. Always there for a reader on a touch screen, which has no hover. */
+.mmd-tools {
+  position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px;
+  border-radius: var(--radius); background: var(--bg-raise); box-shadow: 0 1px 3px rgba(0,0,0,.18);
+  opacity: 0; transition: opacity .12s ease; pointer-events: none;
+}
+.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd:fullscreen .mmd-tools { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .mmd-tools { opacity: 1; pointer-events: auto; } }
+.mmd-tools button {
+  font-family: var(--sans); font-size: 12px; line-height: 1; color: var(--fg-2);
+  min-width: 26px; height: 24px; padding: 0 6px; border-radius: 5px; background: none;
+}
+.mmd-tools button:hover { background: var(--rule); color: var(--fg); }
+.mmd-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Fullscreen is the one place a 4738 px graph is legible. */
+.mmd:fullscreen { margin: 0; background: var(--bg); display: flex; align-items: center; }
+.mmd:fullscreen .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
 /* Until the diagram lands the figure holds about the space it will want, so the
    text below it does not jump when it does. An estimate from the source, set by
    the client -- see mmdWeight in app.js. */

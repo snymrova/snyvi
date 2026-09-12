@@ -10,6 +10,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Feature | Why | Cost | Status |
 |---|---|---|---|
 | Mermaid diagrams | Agents put flowcharts and sequence diagrams in almost every plan. Today they show as code. Vendor the library in the binary, load it only when a page has a `mermaid` block, render after first paint so text never waits. | M | **done 0.2** |
+| A big diagram you can read | A 20000-unit flowchart fitted into the reading column drew 30 px tall: the one diagram worth drawing was the one nobody could read. Each is a viewport now — ⌘/ctrl + scroll zooms toward the cursor, drag pans, `f` fills the screen, `0` fits — driving the SVG's own `viewBox`, so strokes stay crisp and nothing is scaled twice. `docs/DIAGRAMS.md` phase 3. | M | **done 0.9** |
 | Side-by-side diff with word-level highlights | "Compare with previous" and sent patches are inline only. Reviews read far better in two columns with changed words emphasised. Toggle with `s`. | M | **done 0.2** |
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
@@ -461,6 +462,37 @@ than it shows — and budgets what the sidebar puts in the page: rows on a
 first visit, rows with one project open, the shell's size, and renders
 after it has settled. Counts rather than clocks, because what a row costs
 the page is a fact about snyvi on any machine.
+
+**And a big diagram is worth drawing.** `docs/DIAGRAMS.md` phase 3, the
+last thing that document had measured and not fixed: the 220-node
+flowchart is 20023 units wide and was drawn 30 px tall, because
+`max-width: 100%` fitted its width into the reading column and
+`height: auto` took the height down with it.
+
+A drawn diagram is a viewport now. ⌘/ctrl + scroll zooms toward the
+cursor and a trackpad pinch arrives as the same event; a plain scroll is
+still the page's, so a cursor crossing a diagram never traps it. Drag
+pans, double-click zooms in, `0` fits, `f` fills the screen, and the
+figure carries its own controls, shown when it is under the cursor. It
+drives the SVG's `viewBox` rather than scaling a picture: the browser
+draws the same vectors into a different box, so strokes stay crisp at any
+depth and a frame costs nothing per gesture.
+
+Two things the plan did not know, both found by measuring:
+
+- **A fit can be too small to be a diagram.** That flowchart fits the
+  column at 3.8% of itself, which draws a band of grey noise. Under about
+  15% a diagram opens at its own size instead, at the corner the graph
+  starts in, and the button offers `Fit` rather than `100%`.
+- **The live `viewBox` is not the diagram's bounds.** Panning writes it,
+  so re-fitting after a resize or a fullscreen read the reader's own view
+  as the whole graph and could never find its way back out. The bounds
+  are kept on the element; the attribute is only ever the view.
+
+`bench/browser.mjs` drives the gestures rather than the functions — a
+check that called them directly would pass with nothing listening — and
+clicks fullscreen through the protocol, because the browser grants that
+to a real click and to nothing else.
 
 Also: `ensure_daemon` asked a starting daemon for its health every 40 ms
 while a daemon comes up in about 25, so a cold `snyvi app` waited about

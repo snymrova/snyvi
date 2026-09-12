@@ -270,6 +270,8 @@ From source, `cargo build --release` gives you snyvi alone; add
 | p     | pin (kept by `prune`)                       |
 | ⌫     | delete document                             |
 | i     | inbox                                       |
+| f     | fullscreen the diagram                      |
+| 0     | fit the diagram                             |
 | t     | toggle contents                             |
 | \     | toggle sidebar                              |
 | o     | open source                                 |
@@ -292,6 +294,39 @@ A `.csv` or `.tsv` file is laid out as a table rather than shown as
 text: quoted fields keep their commas and newlines, numbers are aligned
 as numbers, and the head stays put while the body scrolls. Very large
 files show their first 2000 rows with a note; `o` opens the whole file.
+
+## Diagrams
+
+A ```` ```mermaid ```` block is drawn as a diagram — flowcharts, sequence,
+class, state, ER and gantt — in snyvi's own palette, so it belongs to the
+page rather than arriving from somewhere else. Both themes are checked on
+every build: every label has to stay legible against whatever is behind
+it.
+
+Drawing happens after the text is on screen and only for diagrams the
+reader is near, one at a time, so a page with eight of them opens as fast
+as a page with none. A diagram is drawn once per tab and kept, so coming
+back to a document costs nothing and a watched file does not redraw on
+every save. One over about 150 nodes is offered rather than drawn: it
+costs seconds, and that should be the reader's call.
+
+A drawn diagram is a viewport, which is what makes a big one worth
+having. It opens fitted, so the shape is visible at a glance:
+
+- **⌘/ctrl + scroll** zooms toward the cursor, and so does a trackpad
+  pinch. A plain scroll is still the page's, so a cursor crossing a
+  diagram never traps it.
+- **Drag** pans, once there is something to pan to.
+- **Double-click** zooms in.
+- **Fit / 100%** is one button: the shape, or the labels.
+- **`f`** fills the screen with it, which is where a diagram of a few
+  hundred nodes is finally readable. **`0`** fits it again.
+
+Zooming drives the SVG's own `viewBox` rather than scaling a picture, so
+strokes stay crisp at any depth.
+
+A source Mermaid cannot parse is never swallowed: the error is shown with
+the source underneath it, exactly as the agent wrote it.
 
 ## Pages and PDFs
 

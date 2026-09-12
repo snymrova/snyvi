@@ -260,6 +260,11 @@ async function main() {
 
     const onDemand = await evaluate(cdp, sessionId, call(page.onDemand, "huge-flow"));
 
+    /* The same diagram, now that it is drawn: is it something a reader can
+     * actually read? Phase 3. */
+    const readable = await evaluate(cdp, sessionId, call(page.readable, "huge-flow"));
+    const full = await fullscreen(cdp, sessionId);
+
     // Two searches, because there are two ways find used to go wrong. "Node 1"
     // is a label in the first flowchart and also a phrase in the prose, so it
     // separates "skips the SVG" from "stopped finding anything". "Diagram" is
@@ -327,7 +332,7 @@ async function main() {
      * every one of them lands in whatever tab is open. */
     const seeded = await sidebar(cdp, env);
 
-    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible: [...light, ...dark], toggled, throttle, seeded });
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible: [...light, ...dark], toggled, throttle, seeded, readable, full });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -341,6 +346,50 @@ async function main() {
     console.error("\nbrowser budget: something is over budget or misbehaving");
     process.exitCode = 1;
   }
+}
+
+/** Fullscreen, which is the one gesture the page cannot fake for itself: the
+ *  browser grants it to a real click and to nothing else, so the click is sent
+ *  through the protocol. */
+async function fullscreen(cdp, sessionId) {
+  const at = await evaluate(cdp, sessionId, `(() => {
+    const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
+    if (!fig) return null;
+    fig.scrollIntoView({ behavior: "instant", block: "center" });
+    const b = fig.querySelector("[data-mmd=full]");
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  if (!at) return { ok: false, why: "no diagram offered a fullscreen button" };
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await cdp.send("Input.dispatchMouseEvent", { type, x: at.x, y: at.y, button: "left", clickCount: 1 }, sessionId);
+  }
+  await sleep(600);
+  const inside = await evaluate(cdp, sessionId, `(() => {
+    const el = document.fullscreenElement;
+    const frame = el && el.querySelector(".mmd-frame");
+    return { is: !!el && el.classList.contains("mmd"),
+      height: frame ? Math.round(frame.getBoundingClientRect().height) : 0,
+      window: Math.round(innerHeight) };
+  })()`);
+  await evaluate(cdp, sessionId, `document.fullscreenElement ? document.exitFullscreen() : null`);
+  await sleep(600);
+  const after = await evaluate(cdp, sessionId, `(() => {
+    const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
+    return { out: !document.fullscreenElement,
+      height: fig ? Math.round(fig.querySelector(".mmd-frame").getBoundingClientRect().height) : 0,
+      window: Math.round(innerHeight) };
+  })()`);
+  const ok = inside.is && inside.height >= inside.window - 4 && after.out && after.height > 0 && after.height < after.window;
+  return {
+    ok, ...inside,
+    why: !inside.is ? "the button did not put it fullscreen"
+      : inside.height < inside.window - 4 ? `fullscreen left it ${inside.height} px tall in a ${inside.window} px screen`
+        : !after.out ? "it never came back out"
+          : after.height >= after.window ? `it came back ${after.height} px tall, still filling the page`
+            : `${inside.height} px of screen, and ${after.height} px back in the document`,
+  };
 }
 
 /** Fill a library the shape a used one has -- several projects, more sessions
@@ -407,7 +456,7 @@ function judge(expect, got) {
   }
 }
 
-function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, toggled, throttle, seeded }) {
+function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, toggled, throttle, seeded, readable, full }) {
   const mark = n => perf.marks.find(m => m.name === n)?.start ?? null;
   const fcp = perf.paints.find(p => p.name === "first-contentful-paint")?.start ?? null;
   const libStart = mark("snyvi:mermaid-load");
@@ -521,6 +570,14 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
         : ok ? `${f.checked} labels, worst ${ratio}:1`
           : `"${f.text}" is ${ratio}:1 against what is behind it`;
     console.log(`  ${`${f.id} (${f.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);
+  }
+
+  /* Phase 3: a diagram of a few hundred nodes is only worth drawing if it can
+   * be read, and every one of these is a gesture the reader makes. */
+  console.log("\nthe big diagram, read");
+  for (const [name, r] of [["viewport", readable], ["fullscreen", full]]) {
+    failed ||= !r.ok;
+    console.log(`  ${name.padEnd(20)}${r.ok ? " ok  " : " FAIL"} ${r.why}`);
   }
 
   /* Counts, not clocks: what the sidebar puts in the page is a fact about

@@ -351,14 +351,18 @@ racing a `sleep` against it, so the window is the same width every run.
 
 Measured on the way, and not fixed here:
 
-- **A big diagram is still unreadable, and now demonstrably so.** The
-  220-node flowchart renders 30 px tall: it is 4738 px wide, `max-width:
-  100%` fits the width into the 630 px column, and `height: auto` takes
-  the height down with it. Phase 3.
-- **The placeholder height is a guess.** A small flowchart lands at
-  258 px and a nine-line sequence diagram at 383, from sources that look
-  alike. The reserve sits between them. Phase 3's bounded frame is what
-  turns the guess into a number.
+- ~~**A big diagram is still unreadable, and now demonstrably so.**~~
+  **Fixed in phase 3.** It rendered 30 px tall because `max-width: 100%`
+  fitted its width into the column and `height: auto` took the height down
+  with it. It opens in a frame of its own now, at a size a label can be
+  read at, and zooms, pans and fills the screen.
+- **The placeholder height is still a guess**, and phase 3 only bounded
+  it. A drawn diagram is at most about 70% of the window tall, so the jump
+  when one lands is bounded too -- but the source says how much there is
+  to draw and never how tall the drawing will be, so the reserve is still
+  an estimate sitting between a small flowchart's 258 px and a sequence
+  diagram's 383. Only a cache of what a diagram measured last time could
+  make it exact, which is phase 2b's ground rather than phase 3's.
 - ~~**The theme toggle still leaves drawn diagrams behind.**~~ **Fixed**
   with section 9, which is where it belonged: 2a made it cheap, and a
   toggle is only worth re-drawing for once the colours are the viewer's

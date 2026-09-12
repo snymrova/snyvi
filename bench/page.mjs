@@ -229,6 +229,85 @@ export async function revisitUsesCache() {
   }
 }
 
+/** Whether a drawn diagram behaves like a viewport.
+ *
+ *  Phase 3 of docs/DIAGRAMS.md, and the fault it answers was measured rather
+ *  than imagined: the 220-node flowchart is 4738 px wide and was drawn 30 px
+ *  tall, because `max-width: 100%` fitted its width into the reading column and
+ *  `height: auto` took the height down with it. The one diagram big enough to
+ *  be worth drawing was the one nobody could read.
+ *
+ *  Every gesture here is dispatched at the frame rather than simulated against
+ *  the model: what is under test is the wiring, and a check that calls the
+ *  functions directly would pass with nothing listening. Fullscreen is the one
+ *  exception -- it needs a gesture the page cannot fake, so it is driven from
+ *  the harness. */
+export async function readable(id) {
+  const fig = [...document.querySelectorAll(".mmd")]
+    .find(f => new RegExp("%%\\s*id:" + id + "(\\s|$)").test(f.dataset.src || ""));
+  if (!fig) return { ok: false, why: `no diagram called ${id} is in the page` };
+  if (fig.dataset.state !== "done") return { ok: false, why: `${id} is ${fig.dataset.state}, not drawn` };
+  const frame = fig.querySelector(".mmd-frame"), svg = fig.querySelector("svg");
+  if (!svg) return { ok: false, why: `${id} drew no SVG` };
+  const box = () => svg.getAttribute("viewBox");
+  const width = () => Number((box() || "0 0 0 0").split(/\s+/)[2]);
+  // Looked at, before it is used: a key means the diagram the reader has in
+  // front of them, so the checks below have to be reading this one.
+  fig.scrollIntoView({ behavior: "instant", block: "center" });
+  await new Promise(res => setTimeout(res, 150));
+  const r = frame.getBoundingClientRect();
+  const wheel = ctrl => frame.dispatchEvent(new WheelEvent("wheel", {
+    bubbles: true, cancelable: true, deltaY: -240, ctrlKey: ctrl,
+    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+
+  /* Fitted, unless fitting this one would draw it too small to read anything:
+   * a graph twenty thousand units wide opens where a label can be read, with
+   * "Fit" offering the bird's-eye. Either is a diagram a reader can use; a
+   * frame taller than the window is not. */
+  const opened = fig.dataset.zoom;
+  const offers = (fig.querySelector("[data-mmd=zoom]") || {}).textContent;
+  const bounded = r.height <= innerHeight;
+  // Back to the whole thing first, so the gestures below start where they can
+  // be seen to have done something.
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+  await new Promise(res => setTimeout(res, 50));
+  const fitted = fig.dataset.zoom === "fit";
+  const fit = box();
+  wheel(false);
+  const plainMoved = box() !== fit;
+  wheel(true);
+  const zoomedIn = width() < Number(fit.split(/\s+/)[2]);
+
+  // Drag, now that there is something to pan to.
+  const before = box();
+  frame.dispatchEvent(new PointerEvent("pointerdown", {
+    bubbles: true, button: 0, pointerId: 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+  window.dispatchEvent(new PointerEvent("pointermove", {
+    bubbles: true, pointerId: 1, clientX: r.left + r.width / 2 - 120, clientY: r.top + r.height / 2 }));
+  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+  const panned = box() !== before;
+
+  // And back to the whole diagram, from the keyboard.
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+  await new Promise(res => setTimeout(res, 50));
+  const refits = fig.dataset.zoom === "fit" && box() === fit;
+
+  const opens = opened === "fit" ? offers !== "Fit" : offers === "Fit";
+  return {
+    ok: bounded && opens && fitted && !plainMoved && zoomedIn && panned && refits,
+    opened, offers, bounded, fitted, plainMoved, zoomedIn, panned, refits,
+    height: Math.round(r.height), window: Math.round(innerHeight),
+    why: !bounded ? `its frame is ${Math.round(r.height)} px in a ${Math.round(innerHeight)} px window`
+      : !opens ? `it opened ${opened} and the button offers "${offers}"`
+        : !fitted ? "0 did not fit it"
+          : plainMoved ? "a plain scroll moved the diagram instead of the page"
+            : !zoomedIn ? "ctrl + scroll did not zoom"
+              : !panned ? "dragging did not pan"
+                : !refits ? "0 did not fit it again"
+                  : `opened ${opened === "fit" ? "fitted" : "where a label can be read"} in ${Math.round(r.height)} px of a ${Math.round(innerHeight)} px window, then zoomed, panned and fitted`,
+  };
+}
+
 /** The sidebar, on a library that has been used.
  *
  *  Every other number in this harness was taken against a two-document

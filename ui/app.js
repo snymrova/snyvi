@@ -1063,10 +1063,335 @@
     const frame = fig.querySelector(".mmd-frame");
     frame.innerHTML = svg.split(MMD_ID).join(mmdRenderId(fig));
     fig.dataset.state = "done";
+    mmdViewport(fig);
     // Named, so the browser budget can find it. A cache hit measures what it
     // actually costs, which is the assignment above.
     performance.measure("snyvi:diagram", { start: t0, end: performance.now() });
   }
+
+  // ---------- a diagram in a viewport: pan, zoom, fullscreen ----------
+  /* Mermaid hands back an SVG with a viewBox, and everything a reader needs is
+   * a viewport around it. The viewBox is what this drives, rather than a CSS
+   * transform: the browser redraws the same vectors into a different box, so
+   * strokes stay crisp at any zoom and a frame costs nothing.
+   *
+   * Measured before it existed (docs/DIAGRAMS.md section 8): the 220-node
+   * flowchart is 4738 px wide and was drawn 30 px tall, because `max-width:
+   * 100%` fitted its width into the reading column and `height: auto` took the
+   * height down with it. The one diagram big enough to be worth drawing was the
+   * one that could not be read.
+   *
+   * A diagram that has to be shrunk to fit the column is the one that gets a
+   * bounded frame; one that already fits keeps the height it drew itself at,
+   * because for a long sequence diagram the page's own scroll is the right
+   * viewport and always was. Both can be zoomed, panned and filled to the
+   * screen. */
+  const mmdViews = new WeakMap();
+  const MMD_MAX_ZOOM = 40;          // 4738 px of flowchart, read at 120 px of it
+  const MMD_MIN_FIT = 0.15;         // a fit smaller than this is a smudge, not a diagram
+  let mmdTouched = null;            // the last diagram the reader used, for the keys
+
+  /** The tallest a fitted diagram may be: most of a screen and never more than
+   *  one, so the text after it is still something the reader can see. */
+  const mmdCap = () => Math.max(260, Math.min(680, Math.round(innerHeight * 0.7)));
+
+  /** Give a drawn diagram its frame and its fit. Called on every paint, cache
+   *  hit included, because the SVG is new each time and the frame's width may
+   *  not be. */
+  function mmdViewport(fig) {
+    const svg = fig.querySelector("svg");
+    const frame = fig.querySelector(".mmd-frame");
+    if (!svg || !frame) {
+      mmdViews.delete(fig);
+      return;
+    }
+    const full = document.fullscreenElement === fig;
+    // A figure that is not laid out cannot be fitted -- which is every other
+    // diagram on the page while one of them is fullscreen. Leave it as it is;
+    // leaving fullscreen fits them all again.
+    const width = full ? Math.round(innerWidth) : frame.clientWidth;
+    if (!width) return;
+    mmdViews.delete(fig);
+    // The graph's own bounds, kept on the element: the live viewBox is wherever
+    // the reader has panned to, so a second pass -- a resize, or coming back
+    // from fullscreen -- would otherwise take the view for the whole diagram
+    // and never find its way out again.
+    const vb = (svg.dataset.mmdBase || svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+    // No usable viewBox is not a failure: the diagram is shown as Mermaid sized
+    // it, and it simply has no viewport. Nothing below assumes one exists.
+    if (vb.length !== 4 || vb.some(n => !Number.isFinite(n)) || vb[2] <= 0 || vb[3] <= 0) return;
+    const base = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
+    svg.dataset.mmdBase = `${base.x} ${base.y} ${base.w} ${base.h}`;
+    // Mermaid sizes the SVG itself, in the units it drew in. The frame decides
+    // how big it is on the page from here on.
+    svg.removeAttribute("width");
+    svg.removeAttribute("height");
+    svg.style.maxWidth = "none";
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    /* A graph far wider than the column has a fit nobody can read: the 220-node
+     * flowchart measures 20023 units across and fits at 4% of itself, which is
+     * a smudge rather than a shape. Past that point the diagram opens where a
+     * label can be read instead -- at its own size, at the corner it starts in
+     * -- and "Fit" is the button that offers the bird's-eye. Under it, fitted
+     * is what a reader wants and what they get. */
+    const fitScale = width / base.w;
+    const smudge = fitScale < MMD_MIN_FIT;
+    const height = full ? Math.round(innerHeight)
+      : smudge ? mmdCap()
+        : base.w > width ? Math.max(220, Math.min(mmdCap(), Math.round(base.h * fitScale)))
+          : Math.round(base.h);
+    frame.style.height = `${height}px`;
+    mmdViews.set(fig, { base, svg, frame, view: { ...base }, fit: null });
+    mmdFit(fig);
+    if (smudge && !full) mmdStart(fig);
+    mmdTools(fig);
+  }
+
+  /** The whole graph, in a box shaped like the frame it is shown in.
+   *
+   *  Matching the frame's aspect ratio is what makes the arithmetic below exact:
+   *  with the two in step there is no letterboxing, so one pixel of frame is one
+   *  known distance in the diagram and a point under the cursor can be held
+   *  still while the view shrinks around it. */
+  function mmdFit(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return;
+    const r = v.frame.getBoundingClientRect();
+    const shape = (r.width || 1) / (r.height || 1);
+    const { base } = v;
+    const w = base.w / base.h > shape ? base.w : base.h * shape;
+    const h = w / shape;
+    v.fit = { x: base.x + (base.w - w) / 2, y: base.y + (base.h - h) / 2, w, h };
+    v.view = { ...v.fit };
+    // A diagram small enough to be shown whole at its own size is already at
+    // full size, so "100%" would be a button that does nothing. Zoom in and out
+    // still say what they mean, and the toggle comes back the moment there is a
+    // difference between the two states.
+    v.shrunk = (r.width || 1) / w < 0.995;
+    mmdApply(fig);
+  }
+
+  /** Where a diagram too wide to fit opens: its own size, at the corner it
+   *  starts in, which for every graph Mermaid lays out is where the beginning
+   *  of it is. */
+  function mmdStart(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return;
+    const r = v.frame.getBoundingClientRect();
+    const w = Math.min(v.fit.w, r.width || v.fit.w);
+    const h = w * v.fit.h / v.fit.w;
+    v.view = { x: v.base.x, y: v.base.y, w, h };
+    mmdClamp(fig);
+    mmdApply(fig);
+  }
+
+  /** Pixels per diagram unit, as the SVG is actually drawn right now. */
+  function mmdScale(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return 1;
+    const r = v.svg.getBoundingClientRect();
+    return Math.min(r.width / v.view.w, r.height / v.view.h) || 1;
+  }
+
+  /** Where in the diagram a point on the screen is. */
+  function mmdPoint(fig, cx, cy) {
+    const v = mmdViews.get(fig);
+    if (!v || cx == null) return null;
+    const r = v.svg.getBoundingClientRect();
+    const s = Math.min(r.width / v.view.w, r.height / v.view.h);
+    if (!(s > 0)) return null;
+    const ox = (r.width - v.view.w * s) / 2, oy = (r.height - v.view.h * s) / 2;
+    return { x: v.view.x + (cx - r.left - ox) / s, y: v.view.y + (cy - r.top - oy) / s };
+  }
+
+  /** The reader cannot lose the diagram: wherever the view goes, its middle
+   *  stays over the graph. Forgiving rather than strict, so a flick of the
+   *  wrist never has to be undone. */
+  function mmdClamp(fig) {
+    const { base, view } = mmdViews.get(fig);
+    const cx = Math.min(Math.max(view.x + view.w / 2, base.x), base.x + base.w);
+    const cy = Math.min(Math.max(view.y + view.h / 2, base.y), base.y + base.h);
+    view.x = cx - view.w / 2;
+    view.y = cy - view.h / 2;
+  }
+
+  function mmdApply(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return;
+    const { view, fit } = v;
+    v.svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+    const zoomed = !!fit && view.w < fit.w - 0.5;
+    fig.dataset.zoom = zoomed ? "in" : "fit";
+    const toggle = fig.querySelector("[data-mmd=zoom]");
+    if (toggle) {
+      toggle.hidden = !v.shrunk && !zoomed;
+      toggle.textContent = zoomed ? "Fit" : "100%";
+      toggle.title = zoomed ? "Fit the whole diagram  0" : "Show it at full size";
+    }
+  }
+
+  /** Zoom by `k` about a point on the screen, or about the middle of the frame.
+   *  Out is bounded by the fit -- there is nothing past the whole diagram -- and
+   *  in by MMD_MAX_ZOOM, which is where the largest diagram measured becomes a
+   *  screenful of readable labels. */
+  function mmdZoom(fig, k, cx, cy) {
+    const v = mmdViews.get(fig);
+    if (!v || !v.fit) return;
+    const w = Math.max(v.fit.w / MMD_MAX_ZOOM, Math.min(v.fit.w, v.view.w / k));
+    if (Math.abs(w - v.view.w) < 0.01) return;
+    const h = w * v.view.h / v.view.w;
+    const p = mmdPoint(fig, cx, cy) || { x: v.view.x + v.view.w / 2, y: v.view.y + v.view.h / 2 };
+    v.view.x = p.x - (p.x - v.view.x) * (w / v.view.w);
+    v.view.y = p.y - (p.y - v.view.y) * (h / v.view.h);
+    v.view.w = w;
+    v.view.h = h;
+    mmdClamp(fig);
+    mmdApply(fig);
+    mmdTouched = fig;
+  }
+
+  /** One diagram unit per pixel: the "let me read that label" half of the
+   *  toggle, from wherever the reader is looking. */
+  function mmdActual(fig) {
+    const v = mmdViews.get(fig);
+    if (!v || !v.fit) return;
+    const r = v.frame.getBoundingClientRect();
+    mmdZoom(fig, v.view.w / Math.max(1, r.width), null, null);
+  }
+
+  /** Fill the screen with one diagram. The frame is re-measured on the way in
+   *  and on the way out, since its height is the one thing fullscreen changes. */
+  function mmdFull(fig) {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      return;
+    }
+    if (!fig.requestFullscreen) {
+      toast("No fullscreen", "this browser did not offer it");
+      return;
+    }
+    fig.requestFullscreen().catch(e => toast("No fullscreen", String(e && e.message ? e.message : e)));
+  }
+
+  /* After the browser has finished resizing the page around it, not during:
+   *  measured mid-transition, a frame reports the width it is leaving and the
+   *  diagram comes back fitted to a column that is no longer there. */
+  document.addEventListener("fullscreenchange", () => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
+    }));
+  });
+
+  /** The controls, added once per figure and shown when it is under the cursor
+   *  or holds the focus -- the same bargain the rename pencils in the tree make:
+   *  present when wanted, absent from a page being read. */
+  function mmdTools(fig) {
+    if (fig.querySelector(".mmd-tools")) return;
+    const bar = document.createElement("div");
+    bar.className = "mmd-tools";
+    bar.innerHTML =
+      `<button type="button" data-mmd="out" title="Zoom out" aria-label="Zoom out">−</button>` +
+      `<button type="button" data-mmd="in" title="Zoom in  (double-click, or ⌘/ctrl + scroll)" aria-label="Zoom in">+</button>` +
+      `<button type="button" data-mmd="zoom" title="Show it at full size">100%</button>` +
+      `<button type="button" data-mmd="full" title="Fullscreen  f" aria-label="Fullscreen">⛶</button>`;
+    fig.appendChild(bar);
+    mmdApply(fig);
+  }
+
+  /** Which diagram a key means: the one under the cursor, else whichever one is
+   *  most on screen, else the last one the reader used.
+   *
+   *  "The first one on the page" was the obvious fallback and the wrong one --
+   *  a reader pressing a key is looking at something, and on a page of eight
+   *  diagrams it is rarely the first. */
+  function mmdKeyed() {
+    const hovered = docEl.querySelector('.mmd[data-state="done"]:hover');
+    if (hovered && mmdViews.has(hovered)) return hovered;
+    const middle = innerHeight / 2;
+    let best = null, nearest = Infinity;
+    for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) {
+      if (!mmdViews.has(fig)) continue;
+      const r = fig.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight) continue;
+      const d = Math.abs((r.top + r.bottom) / 2 - middle);
+      if (d < nearest) { nearest = d; best = fig; }
+    }
+    if (best) return best;
+    return mmdTouched && mmdTouched.isConnected && mmdViews.has(mmdTouched) ? mmdTouched : null;
+  }
+
+  docEl.addEventListener("click", e => {
+    const b = e.target.closest("[data-mmd]");
+    if (!b) return;
+    const fig = b.closest(".mmd");
+    if (!fig) return;
+    mmdTouched = fig;
+    const what = b.dataset.mmd;
+    if (what === "in") mmdZoom(fig, 1.6, null, null);
+    else if (what === "out") mmdZoom(fig, 1 / 1.6, null, null);
+    else if (what === "full") mmdFull(fig);
+    else if (what === "zoom") fig.dataset.zoom === "in" ? mmdFit(fig) : mmdActual(fig);
+  });
+
+  /* Zoom on ⌘/ctrl + scroll, which is the web's own convention and the reason a
+   * cursor crossing a diagram never traps the page. A trackpad pinch arrives
+   * here as exactly this event, so pinching works without a second path. */
+  docEl.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const fig = e.target.closest('.mmd[data-state="done"]');
+    if (!fig || !mmdViews.has(fig)) return;
+    e.preventDefault();
+    mmdZoom(fig, Math.exp(-e.deltaY * 0.0025), e.clientX, e.clientY);
+  }, { passive: false });
+
+  /* Drag to pan, but only once there is something to pan to: a fitted diagram
+   * holds the whole graph already, and a drag across it is a reader selecting a
+   * label, not moving a map. */
+  docEl.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    const fig = e.target.closest('.mmd[data-state="done"]');
+    if (!fig || fig.dataset.zoom !== "in" || !mmdViews.has(fig) || e.target.closest("[data-mmd]")) return;
+    const v = mmdViews.get(fig);
+    let last = { x: e.clientX, y: e.clientY };
+    fig.dataset.grab = "1";
+    mmdTouched = fig;
+    const move = ev => {
+      const s = mmdScale(fig);
+      v.view.x -= (ev.clientX - last.x) / s;
+      v.view.y -= (ev.clientY - last.y) / s;
+      last = { x: ev.clientX, y: ev.clientY };
+      mmdClamp(fig);
+      mmdApply(fig);
+    };
+    const up = () => {
+      delete fig.dataset.grab;
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+    e.preventDefault();
+  });
+
+  docEl.addEventListener("dblclick", e => {
+    const fig = e.target.closest('.mmd[data-state="done"]');
+    if (!fig || !mmdViews.has(fig)) return;
+    e.preventDefault();
+    mmdZoom(fig, 2, e.clientX, e.clientY);
+  });
+
+  /* The frame's width decides the fit, so a window that changes size has
+   * changed the fit. Re-measured rather than rescaled, which also puts a
+   * diagram back where the reader can see all of it. */
+  let mmdResize = null;
+  addEventListener("resize", () => {
+    clearTimeout(mmdResize);
+    mmdResize = setTimeout(() => {
+      for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
+    }, 150);
+  });
 
   /** Mermaid answers a source it cannot parse with its own error graphic, which
    *  replaces the source -- at exactly the moment the reader wants to see what
@@ -1639,6 +1964,10 @@
       case "w": toggleWide(); break;
       case "z": toggleWrap(); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
+      // The diagram under the cursor, or the last one used: fit it, or fill the
+      // screen with it. Both are no-ops on a page with no diagram on it.
+      case "0": { const fig = mmdKeyed(); if (fig) { mmdFit(fig); mmdTouched = fig; } break; }
+      case "f": { const fig = mmdKeyed(); if (fig) { mmdFull(fig); mmdTouched = fig; } break; }
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
       case "o":
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
