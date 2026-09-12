@@ -108,6 +108,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/fonts/{name}", get(asset_font))
         .route("/api/health", get(health))
         .route("/api/tree", get(tree))
+        .route("/api/projects/{id}/tree", get(project_tree))
+        .route("/api/workflows/{id}/tree", get(workflow_tree))
         .route("/api/inbox", get(inbox))
         .route("/api/search", get(search))
         .route("/api/docs", post(receive_doc))
@@ -163,6 +165,56 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
 }
 
 // ---------- shell ----------
+
+/// How much of a project the sidebar is given when it is expanded: enough to
+/// read, never a year of sessions. Everything past this is one click away and
+/// arrives whole, so nothing is hidden -- only unasked for.
+const TREE_WORKFLOWS: usize = 10;
+const TREE_DOCS: usize = 10;
+
+/// One project's rows: its sessions, newest first, each holding its newest
+/// documents.
+///
+/// `whole` is the workflow the reader is reading in, which comes back complete
+/// rather than capped: `[` and `]` step through the versions of a document, and
+/// a cap there would stop them somewhere arbitrary. The page a reader opens and
+/// the fetch their tab makes later both come through here, so an arrival cannot
+/// quietly hand back a shorter list than the page did.
+fn project_rows(
+    app: &App,
+    project_id: i64,
+    workflows: usize,
+    docs: usize,
+    whole: Option<i64>,
+) -> Vec<crate::store::TreeWorkflow> {
+    let mut wfs = app
+        .store
+        .project_tree(project_id, workflows, docs)
+        .unwrap_or_default();
+    if let Some(id) = whole {
+        if let Ok(Some(full)) = app.store.workflow_tree(id) {
+            match wfs.iter().position(|w| w.id == full.id) {
+                Some(at) => wfs[at] = full,
+                // The document being read is in a session too old to be among
+                // the most recent few. It goes in anyway: the reader is in it.
+                None => wfs.insert(0, full),
+            }
+        }
+    }
+    wfs
+}
+
+/// The same rows, keyed by project id, which is the shape the boot payload
+/// carries them in.
+fn subtree(app: &App, project_id: i64, whole: Option<i64>) -> serde_json::Value {
+    let wfs = project_rows(app, project_id, TREE_WORKFLOWS, TREE_DOCS, whole);
+    let mut m = serde_json::Map::new();
+    m.insert(
+        project_id.to_string(),
+        serde_json::to_value(wfs).unwrap_or_default(),
+    );
+    serde_json::Value::Object(m)
+}
 
 fn escape_json_for_script(s: &str) -> String {
     s.replace("</", "<\\/")
@@ -224,9 +276,17 @@ fn doc_html(doc: &Doc, body: &str) -> String {
 }
 
 async fn shell_home(State(app): S) -> Response {
-    let tree = app.store.tree().unwrap_or_default();
+    let tree = app.store.projects().unwrap_or_default();
     let inbox = app.store.inbox(50).unwrap_or_default();
-    let boot = json!({ "view": "inbox", "tree": tree, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
+    // A single project is shown expanded, so its rows are wanted on this page
+    // and are worth the bytes rather than a second round trip. Any more than
+    // one and the reader's own choice of what is open decides, which is in
+    // their browser and not here.
+    let sub = match tree.as_slice() {
+        [only] => subtree(&app, only.id, None),
+        _ => serde_json::Value::Object(Default::default()),
+    };
+    let boot = json!({ "view": "inbox", "tree": tree, "sub": sub, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
     shell(&app, boot, "", "snyvi")
 }
 
@@ -235,11 +295,14 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
         return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>")).into_response();
     };
     let body = app.store.html(&id).unwrap_or_default();
-    let tree = app.store.tree().unwrap_or_default();
+    let tree = app.store.projects().unwrap_or_default();
     let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
     let title = doc.title.clone();
     let folder = doc_folder(&app, &doc);
-    let boot = json!({ "view": "doc", "tree": tree, "doc": doc, "previous": previous, "folder": folder, "browse": app.browse.list(), "version": VERSION });
+    // The project this document is in is the one the sidebar opens on, so it
+    // arrives with the page rather than a moment after it.
+    let sub = subtree(&app, doc.project_id, Some(doc.workflow_id));
+    let boot = json!({ "view": "doc", "tree": tree, "sub": sub, "doc": doc, "previous": previous, "folder": folder, "browse": app.browse.list(), "version": VERSION });
     shell(&app, boot, &doc_html(&doc, &body), &title)
 }
 
@@ -355,8 +418,35 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
 }
 
 async fn tree(State(app): S) -> Response {
-    match app.store.tree() {
+    match app.store.projects() {
         Ok(t) => Json(t).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct TreeQ {
+    workflows: Option<usize>,
+    docs: Option<usize>,
+    /// A workflow to send whole whatever the caps are: the one the reader is in.
+    whole: Option<i64>,
+}
+
+/// What one project holds, fetched when a reader expands it. Zero for either
+/// cap means all of them: that is a reader who clicked past the cap, and the
+/// answer to "show me the rest" is the rest.
+async fn project_tree(State(app): S, Path(id): Path<i64>, Query(q): Query<TreeQ>) -> Response {
+    let workflows = q.workflows.unwrap_or(TREE_WORKFLOWS);
+    let docs = q.docs.unwrap_or(TREE_DOCS);
+    Json(project_rows(&app, id, workflows, docs, q.whole)).into_response()
+}
+
+/// One workflow, whole. Asked for by the tree when a reader wants everything in
+/// a session, and by nothing else.
+async fn workflow_tree(State(app): S, Path(id): Path<i64>) -> Response {
+    match app.store.workflow_tree(id) {
+        Ok(Some(w)) => Json(w).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }
@@ -1079,7 +1169,7 @@ async fn browse_shell(app: Arc<App>, id: String, path: String) -> Response {
     };
     let boot = json!({
         "view": "browse",
-        "tree": app.store.tree().unwrap_or_default(),
+        "tree": app.store.projects().unwrap_or_default(),
         "browse": app.browse.list(),
         "browseRoot": root,
         "browsePath": path,

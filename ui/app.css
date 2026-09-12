@@ -197,6 +197,14 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* The field shows the name as stored, not as the summary styles it. */
 .ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px; }
 .ren-in:focus { outline: none; }
+/* Past a cap, and while a project's rows are on their way. Both sit where a
+   document row would, and neither should read as one: what is behind a row the
+   tree has not drawn is an offer, not a document. */
+.t-more { margin: 1px 0 2px 14px; }
+.t-more button { font: inherit; font-size: 11px; color: var(--fg-3); background: none; border: 0; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.t-more button:hover { background: var(--rule); color: var(--fg-2); }
+.t-more button:disabled { cursor: default; opacity: .5; }
+.t-wait { padding: 4px 8px 4px 14px; font-size: 12px; color: var(--fg-3); }
 .t-empty { padding: 24px 12px; color: var(--fg-3); font-size: 13px; line-height: 1.6; }
 .t-empty code { font-family: var(--mono); font-size: 12px; background: var(--rule); padding: 1px 5px; border-radius: 4px; }
 

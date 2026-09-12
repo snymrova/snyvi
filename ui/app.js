@@ -8,7 +8,8 @@
   const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row");
 
   const state = {
-    tree: boot.tree || [],
+    tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded
+    sub: new Map(Object.entries(boot.sub || {})),   // project id -> its workflows, once filled
     view: boot.view || "inbox",
     doc: boot.doc || null,
     previous: boot.previous || null,
@@ -47,6 +48,13 @@
 
   // ---------- tree ----------
   const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
+  /** Caps a reader has lifted, by project and by workflow, so a refetch does not
+   *  put the rest back out of reach while they are still reading it. */
+  const liftedCaps = new Set();
+  const liftedWorkflows = new Set();
+  /** Fills in flight, so a project expanded twice in a second is fetched once. */
+  const filling = new Set();
+
   /** The browse section keeps its own DOM across navigations so expanded folders stay open. */
   function renderBrowse() {
     const ids = state.browse.map(r => r.id).join(",");
@@ -72,9 +80,41 @@
   const renameBtn = (what, id) =>
     `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
 
+  /** A project is drawn expanded when the reader left it that way, when the
+   *  document on screen is in it, or when it is the only one there is. */
+  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
+
+  const docRow = d => {
+    const active = state.doc && state.doc.id === d.id ? "active" : "";
+    return `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
+  };
+
+  /** The rows inside one project: its sessions, their documents, and — where a
+   *  cap left something out — what it would take to see the rest. A project
+   *  this tab has not fetched yet is a single row saying so, which is the only
+   *  state this can be in that is neither empty nor complete. */
+  function projectRows(p) {
+    const wfs = state.sub.get(String(p.id));
+    if (!wfs) return `<li class="t-wait">…</li>`;
+    let h = "";
+    for (const w of wfs) {
+      h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div><ul>`;
+      for (const d of w.docs) h += docRow(d);
+      if (w.total > w.docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - w.docs.length} older</button></li>`;
+      h += `</ul></li>`;
+    }
+    if (p.workflows > wfs.length) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - wfs.length} older sessions</button></li>`;
+    return h;
+  }
+
+  /** The sidebar, which is a list of projects and the rows of the ones that are
+   *  open. A closed project contributes nothing to the page: this used to carry
+   *  every document in the library on every page open — 13,000 rows and a
+   *  718 ms task at 3000 documents — and what is behind a row is now two
+   *  numbers until a reader asks for it. */
   function renderTree() {
     const projects = state.tree;
-    const total = projects.reduce((n, p) => n + p.workflows.reduce((m, w) => m + w.docs.length, 0), 0);
+    const total = projects.reduce((n, p) => n + p.docs, 0);
     inboxRowEl.innerHTML = `<div class="t-inbox ${state.view === "inbox" ? "active" : ""}" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></div>`;
     renderBrowse();
     if (!projects.length) {
@@ -84,21 +124,84 @@
     // Labels only earn their space when both kinds of tree are on screen.
     let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
-      const isCur = state.doc && state.doc.project_id === p.id;
-      const open = openProjects.has(String(p.id)) || isCur || projects.length === 1;
+      const open = projOpen(p);
       const unread = state.unread.get(p.id) || 0;
       h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${unread ? `<span class="badge">${unread}</span>` : ""}${renameBtn("project", p.id)}</summary><ul>`;
-      for (const w of p.workflows) {
-        h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div><ul>`;
-        for (const d of w.docs) {
-          const active = state.doc && state.doc.id === d.id ? "active" : "";
-          h += `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
-        }
-        h += `</ul></li>`;
-      }
+      h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
     treeEl.innerHTML = h;
+    // A project the reader has open that this tab has never filled: the "…" is
+    // on screen, so fetching it now is what turns it into rows.
+    for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
+  }
+
+  /** What one project holds, fetched the first time it is expanded and kept
+   *  until the library moves under it. */
+  async function fillProject(pid, force) {
+    pid = String(pid);
+    if (filling.has(pid) || (state.sub.has(pid) && !force)) return;
+    filling.add(pid);
+    // The workflow on screen comes back whole in the same answer, so an arrival
+    // cannot re-cap the session a reader is stepping through.
+    const q = new URLSearchParams();
+    if (liftedCaps.has(pid)) { q.set("workflows", "0"); q.set("docs", "0"); }
+    if (state.doc && String(state.doc.project_id) === pid) q.set("whole", state.doc.workflow_id);
+    try {
+      const wfs = await (await fetch(`/api/projects/${pid}/tree${q.size ? `?${q}` : ""}`)).json();
+      if (Array.isArray(wfs)) state.sub.set(pid, wfs);
+    } catch {}
+    filling.delete(pid);
+    // A session a reader had opened out in full, refetched capped: put it back.
+    await Promise.all((state.sub.get(pid) || [])
+      .filter(w => liftedWorkflows.has(w.id) && w.docs.length < w.total)
+      .map(w => fillWorkflow(w.id, pid)));
+    renderTree();
+    markActive();
+  }
+
+  /** One session, whole, dropped into the subtree it belongs to. What "N older"
+   *  asks for, and what puts a lifted cap back after a refetch. */
+  async function fillWorkflow(wid, pid) {
+    let w;
+    try { w = await (await fetch(`/api/workflows/${wid}/tree`)).json(); } catch { return; }
+    if (!w || !Array.isArray(w.docs)) return;
+    const wfs = state.sub.get(String(pid));
+    if (!wfs) return;
+    const at = wfs.findIndex(x => x.id === wid);
+    if (at >= 0) wfs[at] = w; else wfs.unshift(w);
+    state.sub.set(String(pid), wfs);
+  }
+
+  /** The workflow a reader is in is held whole, because `[` and `]` step through
+   *  its documents and a cap would stop them somewhere arbitrary. The server
+   *  sends it with the page it is opened from; a navigation inside the tab asks
+   *  for it here. */
+  async function ensureWorkflow(doc) {
+    if (!doc) return;
+    const pid = String(doc.project_id);
+    if (!state.sub.has(pid)) await fillProject(pid);
+    const wfs = state.sub.get(pid);
+    if (!wfs) return;
+    const at = wfs.findIndex(w => w.id === doc.workflow_id);
+    if (at >= 0 && wfs[at].docs.length >= wfs[at].total) return;
+    // A document opened out of a search can be in a session older than the few
+    // a project shows. `fillWorkflow` puts it at the top: the reader is in it.
+    await fillWorkflow(doc.workflow_id, pid);
+    renderTree();
+    markActive();
+  }
+
+  /** The library moved: refetch the project rows, and the subtrees this tab has
+   *  already filled. Dropping them instead would collapse an expanded project
+   *  to a "…" under the reader. `only` narrows it to one project, which is what
+   *  an arrival needs — nothing else in the library moved.  */
+  async function refreshTree(only) {
+    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+    const pids = only != null ? [String(only)] : [...state.sub.keys()];
+    await Promise.all(pids.filter(pid => state.sub.has(pid)).map(pid => fillProject(pid, true)));
+    renderTree();
+    markActive();
   }
 
   const entryHtml = (rootId, e) => e.dir
@@ -151,9 +254,31 @@
     if (!d.classList || !d.classList.contains("t-proj")) return;
     d.open ? openProjects.add(d.dataset.pid) : openProjects.delete(d.dataset.pid);
     store.set("snyvi.open", [...openProjects].join(","));
+    // Opening draws what this tab already holds and fetches what it does not;
+    // closing takes the rows back out of the page, which is the bound.
+    if (d.open && !state.sub.has(d.dataset.pid)) fillProject(d.dataset.pid);
+    else { renderTree(); markActive(); }
   }, true);
 
   treesEl.addEventListener("click", async e => {
+    // Past a cap, and the answer to "show me the rest" is the rest: a whole
+    // session's documents, or every session in the project.
+    const more = e.target.closest("[data-more-docs], [data-more-wf]");
+    if (more) {
+      e.preventDefault(); e.stopPropagation();
+      more.disabled = true;
+      if (more.dataset.moreWf != null) {
+        liftedCaps.add(String(more.dataset.moreWf));
+        await fillProject(more.dataset.moreWf, true);
+      } else {
+        const wid = Number(more.dataset.moreDocs);
+        const pid = [...state.sub.keys()].find(k => state.sub.get(k).some(w => w.id === wid));
+        liftedWorkflows.add(wid);
+        await fillWorkflow(wid, pid);
+        renderTree(); markActive();
+      }
+      return;
+    }
     const r = e.target.closest("[data-rename]");
     if (r) {
       // Inside a <summary>, the default action is toggling the project open.
@@ -228,17 +353,22 @@
    *  whose header and rail name its project and workflow too. */
   async function applyRename(what, id) {
     state.cache.clear();
-    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
-    renderTree(); markActive();
+    await refreshTree();
     const shown = state.doc && (what === "project" ? state.doc.project_id === id : state.doc.workflow_id === id);
     if (shown) await refreshDoc(state.doc.id);
   }
 
-  /** Flat list of doc ids in sidebar order, for j/k. */
-  const order = () => state.tree.flatMap(p => p.workflows.flatMap(w => w.docs.map(d => d.id)));
+  /** Flat list of doc ids in sidebar order, for j/k. Read off the rows rather
+   *  than out of the model, now that the model holds only what a reader has
+   *  expanded: "next document" is the next one they can see. */
+  const order = () => [...treeEl.querySelectorAll("a[data-id]")].map(a => a.dataset.id);
+  /** Every document in the workflow on screen, for `[` and `]`. Exact whatever
+   *  the caps are: the workflow a reader is in is the one held whole. */
   const siblings = () => {
     if (!state.doc) return [];
-    for (const p of state.tree) for (const w of p.workflows) if (w.id === state.doc.workflow_id) return w.docs.map(d => d.id);
+    for (const w of state.sub.get(String(state.doc.project_id)) || []) {
+      if (w.id === state.doc.workflow_id) return w.docs.map(d => d.id);
+    }
     return [];
   };
 
@@ -407,9 +537,8 @@
     try {
       await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       state.cache.delete(d.id);
-      state.tree = await (await fetch("/api/tree")).json();
+      await refreshTree(d.project_id);
       toast("Deleted", d.title);
-      const ids = order(); const i = ids.indexOf(d.id);
       showInbox(true);
     } catch (e) { toast("Could not delete", String(e)); }
   }
@@ -417,6 +546,7 @@
   function afterRender() {
     renderTree();
     markActive();
+    ensureWorkflow(state.doc);
     buildToc();
     renderMeta(false);
     enhanceCode();
@@ -1219,8 +1349,8 @@
     try {
       await fetch(`/api/docs/${state.doc.id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
       state.doc.pinned = pinned; state.cache.delete(state.doc.id);
-      state.tree = await (await fetch("/api/tree")).json();
-      renderTree(); renderMeta(false);
+      await refreshTree(state.doc.project_id);
+      renderMeta(false);
       toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it");
     } catch (e) { toast("Could not pin", String(e)); }
   }
@@ -1268,22 +1398,28 @@
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
-      try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+      const elsewhere = !state.doc || state.doc.project_id !== d.project_id;
+      // One project moved, so one project's rows are what is refetched. This
+      // used to pull the whole library back down and rebuild the sidebar on
+      // every arrival -- a file saved every few seconds paid it every few
+      // seconds -- and the unread count is set first so one render serves both.
       // An overwrite of a document already here is not an arrival: refresh it where
       // it is if it is on screen, never navigate to it, and never toast — a file
       // being watched changes on every save.
       if (j.existing) {
-        if (state.doc && state.doc.id === d.id) { await refreshDoc(d.id); renderTree(); }
-        else { state.cache.delete(d.id); if (!state.doc || state.doc.project_id !== d.project_id) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); renderTree(); }
+        if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
+        else { state.cache.delete(d.id); if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); }
+        await refreshTree(d.project_id);
         return;
       }
       if (state.view === "inbox" || idle()) {
         state.cache.delete(d.id);
+        await refreshTree(d.project_id);
         await showDoc(d.id, true);
         toast(d.title, `${d.project} · just now`);
       } else {
-        if (!state.doc || state.doc.project_id !== d.project_id) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1);
-        renderTree();
+        if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1);
+        await refreshTree(d.project_id);
         toast(d.title, `${d.project} · click to open`, () => showDoc(d.id, true));
       }
     });
@@ -1305,17 +1441,15 @@
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.cache.delete(j.id);
-      try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
-      if (state.doc && state.doc.id === j.id) showInbox(true); else renderTree();
+      await refreshTree();
+      if (state.doc && state.doc.id === j.id) showInbox(true);
     });
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
       renderBrowse();
     });
-    es.addEventListener("pinned", async () => {
-      try { state.tree = await (await fetch("/api/tree")).json(); renderTree(); } catch {}
-    });
+    es.addEventListener("pinned", async () => { await refreshTree(); });
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
