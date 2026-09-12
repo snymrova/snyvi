@@ -274,7 +274,20 @@ async function main() {
     await cdp.send("Network.setCacheDisabled", { cacheDisabled: false }, sessionId);
     if (revisit.ok) Object.assign(revisit, await evaluate(cdp, sessionId, call(page.drewAfterReturn)));
 
-    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, throttle });
+    /* Phase 2a, in the same tab and with the library already in it: leave the
+     * document and come back, and count calls into the renderer rather than
+     * milliseconds. Deliberately after the reload above, because a reload is
+     * where the cache legitimately starts empty -- what is under test is the
+     * client-side navigation a reader actually makes. */
+    // Settled first, and not optionally: drewAfterReturn is satisfied by two
+    // diagrams, and the unparseable one is still in the queue behind them. A
+    // first render counted as a second one is a failure nobody can reproduce.
+    if (revisit.ok) await evaluate(cdp, sessionId, call(page.settle));
+    const cached = revisit.ok
+      ? await evaluate(cdp, sessionId, call(page.revisitUsesCache))
+      : { ok: false, why: "skipped: the navigation before it never completed" };
+
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, throttle });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -316,7 +329,7 @@ function judge(expect, got) {
   }
 }
 
-function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, throttle }) {
+function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, throttle }) {
   const mark = n => perf.marks.find(m => m.name === n)?.start ?? null;
   const fcp = perf.paints.find(p => p.name === "first-contentful-paint")?.start ?? null;
   const libStart = mark("snyvi:mermaid-load");
@@ -349,6 +362,7 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   const notes = [
     ["longest task, Mermaid parse", longest(lib), "3.57 MB of JS; Phase 4"],
     ["diagram on demand", onDemand.ok ? onDemand.ms : null, "the 220-node one, asked for"],
+    ["revisit, drawn again", cached.ok ? cached.ms : null, "Phase 2a: from the in-tab cache"],
   ];
 
   console.log(`browser budget   (budget factor ${FACTOR}${throttle > 1 ? `, CPU x${throttle}` : ""}${SHARED ? ", shared machine" : ""})\n`);
@@ -406,6 +420,8 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   }
   failed ||= !revisit.ok;
   console.log(`  ${"navigate away".padEnd(20)}${revisit.ok ? " ok  " : " FAIL"} ${revisit.why}`);
+  failed ||= !cached.ok;
+  console.log(`  ${"revisit".padEnd(20)}${cached.ok ? " ok  " : " FAIL"} ${cached.why}`);
 
   console.log(`\nviewport ${viewport}px; ${diagrams.length} diagrams`);
 

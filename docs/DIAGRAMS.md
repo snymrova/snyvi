@@ -4,10 +4,10 @@ Written 2026-09-12, after a report that a page with a big Mermaid diagram
 takes seconds to open. Everything in section 1 is measured on this
 machine under headless Chromium, not estimated.
 
-**Status.** Phase 1 has landed, along with the find fix and the parse-error
-fix from the small list. The harness that took section 1's numbers is now
-`bench/browser.mjs`, runs in CI, and section 7 records what it measures.
-Phases 2a, 3, 4 and 2b are still ahead.
+**Status.** Phases 1 and 2a have landed, along with the find fix and the
+parse-error fix from the small list. The harness that took section 1's numbers
+is now `bench/browser.mjs`, runs in CI, and section 7 records what it measures.
+Phases 3, 4 and 2b are still ahead.
 
 Sections 1 to 8 are about time. Section 9 is about the other half of the
 roadmap's test — whether a diagram looks like it belongs in the document
@@ -108,13 +108,38 @@ Replace the single `mermaid.run` with a scheduler.
 Target: first paint unchanged at ~144 ms, longest frame from 3123 ms down
 to one diagram's slice, the page scrollable and navigable throughout.
 
-### Phase 2a — render each diagram once per tab — **next**
+### Phase 2a — render each diagram once per tab — **done**
 
 A diagram is a pure function of its source and the theme, and documents
-are immutable. Keep a `Map` from `hash(source) + theme` to the SVG
-string. A revisit, a `snyvi watch` refresh, or a back-button becomes a
-string assignment. Perhaps twenty lines; it removes the 2426 ms revisit
-and the re-render-on-every-save outright.
+are immutable. A `Map` from the theme and the source to the SVG string
+turns a revisit, a `snyvi watch` refresh and a back-button into a string
+assignment: measured at **34 ms for the whole document**, against a
+budget row that no longer has anything to report.
+
+Three things it turned out to want beyond the twenty lines:
+
+- **A source that will not parse is remembered too**, so the rule is the
+  whole of it: no source is handed to Mermaid twice in one tab. The
+  failure is a fact about the source in the way the drawing is, and the
+  document holding one is the document a reader re-opens to see what the
+  agent actually wrote. Without this the harness counted one render call
+  per revisit, which is how the rule got stated properly.
+- **The id is not part of the drawing.** Mermaid writes the id it is
+  given into the root element, into an id-scoped `<style>` block, and
+  into the ids of the markers the edges point at. Cached verbatim and
+  painted twice, a document carrying the same diagram twice would hold
+  two of each, with the second one's arrowheads resolving to the first.
+  So what is cached carries a token where the id was, and the figure
+  being painted supplies one.
+- **A bound, in bytes rather than entries**, because one diagram's SVG is
+  two orders of magnitude larger than another's and the tab left open all
+  day reading documents is the one this project promises will stay small.
+  4 MB, least-recently-used first, and never the entry just asked for.
+
+It also made the cap honest. A diagram over the 150-line threshold is
+offered rather than drawn because drawing it costs seconds — and one
+already in the cache costs a string assignment, so a reader who asked for
+the 220-node flowchart once is not asked again on the way back.
 
 ### Phase 3 — make a big diagram readable
 
@@ -203,8 +228,8 @@ the pain, so this can wait for a considered answer.
 | | Phase | Cost | Payoff | |
 |---|---|---|---|---|
 | 1 | Scheduler, viewport-gated, placeholders, cap | M | 3123 ms freeze → responsive | **done** |
-| 2 | In-tab SVG cache | XS | revisit 2426 ms → nothing | next |
-| 3 | Pan, zoom, fullscreen | M | a big diagram becomes readable | |
+| 2 | In-tab SVG cache | XS | revisit 2426 ms → 34 ms | **done** |
+| 3 | Pan, zoom, fullscreen | M | a big diagram becomes readable | next |
 | 4 | Idle prefetch | XS | −523 ms on the first diagram | |
 | 5 | Find, theme, error-source fixes | S | correctness | find and error done |
 | 6 | Trimmed bundle | M | measure before committing | |
@@ -279,6 +304,16 @@ the scheduler replaced.
 The 3193 ms is section 1's 3123 ms reproduced independently, which is the
 only reason to trust either.
 
+Phase 2a adds a row of its own, and it is a count rather than a clock:
+**diagrams drawn again on a revisit**, which must be zero. Counting calls
+into the renderer is the only honest way to ask — a machine fast enough
+makes a real re-render look like a cache — and it names the diagrams it
+caught, because "one diagram was drawn again" is not something anyone can
+act on. With the cache taken out it reads `small-flow, sequence, broken`.
+It also checks that a restored SVG carries the id of the figure it is in
+rather than the one it was first drawn under, which is the fault that
+stays invisible until a document holds the same diagram twice.
+
 Four behaviours are checked as well, and they do not depend on the clock:
 a diagram below the fold is not drawn, one over the cap is offered rather
 than spent, find marks nothing inside an SVG while still finding the
@@ -308,9 +343,14 @@ Measured on the way, and not fixed here:
 - **The theme toggle still leaves drawn diagrams behind.** Unchanged, not
   worsened: `initialize` runs when the theme has moved, so a diagram
   drawn after a toggle is drawn in the new theme and one drawn before
-  keeps the old. Re-drawing them is cheap once 2a holds the sources.
-- **`snyvi watch` still redraws on every save**, though it no longer
-  blocks while doing it. 2a removes the work rather than rescheduling it.
+  keeps the old. *2a has since made the fix cheap — the theme is half of
+  the cache key, so a toggle is drop-the-other-theme and re-queue-what-is-
+  visible — and section 9 is where it lands, because that is where the
+  colours start being worth re-drawing for.*
+- ~~**`snyvi watch` still redraws on every save**~~, though it no longer
+  blocked while doing it. **Fixed by 2a**, which removed the work rather
+  than rescheduling it: the file's diagrams are unchanged across a save,
+  so every one of them is a cache hit.
 
 ## 9. How they look
 

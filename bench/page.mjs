@@ -161,3 +161,70 @@ export async function drewAfterReturn() {
     why: drawn >= 2 ? `interrupted mid-load, left and returned; ${drawn} of ${figures.length} drawn again`
       : `came back to ${figures.length} diagrams and only ${drawn} drew` };
 }
+
+/** The in-tab cache, exercised the way a reader exercises it: leave the document
+ *  and come back.
+ *
+ *  A diagram is a pure function of its source and the theme and a stored
+ *  document never changes, so the second visit must not call the renderer at
+ *  all. That is counted directly rather than read off the clock, because a
+ *  machine fast enough makes a real re-render look like a cache, and the 220-node
+ *  flowchart -- the one that makes the difference obvious -- is held behind its
+ *  button here and never drawn twice either way. */
+export async function revisitUsesCache() {
+  // Inline, not shared: only the function itself crosses into the page, so a
+  // helper from this module's scope would be a ReferenceError over there.
+  const until = async (test, tries = 400) => {
+    for (let i = 0; i < tries; i++) {
+      if (test()) return true;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+  };
+  const done = () => document.querySelectorAll('.mmd[data-state="done"]').length;
+  const before = done();
+  if (before < 2) return { ok: false, why: `only ${before} diagrams were drawn to begin with` };
+  const url = location.pathname;
+  const real = window.mermaid.render;
+  // Named by the fixture's `%% id:` comment, the same way inspect() names them:
+  // "one diagram was drawn again" is not a message anyone can act on.
+  const drawnAgain = [];
+  window.mermaid.render = function (id, src, ...rest) {
+    const m = /%%\s*id:(\S+)/.exec(src || "");
+    drawnAgain.push(m ? m[1] : "unlabelled");
+    return real.call(this, id, src, ...rest);
+  };
+  try {
+    document.querySelector("[data-nav=inbox]").click();
+    await new Promise(r => setTimeout(r, 200));
+    const link = document.querySelector(`#doc a[href="${url}"], #tree a[href="${url}"]`);
+    if (!link) return { ok: false, why: "no link back to the document" };
+    const t0 = performance.now();
+    link.click();
+    const back = await until(() => done() >= before);
+    const ms = performance.now() - t0;
+    if (!back) return { ok: false, why: `came back and only ${done()} of ${before} diagrams redrew` };
+    /* A cached SVG is kept with a token where the id it was drawn under used to
+     * be, and the figure it is painted into supplies a new one -- so an SVG
+     * still carrying the id of the figure from the visit before is a cache that
+     * has stopped rewriting them. That is the case that puts two of every
+     * marker id into a document holding the same diagram twice, and it is
+     * invisible on a page that holds each one once. */
+    const strayId = [...document.querySelectorAll('.mmd[data-state="done"]')]
+      .filter(f => {
+        const svg = f.querySelector("svg");
+        return !svg || svg.id !== f.dataset.mmdId + "-svg";
+      }).length;
+    const ok = drawnAgain.length === 0 && strayId === 0;
+    return {
+      ok, drawnAgain, strayId, ms, drawn: done(),
+      why: drawnAgain.length
+        ? `drawn again on a revisit: ${drawnAgain.join(", ")}`
+        : strayId
+          ? `${strayId} restored diagrams carry the id of the figure they were first drawn under`
+          : `${done()} diagrams restored without a render call, in ${ms.toFixed(0)} ms`,
+    };
+  } finally {
+    window.mermaid.render = real;
+  }
+}

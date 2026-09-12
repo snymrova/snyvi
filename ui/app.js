@@ -492,6 +492,65 @@
   let mmdSeq = 0;
   let mmdWatcher = null;
 
+  /* A diagram is a pure function of its source and the theme, and a stored
+   * document never changes, so no SVG in this tab is worth computing twice.
+   * Measured before this existed: revisiting a document drew the 220-node
+   * flowchart again for another 2426 ms, and `snyvi watch` paid the same price
+   * on every save of the file it was watching.
+   *
+   * A source that cannot be parsed is remembered as well, so the rule is the
+   * whole of it: no source is handed to Mermaid twice in one tab. The failure
+   * is a fact about the source in exactly the way the drawing is, and the
+   * document holding it is the one a reader re-opens to look at what the agent
+   * actually wrote.
+   *
+   * What is kept is the SVG with the id it was drawn under swapped for a token.
+   * That id is the one part of the string that belongs to the figure rather
+   * than to the drawing -- Mermaid writes it into the root element, into an
+   * id-scoped <style> block, and into the ids of the markers its edges point at
+   * -- so a document carrying the same diagram twice would otherwise put two of
+   * each into the page and let the second one's arrowheads resolve to the
+   * first.
+   *
+   * Bounded in bytes rather than in entries, because one diagram's SVG is two
+   * orders of magnitude larger than another's, and a tab left open all day
+   * reading documents is exactly the tab this project promises will stay
+   * small. */
+  const mmdCache = new Map();          // `theme\nsource` -> {svg} or {err}, least recent first
+  const MMD_CACHE_BYTES = 4 << 20;
+  const MMD_ID = "__mmd_id__";
+  let mmdCacheBytes = 0;
+
+  const mmdRenderId = fig => `${fig.dataset.mmdId}-svg`;
+  const mmdKey = src => `${mmdCurrentTheme()}\n${src}`;
+  const mmdCached = src => mmdCache.has(mmdKey(src));
+
+  const mmdSize = e => (e.svg || e.err || "").length;
+
+  function mmdTake(key) {
+    const entry = mmdCache.get(key);
+    if (entry === undefined) return null;
+    // Re-inserted, so the Map's own insertion order is least-recent-first and
+    // eviction is a walk from the front.
+    mmdCache.delete(key);
+    mmdCache.set(key, entry);
+    return entry;
+  }
+
+  function mmdKeep(key, entry) {
+    if (mmdCache.has(key)) mmdCacheBytes -= mmdSize(mmdCache.get(key));
+    mmdCache.set(key, entry);
+    mmdCacheBytes += mmdSize(entry);
+    for (const [k, v] of mmdCache) {
+      // Never the entry just asked for, even when it is alone and over the
+      // budget by itself: evicting it would make the next visit pay again for
+      // the one diagram most likely to be wanted.
+      if (mmdCacheBytes <= MMD_CACHE_BYTES || k === key) break;
+      mmdCache.delete(k);
+      mmdCacheBytes -= mmdSize(v);
+    }
+  }
+
   /** Past this a diagram is offered rather than drawn. The flowchart that
    *  started all this costs 2.4 s of CPU however it is scheduled, and spending
    *  that on a reader who was scrolling past is not a thing a scheduler can
@@ -567,7 +626,10 @@
       frame.className = "mmd-frame";
       fig.appendChild(frame);
       pre.replaceWith(fig);
-      if (weight > MMD_CAP_LINES || src.length > MMD_CAP_BYTES) {
+      // The cap is about cost, and a diagram already drawn in this tab has
+      // none: a reader who asked for this one once is not asked again on the
+      // way back.
+      if ((weight > MMD_CAP_LINES || src.length > MMD_CAP_BYTES) && !mmdCached(src)) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "mmd-ask";
@@ -618,9 +680,13 @@
   /** `initialize` decides the theme of the next render and nothing else, so it is
    *  called when the theme has moved rather than once. Diagrams already drawn
    *  keep the theme they were drawn in; re-drawing them belongs with the cache. */
-  function mmdInit() {
+  function mmdCurrentTheme() {
     const dark = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-    const theme = dark ? "dark" : "neutral";
+    return dark ? "dark" : "neutral";
+  }
+
+  function mmdInit() {
+    const theme = mmdCurrentTheme();
     if (theme === mermaidTheme) return;
     mermaidTheme = theme;
     window.mermaid.initialize({ startOnLoad: false, theme, securityLevel: "strict", fontFamily: "Inter, system-ui, sans-serif" });
@@ -664,23 +730,47 @@
 
   async function mmdRender(fig, token) {
     fig.dataset.state = "rendering";
+    const key = mmdKey(fig.dataset.src);
+    const hit = mmdTake(key);
+    if (hit !== null) {
+      // Nothing to wait for, so no spinner and no slow class -- which the
+      // on-demand button sets on the way in, before it can know this one is
+      // free.
+      fig.classList.remove("mmd-slow");
+      hit.svg ? mmdPaint(fig, hit.svg, performance.now()) : mmdFail(fig, hit.err);
+      return;
+    }
     // A spinner only once the wait is long enough to be worth explaining.
     const slow = setTimeout(() => fig.classList.add("mmd-slow"), 150);
     const t0 = performance.now();
     try {
-      const { svg } = await window.mermaid.render(`${fig.dataset.mmdId}-svg`, fig.dataset.src);
+      const id = mmdRenderId(fig);
+      const { svg } = await window.mermaid.render(id, fig.dataset.src);
+      const kept = svg.split(id).join(MMD_ID);
+      // Kept before the token is consulted: the drawing is done and paid for
+      // either way, and a reader who navigated away while it was being made is
+      // the reader most likely to come straight back to it.
+      mmdKeep(key, { svg: kept });
       if (token !== mmdToken || !fig.isConnected) return;
-      const frame = fig.querySelector(".mmd-frame");
-      frame.innerHTML = svg;
-      fig.dataset.state = "done";
-      // Named, so the browser budget can find it.
-      performance.measure("snyvi:diagram", { start: t0, end: performance.now() });
+      mmdPaint(fig, kept, t0);
     } catch (e) {
+      mmdKeep(key, { err: e && e.message ? e.message : String(e) });
       if (token === mmdToken && fig.isConnected) mmdFail(fig, e);
     } finally {
       clearTimeout(slow);
       fig.classList.remove("mmd-slow");
     }
+  }
+
+  /** The cached string carries a token where its id belongs, and the figure it
+   *  is painted into supplies one. */
+  function mmdPaint(fig, svg, t0) {
+    const frame = fig.querySelector(".mmd-frame");
+    frame.innerHTML = svg.split(MMD_ID).join(mmdRenderId(fig));
+    fig.dataset.state = "done";
+    // Named, so the browser budget can find it. A cache hit measures what it
+    // actually costs, which is the assignment above.
+    performance.measure("snyvi:diagram", { start: t0, end: performance.now() });
   }
 
   /** Mermaid answers a source it cannot parse with its own error graphic, which
