@@ -47,12 +47,17 @@ jobs:
       - name: Browser budget
         # `snyvi bench` measures the daemon. This measures the half the reader
         # actually waits on, which is where the seconds were: a 220-node diagram
-        # froze the tab for 3.1 s before the scheduler landed. The timings scale
-        # with the same factor; the behaviour checks -- a diagram below the fold
-        # is not drawn, one over the cap is offered rather than spent, find does
-        # not mark text inside an SVG -- do not depend on the clock and hold
-        # exactly. See docs/DIAGRAMS.md.
-        run: SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
+        # froze the tab for 3.1 s before the scheduler landed.
+        #
+        # SNYVI_BENCH_SHARED because a hosted runner's speed is not snyvi's to
+        # promise: two of them reported 444 ms and 1404 ms of first paint for
+        # the same commit. Those rows are printed and not enforced here. What is
+        # enforced is the behaviour -- a diagram below the fold is not drawn, one
+        # over the cap is offered rather than spent, find marks nothing inside an
+        # SVG, leaving a document mid-render strands nothing -- none of which
+        # depends on the clock, plus the one timing that does not either:
+        # whether drawing is cut into slices. See docs/DIAGRAMS.md.
+        run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
       - name: Smoke test the daemon
         run: |
           set -e

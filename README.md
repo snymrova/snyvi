@@ -461,7 +461,11 @@ Mermaid, and for drawing with it, because three different things are
 slow in those windows. It also checks what no timing can: that a diagram
 below the fold is not drawn, that one too large to draw politely is
 offered rather than spent, and that leaving a document mid-render
-strands nothing. It needs Node 22 and a Chromium, and installs neither.
+strands nothing. In CI it runs with `SNYVI_BENCH_SHARED=1`, which prints
+the rows that measure the runner rather than snyvi instead of enforcing
+them; the behaviour checks and the one timing that survives a slow
+machine are enforced there too. It needs Node 22 and a Chromium, and
+installs neither.
 See [docs/DIAGRAMS.md](docs/DIAGRAMS.md), which is where the 3193 ms in
 the table above came from and what removing it took.
 

@@ -28,6 +28,23 @@ if (typeof WebSocket !== "function") {
 }
 
 const args = process.argv.slice(2);
+/* Two kinds of number are printed here, and only one of them is a fact about
+ * snyvi.
+ *
+ * "longest task, drawing" is about whether the work is cut into slices, not how
+ * fast the machine cutting them is. It read 0 ms on a hosted runner and 0 ms on
+ * another one three times slower, and 1455 ms the moment the scheduler was
+ * taken out. That discriminates, so it is enforced everywhere.
+ *
+ * First paint and the boot task are mostly a browser and a machine starting up.
+ * Two runners eighteen minutes apart reported 444 ms and 1404 ms for the same
+ * commit. A budget loose enough to admit 1404 catches nothing; one that is not
+ * fails the build for whoever drew the slow runner. So SNYVI_BENCH_SHARED says
+ * "this machine's speed is not mine to promise": those rows are measured and
+ * printed and not enforced. What CI defends is the behaviour, which does not
+ * depend on the clock at all.
+ */
+const SHARED = !!process.env.SNYVI_BENCH_SHARED;
 const CHECK = args.includes("--check");
 const KEEP = args.includes("--keep");          // leave the browser and daemon up
 const BIN = flag("--bin") || "./target/release/snyvi";
@@ -143,6 +160,10 @@ async function main() {
     SNYVI_PORT: PORT,
   };
   let chromeProc = null;
+  // Declared out here because report() runs inside the try and exiting from
+  // there would skip the cleanup below -- which is exactly what left a browser,
+  // two crashpad handlers and a daemon behind for the runner to reap.
+  let failed = false;
   try {
     // The document goes in the way a document always goes in, so the budget
     // covers the real path: CLI, daemon, store, renderer, browser.
@@ -154,7 +175,8 @@ async function main() {
     const profile = join(tmp, "chrome");
     // Its own process group, so teardown takes the renderers and the zygote with
     // it. Killing only the leader left chrome, its crashpad handlers and their
-    // pipes behind for the runner to reap.
+    // pipes behind for the runner to reap. Nothing else here is tuned: flags
+    // that change how the browser starts change what first paint means.
     chromeProc = spawn(chrome, [
       "--headless=new",
       "--remote-debugging-port=0",
@@ -170,8 +192,6 @@ async function main() {
       "--disable-background-networking",
       "--disable-component-update",
       "--disable-extensions",
-      "--disable-breakpad",
-      "--no-zygote",
       "--window-size=1280,900",
       "about:blank",
     ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
@@ -254,7 +274,7 @@ async function main() {
     await cdp.send("Network.setCacheDisabled", { cacheDisabled: false }, sessionId);
     if (revisit.ok) Object.assign(revisit, await evaluate(cdp, sessionId, call(page.drewAfterReturn)));
 
-    report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, throttle });
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, throttle });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -263,6 +283,10 @@ async function main() {
     } else {
       console.log(`\n--keep: daemon and browser left running; data in ${tmp}`);
     }
+  }
+  if (failed && CHECK) {
+    console.error("\nbrowser budget: something is over budget or misbehaving");
+    process.exitCode = 1;
   }
 }
 
@@ -314,35 +338,37 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   const firstSvg = perf.measures.filter(m => m.name === "snyvi:diagram")
     .reduce((m, e) => Math.min(m, e.start + e.duration), Infinity);
 
+  // `steady` marks a row whose budget is a claim about snyvi rather than about
+  // the machine; see SNYVI_BENCH_SHARED at the top of this file.
   const rows = [
-    // 250 rather than the 150 ms docs/BRAINSTORM.md asks for and the 76-128 ms
-    // this measures locally. The gap is not slack: a cold hosted runner spends
-    // it on process start and first font paint, which the CPU factor does not
-    // scale because they are not CPU-bound -- the first CI run of this harness
-    // reported 444 against a 600 budget, close enough to flake. A regression
-    // that matters here doubles the number, and this still catches that.
-    ["first contentful paint", fcp, 250, "the reader sees the document"],
-    ["longest task, boot", longest(boot), 200, "before Mermaid is even fetched"],
-    ["longest task, drawing", longest(render), 250, "Phase 1: one diagram per task"],
-    ["first diagram drawn", Number.isFinite(firstSvg) ? firstSvg : null, 2000, "includes the library parse"],
+    ["first contentful paint", fcp, 250, false, "the reader sees the document"],
+    ["longest task, boot", longest(boot), 200, false, "before Mermaid is even fetched"],
+    ["longest task, drawing", longest(render), 250, true, "Phase 1: one diagram per task"],
+    ["first diagram drawn", Number.isFinite(firstSvg) ? firstSvg : null, 2000, false, "includes the library parse"],
   ];
   const notes = [
     ["longest task, Mermaid parse", longest(lib), "3.57 MB of JS; Phase 4"],
     ["diagram on demand", onDemand.ok ? onDemand.ms : null, "the 220-node one, asked for"],
   ];
 
-  console.log(`browser budget   (budget factor ${FACTOR}${throttle > 1 ? `, CPU x${throttle}` : ""})\n`);
+  console.log(`browser budget   (budget factor ${FACTOR}${throttle > 1 ? `, CPU x${throttle}` : ""}${SHARED ? ", shared machine" : ""})\n`);
   console.log(`${"".padEnd(34)}${"ms".padStart(9)}${"budget".padStart(10)}`);
   let failed = false;
-  for (const [name, value, budget, why] of rows) {
+  for (const [name, value, budget, steady, why] of rows) {
     const b = budget * FACTOR;
+    const enforced = steady || !SHARED;
     const ok = value !== null && value <= b;
-    failed ||= !ok;
+    if (enforced) failed ||= !ok;
     const shown = value === null ? "—" : value.toFixed(0);
-    console.log(`${name.padEnd(34)}${shown.padStart(9)}${b.toFixed(0).padStart(10)} ${ok ? " ok  " : " OVER"} ${why}`);
+    const verdict = ok ? " ok  " : enforced ? " OVER" : " high";
+    const shownBudget = enforced ? b.toFixed(0) : `(${b.toFixed(0)})`;
+    console.log(`${name.padEnd(34)}${shown.padStart(9)}${shownBudget.padStart(10)}${verdict} ${why}`);
   }
   for (const [name, value, why] of notes) {
     console.log(`${name.padEnd(34)}${(value === null ? "—" : value.toFixed(0)).padStart(9)}${"".padStart(10)}      ${why}`);
+  }
+  if (SHARED) {
+    console.log("\na budget in brackets is measured and not enforced: this machine's speed is\nnot snyvi's to promise. The behaviour below is enforced everywhere.");
   }
 
   console.log("\ndiagrams");
@@ -383,10 +409,7 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
 
   console.log(`\nviewport ${viewport}px; ${diagrams.length} diagrams`);
 
-  if (failed && CHECK) {
-    console.error("\nbrowser budget: at least one number is over budget");
-    process.exit(1);
-  }
+  return failed;
 }
 
 main().catch(e => { console.error(e.message); process.exit(1); });

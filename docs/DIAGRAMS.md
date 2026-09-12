@@ -226,12 +226,26 @@ rather than spent. `SNYVI_BENCH_FACTOR` scales the budgets (CI uses 3);
 `SNYVI_BENCH_CPU` throttles the CPU, which is the honest way to see what
 a slower machine would report.
 
-First paint is budgeted at 250 ms rather than the 150 the project's own
-budgets ask for. The gap is not slack: a cold hosted runner spends it on
-process start and first font paint, neither of which the CPU factor
-scales because neither is CPU-bound. The first CI run reported 444
-against a 600 ms budget — close enough to flake for a reason that has
-nothing to do with diagrams. Locally it is 76–128 ms.
+**A shared machine's speed is not snyvi's to promise.** Two hosted
+runners eighteen minutes apart reported 444 ms and 1404 ms of first paint
+for the same commit, and 221 ms and 783 ms of boot task. A budget loose
+enough to admit the slow one catches nothing; one that is not fails the
+build for whoever drew it. So `SNYVI_BENCH_SHARED=1`, which CI sets,
+prints those rows and does not enforce them — they are a fact about the
+runner.
+
+One timing row is enforced everywhere, because it is not a fact about the
+runner: **longest task, drawing**. It asks whether the work is cut into
+slices, not how fast the machine cutting them is. It reads 0 ms on a fast
+runner, 0 ms on one three times slower, 369 ms under an eightfold CPU
+throttle — and 1455 ms the moment the scheduler is taken out. That is the
+number phase 1 is about, and the margin is two orders of magnitude rather
+than a factor of three. Everything in section 6's behaviour list is
+enforced everywhere too, because none of it depends on the clock.
+
+Run it without `SNYVI_BENCH_SHARED` on a machine you control and every
+row is enforced, which is where first paint's 250 ms budget means
+something.
 
 **Three windows, not one longest frame.** The single number the plan
 asked for would have been dominated by Mermaid's own 523 ms of parsing,
