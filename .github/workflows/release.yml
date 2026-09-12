@@ -204,7 +204,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.event.inputs.version || github.ref_name }}" -replace '^v', ''
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "VERSION=$version"
           $name = "snyvi-$version-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item target/release/snyvi.exe, target/release/snyvi-app.exe, README.md "dist/$name/"
@@ -213,7 +213,7 @@ jobs:
           # single newline -- so `sha256sum -c` reads this one like the others.
           $file = "dist/$name.zip"
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-          [IO.File]::WriteAllText((Resolve-Path "dist").Path + "\$name.zip.sha256", "$hash  $name.zip`n")
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path "dist") "$name.zip.sha256"), "$hash  $name.zip`n")
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
