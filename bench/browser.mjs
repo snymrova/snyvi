@@ -31,7 +31,7 @@ const args = process.argv.slice(2);
 const CHECK = args.includes("--check");
 const KEEP = args.includes("--keep");          // leave the browser and daemon up
 const BIN = flag("--bin") || "./target/release/snyvi";
-const PORT = flag("--port") || "7795";
+const PORT = flag("--port") || "7796";   // 7791, 7794-7795 and 7812-7814 are CI's
 const FACTOR = Number(process.env.SNYVI_BENCH_FACTOR || flag("--factor") || 1);
 
 function flag(name) {
@@ -59,6 +59,15 @@ function chromePath() {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Kill the browser and everything it started. `detached` puts it at the head of
+ *  its own group, and the negative pid is what reaches the rest of the group;
+ *  the fallback is for a platform or a state where that does not apply. */
+function killTree(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  try { process.kill(-proc.pid, "SIGKILL"); }
+  catch { try { proc.kill("SIGKILL"); } catch {} }
+}
 
 /* ---------- the DevTools protocol, in about forty lines ---------- */
 
@@ -143,6 +152,9 @@ async function main() {
     if (!/^https?:\/\//.test(url)) throw new Error(`snyvi send printed no URL:\n${url}`);
 
     const profile = join(tmp, "chrome");
+    // Its own process group, so teardown takes the renderers and the zygote with
+    // it. Killing only the leader left chrome, its crashpad handlers and their
+    // pipes behind for the runner to reap.
     chromeProc = spawn(chrome, [
       "--headless=new",
       "--remote-debugging-port=0",
@@ -158,20 +170,27 @@ async function main() {
       "--disable-background-networking",
       "--disable-component-update",
       "--disable-extensions",
+      "--disable-breakpad",
+      "--no-zygote",
       "--window-size=1280,900",
       "about:blank",
-    ], { stdio: ["ignore", "ignore", "pipe"] });
+    ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
     let chromeErr = "";
     chromeProc.stderr.on("data", d => { chromeErr += d; });
 
+    // Sixty seconds, not ten: the first cold start on a hosted runner took longer
+    // than ten and failed the build for a reason that had nothing to do with
+    // snyvi. Nothing waits this long when the browser is behaving -- the file
+    // appears in a second or two and the loop ends there -- so the only cost of
+    // the larger number is how long a genuinely broken Chromium takes to say so.
     const portFile = join(profile, "DevToolsActivePort");
     let devPort = null;
-    for (let i = 0; i < 200 && devPort === null; i++) {
+    for (let i = 0; i < 1200 && devPort === null; i++) {
       await sleep(50);
       if (existsSync(portFile)) devPort = readFileSync(portFile, "utf8").split("\n")[0].trim();
       if (chromeProc.exitCode !== null) throw new Error(`chromium exited: ${chromeErr}`);
     }
-    if (!devPort) throw new Error(`chromium never reported a debugging port: ${chromeErr}`);
+    if (!devPort) throw new Error(`chromium never reported a debugging port in 60s: ${chromeErr}`);
 
     const version = await (await fetch(`http://127.0.0.1:${devPort}/json/version`)).json();
     const cdp = await CDP.open(version.webSocketDebuggerUrl);
@@ -238,7 +257,7 @@ async function main() {
     report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, throttle });
   } finally {
     if (!KEEP) {
-      chromeProc?.kill();
+      killTree(chromeProc);
       try { execFileSync(BIN, ["stop"], { env, stdio: "ignore" }); } catch {}
       rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     } else {
