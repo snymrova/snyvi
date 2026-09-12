@@ -12,6 +12,7 @@
     view: boot.view || "inbox",
     doc: boot.doc || null,
     previous: boot.previous || null,
+    folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
     unread: new Map(),          // project id -> count
     lastActivity: 0,
     cache: new Map(),           // id -> {doc, html, previous}
@@ -303,7 +304,7 @@
   async function showDoc(id, push = true) {
     let j;
     try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
-    state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null;
+    state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
     state.unread.delete(j.doc.project_id);
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
@@ -445,7 +446,7 @@
     const top = main.scrollTop;
     let j; try { j = await fetchDoc(id); } catch { return; }
     if (!state.doc || state.doc.id !== id) return;
-    state.doc = j.doc; state.previous = j.previous;
+    state.doc = j.doc; state.previous = j.previous; state.folder = j.folder;
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
     applyPreview();
@@ -1139,6 +1140,7 @@
       `<button data-act="delete">Delete…<kbd>⌫</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
+      (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button>` : "") +
       `</div>`;
   }
   const rawUrl = (rootId, path) => `/api/browse/${rootId}/raw/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -1159,6 +1161,7 @@
       previewButton() +
       (p ? `<a href="${rawUrl(r.id, p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
       `<button data-act="copybrowse">Copy path</button>` +
+      `<button data-act="terminal" title="${esc(r.path + (p ? "/" + p : ""))}">Open terminal here</button>` +
       `<a href="/b/${r.id}" data-browse="${r.id}" data-path="">Folder contents</a>` +
       `<button data-act="closebrowse">Close folder</button>` +
       `</div>`;
@@ -1178,6 +1181,7 @@
       const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
       navigator.clipboard?.writeText(full); toast("Copied", full);
     }
+    if (b.dataset.act === "terminal") openTerminal();
     if (b.dataset.act === "closebrowse") {
       const id = state.browseRoot.id;
       try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
@@ -1185,6 +1189,29 @@
       showInbox(true);
     }
   });
+
+  /** Open the machine's own terminal where the reader is looking.
+   *
+   *  What is sent is an id, never a path: the daemon resolves the directory
+   *  itself, so nothing typed into a document can reach one. Nothing comes back
+   *  either -- the terminal's output is the terminal's. See docs/TERMINAL.md.
+   *
+   *  The request carries no token because this page has none, and is allowed
+   *  through by being same-origin instead; a page on another origin is refused
+   *  by the daemon. */
+  async function openTerminal() {
+    const body = state.view === "browse"
+      ? { root: state.browseRoot.id, path: state.browsePath || "" }
+      : { doc: state.doc.id };
+    try {
+      const r = await fetch("/api/terminal", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) toast("Terminal", j.dir || "opened");
+      else toast("No terminal", j.error || `${r.status}`);
+    } catch (e) { toast("No terminal", String(e)); }
+  }
 
   async function togglePin() {
     if (!state.doc) return;

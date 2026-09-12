@@ -52,7 +52,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
-| Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **next** |
+| Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
@@ -342,6 +342,58 @@ extension for nothing.
 Both were found by installing the release and looking at it, which is
 what "argued for, not yet watched" below was about. It was written for
 Windows and turned out to be true of Ubuntu.
+
+## 0.8: diagrams that read, and a way out of the viewer
+
+Two documents had been written and neither had any code behind it. This
+cut is both of them.
+
+**Diagrams are drawn once per tab.** `docs/DIAGRAMS.md` phase 2a: a
+diagram is a pure function of its source and the theme and a stored
+document never changes, so the 2426 ms the 220-node flowchart cost on
+every revisit was being spent re-computing an answer the tab already had.
+A whole document now comes back in 34 ms with no call into the renderer
+at all, and `snyvi watch` stops redrawing on every save. Three things it
+wanted beyond the twenty lines the plan estimated: a source that will not
+parse is remembered too, so no source is handed to Mermaid twice; the id
+is not part of the drawing, so what is cached carries a token where the
+id was; and a bound in bytes rather than entries, since one diagram's SVG
+is two orders of magnitude larger than another's.
+
+**And they are drawn in snyvi's own palette.** Section 9 of the same
+document, which is the other question this roadmap asks of everything:
+not whether it is instant but whether it is beautiful. Until now a
+diagram arrived with `#eeeeee` nodes and `#999999` strokes on paper that
+is `#faf9f6`, and in dark mode every edge label sat on a grey swatch
+matching nothing else on the page. The values are read off `:root` rather
+than written out again, so a token changed in `app.css` moves the
+diagrams with it. The theme toggle no longer leaves drawn diagrams
+behind, which the cache above made a three-line fix rather than a
+project.
+
+The check is the part worth keeping. The harness reads the colours back
+off real renders of every diagram family in both themes, finds what is
+actually behind each label, composites alpha, and holds the worst
+contrast in each diagram to 3:1. It found two faults in dark that would
+have shipped: a focus node whose label measured 1.0:1 — the same colour
+twice — and a gantt chart drawing "Scheduler" at 1.4:1 on its own bar.
+
+**A terminal, the reader's own.** `docs/TERMINAL.md`, which is mostly an
+argument for what is *not* being built: an embedded emulator and a "run
+this block" button are both declined, and the reasons are written down so
+the question arrives answered. What landed passes no command at all. A
+button opens the machine's terminal in the folder the reader is looking
+at — the document's own, or its project's root when it was sent as
+content rather than as a path, or a browsed folder's. The page sends an
+id and never a path; the daemon resolves the directory itself.
+
+It also brought snyvi its first `Origin` check, and the plan was wrong
+about why. It had said "the token and an Origin check" — but the page has
+no token, and should not have one, so the gate is the origin with the
+token accepted beside it for the CLI. That is the header that matters
+here anyway: the threat to a loopback side effect is a page on another
+origin firing a POST at it, not a local process, which could open a
+terminal without asking snyvi.
 
 ## Candidates after 0.7
 

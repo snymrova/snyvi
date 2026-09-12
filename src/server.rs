@@ -4,6 +4,7 @@ use crate::browse::Browser;
 use crate::config::{self, Paths};
 use crate::receive::{self, Payload};
 use crate::render::{self, Renderer};
+use crate::platform;
 use crate::store::{Doc, Store};
 use axum::{
     body::Body,
@@ -120,6 +121,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/outline", get(doc_outline))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
+        .route("/api/terminal", post(terminal))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/{id}/close", post(browse_close))
         .route("/api/browse/{id}/tree", get(browse_tree))
@@ -236,7 +238,8 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
     let tree = app.store.tree().unwrap_or_default();
     let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
     let title = doc.title.clone();
-    let boot = json!({ "view": "doc", "tree": tree, "doc": doc, "previous": previous, "browse": app.browse.list(), "version": VERSION });
+    let folder = doc_folder(&app, &doc);
+    let boot = json!({ "view": "doc", "tree": tree, "doc": doc, "previous": previous, "folder": folder, "browse": app.browse.list(), "version": VERSION });
     shell(&app, boot, &doc_html(&doc, &body), &title)
 }
 
@@ -401,6 +404,12 @@ async fn doc_json(State(app): S, Path(id): Path<String>) -> Response {
                 "previous": previous,
                 "preview": preview,
                 "preview_url": preview.map(|_| format!("/api/docs/{id}/blob")),
+                // So the page knows whether there is a terminal button to draw.
+                // A control that is disabled and cannot say why is worse than
+                // no control, and the directory is not something the page can
+                // work out for itself -- it is a parent path on a machine whose
+                // separator the page does not know.
+                "folder": doc_folder(&app, &doc),
             }))
             .into_response()
         }
@@ -749,6 +758,127 @@ struct FindQ {
 
 /// Opening a folder exposes its files, so this one needs the token. Reading inside a
 /// root the user already opened does not.
+#[derive(Deserialize)]
+struct TerminalBody {
+    doc: Option<String>,
+    root: Option<String>,
+    path: Option<String>,
+}
+
+/// The directory a terminal would open in for a document, if one exists.
+///
+/// In order: the folder the file was sent from, then the project's root. The
+/// second is the case that matters. `source_path` is an `Option` and a document
+/// sent as content rather than as a path has none, so without the fallback the
+/// button would be missing from exactly the sends that come straight out of an
+/// agent.
+fn doc_folder(app: &App, doc: &Doc) -> Option<std::path::PathBuf> {
+    doc.source_path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
+        .into_iter()
+        .chain(app.store.project_root(doc.project_id).map(Into::into))
+        .find(|d: &std::path::PathBuf| d.is_dir())
+}
+
+/// Did this request come from snyvi's own page?
+///
+/// The first check of its kind in this server, and the reason section 7 of
+/// `docs/TERMINAL.md` counts it as new work: until now every endpoint either
+/// carried the token or answered with something a foreign page cannot read back
+/// anyway. This one is a side effect that arrives from a click.
+///
+/// It cannot be the token, because the page has none. The token exists so that
+/// a random local process cannot inject a document, and putting it into HTML
+/// that any local process can `GET` would be the end of that. So the token is
+/// accepted -- it is how the CLI and the tests reach this -- and a same-origin
+/// POST is accepted beside it.
+///
+/// `Origin` rather than `Sec-Fetch-Site`: a browser sets `Origin` on every POST,
+/// same-origin included, and has done for far longer, so a window whose engine
+/// predates fetch metadata still gets the button. Where the newer header is
+/// present it is read too, and anything but `same-origin` is refused outright.
+/// A page on another origin is refused by both; curl sends neither and needs the
+/// token.
+fn from_this_page(headers: &HeaderMap) -> bool {
+    if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+        if site != "same-origin" {
+            return false;
+        }
+    }
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let port = config::port();
+    ["127.0.0.1", "localhost", "[::1]"]
+        .iter()
+        .any(|h| origin == format!("http://{h}:{port}"))
+}
+
+/// Open the machine's own terminal, in the directory the reader is looking at.
+///
+/// The only thing this takes from the caller is an id snyvi already holds; the
+/// directory is looked up here, no command is passed, and nothing comes back.
+/// `docs/TERMINAL.md` has the argument, and section 3 of it has what is
+/// deliberately absent.
+async fn terminal(State(app): S, headers: HeaderMap, Json(b): Json<TerminalBody>) -> Response {
+    if !from_this_page(&headers) && !authorized(&app, &headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not from this page, and no token" })),
+        )
+            .into_response();
+    }
+    let dir = if let Some(id) = b.root.as_deref() {
+        // `resolve` is what keeps a path from the caller inside the root it
+        // names -- the same guard `browse_file` reads its bytes through. A file
+        // opens beside itself; the root opens at the root.
+        app.browse
+            .resolve(id, b.path.as_deref().unwrap_or(""))
+            .ok()
+            .and_then(|p| {
+                if p.is_dir() {
+                    Some(p)
+                } else {
+                    p.parent().map(|d| d.to_path_buf())
+                }
+            })
+    } else if let Some(id) = b.doc.as_deref() {
+        app.store
+            .get(id)
+            .ok()
+            .flatten()
+            .and_then(|d| doc_folder(&app, &d))
+    } else {
+        None
+    };
+    let Some(dir) = dir.filter(|d| d.is_dir()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "no folder to open" })),
+        )
+            .into_response();
+    };
+    // `open_terminal` refuses without a display as well; asking here is only so
+    // that the two ways of having no terminal say different things.
+    if !platform::has_display() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "no desktop session to open a terminal in" })),
+        )
+            .into_response();
+    }
+    if platform::open_terminal(&dir) {
+        Json(json!({ "dir": dir })).into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "no terminal found on this machine" })),
+        )
+            .into_response()
+    }
+}
+
 async fn browse_open(State(app): S, headers: HeaderMap, Json(b): Json<OpenBody>) -> Response {
     if !authorized(&app, &headers) {
         return (

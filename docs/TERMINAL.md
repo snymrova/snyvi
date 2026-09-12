@@ -3,10 +3,11 @@
 Written 2026-09-12, after a question about giving the desktop app a
 terminal to run commands from.
 
-**Status.** Decided, no code yet. What lands is section 5: a button that
-opens the *system* terminal in the right directory. The embedded terminal
-of section 3 is declined, and section 3 exists so it does not have to be
-re-argued from scratch the next time it is asked.
+**Status.** Section 5 has landed. A button in the document header and the
+browse header opens the *system* terminal in the right directory. The
+embedded terminal of section 3 is declined, and section 3 exists so it does
+not have to be re-argued from scratch the next time it is asked. Section 7
+is where the plan turned out to be wrong, and says how.
 
 Unlike `DIAGRAMS.md`, nothing here is measured, because nothing here is
 about time. The argument is structural, so section 2 is read out of the
@@ -237,20 +238,77 @@ program named, so it costs almost nothing once section 5 exists, and it
 is worth waiting to see whether anyone opens a terminal only to type the
 same word every time.
 
-## 7. What it needs before it lands
+## 7. What it needed before it landed
 
-- **The token and an `Origin` check.** It is a side effect arriving over
-  HTTP, which puts it in the class of `browse_open` rather than the class
-  of `doc_raw`. The `Origin` check is new work (section 2: nothing checks
-  today) and it is the right place to introduce it, because the cost of
-  getting it wrong here is one window.
-- **A CI check that it spawns nothing on a headless runner.** `has_display`
-  is the guard and CI is the one place guaranteed not to have a display,
-  so the assertion is cheap and it is the one that catches a regression
-  where the guard is dropped.
-- **No new dependency.** If a candidate list starts wanting a crate to
-  detect the desktop, that is the signal to stop and reconsider rather
-  than to add it.
+**The `Origin` check, and the token where there is one.** This is the
+line above that was wrong, and it was wrong in a way worth writing down:
+it said *the token **and** an `Origin` check*, in the class of
+`browse_open`. But `browse_open` is reached from the CLI, and this button
+is reached from the page — **and the page has no token at all.** Nothing
+in `ui/` has ever sent one, because the token exists so that a random
+local process cannot inject a document, and putting it into HTML that any
+local process can `GET` would be the end of that.
+
+So the gate is `Origin`, with the token accepted beside it for the CLI
+and for the tests. That is not the weaker half of what was planned. The
+thing the token would defend against here is a local process, which does
+not need this endpoint: it can spawn a terminal itself, and a stolen
+token is already worth more elsewhere. The thing that actually threatens
+a loopback side effect is a page on another origin firing a POST at it,
+and `Origin` is exactly the header that says so.
+
+`Origin` rather than `Sec-Fetch-Site`: a browser sets `Origin` on every
+POST, same-origin included, and has done for far longer, so a window
+whose engine predates fetch metadata still gets a working button. Where
+the newer header is there it is read too, and anything but `same-origin`
+is refused outright.
+
+**A CI check that it spawns nothing on a headless runner.** It asserts
+four responses — no headers at all, a foreign origin, and our own origin
+with `Sec-Fetch-Site: cross-site`, all 403; then our own origin, which is
+let through and still answers 503, because there is no screen — and then
+that no terminal is running. That last one is checked on the process
+*name*: the first version used `pgrep -f`, which matched the list of
+terminal names where it appears in the checking script's own arguments,
+and went red for the wrong reason.
+
+Two unit tests hold the shape of the candidate list: that no candidate
+ever passes anything but a flag and the directory, and that a candidate
+carrying a flag carries the directory with it. The first is the whole
+feature written as an assertion — a candidate that grew an `-e` would be
+the executor section 3 declines.
+
+**No new dependency.** None was wanted. The candidate list is the same
+shape as `app_mode_browsers`.
+
+## 7a. What it does, as built and measured
+
+The directory is never sent by the page. What the page sends is an id —
+a document's, or a browsed root's and a path inside it — and the daemon
+resolves the directory itself, so nothing a document contains can reach
+one. A path inside a browsed root goes through `Browser::resolve`, the
+same guard `browse_file` reads bytes through, so `../../../etc/passwd`
+resolves to nothing and the answer is "no folder to open".
+
+Checked against a running daemon, with a stand-in terminal that records
+what it was asked:
+
+| | Opens in |
+|---|---|
+| A document sent by path | the file's own folder |
+| A document sent as content, no `source_path` at all | the project's root |
+| A browsed root | the root |
+| A file inside a browsed root | the folder it is in |
+| `../../../etc/passwd` inside a root | nothing: "no folder to open" |
+
+And in every case the recorded argv is **empty**. The directory arrives
+as the child's working directory, which is what a terminal with no flag
+of its own uses, alongside the flag where one is known.
+
+The page learns whether to draw the button from a `folder` field on the
+document, because it cannot work the answer out for itself: it would have
+to take the parent of a path on a machine whose separator it does not
+know. Where nothing resolves, there is no button.
 
 ## 8. Adjacent, and left open
 

@@ -350,6 +350,22 @@ impl Store {
     /// Name a project yourself. The directory it was derived from is its identity and
     /// does not move, so sends keep landing here; `renamed` stops the derived name
     /// from reclaiming the label on the next one.
+    /// Where a project was detected, which is the last directory a document can
+    /// fall back to.
+    ///
+    /// A query of its own rather than a column on `Doc`: the root is wanted by
+    /// one caller in one place, and `DOC_COLS` is read by every list, search and
+    /// tree in the server.
+    pub fn project_root(&self, project_id: i64) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT root FROM projects WHERE id = ?1",
+            params![project_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
     pub fn rename_project(&self, id: i64, name: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(

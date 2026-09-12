@@ -67,6 +67,30 @@ jobs:
           curl -sf "$url" > /dev/null
           curl -sf http://127.0.0.1:7791/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+      - name: The terminal button opens nothing it should not
+        # The one endpoint in snyvi whose effect is a process, so the one worth
+        # checking from the outside. A runner has no display, which is the
+        # guard's whole case -- a daemon reached over ssh declines rather than
+        # fails -- and it is also the only place guaranteed not to have one.
+        # See docs/TERMINAL.md.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/snyvi-ci SNYVI_CONFIG_DIR=/tmp/snyvi-ci-cfg SNYVI_PORT=7791
+          docid=$(./target/release/snyvi send README.md | tail -1); docid=${docid##*/}
+          post() { curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'content-type: application/json' "$@" \
+            -d "{\"doc\":\"$docid\"}" http://127.0.0.1:7791/api/terminal; }
+          # The page has no token, so the gate is the Origin: a foreign page is
+          # refused, and so is a request carrying neither.
+          test "$(post)" = "403"
+          test "$(post -H 'Origin: https://evil.example')" = "403"
+          test "$(post -H 'Origin: http://127.0.0.1:7791' -H 'Sec-Fetch-Site: cross-site')" = "403"
+          # Allowed through, and still opens nothing, because there is no screen.
+          test "$(post -H 'Origin: http://127.0.0.1:7791')" = "503"
+          # On the process name and not the command line: `pgrep -f` matches the
+          # pattern where it appears in this script's own arguments, which is a
+          # green check that would have gone red for the wrong reason.
+          ! ps -e -o comm= | grep -qxE 'gnome-terminal|konsole|xfce4-terminal|alacritty|kitty|foot|ptyxis|wezterm|x-terminal-emulator'
       - name: Smoke test watch
         # A save while `snyvi watch` runs must reach the daemon as the same document.
         run: |
