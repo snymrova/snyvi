@@ -193,7 +193,7 @@ This cut goes out without the JSON and YAML views it had been holding a
 place for. They were never started, and a cut that waits for everything
 named in it stops being a cut, so they move to the next one.
 
-## 0.5: the window ships
+## 0.5 (released 2026-09-12): the window ships
 
 The native window has existed since 0.2 and no release has ever contained
 it. The release builds are static musl binaries, and a WebKitGTK window
@@ -230,28 +230,29 @@ does the same work in 6 MB by asking the distribution for the engine.
 JSON and YAML views, tags from the sender, macOS build, AppImage and
 AUR, tray icon with a global shortcut.
 
-Release hygiene: CI now builds `--features desktop` and opens the window
-under Xvfb, so the Tauri path is no longer unverified. Still open, and
-now with the reason pinned down: no release has ever been cut, so the
-install instructions point at an empty releases page. The release
-workflow is the one path proven only by proxy — CI builds and installs
-the `.deb` on every push, but nothing has ever exercised tagging, the
-two-architecture matrix, or the upload.
+Release hygiene: closed. v0.5.0 is the first release ever cut, and its
+first run exercised everything that had only been proven by proxy: the
+tag trigger, both architectures of the static matrix, the upload of two
+jobs onto one release, and the desktop job appending to it. Twelve
+assets, every one of them checksummed. The shipped desktop `.deb`,
+built on 22.04, was then downloaded, verified against its checksum,
+installed on a 24.04 host and opened its window from `/usr/bin/snyvi`.
 
-Both ways of starting it need a credential an agent session does not
-have. `workflow_dispatch` returns 403 (`Resource not accessible by
-integration`), and pushing `v0.4.0` returns 403 from GitHub while a
-push of ordinary commits to the same branch succeeds — the token can
-write commits but not tags or workflow runs. So it is still one
-command, and it still has to come from a machine with tag permission:
+One thing the first run showed that CI could not: both static legs asked
+for release notes, so each appended a copy and the body carried the
+changelog line twice. Only the amd64 leg authors notes now.
+
+What still has to come from a machine with tag permission is the tag
+itself. `workflow_dispatch` and tag pushes both return 403 for an agent
+session's token, which writes commits and nothing else. So a release
+is one command, from a person:
 
 ```
-git tag -a v0.5.0 -m "snyvi 0.5.0" && git push origin v0.5.0
+git tag -a v0.6.0 -m "snyvi 0.6.0" && git push origin v0.6.0
 ```
 
-The version in `Cargo.toml` is already `0.5.0`, so the tag is the only
-step. 0.4 was never tagged, so 0.5 is the first release either way, and
-it is the one worth cutting: it is the first that contains the window.
+with `Cargo.toml` bumped first, since the workflow reads the version
+from the tag and Tauri reads it from `Cargo.toml`.
 
 ## Still no purpose-built view
 

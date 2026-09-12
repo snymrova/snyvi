@@ -67,7 +67,10 @@ jobs:
             dist/*.tar.gz
             dist/*.deb
             dist/*.sha256
-          generate_release_notes: true
+          # Both matrix legs upload to one release, and each call that asks for
+          # notes appends another copy; v0.5.0 went out with the changelog line
+          # twice. One leg authors the notes, the other only adds its files.
+          generate_release_notes: ${{ matrix.deb_arch == 'amd64' }}
 
   desktop:
     # The viewer in a native window. This one cannot be the static build: a
