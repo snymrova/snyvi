@@ -37,11 +37,23 @@ pub fn has_display() -> bool {
 pub fn open_url(url: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        // `start` is a builtin of cmd, not a program, so it needs the shell.
-        // The empty string is the window title: `start` reads a lone quoted
-        // argument as one, and would then open a window instead of the URL.
+        // `start` is a builtin of cmd, not a program, so this goes through the
+        // shell -- and a command line for cmd has to be built rather than
+        // passed as arguments. Rust quotes an argument only when it contains a
+        // space, and an unquoted `&` is where cmd stops reading a URL and
+        // starts reading a second command. So the line is written out with the
+        // URL quoted, and any quote inside it dropped so it cannot close that
+        // quoting and be read as one.
+        //
+        // The empty pair before it is the window title: `start` takes a lone
+        // quoted argument as one, and would open a window rather than the URL.
+        let safe: String = url
+            .chars()
+            .filter(|c| *c != '"' && *c != '\n' && *c != '\r')
+            .collect();
         return Command::new("cmd")
-            .args(["/C", "start", "", url])
+            .arg("/C")
+            .raw_arg(format!("start \"\" \"{safe}\""))
             .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -133,9 +145,13 @@ pub fn notify(title: &str, body: &str) {
         // or a registered application id. Borrowing PowerShell's own id is
         // what every script that does this does; the cost is that the toast
         // is attributed to it.
+        //
+        // Template 5 is ToastText02: a bold first line and a wrapped second,
+        // which is the shape of every notification snyvi raises. The
+        // image-and-text templates want an image element to fill in.
         let script = format!(
             "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null;\
-             $x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(1);\
+             $x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(5);\
              $t = $x.GetElementsByTagName('text');\
              $t.Item(0).AppendChild($x.CreateTextNode('{}')) > $null;\
              $t.Item(1).AppendChild($x.CreateTextNode('{}')) > $null;\
@@ -176,7 +192,7 @@ pub fn notify(title: &str, body: &str) {
 /// Single-quote a string for PowerShell, where doubling the quote escapes it.
 #[cfg(target_os = "windows")]
 fn ps_quote(s: &str) -> String {
-    s.replace('\'', "''")
+    s.replace('\'', "''").replace(['\n', '\r'], " ")
 }
 
 /// End a process. `force` is the second ask, after a polite one was ignored.
