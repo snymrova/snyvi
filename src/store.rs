@@ -771,11 +771,20 @@ pub mod tempdir {
     }
     impl Dir {
         pub fn new(prefix: &str) -> Dir {
+            // The counter is what makes this unique, not the clock. The name
+            // used to be the pid and the time in nanoseconds, which is unique
+            // on Linux because the clock really does tick every nanosecond.
+            // Windows ticks every 100, so two tests starting together got the
+            // same name, shared one directory, and the first one to finish
+            // deleted it from under the other.
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let n = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!("{prefix}-{}-{n}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("{prefix}-{}-{n}-{seq}", std::process::id()));
             std::fs::create_dir_all(&path).unwrap();
             Dir { path }
         }
