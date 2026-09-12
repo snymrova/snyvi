@@ -83,7 +83,14 @@ pub fn install(exe: &str, auto: bool) -> Result<PathBuf> {
         }
         _ => json!({}),
     };
-    let command = format!("{exe} hook");
+    // Quoted only when it has to be. The hook command is a string that
+    // something else will split, and on Windows the binary usually lives
+    // under a path with a space in it.
+    let command = if exe.contains(' ') {
+        format!("\"{exe}\" hook")
+    } else {
+        format!("{exe} hook")
+    };
     let hooks = settings
         .as_object_mut()
         .context("settings.json is not an object")?

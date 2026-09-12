@@ -15,8 +15,9 @@ use std::process::{Command, Stdio};
 /// The window executable, looked for next to this binary before PATH so that a
 /// tarball install finds its own copy rather than an older one on PATH.
 fn window_binary() -> Option<PathBuf> {
+    let name = crate::platform::exe("snyvi-app");
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(sibling) = exe.parent().map(|d| d.join("snyvi-app")) {
+        if let Some(sibling) = exe.parent().map(|d| d.join(&name)) {
             if sibling.is_file() {
                 return Some(sibling);
             }
@@ -24,16 +25,12 @@ fn window_binary() -> Option<PathBuf> {
     }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
-        .map(|d| d.join("snyvi-app"))
+        .map(|d| d.join(&name))
         .find(|c| c.is_file())
 }
 
-fn has_display() -> bool {
-    std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
-}
-
 pub fn open(url: &str) -> anyhow::Result<()> {
-    if has_display() {
+    if crate::platform::has_display() {
         if let Some(bin) = window_binary() {
             // Replace this process: the window is the foreground program from
             // here on, and `snyvi app` should live exactly as long as it does.
@@ -53,13 +50,7 @@ pub fn open(url: &str) -> anyhow::Result<()> {
     }
 
     // A Chromium-family "app" window has no browser chrome and starts fast.
-    for browser in [
-        "chromium",
-        "chromium-browser",
-        "google-chrome",
-        "brave-browser",
-        "microsoft-edge",
-    ] {
+    for browser in crate::platform::app_mode_browsers() {
         let ok = Command::new(browser)
             .arg(format!("--app={url}"))
             .arg("--window-size=1280,860")
@@ -72,7 +63,7 @@ pub fn open(url: &str) -> anyhow::Result<()> {
         }
     }
     crate::client::open_in_browser(url);
-    if has_display() && window_binary().is_none() {
+    if crate::platform::has_display() && window_binary().is_none() {
         eprintln!("(install snyvi-app for a native window)");
     }
     Ok(())

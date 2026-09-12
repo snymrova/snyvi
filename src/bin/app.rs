@@ -19,7 +19,11 @@ fn main() {
         }
     };
     // The caller checks for a display too, and falls back to a browser when
-    // there is none. Checked again here because this is also reachable directly.
+    // there is none. Checked again here because this is also reachable
+    // directly. Linux only: elsewhere a desktop session is the only way this
+    // is reached. It cannot share `snyvi`'s copy of the check -- this binary
+    // links none of that crate, which is the point of it being separate.
+    #[cfg(target_os = "linux")]
     if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         eprintln!("snyvi-app: no display server");
         std::process::exit(3);

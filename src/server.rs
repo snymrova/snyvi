@@ -342,6 +342,9 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
     Json(json!({
         "ok": true,
         "version": VERSION,
+        // So `snyvi stop` can end this exact process if it ignores the
+        // shutdown endpoint, without having to guess which snyvi it is.
+        "pid": std::process::id(),
         "docs": app.store.count().unwrap_or(0),
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
@@ -537,18 +540,10 @@ fn notify_desktop(app: &App, doc: &Doc) {
     if focused_recently {
         return;
     }
-    let _ = std::process::Command::new("notify-send")
-        .args([
-            "-a",
-            "snyvi",
-            "-i",
-            "text-x-generic",
-            &doc.title,
-            &format!("{} · {}", doc.project, doc.workflow_title),
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    crate::platform::notify(
+        &doc.title,
+        &format!("{} · {}", doc.project, doc.workflow_title),
+    );
 }
 
 async fn compare(

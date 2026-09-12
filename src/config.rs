@@ -1,6 +1,6 @@
 //! Paths, port, and the local write token.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
@@ -59,7 +59,7 @@ pub fn load_or_create_token(paths: &Paths) -> Result<String> {
         }
     }
     fs::create_dir_all(&paths.config_dir).context("creating config dir")?;
-    let token = random_token();
+    let token = random_token()?;
     fs::write(&paths.token_path, &token).context("writing token")?;
     #[cfg(unix)]
     {
@@ -77,19 +77,16 @@ pub fn read_token(paths: &Paths) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-fn random_token() -> String {
-    // 32 bytes from the OS, hex encoded. No extra crate needed.
+fn random_token() -> Result<String> {
+    // 32 bytes from the OS, hex encoded.
+    //
+    // This used to read /dev/urandom and fall back to hashing the clock and
+    // the pid when it could not be opened. On Windows that file does not
+    // exist, so the fallback would have been the only path -- and a token
+    // derived from the time and a process id is one an unprivileged program
+    // on the same machine can search for. getrandom asks each platform for
+    // its own generator and fails rather than returning something weaker.
     let mut buf = [0u8; 32];
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id() as u128;
-    let seed = blake3::hash(&(nanos ^ (pid << 64)).to_le_bytes());
-    buf.copy_from_slice(seed.as_bytes());
-    if let Ok(mut f) = fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let _ = f.read_exact(&mut buf);
-    }
-    buf.iter().map(|b| format!("{b:02x}")).collect()
+    getrandom::fill(&mut buf).map_err(|e| anyhow!("reading random bytes for the token: {e}"))?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }

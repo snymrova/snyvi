@@ -43,13 +43,13 @@ pub fn stop(paths: &Paths) -> Result<bool> {
         eprintln!("stopped snyvi {running}");
         return Ok(true);
     }
-    for sig in ["TERM", "KILL"] {
-        let pids = daemon_pids();
+    for force in [false, true] {
+        let pids = daemon_pids(&h);
         if pids.is_empty() {
             break;
         }
         for pid in pids {
-            signal(pid, sig);
+            crate::platform::terminate(pid, force);
         }
         if wait_gone(Duration::from_secs(3)) {
             eprintln!("stopped snyvi {running}");
@@ -73,19 +73,24 @@ fn wait_gone(within: Duration) -> bool {
     health().is_none()
 }
 
-/// Signal via kill(1), so no libc dependency is needed.
-fn signal(pid: i32, sig: &str) {
-    let _ = Command::new("kill")
-        .arg(format!("-{sig}"))
-        .arg(pid.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+/// The daemon's own process id, for when asking it to exit did not work.
+///
+/// It reports it on /api/health, which is the only answer that is certainly
+/// about the daemon on our port rather than some other snyvi. Daemons before
+/// 0.7 do not report one; on Linux they can still be found by their command
+/// line, and there were no Windows daemons before 0.7 to find.
+fn daemon_pids(health: &Value) -> Vec<u32> {
+    if let Some(pid) = health.get("pid").and_then(Value::as_u64) {
+        if pid > 0 && pid != u64::from(std::process::id()) {
+            return vec![pid as u32];
+        }
+    }
+    legacy_pids()
 }
 
 /// Processes that look like `snyvi serve` on the port we are talking to.
 #[cfg(target_os = "linux")]
-fn daemon_pids() -> Vec<i32> {
+fn legacy_pids() -> Vec<u32> {
     let want_port = config::port().to_string();
     let me = std::process::id();
     let mut out = vec![];
@@ -93,10 +98,10 @@ fn daemon_pids() -> Vec<i32> {
         return out;
     };
     for e in entries.flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
             continue;
         };
-        if pid as u32 == me {
+        if pid == me {
             continue;
         }
         let Ok(cmdline) = std::fs::read(e.path().join("cmdline")) else {
@@ -129,7 +134,7 @@ fn daemon_pids() -> Vec<i32> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn daemon_pids() -> Vec<i32> {
+fn legacy_pids() -> Vec<u32> {
     vec![]
 }
 
@@ -157,11 +162,7 @@ pub fn ensure_daemon() -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
+    crate::platform::detach(&mut cmd);
     cmd.spawn().context("starting snyvi daemon")?;
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
@@ -237,16 +238,7 @@ pub fn browse(paths: &Paths, dir: &str) -> Result<String> {
 }
 
 pub fn open_in_browser(url: &str) {
-    for opener in ["xdg-open", "open"] {
-        if Command::new(opener)
-            .arg(url)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
-            return;
-        }
+    if !crate::platform::open_url(url) {
+        eprintln!("open {url}");
     }
-    eprintln!("open {url}");
 }

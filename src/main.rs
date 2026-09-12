@@ -4,6 +4,7 @@ mod config;
 mod desktop;
 mod hook;
 mod mcp;
+mod platform;
 mod project;
 mod receive;
 mod render;
@@ -292,7 +293,7 @@ fn main() -> Result<()> {
 
 fn init_claude(auto: bool) -> Result<()> {
     let exe = std::env::current_exe()?.to_string_lossy().to_string();
-    let status = std::process::Command::new("claude")
+    let status = platform::shim("claude")
         .args(["mcp", "add", "--scope", "user", "snyvi", "--", &exe, "mcp"])
         .status();
     match status {
