@@ -229,6 +229,68 @@ export async function revisitUsesCache() {
   }
 }
 
+/** The sidebar, on a library that has been used.
+ *
+ *  Every other number in this harness was taken against a two-document
+ *  library, which is exactly why an unbounded tree went unnoticed until a
+ *  reader with months of sends reported the wait: the shell carried every
+ *  document in every project on every page open -- 383 KB and 13,213 rows at
+ *  3000 documents -- and the sidebar built all of them before the reader could
+ *  do anything.
+ *
+ *  So what this returns is what the sidebar costs the page rather than how fast
+ *  the machine drew it: rows in the DOM with nothing expanded, rows once one
+ *  project is, and whether the tree stops rendering once it has drawn. That
+ *  last one is a count and not a clock because a tree that renders in response
+ *  to its own render looks exactly like a correct one in a screenshot -- it
+ *  pegs a core, and the page never finishes loading at all. */
+export async function sidebar() {
+  // Inline, not shared: only the function itself crosses into the page, so a
+  // helper from this module's scope would be a ReferenceError over there.
+  const until = async (test, tries = 200) => {
+    for (let i = 0; i < tries; i++) {
+      if (test()) return true;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+  };
+  const tree = document.querySelector("#tree");
+  const rows = el => el.querySelectorAll(".t-doc").length;
+  const closed = rows(tree);
+  const projects = tree.querySelectorAll(".t-proj").length;
+
+  // One project, expanded the way a reader expands it. Found again by its id
+  // on every look: a fill rebuilds the sidebar, so the element clicked is not
+  // the element the rows arrive in.
+  const first = [...tree.querySelectorAll(".t-proj")].find(d => !d.open);
+  const pid = first ? first.dataset.pid : null;
+  const proj = () => document.querySelector(`#tree .t-proj[data-pid="${pid}"]`);
+  let opened = null, sessions = null, offers = null, filled = false;
+  if (pid) {
+    first.querySelector("summary").click();
+    filled = await until(() => proj() && rows(proj()) > 0);
+    const p = proj();
+    opened = p ? rows(p) : 0;
+    sessions = p ? p.querySelectorAll(".t-wf").length : 0;
+    offers = p ? p.querySelectorAll("[data-more-docs], [data-more-wf]").length : 0;
+  }
+
+  // And then it should stop. Counted over a window with nothing happening in
+  // it: a settled tree does nothing at all here.
+  let mutations = 0;
+  const obs = new MutationObserver(recs => { mutations += recs.length; });
+  obs.observe(tree, { childList: true, subtree: true });
+  await new Promise(r => setTimeout(r, 700));
+  obs.disconnect();
+
+  const nav = performance.getEntriesByType("navigation")[0] || {};
+  return {
+    closed, projects, opened, sessions, offers, filled, mutations,
+    shell: Math.round(nav.transferSize || 0),
+    nodes: tree.querySelectorAll("*").length,
+  };
+}
+
 /** Every label in every diagram, and what it is drawn against.
  *
  *  Section 9 of docs/DIAGRAMS.md asks for a rendered assertion per diagram
