@@ -73,9 +73,10 @@ jobs:
           generate_release_notes: ${{ matrix.deb_arch == 'amd64' }}
 
   desktop:
-    # The viewer in a native window. This one cannot be the static build: a
-    # WebKitGTK window links against the distribution's webkit and gtk, so it is
-    # dynamically linked and tied to a glibc baseline.
+    # The native window, as an add-on to the static package rather than a second
+    # copy of snyvi. Only this one executable links WebKitGTK, so only this one
+    # is dynamically linked and tied to a glibc baseline; snyvi itself ships
+    # from the matrix above, static, for both architectures.
     #
     # Built on the oldest release it supports so that baseline is as low as it
     # goes: 22.04 records libc6 (>= 2.34), which covers Ubuntu 22.04 and later
@@ -83,9 +84,9 @@ jobs:
     # binary by dpkg-shlibdeps in packaging/deb.sh, so they are never a guess.
     #
     # amd64 only for now. The arm64 runners are 24.04, which would record a
-    # glibc baseline that excludes every distribution older than that, and an
-    # arm64 desktop package worth shipping wants its own oldest-host runner.
-    # The static package still covers arm64, in a browser window.
+    # glibc baseline excluding every distribution older than that. Now that the
+    # window is one small executable and snyvi itself is static everywhere, an
+    # arm64 add-on costs only its own oldest-host runner.
     #
     # After `build`, because both jobs upload to the same release: running them
     # in sequence keeps two writers off one release, and lets the static
@@ -106,28 +107,33 @@ jobs:
         # that ships a window nobody opened is the whole reason this job exists.
         run: |
           set -e
-          B=target/release/snyvi
-          file $B
+          file target/release/snyvi target/release/snyvi-app
+          # snyvi must not have gained an engine; the window must have one.
+          ldd target/release/snyvi | grep -q webkit && { echo "snyvi links webkit"; exit 1; } || true
+          ldd target/release/snyvi-app | grep -q webkit || { echo "snyvi-app lacks webkit"; exit 1; }
           export SNYVI_DATA_DIR=/tmp/s-d SNYVI_CONFIG_DIR=/tmp/c-d SNYVI_PORT=7803
-          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 $B app > /tmp/app.log 2>&1 || code=$?
+          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
-          SNYVI_BENCH_FACTOR=3 $B bench --check
-          $B stop
+          grep -q "install snyvi-app" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
+          ./target/release/snyvi stop
       - name: Package
+        # The tarball carries the one executable; whoever unpacks it puts it
+        # beside their snyvi, which is where `snyvi app` looks first.
         run: |
           version="${{ github.event.inputs.version || github.ref_name }}"
           version="${version#v}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          name=snyvi-$version-x86_64-linux-desktop
+          name=snyvi-app-$version-x86_64-linux
           mkdir -p dist/$name
-          cp target/release/snyvi README.md dist/$name/
+          cp target/release/snyvi-app README.md dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
-          deb=$(packaging/deb.sh --desktop target/release/snyvi "$version" amd64 dist)
+          deb=$(packaging/deb.sh --desktop target/release/snyvi-app "$version" amd64 dist)
           dpkg-deb -I "$deb"
-          sudo apt-get install -y -qq "$PWD/$deb"
-          test "$(command -v snyvi)" = /usr/bin/snyvi
-          snyvi --version
+          # Installing it must pull in snyvi rather than replace it, but the
+          # static package is not in an apt repository, so satisfy it from the
+          # matrix job's artifact is not possible here; check the field instead.
+          dpkg-deb -f "$deb" Depends | grep -q "snyvi (= $version)"
           (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
       - uses: softprops/action-gh-release@v2
         with:

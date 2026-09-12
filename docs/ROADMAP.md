@@ -54,8 +54,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tray icon and global shortcut | Summon the window from anywhere; the daemon is resident anyway. | M | later |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
-| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. | S | next |
-| Split the window into its own binary | The desktop package is one binary, so `snyvi serve` carries the linked engine even with no window open: 66 MB resident against the static build's 34 MB. A separate executable for the window would give the desktop package a lean daemon again. | M | next |
+| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. | S | next |
+| Split the window into its own binary | The desktop package was one binary, so `snyvi serve` carried the linked engine with no window open: 66 MB against the static build's 34 MB. `snyvi-app` is now the window alone, and an add-on that depends on snyvi rather than replacing it. Daemon back to 35 MB, and the install stops being a choice. | M | **done 0.6** |
 | macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. | S | later |
 | AppImage | Measured before choosing: bundling WebKitGTK and its closure is 196 MB raw, 73 MB compressed, so the AppImage is ~80 MB against a 15 MB budget — 13x the `.deb` that does the same job by asking the distribution for webkit. It also puts nothing on `PATH`, which is where `snyvi send` has to be for the hook and the MCP server to call it. Not worth it for this shape of program. | M | **no** |
 
@@ -224,6 +224,38 @@ of them, and the desktop build is a second artifact with a second budget.
 AppImage was considered for the same job and measured first: ~80 MB, a
 FUSE dependency, and nothing on `PATH` for the hook to call. The `.deb`
 does the same work in 6 MB by asking the distribution for the engine.
+
+## 0.6: the window becomes an add-on
+
+0.5 shipped the window, and shipped it as a fork in the road: two
+packages, `snyvi` and `snyvi-desktop`, that conflicted with and replaced
+each other. Someone arriving at the releases page had to understand a
+trade between a static binary and WebKitGTK before they could install
+anything, and picking wrong meant starting over. On arm64 the window was
+not offered at all.
+
+It is one product again. `snyvi` is the static binary, every
+architecture, no dependencies — that is what you install. `snyvi-app` is
+the window executable alone, 4.3 MB, and it *depends on* snyvi instead of
+replacing it. Install it whenever, or never; `snyvi app` takes the best
+window it can find and says what would give it a better one.
+
+The engine moved with it. Before, linking WebKitGTK into snyvi linked it
+into the daemon, the MCP server and the hook as well, and `snyvi serve`
+sat at 66 MB having never opened a window. It is 35 MB now in every
+configuration, and the engine is resident only while a window is.
+
+The window binary needs nothing from the crate — it is handed a URL on
+argv — so this cost no lib target and no shared state: two `[[bin]]`
+targets, one of them behind `required-features`. `desktop.rs` lost its
+`#[cfg]` fork entirely, because a build without the window and a machine
+without it installed are now the same case.
+
+CI checks the thing that would undo it: `ldd` must show no webkit in
+snyvi and webkit in snyvi-app. It then installs them the way a person
+does — snyvi alone first, confirming the browser fallback says what to
+add, then the add-on, confirming snyvi survives it and the native window
+opens.
 
 ## Candidates after 0.4
 

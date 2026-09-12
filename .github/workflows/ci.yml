@@ -90,7 +90,17 @@ jobs:
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb \
                                       dpkg-dev desktop-file-utils
       - name: Build
+        # Both: the window executable needs the feature, and snyvi itself must
+        # still build here to be the thing the window is installed beside.
         run: cargo build --release --features desktop
+      - name: snyvi must not link a browser engine
+        # The whole point of the split. If snyvi ever gains a webkit NEEDED
+        # entry again, the daemon is carrying an engine it never opens.
+        run: |
+          set -e
+          ldd target/release/snyvi | grep -q webkit && { echo "snyvi links webkit"; ldd target/release/snyvi; exit 1; } || true
+          ldd target/release/snyvi-app | grep -q webkit || { echo "snyvi-app does not link webkit"; exit 1; }
+          echo "snyvi: no engine; snyvi-app: engine. as intended"
       - name: Open a window
         # 124 is the timeout firing, which means the window stayed up.
         run: |
@@ -98,30 +108,48 @@ jobs:
           export SNYVI_DATA_DIR=/tmp/s-desktop SNYVI_CONFIG_DIR=/tmp/c-desktop SNYVI_PORT=7812
           xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
+          # It must have been the native window, not a browser fallback: `snyvi
+          # app` execs the sibling, so the surviving process is snyvi-app.
+          grep -q "install snyvi-app" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
           ./target/release/snyvi stop
 
-      - name: Package and install the desktop .deb
+      - name: Package both, install the way a person would
         # Same reason the static package is built here: a packaging path that
         # only runs at release time is broken exactly when it matters. This one
         # has more to get wrong, because it is the only package that declares
         # dependencies.
         run: |
           set -e
-          deb=$(packaging/deb.sh --desktop target/release/snyvi 0.0.0-ci amd64 /tmp/deb-desktop)
-          dpkg-deb -I "$deb"
-          # The dependencies are read out of the binary, so they must at least
-          # name webkit; a package that forgot it installs and then cannot open.
-          dpkg-deb -f "$deb" Depends | grep -q libwebkit2gtk-4.1-0
-          # apt rather than dpkg -i: it resolves the declared dependencies, so a
-          # Depends line that cannot be satisfied fails here instead of on a user.
-          sudo apt-get install -y -qq "$deb"
+          main=$(packaging/deb.sh target/release/snyvi 0.0.0-ci amd64 /tmp/deb-split)
+          addon=$(packaging/deb.sh --desktop target/release/snyvi-app 0.0.0-ci amd64 /tmp/deb-split)
+          dpkg-deb -I "$addon"
+          # The dependencies are read out of the binary, so they must name webkit
+          # and the package it adds to; forgetting either installs something that
+          # then cannot open a window.
+          dpkg-deb -f "$addon" Depends | grep -q libwebkit2gtk-4.1-0
+          dpkg-deb -f "$addon" Depends | grep -q 'snyvi (= 0.0.0-ci)'
+          # The add-on must not claim the other package's paths.
+          dpkg-deb -c "$addon" | grep -q usr/bin/snyvi-app
+          dpkg-deb -c "$addon" | grep -qv 'usr/bin/snyvi$'
+
+          # This is the order a person does it in: snyvi first, on its own.
+          sudo dpkg -i "$main"
           test "$(command -v snyvi)" = /usr/bin/snyvi
           snyvi --version
           desktop-file-validate /usr/share/applications/snyvi.desktop
-          # It replaced the static package's paths, so the window must still open
-          # from the installed copy, not just from target/release.
+          # With no window installed it must still work, falling back to a browser
+          # rather than failing, and must say what would give a native window.
           export SNYVI_DATA_DIR=/tmp/s-pkg SNYVI_CONFIG_DIR=/tmp/c-pkg SNYVI_PORT=7813
+          xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-nowin.log 2>&1 || true
+          grep -q "install snyvi-app" /tmp/app-nowin.log || { echo "no hint about the window package:"; cat /tmp/app-nowin.log; exit 1; }
+          snyvi stop || true
+
+          # Then adding the window, which is the whole claim: an addition, not a
+          # replacement. apt resolves its dependencies; snyvi stays installed.
+          sudo apt-get install -y -qq "$addon"
+          dpkg -l snyvi | grep -q '^ii' || { echo "snyvi was removed by the add-on"; exit 1; }
           xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 snyvi app > /tmp/app-pkg.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "packaged window exited early:"; cat /tmp/app-pkg.log; exit 1; }
+          grep -q "install snyvi-app" /tmp/app-pkg.log && { echo "still fell back to a browser"; exit 1; } || true
           snyvi stop
-          sudo dpkg -r snyvi-desktop
+          sudo dpkg -r snyvi-app snyvi

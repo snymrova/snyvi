@@ -5,18 +5,20 @@
 #   packaging/deb.sh target/x86_64-unknown-linux-musl/release/snyvi 0.4.0 amd64 dist
 #   packaging/deb.sh --desktop target/release/snyvi 0.4.0 amd64 dist
 #
-# Two packages come out of one script, because two binaries cannot be one
-# package. The default is the static (musl) build: it declares no dependencies
-# at all and installs on any Debian or Ubuntu of that architecture. --desktop
-# packages the `--features desktop` build, which is a native WebKitGTK window
-# and is therefore linked against the distribution's webkit and gtk.
+# Two packages, and the second adds to the first rather than replacing it.
 #
-# Those dependencies are read out of the binary by dpkg-shlibdeps rather than
-# written by hand, so the package states exactly what the build needs and
-# cannot claim a glibc baseline the build did not have.
+# The default is `snyvi`: the static (musl) build of the whole program -- daemon,
+# CLI, MCP server, hook. It declares no dependencies at all and installs on any
+# Debian or Ubuntu of that architecture. This is what everyone installs.
 #
-# Both ship the same paths, so they conflict with and replace each other: a
-# machine has one snyvi or the other, never both.
+# --desktop is `snyvi-app`: the native window executable alone, which links the
+# distribution's webkit and gtk and so cannot be static. It depends on snyvi and
+# ships one file; `snyvi app` finds it and hands it a URL. Installing it is an
+# addition, never a choice made instead of the first one.
+#
+# Its dependencies are read out of the binary by dpkg-shlibdeps rather than
+# written by hand, so the package states exactly what the build needs and cannot
+# claim a glibc baseline the build did not have.
 #
 # dpkg-deb is the only tool the default path needs, which is why this is a
 # script and not another crate in the build; --desktop adds dpkg-dev for
@@ -37,8 +39,7 @@ root=$(dirname "$here")
 [ -x "$bin" ] || { echo "deb.sh: $bin is not an executable" >&2; exit 1; }
 
 pkg=snyvi
-other=snyvi-desktop
-if [ "$desktop" = 1 ]; then pkg=snyvi-desktop; other=snyvi; fi
+if [ "$desktop" = 1 ]; then pkg=snyvi-app; fi
 
 # What the desktop build links against, straight from the binary. Run before
 # staging so a missing dpkg-dev fails before anything is written.
@@ -60,10 +61,16 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 chmod 755 "$stage"   # mktemp -d is 0700; the package root must not be
 
-install -Dm755 "$bin"                    "$stage/usr/bin/snyvi"
-install -Dm644 "$here/snyvi.service"     "$stage/usr/lib/systemd/user/snyvi.service"
-install -Dm644 "$here/snyvi.desktop"     "$stage/usr/share/applications/snyvi.desktop"
-install -Dm644 "$root/icons/icon.png"    "$stage/usr/share/icons/hicolor/256x256/apps/snyvi.png"
+if [ "$desktop" = 1 ]; then
+  # One file. The menu entry, the service and the icon belong to snyvi, which
+  # this depends on, so shipping them again would be two packages owning a path.
+  install -Dm755 "$bin"                  "$stage/usr/bin/snyvi-app"
+else
+  install -Dm755 "$bin"                  "$stage/usr/bin/snyvi"
+  install -Dm644 "$here/snyvi.service"   "$stage/usr/lib/systemd/user/snyvi.service"
+  install -Dm644 "$here/snyvi.desktop"   "$stage/usr/share/applications/snyvi.desktop"
+  install -Dm644 "$root/icons/icon.png"  "$stage/usr/share/icons/hicolor/256x256/apps/snyvi.png"
+fi
 install -Dm644 "$here/copyright"         "$stage/usr/share/doc/$pkg/copyright"
 install -Dm644 "$root/README.md"         "$stage/usr/share/doc/$pkg/README.md"
 gzip -9n "$stage/usr/share/doc/$pkg/README.md"
@@ -87,14 +94,30 @@ mkdir -p "$stage/DEBIAN"
   echo "Version: $version"
   echo "Architecture: $arch"
   echo "Maintainer: $maintainer"
-  if [ -n "$depends" ]; then echo "Depends: $depends"; fi
-  echo "Conflicts: $other"
-  echo "Replaces: $other"
+  if [ "$desktop" = 1 ]; then
+    # snyvi itself, at exactly this version: the window is handed a URL by
+    # `snyvi app`, so a mismatched pair is not a combination worth shipping.
+    echo "Depends: snyvi (= $version), $depends"
+  else
+    # 0.5.0 shipped snyvi-desktop as a whole second snyvi that replaced this
+    # one. It is now an add-on under a different name, so this package
+    # supersedes that one rather than refusing to sit beside it.
+    # Conflicts rather than Breaks: Breaks asks dpkg to deconfigure the old
+    # package, which it refuses, while Conflicts with Replaces makes it remove
+    # the thing being superseded -- which is right, because 0.5.0's
+    # snyvi-desktop was a whole second snyvi, not an add-on to keep.
+    echo "Conflicts: snyvi-desktop (<< 0.6.0)"
+    echo "Replaces: snyvi-desktop (<< 0.6.0)"
+  fi
   echo "Installed-Size: $(du -ks --exclude=DEBIAN "$stage" | cut -f1)"
   echo "Section: utils"
   echo "Priority: optional"
   echo "Homepage: https://github.com/snymrova/snyvi"
-  echo "Description: fast, beautiful viewer for the documents your agents produce"
+  if [ "$desktop" = 1 ]; then
+    echo "Description: native window for snyvi"
+  else
+    echo "Description: fast, beautiful viewer for the documents your agents produce"
+  fi
   echo " snyvi receives Markdown and source files from coding agents such as Claude"
   echo " Code and shows them rendered, filed under the project and workflow they came"
   echo " from. It also browses a folder straight from disk."
@@ -103,23 +126,26 @@ mkdir -p "$stage/DEBIAN"
   echo " out, and the daemon listens on the loopback interface only."
   echo " ."
   if [ "$desktop" = 1 ]; then
-    echo " This build opens the viewer in a native window (WebKitGTK) instead of a"
-    echo " browser tab, so it links against the distribution's webkit and gtk and"
-    echo " installs on the release it was built for. The UI, fonts and syntax"
-    echo " grammars are still embedded in the binary; it still needs no network."
+    echo " This package adds a native window. Without it snyvi opens in a browser,"
+    echo " in app mode when a Chromium-family one is installed; with it, \"snyvi app\""
+    echo " opens a WebKitGTK window of its own that remembers its size and place."
     echo " ."
-    echo " For a binary that depends on nothing and runs on any Debian or Ubuntu,"
-    echo " install the snyvi package instead and read in a browser window."
+    echo " It is one executable and nothing else, because linking a browser engine"
+    echo " into snyvi itself would link it into the daemon too. Install it whenever"
+    echo " you like; nothing about snyvi changes until you do."
   else
     echo " A single static binary with its own UI, fonts and syntax grammars embedded."
     echo " No runtime, no dependencies, no network access."
     echo " ."
-    echo " For the viewer in a native window rather than a browser one, install the"
-    echo " snyvi-desktop package instead."
+    echo " It opens documents in a browser window. For a native one, add the"
+    echo " snyvi-app package; it needs this package and does not replace it."
   fi
 } > "$stage/DEBIAN/control"
 
-cat > "$stage/DEBIAN/postinst" <<'EOF'
+# Only the main package: upgrading the window executable does not leave a stale
+# daemon behind, because the daemon was never in it.
+if [ "$desktop" != 1 ]; then
+  cat > "$stage/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = configure ] && [ -n "$2" ]; then
@@ -127,7 +153,8 @@ if [ "$1" = configure ] && [ -n "$2" ]; then
   echo "snyvi:   systemctl --user restart snyvi   (or: snyvi restart)"
 fi
 EOF
-chmod 755 "$stage/DEBIAN/postinst"
+  chmod 755 "$stage/DEBIAN/postinst"
+fi
 
 # md5sums covers every shipped file, so `dpkg -V` can verify the install.
 (cd "$stage" && find . -path ./DEBIAN -prune -o -type f -print0 \

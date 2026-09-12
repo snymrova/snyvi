@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -34,9 +34,22 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# Two executables. `snyvi` is everything -- daemon, CLI, MCP server, hook -- and
+# never links a browser engine, so it stays static and depends on nothing.
+# `snyvi-app` is the native window and nothing else; `snyvi app` finds it and
+# hands it a URL. Built separately: the static target cannot link WebKitGTK.
+[[bin]]
+name = "snyvi"
+path = "src/main.rs"
+
+[[bin]]
+name = "snyvi-app"
+path = "src/bin/app.rs"
+required-features = ["desktop"]
+
 [features]
 default = []
-# `snyvi app`: a native window (WebKitGTK on Linux) on top of the local daemon.
+# Builds the `snyvi-app` window executable. Nothing in `snyvi` is conditional on it.
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-window-state"]
 
 [dependencies.tauri]
