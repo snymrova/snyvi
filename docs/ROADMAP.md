@@ -40,7 +40,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 
 | Feature | Why | Cost | Status |
 |---|---|---|---|
-| Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux. | S | **done 0.2** |
+| Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux, a PowerShell toast on Windows, osascript on macOS. | S | **done 0.2** |
 | `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
 | Other agents | Config snippets for Codex CLI, Gemini CLI and Cursor: all speak MCP, so it is docs plus an `init` subcommand per tool. | S | later |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
@@ -51,12 +51,14 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Feature | Why | Cost | Status |
 |---|---|---|---|
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
-| Tray icon and global shortcut | Summon the window from anywhere; the daemon is resident anyway. | M | later |
+| Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
+| Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
 | Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. | S | next |
 | Split the window into its own binary | The desktop package was one binary, so `snyvi serve` carried the linked engine with no window open: 66 MB against the static build's 34 MB. `snyvi-app` is now the window alone, and an add-on that depends on snyvi rather than replacing it. Daemon back to 35 MB, and the install stops being a choice. | M | **done 0.6** |
-| macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. | S | later |
+| Windows | One zip with both executables, because there is no static/dynamic fork to make: snyvi.exe links no engine and the window uses WebView2, which ships with the OS. The daemon, CLI, MCP server and hook all needed a platform layer first -- opening a URL, raising a notification, ending a process, starting detached. | M | **done 0.7** |
+| macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. Cheaper since 0.7: the platform layer already has the macOS path for notifications and for opening a URL, so what is left is the matrix leg and a .app bundle. | S | later |
 | AppImage | Measured before choosing: bundling WebKitGTK and its closure is 196 MB raw, 73 MB compressed, so the AppImage is ~80 MB against a 15 MB budget — 13x the `.deb` that does the same job by asking the distribution for webkit. It also puts nothing on `PATH`, which is where `snyvi send` has to be for the hook and the MCP server to call it. Not worth it for this shape of program. | M | **no** |
 
 ## E. Speed and hardening
@@ -257,12 +259,65 @@ does — snyvi alone first, confirming the browser fallback says what to
 add, then the add-on, confirming snyvi survives it and the native window
 opens.
 
-## Candidates after 0.4
+## 0.7: Windows, and a tray
 
-JSON and YAML views, tags from the sender, macOS build, AppImage and
-AUR, tray icon with a global shortcut.
+snyvi ran on Linux and nowhere else, though almost none of it was about
+Linux. Six places asked the operating system directly -- opening a URL,
+raising a notification, ending a process, starting the daemon detached,
+knowing whether there is a screen, and what an executable is called --
+and those are now one module that asks whichever machine it is on,
+through a program that machine already ships. Nothing new is depended
+on to do it.
 
-Release hygiene: closed. v0.5.0 is the first release ever cut, and its
+Windows is one job and one zip. The split that Linux needs -- a static
+binary that cannot link WebKitGTK, and a window package that can -- has
+no counterpart there: `snyvi.exe` links no engine, and `snyvi-app.exe`
+uses WebView2, which is part of Windows 10 and 11. So both are built
+together, both ship together, and installing the window is not a second
+decision. CI builds it, runs the tests, holds the daemon to the same
+perf budget, and opens the window through `snyvi app` -- because the
+piece that is new is the lookup, which now has to find a name ending in
+.exe.
+
+Two things were found on the way rather than ported. The write token
+came from /dev/urandom with a fallback that hashed the clock and the
+pid; on Windows that fallback would have been the only path, and a
+token derived from the time and a process id is one a program on the
+same machine can search for. And `init-claude` spawned `claude` by
+name, which on Windows is a .cmd shim that CreateProcess will never
+find.
+
+The window gained a tray, on both platforms. Closing it hides it: a
+viewer for what your agents are producing is a thing you close and
+reopen all day, and paying ~150 ms for a browser engine each time was
+the wrong trade. The menu is two items, show and quit, because the
+library and the daemon belong to `snyvi` itself. Hiding also made
+`snyvi app` a likely thing to type twice, so the window is
+single-instance now: the second one hands its URL to the first.
+
+A tray is an addition rather than a precondition. On Linux it is
+dlopened, not linked, so a desktop without libayatana-appindicator has
+none -- and there the window must still open, with closing back to
+meaning close, or snyvi would be running with no way back to it. That
+dlopen is also the one dependency in the add-on package not read out of
+the binary by dpkg-shlibdeps, which cannot see a library nobody links;
+CI checks the hand-written name against the string the binary loads.
+
+And the mark is finally drawn rather than scaled. It existed as an SVG
+favicon and one 256px PNG, and everything smaller came from something
+downsampling that -- a 7.5% stroke is 1.2px at 16px, which is grey
+mush exactly where the icon is seen most. Every size is now drawn for
+itself, with the small ones snapped to the pixel grid and deliberately
+bolder, out of one generator so the tab, the taskbar and the tray
+cannot drift apart. Windows gets a real .ico of bitmaps, since a PNG
+entry is only documented to work at 256.
+
+## Candidates after 0.7
+
+JSON and YAML views, tags from the sender, macOS build, AUR, the global
+shortcut the tray item was half of, arm64 for the Linux window add-on.
+
+Release hygiene: v0.5.0 is the first release ever cut, and its
 first run exercised everything that had only been proven by proxy: the
 tag trigger, both architectures of the static matrix, the upload of two
 jobs onto one release, and the desktop job appending to it. Twelve
@@ -280,11 +335,28 @@ session's token, which writes commits and nothing else. So a release
 is one command, from a person:
 
 ```
-git tag -a v0.6.0 -m "snyvi 0.6.0" && git push origin v0.6.0
+git tag -a v0.7.0 -m "snyvi 0.7.0" && git push origin v0.7.0
 ```
 
 with `Cargo.toml` bumped first, since the workflow reads the version
 from the tag and Tauri reads it from `Cargo.toml`.
+
+That last line is there because v0.6.0 was first pushed without it. The
+tag went onto a commit from a clone that had not fetched the work the
+tag was naming, whose `Cargo.toml` still said 0.5.0, and the run
+rebuilt the previous release under the new name. Nothing downstream
+could catch it: the workflow was right about the tag, the crate was
+right about its manifest, and they disagreed. Since 0.7 the release
+refuses to build when they do -- the first step of the first job, so a
+mismatch costs seconds rather than twelve assets.
+
+## Not yet proven on Windows
+
+The build, the tests, the daemon and the window are all exercised by CI
+on a Windows runner. What no runner shows is a desktop in use: the
+toast, the tray's click behaviour, and how the window looks at the
+display scalings Windows actually ships with. Those are argued for, not
+yet watched.
 
 ## Still no purpose-built view
 

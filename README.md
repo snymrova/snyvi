@@ -41,6 +41,24 @@ server, the hook — stays the static binary above. Nothing changes about
 snyvi until you install it, and removing it just puts you back in a
 browser. See [Desktop](#desktop) for what the window costs.
 
+### Windows
+
+Download `snyvi-<version>-x86_64-pc-windows-msvc.zip` from the same page
+and unzip it somewhere on your `PATH`:
+
+```
+snyvi send README.md                              # starts the daemon, prints a link
+snyvi init-claude                                 # register with Claude Code
+snyvi app                                         # a window of its own
+```
+
+One download, both executables, nothing to choose. `snyvi.exe` is
+everything — daemon, CLI, MCP server, hook — and `snyvi-app.exe` is the
+native window; keep them in the same folder and `snyvi app` finds it.
+There is no separate package for the window the way there is on Linux,
+because it uses WebView2, which is part of Windows 10 and 11 rather than
+a library to go and install.
+
 ### Any other Linux
 
 Download the tarball for your architecture from the same page:
@@ -170,8 +188,8 @@ is noted and watched for its return.
 `snyvi app` opens the viewer in a window of its own, and takes the best
 window it can find:
 
-1. a native WebKitGTK window, if the `snyvi-app` executable is installed
-   beside snyvi or on `PATH`;
+1. a native window, if the `snyvi-app` executable is installed beside
+   snyvi or on `PATH` — WebKitGTK on Linux, WebView2 on Windows;
 2. failing that, a Chromium-family browser in app mode — no tabs, no
    address bar, its own entry in the task switcher;
 3. failing that, your default browser.
@@ -181,9 +199,22 @@ the first rung appears; remove it and you are back on the second.
 
 The native window is worth having if you would rather not keep a browser
 on the machine, or you want the window to remember where you left it:
-size and position are restored on the next run. What it costs is what a
-browser engine costs, and it costs it **only in the window's own
-process**:
+size and position are restored on the next run.
+
+It also puts snyvi in the tray. Closing the window hides it rather than
+quitting — showing it again is instant, where starting a browser engine
+is the ~150 ms below — and the tray icon brings it back. Its menu has
+two items, show and quit, because everything about the library and the
+daemon belongs to `snyvi` itself. On Windows a left click on the tray
+toggles the window and a right click opens the menu; Linux's tray
+protocol sends no clicks, so there the menu answers both. Running
+`snyvi app` again also just shows the window you already have.
+
+On a Linux desktop with no `libayatana-appindicator3`, there is no tray —
+snyvi says so, and closing the window goes back to meaning close.
+
+What the window costs is what a browser engine costs, and it costs it
+**only in the window's own process**:
 
 | | snyvi | snyvi-app |
 |---|---|---|
@@ -193,6 +224,10 @@ process**:
 | dependencies | **none** | webkit2gtk-4.1, gtk3, glibc 2.34+ |
 | runs on | any Linux, both architectures | Ubuntu 22.04+, Debian 12+, amd64 |
 | resident | 35 MB | ~380 MB while a window is open |
+
+Those are the Linux numbers, where the two are packaged separately. On
+Windows both are in the one zip and the window costs whatever WebView2
+already costs the machine.
 
 That separation is the point. Before 0.6 the window was compiled into
 snyvi itself, so a machine that wanted one got an engine linked into the
@@ -344,7 +379,8 @@ Documents from one Claude Code session share a workflow whether they
 came from the hook or from `send_document`; a SessionStart hook,
 installed by `init-claude`, records the session for the MCP server.
 When no snyvi tab has focus, a new document raises a desktop
-notification via `notify-send` (set `SNYVI_NOTIFY=0` to disable).
+notification — `notify-send` on Linux, a toast on Windows, Notification
+Center on macOS (set `SNYVI_NOTIFY=0` to disable).
 
 ## Languages
 
@@ -363,7 +399,9 @@ pack after adding a `.sublime-syntax` file there.
 | index     | `~/.local/share/snyvi/snyvi.db` (SQLite, FTS5) |
 | token     | `~/.config/snyvi/token` (required for every write) |
 
-Override with `SNYVI_DATA_DIR` and `SNYVI_CONFIG_DIR`.
+On Windows, `%LOCALAPPDATA%\snyvi` and `%APPDATA%\snyvi\token`.
+
+Override either with `SNYVI_DATA_DIR` and `SNYVI_CONFIG_DIR`.
 
 ## Design notes
 
