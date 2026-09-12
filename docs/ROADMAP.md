@@ -67,6 +67,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Feature | Why | Cost | Status |
 |---|---|---|---|
 | Content-Security-Policy header | The UI page has no CSP yet. Scripts and styles come only from the daemon; say so. | XS | **done 0.2** |
+| A sidebar that does not carry the library | `Store::tree()` returned every document there was, and the shell embeds what it returns in every page it serves: 383 KB and 13,213 rows at 3000 documents, with one 362-718 ms task building them before the reader could do anything, and the same cost again on every arrival. A project row is two numbers now and what is behind it is fetched when it is expanded. | M | **done 0.9** |
 | Virtualised rendering above ~200k lines | Chromium copes up to about 100k lines with `content-visibility`; beyond that, page the lines from the server on scroll. | M | later |
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
@@ -394,6 +395,77 @@ token accepted beside it for the CLI. That is the header that matters
 here anyway: the threat to a loopback side effect is a page on another
 origin firing a POST at it, not a local process, which could open a
 terminal without asking snyvi.
+
+## 0.9: the library gets big
+
+Everything measured until now was measured on a library with two
+documents in it. A reader with months of agent sends reported that snyvi
+took a moment to open, and that is where it was: not the daemon, which
+answers a page in a millisecond, and not the renderer, but the sidebar.
+
+`Store::tree()` returned every document in the library and `shell_doc`
+embedded it in every page. At 3000 documents that is a 383 KB page,
+13,213 rows in the sidebar and a 362-718 ms task building them before the
+reader can scroll or type — on a fast machine, headless. An arrival paid
+it again, because the `doc` event refetched the whole tree and rebuilt the
+sidebar, so a file being saved every few seconds cost that every few
+seconds.
+
+A project row now carries two numbers instead of its contents. Same
+library, same page:
+
+|  | before | after |
+|---|---|---|
+| shell page | 383 KB | 24 KB (18 KB of it the inbox's 50) |
+| `/api/tree` | 360 KB | 920 B |
+| sidebar nodes | 13,213 | 461 |
+| longest boot task | 362-718 ms | 0 ms |
+| load event | 446-815 ms | 52-88 ms |
+| an arrival | 360 KB and a rebuild | 13 KB, no long task |
+
+An expanded project shows its ten most recent sessions with their ten
+newest documents and says how many more there are; clicking that asks for
+the rest, whole. Two things stay exact: the workflow a reader is in always
+arrives complete, because `[` and `]` step through the versions of a
+document and a cap there would stop them somewhere arbitrary; and a cap a
+reader has lifted is put back after a refetch rather than closing under
+them.
+
+**Mermaid is fetched before the reader reaches a diagram.**
+`docs/DIAGRAMS.md` phase 4's first item. The first diagram on a page cost
+1170 ms, and 490 of those were one unbreakable task compiling 3.57 MB of
+JavaScript that nothing asked for until a diagram came near the viewport
+— the worst moment to begin, since the reader has arrived and is waiting.
+A page that holds a diagram now asks for the library in idle time: 783 ms
+to the first diagram, and the compile is spent while the first screen is
+being read. Beside it, the bundle's URL finally carries a version: it was
+being served immutable for a year, so a browser would have kept the first
+Mermaid it ever saw across every upgrade — and the trimmed bundle that
+phase 4 wants next could never have replaced it.
+
+Two faults found on the way, both worth writing down:
+
+- **A `<details>` created with `open` fires `toggle` in Chrome.** The
+  first lazy sidebar rebuilt the tree from that event, which created the
+  element that fired it, and the two rendered each other for as long as
+  the tab was open. The page never fired its load event at all — and
+  `bench/browser.mjs`, which waits for one, hung rather than failed.
+  Opening a project now writes that project's own list and nothing else.
+- **The browser harness had no floor under that wait.** It has one now,
+  and the message names what to look for. A benchmark that hangs is worse
+  than one that fails: the failure is what tells you the thing is broken.
+
+`bench/browser.mjs` also seeds a library of its own now — four projects,
+more sessions than a project shows, and a session with more documents
+than it shows — and budgets what the sidebar puts in the page: rows on a
+first visit, rows with one project open, the shell's size, and renders
+after it has settled. Counts rather than clocks, because what a row costs
+the page is a fact about snyvi on any machine.
+
+Also: `ensure_daemon` asked a starting daemon for its health every 40 ms
+while a daemon comes up in about 25, so a cold `snyvi app` waited about
+twice as long as it needed to. 51 ms to 25-28 ms for a cold start and
+send.
 
 ## Candidates after 0.7
 

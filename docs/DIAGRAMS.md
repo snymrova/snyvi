@@ -5,9 +5,10 @@ takes seconds to open. Everything in section 1 is measured on this
 machine under headless Chromium, not estimated.
 
 **Status.** Phases 1, 2a and 8 (section 9's theming) have landed, along with
-the find fix and the parse-error fix from the small list. The harness that took
-section 1's numbers is now `bench/browser.mjs`, runs in CI, and section 7
-records what it measures. Phases 3, 4 and 2b are still ahead.
+the find fix and the parse-error fix from the small list, and phase 4's idle
+prefetch. The harness that took section 1's numbers is now
+`bench/browser.mjs`, runs in CI, and section 7 records what it measures.
+Phase 3, the rest of phase 4 (the trimmed bundle) and 2b are still ahead.
 
 Sections 1 to 8 are about time. Section 9 is about the other half of the
 roadmap's test — whether a diagram looks like it belongs in the document
@@ -164,9 +165,21 @@ About 150 lines of vanilla JavaScript and no new dependency.
 
 ### Phase 4 — the 523 ms, and the small faults
 
-- **Prefetch Mermaid when idle**, once a tab has a document open and the
-  library is known to contain a diagram anywhere. Takes ~523 ms off the
-  first diagram and costs nothing when none ever appears.
+- ~~**Prefetch Mermaid when idle**~~ **Done.** Asked for as soon as a
+  document is known to hold a diagram at all, in idle time, rather than
+  when one comes near the viewport — which was the moment the reader had
+  arrived and was waiting. `requestIdleCallback` waits for a gap instead
+  of making one, with a timeout as the floor under a tab that never has
+  one: the compile is coming either way and any moment beats the one the
+  reader chose. Measured on the harness's fixture: first diagram drawn
+  1170 ms → 783 ms, the parse task 494 → 364 ms, first paint 220 → 156 ms.
+  A page with no diagram asks for nothing.
+- **Version the bundle's URL.** Done beside the prefetch, because it had
+  to be: `/assets/mermaid.js` carried no version while being served
+  `immutable` for a year, so a browser that had cached one snyvi's Mermaid
+  would have kept it across every upgrade — and the trimmed bundle below
+  could never have replaced it. The build hash now covers the bundle's
+  bytes.
 - **Trim the bundle.** 3.57 MB is the parse cost. The full build carries
   every diagram type — gantt, gitgraph, mindmap, quadrant, sankey,
   xychart, C4, journey, timeline, block, packet, architecture, radar,
@@ -230,7 +243,7 @@ the pain, so this can wait for a considered answer.
 | 1 | Scheduler, viewport-gated, placeholders, cap | M | 3123 ms freeze → responsive | **done** |
 | 2 | In-tab SVG cache | XS | revisit 2426 ms → 34 ms | **done** |
 | 3 | Pan, zoom, fullscreen | M | a big diagram becomes readable | next |
-| 4 | Idle prefetch | XS | −523 ms on the first diagram | |
+| 4 | Idle prefetch | XS | −390 ms on the first diagram, measured | **done** |
 | 5 | Find, theme, error-source fixes | S | correctness | find and error done |
 | 6 | Trimmed bundle | M | measure before committing | |
 | 7 | Daemon-side SVG cache | M | instant everywhere; needs the call above | |
