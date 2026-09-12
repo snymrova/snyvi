@@ -6,6 +6,14 @@ Comment=A fast, beautiful viewer for the documents your agents produce
 Exec=snyvi app
 Icon=snyvi
 Terminal=false
+# The shell finds this entry from the window, and the window is snyvi-app --
+# a second executable, with a name of its own. Tauri leaves the GTK
+# application id unset unless enableGTKAppId is on, so GTK falls back to the
+# program name and the window announces itself as snyvi-app, which matches no
+# file called snyvi.desktop. Nothing says so: the entry is simply never found,
+# and the icon installed below it is never looked up. Naming the class here is
+# what connects the two.
+StartupWMClass=snyvi-app
 Categories=Development;
 Keywords=markdown;code;viewer;agent;claude;
 StartupNotify=false

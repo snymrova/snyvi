@@ -113,6 +113,18 @@ mkdir -p "$stage/DEBIAN"
     # snyvi itself, at exactly this version: the window is handed a URL by
     # `snyvi app`, so a mismatched pair is not a combination worth shipping.
     echo "Depends: snyvi (= $version), $depends"
+    # The library above is necessary and not sufficient on GNOME, which has no
+    # tray of its own: the indicator is published on the bus and then nothing
+    # draws it. What draws it is a shell extension, and on Ubuntu it is usually
+    # there and enabled -- but a minimal install has it in neither state, and
+    # the symptom is the one that looks like a bug in snyvi: a window that
+    # closes to a tray that is not there.
+    #
+    # Recommends rather than Depends, because KDE, Xfce and Cinnamon have a
+    # real tray and would be made to install a GNOME extension for nothing.
+    # apt installs recommends by default, so GNOME gets it and the rest can
+    # decline it.
+    echo "Recommends: gnome-shell-extension-appindicator"
   else
     # 0.5.0 shipped snyvi-desktop as a whole second snyvi that replaced this
     # one. It is now an add-on under a different name, so this package

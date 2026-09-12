@@ -91,7 +91,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb \
                                       dpkg-dev desktop-file-utils dbus-x11 \
-                                      libayatana-appindicator3-dev
+                                      libayatana-appindicator3-dev x11-utils
       - name: Build
         # Both: the window executable needs the feature, and snyvi itself must
         # still build here to be the thing the window is installed beside.
@@ -181,7 +181,50 @@ jobs:
             timeout 20 snyvi app > /tmp/app-pkg.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "packaged window did not hold the foreground (exit ${code:-0}):"; cat /tmp/app-pkg.log; exit 1; }
           snyvi stop
-          sudo dpkg -r snyvi-app snyvi
+
+      # 0.7 shipped an icon drawn at every size and no way for the shell to
+      # find it: the entry is snyvi.desktop, the window calls itself snyvi-app,
+      # and a window that matches no entry gets a generic icon in the dock and
+      # the switcher. Nothing reports it -- not desktop-file-validate, which
+      # sees a valid file, and not the window, which opened fine.
+      #
+      # So the class is read off a real window rather than trusted: the two
+      # ends are set in different files, and a tauri that starts setting the
+      # GTK app id would move one without the other.
+      - name: The window's class must match the desktop entry
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/s-wm SNYVI_CONFIG_DIR=/tmp/c-wm SNYVI_PORT=7814
+          want=$(sed -n 's/^StartupWMClass=//p' /usr/share/applications/snyvi.desktop)
+          test -n "$want" || { echo "snyvi.desktop declares no StartupWMClass"; exit 1; }
+          cat > /tmp/wmclass.sh <<'INNER'
+          set -e
+          snyvi send README.md >/dev/null 2>&1 || true
+          snyvi-app "http://127.0.0.1:$SNYVI_PORT/" >/tmp/wm-app.log 2>&1 &
+          # WM_CLASS is two strings, instance then class ("snyvi-app",
+          # "Snyvi-app"). GNOME matches StartupWMClass against either, so print
+          # both and let the caller decide.
+          for _ in $(seq 1 60); do
+            for id in $(xwininfo -root -children | grep -oE '^ +0x[0-9a-f]+' | tr -d ' '); do
+              out=$(xprop -id "$id" WM_CLASS 2>/dev/null || true)
+              case "$out" in *snyvi*|*Snyvi*) echo "$out"; exit 0;; esac
+            done
+            sleep 0.25
+          done
+          echo "no window appeared"; cat /tmp/wm-app.log; exit 1
+          INNER
+          got=$(xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- \
+                  sh /tmp/wmclass.sh | grep WM_CLASS)
+          echo "$got"
+          # Quoted, so that "snyvi" can never pass for "snyvi-app".
+          echo "$got" | grep -qF "\"$want\"" || {
+            echo "the window's class is not $want, so the shell will find no entry for it"
+            echo "snyvi.desktop says StartupWMClass=$want"
+            exit 1; }
+          snyvi stop || true
+
+      - name: Remove the packages
+        run: sudo dpkg -r snyvi-app snyvi
 
   windows:
     # One job, not two. The split on Linux exists because a static musl binary

@@ -312,6 +312,35 @@ bolder, out of one generator so the tab, the taskbar and the tray
 cannot drift apart. Windows gets a real .ico of bitmaps, since a PNG
 entry is only documented to work at 256.
 
+## 0.7.1: the icon nobody could see
+
+0.7 drew the mark at every size and installed all of them, and on Ubuntu
+the window still came up generic. The icon was never the problem: the
+shell finds an icon by first matching a window to a desktop entry, and
+it matches on the window's class. Tauri leaves the GTK application id
+unset unless `enableGTKAppId` is on, so GTK falls back to the program
+name and the window announces itself as `snyvi-app` — which matches no
+file called `snyvi.desktop`. `StartupWMClass=snyvi-app` in the entry is
+the line that connects them.
+
+Nothing could have caught it. `desktop-file-validate` saw a valid file,
+the window opened, CI proved the package installed and held the
+foreground, and the two ends of the match live in different files that
+were each correct alone. So CI now reads `WM_CLASS` off a real window
+under Xvfb and checks it against the entry, rather than trusting either.
+
+The tray was a second, unrelated miss in the same report. The package
+depends on `libayatana-appindicator3-1`, which is the library, and on
+GNOME the library is not sufficient: GNOME has no tray, so the indicator
+is published on the bus and nothing draws it. The extension that draws
+it is now a `Recommends` — not a `Depends`, because KDE, Xfce and
+Cinnamon have a real tray and should not be made to install a GNOME
+extension for nothing.
+
+Both were found by installing the release and looking at it, which is
+what "argued for, not yet watched" below was about. It was written for
+Windows and turned out to be true of Ubuntu.
+
 ## Candidates after 0.7
 
 JSON and YAML views, tags from the sender, macOS build, AUR, the global

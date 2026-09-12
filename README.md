@@ -213,6 +213,22 @@ protocol sends no clicks, so there the menu answers both. Running
 On a Linux desktop with no `libayatana-appindicator3`, there is no tray —
 snyvi says so, and closing the window goes back to meaning close.
 
+GNOME is the case where the library is there and the tray still is not:
+it has no tray of its own, so the indicator is published and nothing
+draws it. What draws it is a shell extension, which the `snyvi-app`
+package recommends and Ubuntu normally has enabled already. If the tray
+is missing on a GNOME desktop and `snyvi app` reported no error, that is
+what to look for:
+
+```
+gnome-extensions list --enabled | grep -i appindicator   # nothing? then:
+sudo apt install gnome-shell-extension-appindicator
+gnome-extensions enable ubuntu-appindicators@ubuntu.com
+```
+
+Log out and back in afterwards; under Wayland the shell cannot reload
+extensions in place.
+
 What the window costs is what a browser engine costs, and it costs it
 **only in the window's own process**:
 
