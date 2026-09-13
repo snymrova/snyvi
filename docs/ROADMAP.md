@@ -71,6 +71,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | A sidebar that does not carry the library | `Store::tree()` returned every document there was, and the shell embeds what it returns in every page it serves: 383 KB and 13,213 rows at 3000 documents, with one 362-718 ms task building them before the reader could do anything, and the same cost again on every arrival. A project row is two numbers now and what is behind it is fetched when it is expanded. | M | **done 0.9** |
 | Virtualised rendering above ~200k lines | Chromium copes up to about 100k lines with `content-visibility`; beyond that, page the lines from the server on scroll. | M | later |
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
+| Size, start-up and memory in the bench | The README's binary size, cold start and resident rows were hand-measured and enforced by nothing, and had drifted. `snyvi bench` starts a daemon of its own and budgets all three, with sends and a page's first byte beside them. | S | **done 0.10** |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
 
 ## Explicitly not planned
@@ -498,6 +499,81 @@ Also: `ensure_daemon` asked a starting daemon for its health every 40 ms
 while a daemon comes up in about 25, so a cold `snyvi app` waited about
 twice as long as it needed to. 51 ms to 25-28 ms for a cold start and
 send.
+
+## 0.10: the numbers nobody was checking
+
+The README's table had three rows that no test stood behind: the size of
+the binary, how long a daemon takes to come up, and what it holds
+resident. They were measured by hand when they were written and never
+again, and `snyvi bench --check` — the thing that is supposed to make a
+budget a test — measured the renderer in process and nothing about the
+process a reader actually runs.
+
+It does now. The bench starts a daemon of its own, on a free port with a
+temporary directory, so it can be run on a machine with a library in use
+and touch nothing; weighs the binary it is running as; starts that daemon
+three times and keeps the best; sends three documents by path, the way
+the hook does; fetches a page; and reads the daemon's resident set twice.
+The clocks scale with `SNYVI_BENCH_FACTOR` like the render rows; a size
+and a resident set do not, because they are not clocks.
+
+|  | table said | bench reads | budget |
+|---|---|---|---|
+| binary size | 12.3 MB | 12.4 MB | 15 MB |
+| cold start to first health | 25-28 ms | 11-14 ms | 100 ms |
+| send, 100 KB, round trip | ~50 ms | 12-14 ms | 100 ms |
+| document page, first byte | 3-5 ms | 1-2 ms | 30 ms |
+| resident, documents in | 35 MB | 40 MB | 60 MB |
+| resident, after the big fixtures | 50 MB | 82 MB | 100 MB |
+
+The first run of the resident row read 62 MB, over the 60 MB budget that
+`docs/BRAINSTORM.md` set for one document. Finding out why was most of
+the work, and the answer changed the daemon:
+
+- **Freed memory was handed back ten seconds late.** A render runs on one
+  of tokio's blocking threads. mimalloc gives a thread's freed pages back
+  to the system the next time that thread touches the allocator, and an
+  idle thread never does — and tokio kept an idle blocking thread for ten
+  seconds. So a 1 MB document left the daemon at 84 MB for ten seconds
+  after it had answered, and 42 MB the moment the thread retired. The
+  runtime now retires a blocking thread after one second. The next render
+  starts a thread, which costs microseconds beside a render; a burst of
+  sends inside a second shares one.
+- **A request body is capped at 2 MB.** `snyvi send FILE` is unaffected,
+  since the daemon reads a path itself, but `snyvi send < FILE` carries
+  the bytes and is refused above that with a 413. The bench sends by
+  path. The cap is not changed here; it is written down.
+- **A page fetched while the render thread is still alive keeps a dozen
+  MB with the worker that served it**, and a further fetch a few more,
+  and neither comes back on its own: 40 MB with three documents in and
+  the thread retired, 52-56 MB when the pages were asked for in the same
+  second, which is what a tab does on arrival. The bench reads the
+  documents row before it fetches a page, so that it measures what
+  documents cost; what a page leaves behind is the next thing here to
+  find.
+- **The 82 MB is mostly the full highlight of 100,000 lines of Rust**, not
+  the 1 MB of Markdown: the code file alone settles at 75 MB, the
+  Markdown alone at 38. What a full highlight leaves live — the grammar's
+  regexes compiled on first use are the likely answer, since the syntax
+  set is shared and keeps them — has not been measured, and the 100 MB
+  budget holds the line at the measured number until it is.
+
+The bench also found that the table was generous in the other direction:
+a cold start is 11 ms, not 25, since `ensure_daemon` stopped over-waiting
+in 0.9, and a send is 12 ms, not 50.
+
+And its first run on the Windows runner went red on the cold start: 405 ms,
+three times in a row, against the 300 ms the factor allows, with every
+other row passing with room -- 22 ms for a send, 0.9 ms to a page's first
+byte, and 20 MB and 31 MB by working set for the two resident rows, which
+is a different accounting from Linux's resident set and not a smaller
+daemon. Creating a process is the one row that is mostly the operating
+system's, and on a hosted Windows VM it is the VM's, so that job runs the
+bench with `SNYVI_BENCH_SHARED=1`, the switch `bench/browser.mjs` already
+had for rows that measure the runner: the cold start is printed there and
+not enforced, and the rest still is. What a cold start costs on a Windows
+machine a person uses is not known, and belongs with the other things
+"Not yet proven on Windows" below.
 
 ## Candidates after 0.7
 
