@@ -461,21 +461,23 @@ architecture, the performance budgets, and the milestones.
 
 ## Measured so far
 
-Release build on a 4-core container, headless Chromium, warm daemon,
-best of three for render rows (`snyvi bench`); the page rows come from
+Release build on a 4-core container, headless Chromium, best of three
+for the render and daemon rows (`snyvi bench`); the page rows come from
 `bench/browser.mjs`.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|
-| Binary size, `snyvi`                        | 12.3 MB     | 15 MB  |
+| Binary size, `snyvi`                        | 12.4 MB     | 15 MB  |
 | Binary size, `snyvi-app` (the window)       | 4.3 MB      |        |
 | Download, `.deb` (snyvi / snyvi-app)        | 5.5 MB / 1.2 MB | |
-| Daemon resident (1 doc / loaded)            | 35 MB / 50 MB | 60 MB |
+| Daemon cold start, to first health          | 11 to 14 ms | 100 ms |
+| Daemon resident, three documents in, settled | 40 MB      | 60 MB  |
+| Daemon resident, after a 1 MB document and a 100k-line file, settled | 82 MB | 100 MB |
 | Native window, to the web process           | ~150 ms     | 150 ms to first paint |
 | Native window process, resident             | ~380 MB     | see below |
-| Renderer init (86 grammars from the pack)   | 19 ms       |        |
-| `snyvi send` round trip (render + store)    | ~50 ms      |        |
-| Document page, time to first byte           | 3 to 5 ms   | 30 ms  |
+| Renderer init (86 grammars from the pack)   | 6 ms        |        |
+| Send, 100 KB Markdown, round trip           | 12 to 14 ms | 100 ms |
+| Document page, time to first byte           | 1 to 2 ms   | 30 ms  |
 | Document page, first contentful paint       | 65 to 170 ms (cold fonts) | |
 | Longest frozen frame, page with a 220-node diagram | 66 ms (was 3193) | 200 ms |
 | New document visible after send (SSE)       | ~50 ms      | 100 ms |
@@ -485,8 +487,25 @@ best of three for render rows (`snyvi bench`); the page rows come from
 
 `snyvi bench --check` fails when a case exceeds its budget; CI runs it
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
-Markdown fast path skips the HTML sanitizer whenever a document contains
-no raw HTML, which is nearly always for agent output.
+factor scales the budgets that are clocks and not the size or the
+resident rows: a binary weighs the same on any machine. The Markdown
+fast path skips the HTML sanitizer whenever a document contains no raw
+HTML, which is nearly always for agent output.
+
+The render rows are the renderer in process. The daemon rows are a
+daemon the bench starts for itself — its own data directory, its own
+port, gone when the bench is — so `snyvi bench` never touches the
+library on 7777. It weighs the binary it is running as, starts that
+daemon three times and keeps the fastest, sends three 100 KB documents
+by path the way the hook does, asks for a page the way a browser does,
+and reads the daemon's resident set twice: once with those three
+documents in and once after the 1 MB and the 100k-line fixtures have
+gone through it, the second only after the daemon has said the
+background highlight is done. Both readings are taken settled: a render
+runs on a thread that retires a second after its last task, and its
+freed memory goes back to the system only then, so the number a second
+after a send is the one a reader lives with and the number during it is
+not.
 
 `node bench/browser.mjs --check` is the other half, and covers the part
 the reader actually waits on. It sends a fixture document through the
@@ -517,7 +536,8 @@ its own executable put the daemon back to 35 MB and left the engine
 where it belongs: in the process that is showing you something, for as
 long as it is on screen.
 
-What `bench --check` measures is the renderer, in process, and
-`bench/browser.mjs` measures the page. Neither measures binary size,
-start-up or resident memory, so those rows are enforced by nothing —
-they are hand-measured, and they drift. That is the next gap to close.
+Until 0.10 the size, start-up and resident rows were hand-measured and
+enforced by nothing, and they had drifted: the table said 35 MB for a
+daemon with one document in it, and the first run of the bench read
+62 MB. Most of that was not the daemon's. See the 0.10 notes in
+[docs/ROADMAP.md](docs/ROADMAP.md) for what it was.

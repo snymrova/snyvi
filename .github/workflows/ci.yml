@@ -37,7 +37,9 @@ jobs:
           sudo dpkg -r snyvi
       - name: Perf budget
         # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
-        # regression that triples a case still fails the build.
+        # regression that triples a case still fails the build. Only the clocks scale:
+        # the binary's size and the daemon's resident set are the same on any machine,
+        # and the bench measures both on a daemon it starts for itself.
         run: SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
       # Node 22 for the global WebSocket the harness drives Chromium with; the
       # runner's own Node may be older, and nothing else here uses it.

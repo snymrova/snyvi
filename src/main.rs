@@ -1,3 +1,4 @@
+mod bench;
 mod browse;
 mod client;
 mod config;
@@ -112,7 +113,7 @@ enum Cmd {
     Restart,
     /// Show daemon status.
     Status,
-    /// Measure render speed on synthetic documents.
+    /// Measure render speed on synthetic documents, and a daemon of its own: binary size, cold start, send, first byte, resident memory.
     Bench {
         /// Exit non-zero if any case exceeds its budget (SNYVI_BENCH_FACTOR scales budgets for slow CI runners).
         #[arg(long)]
@@ -126,6 +127,15 @@ fn main() -> Result<()> {
         Cmd::Serve => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
+                // Renders run on blocking threads, and a thread's freed memory
+                // is only handed back when that thread next touches the
+                // allocator -- which an idle one never does. Tokio keeps an
+                // idle blocking thread for ten seconds, so a 1 MB document
+                // left the daemon at 84 MB resident for ten seconds after it
+                // had answered, and 42 MB the moment the thread went. A
+                // thread is cheap to start next to a render; a second is
+                // enough to serve a burst of sends from one.
+                .thread_keep_alive(std::time::Duration::from_secs(1))
                 .enable_all()
                 .build()?;
             rt.block_on(server::run(paths))
@@ -287,7 +297,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Bench { check } => bench(check),
+        Cmd::Bench { check } => bench::run(check),
     }
 }
 
@@ -314,100 +324,6 @@ fn init_claude(auto: bool) -> Result<()> {
             path.display()
         );
         println!("Add --auto to also install a PostToolUse hook that sends every Markdown file Claude writes.");
-    }
-    Ok(())
-}
-
-fn bench(check: bool) -> Result<()> {
-    use std::time::Instant;
-    // Budgets in ms on a warm 4-core dev box. The 1 MB Markdown target in docs/BRAINSTORM.md
-    // is 200 ms; comrak with all extensions currently lands at ~265, so the budget holds the
-    // line at the measured number until the parser step is optimised.
-    let factor: f64 = std::env::var("SNYVI_BENCH_FACTOR")
-        .ok()
-        .and_then(|f| f.parse().ok())
-        .unwrap_or(1.0);
-    let t0 = Instant::now();
-    let r = render::Renderer::new();
-    let init_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-    // A realistic document: prose, headings, lists, a table, and a code block every ~2 KB.
-    let section = "## Section heading\n\nA paragraph of ordinary prose with *emphasis*, **strong text**, `inline code`, and a [link](https://example.com). \
-It runs on for a few sentences so the parser sees realistic line lengths and inline markup density.\n\n\
-- one item\n- another item with `code`\n- a third\n\n\
-| col a | col b | col c |\n|---|---|---|\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n\n\
-> A quote that says something worth remembering.\n\n\
-Another paragraph. Then more prose, because most documents are mostly prose, and the renderer should be judged on that.\n\n\
-```rust\nfn main() {\n    let x = 42;\n    println!(\"{x}\");\n}\n```\n\n";
-    let md_2k = section;
-    let repeat = |bytes: usize| -> String {
-        (0..bytes / section.len() + 1)
-            .map(|i| section.replacen("Section heading", &format!("Section {i}"), 1))
-            .collect()
-    };
-    let md_100k = repeat(100 * 1024);
-    let md_1m = repeat(1024 * 1024);
-    let code_10k: String = (0..10_000)
-        .map(|i| format!("fn f{i}(x: u32) -> u32 {{ x + {i} }} // line\n"))
-        .collect();
-    let code_100k: String = (0..100_000)
-        .map(|i| format!("fn f{i}(x: u32) -> u32 {{ x + {i} }} // line\n"))
-        .collect();
-    let cases: Vec<(&str, render::Kind, Option<&str>, &str, f64)> = vec![
-        ("markdown 2 KB", render::Kind::Markdown, None, md_2k, 2.0),
-        (
-            "markdown 100 KB",
-            render::Kind::Markdown,
-            None,
-            &md_100k,
-            50.0,
-        ),
-        ("markdown 1 MB", render::Kind::Markdown, None, &md_1m, 400.0),
-        (
-            "rust 10k lines (highlighted)",
-            render::Kind::Code,
-            Some("rs"),
-            &code_10k,
-            500.0,
-        ),
-        (
-            "rust 100k lines (highlight capped at 256 KB)",
-            render::Kind::Code,
-            Some("rs"),
-            &code_100k,
-            500.0,
-        ),
-    ];
-    println!("renderer init: {init_ms:.1} ms   (budget factor {factor})\n");
-    println!(
-        "{:<48} {:>9} {:>9}   {:>9}   {:>9}",
-        "case", "ms", "MB/s", "html KB", "budget"
-    );
-    let mut failed = false;
-    for (name, kind, lang, src, budget) in cases {
-        // Warm once so lazy regex compilation is not charged to the measurement.
-        let _ = r.render(kind, lang, &src[..src.len().min(2048)]);
-        // Best of three: the number we care about is the cost of the work, not scheduler noise.
-        let mut best = f64::MAX;
-        let mut out_len = 0;
-        for _ in 0..3 {
-            let t = Instant::now();
-            let out = r.render(kind, lang, src);
-            best = best.min(t.elapsed().as_secs_f64() * 1000.0);
-            out_len = out.len();
-        }
-        let budget = budget * factor;
-        let ok = best <= budget;
-        failed |= !ok;
-        let mbs = src.len() as f64 / 1e6 / (best / 1000.0);
-        println!(
-            "{name:<48} {best:>9.1} {mbs:>9.1}   {:>9}   {budget:>7.0}{}",
-            out_len / 1024,
-            if ok { " ok" } else { " OVER" }
-        );
-    }
-    if check && failed {
-        anyhow::bail!("bench: at least one case exceeded its budget");
     }
     Ok(())
 }
