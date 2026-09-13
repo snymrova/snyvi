@@ -523,7 +523,7 @@ is three commands, from a person:
 
 ```
 git fetch origin main
-git show origin/main:Cargo.toml | grep '^version'    # must match the tag
+git show origin/main:Cargo.toml | awk '/^\[/{t=$0} t=="[package]" && /^version/'
 git tag -a v0.7.0 -m "snyvi 0.7.0" origin/main && git push origin v0.7.0
 ```
 
@@ -532,10 +532,16 @@ A tag is a pointer to a commit, and the only commit worth naming is the
 one the remote has; a local `main` that is behind — or a clone sitting on
 another branch entirely — will happily take the tag and release the wrong
 tree. Tagging the fetched ref by name means the tag cannot land anywhere
-but where the work is, whatever the working copy is doing. The middle line
-is the one thing CI cannot check before the fact: `Cargo.toml` has to be
-bumped and merged first, since the workflow reads the version from the tag
-and the crate and Tauri read it from the manifest.
+but where the work is, whatever the working copy is doing.
+
+The middle line prints one number, and it has to be the one being tagged:
+`Cargo.toml` must be bumped and merged before the tag, and that is the one
+mismatch nothing can catch in advance — by the time the workflow compares
+them, the tag exists and a run has been spent. It reads the `[package]`
+table rather than grepping the file, because Tauri and its two plugins are
+declared in long form — `[dependencies.tauri]` with `version = "2"` under
+it — so a plain `grep '^version'` answers with four numbers, three of them
+not the crate's.
 
 All of that is there because v0.6.0 was first pushed without it. The
 tag went onto a commit from a clone that had not fetched the work the
