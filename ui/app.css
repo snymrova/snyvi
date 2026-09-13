@@ -136,7 +136,19 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] #app:has(#rail.empty) { grid-template-columns: 0 minmax(0,1fr) 0; }
 
 
-#side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; }
+#side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* The panes' edges drag. The gutter straddles the seam, so it takes nothing
+   from the grid, and sets the same variable the grid reads, so every rule
+   that knows the pane's width follows. app.js clamps it; boot.js applies the
+   stored width before first paint. Not on a sheet, which has its own width. */
+.gutter { position: absolute; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+#side .gutter { right: -4px; }
+#rail .gutter { left: -4px; }
+.gutter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity var(--t); }
+.gutter:hover::after, .gutter:focus-visible::after, :root[data-resizing] .gutter::after { opacity: .6; }
+.gutter:focus-visible { outline: none; }
+:root[data-resizing] { cursor: col-resize; user-select: none; }
+:root[data-resizing] * { transition: none !important; }
 /* Narrow windows: a pane that no longer fits beside the document becomes a
    sheet over it. `data-sheet` on the root names the one that is open; app.js
    sets it only while the pane is at a sheet width, and clears it when the
@@ -149,6 +161,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   #chrome #btn-rail { display: inline-flex; }
   #app:has(#rail.empty) #btn-rail { display: none; }
   #find { padding-right: 56px; }
+  #rail .gutter { display: none; }
 }
 @media (max-width: 760px)  {
   #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
@@ -156,6 +169,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   :root[data-sheet="side"] #side { display: flex; animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
   #chrome #btn-side { display: inline-flex; }
   #find { padding-left: 56px; }
+  #side .gutter { display: none; }
 }
 @keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
 @keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -456,7 +470,7 @@ pre.mermaid::before { display: none; }
   border-radius: var(--radius); background: var(--bg-raise); box-shadow: 0 1px 3px rgba(0,0,0,.18);
   opacity: 0; transition: opacity .12s ease; pointer-events: none;
 }
-.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd:fullscreen .mmd-tools { opacity: 1; pointer-events: auto; }
+.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd[data-full] .mmd-tools { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .mmd-tools { opacity: 1; pointer-events: auto; } }
 .mmd-tools button {
   font-family: var(--sans); font-size: 12px; line-height: 1; color: var(--fg-2);
@@ -464,9 +478,16 @@ pre.mermaid::before { display: none; }
 }
 .mmd-tools button:hover { background: var(--rule); color: var(--fg); }
 .mmd-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Fullscreen is the one place a 4738 px graph is legible. */
-.mmd:fullscreen { margin: 0; background: var(--bg); display: flex; align-items: center; }
-.mmd:fullscreen .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
+/* Filling the screen is the one place a 4738 px graph is legible. The figure
+   is laid over the page from where it is, and the document -- not the figure
+   -- is what asks the browser for fullscreen. A figure of its own in the top
+   layer is what WebKitGTK, the Linux window's engine, drew every glyph of as
+   nothing: the boxes and arrows stayed and the labels, the tool bar and an
+   SVG's own text went; and on the way back it kept the figure at the size
+   its placeholder had until the next scroll. A fixed box has neither fault in
+   any engine. mmdFull in app.js. */
+.mmd[data-full] { position: fixed; inset: 0; z-index: 30; margin: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.mmd[data-full] .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
 /* Until the diagram lands the figure holds about the space it will want, so the
    text below it does not jump when it does. An estimate from the source, set by
    the client -- see mmdWeight in app.js. */

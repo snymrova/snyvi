@@ -4,10 +4,11 @@
  * does: where the contents' marker is after a read to the end, what a wheel
  * over the rail moves, what Back does after a click on an entry, whether a
  * save keeps the reader's place, what `t` opens on a narrow window, whether
- * Tab reaches every control and a dialog gives focus back. Every row here
- * was a fault once -- the 0.11 and 0.12 notes in docs/ROADMAP.md say which
- * -- and the point of running them on every push is that the rail cannot
- * quietly stop following again.
+ * Tab reaches every control and a dialog gives focus back, what a drag on a
+ * pane's edge does, what `f` fills and what Escape gives back. Every row
+ * here was a fault once -- the 0.11 to 0.13 notes in docs/ROADMAP.md say
+ * which -- and the point of running them on every push is that the rail
+ * cannot quietly stop following again.
  *
  *   node bench/ui.mjs            report
  *   node bench/ui.mjs --check    and exit non-zero if a row fails
@@ -24,7 +25,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { plan } from "./fixture.mjs";
+import { plan, flowchart } from "./fixture.mjs";
 import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
 
 const args = process.argv.slice(2);
@@ -123,6 +124,12 @@ async function main() {
     };
     const first = await send();
     const url = `${base}/d/${first.doc.id}`;
+    // A third, with a diagram in it, for the rows that fill the screen. Small,
+    // so it is drawn in a moment; sent last, so it is the newest and `j` from
+    // the plan still opens the second.
+    const diagram = join(tmp, "diagram.md");
+    writeFileSync(diagram, "# A diagram to fill the screen with\n\nA paragraph before it.\n\n```mermaid\n" + flowchart(12, "Label") + "\n```\n\nAnd one after.\n");
+    const diagramUrl = execFileSync(BIN, ["send", diagram], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
 
     const browser = await launch(join(tmp, "chrome"));
     chromeProc = browser.proc;
@@ -137,6 +144,8 @@ async function main() {
     sections.push(["the rail, 1280 px wide", await railRows(p, url, md, send)]);
     sections.push(["narrow windows", await narrowRows(p, url)]);
     sections.push(["by keyboard", await keyboardRows(p, url)]);
+    sections.push(["the panes' edges", await widthRows(p, url)]);
+    sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -171,6 +180,8 @@ const KEYS = {
   Tab: { key: "Tab", code: "Tab", vk: 9 },
   Escape: { key: "Escape", code: "Escape", vk: 27 },
   Enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
+  ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", vk: 37 },
+  ArrowRight: { key: "ArrowRight", code: "ArrowRight", vk: 39 },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
   "\\": { key: "\\", code: "Backslash", vk: 220, text: "\\" },
@@ -215,6 +226,27 @@ class Driver {
     await sleep(200);
   }
   async clickOn(selector) { const at = await this.ui("center", selector); await this.click(at.x, at.y); }
+  async dblclick(x, y) {
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s);
+    for (const clickCount of [1, 2]) {
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await this.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount }, this.s);
+      }
+    }
+    await sleep(200);
+  }
+  /** Press at (x, y), move `dx` to the side in a few steps, let go. */
+  async drag(x, y, dx) {
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s);
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, this.s);
+    const steps = 6;
+    for (let i = 1; i <= steps; i++) {
+      await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(x + dx * i / steps), y, button: "left", buttons: 1 }, this.s);
+      await sleep(20);
+    }
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x + dx, y, button: "left", clickCount: 1 }, this.s);
+    await sleep(200);
+  }
   /** Park the pointer where it hovers nothing that matters. */
   async pointerAway() { await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 }, this.s); }
   async width(w, h = 800) {
@@ -515,6 +547,105 @@ async function keyboardRows(p, url) {
   rows.push(["no pointer to hover with", touch.none && touch.copy === "1" && touch.ren === "1" && Number(touch.anchor) > 0,
     !touch.none ? "the page could not be made to believe it has no pointer" : `copy ${touch.copy}, rename ${touch.ren}, # ${touch.anchor} under (hover: none)`]);
 
+  return rows;
+}
+
+/** 0.13: the panes' edges drag, within limits, and the width is kept. */
+async function widthRows(p, url) {
+  const rows = [];
+  await p.goto(url);
+  await p.pointerAway();
+  const side = () => p.ev(`({ w: Math.round(document.querySelector("#side").getBoundingClientRect().width), now: document.querySelector("#side .gutter").getAttribute("aria-valuenow"), main: Math.round(document.querySelector("#main").getBoundingClientRect().left) })`);
+  const railW = () => p.ev(`Math.round(document.querySelector("#rail").getBoundingClientRect().width)`);
+  const gutter = sel => p.ui("center", sel);
+
+  const start = await side();
+  let at = await gutter("#side .gutter");
+  await p.drag(at.x, at.y, 120);
+  const wider = await side();
+  dbg("drag", { start, at, wider });
+  rows.push(["the sidebar drags wider", start.w === 264 && wider.w === 384 && wider.main === 384,
+    `${start.w} px, dragged 120: ${wider.w} px, the document starts at ${wider.main}`]);
+
+  at = await gutter("#side .gutter");
+  await p.drag(at.x, at.y, 600);
+  const capped = await side();
+  rows.push(["and stops at its limit", capped.w === 440, `dragged 600 more: ${capped.w} px`]);
+
+  await p.reload();
+  const kept = await side();
+  rows.push(["kept after a reload", kept.w === 440, `${kept.w} px after the reload`]);
+
+  await p.ev(`document.querySelector("#side .gutter").focus()`);
+  await p.press("ArrowLeft");
+  const byKey = await side();
+  rows.push(["the arrow keys move it", byKey.w === 424 && byKey.now === "424", `ArrowLeft from 440: ${byKey.w} px, announced as ${byKey.now}`]);
+
+  at = await gutter("#side .gutter");
+  await p.dblclick(at.x, at.y);
+  const reset = await side();
+  await p.reload();
+  const resetKept = await side();
+  rows.push(["double-click puts it back", reset.w === 264 && resetKept.w === 264, `${reset.w} px, ${resetKept.w} px after a reload`]);
+
+  const railBefore = await railW();
+  at = await gutter("#rail .gutter");
+  await p.drag(at.x, at.y, -100);
+  const railAfter = await railW();
+  at = await gutter("#rail .gutter");
+  await p.dblclick(at.x, at.y);
+  const railReset = await railW();
+  await p.pointerAway();
+  rows.push(["the rail drags too", railBefore === 232 && railAfter === 332 && railReset === 232,
+    `${railBefore} px, dragged 100 leftwards: ${railAfter} px, double-click: ${railReset} px`]);
+  return rows;
+}
+
+/** 0.13: a diagram fills the window from inside the page, and the page
+ *  comes back whole. */
+async function diagramRows(p, url) {
+  const rows = [];
+  await p.goto(url);
+  await p.pointerAway();
+  await p.ev(`document.querySelector(".mmd").scrollIntoView({ block: "center", behavior: "instant" })`);
+  let drawn = false;
+  for (let i = 0; i < 80 && !drawn; i++) { await sleep(100); drawn = await p.ev(`!!document.querySelector('.mmd[data-state="done"]')`); }
+  await sleep(300);
+  const read = () => p.ev(`(() => {
+    const fig = document.querySelector(".mmd"), frame = fig.querySelector(".mmd-frame"), r = frame.getBoundingClientRect();
+    const labels = [...fig.querySelectorAll("foreignObject, text")].filter(t => t.getBoundingClientRect().width > 0).length;
+    return { drawn: fig.dataset.state === "done", full: fig.dataset.full === "1", topLayer: document.fullscreenElement === fig,
+      frame: [r.left, r.top, r.width, r.height].map(Math.round), width: frame.clientWidth, labels, zoom: fig.dataset.zoom,
+      cv: fig.style.contentVisibility, win: [innerWidth, innerHeight], top: document.querySelector("#main").scrollTop };
+  })()`);
+  const before = await read();
+  await p.press("f");
+  await sleep(600);
+  const filled = await read();
+  dbg("fill", { before, filled });
+  rows.push(["f fills the window", before.drawn && filled.full && !filled.topLayer && filled.frame[0] === 0 && filled.frame[1] === 0 && filled.frame[2] === filled.win[0] && filled.frame[3] === filled.win[1] && filled.labels > 0,
+    !before.drawn ? "the diagram was never drawn" : !filled.full ? "f filled nothing" : filled.topLayer ? "the figure itself went into the top layer"
+      : filled.labels === 0 ? "the labels were not laid out" : filled.frame[2] !== filled.win[0] || filled.frame[3] !== filled.win[1] ? `the frame is ${filled.frame[2]}×${filled.frame[3]} in a ${filled.win[0]}×${filled.win[1]} window`
+        : `the frame is the ${filled.win[0]}×${filled.win[1]} window, ${filled.labels} labels laid out, the figure itself not in the top layer`]);
+
+  await p.press("Escape");
+  await sleep(600);
+  const back = await read();
+  dbg("back", back);
+  rows.push(["Escape gives the page back", !back.full && back.width > 0 && back.frame[3] > 0 && back.frame[3] < back.win[1] && back.zoom === "fit" && back.cv === "visible" && Math.abs(back.top - before.top) < 2,
+    back.full ? "still filling" : back.width === 0 ? "the figure came back with no size, waiting on a scroll" : back.frame[3] >= back.win[1] ? `came back ${back.frame[3]} px tall`
+      : back.zoom !== "fit" ? `came back zoomed ${back.zoom}` : back.cv !== "visible" ? "came back as a placeholder again" : Math.abs(back.top - before.top) >= 2 ? `the document moved from ${before.top} to ${back.top}`
+        : `${back.width} px wide and fitted again with no scroll, document at ${back.top}`]);
+
+  await p.clickOn(".mmd [data-mmd=full]");
+  await sleep(600);
+  const byButton = await read();
+  await p.clickOn(".mmd [data-mmd=full]");
+  await sleep(600);
+  const byButtonBack = await read();
+  await p.pointerAway();
+  rows.push(["the button, both ways", byButton.full && !byButtonBack.full && byButtonBack.width > 0,
+    !byButton.full ? "the button filled nothing" : byButtonBack.full ? "the button did not give the page back" : byButtonBack.width === 0 ? "back with no size" : "fills on one click, gives the page back on the next"]);
   return rows;
 }
 

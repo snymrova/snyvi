@@ -153,8 +153,10 @@ everything needed is a viewport around it.
   cursor, drag pans, double-click zooms in, `0` refits. Driving the
   `viewBox` rather than a CSS transform keeps strokes crisp at any zoom
   and costs nothing per frame.
-- **Fullscreen**, on a button and a key: the one place a 4738 px graph is
-  legible.
+- **Fill the screen**, on a button and a key: the one place a 4738 px
+  graph is legible. The figure is laid over the page and the document
+  asks for the browser's fullscreen; the figure itself in the top layer
+  drew no text at all in WebKitGTK (0.13 in ROADMAP.md).
 - **Fit / 100%** as one toggle, so "show me the shape" and "let me read
   that label" are each one click.
 - **Let a diagram escape the reading measure.** 0.3.2 gave the pane to
@@ -243,7 +245,7 @@ the pain, so this can wait for a considered answer.
 |---|---|---|---|---|
 | 1 | Scheduler, viewport-gated, placeholders, cap | M | 3123 ms freeze → responsive | **done** |
 | 2 | In-tab SVG cache | XS | revisit 2426 ms → 34 ms | **done** |
-| 3 | Pan, zoom, fullscreen | M | a big diagram becomes readable | next |
+| 3 | Pan, zoom, fill the screen | M | a big diagram becomes readable | **done** |
 | 4 | Idle prefetch | XS | −390 ms on the first diagram, measured | **done** |
 | 5 | Find, theme, error-source fixes | S | correctness | find and error done |
 | 6 | Trimmed bundle | M | measure before committing | |

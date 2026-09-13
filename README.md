@@ -270,7 +270,7 @@ From source, `cargo build --release` gives you snyvi alone; add
 | p     | pin (kept by `prune`)                       |
 | ⌫     | delete document                             |
 | i     | inbox                                       |
-| f     | fullscreen the diagram                      |
+| f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
 | t     | toggle contents                             |
 | \     | toggle sidebar                              |
@@ -394,6 +394,13 @@ or a tap outside closes it. The contents open on the section you are
 in, and a tap on an entry goes there and puts the sheet away. Widen the
 window and the panes are panes again, as you left them.
 
+Both panes resize. Drag the seam between a pane and the document -- the
+sidebar's right edge, the rail's left -- and the pane follows, between a
+width where its rows are still readable and one past which the document
+would be the pane that does not fit: 200 to 440 px for the sidebar, 180
+to 400 for the rail. Double-click the seam for the default. The seam is
+a Tab stop too, and the arrow keys move it. The width is kept.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders
@@ -493,8 +500,12 @@ for the render and daemon rows (`snyvi bench`); the page rows come from
 read by `bench/ui.mjs`: where the contents' marker is after a read to
 the end, what a wheel over the rail moves, what Back does, whether a
 save keeps the place, what `t` opens at 1000 px, whether Tab reaches
-every control. Counts and positions, no clocks, so every one of its
-rows is enforced on every machine, CI's included.
+every control, what a drag on a pane's edge does, what `f` fills and
+what Escape gives back. Counts and positions, no clocks, so every one
+of its rows is enforced on every machine, CI's included. The desktop
+window's engine is not Chromium: `bench/webkit.py` drives the same page
+in WebKitGTK under Xvfb, by hand for now, and reads the two things only
+that engine got wrong.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|

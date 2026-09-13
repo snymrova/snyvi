@@ -42,7 +42,7 @@
   const fmt = ts => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const kindTag = k => ({ markdown: "md", code: "code", diff: "diff", text: "txt", image: "img", binary: "bin", table: "csv" }[k] || k);
   const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
-  const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+  const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }, del: k => { try { localStorage.removeItem(k); } catch {} } };
   const idle = () => Date.now() - state.lastActivity > 2500 && !(window.getSelection() && String(window.getSelection()).length);
   ["scroll", "keydown", "mousedown", "wheel", "touchstart"].forEach(e => window.addEventListener(e, () => { state.lastActivity = Date.now(); }, { passive: true, capture: true }));
 
@@ -812,6 +812,9 @@
   }
 
   function prepareMermaid() {
+    // A new document under a filled figure: the figure goes with the old one,
+    // and the browser's fullscreen, if it was granted, goes with it.
+    if (document.fullscreenElement) quiet(document.exitFullscreen());
     mmdToken++;
     mmdQueue = [];
     if (mmdWatcher) mmdWatcher.disconnect();
@@ -1154,10 +1157,11 @@
       mmdViews.delete(fig);
       return;
     }
-    const full = document.fullscreenElement === fig;
-    // A figure that is not laid out cannot be fitted -- which is every other
-    // diagram on the page while one of them is fullscreen. Leave it as it is;
-    // leaving fullscreen fits them all again.
+    const full = fig.dataset.full === "1";
+    // The window's width when the figure fills it, rather than the frame's:
+    // the frame is the window then, but measured before the browser has laid
+    // that out it still says what it was. A figure that is not laid out at
+    // all cannot be fitted; left as it is, it is fitted on the next pass.
     const width = full ? Math.round(innerWidth) : frame.clientWidth;
     if (!width) return;
     mmdViews.delete(fig);
@@ -1308,27 +1312,53 @@
     mmdZoom(fig, v.view.w / Math.max(1, r.width), null, null);
   }
 
-  /** Fill the screen with one diagram. The frame is re-measured on the way in
-   *  and on the way out, since its height is the one thing fullscreen changes. */
+  /** Fill the window with one diagram; the same key or button, or Escape,
+   *  gives the page back.
+   *
+   *  The figure is laid over the page from where it is (`.mmd[data-full]` in
+   *  app.css), and the document, not the figure, asks the browser for
+   *  fullscreen -- a courtesy that hides the browser's own chrome where it is
+   *  granted, and nothing here depends on the answer. 0.9 put the figure
+   *  itself in the top layer, and in WebKitGTK, the engine of the Linux
+   *  window, two things came of that: every glyph inside the fullscreen
+   *  element drew as nothing -- the boxes and arrows stayed; the labels, the
+   *  tool bar and an SVG's own <text> went -- and on the way back the figure,
+   *  a content-visibility placeholder again, kept the placeholder's size
+   *  until the next scroll laid it out. A fixed box in the page has neither
+   *  fault in any engine, and the figure is marked visible for good, since it
+   *  is the one the reader is looking at. bench/webkit.py is where both were
+   *  seen. */
+  let mmdFullFrom = 0;   // where the document was, to put it back there
+  function quiet(p) { if (p && p.catch) p.catch(() => {}); }   // a promise whose refusal is no news
   function mmdFull(fig) {
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-      return;
-    }
-    if (!fig.requestFullscreen) {
-      toast("No fullscreen", "this browser did not offer it");
-      return;
-    }
-    fig.requestFullscreen().catch(e => toast("No fullscreen", String(e && e.message ? e.message : e)));
+    const open = docEl.querySelector(".mmd[data-full]");
+    if (open) { mmdUnfill(open); return; }
+    mmdFullFrom = main.scrollTop;
+    fig.style.contentVisibility = "visible";
+    fig.dataset.full = "1";
+    mmdRefit();
+    if (document.documentElement.requestFullscreen && !document.fullscreenElement) quiet(document.documentElement.requestFullscreen());
   }
-
-  /* After the browser has finished resizing the page around it, not during:
-   *  measured mid-transition, a frame reports the width it is leaving and the
-   *  diagram comes back fitted to a column that is no longer there. */
-  document.addEventListener("fullscreenchange", () => {
+  function mmdUnfill(fig) {
+    delete fig.dataset.full;
+    main.scrollTo({ top: mmdFullFrom, behavior: "instant" });
+    mmdRefit();
+    if (document.fullscreenElement) quiet(document.exitFullscreen());
+  }
+  /** After the browser has laid the change out, not during: measured
+   *  mid-transition, a frame reports the width it is leaving and the diagram
+   *  comes back fitted to a column that is no longer there. */
+  function mmdRefit() {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
     }));
+  }
+  // The browser's own way out -- Escape, or whatever it binds -- ends the
+  // fill too; a window that changed size around it is measured again.
+  document.addEventListener("fullscreenchange", () => {
+    const open = docEl.querySelector(".mmd[data-full]");
+    if (open && !document.fullscreenElement) mmdUnfill(open);
+    else mmdRefit();
   });
 
   /** The controls, added once per figure and shown when it is under the cursor
@@ -1342,7 +1372,7 @@
       `<button type="button" data-mmd="out" title="Zoom out" aria-label="Zoom out">−</button>` +
       `<button type="button" data-mmd="in" title="Zoom in  (double-click, or ⌘/ctrl + scroll)" aria-label="Zoom in">+</button>` +
       `<button type="button" data-mmd="zoom" title="Show it at full size">100%</button>` +
-      `<button type="button" data-mmd="full" title="Fullscreen  f" aria-label="Fullscreen">⛶</button>`;
+      `<button type="button" data-mmd="full" title="Fill the screen  f" aria-label="Fill the screen">⛶</button>`;
     fig.appendChild(bar);
     mmdApply(fig);
   }
@@ -2194,10 +2224,73 @@
   const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
   for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
 
+  // ---------- the panes' widths ----------
+  /* Each pane's edge drags, between a floor where its rows stop being
+   * readable and a ceiling past which the document would be the pane that
+   * does not fit. The width goes into the custom property the grid already
+   * reads, so every rule that knows the pane's width follows, and into
+   * storage, which boot.js applies before first paint. Double-click puts the
+   * default back; for a keyboard the arrow keys move it and Home and End
+   * take it to either limit. */
+  const PANES = [
+    { el: sideEl, prop: "--side-w", key: "snyvi.side-w", min: 200, max: 440, dflt: 264, sign: 1 },
+    { el: rail, prop: "--rail-w", key: "snyvi.rail-w", min: 180, max: 400, dflt: 232, sign: -1 },
+  ];
+  for (const pane of PANES) {
+    const g = pane.el.querySelector(".gutter");
+    const width = () => parseFloat(getComputedStyle(root).getPropertyValue(pane.prop)) || pane.dflt;
+    const set = w => {
+      w = Math.round(Math.max(pane.min, Math.min(pane.max, w)));
+      root.style.setProperty(pane.prop, `${w}px`);
+      g.setAttribute("aria-valuenow", w);
+      return w;
+    };
+    g.setAttribute("aria-valuenow", width());
+    g.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      const x0 = e.clientX, w0 = width();
+      let w = w0;
+      g.setPointerCapture(e.pointerId);
+      root.dataset.resizing = "1";
+      const move = ev => { w = set(w0 + pane.sign * (ev.clientX - x0)); };
+      const up = () => {
+        delete root.dataset.resizing;
+        g.removeEventListener("pointermove", move);
+        g.removeEventListener("pointerup", up);
+        g.removeEventListener("pointercancel", up);
+        store.set(pane.key, String(w));
+      };
+      g.addEventListener("pointermove", move);
+      g.addEventListener("pointerup", up);
+      g.addEventListener("pointercancel", up);
+      e.preventDefault();
+    });
+    g.addEventListener("dblclick", () => {
+      root.style.removeProperty(pane.prop);
+      store.del(pane.key);
+      g.setAttribute("aria-valuenow", pane.dflt);
+    });
+    g.addEventListener("keydown", e => {
+      const step = e.shiftKey ? 64 : 16;
+      const to = e.key === "ArrowRight" ? width() + pane.sign * step
+        : e.key === "ArrowLeft" ? width() - pane.sign * step
+          : e.key === "Home" ? pane.min : e.key === "End" ? pane.max : null;
+      if (to === null) return;
+      store.set(pane.key, String(set(to)));
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  }
+
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
-    if (e.key === "Escape") { closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind(); return; }
+    if (e.key === "Escape") {
+      const filled = docEl.querySelector(".mmd[data-full]");
+      if (filled) mmdUnfill(filled);
+      closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind();
+      return;
+    }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
     if (browsing() && (e.key === "j" || e.key === "k")) {
       const links = [...browseEl.querySelectorAll(".b-file a")];

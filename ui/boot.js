@@ -8,4 +8,7 @@ try {
   if (localStorage.getItem("snyvi.rail") === "0") d.dataset.rail = "0";
   if (localStorage.getItem("snyvi.wide") === "1") d.dataset.wide = "1";
   if (localStorage.getItem("snyvi.wrap") === "1") d.dataset.wrap = "1";
+  var sw = +localStorage.getItem("snyvi.side-w"), rw = +localStorage.getItem("snyvi.rail-w");
+  if (sw) d.style.setProperty("--side-w", sw + "px");
+  if (rw) d.style.setProperty("--rail-w", rw + "px");
 } catch (e) {}

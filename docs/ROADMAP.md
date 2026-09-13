@@ -25,6 +25,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | A refresh keeps the place | A watched file saved while it is being read swapped the body and restored a pixel offset into blocks that were still 60 px placeholders: the reader landed 57 paragraphs from where they were. The place is a block and an offset into it now. | S | **done 0.11** |
 | Section links | The `#` beside a heading was rendered `inert` and drawn outside a box that paint containment clips to, so it existed in the markup and nowhere else. It is a link now: a click writes the section into the URL and the clipboard, the way a line number does, and the contents write the same slugs. | XS | **done 0.11** |
 | Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key or a button in the header, closed by Escape or a tap outside, and the contents open on the current section. | S | **done 0.12** |
+| Panes that resize | The sidebar was 264 px and every title in it was cut at 26 characters, three plans with the same first words among them. Both panes' edges drag, between a floor and a ceiling, by keyboard too, and the width is kept. | S | **done 0.13** |
+| A diagram fills the screen from inside the page | In the Linux window's engine a figure of its own in the top layer drew every glyph as nothing, and came back the size of its placeholder until the next scroll. The figure is laid over the page and the document asks for fullscreen: the same in every engine, and the labels are drawn in that one. | S | **done 0.13** |
 | Back returns to where the reader was | A document opened again through Back opens at the top. Keep the place in the history entry, the way a refresh now keeps it. | XS | next |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
@@ -682,8 +684,8 @@ What the probe found on the way, none of it visible from the code:
   current entry at all. Both rails now read every heading's position on
   the frame after a scroll, which headings can afford because they opt
   out of `content-visibility`. At the very end the last section is
-  current even when it is shorter than the fold, which the 0.13 plan
-  below had listed.
+  current even when it is shorter than the fold, which the plan for the
+  next release had listed.
 - Tab reached the copy button of a code block below the fold and the
   next Tab landed on the body, so the rail's entries were never reached
   by keyboard. The browser focuses an element inside a placeholder
@@ -708,6 +710,62 @@ What the probe found on the way, none of it visible from the code:
   would be on any pane the browser chained itself; the next one moves
   the document. The row allows one wheel's worth.
 
+## 0.13: the panes fit the reader
+
+A screenshot of the library in use, in the window: a 264 px sidebar
+with every title in it cut at 26 characters -- "Generation model
+comparison: Op…" three times over, three plans with the same first
+words -- and a report that a diagram filled to the screen showed its
+boxes and none of its words, and came back blank until the page was
+scrolled. The first was a width nobody had meant as a limit; the second
+was two faults, and neither showed in Chromium.
+
+Each pane's edge drags now, the sidebar's right and the rail's left,
+between a width where the rows are still readable and one past which
+the document would be the pane that does not fit -- 200 to 440 px and
+180 to 400 -- with double-click for the default, the arrow keys for a
+keyboard, and the width kept, applied by boot.js before first paint so
+nothing jumps. The width is the custom property the grid already read,
+so the sheet at 760 px, the wide layout's rules and the rail's own
+scroll follow without a change.
+
+The diagram was WebKitGTK, the engine of the Linux window. Driven under
+Xvfb, a plain page with a bold word, a button, an SVG `<text>` and a
+`foreignObject` went fullscreen as an element and drew none of them: the
+rects stayed, every glyph went, and the button shrank to its padding,
+so the glyphs had no width either. The same page with the document as
+the fullscreen element drew everything; so did the element with the
+DMA-BUF renderer off, or compositing off. The fault is the engine's
+element fullscreen on its default path, and nothing in a page mends it
+there; what a page can do is keep the figure out of the top layer. `f`
+and the button lay the figure over the page from where it is, as a
+fixed box, and the document asks the browser for fullscreen as a
+courtesy that hides the browser's chrome where it is granted. The same
+result in every engine, and the labels are drawn in this one.
+
+The blank on the way back was `content-visibility: auto`. Leaving the
+top layer put the figure back in the flow as a placeholder, and WebKit
+did not read again whether it was near the viewport until the next
+scroll, so the frame measured 0 × 0 and the fit that runs after
+fullscreen returned early with the fullscreen's zoom still on it.
+Chromium got this right for a click on the button only because 0.12's
+focus handler had marked the block visible, and would have got it wrong
+for `f`. A figure that has filled the screen is marked visible for
+good: it is the one the reader is looking at.
+
+The rows, in `bench/ui.mjs` beside the 0.11 and 0.12 ones, 32 in all:
+
+| | reads |
+|---|---|
+| the panes' edges | a 120 px drag makes a 384 px sidebar and the document starts at 384; 600 more stops at 440; 440 after a reload; ArrowLeft makes 424 and announces it; double-click gives 264 and a reload keeps it; the rail goes from 232 to 332 and back |
+| a diagram, filled | `f` makes the frame the window, the figure not in the top layer, the labels laid out; Escape gives back a fitted figure at column width with no scroll, the document where it was; the button does both |
+
+`bench/webkit.py` reads the same two rows in WebKitGTK, off the pixels
+for the first -- the label's box has ink in it -- since layout was what
+said the labels were there when the screen said they were not. By hand
+for now: the only runners with the engine are the ones that build the
+window.
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
@@ -717,7 +775,8 @@ would fail if it stopped being true. The bench already does the last of
 these for the daemon and the renderer; 0.11 was the first time the
 behaviour of the page was measured the same way, and it found eleven
 faults in an afternoon; 0.12 made the measuring a check in CI, and the
-check found six more before it passed. So the rule for what is left: nothing goes into
+check found six more before it passed; 0.13's two faults were in an
+engine the check does not run, and got a harness of their own. So the rule for what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
 
@@ -737,18 +796,23 @@ diagram tools already are. Probe: Tab from the top of the page reaches
 every control; at 700 and 1000 px every key still does what the help box
 says. Cost M.
 
-**0.13: a read that never loses its place.** Back to a document opens it
-where the reader left it, the way a refresh now does; the browse path
-lands a fragment the way the document path now does. (The last heading
-becoming current at the end of a short final section, listed here
-before, came with 0.12's marker.) Probe: read to the end, `j`, Back,
-same block. Cost S.
+**0.13: the panes fit the reader** (shipped; the notes above). The
+sidebar and the rail resize by drag and by key, within limits, and
+remember it; a diagram fills the screen from inside the page, since the
+Linux window's engine draws no text in an element of its own in the top
+layer. Probe: the nine rows above. Cost S.
 
-**0.14: the library, in use.** Delete without a dialog: the document goes
-at once and the toast offers "Undo" for eight seconds, over a soft
-delete that `prune` makes final. Arrivals that come in a burst become
-one toast that counts. Unread badges survive a restart. Probe: delete,
-undo, the row is back; twelve sends in two seconds, one toast. Cost M.
+**0.14: a read that never loses its place, and the library in use.**
+Back to a document opens it where the reader left it, the way a refresh
+now does; the browse path lands a fragment the way the document path
+now does. (The last heading becoming current at the end of a short
+final section, listed here before, came with 0.12's marker.) Delete
+without a dialog: the document goes at once and the toast offers "Undo"
+for eight seconds, over a soft delete that `prune` makes final.
+Arrivals that come in a burst become one toast that counts. Unread
+badges survive a restart. Probe: read to the end, `j`, Back, same
+block; delete, undo, the row is back; twelve sends in two seconds, one
+toast. Cost M.
 
 **0.15: the three desktops.** macOS in the release matrix with a `.app`;
 the Linux window on arm64; the global shortcut the tray item was half

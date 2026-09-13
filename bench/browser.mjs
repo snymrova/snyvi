@@ -194,9 +194,12 @@ async function main() {
   }
 }
 
-/** Fullscreen, which is the one gesture the page cannot fake for itself: the
- *  browser grants it to a real click and to nothing else, so the click is sent
- *  through the protocol. */
+/** Filling the screen, which is the one gesture the page cannot fake for
+ *  itself: the browser grants fullscreen to a real click and to nothing else,
+ *  so the click is sent through the protocol. What is read is the fill -- the
+ *  figure over the whole window, its labels laid out, and not the figure
+ *  itself in the top layer, which is the fault 0.13 took out -- and the way
+ *  back: the figure at column width again with no scroll to prompt it. */
 async function fullscreen(cdp, sessionId) {
   const at = await evaluate(cdp, sessionId, `(() => {
     const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
@@ -213,28 +216,38 @@ async function fullscreen(cdp, sessionId) {
   }
   await sleep(600);
   const inside = await evaluate(cdp, sessionId, `(() => {
-    const el = document.fullscreenElement;
+    const el = document.querySelector(".mmd[data-full]");
     const frame = el && el.querySelector(".mmd-frame");
-    return { is: !!el && el.classList.contains("mmd"),
+    const labels = el ? [...el.querySelectorAll("foreignObject, text")].filter(t => t.getBoundingClientRect().width > 0).length : 0;
+    return { is: !!el, topLayer: !!el && document.fullscreenElement === el, labels,
       height: frame ? Math.round(frame.getBoundingClientRect().height) : 0,
       window: Math.round(innerHeight) };
   })()`);
-  await evaluate(cdp, sessionId, `document.fullscreenElement ? document.exitFullscreen() : null`);
+  // Escape, the way a reader leaves.
+  for (const type of ["rawKeyDown", "keyUp"]) {
+    await cdp.send("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, sessionId);
+  }
   await sleep(600);
   const after = await evaluate(cdp, sessionId, `(() => {
     const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
-    return { out: !document.fullscreenElement,
-      height: fig ? Math.round(fig.querySelector(".mmd-frame").getBoundingClientRect().height) : 0,
+    const frame = fig && fig.querySelector(".mmd-frame");
+    return { out: !document.querySelector(".mmd[data-full]") && !document.fullscreenElement,
+      width: frame ? frame.clientWidth : 0,
+      height: frame ? Math.round(frame.getBoundingClientRect().height) : 0,
       window: Math.round(innerHeight) };
   })()`);
-  const ok = inside.is && inside.height >= inside.window - 4 && after.out && after.height > 0 && after.height < after.window;
+  const ok = inside.is && !inside.topLayer && inside.labels > 0 && inside.height >= inside.window - 4
+    && after.out && after.width > 0 && after.height > 0 && after.height < after.window;
   return {
     ok, ...inside,
-    why: !inside.is ? "the button did not put it fullscreen"
-      : inside.height < inside.window - 4 ? `fullscreen left it ${inside.height} px tall in a ${inside.window} px screen`
-        : !after.out ? "it never came back out"
-          : after.height >= after.window ? `it came back ${after.height} px tall, still filling the page`
-            : `${inside.height} px of screen, and ${after.height} px back in the document`,
+    why: !inside.is ? "the button did not fill the screen"
+      : inside.topLayer ? "the figure itself went into the top layer"
+        : inside.labels === 0 ? "filled, with no label laid out"
+          : inside.height < inside.window - 4 ? `filled ${inside.height} px of a ${inside.window} px screen`
+            : !after.out ? "it never came back out"
+              : after.width === 0 ? "it came back with no size, waiting on a scroll"
+                : after.height >= after.window ? `it came back ${after.height} px tall, still filling the page`
+                  : `${inside.height} px of screen with ${inside.labels} labels, and ${after.height} px back in the document`,
   };
 }
 
