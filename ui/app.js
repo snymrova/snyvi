@@ -5,7 +5,7 @@
   const boot = JSON.parse($("#boot").textContent || "{}");
   const root = document.documentElement;
   const main = $("#main"), docEl = $("#doc"), treeEl = $("#tree"), tocEl = $("#toc"), metaEl = $("#meta"), rail = $("#rail");
-  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row");
+  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueEl = $("#queue"), queueBar = $("#queue-bar");
 
   const state = {
     tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded
@@ -14,8 +14,8 @@
     doc: boot.doc || null,
     previous: boot.previous || null,
     folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
-    unread: new Map(),          // project id -> count
-    lastActivity: 0,
+    queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
+    waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
     cache: new Map(),           // id -> {doc, html, previous}
     split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),
     comparing: null,            // {a, b} while a comparison is shown
@@ -43,8 +43,9 @@
   const kindTag = k => ({ markdown: "md", code: "code", diff: "diff", text: "txt", image: "img", binary: "bin", table: "csv" }[k] || k);
   const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
   const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }, del: k => { try { localStorage.removeItem(k); } catch {} } };
-  const idle = () => Date.now() - state.lastActivity > 2500 && !(window.getSelection() && String(window.getSelection()).length);
-  ["scroll", "keydown", "mousedown", "wheel", "touchstart"].forEach(e => window.addEventListener(e, () => { state.lastActivity = Date.now(); }, { passive: true, capture: true }));
+  /** The ids on the queue, for the rows that carry a mark. Rebuilt whenever
+   *  the queue is drawn, which is after every change to it. */
+  let queueIds = new Set(state.queue.map(d => d.id));
 
   // ---------- tree ----------
   const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
@@ -89,9 +90,116 @@
   const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
 
   const docRow = d => {
-    const active = state.doc && state.doc.id === d.id ? "active" : "";
-    return `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
+    const cls = [state.doc && state.doc.id === d.id ? "active" : "", waitingRow(d) ? "new" : ""].join(" ").trim();
+    return `<li class="t-doc"><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
   };
+
+  // ---------- the queue ----------
+  /* What arrived and has not been opened, in the order it came. An arrival
+   * joins it and an open leaves it, wherever the open came from: it is the
+   * unread set with an order, not a second list to keep. It never takes the
+   * page away from a reader. Before 0.14 an arrival opened itself whenever
+   * the reader had gone 2.5 s without touching anything -- which is what
+   * reading a paragraph looks like -- and with several agents sending, the
+   * document changed under them many times an hour. Now it is a row at the
+   * top of the sidebar, a bar above the document, and `n`. */
+  const QUEUE_ROWS = 6;    // in the sidebar; the inbox lists the rest
+  const QUEUE_HELD = 24;   // what a page opens with and keeps; the count is the daemon's, whatever is held
+  /** Whether a row is on the queue: held here, or marked by the daemon on a
+   *  row fetched with its project. */
+  const waitingRow = d => queueIds.has(d.id) || !!d.unread;
+  /** Rows fetched with their projects carry the daemon's mark; when a read
+   *  happens here, the mark comes off here too, rather than a refetch. */
+  function unmarkRows(ids) {
+    for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.unread && (!ids || ids.has(d.id))) d.unread = false;
+  }
+  /** Fewer held than are waiting, and room to hold more: ask for the oldest
+   *  again. A moment later, so a burst of twelve is one ask and not twelve. */
+  let holdTimer = 0;
+  function holdQueue() {
+    if (state.queue.length >= QUEUE_HELD || state.waiting <= state.queue.length) return;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(async () => {
+      try {
+        const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
+        if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
+      } catch {}
+    }, 150);
+  }
+  const queueRow = d => `<li class="t-doc"><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span></a></li>`;
+  const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+  /** The section at the top of the sidebar and the bar above the document,
+   *  both from the same rows. The bar is not drawn on the inbox, which lists
+   *  the queue itself. */
+  function renderQueue() {
+    queueIds = new Set(state.queue.map(d => d.id));
+    const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
+    queueEl.innerHTML = !n || !head ? "" : `<div class="t-queue"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
+      state.queue.slice(0, QUEUE_ROWS).map(queueRow).join("") +
+      (n > shown ? `<li class="t-more"><a href="/" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
+    const bar = n > 0 && !!head && state.view !== "inbox";
+    queueBar.hidden = !bar;
+    queueBar.innerHTML = !bar ? "" : `<div class="qb"><span class="qb-n">${n} waiting</span><span class="qb-next"><b>${esc(head.title)}</b> · ${esc(head.project)}</span>` +
+      `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
+      `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+  }
+
+  /** The reader opened a document: off the queue here at once, and on the
+   *  server so every other tab hears. */
+  function markRead(id) {
+    const held = queueIds.has(id);
+    let marked = false;
+    for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.id === id && d.unread) marked = true;
+    if (!held && !marked) return;
+    if (held) { state.queue = state.queue.filter(d => d.id !== id); queueIds.delete(id); }
+    unmarkRows(new Set([id]));
+    state.waiting = Math.max(0, state.waiting - 1);
+    fetch(`/api/docs/${id}/read`, { method: "POST" }).catch(() => {});
+  }
+
+  /** `n`: the oldest waiting document. Opening it takes it off, so the next
+   *  `n` is the one after; a reader drains the queue with one key. */
+  function openNext() {
+    const d = state.queue[0];
+    if (!d) { toast("Nothing waiting", "Every document that arrived has been opened."); return; }
+    showDoc(d.id, true);
+  }
+
+  /** Everything waiting, read without being opened: for the day an agent
+   *  sent thirty and the reader wants the sidebar back. */
+  async function clearQueue() {
+    const n = state.waiting;
+    if (!n) return;
+    state.queue = []; state.waiting = 0;
+    unmarkRows(null);
+    renderTree(); markActive();
+    if (state.view === "inbox") showInbox(false);
+    try { await fetch("/api/queue/clear", { method: "POST" }); } catch {}
+    toast("Marked read", plural(n, "document"));
+  }
+
+  /** Rows leaving the queue, told by the server: this tab's own opens come
+   *  back this way too, and are already gone. */
+  function dropFromQueue(ids, waiting) {
+    const gone = new Set(ids);
+    const known = state.queue.some(d => gone.has(d.id)) || (waiting != null && waiting !== state.waiting);
+    state.queue = state.queue.filter(d => !gone.has(d.id));
+    unmarkRows(gone);
+    if (waiting != null) state.waiting = waiting;
+    if (!known) return;
+    renderTree(); markActive();
+    if (state.view === "inbox") showInbox(false);
+    holdQueue();
+  }
+
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-q]");
+    if (!b) return;
+    e.preventDefault();
+    if (b.dataset.q === "next") openNext();
+    else if (b.dataset.q === "clear") clearQueue();
+  });
 
   /** The rows inside one project: its sessions, their documents, and — where a
    *  cap left something out — what it would take to see the rest. A project
@@ -122,6 +230,7 @@
     // A link, so the keyboard reaches it: a div with a click handler is a row
     // Tab walks straight past.
     inboxRowEl.innerHTML = `<a class="t-inbox ${state.view === "inbox" ? "active" : ""}" href="/" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></a>`;
+    renderQueue();
     renderBrowse();
     if (!projects.length) {
       treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
@@ -131,8 +240,7 @@
     let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
       const open = projOpen(p);
-      const unread = state.unread.get(p.id) || 0;
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${unread ? `<span class="badge">${unread}</span>` : ""}${renameBtn("project", p.id)}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -470,11 +578,12 @@
     return j;
   }
 
-  async function showDoc(id, push = true) {
+  async function showDoc(id, push = true, fromHistory = false) {
     let j;
     try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
+    if (push) leave();
     state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
-    state.unread.delete(j.doc.project_id);
+    markRead(id);
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
     swapIn();
@@ -482,21 +591,40 @@
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
     if (push) history.pushState({ id }, "", `/d/${id}`);
-    main.scrollTo({ top: 0, behavior: "instant" });
+    if (fromHistory && kept("id", id)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
+
+  /** Where the reader is, written into the page's history entry so that Back
+   *  (or Forward) opens it there rather than at the top -- the way a save
+   *  already keeps the place. A block and an offset into it, not a pixel
+   *  count, since the page may be laid out afresh by then. Written as they
+   *  leave, and a moment after each scroll for the departures the page never
+   *  sees: the browser's own Back and Forward. */
+  function leave() {
+    const reading = (state.view === "doc" && state.doc && !state.comparing) || (browsing() && state.browsePath);
+    if (reading) history.replaceState({ ...(history.state || {}), place: placeOf() }, "", location.pathname + location.hash);
+  }
+  let leaveTimer = 0;
+  main.addEventListener("scroll", () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(leave, 400); }, { passive: true });
+
+  /** Whether the entry history landed on is the page asked for, with a place
+   *  in it. Only a move through history asks: a re-render of the same page --
+   *  a preview toggled, a split view -- starts at the top as it always did. */
+  const kept = (key, value) => !!(history.state && history.state[key] === value && history.state.place);
 
   function browseHtml(f, root) {
     const sub = `${esc(root.name)} · ${esc(f.path)} · ${fmtSize(f.size)} · ${rel(f.modified)}`;
     return `<header class="doc-head"><h1 class="doc-title">${esc(f.name)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${f.kind}">${f.html}</article>`;
   }
 
-  async function showBrowse(rootId, path, push = true) {
+  async function showBrowse(rootId, path, push = true, fromHistory = false) {
     path = path || "";
     if (!path) {
       // No file asked for and no README: show the folder's contents.
       let entries = [], root = state.browse.find(r => r.id === rootId);
       try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=`)).json(); } catch {}
+      if (push) leave();
       state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
       state.browseRoot = root || state.browseRoot; state.browsePath = "";
       setPreview(null, null, `b:${rootId}:`);
@@ -515,6 +643,7 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       j = await r.json();
     } catch (e) { toast("Could not open file", String(e)); return; }
+    if (push) leave();
     state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
     state.browseRoot = j.root; state.browsePath = path;
     setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
@@ -523,11 +652,12 @@
     applyPreview();
     document.title = j.file.name;
     if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
-    main.scrollTo({ top: 0, behavior: "instant" });
+    if (fromHistory && history.state.browse === rootId && kept("path", path)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
 
   async function showInbox(push = true) {
+    if (push) leave();
     state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
     let items = boot.inbox;
     if (!items || push) {
@@ -536,14 +666,28 @@
     boot.inbox = null;
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
-    if (!items.length) {
-      docEl.innerHTML = `<div class="empty-state"><h1>Nothing to read yet</h1><p>Documents your agents send will appear here, filed by project.</p><pre>snyvi send PLAN.md\nsnyvi init-claude</pre></div>`;
-    } else {
-      docEl.innerHTML = `<div class="inbox-head"><h1>Inbox</h1><p>Newest first, across every project.</p></div><ul class="inbox">` +
-        items.map(d => `<li><a href="/d/${d.id}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`).join("") + `</ul>`;
-    }
+    docEl.innerHTML = inboxHtml(items);
     if (push) swapIn();
     afterRender();
+    // The inbox lists every waiting row, and the page opened with the oldest
+    // few: the rest come after the page is on screen, not before the sidebar is.
+    if (state.waiting > state.queue.length) {
+      try {
+        const q = await (await fetch("/api/queue")).json();
+        if (Array.isArray(q) && state.view === "inbox") { state.queue = q; docEl.innerHTML = inboxHtml(items); renderTree(); markActive(); }
+      } catch {}
+    }
+  }
+
+  function inboxHtml(items) {
+    const row = d => `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`;
+    if (!items.length) return `<div class="empty-state"><h1>Nothing to read yet</h1><p>Documents your agents send will appear here, filed by project.</p><pre>snyvi send PLAN.md\nsnyvi init-claude</pre></div>`;
+    // What is waiting comes first, oldest first, so the landing page answers
+    // "what is new" before "what is there".
+    const n = state.waiting;
+    return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
+      (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the first<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
+      `<ul class="inbox">${items.map(row).join("")}</ul>`;
   }
 
   async function showCompare(aId, bId) {
@@ -581,6 +725,8 @@
     try {
       await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       state.cache.delete(d.id);
+      state.queue = state.queue.filter(x => x.id !== d.id);
+      state.waiting = Math.max(0, state.waiting - (waitingRow(d) ? 1 : 0));
       await refreshTree(d.project_id);
       toast("Deleted", d.title);
       showInbox(true);
@@ -637,12 +783,16 @@
     const el = p.i >= 0 ? docEl.querySelectorAll(".prose > *")[p.i] : null;
     if (!el) { main.scrollTo({ top: p.top, behavior: "instant" }); return; }
     const put = () => {
+      if (!el.isConnected) return;   // the page moved on before a late put
       el.scrollIntoView({ block: "start", behavior: "instant" });
       main.scrollBy({ top: el.getBoundingClientRect().top - main.getBoundingClientRect().top - p.delta, behavior: "instant" });
     };
     put();
     // Once more after the blocks around it have been laid out for real.
     requestAnimationFrame(() => requestAnimationFrame(put));
+    // And once the swap-in has finished, when there is one: it translates the
+    // body 4 px while it runs, and a put measured during it lands 4 px off.
+    if (docEl.classList.contains("swap")) docEl.addEventListener("animationend", put, { once: true });
   }
 
   /** A stored document was overwritten (a hook or `snyvi watch` send) or finished
@@ -1865,7 +2015,7 @@
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
       previewButton() +
-      `<button data-act="delete">Delete…<kbd>⌫</kbd></button>` +
+      `<button data-act="delete">Delete…<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button>` : "") +
@@ -1987,9 +2137,9 @@
     // Back or forward to a hash on the document already on screen -- the `#`
     // beside a heading pushes one -- is a move within it, not a rebuild.
     if (d && state.view === "doc" && state.doc && state.doc.id === d[1] && !state.comparing) return jumpToHash();
-    if (d) return showDoc(d[1], false);
+    if (d) return showDoc(d[1], false, true);
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
-    if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false);
+    if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     showInbox(false);
   });
 
@@ -1999,30 +2149,40 @@
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
-      const elsewhere = !state.doc || state.doc.project_id !== d.project_id;
       // One project moved, so one project's rows are what is refetched. This
       // used to pull the whole library back down and rebuild the sidebar on
       // every arrival -- a file saved every few seconds paid it every few
-      // seconds -- and the unread count is set first so one render serves both.
+      // seconds.
       // An overwrite of a document already here is not an arrival: refresh it where
       // it is if it is on screen, never navigate to it, and never toast — a file
       // being watched changes on every save.
       if (j.existing) {
         if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
-        else { state.cache.delete(d.id); if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); }
+        else state.cache.delete(d.id);
         await refreshTree(d.project_id);
         return;
       }
-      if (state.view === "inbox" || idle()) {
-        state.cache.delete(d.id);
-        await refreshTree(d.project_id);
-        await showDoc(d.id, true);
-        toast(d.title, `${d.project} · just now`);
-      } else {
-        if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1);
-        await refreshTree(d.project_id);
-        toast(d.title, `${d.project} · click to open`, () => showDoc(d.id, true));
-      }
+      // An arrival joins the queue and the page stays where it is. The one
+      // place it opens by itself is the inbox with nothing waiting: the empty
+      // state exists to be filled, and a reader there has nothing to lose.
+      // An inbox with a queue on it is the queue, and the arrival is a row.
+      const opens = state.view === "inbox" && !state.waiting;
+      // Held in order only while everything waiting is held: past that the
+      // arrival is the newest, and belongs after rows this page never had.
+      if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
+      state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
+      holdQueue();   // a burst's events carry counts ahead of the rows this page holds
+      state.cache.delete(d.id);
+      renderTree(); markActive();
+      await refreshTree(d.project_id);
+      if (opens) { await showDoc(d.id, true); toast(d.title, `${d.project} · just now`); }
+      else if (state.view === "inbox") showInbox(false);
+    });
+    // A document was opened somewhere -- this tab, another, the window -- and
+    // is off the queue everywhere.
+    es.addEventListener("read", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (Array.isArray(j.ids)) dropFromQueue(j.ids, j.waiting);
     });
     // A large code file finished highlighting in the background: swap the body in place.
     es.addEventListener("rendered", ev => {
@@ -2042,6 +2202,8 @@
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.cache.delete(j.id);
+      state.queue = state.queue.filter(d => d.id !== j.id);
+      if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();
       if (state.doc && state.doc.id === j.id) showInbox(true);
     });
@@ -2291,6 +2453,15 @@
       closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind();
       return;
     }
+    // Back and forward, where the browser does not do it itself: the desktop
+    // window has no toolbar and no shortcut of its own for either. A browser
+    // that has one yields it to the page's preventDefault, so this is one
+    // step there too, not two.
+    if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      if (e.key === "ArrowLeft") history.back(); else history.forward();
+      return;
+    }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
     if (browsing() && (e.key === "j" || e.key === "k")) {
       const links = [...browseEl.querySelectorAll(".b-file a")];
@@ -2312,7 +2483,10 @@
       case "s": toggleSplit(); break;
       case "v": togglePreview(); break;
       case "/": openFind(); break;
-      case "Backspace": case "Delete": deleteCurrent(); break;
+      // Delete and not Backspace: a key a reader leans on while thinking is
+      // not a key to lose a document to.
+      case "Delete": deleteCurrent(); break;
+      case "n": openNext(); break;
       case "i": showInbox(true); break;
       case "w": toggleWide(); break;
       case "z": toggleWrap(); break;
@@ -2340,6 +2514,8 @@
 
   // ---------- boot ----------
   if (state.view === "doc" && state.doc) {
+    // Opened from a link -- an agent's, or the notification's -- so it is read.
+    markRead(state.doc.id);
     document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname + location.hash);
     // A link to a section: the browser's own fragment scroll aimed at a
     // placeholder, the same way a smooth scroll does. Land it properly.

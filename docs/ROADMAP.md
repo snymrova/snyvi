@@ -27,7 +27,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key or a button in the header, closed by Escape or a tap outside, and the contents open on the current section. | S | **done 0.12** |
 | Panes that resize | The sidebar was 264 px and every title in it was cut at 26 characters, three plans with the same first words among them. Both panes' edges drag, between a floor and a ceiling, by keyboard too, and the width is kept. | S | **done 0.13** |
 | A diagram fills the screen from inside the page | In the Linux window's engine a figure of its own in the top layer drew every glyph as nothing, and came back the size of its placeholder until the next scroll. The figure is laid over the page and the document asks for fullscreen: the same in every engine, and the labels are drawn in that one. | S | **done 0.13** |
-| Back returns to where the reader was | A document opened again through Back opens at the top. Keep the place in the history entry, the way a refresh now keeps it. | XS | next |
+| Back returns to where the reader was | A document opened again through Back opened at the top. The place is in the history entry now, written as the reader leaves and after each scroll, the way a refresh keeps it; and alt+← is Back in the window, which had no way back at all. | XS | **done 0.14** |
+| An arrival never takes the page away | An arrival opened itself whenever the page had gone 2.5 s without a scroll or a key -- which is what reading a paragraph looks like -- and with several agents sending, the document changed under the reader many times an hour, with no way back in the window and no trace of the new one once its toast was gone. Arrivals join a queue: a row in the sidebar, a mark in the tree, a bar above the document that counts, `n` to read down the line. The one place an arrival opens itself is an inbox with nothing waiting. | S | **done 0.14** |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
 ## B. Library and organisation
@@ -39,10 +40,10 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Search filters | Scope search to a project, a kind, or a date range with prefixes (`p:snyvi kind:diff`). | S | **done 0.2** |
 | Delete a document from the UI | With confirmation. Prune covers bulk; users still want to remove one. | S | **done 0.2** |
 | Delete with undo instead of a dialog | The confirmation is `window.confirm`, which the native window draws as the toolkit's dialog in the toolkit's theme. Delete at once and offer "Undo" in the toast for eight seconds, over a soft delete that prune makes final. | M | next |
-| Arrivals that come in a burst | Each arrival is a toast and nothing caps them: an agent that writes twelve files stacks twelve. Past three in a few seconds, one toast that counts. | XS | next |
+| Arrivals that come in a burst | Each arrival was a toast and nothing capped them: an agent that writes twelve files stacked twelve. They are rows on the queue now, and the bar above the document says "12 waiting"; there is no arrival toast at all. | XS | **done 0.14** |
 | Rename workflow and project | Session-derived titles are guesses; let the user fix them inline. | S | **done 0.4** |
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
-| Unread state persisted | Badges survive restarts. | XS | later |
+| Unread state persisted | The badge was a count per project in one tab's memory: a sibling document from the project being read left no mark, and a restart forgot the rest. Unread is a column now and the queue is a query on it, so it is the same in every tab and the window and survives a restart. | XS | **done 0.14** |
 | Archive a project | Hide finished projects from the tree without deleting. | S | later |
 | Export | Copy as Markdown, print stylesheet polish, save as PDF via print. | S | maybe |
 
@@ -766,6 +767,66 @@ said the labels were there when the screen said they were not. By hand
 for now: the only runners with the engine are the ones that build the
 window.
 
+## 0.14: a read that is never interrupted
+
+A report from use, with several agents sending: "I was reading a doc,
+then another doc came and everything changed. It just showed the doc,
+and I was not able to go to the previous one, and it did not ask."
+Three faults, and all three were in the design rather than in the code.
+
+The page opened an arrival by itself whenever the reader had gone 2.5
+seconds without a scroll, a key, a click or a wheel and had nothing
+selected. That is what reading a paragraph looks like. The rule was
+written for a tab left open on another monitor, and it cannot tell
+reading from absence; with three agents finishing at once it guessed
+wrong many times an hour. There was no way back in the window, which
+has no toolbar and had no key for it. And once the arrival's toast had
+gone, eight seconds later, nothing said it had come: the badge was a
+count per project, kept in one tab's memory, skipped for the project on
+screen, and forgotten on restart.
+
+The reader's proposal was a queue, and it is a better design than the
+"open or dismiss" strip it replaced in the plan: a strip asks a question
+and the question expires; a queue makes no demand. What arrives and is
+not opened is on it, in arrival order. It is the unread set with an
+order and nothing more -- an `unread` column, one query -- so it lives
+in the daemon, is the same in every tab and the window, and survives a
+restart. It shows in three places from one state: a "Waiting" section
+at the top of the sidebar with the oldest six and "N more"; the same
+mark on each row in the tree; and a bar above the document, in the
+document's measure, that counts and names the oldest, with Open, Show
+all and Mark all read. The bar has no height, so a bar that appears
+mid-read lays over the page's top margin rather than pushing the text
+down under the reader. `n` opens the oldest and takes it off, so the
+next `n` is the one after. Opening a document any other way takes it
+off the same way, and every tab hears through a `read` event. The
+inbox lists what is waiting first, then everything else. The one place
+an arrival still opens itself is an inbox with nothing waiting, which
+is the empty state that exists to be filled; an inbox with a queue on it
+is the queue, and the arrival is a row. There is no arrival toast any
+more: the row and the bar are the notice, and twelve in two seconds are
+twelve rows and a bar that says twelve.
+
+Back opens a document where the reader left it. The place -- a block
+and an offset into it, the shape a save already keeps -- is written into
+the history entry as they leave and 400 ms after each scroll, the second
+for the departures the page never sees: the browser's own Back and
+Forward. It is read only on a move through history, so a preview
+toggled or a split view still starts at the top. alt+← and alt+→ are
+Back and Forward in the page, for the window; a browser with the same
+shortcut yields it to the page's preventDefault, so there it is one step
+and not two.
+
+And Backspace no longer deletes: a key a reader leans on while thinking
+is not a key to lose a document to, least of all once delete loses its
+dialog in 0.15. Delete is on Del, and on the button.
+
+The rows, in `bench/ui.mjs`, eight more for 40 in all:
+
+| | reads |
+|---|---|
+| arrivals, while reading | an arrival at block 30 of the plan leaves the page at block 30, the bar reading "1 waiting" with its title, one row in the sidebar, one mark in the tree; `n` opens it and every mark is gone; alt+← lands on the plan at the same block and offset; alt+→ is the arrival again; twelve at once read "12 waiting", six rows and "6 more" in the daemon's order; a reload still says twelve; `i` lists the twelve first; an arrival on that inbox is a 13th row and not a page, and Mark all read empties it through a reload; an arrival on an empty inbox opens itself, read |
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
@@ -776,7 +837,8 @@ these for the daemon and the renderer; 0.11 was the first time the
 behaviour of the page was measured the same way, and it found eleven
 faults in an afternoon; 0.12 made the measuring a check in CI, and the
 check found six more before it passed; 0.13's two faults were in an
-engine the check does not run, and got a harness of their own. So the rule for what is left: nothing goes into
+engine the check does not run, and got a harness of their own; 0.14's
+three came from a reader with several agents, and were the design's. So the rule for what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
 
@@ -802,24 +864,27 @@ remember it; a diagram fills the screen from inside the page, since the
 Linux window's engine draws no text in an element of its own in the top
 layer. Probe: the nine rows above. Cost S.
 
-**0.14: a read that never loses its place, and the library in use.**
-Back to a document opens it where the reader left it, the way a refresh
-now does; the browse path lands a fragment the way the document path
-now does. (The last heading becoming current at the end of a short
-final section, listed here before, came with 0.12's marker.) Delete
-without a dialog: the document goes at once and the toast offers "Undo"
-for eight seconds, over a soft delete that `prune` makes final.
-Arrivals that come in a burst become one toast that counts. Unread
-badges survive a restart. Probe: read to the end, `j`, Back, same
-block; delete, undo, the row is back; twelve sends in two seconds, one
-toast. Cost M.
+**0.14: a read that is never interrupted** (shipped; the notes above).
+An arrival joins a queue and never takes the page away; `n` reads down
+the line; Back opens a document where the reader left it and works in
+the window; unread is the daemon's and survives a restart. (The last
+heading becoming current at the end of a short final section, listed
+here before, came with 0.12's marker; the browse path landing a
+fragment moves to 0.15 with the rest of the library work.) Probe: the
+eight rows above. Cost M.
 
-**0.15: the three desktops.** macOS in the release matrix with a `.app`;
-the Linux window on arm64; the global shortcut the tray item was half
-of; the window as the place an agent's link opens when it is running,
-rather than a browser beside it; and the Windows list under "Not yet proven on Windows" watched by a
-person on a real machine, with the cold start measured there and the
-bench's Windows budget set from it. Cost M.
+**0.15: the three desktops, and the library in use.** macOS in the
+release matrix with a `.app`; the Linux window on arm64; the global
+shortcut the tray item was half of; the window as the place an agent's
+link opens when it is running, rather than a browser beside it; and the
+Windows list under "Not yet proven on Windows" watched by a person on a
+real machine, with the cold start measured there and the bench's
+Windows budget set from it. With them, delete without a dialog: the
+document goes at once and the toast offers "Undo" for eight seconds,
+over a soft delete that `prune` makes final -- the dialog is the
+toolkit's in the window, which is why it belongs with the desktops. And
+the browse path lands a fragment the way the document path does. Probe:
+delete, undo, the row is back. Cost M.
 
 **The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
 every push since 0.12, holds every row of the 0.11 table above and what

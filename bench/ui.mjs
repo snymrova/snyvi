@@ -5,8 +5,9 @@
  * over the rail moves, what Back does after a click on an entry, whether a
  * save keeps the reader's place, what `t` opens on a narrow window, whether
  * Tab reaches every control and a dialog gives focus back, what a drag on a
- * pane's edge does, what `f` fills and what Escape gives back. Every row
- * here was a fault once -- the 0.11 to 0.13 notes in docs/ROADMAP.md say
+ * pane's edge does, what `f` fills and what Escape gives back, and what an
+ * arrival does to a reader in the middle of a page. Every row
+ * here was a fault once -- the 0.11 to 0.14 notes in docs/ROADMAP.md say
  * which -- and the point of running them on every push is that the rail
  * cannot quietly stop following again.
  *
@@ -130,6 +131,20 @@ async function main() {
     const diagram = join(tmp, "diagram.md");
     writeFileSync(diagram, "# A diagram to fill the screen with\n\nA paragraph before it.\n\n```mermaid\n" + flowchart(12, "Label") + "\n```\n\nAnd one after.\n");
     const diagramUrl = execFileSync(BIN, ["send", diagram], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
+    // A new document, the way an agent's send makes one: its own file, its
+    // own content, through the API. What the queue rows send while reading.
+    let arrivals = 0;
+    const arrive = async () => {
+      const n = ++arrivals, path = join(tmp, `arrival-${n}.md`);
+      writeFileSync(path, `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
+      const r = await fetch(`${base}/api/docs`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ path, cwd: tmp }),
+      });
+      if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
+      return (await r.json()).doc;
+    };
 
     const browser = await launch(join(tmp, "chrome"));
     chromeProc = browser.proc;
@@ -146,6 +161,7 @@ async function main() {
     sections.push(["by keyboard", await keyboardRows(p, url)]);
     sections.push(["the panes' edges", await widthRows(p, url)]);
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
+    sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -203,10 +219,10 @@ class Driver {
     await loaded;
     await sleep(400);
   }
-  async press(k, { ctrl = false } = {}) {
+  async press(k, { ctrl = false, alt = false } = {}) {
     const spec = KEYS[k] || { key: k, code: `Key${k.toUpperCase()}`, vk: k.toUpperCase().charCodeAt(0), text: k };
-    const modifiers = (spec.shift ? 8 : 0) | (ctrl ? 2 : 0);
-    const down = { type: spec.text && !ctrl ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
+    const modifiers = (spec.shift ? 8 : 0) | (ctrl ? 2 : 0) | (alt ? 1 : 0);
+    const down = { type: spec.text && !ctrl && !alt ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
     if (down.type === "keyDown") down.text = spec.text;
     await this.cdp.send("Input.dispatchKeyEvent", down, this.s);
     await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers }, this.s);
@@ -646,6 +662,92 @@ async function diagramRows(p, url) {
   await p.pointerAway();
   rows.push(["the button, both ways", byButton.full && !byButtonBack.full && byButtonBack.width > 0,
     !byButton.full ? "the button filled nothing" : byButtonBack.full ? "the button did not give the page back" : byButtonBack.width === 0 ? "back with no size" : "fills on one click, gives the page back on the next"]);
+  return rows;
+}
+
+/** 0.14: an arrival joins a queue and the page stays where it is; `n` reads
+ *  down the line; Back returns to the place; the count survives a reload. */
+async function queueRows(p, url, arrive) {
+  const rows = [];
+  const read = () => p.ev(`(() => {
+    const bar = document.querySelector("#queue-bar");
+    return { title: document.title, path: location.pathname, bar: bar.hidden ? null : bar.textContent.trim(),
+      side: [...document.querySelectorAll("#queue a.new .title")].map(a => a.textContent), more: document.querySelector("#queue .t-more")?.textContent || null,
+      marked: document.querySelectorAll("#tree a.new").length, waiting: [...document.querySelectorAll(".inbox.waiting .title")].map(a => a.textContent),
+      place: window.__ui.place() };
+  })()`);
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+
+  await p.goto(url);
+  await p.pointerAway();
+  await p.ui("scrollMain", 12000); await sleep(700);
+  const before = await read();
+  const first = await arrive();
+  const barCame = await until(`!document.querySelector("#queue-bar").hidden`);
+  await sleep(400);
+  const during = await read();
+  dbg("arrival", { before, during });
+  const stayed = during.title === before.title && during.place.block === before.place.block && Math.abs(during.place.delta - before.place.delta) < 2;
+  rows.push(["an arrival while reading", barCame && stayed && /^1 waiting/.test(during.bar) && during.bar.includes(first.title) && during.side.length === 1 && during.marked === 1,
+    !barCame ? "no bar appeared" : during.title !== before.title ? `the page changed to "${during.title}"` : !stayed ? `the document moved: block ${before.place.block} at ${before.place.delta} px, then block ${during.place.block} at ${during.place.delta} px`
+      : !/^1 waiting/.test(during.bar) ? `the bar reads "${during.bar.slice(0, 30)}"` : during.side.length !== 1 ? `${during.side.length} rows in the sidebar's queue` : during.marked !== 1 ? `${during.marked} rows marked in the tree`
+        : `page unmoved at block ${during.place.block}; bar reads "1 waiting", one row in the sidebar, one marked in the tree`]);
+
+  await p.press("n");
+  await sleep(600);
+  const opened = await read();
+  rows.push(["n opens it", opened.title === first.title && opened.bar === null && opened.side.length === 0 && opened.marked === 0,
+    opened.title !== first.title ? `n opened "${opened.title}"` : opened.bar !== null ? "the bar is still up" : opened.side.length ? "the sidebar still lists it" : opened.marked ? "the tree still marks it" : "open, off the queue, unmarked in the tree"]);
+
+  await p.press("ArrowLeft", { alt: true });
+  await sleep(800);
+  const back = await read();
+  dbg("back", { before: before.place, back: back.place });
+  rows.push(["alt ← is Back, to the place", back.title === before.title && back.place.block === before.place.block && Math.abs(back.place.delta - before.place.delta) < 2,
+    back.title !== before.title ? `landed on "${back.title}"` : `back on the plan at block ${back.place.block}, ${back.place.delta} px in (was ${before.place.delta})`]);
+  await p.press("ArrowRight", { alt: true });
+  await sleep(600);
+  const fwd = await read();
+  rows.push(["alt → is Forward", fwd.title === first.title, fwd.title === first.title ? "forward to the arrival" : `landed on "${fwd.title}"`]);
+
+  await Promise.all(Array.from({ length: 12 }, arrive));
+  const twelve = await until(`/^12 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  await sleep(300);
+  const many = await read();
+  // Twelve sent at once land in whatever order the daemon took them; the
+  // order it keeps is the order the page must show.
+  const served = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.title))`);
+  const inOrder = many.side.join("|") === served.slice(0, 6).join("|");
+  rows.push(["twelve at once", twelve && many.side.length === 6 && /6 more/.test(many.more || "") && inOrder,
+    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 12 waiting; six rows and \"6 more\" in the sidebar, in arrival order"]);
+
+  await p.reload();
+  const kept = await read();
+  rows.push(["still waiting after a reload", /^12 waiting/.test(kept.bar || "") && kept.side.length === 6,
+    `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", ${kept.side.length} rows in the sidebar`]);
+
+  await p.press("i");
+  await sleep(600);
+  const inbox = await read();
+  rows.push(["the inbox lists them first", inbox.bar === null && inbox.waiting.length === 12 && inbox.waiting[0] === served[0],
+    inbox.bar !== null ? "the bar is up on the inbox" : `${inbox.waiting.length} waiting on the inbox, "${inbox.waiting[0]}" first`]);
+
+  const late = await arrive();
+  await until(`document.querySelectorAll(".inbox.waiting li").length === 13`);
+  const still = await read();
+  await p.clickOn(".inbox-sec [data-q=clear]");
+  await sleep(500);
+  await p.reload();
+  const cleared = await read();
+  rows.push(["an inbox with a queue, cleared", still.title === "snyvi" && still.waiting.length === 13 && cleared.waiting.length === 0 && cleared.side.length === 0 && cleared.bar === null,
+    still.title !== "snyvi" ? `the arrival opened itself over the inbox: "${still.title}"` : still.waiting.length !== 13 ? `${still.waiting.length} waiting after the arrival` : cleared.waiting.length || cleared.side.length ? "something is still waiting after Mark all read and a reload" : `the arrival became the 13th row; Mark all read emptied the queue, and a reload agrees`]);
+
+  const fresh = await arrive();
+  const openedItself = await until(`document.title === ${JSON.stringify(fresh.title)}`);
+  const empty = await read();
+  rows.push(["an arrival on an empty inbox", openedItself && empty.bar === null && empty.marked === 0,
+    !openedItself ? `stayed on "${empty.title}"` : empty.bar !== null ? "opened, but the bar counts it" : "opened itself, and is read"]);
+  void late;
   return rows;
 }
 

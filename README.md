@@ -268,7 +268,8 @@ From source, `cargo build --release` gives you snyvi alone; add
 | w     | maximise width                              |
 | z     | wrap long lines                             |
 | p     | pin (kept by `prune`)                       |
-| ⌫     | delete document                             |
+| n     | open the next document waiting              |
+| Del   | delete document                             |
 | i     | inbox                                       |
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
@@ -276,6 +277,7 @@ From source, `cargo build --release` gives you snyvi alone; add
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+| alt ← / → | back / forward                          |
 
 Everything the keys do, a finger can do too: on a screen with no
 pointer the controls that appear on hover -- copy, rename, the `#`
@@ -401,6 +403,35 @@ would be the pane that does not fit: 200 to 440 px for the sidebar, 180
 to 400 for the rail. Double-click the seam for the default. The seam is
 a Tab stop too, and the arrow keys move it. The width is kept.
 
+## Arrivals
+
+A document that arrives while you are reading never takes the page
+away. It joins a queue: a row at the top of the sidebar under
+"Waiting", a mark on its row in the tree, and a bar above the document
+that counts -- "3 waiting" and the title of the oldest. `n` opens the
+oldest and takes it off, so the next `n` is the one after; a reader
+drains the queue with one key, in the order things came. Opening a
+document any other way -- the sidebar, the inbox, an agent's link --
+takes it off the same way, since read is read wherever you got to it.
+The queue lives in the daemon, so it is the same in every tab and the
+window, and it survives a restart.
+
+The inbox lists what is waiting first, oldest first, then everything
+else. "Mark all read" empties the queue without opening anything, for
+the day an agent sent thirty. Twelve arrivals in two seconds are twelve
+rows and one bar that says twelve.
+
+The one place an arrival opens by itself is the inbox with nothing
+waiting: the empty state exists to be filled. Before 0.14 an arrival
+opened itself whenever the page had gone 2.5 seconds without a scroll
+or a key, which is what reading a paragraph looks like.
+
+Back opens a document where you left it, not at the top: the place is
+written into the history entry as you leave and after each scroll, as
+a block and an offset into it, the way a save already keeps it. In the
+desktop window, which has no toolbar, alt+← and alt+→ are Back and
+Forward; in a browser they are the same one step, not two.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders
@@ -464,7 +495,8 @@ came from the hook or from `send_document`; a SessionStart hook,
 installed by `init-claude`, records the session for the MCP server.
 When no snyvi tab has focus, a new document raises a desktop
 notification — `notify-send` on Linux, a toast on Windows, Notification
-Center on macOS (set `SNYVI_NOTIFY=0` to disable).
+Center on macOS (set `SNYVI_NOTIFY=0` to disable). In the page it joins
+the queue, under "Arrivals" above.
 
 ## Languages
 
@@ -501,7 +533,8 @@ read by `bench/ui.mjs`: where the contents' marker is after a read to
 the end, what a wheel over the rail moves, what Back does, whether a
 save keeps the place, what `t` opens at 1000 px, whether Tab reaches
 every control, what a drag on a pane's edge does, what `f` fills and
-what Escape gives back. Counts and positions, no clocks, so every one
+what Escape gives back, and what an arrival does to a reader in the
+middle of a page. Counts and positions, no clocks, so every one
 of its rows is enforced on every machine, CI's included. The desktop
 window's engine is not Chromium: `bench/webkit.py` drives the same page
 in WebKitGTK under Xvfb, by hand for now, and reads the two things only

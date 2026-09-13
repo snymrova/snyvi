@@ -73,6 +73,20 @@ pub struct App {
 
 type S = State<Arc<App>>;
 
+/// The most the queue is ever sent as. Past this a reader is not going to
+/// read down the line; the count beside the rows says how many there are.
+const QUEUE_MAX: usize = 500;
+/// How much of it a page opens with. The sidebar shows six and the bar shows
+/// the oldest; the inbox, which lists them all, asks for the rest itself. A
+/// library with hundreds waiting used to double the shell page.
+const QUEUE_BOOT: usize = 24;
+
+/// The queue's length, for the events and the boot payload: every tab keeps
+/// its count from here rather than by arithmetic on what it happened to see.
+fn waiting(app: &App) -> i64 {
+    app.store.waiting().unwrap_or(0)
+}
+
 pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let token = config::load_or_create_token(&paths)?;
     let store = Store::open(&paths)?;
@@ -126,6 +140,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs", post(receive_doc))
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
+        .route("/api/docs/{id}/read", post(mark_read))
+        .route("/api/queue", get(queue))
+        .route("/api/queue/clear", post(clear_queue))
         .route("/api/docs/{id}/delete", post(delete_doc))
         .route("/api/docs/{id}/history", get(history))
         .route("/api/projects/{id}/rename", post(rename_project))
@@ -236,6 +253,15 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
     // through the markup: the Mermaid bundle.
     if let Some(o) = boot.as_object_mut() {
         o.insert("v".into(), serde_json::Value::String(app.asset_v.clone()));
+        // What is waiting to be read, on every page: the bar above the
+        // document and the section at the top of the sidebar draw from it
+        // before the first paint, so a reload never loses count.
+        o.insert(
+            "queue".into(),
+            serde_json::to_value(app.store.queue(QUEUE_BOOT).unwrap_or_default())
+                .unwrap_or_default(),
+        );
+        o.insert("waiting".into(), json!(waiting(app)));
     }
     let page = INDEX_HTML
         .replace("{{V}}", &app.asset_v)
@@ -616,7 +642,11 @@ async fn history(State(app): S, Path(id): Path<String>) -> Response {
 async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
     match app.store.delete(&id) {
         Ok(true) => {
-            emit(&app, "deleted", json!({ "id": id }));
+            emit(
+                &app,
+                "deleted",
+                json!({ "id": id, "waiting": waiting(&app) }),
+            );
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
@@ -768,6 +798,45 @@ async fn rename_workflow(
     }
 }
 
+/// The queue: what arrived and has not been opened, oldest first.
+async fn queue(State(app): S, Query(q): Query<Limit>) -> Response {
+    match app.store.queue(q.limit.unwrap_or(QUEUE_MAX).min(QUEUE_MAX)) {
+        Ok(q) => Json(q).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A tab opened a document. Every other tab hears, so the same row leaves
+/// the queue everywhere at once; a document already read answers the same
+/// and tells nobody, since nothing changed.
+async fn mark_read(State(app): S, Path(id): Path<String>) -> Response {
+    match app.store.mark_read(&id) {
+        Ok(true) => {
+            emit(
+                &app,
+                "read",
+                json!({ "ids": [id], "waiting": waiting(&app) }),
+            );
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Everything waiting, read without being opened.
+async fn clear_queue(State(app): S) -> Response {
+    match app.store.mark_all_read() {
+        Ok(ids) => {
+            if !ids.is_empty() {
+                emit(&app, "read", json!({ "ids": ids, "waiting": 0 }));
+            }
+            Json(json!({ "ok": true, "n": ids.len() })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
 /// Pinning is UI state, so it needs no token; it only affects what `prune` keeps.
 async fn pin(State(app): S, Path(id): Path<String>, Json(b): Json<PinBody>) -> Response {
     match app.store.set_pinned(&id, b.pinned) {
@@ -800,7 +869,7 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             emit(
                 &app,
                 "doc",
-                json!({ "doc": doc, "url": url, "existing": received.existing }),
+                json!({ "doc": doc, "url": url, "existing": received.existing, "waiting": waiting(&app) }),
             );
             if !received.existing {
                 notify_desktop(&app, &doc);

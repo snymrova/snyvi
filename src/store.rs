@@ -37,6 +37,10 @@ pub struct TreeDoc {
     pub kind: Kind,
     pub received_at: i64,
     pub pinned: bool,
+    /// On the queue: arrived and not yet opened. The row carries its own mark,
+    /// so a project expanded later marks its rows without the page holding
+    /// the whole queue.
+    pub unread: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -133,7 +137,8 @@ CREATE TABLE IF NOT EXISTS docs (
   branch TEXT,
   content_hash TEXT NOT NULL,
   pinned INTEGER NOT NULL DEFAULT 0,
-  origin TEXT NOT NULL DEFAULT 'cli'
+  origin TEXT NOT NULL DEFAULT 'cli',
+  unread INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS docs_recv ON docs(received_at DESC);
 CREATE INDEX IF NOT EXISTS docs_wf ON docs(workflow_id, received_at);
@@ -170,9 +175,14 @@ impl Store {
             "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'",
             "ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0",
+            // Read, for everything that was here before there was a queue: a
+            // library's worth of old documents is not a backlog.
+            "ALTER TABLE docs ADD COLUMN unread INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute_batch(stmt);
         }
+        // After the column is there on every database, old or new.
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS docs_unread ON docs(unread, received_at);")?;
         Ok(Store {
             conn: Mutex::new(conn),
             docs_dir: paths.docs_dir.clone(),
@@ -219,8 +229,8 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)",
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1)",
             params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin],
         )?;
         tx.execute(
@@ -361,6 +371,54 @@ impl Store {
         )? > 0)
     }
 
+    /// What arrived and has not been opened, oldest first: the order things
+    /// came in is the order to read them in. Every insert joins it and every
+    /// open leaves it, so it is the unread set with an order and nothing more.
+    pub fn queue(&self, limit: usize) -> Result<Vec<Doc>> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(&format!(
+                "SELECT {DOC_COLS} {DOC_FROM} WHERE d.unread = 1 ORDER BY d.received_at, d.rowid LIMIT ?1"
+            ))?
+            .query_map(params![limit as i64], row_to_doc)?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
+    /// How many are on the queue: what the bar says, however many rows the
+    /// page was sent.
+    pub fn waiting(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        Ok(
+            conn.query_row("SELECT COUNT(*) FROM docs WHERE unread = 1", [], |r| {
+                r.get(0)
+            })?,
+        )
+    }
+
+    /// A document was opened. True when this is what took it off the queue.
+    pub fn mark_read(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE docs SET unread = 0 WHERE id = ?1 AND unread = 1",
+            params![id],
+        )? > 0)
+    }
+
+    /// Everything waiting, marked read without being opened. Returns what
+    /// left the queue, so every open tab can take the same rows off.
+    pub fn mark_all_read(&self) -> Result<Vec<String>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let ids: Vec<String> = tx
+            .prepare("SELECT id FROM docs WHERE unread = 1")?
+            .query_map([], |r| r.get(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        tx.execute("UPDATE docs SET unread = 0 WHERE unread = 1", [])?;
+        tx.commit()?;
+        Ok(ids)
+    }
+
     /// Name a project yourself. The directory it was derived from is its identity and
     /// does not move, so sends keep landing here; `renamed` stops the derived name
     /// from reclaiming the label on the next one.
@@ -497,7 +555,7 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         let mut doc_stmt = conn.prepare(
-            "SELECT id, title, kind, received_at, pinned FROM docs
+            "SELECT id, title, kind, received_at, pinned, unread FROM docs
              WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
         for w in &mut wfs {
@@ -535,7 +593,7 @@ impl Store {
         };
         w.docs = conn
             .prepare(
-                "SELECT id, title, kind, received_at, pinned FROM docs
+                "SELECT id, title, kind, received_at, pinned, unread FROM docs
                  WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
             )?
             .query_map(params![workflow_id], row_to_tree_doc)?
@@ -645,6 +703,7 @@ fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
         kind: Kind::parse(&r.get::<_, String>(2)?).unwrap_or(Kind::Text),
         received_at: r.get(3)?,
         pinned: r.get::<_, i64>(4)? != 0,
+        unread: r.get::<_, i64>(5)? != 0,
     })
 }
 
@@ -886,6 +945,39 @@ mod tests {
         assert!(s.get(&b.id).unwrap().is_none());
         assert!(s.html(&b.id).is_err(), "files removed");
         assert!(s.get(&a.id).unwrap().unwrap().pinned);
+    }
+
+    /// The queue is the unread set in arrival order: every insert joins it,
+    /// an open leaves it once, an overwrite changes nothing about it, and a
+    /// clear empties it and says what left.
+    #[test]
+    fn the_queue_is_what_arrived_and_was_not_opened() {
+        let (s, _d) = temp_store();
+        assert!(s.queue(10).unwrap().is_empty());
+        let a = s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap();
+        let b = s.insert(&new_id("b"), new_doc("B", "bbb", "w")).unwrap();
+        let ids = |q: Vec<Doc>| q.into_iter().map(|d| d.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(s.queue(10).unwrap()),
+            vec![a.id.clone(), b.id.clone()],
+            "oldest first"
+        );
+        assert_eq!(s.waiting().unwrap(), 2);
+        assert!(s.mark_read(&a.id).unwrap());
+        assert!(!s.mark_read(&a.id).unwrap(), "already read");
+        assert_eq!(s.waiting().unwrap(), 1);
+        assert_eq!(ids(s.queue(10).unwrap()), vec![b.id.clone()]);
+        s.replace(&b.id, new_doc("B2", "bbb2", "w")).unwrap();
+        assert_eq!(
+            ids(s.queue(10).unwrap()),
+            vec![b.id.clone()],
+            "an overwrite is not an arrival"
+        );
+        let c = s.insert(&new_id("c"), new_doc("C", "ccc", "w")).unwrap();
+        let cleared = s.mark_all_read().unwrap();
+        assert_eq!(cleared, vec![b.id, c.id]);
+        assert!(s.queue(10).unwrap().is_empty());
+        assert!(s.mark_all_read().unwrap().is_empty());
     }
 
     #[test]

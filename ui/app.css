@@ -213,7 +213,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-proj > summary::before { content: ""; width: 0; height: 0; border: 4px solid transparent; border-left: 5px solid var(--fg-3); margin-left: 2px; transition: transform var(--t); }
 .t-proj[open] > summary::before { transform: rotate(90deg); }
 .t-proj > summary:hover { background: var(--rule); color: var(--fg); }
-.t-proj .badge { margin-left: auto; background: var(--accent); color: #fff; font-size: 10px; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; }
 .t-wf { margin: 2px 0 6px 6px; }
 .t-wf > .wf-name { font-size: 12px; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px 4px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
@@ -221,6 +220,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--accent); }
 .t-doc a.active::before { background: var(--accent); }
+/* A row waiting to be read: the bullet every row has, in the accent and a
+   little larger. It is the same mark in the queue section and in the tree,
+   and it goes when the document is opened from either. */
+.t-doc a.new::before { background: var(--accent); width: 6px; height: 6px; left: 4px; }
+.t-doc a.new .title { color: var(--fg); font-weight: 550; }
+.t-queue { margin: 0 0 10px; padding: 0 0 6px; border-bottom: 1px solid var(--rule); }
+.t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
+.t-queue .t-label .n { margin-left: auto; background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: 10px; }
+.t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
+.t-queue .t-more { margin-left: 8px; }
+.t-queue .t-more a { display: inline-block; font-size: 11px; color: var(--fg-3); padding: 3px 6px; border-radius: 5px; }
+.t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 .t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
 .t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
@@ -415,6 +426,24 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 :root[data-wide="1"] #doc { --doc-pad: 64px; max-width: none; }
 
 /* find bar */
+/* ---------- the queue bar ---------- */
+/* Above the document while something is waiting, in the document's measure so
+   it reads as part of the page and not the chrome. Sticky like the find bar,
+   so a reader deep in a long page still sees the count. */
+#queue-bar[hidden] { display: none; }
+#queue-bar { position: sticky; top: 0; z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; box-sizing: border-box; font-size: 13px; }
+/* Its height is nothing, so a bar that appears mid-read lays over the page's
+   top margin rather than pushing the text down under the reader; the find
+   bar makes room for it instead. */
+#queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
+#queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 5px 5px 12px; animation: rise 160ms cubic-bezier(.2,.7,.2,1); }
+#queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+#queue-bar .qb-next { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
+#queue-bar .qb-next b { font-weight: 550; color: var(--fg); }
+#queue-bar button:not(.icon), #queue-bar .qb-all { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
+#queue-bar button:not(.icon):hover, #queue-bar .qb-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+#queue-bar kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
+#queue-bar .icon { width: 26px; height: 26px; }
 #find[hidden] { display: none; }
 #find { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }
 #find > * { background: var(--bg-raise); }
@@ -565,6 +594,14 @@ pre.mermaid::before { display: none; }
 .inbox .time { grid-area: time; font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .inbox .sub { grid-area: sub; font-size: 12.5px; color: var(--fg-3); }
 .inbox .sub b { font-weight: 500; color: var(--fg-2); }
+.inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
+.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; margin: 30px 0 4px; }
+.inbox-sec .n { background: var(--accent); color: #fff; border-radius: 9px; padding: 0 7px; line-height: 17px; letter-spacing: 0; font-size: 11px; }
+.inbox-sec button { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12.5px; color: var(--fg-2); padding: 3px 8px; border-radius: 5px; }
+.inbox-sec button + button { margin-left: 0; }
+.inbox-sec button:hover { background: var(--rule); color: var(--fg); }
+.inbox-sec kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
+.inbox.waiting { margin-bottom: 8px; }
 .empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
 .empty-state h1 { font-size: 22px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
 .empty-state p { margin: 0 0 18px; font-size: 15px; }
@@ -657,7 +694,7 @@ pre.code .ln::before { cursor: pointer; }
 
 /* ---------- print ---------- */
 @media print {
-  #side, #rail, #toasts, #palette, #help, pre.code .copy { display: none !important; }
+  #side, #rail, #toasts, #palette, #help, #queue-bar, pre.code .copy { display: none !important; }
   #app { display: block; }
   #doc { max-width: none; padding: 0; }
   .prose { font-size: 11.5pt; }
