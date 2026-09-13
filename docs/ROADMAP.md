@@ -562,6 +562,19 @@ The bench also found that the table was generous in the other direction:
 a cold start is 11 ms, not 25, since `ensure_daemon` stopped over-waiting
 in 0.9, and a send is 12 ms, not 50.
 
+And its first run on the Windows runner went red on the cold start: 405 ms,
+three times in a row, against the 300 ms the factor allows, with every
+other row passing with room -- 22 ms for a send, 0.9 ms to a page's first
+byte, and 20 MB and 31 MB by working set for the two resident rows, which
+is a different accounting from Linux's resident set and not a smaller
+daemon. Creating a process is the one row that is mostly the operating
+system's, and on a hosted Windows VM it is the VM's, so that job runs the
+bench with `SNYVI_BENCH_SHARED=1`, the switch `bench/browser.mjs` already
+had for rows that measure the runner: the cold start is printed there and
+not enforced, and the rest still is. What a cold start costs on a Windows
+machine a person uses is not known, and belongs with the other things
+"Not yet proven on Windows" below.
+
 ## Candidates after 0.7
 
 JSON and YAML views, tags from the sender, macOS build, AUR, the global

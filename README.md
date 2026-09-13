@@ -488,7 +488,11 @@ for the render and daemon rows (`snyvi bench`); the page rows come from
 `snyvi bench --check` fails when a case exceeds its budget; CI runs it
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
 factor scales the budgets that are clocks and not the size or the
-resident rows: a binary weighs the same on any machine. The Markdown
+resident rows: a binary weighs the same on any machine. The Windows job
+adds `SNYVI_BENCH_SHARED=1`, which prints the cold-start row without
+enforcing it: that runner takes 400 ms to create a process where a dev
+box takes 11, and how much of that is Windows and how much the runner is
+not yet known. The Markdown
 fast path skips the HTML sanitizer whenever a document contains no raw
 HTML, which is nearly always for agent output.
 

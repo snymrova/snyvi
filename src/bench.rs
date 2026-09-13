@@ -12,7 +12,11 @@
 //! `SNYVI_BENCH_FACTOR` scales the budgets that are clocks, for a hosted
 //! runner that is slower than a dev box. A size or a resident set is not a
 //! clock: the same binary weighs the same on any machine, so those budgets
-//! are never scaled.
+//! are never scaled. `SNYVI_BENCH_SHARED` says the machine is one whose
+//! speed is not snyvi's to promise, as `bench/browser.mjs` uses it: the one
+//! row that is mostly the operating system's -- creating a process, which a
+//! hosted Windows runner does in 400 ms and a dev box in 10 -- is then
+//! printed and not enforced, and every other row still is.
 
 use crate::render;
 use anyhow::{anyhow, bail, Context, Result};
@@ -30,9 +34,10 @@ pub fn run(check: bool) -> Result<()> {
         .ok()
         .and_then(|f| f.parse().ok())
         .unwrap_or(1.0);
+    let shared = std::env::var_os("SNYVI_BENCH_SHARED").is_some();
     let fixtures = Fixtures::new();
     let mut failed = render_rows(&fixtures, factor);
-    failed |= process_rows(&fixtures, factor)?;
+    failed |= process_rows(&fixtures, factor, shared)?;
     if check && failed {
         bail!("bench: at least one case exceeded its budget");
     }
@@ -160,14 +165,20 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
 /// `snyvi send FILE` and the hook send them: the daemon reads the file
 /// itself, which is also the only way a 4.5 MB file goes in at all, since a
 /// request body is capped at 2 MB.
-fn process_rows(f: &Fixtures, factor: f64) -> Result<bool> {
+fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     let exe = std::env::current_exe().context("locating snyvi binary")?;
     let dir = std::env::temp_dir().join(format!("snyvi-bench-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).context("creating the bench's data directory")?;
     let port = free_port()?;
 
-    println!("\n{:<48} {:>9}   {:>9}", "process", "value", "budget");
+    println!(
+        "\n{:<48} {:>9}   {:>9}{}",
+        "process",
+        "value",
+        "budget",
+        if shared { "   (shared machine)" } else { "" }
+    );
     let mut rows = Rows { failed: false };
 
     let size = std::fs::metadata(&exe)?.len() as f64 / MB;
@@ -186,7 +197,18 @@ fn process_rows(f: &Fixtures, factor: f64) -> Result<bool> {
         start = start.min(ms);
         daemon = Some(d);
     }
-    rows.time("daemon cold start, to first health", start, 100.0, factor);
+    // Mostly the operating system's: create a process, map a 10 MB image,
+    // and on a hosted Windows runner have the antivirus read it first. That
+    // runner reads 405 ms where a Linux one reads 13 and a dev box 11, so on
+    // a shared machine this row is printed and not enforced. The rows below
+    // it are the daemon's own work and are enforced everywhere.
+    rows.time_unless(
+        "daemon cold start, to first health",
+        start,
+        100.0,
+        factor,
+        shared,
+    );
     let daemon = daemon.expect("three starts leave one running");
 
     let result = (|| -> Result<()> {
@@ -245,6 +267,9 @@ fn process_rows(f: &Fixtures, factor: f64) -> Result<bool> {
     stop(daemon);
     let _ = std::fs::remove_dir_all(&dir);
     result?;
+    if shared {
+        println!("\na budget in brackets is measured and not enforced: this machine's speed is not snyvi's to promise");
+    }
     Ok(rows.failed)
 }
 
@@ -254,14 +279,29 @@ struct Rows {
 
 impl Rows {
     fn time(&mut self, name: &str, ms: f64, budget: f64, factor: f64) {
+        self.time_unless(name, ms, budget, factor, false);
+    }
+
+    /// A timing that is printed against its budget but, when `unenforced`,
+    /// does not fail the check: the budget goes in brackets, as the browser
+    /// bench writes it, so the log says which rows a red would have come from.
+    fn time_unless(&mut self, name: &str, ms: f64, budget: f64, factor: f64, unenforced: bool) {
         let budget = budget * factor;
         let ok = ms <= budget;
-        self.failed |= !ok;
+        self.failed |= !ok && !unenforced;
+        let budget = if unenforced {
+            format!("({budget:.0} ms)")
+        } else {
+            format!("{budget:.0} ms")
+        };
         println!(
-            "{name:<48} {:>9}   {:>9}{}",
+            "{name:<48} {:>9}   {budget:>9}{}",
             format!("{ms:.1} ms"),
-            format!("{budget:.0} ms"),
-            if ok { " ok" } else { " OVER" }
+            match (ok, unenforced) {
+                (true, _) => " ok",
+                (false, true) => " over, not enforced here",
+                (false, false) => " OVER",
+            }
         );
     }
 
