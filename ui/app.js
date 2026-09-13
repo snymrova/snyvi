@@ -8,7 +8,8 @@
   const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row");
 
   const state = {
-    tree: boot.tree || [],
+    tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded
+    sub: new Map(Object.entries(boot.sub || {})),   // project id -> its workflows, once filled
     view: boot.view || "inbox",
     doc: boot.doc || null,
     previous: boot.previous || null,
@@ -47,6 +48,16 @@
 
   // ---------- tree ----------
   const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
+  /** Caps a reader has lifted, by project and by workflow, so a refetch does not
+   *  put the rest back out of reach while they are still reading it. */
+  const liftedCaps = new Set();
+  const liftedWorkflows = new Set();
+  /** Fills in flight, so a project expanded twice in a second is fetched once,
+   *  and fills already attempted, so a fetch that failed is not retried by the
+   *  render it would trigger. Expanding the project by hand asks again. */
+  const filling = new Set();
+  const tried = new Set();
+
   /** The browse section keeps its own DOM across navigations so expanded folders stay open. */
   function renderBrowse() {
     const ids = state.browse.map(r => r.id).join(",");
@@ -72,9 +83,41 @@
   const renameBtn = (what, id) =>
     `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
 
+  /** A project is drawn expanded when the reader left it that way, when the
+   *  document on screen is in it, or when it is the only one there is. */
+  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
+
+  const docRow = d => {
+    const active = state.doc && state.doc.id === d.id ? "active" : "";
+    return `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
+  };
+
+  /** The rows inside one project: its sessions, their documents, and — where a
+   *  cap left something out — what it would take to see the rest. A project
+   *  this tab has not fetched yet is a single row saying so, which is the only
+   *  state this can be in that is neither empty nor complete. */
+  function projectRows(p) {
+    const wfs = state.sub.get(String(p.id));
+    if (!wfs) return `<li class="t-wait">…</li>`;
+    let h = "";
+    for (const w of wfs) {
+      h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div><ul>`;
+      for (const d of w.docs) h += docRow(d);
+      if (w.total > w.docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - w.docs.length} older</button></li>`;
+      h += `</ul></li>`;
+    }
+    if (p.workflows > wfs.length) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - wfs.length} older sessions</button></li>`;
+    return h;
+  }
+
+  /** The sidebar, which is a list of projects and the rows of the ones that are
+   *  open. A closed project contributes nothing to the page: this used to carry
+   *  every document in the library on every page open — 13,000 rows and a
+   *  718 ms task at 3000 documents — and what is behind a row is now two
+   *  numbers until a reader asks for it. */
   function renderTree() {
     const projects = state.tree;
-    const total = projects.reduce((n, p) => n + p.workflows.reduce((m, w) => m + w.docs.length, 0), 0);
+    const total = projects.reduce((n, p) => n + p.docs, 0);
     inboxRowEl.innerHTML = `<div class="t-inbox ${state.view === "inbox" ? "active" : ""}" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></div>`;
     renderBrowse();
     if (!projects.length) {
@@ -84,21 +127,85 @@
     // Labels only earn their space when both kinds of tree are on screen.
     let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
-      const isCur = state.doc && state.doc.project_id === p.id;
-      const open = openProjects.has(String(p.id)) || isCur || projects.length === 1;
+      const open = projOpen(p);
       const unread = state.unread.get(p.id) || 0;
       h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${unread ? `<span class="badge">${unread}</span>` : ""}${renameBtn("project", p.id)}</summary><ul>`;
-      for (const w of p.workflows) {
-        h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div><ul>`;
-        for (const d of w.docs) {
-          const active = state.doc && state.doc.id === d.id ? "active" : "";
-          h += `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
-        }
-        h += `</ul></li>`;
-      }
+      h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
     treeEl.innerHTML = h;
+    // A project the reader has open that this tab has never filled: the "…" is
+    // on screen, so fetching it now is what turns it into rows.
+    for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
+  }
+
+  /** What one project holds, fetched the first time it is expanded and kept
+   *  until the library moves under it. */
+  async function fillProject(pid, force) {
+    pid = String(pid);
+    if (filling.has(pid) || (!force && (state.sub.has(pid) || tried.has(pid)))) return;
+    filling.add(pid);
+    tried.add(pid);
+    // The workflow on screen comes back whole in the same answer, so an arrival
+    // cannot re-cap the session a reader is stepping through.
+    const q = new URLSearchParams();
+    if (liftedCaps.has(pid)) { q.set("workflows", "0"); q.set("docs", "0"); }
+    if (state.doc && String(state.doc.project_id) === pid) q.set("whole", state.doc.workflow_id);
+    try {
+      const wfs = await (await fetch(`/api/projects/${pid}/tree${q.size ? `?${q}` : ""}`)).json();
+      if (Array.isArray(wfs)) state.sub.set(pid, wfs);
+    } catch {}
+    filling.delete(pid);
+    // A session a reader had opened out in full, refetched capped: put it back.
+    await Promise.all((state.sub.get(pid) || [])
+      .filter(w => liftedWorkflows.has(w.id) && w.docs.length < w.total)
+      .map(w => fillWorkflow(w.id, pid)));
+    renderTree();
+    markActive();
+  }
+
+  /** One session, whole, dropped into the subtree it belongs to. What "N older"
+   *  asks for, and what puts a lifted cap back after a refetch. */
+  async function fillWorkflow(wid, pid) {
+    let w;
+    try { w = await (await fetch(`/api/workflows/${wid}/tree`)).json(); } catch { return; }
+    if (!w || !Array.isArray(w.docs)) return;
+    const wfs = state.sub.get(String(pid));
+    if (!wfs) return;
+    const at = wfs.findIndex(x => x.id === wid);
+    if (at >= 0) wfs[at] = w; else wfs.unshift(w);
+    state.sub.set(String(pid), wfs);
+  }
+
+  /** The workflow a reader is in is held whole, because `[` and `]` step through
+   *  its documents and a cap would stop them somewhere arbitrary. The server
+   *  sends it with the page it is opened from; a navigation inside the tab asks
+   *  for it here. */
+  async function ensureWorkflow(doc) {
+    if (!doc) return;
+    const pid = String(doc.project_id);
+    if (!state.sub.has(pid)) await fillProject(pid);
+    const wfs = state.sub.get(pid);
+    if (!wfs) return;
+    const at = wfs.findIndex(w => w.id === doc.workflow_id);
+    if (at >= 0 && wfs[at].docs.length >= wfs[at].total) return;
+    // A document opened out of a search can be in a session older than the few
+    // a project shows. `fillWorkflow` puts it at the top: the reader is in it.
+    await fillWorkflow(doc.workflow_id, pid);
+    renderTree();
+    markActive();
+  }
+
+  /** The library moved: refetch the project rows, and the subtrees this tab has
+   *  already filled. Dropping them instead would collapse an expanded project
+   *  to a "…" under the reader. `only` narrows it to one project, which is what
+   *  an arrival needs — nothing else in the library moved.  */
+  async function refreshTree(only) {
+    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+    const pids = only != null ? [String(only)] : [...state.sub.keys()];
+    await Promise.all(pids.filter(pid => state.sub.has(pid)).map(pid => fillProject(pid, true)));
+    renderTree();
+    markActive();
   }
 
   const entryHtml = (rootId, e) => e.dir
@@ -149,11 +256,57 @@
       return;
     }
     if (!d.classList || !d.classList.contains("t-proj")) return;
-    d.open ? openProjects.add(d.dataset.pid) : openProjects.delete(d.dataset.pid);
+    const pid = d.dataset.pid;
+    d.open ? openProjects.add(pid) : openProjects.delete(pid);
     store.set("snyvi.open", [...openProjects].join(","));
+    // Opening draws what this tab already holds and fetches what it does not;
+    // closing takes the rows back out of the page, which is the bound.
+    //
+    // The rows go straight into this project's list rather than through
+    // renderTree, and that is not a shortcut: an element created with `open`
+    // fires `toggle` in Chrome, so rebuilding the whole sidebar from here
+    // creates the <details open> that called us and the two render each other
+    // for as long as the tab is open. Measured before this was written: the
+    // page never fired its load event at all, and the browser bench, which
+    // waits for it, hung rather than failed.
+    const ul = d.querySelector(":scope > ul");
+    if (!ul) return;
+    if (!d.open) {
+      ul.innerHTML = "";
+      return;
+    }
+    // Already drawn -- this is the event that a render fires at itself.
+    if (ul.firstChild) return;
+    const p = state.tree.find(x => String(x.id) === pid);
+    if (!p) return;
+    if (state.sub.has(pid)) {
+      ul.innerHTML = projectRows(p);
+      markActive();
+    } else {
+      // Asked for by hand, so a project whose fill failed earlier is tried again.
+      fillProject(pid, true);
+    }
   }, true);
 
   treesEl.addEventListener("click", async e => {
+    // Past a cap, and the answer to "show me the rest" is the rest: a whole
+    // session's documents, or every session in the project.
+    const more = e.target.closest("[data-more-docs], [data-more-wf]");
+    if (more) {
+      e.preventDefault(); e.stopPropagation();
+      more.disabled = true;
+      if (more.dataset.moreWf != null) {
+        liftedCaps.add(String(more.dataset.moreWf));
+        await fillProject(more.dataset.moreWf, true);
+      } else {
+        const wid = Number(more.dataset.moreDocs);
+        const pid = [...state.sub.keys()].find(k => state.sub.get(k).some(w => w.id === wid));
+        liftedWorkflows.add(wid);
+        await fillWorkflow(wid, pid);
+        renderTree(); markActive();
+      }
+      return;
+    }
     const r = e.target.closest("[data-rename]");
     if (r) {
       // Inside a <summary>, the default action is toggling the project open.
@@ -228,17 +381,22 @@
    *  whose header and rail name its project and workflow too. */
   async function applyRename(what, id) {
     state.cache.clear();
-    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
-    renderTree(); markActive();
+    await refreshTree();
     const shown = state.doc && (what === "project" ? state.doc.project_id === id : state.doc.workflow_id === id);
     if (shown) await refreshDoc(state.doc.id);
   }
 
-  /** Flat list of doc ids in sidebar order, for j/k. */
-  const order = () => state.tree.flatMap(p => p.workflows.flatMap(w => w.docs.map(d => d.id)));
+  /** Flat list of doc ids in sidebar order, for j/k. Read off the rows rather
+   *  than out of the model, now that the model holds only what a reader has
+   *  expanded: "next document" is the next one they can see. */
+  const order = () => [...treeEl.querySelectorAll("a[data-id]")].map(a => a.dataset.id);
+  /** Every document in the workflow on screen, for `[` and `]`. Exact whatever
+   *  the caps are: the workflow a reader is in is the one held whole. */
   const siblings = () => {
     if (!state.doc) return [];
-    for (const p of state.tree) for (const w of p.workflows) if (w.id === state.doc.workflow_id) return w.docs.map(d => d.id);
+    for (const w of state.sub.get(String(state.doc.project_id)) || []) {
+      if (w.id === state.doc.workflow_id) return w.docs.map(d => d.id);
+    }
     return [];
   };
 
@@ -407,9 +565,8 @@
     try {
       await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       state.cache.delete(d.id);
-      state.tree = await (await fetch("/api/tree")).json();
+      await refreshTree(d.project_id);
       toast("Deleted", d.title);
-      const ids = order(); const i = ids.indexOf(d.id);
       showInbox(true);
     } catch (e) { toast("Could not delete", String(e)); }
   }
@@ -417,6 +574,7 @@
   function afterRender() {
     renderTree();
     markActive();
+    ensureWorkflow(state.doc);
     buildToc();
     renderMeta(false);
     enhanceCode();
@@ -623,6 +781,7 @@
       pre.replaceWith(fig);
       mmdReserve(fig);
     }
+    mmdPrefetch();
   }
 
   /** The theme moved, so every diagram on the page was drawn in the other one.
@@ -678,6 +837,28 @@
     }
   }
 
+  /** Ask for the library as soon as a page is known to hold a diagram at all,
+   *  in idle time, rather than when a diagram comes near the viewport.
+   *
+   *  Measured: the first diagram on a page lands at ~1170 ms, of which ~490 ms
+   *  is one unbreakable task compiling 3.57 MB of JavaScript -- and none of it
+   *  used to start until the reader had scrolled to the diagram, which is the
+   *  worst possible moment to begin. Spent here it is spent while they are
+   *  still reading the first screen, and by the time they arrive only the
+   *  drawing is left. A page with no diagram asks for nothing, which is most
+   *  pages; a tab that already has the library asks again for nothing at all.
+   *
+   *  `requestIdleCallback` rather than a timer, so this waits for a gap instead
+   *  of making one. The timeout is the floor under a tab that never has a gap:
+   *  the compile is coming either way, and sooner is a better moment than the
+   *  one the reader chose. */
+  function mmdPrefetch() {
+    if (mermaidReady) return;
+    const go = () => { if (!mermaidReady) mermaidLib().catch(() => {}); };
+    if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 2000 });
+    else setTimeout(go, 400);
+  }
+
   function mmdEnqueue(fig) {
     if (fig.dataset.state === "queued" || fig.dataset.state === "rendering" || fig.dataset.state === "done") return;
     fig.dataset.state = "queued";
@@ -695,7 +876,10 @@
       performance.mark("snyvi:mermaid-load");
       mermaidReady = new Promise((res, rej) => {
         const sc = document.createElement("script");
-        sc.src = "/assets/mermaid.js";
+        // Versioned like every other asset: the bundle is served immutable for
+        // a year, so without this a browser would keep the first one it ever
+        // saw across every upgrade.
+        sc.src = `/assets/mermaid.js${boot.v ? `?v=${boot.v}` : ""}`;
         sc.onload = () => { performance.mark("snyvi:mermaid-ready"); res(); };
         sc.onerror = () => rej(new Error("could not load the diagram library"));
         document.head.appendChild(sc);
@@ -879,10 +1063,335 @@
     const frame = fig.querySelector(".mmd-frame");
     frame.innerHTML = svg.split(MMD_ID).join(mmdRenderId(fig));
     fig.dataset.state = "done";
+    mmdViewport(fig);
     // Named, so the browser budget can find it. A cache hit measures what it
     // actually costs, which is the assignment above.
     performance.measure("snyvi:diagram", { start: t0, end: performance.now() });
   }
+
+  // ---------- a diagram in a viewport: pan, zoom, fullscreen ----------
+  /* Mermaid hands back an SVG with a viewBox, and everything a reader needs is
+   * a viewport around it. The viewBox is what this drives, rather than a CSS
+   * transform: the browser redraws the same vectors into a different box, so
+   * strokes stay crisp at any zoom and a frame costs nothing.
+   *
+   * Measured before it existed (docs/DIAGRAMS.md section 8): the 220-node
+   * flowchart is 4738 px wide and was drawn 30 px tall, because `max-width:
+   * 100%` fitted its width into the reading column and `height: auto` took the
+   * height down with it. The one diagram big enough to be worth drawing was the
+   * one that could not be read.
+   *
+   * A diagram that has to be shrunk to fit the column is the one that gets a
+   * bounded frame; one that already fits keeps the height it drew itself at,
+   * because for a long sequence diagram the page's own scroll is the right
+   * viewport and always was. Both can be zoomed, panned and filled to the
+   * screen. */
+  const mmdViews = new WeakMap();
+  const MMD_MAX_ZOOM = 40;          // 4738 px of flowchart, read at 120 px of it
+  const MMD_MIN_FIT = 0.15;         // a fit smaller than this is a smudge, not a diagram
+  let mmdTouched = null;            // the last diagram the reader used, for the keys
+
+  /** The tallest a fitted diagram may be: most of a screen and never more than
+   *  one, so the text after it is still something the reader can see. */
+  const mmdCap = () => Math.max(260, Math.min(680, Math.round(innerHeight * 0.7)));
+
+  /** Give a drawn diagram its frame and its fit. Called on every paint, cache
+   *  hit included, because the SVG is new each time and the frame's width may
+   *  not be. */
+  function mmdViewport(fig) {
+    const svg = fig.querySelector("svg");
+    const frame = fig.querySelector(".mmd-frame");
+    if (!svg || !frame) {
+      mmdViews.delete(fig);
+      return;
+    }
+    const full = document.fullscreenElement === fig;
+    // A figure that is not laid out cannot be fitted -- which is every other
+    // diagram on the page while one of them is fullscreen. Leave it as it is;
+    // leaving fullscreen fits them all again.
+    const width = full ? Math.round(innerWidth) : frame.clientWidth;
+    if (!width) return;
+    mmdViews.delete(fig);
+    // The graph's own bounds, kept on the element: the live viewBox is wherever
+    // the reader has panned to, so a second pass -- a resize, or coming back
+    // from fullscreen -- would otherwise take the view for the whole diagram
+    // and never find its way out again.
+    const vb = (svg.dataset.mmdBase || svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+    // No usable viewBox is not a failure: the diagram is shown as Mermaid sized
+    // it, and it simply has no viewport. Nothing below assumes one exists.
+    if (vb.length !== 4 || vb.some(n => !Number.isFinite(n)) || vb[2] <= 0 || vb[3] <= 0) return;
+    const base = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
+    svg.dataset.mmdBase = `${base.x} ${base.y} ${base.w} ${base.h}`;
+    // Mermaid sizes the SVG itself, in the units it drew in. The frame decides
+    // how big it is on the page from here on.
+    svg.removeAttribute("width");
+    svg.removeAttribute("height");
+    svg.style.maxWidth = "none";
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    /* A graph far wider than the column has a fit nobody can read: the 220-node
+     * flowchart measures 20023 units across and fits at 4% of itself, which is
+     * a smudge rather than a shape. Past that point the diagram opens where a
+     * label can be read instead -- at its own size, at the corner it starts in
+     * -- and "Fit" is the button that offers the bird's-eye. Under it, fitted
+     * is what a reader wants and what they get. */
+    const fitScale = width / base.w;
+    const smudge = fitScale < MMD_MIN_FIT;
+    const height = full ? Math.round(innerHeight)
+      : smudge ? mmdCap()
+        : base.w > width ? Math.max(220, Math.min(mmdCap(), Math.round(base.h * fitScale)))
+          : Math.round(base.h);
+    frame.style.height = `${height}px`;
+    mmdViews.set(fig, { base, svg, frame, view: { ...base }, fit: null });
+    mmdFit(fig);
+    if (smudge && !full) mmdStart(fig);
+    mmdTools(fig);
+  }
+
+  /** The whole graph, in a box shaped like the frame it is shown in.
+   *
+   *  Matching the frame's aspect ratio is what makes the arithmetic below exact:
+   *  with the two in step there is no letterboxing, so one pixel of frame is one
+   *  known distance in the diagram and a point under the cursor can be held
+   *  still while the view shrinks around it. */
+  function mmdFit(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return;
+    const r = v.frame.getBoundingClientRect();
+    const shape = (r.width || 1) / (r.height || 1);
+    const { base } = v;
+    const w = base.w / base.h > shape ? base.w : base.h * shape;
+    const h = w / shape;
+    v.fit = { x: base.x + (base.w - w) / 2, y: base.y + (base.h - h) / 2, w, h };
+    v.view = { ...v.fit };
+    // A diagram small enough to be shown whole at its own size is already at
+    // full size, so "100%" would be a button that does nothing. Zoom in and out
+    // still say what they mean, and the toggle comes back the moment there is a
+    // difference between the two states.
+    v.shrunk = (r.width || 1) / w < 0.995;
+    mmdApply(fig);
+  }
+
+  /** Where a diagram too wide to fit opens: its own size, at the corner it
+   *  starts in, which for every graph Mermaid lays out is where the beginning
+   *  of it is. */
+  function mmdStart(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return;
+    const r = v.frame.getBoundingClientRect();
+    const w = Math.min(v.fit.w, r.width || v.fit.w);
+    const h = w * v.fit.h / v.fit.w;
+    v.view = { x: v.base.x, y: v.base.y, w, h };
+    mmdClamp(fig);
+    mmdApply(fig);
+  }
+
+  /** Pixels per diagram unit, as the SVG is actually drawn right now. */
+  function mmdScale(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return 1;
+    const r = v.svg.getBoundingClientRect();
+    return Math.min(r.width / v.view.w, r.height / v.view.h) || 1;
+  }
+
+  /** Where in the diagram a point on the screen is. */
+  function mmdPoint(fig, cx, cy) {
+    const v = mmdViews.get(fig);
+    if (!v || cx == null) return null;
+    const r = v.svg.getBoundingClientRect();
+    const s = Math.min(r.width / v.view.w, r.height / v.view.h);
+    if (!(s > 0)) return null;
+    const ox = (r.width - v.view.w * s) / 2, oy = (r.height - v.view.h * s) / 2;
+    return { x: v.view.x + (cx - r.left - ox) / s, y: v.view.y + (cy - r.top - oy) / s };
+  }
+
+  /** The reader cannot lose the diagram: wherever the view goes, its middle
+   *  stays over the graph. Forgiving rather than strict, so a flick of the
+   *  wrist never has to be undone. */
+  function mmdClamp(fig) {
+    const { base, view } = mmdViews.get(fig);
+    const cx = Math.min(Math.max(view.x + view.w / 2, base.x), base.x + base.w);
+    const cy = Math.min(Math.max(view.y + view.h / 2, base.y), base.y + base.h);
+    view.x = cx - view.w / 2;
+    view.y = cy - view.h / 2;
+  }
+
+  function mmdApply(fig) {
+    const v = mmdViews.get(fig);
+    if (!v) return;
+    const { view, fit } = v;
+    v.svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+    const zoomed = !!fit && view.w < fit.w - 0.5;
+    fig.dataset.zoom = zoomed ? "in" : "fit";
+    const toggle = fig.querySelector("[data-mmd=zoom]");
+    if (toggle) {
+      toggle.hidden = !v.shrunk && !zoomed;
+      toggle.textContent = zoomed ? "Fit" : "100%";
+      toggle.title = zoomed ? "Fit the whole diagram  0" : "Show it at full size";
+    }
+  }
+
+  /** Zoom by `k` about a point on the screen, or about the middle of the frame.
+   *  Out is bounded by the fit -- there is nothing past the whole diagram -- and
+   *  in by MMD_MAX_ZOOM, which is where the largest diagram measured becomes a
+   *  screenful of readable labels. */
+  function mmdZoom(fig, k, cx, cy) {
+    const v = mmdViews.get(fig);
+    if (!v || !v.fit) return;
+    const w = Math.max(v.fit.w / MMD_MAX_ZOOM, Math.min(v.fit.w, v.view.w / k));
+    if (Math.abs(w - v.view.w) < 0.01) return;
+    const h = w * v.view.h / v.view.w;
+    const p = mmdPoint(fig, cx, cy) || { x: v.view.x + v.view.w / 2, y: v.view.y + v.view.h / 2 };
+    v.view.x = p.x - (p.x - v.view.x) * (w / v.view.w);
+    v.view.y = p.y - (p.y - v.view.y) * (h / v.view.h);
+    v.view.w = w;
+    v.view.h = h;
+    mmdClamp(fig);
+    mmdApply(fig);
+    mmdTouched = fig;
+  }
+
+  /** One diagram unit per pixel: the "let me read that label" half of the
+   *  toggle, from wherever the reader is looking. */
+  function mmdActual(fig) {
+    const v = mmdViews.get(fig);
+    if (!v || !v.fit) return;
+    const r = v.frame.getBoundingClientRect();
+    mmdZoom(fig, v.view.w / Math.max(1, r.width), null, null);
+  }
+
+  /** Fill the screen with one diagram. The frame is re-measured on the way in
+   *  and on the way out, since its height is the one thing fullscreen changes. */
+  function mmdFull(fig) {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      return;
+    }
+    if (!fig.requestFullscreen) {
+      toast("No fullscreen", "this browser did not offer it");
+      return;
+    }
+    fig.requestFullscreen().catch(e => toast("No fullscreen", String(e && e.message ? e.message : e)));
+  }
+
+  /* After the browser has finished resizing the page around it, not during:
+   *  measured mid-transition, a frame reports the width it is leaving and the
+   *  diagram comes back fitted to a column that is no longer there. */
+  document.addEventListener("fullscreenchange", () => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
+    }));
+  });
+
+  /** The controls, added once per figure and shown when it is under the cursor
+   *  or holds the focus -- the same bargain the rename pencils in the tree make:
+   *  present when wanted, absent from a page being read. */
+  function mmdTools(fig) {
+    if (fig.querySelector(".mmd-tools")) return;
+    const bar = document.createElement("div");
+    bar.className = "mmd-tools";
+    bar.innerHTML =
+      `<button type="button" data-mmd="out" title="Zoom out" aria-label="Zoom out">−</button>` +
+      `<button type="button" data-mmd="in" title="Zoom in  (double-click, or ⌘/ctrl + scroll)" aria-label="Zoom in">+</button>` +
+      `<button type="button" data-mmd="zoom" title="Show it at full size">100%</button>` +
+      `<button type="button" data-mmd="full" title="Fullscreen  f" aria-label="Fullscreen">⛶</button>`;
+    fig.appendChild(bar);
+    mmdApply(fig);
+  }
+
+  /** Which diagram a key means: the one under the cursor, else whichever one is
+   *  most on screen, else the last one the reader used.
+   *
+   *  "The first one on the page" was the obvious fallback and the wrong one --
+   *  a reader pressing a key is looking at something, and on a page of eight
+   *  diagrams it is rarely the first. */
+  function mmdKeyed() {
+    const hovered = docEl.querySelector('.mmd[data-state="done"]:hover');
+    if (hovered && mmdViews.has(hovered)) return hovered;
+    const middle = innerHeight / 2;
+    let best = null, nearest = Infinity;
+    for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) {
+      if (!mmdViews.has(fig)) continue;
+      const r = fig.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight) continue;
+      const d = Math.abs((r.top + r.bottom) / 2 - middle);
+      if (d < nearest) { nearest = d; best = fig; }
+    }
+    if (best) return best;
+    return mmdTouched && mmdTouched.isConnected && mmdViews.has(mmdTouched) ? mmdTouched : null;
+  }
+
+  docEl.addEventListener("click", e => {
+    const b = e.target.closest("[data-mmd]");
+    if (!b) return;
+    const fig = b.closest(".mmd");
+    if (!fig) return;
+    mmdTouched = fig;
+    const what = b.dataset.mmd;
+    if (what === "in") mmdZoom(fig, 1.6, null, null);
+    else if (what === "out") mmdZoom(fig, 1 / 1.6, null, null);
+    else if (what === "full") mmdFull(fig);
+    else if (what === "zoom") fig.dataset.zoom === "in" ? mmdFit(fig) : mmdActual(fig);
+  });
+
+  /* Zoom on ⌘/ctrl + scroll, which is the web's own convention and the reason a
+   * cursor crossing a diagram never traps the page. A trackpad pinch arrives
+   * here as exactly this event, so pinching works without a second path. */
+  docEl.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const fig = e.target.closest('.mmd[data-state="done"]');
+    if (!fig || !mmdViews.has(fig)) return;
+    e.preventDefault();
+    mmdZoom(fig, Math.exp(-e.deltaY * 0.0025), e.clientX, e.clientY);
+  }, { passive: false });
+
+  /* Drag to pan, but only once there is something to pan to: a fitted diagram
+   * holds the whole graph already, and a drag across it is a reader selecting a
+   * label, not moving a map. */
+  docEl.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    const fig = e.target.closest('.mmd[data-state="done"]');
+    if (!fig || fig.dataset.zoom !== "in" || !mmdViews.has(fig) || e.target.closest("[data-mmd]")) return;
+    const v = mmdViews.get(fig);
+    let last = { x: e.clientX, y: e.clientY };
+    fig.dataset.grab = "1";
+    mmdTouched = fig;
+    const move = ev => {
+      const s = mmdScale(fig);
+      v.view.x -= (ev.clientX - last.x) / s;
+      v.view.y -= (ev.clientY - last.y) / s;
+      last = { x: ev.clientX, y: ev.clientY };
+      mmdClamp(fig);
+      mmdApply(fig);
+    };
+    const up = () => {
+      delete fig.dataset.grab;
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+    e.preventDefault();
+  });
+
+  docEl.addEventListener("dblclick", e => {
+    const fig = e.target.closest('.mmd[data-state="done"]');
+    if (!fig || !mmdViews.has(fig)) return;
+    e.preventDefault();
+    mmdZoom(fig, 2, e.clientX, e.clientY);
+  });
+
+  /* The frame's width decides the fit, so a window that changes size has
+   * changed the fit. Re-measured rather than rescaled, which also puts a
+   * diagram back where the reader can see all of it. */
+  let mmdResize = null;
+  addEventListener("resize", () => {
+    clearTimeout(mmdResize);
+    mmdResize = setTimeout(() => {
+      for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
+    }, 150);
+  });
 
   /** Mermaid answers a source it cannot parse with its own error graphic, which
    *  replaces the source -- at exactly the moment the reader wants to see what
@@ -1219,8 +1728,8 @@
     try {
       await fetch(`/api/docs/${state.doc.id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
       state.doc.pinned = pinned; state.cache.delete(state.doc.id);
-      state.tree = await (await fetch("/api/tree")).json();
-      renderTree(); renderMeta(false);
+      await refreshTree(state.doc.project_id);
+      renderMeta(false);
       toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it");
     } catch (e) { toast("Could not pin", String(e)); }
   }
@@ -1268,22 +1777,28 @@
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
-      try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+      const elsewhere = !state.doc || state.doc.project_id !== d.project_id;
+      // One project moved, so one project's rows are what is refetched. This
+      // used to pull the whole library back down and rebuild the sidebar on
+      // every arrival -- a file saved every few seconds paid it every few
+      // seconds -- and the unread count is set first so one render serves both.
       // An overwrite of a document already here is not an arrival: refresh it where
       // it is if it is on screen, never navigate to it, and never toast — a file
       // being watched changes on every save.
       if (j.existing) {
-        if (state.doc && state.doc.id === d.id) { await refreshDoc(d.id); renderTree(); }
-        else { state.cache.delete(d.id); if (!state.doc || state.doc.project_id !== d.project_id) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); renderTree(); }
+        if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
+        else { state.cache.delete(d.id); if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); }
+        await refreshTree(d.project_id);
         return;
       }
       if (state.view === "inbox" || idle()) {
         state.cache.delete(d.id);
+        await refreshTree(d.project_id);
         await showDoc(d.id, true);
         toast(d.title, `${d.project} · just now`);
       } else {
-        if (!state.doc || state.doc.project_id !== d.project_id) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1);
-        renderTree();
+        if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1);
+        await refreshTree(d.project_id);
         toast(d.title, `${d.project} · click to open`, () => showDoc(d.id, true));
       }
     });
@@ -1305,17 +1820,15 @@
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.cache.delete(j.id);
-      try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
-      if (state.doc && state.doc.id === j.id) showInbox(true); else renderTree();
+      await refreshTree();
+      if (state.doc && state.doc.id === j.id) showInbox(true);
     });
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
       renderBrowse();
     });
-    es.addEventListener("pinned", async () => {
-      try { state.tree = await (await fetch("/api/tree")).json(); renderTree(); } catch {}
-    });
+    es.addEventListener("pinned", async () => { await refreshTree(); });
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -1451,6 +1964,10 @@
       case "w": toggleWide(); break;
       case "z": toggleWrap(); break;
       case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
+      // The diagram under the cursor, or the last one used: fit it, or fill the
+      // screen with it. Both are no-ops on a page with no diagram on it.
+      case "0": { const fig = mmdKeyed(); if (fig) { mmdFit(fig); mmdTouched = fig; } break; }
+      case "f": { const fig = mmdKeyed(); if (fig) { mmdFull(fig); mmdTouched = fig; } break; }
       case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
       case "o":
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");

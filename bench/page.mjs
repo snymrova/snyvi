@@ -229,6 +229,147 @@ export async function revisitUsesCache() {
   }
 }
 
+/** Whether a drawn diagram behaves like a viewport.
+ *
+ *  Phase 3 of docs/DIAGRAMS.md, and the fault it answers was measured rather
+ *  than imagined: the 220-node flowchart is 4738 px wide and was drawn 30 px
+ *  tall, because `max-width: 100%` fitted its width into the reading column and
+ *  `height: auto` took the height down with it. The one diagram big enough to
+ *  be worth drawing was the one nobody could read.
+ *
+ *  Every gesture here is dispatched at the frame rather than simulated against
+ *  the model: what is under test is the wiring, and a check that calls the
+ *  functions directly would pass with nothing listening. Fullscreen is the one
+ *  exception -- it needs a gesture the page cannot fake, so it is driven from
+ *  the harness. */
+export async function readable(id) {
+  const fig = [...document.querySelectorAll(".mmd")]
+    .find(f => new RegExp("%%\\s*id:" + id + "(\\s|$)").test(f.dataset.src || ""));
+  if (!fig) return { ok: false, why: `no diagram called ${id} is in the page` };
+  if (fig.dataset.state !== "done") return { ok: false, why: `${id} is ${fig.dataset.state}, not drawn` };
+  const frame = fig.querySelector(".mmd-frame"), svg = fig.querySelector("svg");
+  if (!svg) return { ok: false, why: `${id} drew no SVG` };
+  const box = () => svg.getAttribute("viewBox");
+  const width = () => Number((box() || "0 0 0 0").split(/\s+/)[2]);
+  // Looked at, before it is used: a key means the diagram the reader has in
+  // front of them, so the checks below have to be reading this one.
+  fig.scrollIntoView({ behavior: "instant", block: "center" });
+  await new Promise(res => setTimeout(res, 150));
+  const r = frame.getBoundingClientRect();
+  const wheel = ctrl => frame.dispatchEvent(new WheelEvent("wheel", {
+    bubbles: true, cancelable: true, deltaY: -240, ctrlKey: ctrl,
+    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+
+  /* Fitted, unless fitting this one would draw it too small to read anything:
+   * a graph twenty thousand units wide opens where a label can be read, with
+   * "Fit" offering the bird's-eye. Either is a diagram a reader can use; a
+   * frame taller than the window is not. */
+  const opened = fig.dataset.zoom;
+  const offers = (fig.querySelector("[data-mmd=zoom]") || {}).textContent;
+  const bounded = r.height <= innerHeight;
+  // Back to the whole thing first, so the gestures below start where they can
+  // be seen to have done something.
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+  await new Promise(res => setTimeout(res, 50));
+  const fitted = fig.dataset.zoom === "fit";
+  const fit = box();
+  wheel(false);
+  const plainMoved = box() !== fit;
+  wheel(true);
+  const zoomedIn = width() < Number(fit.split(/\s+/)[2]);
+
+  // Drag, now that there is something to pan to.
+  const before = box();
+  frame.dispatchEvent(new PointerEvent("pointerdown", {
+    bubbles: true, button: 0, pointerId: 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+  window.dispatchEvent(new PointerEvent("pointermove", {
+    bubbles: true, pointerId: 1, clientX: r.left + r.width / 2 - 120, clientY: r.top + r.height / 2 }));
+  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+  const panned = box() !== before;
+
+  // And back to the whole diagram, from the keyboard.
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+  await new Promise(res => setTimeout(res, 50));
+  const refits = fig.dataset.zoom === "fit" && box() === fit;
+
+  const opens = opened === "fit" ? offers !== "Fit" : offers === "Fit";
+  return {
+    ok: bounded && opens && fitted && !plainMoved && zoomedIn && panned && refits,
+    opened, offers, bounded, fitted, plainMoved, zoomedIn, panned, refits,
+    height: Math.round(r.height), window: Math.round(innerHeight),
+    why: !bounded ? `its frame is ${Math.round(r.height)} px in a ${Math.round(innerHeight)} px window`
+      : !opens ? `it opened ${opened} and the button offers "${offers}"`
+        : !fitted ? "0 did not fit it"
+          : plainMoved ? "a plain scroll moved the diagram instead of the page"
+            : !zoomedIn ? "ctrl + scroll did not zoom"
+              : !panned ? "dragging did not pan"
+                : !refits ? "0 did not fit it again"
+                  : `opened ${opened === "fit" ? "fitted" : "where a label can be read"} in ${Math.round(r.height)} px of a ${Math.round(innerHeight)} px window, then zoomed, panned and fitted`,
+  };
+}
+
+/** The sidebar, on a library that has been used.
+ *
+ *  Every other number in this harness was taken against a two-document
+ *  library, which is exactly why an unbounded tree went unnoticed until a
+ *  reader with months of sends reported the wait: the shell carried every
+ *  document in every project on every page open -- 383 KB and 13,213 rows at
+ *  3000 documents -- and the sidebar built all of them before the reader could
+ *  do anything.
+ *
+ *  So what this returns is what the sidebar costs the page rather than how fast
+ *  the machine drew it: rows in the DOM with nothing expanded, rows once one
+ *  project is, and whether the tree stops rendering once it has drawn. That
+ *  last one is a count and not a clock because a tree that renders in response
+ *  to its own render looks exactly like a correct one in a screenshot -- it
+ *  pegs a core, and the page never finishes loading at all. */
+export async function sidebar() {
+  // Inline, not shared: only the function itself crosses into the page, so a
+  // helper from this module's scope would be a ReferenceError over there.
+  const until = async (test, tries = 200) => {
+    for (let i = 0; i < tries; i++) {
+      if (test()) return true;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+  };
+  const tree = document.querySelector("#tree");
+  const rows = el => el.querySelectorAll(".t-doc").length;
+  const closed = rows(tree);
+  const projects = tree.querySelectorAll(".t-proj").length;
+
+  // One project, expanded the way a reader expands it. Found again by its id
+  // on every look: a fill rebuilds the sidebar, so the element clicked is not
+  // the element the rows arrive in.
+  const first = [...tree.querySelectorAll(".t-proj")].find(d => !d.open);
+  const pid = first ? first.dataset.pid : null;
+  const proj = () => document.querySelector(`#tree .t-proj[data-pid="${pid}"]`);
+  let opened = null, sessions = null, offers = null, filled = false;
+  if (pid) {
+    first.querySelector("summary").click();
+    filled = await until(() => proj() && rows(proj()) > 0);
+    const p = proj();
+    opened = p ? rows(p) : 0;
+    sessions = p ? p.querySelectorAll(".t-wf").length : 0;
+    offers = p ? p.querySelectorAll("[data-more-docs], [data-more-wf]").length : 0;
+  }
+
+  // And then it should stop. Counted over a window with nothing happening in
+  // it: a settled tree does nothing at all here.
+  let mutations = 0;
+  const obs = new MutationObserver(recs => { mutations += recs.length; });
+  obs.observe(tree, { childList: true, subtree: true });
+  await new Promise(r => setTimeout(r, 700));
+  obs.disconnect();
+
+  const nav = performance.getEntriesByType("navigation")[0] || {};
+  return {
+    closed, projects, opened, sessions, offers, filled, mutations,
+    shell: Math.round(nav.transferSize || 0),
+    nodes: tree.querySelectorAll("*").length,
+  };
+}
+
 /** Every label in every diagram, and what it is drawn against.
  *
  *  Section 9 of docs/DIAGRAMS.md asks for a rendered assertion per diagram

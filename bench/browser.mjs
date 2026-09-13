@@ -126,6 +126,25 @@ class CDP {
   close() { this.ws.close(); }
 }
 
+/** A load event, or a failure saying so.
+ *
+ *  A page that never fires one used to hang this harness rather than fail it:
+ *  a render loop in the sidebar held the document open for ever and this wait
+ *  had no floor, so a fault that a reader would have felt as a pegged core read
+ *  here as a build that never finished. */
+function pageLoad(cdp, sessionId, what) {
+  return new Promise((res, rej) => {
+    const timer = setTimeout(
+      () => rej(new Error(`${what}: no load event in 20s -- something is holding the document open, and a render loop will do it`)),
+      20_000);
+    cdp.on("Page.loadEventFired", (_p, sn) => {
+      if (sn !== sessionId) return;
+      clearTimeout(timer);
+      res();
+    });
+  });
+}
+
 /** A page function, as source the page can evaluate. Arguments are passed as
  *  JSON, so anything handed over has to survive a round trip -- which is the
  *  same constraint returning a value already imposes. */
@@ -227,7 +246,7 @@ async function main() {
     const throttle = Number(process.env.SNYVI_BENCH_CPU || 1);
     if (throttle > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle }, sessionId);
 
-    const loaded = new Promise(res => cdp.on("Page.loadEventFired", (_p, s) => s === sessionId && res()));
+    const loaded = pageLoad(cdp, sessionId, "the document");
     await cdp.send("Page.navigate", { url }, sessionId);
     await loaded;
 
@@ -240,6 +259,11 @@ async function main() {
     const viewport = await evaluate(cdp, sessionId, "innerHeight");
 
     const onDemand = await evaluate(cdp, sessionId, call(page.onDemand, "huge-flow"));
+
+    /* The same diagram, now that it is drawn: is it something a reader can
+     * actually read? Phase 3. */
+    const readable = await evaluate(cdp, sessionId, call(page.readable, "huge-flow"));
+    const full = await fullscreen(cdp, sessionId);
 
     // Two searches, because there are two ways find used to go wrong. "Node 1"
     // is a label in the first flowchart and also a phrase in the prose, so it
@@ -295,14 +319,20 @@ async function main() {
     const famMd = join(tmp, "diagram-families.md");
     writeFileSync(famMd, families());
     const famUrl = execFileSync(BIN, ["send", famMd], { env, encoding: "utf8" }).trim().split("\n").pop();
-    const famLoaded = new Promise(res => cdp.on("Page.loadEventFired", (_p, sn) => sn === sessionId && res()));
+    const famLoaded = pageLoad(cdp, sessionId, "the families document");
     await cdp.send("Page.navigate", { url: famUrl }, sessionId);
     await famLoaded;
     const light = await evaluate(cdp, sessionId, call(page.legible, "light"));
     const toggled = await evaluate(cdp, sessionId, call(page.setTheme, "dark"));
     const dark = toggled.ok ? await evaluate(cdp, sessionId, call(page.legible, "dark")) : [];
 
-    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible: [...light, ...dark], toggled, throttle });
+    /* The sidebar, on a library that has been used rather than the two
+     * documents every number above was taken against. Last, and in a page of
+     * its own, because seeding a library is a couple of hundred arrivals and
+     * every one of them lands in whatever tab is open. */
+    const seeded = await sidebar(cdp, env);
+
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible: [...light, ...dark], toggled, throttle, seeded, readable, full });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -316,6 +346,88 @@ async function main() {
     console.error("\nbrowser budget: something is over budget or misbehaving");
     process.exitCode = 1;
   }
+}
+
+/** Fullscreen, which is the one gesture the page cannot fake for itself: the
+ *  browser grants it to a real click and to nothing else, so the click is sent
+ *  through the protocol. */
+async function fullscreen(cdp, sessionId) {
+  const at = await evaluate(cdp, sessionId, `(() => {
+    const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
+    if (!fig) return null;
+    fig.scrollIntoView({ behavior: "instant", block: "center" });
+    const b = fig.querySelector("[data-mmd=full]");
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  if (!at) return { ok: false, why: "no diagram offered a fullscreen button" };
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await cdp.send("Input.dispatchMouseEvent", { type, x: at.x, y: at.y, button: "left", clickCount: 1 }, sessionId);
+  }
+  await sleep(600);
+  const inside = await evaluate(cdp, sessionId, `(() => {
+    const el = document.fullscreenElement;
+    const frame = el && el.querySelector(".mmd-frame");
+    return { is: !!el && el.classList.contains("mmd"),
+      height: frame ? Math.round(frame.getBoundingClientRect().height) : 0,
+      window: Math.round(innerHeight) };
+  })()`);
+  await evaluate(cdp, sessionId, `document.fullscreenElement ? document.exitFullscreen() : null`);
+  await sleep(600);
+  const after = await evaluate(cdp, sessionId, `(() => {
+    const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
+    return { out: !document.fullscreenElement,
+      height: fig ? Math.round(fig.querySelector(".mmd-frame").getBoundingClientRect().height) : 0,
+      window: Math.round(innerHeight) };
+  })()`);
+  const ok = inside.is && inside.height >= inside.window - 4 && after.out && after.height > 0 && after.height < after.window;
+  return {
+    ok, ...inside,
+    why: !inside.is ? "the button did not put it fullscreen"
+      : inside.height < inside.window - 4 ? `fullscreen left it ${inside.height} px tall in a ${inside.window} px screen`
+        : !after.out ? "it never came back out"
+          : after.height >= after.window ? `it came back ${after.height} px tall, still filling the page`
+            : `${inside.height} px of screen, and ${after.height} px back in the document`,
+  };
+}
+
+/** Fill a library the shape a used one has -- several projects, more sessions
+ *  than a project shows, and a session with more documents than it shows -- and
+ *  then read the sidebar in a fresh page.
+ *
+ *  Sends go in through the CLI, which is how documents arrive; `input` rather
+ *  than a file per document, so this costs a process and not a write. */
+async function sidebar(cdp, env) {
+  const projects = Number(process.env.SNYVI_BENCH_PROJECTS || 4);
+  const sessions = Number(process.env.SNYVI_BENCH_SESSIONS || 12);   // past the sidebar's cap of 10
+  const docs = Number(process.env.SNYVI_BENCH_DOCS || 4);
+  const deep = Number(process.env.SNYVI_BENCH_DEEP || 14);           // one session past the cap of 10
+  for (let p = 0; p < projects; p++) {
+    for (let w = 0; w < sessions; w++) {
+      const n = p === 0 && w === 0 ? deep : docs;
+      for (let d = 0; d < n; d++) {
+        execFileSync(BIN, ["send", "-t", `Plan ${p}.${w}.${d}`, "-w", `session-${p}-${w}`, "--project", `/tmp/snyvi-bench-project-${p}`],
+          { env, input: `# Plan ${p}.${w}.${d}\n\nSomething an agent wrote.\n`, encoding: "utf8", stdio: ["pipe", "ignore", "ignore"] });
+      }
+    }
+  }
+  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
+  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+  await cdp.send("Page.enable", {}, sessionId);
+  await cdp.send("Runtime.enable", {}, sessionId);
+  // A first visit: the tab remembers which projects a reader left open, and
+  // the 200 arrivals above walked this browser through several of them. What
+  // is being measured is what the sidebar puts in the page before anyone has
+  // asked for anything.
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument",
+    { source: "try { localStorage.clear(); } catch (e) {}" }, sessionId);
+  const loaded = pageLoad(cdp, sessionId, "the inbox, on a seeded library");
+  await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` }, sessionId);
+  await loaded;
+  const read = await evaluate(cdp, sessionId, call(page.sidebar));
+  await cdp.send("Target.closeTarget", { targetId });
+  return { ...read, documents: projects * sessions * docs + (deep - docs) };
 }
 
 /* ---------- the numbers, and the budgets ---------- */
@@ -344,7 +456,7 @@ function judge(expect, got) {
   }
 }
 
-function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, toggled, throttle }) {
+function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, toggled, throttle, seeded, readable, full }) {
   const mark = n => perf.marks.find(m => m.name === n)?.start ?? null;
   const fcp = perf.paints.find(p => p.name === "first-contentful-paint")?.start ?? null;
   const libStart = mark("snyvi:mermaid-load");
@@ -458,6 +570,37 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
         : ok ? `${f.checked} labels, worst ${ratio}:1`
           : `"${f.text}" is ${ratio}:1 against what is behind it`;
     console.log(`  ${`${f.id} (${f.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);
+  }
+
+  /* Phase 3: a diagram of a few hundred nodes is only worth drawing if it can
+   * be read, and every one of these is a gesture the reader makes. */
+  console.log("\nthe big diagram, read");
+  for (const [name, r] of [["viewport", readable], ["fullscreen", full]]) {
+    failed ||= !r.ok;
+    console.log(`  ${name.padEnd(20)}${r.ok ? " ok  " : " FAIL"} ${r.why}`);
+  }
+
+  /* Counts, not clocks: what the sidebar puts in the page is a fact about
+   * snyvi at any library size, and it is enforced on every machine. */
+  console.log(`\nthe sidebar, on a library of ${seeded.documents} documents`);
+  const sideChecks = [
+    ["rows, first visit", seeded.closed, 20,
+      `${seeded.projects} projects, and a closed one costs the page nothing`],
+    ["rows, one project open", seeded.opened, 130,
+      `ten sessions of ten, ${seeded.sessions} drawn with ${seeded.offers} offering the rest`],
+    ["shell page, KB", Math.round(seeded.shell / 1024), 48,
+      "the tree is a row per project, not the library"],
+    ["renders after it settled", seeded.mutations, 8,
+      "a tree that answers its own render never stops"],
+  ];
+  for (const [name, value, budget, why] of sideChecks) {
+    const ok = value !== null && value <= budget;
+    failed ||= !ok;
+    console.log(`  ${name.padEnd(26)}${String(value === null ? "—" : value).padStart(6)}${String(budget).padStart(9)}${ok ? " ok  " : " OVER"} ${why}`);
+  }
+  if (!seeded.filled) {
+    failed = true;
+    console.log(`  ${"expanding a project".padEnd(26)}${"".padStart(15)} FAIL it drew no documents at all`);
   }
 
   console.log(`\nviewport ${viewport}px; ${diagrams.length} diagrams`);

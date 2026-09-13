@@ -10,6 +10,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Feature | Why | Cost | Status |
 |---|---|---|---|
 | Mermaid diagrams | Agents put flowcharts and sequence diagrams in almost every plan. Today they show as code. Vendor the library in the binary, load it only when a page has a `mermaid` block, render after first paint so text never waits. | M | **done 0.2** |
+| A big diagram you can read | A 20000-unit flowchart fitted into the reading column drew 30 px tall: the one diagram worth drawing was the one nobody could read. Each is a viewport now — ⌘/ctrl + scroll zooms toward the cursor, drag pans, `f` fills the screen, `0` fits — driving the SVG's own `viewBox`, so strokes stay crisp and nothing is scaled twice. `docs/DIAGRAMS.md` phase 3. | M | **done 0.9** |
 | Side-by-side diff with word-level highlights | "Compare with previous" and sent patches are inline only. Reviews read far better in two columns with changed words emphasised. Toggle with `s`. | M | **done 0.2** |
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
@@ -67,6 +68,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Feature | Why | Cost | Status |
 |---|---|---|---|
 | Content-Security-Policy header | The UI page has no CSP yet. Scripts and styles come only from the daemon; say so. | XS | **done 0.2** |
+| A sidebar that does not carry the library | `Store::tree()` returned every document there was, and the shell embeds what it returns in every page it serves: 383 KB and 13,213 rows at 3000 documents, with one 362-718 ms task building them before the reader could do anything, and the same cost again on every arrival. A project row is two numbers now and what is behind it is fetched when it is expanded. | M | **done 0.9** |
 | Virtualised rendering above ~200k lines | Chromium copes up to about 100k lines with `content-visibility`; beyond that, page the lines from the server on scroll. | M | later |
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
@@ -395,6 +397,108 @@ here anyway: the threat to a loopback side effect is a page on another
 origin firing a POST at it, not a local process, which could open a
 terminal without asking snyvi.
 
+## 0.9: the library gets big
+
+Everything measured until now was measured on a library with two
+documents in it. A reader with months of agent sends reported that snyvi
+took a moment to open, and that is where it was: not the daemon, which
+answers a page in a millisecond, and not the renderer, but the sidebar.
+
+`Store::tree()` returned every document in the library and `shell_doc`
+embedded it in every page. At 3000 documents that is a 383 KB page,
+13,213 rows in the sidebar and a 362-718 ms task building them before the
+reader can scroll or type — on a fast machine, headless. An arrival paid
+it again, because the `doc` event refetched the whole tree and rebuilt the
+sidebar, so a file being saved every few seconds cost that every few
+seconds.
+
+A project row now carries two numbers instead of its contents. Same
+library, same page:
+
+|  | before | after |
+|---|---|---|
+| shell page | 383 KB | 24 KB (18 KB of it the inbox's 50) |
+| `/api/tree` | 360 KB | 920 B |
+| sidebar nodes | 13,213 | 461 |
+| longest boot task | 362-718 ms | 0 ms |
+| load event | 446-815 ms | 52-88 ms |
+| an arrival | 360 KB and a rebuild | 13 KB, no long task |
+
+An expanded project shows its ten most recent sessions with their ten
+newest documents and says how many more there are; clicking that asks for
+the rest, whole. Two things stay exact: the workflow a reader is in always
+arrives complete, because `[` and `]` step through the versions of a
+document and a cap there would stop them somewhere arbitrary; and a cap a
+reader has lifted is put back after a refetch rather than closing under
+them.
+
+**Mermaid is fetched before the reader reaches a diagram.**
+`docs/DIAGRAMS.md` phase 4's first item. The first diagram on a page cost
+1170 ms, and 490 of those were one unbreakable task compiling 3.57 MB of
+JavaScript that nothing asked for until a diagram came near the viewport
+— the worst moment to begin, since the reader has arrived and is waiting.
+A page that holds a diagram now asks for the library in idle time: 783 ms
+to the first diagram, and the compile is spent while the first screen is
+being read. Beside it, the bundle's URL finally carries a version: it was
+being served immutable for a year, so a browser would have kept the first
+Mermaid it ever saw across every upgrade — and the trimmed bundle that
+phase 4 wants next could never have replaced it.
+
+Two faults found on the way, both worth writing down:
+
+- **A `<details>` created with `open` fires `toggle` in Chrome.** The
+  first lazy sidebar rebuilt the tree from that event, which created the
+  element that fired it, and the two rendered each other for as long as
+  the tab was open. The page never fired its load event at all — and
+  `bench/browser.mjs`, which waits for one, hung rather than failed.
+  Opening a project now writes that project's own list and nothing else.
+- **The browser harness had no floor under that wait.** It has one now,
+  and the message names what to look for. A benchmark that hangs is worse
+  than one that fails: the failure is what tells you the thing is broken.
+
+`bench/browser.mjs` also seeds a library of its own now — four projects,
+more sessions than a project shows, and a session with more documents
+than it shows — and budgets what the sidebar puts in the page: rows on a
+first visit, rows with one project open, the shell's size, and renders
+after it has settled. Counts rather than clocks, because what a row costs
+the page is a fact about snyvi on any machine.
+
+**And a big diagram is worth drawing.** `docs/DIAGRAMS.md` phase 3, the
+last thing that document had measured and not fixed: the 220-node
+flowchart is 20023 units wide and was drawn 30 px tall, because
+`max-width: 100%` fitted its width into the reading column and
+`height: auto` took the height down with it.
+
+A drawn diagram is a viewport now. ⌘/ctrl + scroll zooms toward the
+cursor and a trackpad pinch arrives as the same event; a plain scroll is
+still the page's, so a cursor crossing a diagram never traps it. Drag
+pans, double-click zooms in, `0` fits, `f` fills the screen, and the
+figure carries its own controls, shown when it is under the cursor. It
+drives the SVG's `viewBox` rather than scaling a picture: the browser
+draws the same vectors into a different box, so strokes stay crisp at any
+depth and a frame costs nothing per gesture.
+
+Two things the plan did not know, both found by measuring:
+
+- **A fit can be too small to be a diagram.** That flowchart fits the
+  column at 3.8% of itself, which draws a band of grey noise. Under about
+  15% a diagram opens at its own size instead, at the corner the graph
+  starts in, and the button offers `Fit` rather than `100%`.
+- **The live `viewBox` is not the diagram's bounds.** Panning writes it,
+  so re-fitting after a resize or a fullscreen read the reader's own view
+  as the whole graph and could never find its way back out. The bounds
+  are kept on the element; the attribute is only ever the view.
+
+`bench/browser.mjs` drives the gestures rather than the functions — a
+check that called them directly would pass with nothing listening — and
+clicks fullscreen through the protocol, because the browser grants that
+to a real click and to nothing else.
+
+Also: `ensure_daemon` asked a starting daemon for its health every 40 ms
+while a daemon comes up in about 25, so a cold `snyvi app` waited about
+twice as long as it needed to. 51 ms to 25-28 ms for a cold start and
+send.
+
 ## Candidates after 0.7
 
 JSON and YAML views, tags from the sender, macOS build, AUR, the global
@@ -415,16 +519,31 @@ changelog line twice. Only the amd64 leg authors notes now.
 What still has to come from a machine with tag permission is the tag
 itself. `workflow_dispatch` and tag pushes both return 403 for an agent
 session's token, which writes commits and nothing else. So a release
-is one command, from a person:
+is three commands, from a person:
 
 ```
-git tag -a v0.7.0 -m "snyvi 0.7.0" && git push origin v0.7.0
+git fetch origin main
+git show origin/main:Cargo.toml | awk '/^\[/{t=$0} t=="[package]" && /^version/'
+git tag -a v0.7.0 -m "snyvi 0.7.0" origin/main && git push origin v0.7.0
 ```
 
-with `Cargo.toml` bumped first, since the workflow reads the version
-from the tag and Tauri reads it from `Cargo.toml`.
+The fetch is not ceremony and neither is naming `origin/main` on the tag.
+A tag is a pointer to a commit, and the only commit worth naming is the
+one the remote has; a local `main` that is behind — or a clone sitting on
+another branch entirely — will happily take the tag and release the wrong
+tree. Tagging the fetched ref by name means the tag cannot land anywhere
+but where the work is, whatever the working copy is doing.
 
-That last line is there because v0.6.0 was first pushed without it. The
+The middle line prints one number, and it has to be the one being tagged:
+`Cargo.toml` must be bumped and merged before the tag, and that is the one
+mismatch nothing can catch in advance — by the time the workflow compares
+them, the tag exists and a run has been spent. It reads the `[package]`
+table rather than grepping the file, because Tauri and its two plugins are
+declared in long form — `[dependencies.tauri]` with `version = "2"` under
+it — so a plain `grep '^version'` answers with four numbers, three of them
+not the crate's.
+
+All of that is there because v0.6.0 was first pushed without it. The
 tag went onto a commit from a clone that had not fetched the work the
 tag was naming, whose `Cargo.toml` still said 0.5.0, and the run
 rebuilt the previous release under the new name. Nothing downstream

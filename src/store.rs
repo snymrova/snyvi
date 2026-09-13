@@ -44,15 +44,29 @@ pub struct TreeWorkflow {
     pub id: i64,
     pub key: String,
     pub title: String,
+    /// The newest documents in it, which is usually all of them.
     pub docs: Vec<TreeDoc>,
+    /// How many it actually holds, so the tree can offer the rest rather than
+    /// pretend the cap is the whole of it.
+    pub total: i64,
 }
 
+/// A project as the sidebar first shows it: a row, and how much is behind it.
+///
+/// Without its documents, on purpose. The tree used to arrive whole -- every
+/// workflow and every document in the library -- and the shell embeds it on
+/// every page open: at 3000 documents that was a 383 KB page and a 718 ms task
+/// building 13,000 rows nobody had asked to see. What a project holds is
+/// fetched when it is expanded, the way a browsed folder already was.
 #[derive(Clone, Debug, Serialize)]
 pub struct TreeProject {
     pub id: i64,
     pub name: String,
     pub root: String,
-    pub workflows: Vec<TreeWorkflow>,
+    /// Documents in the project. The inbox count is the sum of these.
+    pub docs: i64,
+    /// Workflows in it, for the same reason `TreeWorkflow::total` exists.
+    pub workflows: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -416,47 +430,119 @@ impl Store {
         Ok(victims)
     }
 
-    pub fn tree(&self) -> Result<Vec<TreeProject>> {
+    /// One row per project, most recent activity first.
+    ///
+    /// One query rather than the walk this replaced, and it answers the whole
+    /// sidebar until a reader expands something: a project's name, where it was
+    /// detected, and the two counts the tree needs to say how much is behind a
+    /// row it has not drawn.
+    ///
+    /// A project with no documents is not a row. One only exists because
+    /// something was sent to it, and prune deletes the empties, but a rename
+    /// can briefly outlive the last document it named.
+    pub fn projects(&self) -> Result<Vec<TreeProject>> {
         let conn = self.conn.lock().unwrap();
-        let mut projects: Vec<TreeProject> = conn
-            .prepare("SELECT id, name, root FROM projects ORDER BY (SELECT MAX(received_at) FROM docs WHERE project_id = projects.id) DESC")?
-            .query_map([], |r| Ok(TreeProject { id: r.get(0)?, name: r.get(1)?, root: r.get(2)?, workflows: vec![] }))?
+        let rows = conn
+            .prepare(
+                "SELECT p.id, p.name, p.root, COUNT(d.id), COUNT(DISTINCT d.workflow_id)
+                 FROM projects p JOIN docs d ON d.project_id = p.id
+                 GROUP BY p.id ORDER BY MAX(d.received_at) DESC, p.id DESC",
+            )?
+            .query_map([], |r| {
+                Ok(TreeProject {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    root: r.get(2)?,
+                    docs: r.get(3)?,
+                    workflows: r.get(4)?,
+                })
+            })?
             .collect::<std::result::Result<_, _>>()?;
-        let mut wf_stmt = conn.prepare(
-            "SELECT id, key, title FROM workflows WHERE project_id = ?1
-             ORDER BY (SELECT MAX(received_at) FROM docs WHERE workflow_id = workflows.id) DESC",
+        Ok(rows)
+    }
+
+    /// What one project holds: its `workflows` most recent sessions, each
+    /// carrying its `docs` newest documents and saying how many it has.
+    ///
+    /// Zero means every one of them, which is what a reader asking to see past
+    /// a cap gets. The caps are what keep an expanded project a screenful of
+    /// rows instead of a year of them; nothing is hidden, only unasked for.
+    pub fn project_tree(
+        &self,
+        project_id: i64,
+        workflows: usize,
+        docs: usize,
+    ) -> Result<Vec<TreeWorkflow>> {
+        // SQLite reads a negative LIMIT as no limit, which is the one case
+        // callers spell as 0 -- so the two are translated here rather than by
+        // building two versions of each statement.
+        let wf_limit = if workflows == 0 { -1 } else { workflows as i64 };
+        let doc_limit = if docs == 0 { -1 } else { docs as i64 };
+        let conn = self.conn.lock().unwrap();
+        let mut wfs: Vec<TreeWorkflow> = conn
+            .prepare(
+                "SELECT w.id, w.key, w.title, COUNT(d.id)
+                 FROM workflows w JOIN docs d ON d.workflow_id = w.id
+                 WHERE w.project_id = ?1
+                 GROUP BY w.id ORDER BY MAX(d.received_at) DESC, w.id DESC LIMIT ?2",
+            )?
+            .query_map(params![project_id, wf_limit], |r| {
+                Ok(TreeWorkflow {
+                    id: r.get(0)?,
+                    key: r.get(1)?,
+                    title: r.get(2)?,
+                    docs: vec![],
+                    total: r.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        let mut doc_stmt = conn.prepare(
+            "SELECT id, title, kind, received_at, pinned FROM docs
+             WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
-        let mut doc_stmt = conn.prepare("SELECT id, title, kind, received_at, pinned FROM docs WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC")?;
-        for p in &mut projects {
-            let wfs = wf_stmt
-                .query_map(params![p.id], |r| {
+        for w in &mut wfs {
+            w.docs = doc_stmt
+                .query_map(params![w.id, doc_limit], row_to_tree_doc)?
+                .collect::<std::result::Result<_, _>>()?;
+        }
+        Ok(wfs)
+    }
+
+    /// One workflow with every document in it.
+    ///
+    /// What `[` and `]` walk, so it is never a capped list: a reader stepping
+    /// through the versions of a plan must reach the oldest one. Also what the
+    /// tree fetches when a reader asks to see past a workflow's cap.
+    pub fn workflow_tree(&self, workflow_id: i64) -> Result<Option<TreeWorkflow>> {
+        let conn = self.conn.lock().unwrap();
+        let found = conn
+            .query_row(
+                "SELECT id, key, title FROM workflows WHERE id = ?1",
+                params![workflow_id],
+                |r| {
                     Ok(TreeWorkflow {
                         id: r.get(0)?,
                         key: r.get(1)?,
                         title: r.get(2)?,
                         docs: vec![],
+                        total: 0,
                     })
-                })?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            for mut w in wfs {
-                w.docs = doc_stmt
-                    .query_map(params![w.id], |r| {
-                        Ok(TreeDoc {
-                            id: r.get(0)?,
-                            title: r.get(1)?,
-                            kind: Kind::parse(&r.get::<_, String>(2)?).unwrap_or(Kind::Text),
-                            received_at: r.get(3)?,
-                            pinned: r.get::<_, i64>(4)? != 0,
-                        })
-                    })?
-                    .collect::<std::result::Result<_, _>>()?;
-                if !w.docs.is_empty() {
-                    p.workflows.push(w);
-                }
-            }
-        }
-        projects.retain(|p| !p.workflows.is_empty());
-        Ok(projects)
+                },
+            )
+            .optional()?;
+        let Some(mut w) = found else {
+            return Ok(None);
+        };
+        w.docs = conn
+            .prepare(
+                "SELECT id, title, kind, received_at, pinned FROM docs
+                 WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
+            )?
+            .query_map(params![workflow_id], row_to_tree_doc)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        w.total = w.docs.len() as i64;
+        // A workflow with nothing in it is not one the tree can show.
+        Ok((!w.docs.is_empty()).then_some(w))
     }
 
     pub fn inbox(&self, limit: usize) -> Result<Vec<Doc>> {
@@ -548,6 +634,18 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row("SELECT COUNT(*) FROM docs", [], |r| r.get(0))?)
     }
+}
+
+/// A tree row, which is the five columns of a document the sidebar draws and
+/// none of the rest. Shared by the two queries that return them.
+fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
+    Ok(TreeDoc {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        kind: Kind::parse(&r.get::<_, String>(2)?).unwrap_or(Kind::Text),
+        received_at: r.get(3)?,
+        pinned: r.get::<_, i64>(4)? != 0,
+    })
 }
 
 fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
@@ -650,7 +748,9 @@ mod tests {
             s.latest_for_path("/p", "/p/PLAN.md").unwrap().unwrap().id,
             b.id
         );
-        assert_eq!(s.tree().unwrap()[0].workflows[0].docs.len(), 2);
+        let p = &s.projects().unwrap()[0];
+        assert_eq!((p.docs, p.workflows), (2, 1));
+        assert_eq!(s.project_tree(p.id, 10, 10).unwrap()[0].docs.len(), 2);
     }
 
     #[test]
@@ -672,7 +772,7 @@ mod tests {
         let c = s.insert(&new_id("c"), d).unwrap();
         assert_eq!(c.project_id, a.project_id, "the root is still the identity");
         assert_eq!(c.project, "Auth work");
-        assert_eq!(s.tree().unwrap()[0].name, "Auth work");
+        assert_eq!(s.projects().unwrap()[0].name, "Auth work");
         assert!(!s.rename_project(9999, "nobody").unwrap());
     }
 
@@ -690,9 +790,9 @@ mod tests {
             .unwrap();
         assert_eq!(b.workflow_id, a.workflow_id, "same session, same workflow");
         assert_eq!(b.workflow_title, "Auth refactor");
-        let t = s.tree().unwrap();
-        assert_eq!(t[0].workflows[0].title, "Auth refactor");
-        assert_eq!(t[0].workflows[0].key, "sess-1");
+        let t = s.project_tree(b.project_id, 10, 10).unwrap();
+        assert_eq!(t[0].title, "Auth refactor");
+        assert_eq!(t[0].key, "sess-1");
         assert!(!s.rename_workflow(9999, "nobody").unwrap());
     }
 
@@ -738,7 +838,10 @@ mod tests {
         assert_eq!(s.previous(&c).unwrap().unwrap().id, b.id);
         assert_eq!(s.previous(&b).unwrap().unwrap().id, a.id);
         assert!(s.previous(&a).unwrap().is_none());
-        assert_eq!(s.tree().unwrap()[0].workflows[0].docs[0].title, "C");
+        assert_eq!(
+            s.project_tree(c.project_id, 10, 10).unwrap()[0].docs[0].title,
+            "C"
+        );
         let hist: Vec<String> = s
             .history(a.project_id, "/p/PLAN.md")
             .unwrap()
@@ -765,7 +868,7 @@ mod tests {
             .insert(&new_id("b"), new_doc("B", "two", "ksi pivot"))
             .unwrap();
         assert_eq!(a.workflow_id, b.workflow_id, "same key is one workflow");
-        assert_eq!(s.tree().unwrap()[0].workflows.len(), 1);
+        assert_eq!(s.projects().unwrap()[0].workflows, 1);
     }
 
     #[test]
@@ -799,6 +902,52 @@ mod tests {
         assert_eq!(s.source(&a.id).unwrap(), "second draft");
         assert!(s.search("first", 5).unwrap().is_empty());
         assert_eq!(s.search("second", 5).unwrap().len(), 1);
+    }
+
+    /// The sidebar is bounded, which is the whole point of these three queries:
+    /// a project row costs the same whatever is behind it, an expanded project
+    /// is a screenful, and everything past the caps is still reachable -- whole,
+    /// and only when asked for.
+    #[test]
+    fn an_expanded_project_is_a_screenful_not_a_year() {
+        let (s, _d) = temp_store();
+        // Twelve sessions of twelve documents: past both caps, in both
+        // directions, so a cap that only held in one would show here.
+        for w in 0..12 {
+            for i in 0..12 {
+                let body = format!("session {w}, document {i}");
+                s.insert(
+                    &new_id(&format!("d{w}-{i}")),
+                    new_doc("Plan", &body, &format!("sess-{w}")),
+                )
+                .unwrap();
+            }
+        }
+
+        let p = s.projects().unwrap();
+        assert_eq!(p.len(), 1);
+        assert_eq!(
+            (p[0].docs, p[0].workflows),
+            (144, 12),
+            "a row carries what is behind it as two numbers, not as rows"
+        );
+
+        let capped = s.project_tree(p[0].id, 10, 10).unwrap();
+        assert_eq!(capped.len(), 10, "ten of the twelve sessions");
+        assert!(
+            capped.iter().all(|w| w.docs.len() == 10 && w.total == 12),
+            "ten documents each, and each says it holds twelve"
+        );
+
+        let all = s.project_tree(p[0].id, 0, 0).unwrap();
+        assert_eq!(all.len(), 12, "a zero cap is a reader asking for the rest");
+        assert!(all.iter().all(|w| w.docs.len() == 12));
+
+        // What `[` and `]` walk. Never capped: a reader stepping back through
+        // the versions of a plan has to reach the first one.
+        let w = s.workflow_tree(capped[0].id).unwrap().unwrap();
+        assert_eq!((w.docs.len(), w.total), (12, 12));
+        assert!(s.workflow_tree(9999).unwrap().is_none());
     }
 }
 
