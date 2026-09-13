@@ -277,6 +277,14 @@ From source, `cargo build --release` gives you snyvi alone; add
 | o     | open source                                 |
 | ?     | show keys                                   |
 
+Everything the keys do, a finger can do too: on a screen with no
+pointer the controls that appear on hover -- copy, rename, the `#`
+beside a heading, a code block's language -- are simply there, and the
+`? for keys` in the sidebar's footer opens the same box. Tab reaches
+every control in the order they are on the page; the search palette and
+the keys box keep focus inside them while open and give it back to
+where it was on Escape, and the find count is read out as it changes.
+
 ## Lines
 
 A code or text document addresses its lines. `#L120` opens it at line 120
@@ -378,6 +386,14 @@ beside a heading copies a link to that section, the way a line number
 copies a link to a line, and the contents write the same links. `t`
 hides the rail and stays hidden until you bring it back.
 
+On a window under 1100 px wide the rail no longer fits beside the
+document, and under 760 px neither does the sidebar. Each becomes a
+sheet over the document instead: `t` and `\` open it, so do the two
+buttons at the top of the page that appear at those widths, and Escape
+or a tap outside closes it. The contents open on the section you are
+in, and a tap on an entry goes there and puts the sheet away. Widen the
+window and the panes are panes again, as you left them.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders
@@ -473,7 +489,12 @@ architecture, the performance budgets, and the milestones.
 
 Release build on a 4-core container, headless Chromium, best of three
 for the render and daemon rows (`snyvi bench`); the page rows come from
-`bench/browser.mjs`.
+`bench/browser.mjs`. What the page does, as opposed to how fast, is
+read by `bench/ui.mjs`: where the contents' marker is after a read to
+the end, what a wheel over the rail moves, what Back does, whether a
+save keeps the place, what `t` opens at 1000 px, whether Tab reaches
+every control. Counts and positions, no clocks, so every one of its
+rows is enforced on every machine, CI's included.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|

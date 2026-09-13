@@ -135,14 +135,34 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #app:has(#rail.empty) { grid-template-columns: var(--side-w) minmax(0,1fr) 0; }
 :root[data-side="0"] #app:has(#rail.empty) { grid-template-columns: 0 minmax(0,1fr) 0; }
 
-@media (max-width: 1100px) { #rail { display: none; } #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0 !important; } }
-@media (max-width: 760px)  {
-  #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
-  #side { position: fixed; inset: 0 auto 0 0; width: min(88vw, var(--side-w)); z-index: 20; box-shadow: var(--shadow); display: none; }
-  :root[data-side="1"] #side { display: flex; }
-}
 
 #side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; }
+/* Narrow windows: a pane that no longer fits beside the document becomes a
+   sheet over it. `data-sheet` on the root names the one that is open; app.js
+   sets it only while the pane is at a sheet width, and clears it when the
+   window grows past that. The scrim behind a sheet is what a tap outside
+   lands on. The two buttons in #chrome exist for the same widths. */
+@media (max-width: 1100px) {
+  #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0 !important; }
+  #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: 20; box-shadow: var(--shadow); padding: 20px 0 20px 16px; }
+  :root[data-sheet="rail"] #rail { display: flex; animation: sheet-r 160ms cubic-bezier(.2,.7,.2,1); }
+  #chrome #btn-rail { display: inline-flex; }
+  #app:has(#rail.empty) #btn-rail { display: none; }
+  #find { padding-right: 56px; }
+}
+@media (max-width: 760px)  {
+  #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
+  #side { display: none; position: fixed; inset: 0 auto 0 0; width: min(88vw, var(--side-w)); z-index: 20; box-shadow: var(--shadow); }
+  :root[data-sheet="side"] #side { display: flex; animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
+  #chrome #btn-side { display: inline-flex; }
+  #find { padding-left: 56px; }
+}
+@keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+@keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+#scrim { position: fixed; inset: 0; z-index: 15; background: rgba(20, 16, 10, .28); display: none; }
+:root[data-sheet] #scrim { display: block; }
+#chrome { position: fixed; top: 10px; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between; padding: 0 10px; pointer-events: none; }
+#chrome .icon { display: none; pointer-events: auto; background: var(--bg-raise); box-shadow: var(--shadow); }
 /* Pin each pane to its named area. Without this a hidden sidebar leaves the grid
    and the document pane slides into the zero-width first column. */
 #side { grid-area: side; }
@@ -165,7 +185,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .icon .aa { font-size: 12px; font-weight: 600; letter-spacing: -.02em; font-family: var(--serif); }
 .side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
 .side-foot .spacer { flex: 1; }
-.side-foot .hint { font-size: 11px; color: var(--fg-3); }
+.side-foot .hint { font-size: 11px; color: var(--fg-3); padding: 2px 4px; border-radius: 4px; }
+.side-foot .hint:hover { color: var(--fg); }
 
 #trees { overflow-y: auto; padding: 0 8px 8px; font-size: 13px; flex: 1; min-height: 0; }
 #tree ul { list-style: none; margin: 0; padding: 0; }
@@ -222,6 +243,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .b-close { margin-left: auto; color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; }
 .b-root > summary:hover .b-close { opacity: 1; }
 .b-close:hover { background: var(--rule-2); color: var(--fg); }
+.b-close:focus-visible { opacity: 1; }
 .b-tree, .b-tree ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
 .b-tree .b-empty { padding: 3px 10px; color: var(--fg-3); font-size: 12px; font-style: italic; }
 .b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); display: flex; align-items: center; gap: 5px; }
@@ -265,7 +287,11 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 /* Not the headings: they are few and cheap, and the containment that comes
    with content-visibility clips to the box, which is where the `#` beside a
    heading was -- drawn outside it, and so never drawn at all. */
-.prose > h1, .prose > h2, .prose > h3, .prose > h4 { content-visibility: visible; }
+.prose > h1, .prose > h2, .prose > h3, .prose > h4, .prose > table { content-visibility: visible; }
+/* A table too: as a placeholder it counts as a scroller Tab can stop on,
+   and the moment it is laid out and fits, it is not one, and the browser
+   drops the focus it just gave it onto the body. Laid out from the start,
+   it is a stop only when it really scrolls. */
 .prose > :first-child { margin-top: 0; }
 .prose p { margin: 0 0 1.2em; text-wrap: pretty; }
 .prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--sans); font-weight: 650; line-height: 1.25; letter-spacing: -.015em; text-wrap: balance; margin: 2.2em 0 .6em; position: relative; scroll-margin-top: 28px; }
@@ -277,7 +303,7 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose a.anchor { position: absolute; left: -1.2em; top: 0; color: var(--fg-3); opacity: 0; font-weight: 400; }
 .prose a.anchor::before { content: "#"; }
 .prose h1:hover a.anchor, .prose h2:hover a.anchor, .prose h3:hover a.anchor, .prose h4:hover a.anchor { opacity: .7; }
-.prose a.anchor:hover { opacity: 1; text-decoration: none; }
+.prose a.anchor:hover, .prose a.anchor:focus-visible { opacity: 1; text-decoration: none; }
 /* Where a jump landed: the heading is lit for a moment, then not. A jump is
    instant -- see jumpTo in app.js for why it cannot be smooth -- and this is
    what tells the eye where it went. */
@@ -346,6 +372,14 @@ pre.code .copy { position: absolute; top: 6px; right: 8px; opacity: 0; transitio
 pre.code:hover .copy { opacity: 1; }
 pre.code:hover:has(.copy)::before { opacity: 0; }
 pre.code .copy:hover { color: var(--fg); }
+pre.code .copy:focus-visible { opacity: 1; }
+/* No pointer to hover with: everything that waits for one is simply there,
+   the way the diagram tools already are. */
+@media (hover: none) {
+  .ren, .b-close, pre.code .copy, pre.code::before { opacity: 1; }
+  pre.code:has(.copy)::before { opacity: 0; }
+  .prose a.anchor { opacity: .5; }
+}
 pre.code .ln { display: inline; }
 /* The number gutter, written once: the wrap rules below hang continuation lines past it. */
 pre.code { --num-pad: 14px; --num-w: 3.2ch; --num-gap: 1.6ch; --gutter: calc(var(--num-pad) + var(--num-w) + var(--num-gap)); }
@@ -593,7 +627,8 @@ pre.code .ln::before { cursor: pointer; }
 #palette-list .s { font-size: 12px; color: var(--fg-3); }
 #palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
-.help-box { padding: 18px 22px 20px; }
+.help-box { padding: 18px 22px 20px; position: relative; outline: none; }
+.help-close { position: absolute; top: 12px; right: 12px; }
 .help-box h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-3); }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 .help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }

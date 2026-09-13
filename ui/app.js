@@ -1520,7 +1520,7 @@
       frag.appendChild(document.createTextNode(text.slice(last)));
       t.parentNode.replaceChild(frag, t);
     }
-    if (findMarks.length) gotoFind(0); else findCount.textContent = "0";
+    if (findMarks.length) gotoFind(0); else findCount.textContent = "No matches";
   }
   function gotoFind(i) {
     if (!findMarks.length) return;
@@ -1562,11 +1562,35 @@
       a.classList.toggle("cur", on);
       if (on) { a.setAttribute("aria-current", "location"); cur = a; } else a.removeAttribute("aria-current");
     });
-    if (!cur || tocEl.matches(":hover")) return;
+    if (cur) keepCurInView(false);
+  }
+  /** Scroll the contents so the current entry is in view. `now` skips the
+   *  hover exemption and the smooth scroll: a sheet that has just opened has
+   *  no pointer over it yet and no place it is scrolling from. */
+  function keepCurInView(now) {
+    const cur = tocEl.querySelector("a.cur");
+    if (!cur || (!now && tocEl.matches(":hover"))) return;
     const top = cur.offsetTop, bottom = top + cur.offsetHeight;
     const seen = tocEl.scrollTop, h = tocEl.clientHeight;
     if (top >= seen + 24 && bottom <= seen + h - 24) return;
-    tocEl.scrollTo({ top: Math.max(0, top - h / 2) });
+    tocEl.scrollTo({ top: Math.max(0, top - h / 2), behavior: now ? "instant" : "smooth" });
+  }
+
+  /** Call `track` on the frame after every scroll or resize, and once now.
+   *  An IntersectionObserver did this before, firing when a heading crossed
+   *  a band below the top edge -- and a jump of a page or more can land with
+   *  no heading in the band, on which nothing fired and the marker stayed on
+   *  the section the reader had left. Reading every heading's position on a
+   *  scroll frame is cheap: headings opt out of content-visibility, so none
+   *  is a placeholder that has to be laid out to be asked. */
+  function follow(track) {
+    let queued = false;
+    const tick = () => { queued = false; track(); };
+    const poke = () => { if (!queued) { queued = true; requestAnimationFrame(tick); } };
+    main.addEventListener("scroll", poke, { passive: true });
+    addEventListener("resize", poke);
+    poke();
+    return { disconnect() { main.removeEventListener("scroll", poke); removeEventListener("resize", poke); } };
   }
 
   let spy = null;
@@ -1585,12 +1609,14 @@
         return `<li class="d${h.tagName[1]}"><a href="#${esc(id)}" data-i="${i}">${esc(h.textContent.replace(/^#\s*/, ""))}</a></li>`;
       }).join("") + `</ul>`;
       const links = [...tocEl.querySelectorAll("a")];
-      spy = new IntersectionObserver(() => {
+      spy = follow(() => {
         let cur = -1;
         hs.forEach((h, i) => { if (h.getBoundingClientRect().top < 120) cur = i; });
+        // At the very end the last section is the one being read, even when
+        // it is shorter than the fold and its heading never reaches the top.
+        if (main.scrollTop + main.clientHeight >= main.scrollHeight - 2) cur = hs.length - 1;
         markCur(links, cur);
-      }, { root: main, rootMargin: "-100px 0px -60% 0px", threshold: 0 });
-      hs.forEach(h => spy.observe(h));
+      });
     }
     rail.classList.toggle("empty", state.view === "inbox");
   }
@@ -1610,6 +1636,7 @@
     e.preventDefault();
     history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
     jumpTo(h);
+    if (root.dataset.sheet === "rail") closeSheet();
   });
 
   /** Go to a block of the document. Instant, not smooth, and on purpose: a
@@ -1650,6 +1677,25 @@
     history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
     navigator.clipboard?.writeText(location.href);
     toast("Link copied", location.pathname + location.hash);
+  });
+
+  /* Tab into a code block below the fold and the browser focuses the copy
+   * button without bringing it on screen -- the block is a placeholder, see
+   * content-visibility in app.css -- and the next Tab, asked to go on from
+   * inside a placeholder, gives up and lands on the body; the rail's entries
+   * after it are never reached. Bring whatever takes focus on screen, which
+   * is what a keyboard reader wants anyway, and which makes the block real. */
+  docEl.addEventListener("focusin", e => {
+    const block = e.target.closest(".prose > *");
+    if (!block) return;
+    // A block with focus in it is never a placeholder again: the scroll
+    // below is aimed through placeholders and can overshoot by a screen,
+    // and a focused element that ends up inside a skipped block is blurred
+    // by the browser -- which is how Tab was reaching the body.
+    block.style.contentVisibility = "visible";
+    const put = () => e.target.scrollIntoView({ block: "nearest", behavior: "instant" });
+    put();
+    requestAnimationFrame(() => requestAnimationFrame(put));
   });
 
   /* Scroll chaining, restored. The document pane is a sibling of the two side
@@ -1696,13 +1742,11 @@
       flash(el);
     }));
     // Mark whichever declaration the reader has scrolled past.
-    const tops = items.map(o => lines[o.line - 1]).filter(Boolean);
-    outlineSpy = new IntersectionObserver(() => {
+    outlineSpy = follow(() => {
       let cur = -1;
       items.forEach((o, i) => { const el = lines[o.line - 1]; if (el && el.getBoundingClientRect().top < 140) cur = i; });
       markCur(links, cur);
-    }, { root: main, rootMargin: "-120px 0px -60% 0px", threshold: 0 });
-    tops.forEach(el => outlineSpy.observe(el));
+    });
   }
   let outlineToken = 0;
   function flash(el) {
@@ -1902,7 +1946,7 @@
     if (a.dataset.nav === "inbox") showInbox(true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else showDoc(a.dataset.id, true);
-    if (window.innerWidth <= 760) root.dataset.side = "0";
+    if (root.dataset.sheet === "side") closeSheet();
   });
   document.addEventListener("mouseover", e => {
     const a = e.target.closest("a[data-id]");
@@ -1999,13 +2043,13 @@
   const pal = $("#palette"), palIn = $("#palette-input"), palList = $("#palette-list");
   let palSel = 0, palItems = [], palTimer = null;
   function openPalette() {
-    pal.hidden = false; palIn.value = "";
+    palIn.value = "";
     palIn.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
       : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff)";
-    palIn.focus(); palSearch("");
+    openDialog(pal, palIn); palSearch("");
   }
   const browsing = () => state.view === "browse" && state.browseRoot;
-  function closePalette() { pal.hidden = true; }
+  function closePalette() { closeDialog(pal); }
   async function palSearch(q) {
     // A line number is not a search term. `:120` and `L120` jump instead.
     const g = /^\s*[:lL]\s*(\d+)\s*$/.exec(q);
@@ -2079,13 +2123,81 @@
     next ? (root.dataset.font = next) : delete root.dataset.font;
     store.set("snyvi.font", next);
   });
-  const help = $("#help");
-  help.addEventListener("click", e => { if (e.target === help) help.hidden = true; });
+  // ---------- dialogs: focus goes in, stays in, and comes back ----------
+  const appEl = $("#app"), help = $("#help");
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  let dialogOpener = null;
+  /** Show a dialog. The page behind it goes inert, so Tab and a screen
+   *  reader stay inside it, and whatever had focus gets it back on close. */
+  function openDialog(el, focusEl) {
+    if (!el.hidden) { (focusEl || el).focus(); return; }
+    if (pal.hidden && help.hidden) dialogOpener = document.activeElement;
+    el.hidden = false;
+    appEl.inert = true;
+    (focusEl || el.querySelector(FOCUSABLE) || el.firstElementChild).focus();
+  }
+  function closeDialog(el) {
+    if (el.hidden) return;
+    el.hidden = true;
+    if (!pal.hidden || !help.hidden) return;
+    appEl.inert = false;
+    const back = dialogOpener; dialogOpener = null;
+    if (back && back.isConnected && back !== document.body) back.focus();
+  }
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const box = [pal, help].find(d => !d.hidden)?.firstElementChild;
+    if (!box) return;
+    const f = [...box.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null);
+    if (!f.length) { e.preventDefault(); return; }
+    const at = document.activeElement, first = f[0], last = f[f.length - 1];
+    if (e.shiftKey ? (at === first || !box.contains(at)) : (at === last || !box.contains(at))) {
+      e.preventDefault(); (e.shiftKey ? last : first).focus();
+    }
+  }, true);
+  help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
+  $("#help-close").addEventListener("click", () => closeDialog(help));
+  $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+
+  // ---------- the panes on a narrow window ----------
+  /* Past the widths in app.css the rail and then the sidebar stop fitting
+   * beside the document, and each becomes a sheet over it: `t` and `\`
+   * open the sheet rather than changing the setting the wide layout keeps,
+   * the two buttons in #chrome do the same for a finger, and Escape or a
+   * tap on the scrim closes it. The contents inside the sheet open on the
+   * current section, which the hidden pane could not scroll to. */
+  const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
+  const sideEl = $("#side");
+  let sheetOpener = null;
+  function openSheet(which, opener) {
+    if (root.dataset.sheet === which) return;
+    sheetOpener = opener || document.activeElement;
+    root.dataset.sheet = which;
+    if (which === "rail") keepCurInView(true);
+    const first = which === "rail"
+      ? tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a")
+      : sideEl.querySelector("#trees a[aria-current], #trees a, #trees summary");
+    (first || (which === "rail" ? rail : sideEl)).focus({ preventScroll: true });
+  }
+  function closeSheet() {
+    if (!root.dataset.sheet) return false;
+    delete root.dataset.sheet;
+    const back = sheetOpener; sheetOpener = null;
+    if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
+    return true;
+  }
+  const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
+  $("#scrim").addEventListener("click", closeSheet);
+  $("#btn-rail").addEventListener("click", e => toggleSheet("rail", e.currentTarget));
+  $("#btn-side").addEventListener("click", e => toggleSheet("side", e.currentTarget));
+  // The window grew past the width that made it a sheet: it is a pane again.
+  const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
+  for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
 
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
-    if (e.key === "Escape") { closePalette(); help.hidden = true; if (!findBar.hidden) closeFind(); return; }
+    if (e.key === "Escape") { closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind(); return; }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
     if (browsing() && (e.key === "j" || e.key === "k")) {
       const links = [...browseEl.querySelectorAll(".b-file a")];
@@ -2111,17 +2223,23 @@
       case "i": showInbox(true); break;
       case "w": toggleWide(); break;
       case "z": toggleWrap(); break;
-      case "t": { const off = root.dataset.rail !== "0"; root.dataset.rail = off ? "0" : "1"; store.set("snyvi.rail", off ? "0" : "1"); break; }
+      case "t":
+        if (railNarrow.matches) { if (!rail.classList.contains("empty")) toggleSheet("rail"); }
+        else { const off = root.dataset.rail !== "0"; root.dataset.rail = off ? "0" : "1"; store.set("snyvi.rail", off ? "0" : "1"); }
+        break;
       // The diagram under the cursor, or the last one used: fit it, or fill the
       // screen with it. Both are no-ops on a page with no diagram on it.
       case "0": { const fig = mmdKeyed(); if (fig) { mmdFit(fig); mmdTouched = fig; } break; }
       case "f": { const fig = mmdKeyed(); if (fig) { mmdFull(fig); mmdTouched = fig; } break; }
-      case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
+      case "\\":
+        if (sideNarrow.matches) toggleSheet("side");
+        else { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); }
+        break;
       case "o":
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
         else if (browsing() && state.browsePath) window.open(rawUrl(state.browseRoot.id, state.browsePath), "_blank");
         break;
-      case "?": help.hidden = !help.hidden; break;
+      case "?": help.hidden ? openDialog(help, help.firstElementChild) : closeDialog(help); break;
       default: return;
     }
     e.preventDefault();

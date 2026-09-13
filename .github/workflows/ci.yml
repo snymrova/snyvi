@@ -60,6 +60,12 @@ jobs:
         # depends on the clock, plus the one timing that does not either:
         # whether drawing is cut into slices. See docs/DIAGRAMS.md.
         run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
+      - name: What the page does
+        # Not how fast, what: where the contents' marker is, what a wheel
+        # moves, what Back does, what `t` opens at 1000 px, whether Tab
+        # reaches every control. Counts and positions, so every row holds on
+        # any machine. See the 0.11 and 0.12 notes in docs/ROADMAP.md.
+        run: node bench/ui.mjs --check
       - name: Smoke test the daemon
         run: |
           set -e

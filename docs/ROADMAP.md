@@ -24,7 +24,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | The rail follows the reader | The contents were marked and never moved: on a plan with 46 headings the marker left the visible rail at section 4 and stayed gone, the actions under the contents were a scroll away, a wheel over either pane reached nothing, and a click on an entry added a history entry that Back turned into a rebuild at the top. Contents and actions scroll apart, the marker is kept in view, a wheel the pane cannot use goes to the document, a jump is instant and lands. | S | **done 0.11** |
 | A refresh keeps the place | A watched file saved while it is being read swapped the body and restored a pixel offset into blocks that were still 60 px placeholders: the reader landed 57 paragraphs from where they were. The place is a block and an offset into it now. | S | **done 0.11** |
 | Section links | The `#` beside a heading was rendered `inert` and drawn outside a box that paint containment clips to, so it existed in the markup and nowhere else. It is a link now: a click writes the section into the URL and the clipboard, the way a line number does, and the contents write the same slugs. | XS | **done 0.11** |
-| Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key. | S | next |
+| Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key or a button in the header, closed by Escape or a tap outside, and the contents open on the current section. | S | **done 0.12** |
 | Back returns to where the reader was | A document opened again through Back opens at the top. Keep the place in the history entry, the way a refresh now keeps it. | XS | next |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
@@ -62,6 +62,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
 | Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
+| The window is where a link opens | With `snyvi-app` running, an agent's `send_document` still answers with `http://127.0.0.1:7777/d/…`, and a click on it opens the default browser beside the window; the window learns of the arrival only through its own tab's toast, and the desktop notification opens nothing. The daemon should know when a window is up, `snyvi open` and the notification should hand the URL to it and raise it, and the tool's reply should say the document is open in snyvi rather than print an address to click through a browser. | S | next |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
 | Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. | S | next |
@@ -80,8 +81,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
 | Size, start-up and memory in the bench | The README's binary size, cold start and resident rows were hand-measured and enforced by nothing, and had drifted. `snyvi bench` starts a daemon of its own and budgets all three, with sends and a page's first byte beside them. | S | **done 0.10** |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
-| The UI's behaviour in CI | Every fault in 0.11 was found by driving Chromium against a daemon and measuring: where the marker was, what a wheel moved, what Back did. Those probes belong beside the browser bench, run on every push, so the rail cannot quietly stop following again. | S | next |
-| Keyboard and screen-reader pass | The palette and the help box trap no focus and return it nowhere; the find count is not announced; hover-only controls (copy, rename, the `#`) have no equivalent under a finger. One pass, with the checks kept. | S | next |
+| The UI's behaviour in CI | Every fault in 0.11 was found by driving Chromium against a daemon and measuring: where the marker was, what a wheel moved, what Back did. Those probes are `bench/ui.mjs` now, beside the browser bench and on every push, so the rail cannot quietly stop following again. | S | **done 0.12** |
+| Keyboard and screen-reader pass | The palette and the help box trap no focus and return it nowhere; the find count is not announced; hover-only controls (copy, rename, the `#`) have no equivalent under a finger. One pass, with the checks kept in `bench/ui.mjs`. | S | **done 0.12** |
 
 ## Explicitly not planned
 
@@ -641,22 +642,90 @@ Also: the inbox row is a link rather than a div with a click handler, so
 Tab reaches it; the active row and the current entry carry
 `aria-current`; the panes' scrollbars are thin.
 
+## 0.12: the chrome at every width, and by keyboard
+
+The rule 1.0 set below: nothing goes in that a probe cannot check, and
+nothing is checked off without one. So this release is two things, the
+chrome and the probe of it, and the probe is `bench/ui.mjs`: the 0.11
+measurements kept, beside `bench/browser.mjs` and run by CI on every
+push, plus the rows for what 0.12 adds. Twenty-three rows, counts and
+positions only, so every one is enforced on every machine:
+
+| | reads |
+|---|---|
+| the rail, 1280 px | contents scroll on their own; marker in view at 60% and at the end; 5600 px of wheel over the rail moves the document; a wheel over the sidebar does; a click on an entry adds no history and lands 28 px in; Back moves to the previous section without a rebuild; a save keeps block and offset; `j` puts the contents back at the top; `t` survives a reload; a link to a section lands with the marker in view; the `#` writes the URL and moves nothing |
+| narrow windows | at 1000 px `t` opens a 320 px sheet on the current section with focus inside, and Escape closes it; the button opens it and a tap outside closes it; an entry in the sheet goes to its section and closes; at 700 px `\` opens the sidebar the same way; a row in it opens the document and closes, and at 1280 px again both panes are back; `? / ⌘K w z t \ i j` do what the help box says at both widths |
+| by keyboard | Tab from the top reaches every control, 66 stops; the palette and the help box keep focus in and give it back; the find count is a live region; copy, rename and the `#` are visible with no pointer to hover with |
+
+What the chrome does now: under 1100 px the rail is a sheet over the
+document, under 760 px so is the sidebar; `t` and `\` open the sheet
+instead of changing the setting the wide layout keeps, two buttons at
+the top of the page do the same for a finger, Escape or a tap on the
+scrim closes it, and the contents inside open on the current section,
+which the hidden pane could never scroll to. The palette and the help
+box are dialogs: the page behind them is inert, Tab stays inside, and
+whatever had focus gets it back. The help box has a close button and
+the "? for keys" in the footer opens it, because a phone has neither a
+`?` nor a pointer. Under `(hover: none)` the controls that appear on
+hover are simply there. The find count is a polite live region.
+
+What the probe found on the way, none of it visible from the code:
+
+- The sheet's rules sat above the rule that gives both panes
+  `display: flex`, at equal specificity, and lost. The first run read
+  the rail still beside the document at 1000 px.
+- The marker was an IntersectionObserver firing when a heading crossed
+  a band 100 to 320 px below the top edge. A jump of a page or more can
+  land with no heading in that band, and then nothing fires and the
+  marker stays on the section the reader left -- or, on a fresh page,
+  never appears: the sheet opened at 50% of the document with no
+  current entry at all. Both rails now read every heading's position on
+  the frame after a scroll, which headings can afford because they opt
+  out of `content-visibility`. At the very end the last section is
+  current even when it is shorter than the fold, which the 0.13 plan
+  below had listed.
+- Tab reached the copy button of a code block below the fold and the
+  next Tab landed on the body, so the rail's entries were never reached
+  by keyboard. The browser focuses an element inside a placeholder
+  without bringing it on screen; the scroll that does, aimed through
+  placeholders, overshoots by a screen; and a focused element that ends
+  up inside a skipped block is blurred. A block with focus in it is
+  never a placeholder again, and the scroll is applied twice, as
+  `jumpTo` does.
+- A table below the fold was a Tab stop, because as a placeholder it
+  counts as a scroller, and stopped being one the moment it was laid
+  out and fit, at which point the browser dropped the focus it had just
+  given it. Tables opt out of `content-visibility` with the headings.
+- Navigating from the sidebar overlay at 700 px used to set the wide
+  layout's `data-side` to hidden, so a window widened afterwards had no
+  sidebar. The sheet closes instead, and the row that widens the
+  window back holds it.
+- Headless Chromium has no pointing device and answers `(hover: none)`
+  already, and the DevTools media emulation does not change that; the
+  row asks for a touch screen instead, which is the case the rule is
+  for.
+- A wheel that takes the contents to their end is spent there, as it
+  would be on any pane the browser chained itself; the next one moves
+  the document. The row allows one wheel's worth.
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
 the three desktops, a reader who has never seen it is not surprised by
 anything it does, and every number the README quotes is a test that
 would fail if it stopped being true. The bench already does the last of
-these for the daemon and the renderer; 0.11 is the first time the
+these for the daemon and the renderer; 0.11 was the first time the
 behaviour of the page was measured the same way, and it found eleven
-faults in an afternoon. So the rule for what is left: nothing goes into
+faults in an afternoon; 0.12 made the measuring a check in CI, and the
+check found six more before it passed. So the rule for what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
 
 Each phase is a release, in this order, because each one's probes are
 what the next one is measured with.
 
-**0.12: the chrome at every width, and by keyboard.** Below 1100 px the
+**0.12: the chrome at every width, and by keyboard** (shipped; the notes
+above). Below 1100 px the
 rail is removed and `t` is dead; below 760 px the sidebar is an overlay
 with no backdrop and no way out but its key. Each becomes a sheet over
 the document, opened by its key or a button in the header, closed by
@@ -669,11 +738,11 @@ every control; at 700 and 1000 px every key still does what the help box
 says. Cost M.
 
 **0.13: a read that never loses its place.** Back to a document opens it
-where the reader left it, the way a refresh now does; the last heading
-of a document becomes current when its section is shorter than the fold,
-instead of the one before it; the browse path lands a fragment the way
-the document path now does. Probe: read to the end, `j`, Back, same
-block. Cost S.
+where the reader left it, the way a refresh now does; the browse path
+lands a fragment the way the document path now does. (The last heading
+becoming current at the end of a short final section, listed here
+before, came with 0.12's marker.) Probe: read to the end, `j`, Back,
+same block. Cost S.
 
 **0.14: the library, in use.** Delete without a dialog: the document goes
 at once and the toast offers "Undo" for eight seconds, over a soft
@@ -683,13 +752,14 @@ undo, the row is back; twelve sends in two seconds, one toast. Cost M.
 
 **0.15: the three desktops.** macOS in the release matrix with a `.app`;
 the Linux window on arm64; the global shortcut the tray item was half
-of; and the Windows list under "Not yet proven on Windows" watched by a
+of; the window as the place an agent's link opens when it is running,
+rather than a browser beside it; and the Windows list under "Not yet proven on Windows" watched by a
 person on a real machine, with the cold start measured there and the
 bench's Windows budget set from it. Cost M.
 
-**The gate.** `bench/ui.mjs` runs beside `bench/browser.mjs` on every
-push and holds every row of the 0.11 table above, plus what 0.12-0.14
-add; the README's tables carry no number the bench does not read; the
+**The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
+every push since 0.12, holds every row of the 0.11 table above and what
+0.12 added, plus what 0.13 and 0.14 add; the README's tables carry no number the bench does not read; the
 tables in this file have no row marked **next**; and `docs/BRAINSTORM.md`
 is read once more against what shipped, so that the budgets it set and
 the ones the bench enforces are the same budgets. Then the three

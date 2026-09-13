@@ -129,3 +129,24 @@ export function fixture() {
     below
   );
 }
+
+/** A plan the shape of the one in the 0.11 screenshot -- numbered sections,
+ *  three levels of heading, 47 of them, about 54 KB -- long enough that the
+ *  contents outrun the rail and the document outruns the 60 px guess every
+ *  block below the fold is laid out at. bench/ui.mjs reads the page against
+ *  it. The code block and the table are there so the controls that appear
+ *  on hover have something to appear on. */
+export function plan(title = "rampscan — plan of action") {
+  const p = "The quick brown fox jumps over the lazy dog. ".repeat(12).trim();
+  const out = [`# ${title}: the artifact plane and the Security Decision Record`, "",
+    `**Status:** proposed plan of record for one deliverable. ${p}`, ""];
+  for (let s = 0; s < 10; s++) {
+    out.push(`## ${s}. Section ${s} with a heading that is fairly long so it wraps in the rail`, "", p, "", p, "");
+    if (s === 1) out.push("```rust", "fn main() {", "    println!(\"a code block, with a language and a copy button\");", "}", "```", "");
+    if (s === 2) out.push("| step | owner | when |", "|---|---|---|", "| one | the agent | now |", "| two | the reader | later |", "");
+    for (let t = 0; t < (s < 6 ? 4 : 3); t++) {
+      out.push(`### ${s}.${t + 1} Subsection ${t + 1} of section ${s}`, "", p, "", "- point one", "- point two", "- point three", "", p, "");
+    }
+  }
+  return out.join("\n") + "\n";
+}
