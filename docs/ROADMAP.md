@@ -21,6 +21,11 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Preview a page or a PDF | An `.html` file showed as source only and a `.pdf` as "a binary file". Both now show as themselves with `v`: a page in an iframe with an opaque origin, a PDF in the browser's viewer. | M | **done 0.3** |
 | Images and binaries in the library | `send_document` of a PNG stored mojibake. Images are kept as bytes and displayed; anything else undecodable is described. | S | **done 0.3** |
 | Line wrap toggle, jump to line, line permalinks | `#L120` and `#L120-L140` open a code document at a line and mark it; clicking a line number writes that link; `z` wraps long lines with the continuations hanging past the numbers. | S | **done 0.4** |
+| The rail follows the reader | The contents were marked and never moved: on a plan with 46 headings the marker left the visible rail at section 4 and stayed gone, the actions under the contents were a scroll away, a wheel over either pane reached nothing, and a click on an entry added a history entry that Back turned into a rebuild at the top. Contents and actions scroll apart, the marker is kept in view, a wheel the pane cannot use goes to the document, a jump is instant and lands. | S | **done 0.11** |
+| A refresh keeps the place | A watched file saved while it is being read swapped the body and restored a pixel offset into blocks that were still 60 px placeholders: the reader landed 57 paragraphs from where they were. The place is a block and an offset into it now. | S | **done 0.11** |
+| Section links | The `#` beside a heading was rendered `inert` and drawn outside a box that paint containment clips to, so it existed in the markup and nowhere else. It is a link now: a click writes the section into the URL and the clipboard, the way a line number does, and the contents write the same slugs. | XS | **done 0.11** |
+| Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key. | S | next |
+| Back returns to where the reader was | A document opened again through Back opens at the top. Keep the place in the history entry, the way a refresh now keeps it. | XS | next |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
 ## B. Library and organisation
@@ -31,6 +36,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | One workflow per Claude Code session | Hook sends and MCP sends from the same session land in two workflows because the MCP server cannot see Claude's session id. A `SessionStart` hook can record `cwd → session` in the config dir; the MCP server reads it. Result: one workflow per session, titled from its first document. | S | **done 0.2** |
 | Search filters | Scope search to a project, a kind, or a date range with prefixes (`p:snyvi kind:diff`). | S | **done 0.2** |
 | Delete a document from the UI | With confirmation. Prune covers bulk; users still want to remove one. | S | **done 0.2** |
+| Delete with undo instead of a dialog | The confirmation is `window.confirm`, which the native window draws as the toolkit's dialog in the toolkit's theme. Delete at once and offer "Undo" in the toast for eight seconds, over a soft delete that prune makes final. | M | next |
+| Arrivals that come in a burst | Each arrival is a toast and nothing caps them: an agent that writes twelve files stacks twelve. Past three in a few seconds, one toast that counts. | XS | next |
 | Rename workflow and project | Session-derived titles are guesses; let the user fix them inline. | S | **done 0.4** |
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
 | Unread state persisted | Badges survive restarts. | XS | later |
@@ -73,6 +80,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
 | Size, start-up and memory in the bench | The README's binary size, cold start and resident rows were hand-measured and enforced by nothing, and had drifted. `snyvi bench` starts a daemon of its own and budgets all three, with sends and a page's first byte beside them. | S | **done 0.10** |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
+| The UI's behaviour in CI | Every fault in 0.11 was found by driving Chromium against a daemon and measuring: where the marker was, what a wheel moved, what Back did. Those probes belong beside the browser bench, run on every push, so the rail cannot quietly stop following again. | S | next |
+| Keyboard and screen-reader pass | The palette and the help box trap no focus and return it nowhere; the find count is not announced; hover-only controls (copy, rename, the `#`) have no equivalent under a finger. One pass, with the checks kept. | S | next |
 
 ## Explicitly not planned
 
@@ -574,6 +583,120 @@ had for rows that measure the runner: the cold start is printed there and
 not enforced, and the rest still is. What a cold start costs on a Windows
 machine a person uses is not known, and belongs with the other things
 "Not yet proven on Windows" below.
+
+## 0.11: the rail follows the reader
+
+A screenshot of a real plan in use -- 33 KB, numbered sections, three
+levels of heading -- showed the rail scrolled by hand to reach "Pin" and
+"Compare with previous" under a contents list that ran past the bottom of
+the window, and the contents themselves cut off at the top. Driving
+Chromium against a daemon with a 66 KB fixture of the same shape found
+what a reader of that plan gets, and none of it was a style problem:
+
+|  | before | after |
+|---|---|---|
+| contents, 46 entries, in a 1043 px pane | 1868 px, the actions under it at 1956 | scroll on their own; actions stay put |
+| marker after reading to section 7 | off the visible rail, and from section 4 on | in view, kept there |
+| 5600 px of wheel over the rail | document moved 0 px | document moved 5600 px |
+| a wheel over the sidebar | nothing moved at all | the document |
+| a click on an entry | +1 history entry; Back rebuilt the document at the top | 0 entries; Back moves within the document |
+| the entry's heading, on landing | flush with the pane's edge | 28 px in, lit for a moment |
+| a jump of 5000 px, smooth | stopped 1658 px short | lands, and is corrected two frames later |
+| a watched file saved at 12,000 px in | reader moved from block 68 to block 125 | same block, same offset |
+| the contents after `j` to the next document | still scrolled 400 px into the last one | at the top |
+| `t` after a reload | rail back | rail as left |
+| the `#` beside a heading | `inert`, and clipped out of existence | a link; click copies the section's URL |
+
+Three of those have the same cause, and it is worth writing down because
+it will come back. Every block of prose is `content-visibility: auto`
+with a guessed height of 60 px until it comes near the screen, which is
+what makes a 100k-line document scroll at all. But it means a pixel
+position in the document is only true near where the reader is: a smooth
+scroll aims at where its target was when it started and the blocks it
+passes grow under it; a scrollTop restored into a freshly swapped body
+counts placeholders, not paragraphs; and the browser's own scroll to a
+fragment on load does the same. Anything that jumps now jumps
+instantly, to an element rather than to a number, and puts itself right
+two frames later; a refresh remembers the block under the top edge and
+the offset into it. The `#` was a fourth victim: paint containment,
+which comes with `content-visibility`, clips to the box, and the anchor
+was drawn 1.2em outside it. Headings opt out.
+
+Two more were one line each. A bare assignment to `scrollTop` honours
+the pane's `scroll-behavior: smooth`, so every save of a watched file
+glided the reader from the top back to their place; it is
+`scrollTo({ behavior: "instant" })` now. And the wheel: the document pane
+is a sibling of the two side panes rather than their ancestor, so a
+wheel over a pane that had nothing to scroll had nowhere to chain to.
+It chains to the document now, once the pane under it is at its end,
+which is what the browser would do if the layout let it.
+
+What moves: a document arrives with a 180 ms rise rather than a snap --
+on a navigation, never on a refresh in place, which would blink on every
+save. Rows in both trees and entries in the contents transition their
+colour. A jump lights its heading for 700 ms. All of it is under the
+same `prefers-reduced-motion` rule as before.
+
+Also: the inbox row is a link rather than a div with a click handler, so
+Tab reaches it; the active row and the current entry carry
+`aria-current`; the panes' scrollbars are thin.
+
+## 1.0: what done looks like
+
+1.0 is not a feature. It is the point where a person can install snyvi on
+the three desktops, a reader who has never seen it is not surprised by
+anything it does, and every number the README quotes is a test that
+would fail if it stopped being true. The bench already does the last of
+these for the daemon and the renderer; 0.11 is the first time the
+behaviour of the page was measured the same way, and it found eleven
+faults in an afternoon. So the rule for what is left: nothing goes into
+the 1.0 list that cannot be checked by a probe or a test, and nothing is
+checked off without one.
+
+Each phase is a release, in this order, because each one's probes are
+what the next one is measured with.
+
+**0.12: the chrome at every width, and by keyboard.** Below 1100 px the
+rail is removed and `t` is dead; below 760 px the sidebar is an overlay
+with no backdrop and no way out but its key. Each becomes a sheet over
+the document, opened by its key or a button in the header, closed by
+Escape or a tap outside, with the marker inside it. The palette and the
+help box become dialogs that trap focus and give it back. The find count
+is announced. Everything that appears on hover -- copy, rename, the `#`,
+a code block's language -- is present under `(hover: none)`, as the
+diagram tools already are. Probe: Tab from the top of the page reaches
+every control; at 700 and 1000 px every key still does what the help box
+says. Cost M.
+
+**0.13: a read that never loses its place.** Back to a document opens it
+where the reader left it, the way a refresh now does; the last heading
+of a document becomes current when its section is shorter than the fold,
+instead of the one before it; the browse path lands a fragment the way
+the document path now does. Probe: read to the end, `j`, Back, same
+block. Cost S.
+
+**0.14: the library, in use.** Delete without a dialog: the document goes
+at once and the toast offers "Undo" for eight seconds, over a soft
+delete that `prune` makes final. Arrivals that come in a burst become
+one toast that counts. Unread badges survive a restart. Probe: delete,
+undo, the row is back; twelve sends in two seconds, one toast. Cost M.
+
+**0.15: the three desktops.** macOS in the release matrix with a `.app`;
+the Linux window on arm64; the global shortcut the tray item was half
+of; and the Windows list under "Not yet proven on Windows" watched by a
+person on a real machine, with the cold start measured there and the
+bench's Windows budget set from it. Cost M.
+
+**The gate.** `bench/ui.mjs` runs beside `bench/browser.mjs` on every
+push and holds every row of the 0.11 table above, plus what 0.12-0.14
+add; the README's tables carry no number the bench does not read; the
+tables in this file have no row marked **next**; and `docs/BRAINSTORM.md`
+is read once more against what shipped, so that the budgets it set and
+the ones the bench enforces are the same budgets. Then the three
+commands under "Release hygiene", from a person, and the tag says 1.0.0.
+
+What 1.0 is not, so it is not waited for: editing, streaming, a hosted
+or shared library, more than one reader. See "Explicitly not planned".
 
 ## Candidates after 0.7
 

@@ -149,7 +149,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main { grid-area: main; }
 #rail { grid-area: rail; }
 #main { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
-@media (prefers-reduced-motion: reduce) { #main { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
+/* The panes' own scrollbars: there when a list is longer than the pane, and
+   no wider than they need to be. The document keeps the browser's. */
+#trees, #toc, #meta { scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
+@media (prefers-reduced-motion: reduce) { #main, #toc { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
 
 /* ---------- sidebar ---------- */
 .side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 16px; }
@@ -166,8 +169,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 
 #trees { overflow-y: auto; padding: 0 8px 8px; font-size: 13px; flex: 1; min-height: 0; }
 #tree ul { list-style: none; margin: 0; padding: 0; }
-.t-inbox { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 0 0 8px; border-radius: 6px; color: var(--fg-2); font-weight: 500; cursor: pointer; }
-.t-inbox:hover { background: var(--rule); color: var(--fg); }
+.t-inbox { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 0 0 8px; border-radius: 6px; color: var(--fg-2); font-weight: 500; cursor: pointer; transition: background var(--t), color var(--t); }
+.t-inbox:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-inbox.active { background: var(--accent-bg); color: var(--accent); }
 .t-inbox .n { margin-left: auto; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-proj > summary { list-style: none; cursor: pointer; padding: 6px 8px; border-radius: 6px; font-weight: 600; color: var(--fg-2); display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
@@ -178,7 +181,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-proj .badge { margin-left: auto; background: var(--accent); color: #fff; font-size: 10px; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; }
 .t-wf { margin: 2px 0 6px 6px; }
 .t-wf > .wf-name { font-size: 12px; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px 4px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px 4px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
 .t-doc a::before { content: ""; position: absolute; left: 6px; top: 50%; width: 3px; height: 3px; border-radius: 50%; background: var(--rule-2); transform: translateY(-50%); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--accent); }
@@ -226,7 +229,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .b-dir > details > summary::before { content: ""; width: 0; height: 0; border: 3.5px solid transparent; border-left: 4.5px solid var(--fg-3); transition: transform var(--t); flex: none; }
 .b-dir > details[open] > summary::before { transform: rotate(90deg); }
 .b-dir > details > summary:hover { background: var(--rule); color: var(--fg); }
-.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px 3px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; }
+.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px 3px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
 .b-file a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .b-file a.active { background: var(--accent-bg); color: var(--accent); }
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
@@ -246,6 +249,11 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 
 /* ---------- document ---------- */
 #doc { --doc-pad: 48px; max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 56px var(--doc-pad) 120px; }
+/* A new document arrives rather than snaps: one short rise on a navigation.
+   Not on a refresh in place -- a file being watched is saved every few seconds,
+   and a body that blinked on each save would be worse than one that moved. */
+#doc.swap { animation: doc-in 180ms cubic-bezier(.2,.7,.2,1); }
+@keyframes doc-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .doc-head { margin-bottom: 40px; }
 .doc-title { font-size: 34px; line-height: 1.15; letter-spacing: -.022em; font-weight: 650; margin: 0 0 10px; text-wrap: balance; font-family: var(--sans); }
 .doc-sub { color: var(--fg-3); font-size: 13px; margin: 0; }
@@ -254,9 +262,13 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose { font-family: var(--body); font-size: 17px; line-height: 1.65; }
 :root[data-font="serif"] .prose { font-size: 18px; }
 .prose > * { content-visibility: auto; contain-intrinsic-size: auto 60px; }
+/* Not the headings: they are few and cheap, and the containment that comes
+   with content-visibility clips to the box, which is where the `#` beside a
+   heading was -- drawn outside it, and so never drawn at all. */
+.prose > h1, .prose > h2, .prose > h3, .prose > h4 { content-visibility: visible; }
 .prose > :first-child { margin-top: 0; }
 .prose p { margin: 0 0 1.2em; text-wrap: pretty; }
-.prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--sans); font-weight: 650; line-height: 1.25; letter-spacing: -.015em; text-wrap: balance; margin: 2.2em 0 .6em; position: relative; }
+.prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--sans); font-weight: 650; line-height: 1.25; letter-spacing: -.015em; text-wrap: balance; margin: 2.2em 0 .6em; position: relative; scroll-margin-top: 28px; }
 .prose h1 { font-size: 1.9em; }
 .prose h2 { font-size: 1.5em; margin-top: 2.4em; }
 .prose h3 { font-size: 1.2em; }
@@ -265,6 +277,12 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose a.anchor { position: absolute; left: -1.2em; top: 0; color: var(--fg-3); opacity: 0; font-weight: 400; }
 .prose a.anchor::before { content: "#"; }
 .prose h1:hover a.anchor, .prose h2:hover a.anchor, .prose h3:hover a.anchor, .prose h4:hover a.anchor { opacity: .7; }
+.prose a.anchor:hover { opacity: 1; text-decoration: none; }
+/* Where a jump landed: the heading is lit for a moment, then not. A jump is
+   instant -- see jumpTo in app.js for why it cannot be smooth -- and this is
+   what tells the eye where it went. */
+.prose .flash { animation: land 700ms ease-out; }
+@keyframes land { from { background: var(--accent-bg); } to { background: transparent; } }
 .prose ul, .prose ol { padding-left: 1.4em; margin: 0 0 1.2em; }
 .prose li { margin: .3em 0; }
 .prose li > p { margin-bottom: .4em; }
@@ -498,7 +516,17 @@ pre.mermaid::before { display: none; }
 .empty-state pre { text-align: left; font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 12px 16px; border-radius: var(--radius); display: inline-block; margin: 0; }
 
 /* ---------- rail ---------- */
-#rail { padding: 60px 20px 20px 8px; overflow-y: auto; font-size: 12.5px; }
+/* Two things live in the rail and they scroll apart. The contents can be
+   longer than the pane -- 46 entries at 1868 px in a 1043 px window on a plan
+   with numbered sections -- and used to push the actions under it off the
+   screen, so "Pin" and "Compare with previous" were a scroll away on exactly
+   the documents worth pinning and comparing. The contents scroll on their own
+   now, in the room the actions leave, and the actions stay put. */
+#rail { padding: 60px 0 20px 8px; overflow: hidden; font-size: 12.5px; }
+#toc { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; padding: 14px 20px 14px 0; scroll-behavior: smooth; }
+/* Entries that have scrolled out fade at the edges rather than being cut mid-line.
+   The padding is the fade's height, so an unscrolled list has nothing in it. */
+#toc { mask-image: linear-gradient(transparent, #000 14px, #000 calc(100% - 14px), transparent); }
 #toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
 #toc li a { display: block; padding: 3px 10px; color: var(--fg-3); border-left: 1px solid transparent; margin-left: -1px; line-height: 1.4; transition: color var(--t), border-color var(--t); overflow-wrap: anywhere; }
 /* Two lines of a heading, then ellipsis: better than cutting every entry mid-word. */
@@ -531,7 +559,10 @@ pre.code .ln::before { cursor: pointer; }
 :root[data-wrap="1"] .kind-text pre.code .ln,
 :root[data-wrap="1"] .kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln { padding-left: var(--gutter); text-indent: calc(-1 * var(--gutter)); }
 
-#meta { margin-top: 28px; color: var(--fg-3); line-height: 1.7; }
+/* Capped and scrollable on its own, for a file with forty versions behind it:
+   the contents above it must never be squeezed out of the pane entirely. */
+#meta { flex: none; max-height: 50%; overflow-y: auto; margin-top: 28px; padding-right: 20px; color: var(--fg-3); line-height: 1.7; }
+#toc:empty + #meta { margin-top: 0; }
 #meta .row { display: flex; gap: 8px; }
 #meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; flex: none; }
 /* Long folder and file names wrap inside the rail rather than running off it. */
