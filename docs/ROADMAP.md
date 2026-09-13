@@ -519,16 +519,25 @@ changelog line twice. Only the amd64 leg authors notes now.
 What still has to come from a machine with tag permission is the tag
 itself. `workflow_dispatch` and tag pushes both return 403 for an agent
 session's token, which writes commits and nothing else. So a release
-is one command, from a person:
+is three commands, from a person:
 
 ```
-git tag -a v0.7.0 -m "snyvi 0.7.0" && git push origin v0.7.0
+git fetch origin main
+git show origin/main:Cargo.toml | grep '^version'    # must match the tag
+git tag -a v0.7.0 -m "snyvi 0.7.0" origin/main && git push origin v0.7.0
 ```
 
-with `Cargo.toml` bumped first, since the workflow reads the version
-from the tag and Tauri reads it from `Cargo.toml`.
+The fetch is not ceremony and neither is naming `origin/main` on the tag.
+A tag is a pointer to a commit, and the only commit worth naming is the
+one the remote has; a local `main` that is behind — or a clone sitting on
+another branch entirely — will happily take the tag and release the wrong
+tree. Tagging the fetched ref by name means the tag cannot land anywhere
+but where the work is, whatever the working copy is doing. The middle line
+is the one thing CI cannot check before the fact: `Cargo.toml` has to be
+bumped and merged first, since the workflow reads the version from the tag
+and the crate and Tauri read it from the manifest.
 
-That last line is there because v0.6.0 was first pushed without it. The
+All of that is there because v0.6.0 was first pushed without it. The
 tag went onto a commit from a clone that had not fetched the work the
 tag was naming, whose `Cargo.toml` still said 0.5.0, and the run
 rebuilt the previous release under the new name. Nothing downstream
