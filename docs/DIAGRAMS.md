@@ -4,11 +4,12 @@ Written 2026-09-12, after a report that a page with a big Mermaid diagram
 takes seconds to open. Everything in section 1 is measured on this
 machine under headless Chromium, not estimated.
 
-**Status.** Phases 1, 2a and 8 (section 9's theming) have landed, along with
-the find fix and the parse-error fix from the small list, and phase 4's idle
-prefetch. The harness that took section 1's numbers is now
+**Status.** Phases 1, 2a, 3 and 8 (section 9's theming) have landed, along
+with the find fix and the parse-error fix from the small list, and phase 4's
+idle prefetch. The harness that took section 1's numbers is now
 `bench/browser.mjs`, runs in CI, and section 7 records what it measures.
-Phase 3, the rest of phase 4 (the trimmed bundle) and 2b are still ahead.
+The rest of phase 4 (the trimmed bundle, re-theming on toggle) and 2b are
+still ahead.
 
 Sections 1 to 8 are about time. Section 9 is about the other half of the
 roadmap's test — whether a diagram looks like it belongs in the document
