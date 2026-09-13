@@ -72,10 +72,11 @@
 
   /** Highlight whatever is on screen, without rebuilding either tree. */
   function markActive() {
-    for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) a.classList.remove("active");
-    if (state.view === "inbox") inboxRowEl.querySelector(".t-inbox")?.classList.add("active");
-    else if (state.view === "browse" && state.browseRoot) browseEl.querySelector(`.b-file a[data-browse="${state.browseRoot.id}"][data-path="${CSS.escape(state.browsePath)}"]`)?.classList.add("active");
-    else if (state.doc) treeEl.querySelector(`a[data-id="${state.doc.id}"]`)?.classList.add("active");
+    for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
+    const on = state.view === "inbox" ? inboxRowEl.querySelector(".t-inbox")
+      : state.view === "browse" && state.browseRoot ? browseEl.querySelector(`.b-file a[data-browse="${state.browseRoot.id}"][data-path="${CSS.escape(state.browsePath)}"]`)
+        : state.doc ? treeEl.querySelector(`a[data-id="${state.doc.id}"]`) : null;
+    if (on) { on.classList.add("active"); on.setAttribute("aria-current", "page"); }
   }
 
   /** Both names are guesses — a directory name and a session's first document — so
@@ -118,7 +119,9 @@
   function renderTree() {
     const projects = state.tree;
     const total = projects.reduce((n, p) => n + p.docs, 0);
-    inboxRowEl.innerHTML = `<div class="t-inbox ${state.view === "inbox" ? "active" : ""}" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></div>`;
+    // A link, so the keyboard reaches it: a div with a click handler is a row
+    // Tab walks straight past.
+    inboxRowEl.innerHTML = `<a class="t-inbox ${state.view === "inbox" ? "active" : ""}" href="/" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></a>`;
     renderBrowse();
     if (!projects.length) {
       treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
@@ -442,6 +445,14 @@
   }
 
   // ---------- documents ----------
+  /** The body was replaced by a navigation: let it arrive. Restarted from the
+   *  beginning each time, since the class is already there after the first. */
+  function swapIn() {
+    docEl.classList.remove("swap");
+    void docEl.offsetWidth;
+    docEl.classList.add("swap");
+  }
+
   function docHtml(doc, body) {
     let sub = `${esc(doc.project)} · ${esc(doc.workflow_title)}`;
     if (doc.branch) sub += ` · <span class="branch">${esc(doc.branch)}</span>`;
@@ -466,6 +477,7 @@
     state.unread.delete(j.doc.project_id);
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
+    swapIn();
     applyPreview();
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
@@ -492,6 +504,7 @@
       if (push) history.pushState({ browse: rootId, path: "" }, "", `/b/${rootId}`);
       docEl.innerHTML = `<div class="inbox-head"><h1>${esc(root ? root.name : "Folder")}</h1><p>${esc(root ? root.path : "")}</p></div><ul class="inbox">` +
         entries.map(e => `<li><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}"><span class="title">${e.dir ? "▸ " : ""}${esc(e.name)}</span><span class="time">${e.dir ? "" : fmtSize(e.size)}</span></a></li>`).join("") + `</ul>`;
+      swapIn();
       main.scrollTo({ top: 0, behavior: "instant" });
       afterRender();
       return;
@@ -506,6 +519,7 @@
     state.browseRoot = j.root; state.browsePath = path;
     setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
     docEl.innerHTML = browseHtml(j.file, j.root);
+    swapIn();
     applyPreview();
     document.title = j.file.name;
     if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
@@ -528,6 +542,7 @@
       docEl.innerHTML = `<div class="inbox-head"><h1>Inbox</h1><p>Newest first, across every project.</p></div><ul class="inbox">` +
         items.map(d => `<li><a href="/d/${d.id}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`).join("") + `</ul>`;
     }
+    if (push) swapIn();
     afterRender();
   }
 
@@ -539,6 +554,7 @@
     try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
     state.comparing = { a, b };
     docEl.innerHTML = `<header class="doc-head"><h1 class="doc-title">${esc(cur.title)}</h1><p class="doc-sub">changes ${fmt(j.a.received_at)} → ${fmt(j.b.received_at)}${state.split ? " · split" : " · inline"}</p></header><article class="prose kind-diff">${j.html}</article>`;
+    swapIn();
     main.scrollTo({ top: 0, behavior: "instant" });
     buildToc(); renderMeta(true); enhanceCode();
   }
@@ -596,12 +612,45 @@
   }
 
   // ---------- live refresh ----------
+  /** Where the reader is, as a block and an offset into it rather than a
+   *  pixel count. A block below the fold is a placeholder of a guessed height
+   *  until it comes near the screen -- `content-visibility` in app.css -- so
+   *  the same scrollTop in a freshly swapped body is a different paragraph.
+   *  Measured: a refresh at 12,000 px put the reader at block 125 of the
+   *  document they had been reading at block 68. The block is what stays put. */
+  function placeOf() {
+    const top = main.scrollTop, edge = main.getBoundingClientRect().top + 1;
+    const blocks = docEl.querySelectorAll(".prose > *");
+    let i = -1, delta = 0;
+    for (let n = 0; n < blocks.length; n++) {
+      const r = blocks[n].getBoundingClientRect();
+      if (r.bottom > edge) { i = n; delta = r.top - edge + 1; break; }
+    }
+    return { top, i, delta };
+  }
+
+  /** Put the reader back. Named instant throughout: the pane scrolls smoothly
+   *  by stylesheet, and a bare assignment to scrollTop honours that -- so every
+   *  save of a watched file used to glide the reader from the top back to
+   *  where they were. */
+  function placeAt(p) {
+    const el = p.i >= 0 ? docEl.querySelectorAll(".prose > *")[p.i] : null;
+    if (!el) { main.scrollTo({ top: p.top, behavior: "instant" }); return; }
+    const put = () => {
+      el.scrollIntoView({ block: "start", behavior: "instant" });
+      main.scrollBy({ top: el.getBoundingClientRect().top - main.getBoundingClientRect().top - p.delta, behavior: "instant" });
+    };
+    put();
+    // Once more after the blocks around it have been laid out for real.
+    requestAnimationFrame(() => requestAnimationFrame(put));
+  }
+
   /** A stored document was overwritten (a hook or `snyvi watch` send) or finished
-   *  highlighting: fetch it again and swap the body in place, keeping the scroll. */
+   *  highlighting: fetch it again and swap the body in place, keeping the place. */
   async function refreshDoc(id) {
     state.cache.delete(id);
     if (!state.doc || state.doc.id !== id || state.comparing) return;
-    const top = main.scrollTop;
+    const place = placeOf();
     let j; try { j = await fetchDoc(id); } catch { return; }
     if (!state.doc || state.doc.id !== id) return;
     state.doc = j.doc; state.previous = j.previous; state.folder = j.folder;
@@ -609,7 +658,7 @@
     docEl.innerHTML = j.html;
     applyPreview();
     if (j.doc.kind === "diff" && state.split) await applySplit();
-    main.scrollTop = top;
+    placeAt(place);
     afterRefresh();
   }
 
@@ -628,11 +677,11 @@
     }
     // The reader moved on while this was in flight.
     if (!browsing() || state.browseRoot.id !== rootId || state.browsePath !== path) return;
-    const top = main.scrollTop;
+    const place = placeOf();
     setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
     docEl.innerHTML = browseHtml(j.file, j.root);
     applyPreview();
-    main.scrollTop = top;
+    placeAt(place);
     afterRefresh();
   }
 
@@ -1498,29 +1547,125 @@
   window.addEventListener("focus", beacon); document.addEventListener("visibilitychange", beacon); setInterval(beacon, 3000); beacon();
 
   // ---------- rail: toc + meta ----------
+  /** Mark one entry as where the reader is, and keep it where they can see it.
+   *
+   *  The contents used to be marked and never moved: on a plan with 46
+   *  headings the marker left the visible part of the rail at section 4 and
+   *  the rail showed sections 0-4 for the rest of the read. It follows now,
+   *  the way an editor's outline does -- except while the pointer is over it,
+   *  because a list that scrolls under a hand about to click is worse than
+   *  one that lags a heading. */
+  function markCur(links, at) {
+    let cur = null;
+    links.forEach((a, i) => {
+      const on = i === at;
+      a.classList.toggle("cur", on);
+      if (on) { a.setAttribute("aria-current", "location"); cur = a; } else a.removeAttribute("aria-current");
+    });
+    if (!cur || tocEl.matches(":hover")) return;
+    const top = cur.offsetTop, bottom = top + cur.offsetHeight;
+    const seen = tocEl.scrollTop, h = tocEl.clientHeight;
+    if (top >= seen + 24 && bottom <= seen + h - 24) return;
+    tocEl.scrollTo({ top: Math.max(0, top - h / 2) });
+  }
+
   let spy = null;
   function buildToc() {
     if (spy) { spy.disconnect(); spy = null; }
+    tocEl.scrollTop = 0;   // a new document starts at its beginning, and so does its contents
     const reading = state.view === "doc" || state.view === "browse";
     const hs = reading ? [...docEl.querySelectorAll(".prose h1, .prose h2, .prose h3, .prose h4")] : [];
     if (hs.length < 3) { tocEl.innerHTML = ""; buildOutline(); }
     else {
       tocEl.innerHTML = `<ul>` + hs.map((h, i) => {
-        if (!h.id) h.id = `h-${i}`;
-        return `<li class="d${h.tagName[1]}"><a href="#${h.id}" data-i="${i}">${esc(h.textContent.replace(/^#\s*/, ""))}</a></li>`;
+        // The renderer's own slug where there is one, so the URL the contents
+        // write is the one the `#` beside the heading writes; a counter where
+        // there is not, as in a rendered notebook or a browsed page.
+        const id = h.querySelector("a.anchor[id]")?.id || h.id || (h.id = `h-${i}`);
+        return `<li class="d${h.tagName[1]}"><a href="#${esc(id)}" data-i="${i}">${esc(h.textContent.replace(/^#\s*/, ""))}</a></li>`;
       }).join("") + `</ul>`;
-      const links = tocEl.querySelectorAll("a");
-      const visible = new Set();
-      spy = new IntersectionObserver(entries => {
-        for (const e of entries) e.isIntersecting ? visible.add(e.target) : visible.delete(e.target);
-        let cur = null;
-        for (const h of hs) { if (h.getBoundingClientRect().top < 120) cur = h; }
-        links.forEach(a => a.classList.toggle("cur", cur && a.getAttribute("href") === `#${cur.id}`));
+      const links = [...tocEl.querySelectorAll("a")];
+      spy = new IntersectionObserver(() => {
+        let cur = -1;
+        hs.forEach((h, i) => { if (h.getBoundingClientRect().top < 120) cur = i; });
+        markCur(links, cur);
       }, { root: main, rootMargin: "-100px 0px -60% 0px", threshold: 0 });
       hs.forEach(h => spy.observe(h));
     }
     rail.classList.toggle("empty", state.view === "inbox");
   }
+
+  /* A contents entry is a hash link, and the browser's own handling of one
+   * does two things wrong here. It pushes a history entry per click, so Back
+   * after reading three sections walks back through them -- and each step
+   * landed in popstate, which rebuilt the document and put the reader at the
+   * top. And it puts the heading flush against the pane's edge. The URL still
+   * gets the hash, so a link to a section can be copied; the entry is replaced
+   * rather than added, and the heading's scroll margin gives it room. */
+  tocEl.addEventListener("click", e => {
+    const a = e.target.closest('a[href^="#"]');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    const h = headingFor(a.getAttribute("href").slice(1));
+    if (!h) return;
+    e.preventDefault();
+    history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
+    jumpTo(h);
+  });
+
+  /** Go to a block of the document. Instant, not smooth, and on purpose: a
+   *  smooth scroll aims at where the target is when it starts, and in a long
+   *  document the blocks between here and there are placeholders that grow
+   *  as the scroll passes them. Measured: a smooth jump of 5000 px stopped
+   *  1658 px short of its heading. An instant one lands, the two frames
+   *  after it put right what the blocks around the target did to it on
+   *  arrival, and the flash says where it went. */
+  function jumpTo(el) {
+    const put = () => el.scrollIntoView({ block: "start", behavior: "instant" });
+    put();
+    requestAnimationFrame(() => requestAnimationFrame(put));
+    flash(el);
+  }
+
+  /** The heading a fragment names. The renderer puts the id on the anchor
+   *  inside the heading, and the heading is what carries the scroll margin. */
+  function headingFor(id) {
+    const el = document.getElementById(decodeURIComponent(id));
+    return el && (el.closest("h1, h2, h3, h4, h5, h6") || el);
+  }
+
+  /** Where a hash on the document already on screen points, without a rebuild. */
+  function jumpToHash() {
+    if (lineHash()) { applyLineHash(true); return; }
+    const h = location.hash.length > 1 && headingFor(location.hash.slice(1));
+    if (h) jumpTo(h);
+  }
+
+  /* The `#` beside a heading: a link to the section, written into the URL and
+   * onto the clipboard, the way a click on a line number is. It does not
+   * scroll -- the reader is looking at the heading already. */
+  docEl.addEventListener("click", e => {
+    const a = e.target.closest("a.anchor[href^='#']");
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
+    navigator.clipboard?.writeText(location.href);
+    toast("Link copied", location.pathname + location.hash);
+  });
+
+  /* Scroll chaining, restored. The document pane is a sibling of the two side
+   * panes rather than their ancestor, so a wheel over the contents that the
+   * contents could not use went nowhere: measured, 5600 px of wheel over the
+   * rail moved the document 0 px, and any amount over the sidebar moved
+   * nothing at all. The browser chains a scroll to the nearest ancestor that
+   * can take it; the pane that should take it here is the one beside it. */
+  for (const pane of [$("#side"), rail]) pane.addEventListener("wheel", e => {
+    if (e.ctrlKey || e.metaKey || !e.deltaY) return;
+    const box = e.target.closest("#trees, #toc, #meta");
+    if (box && (e.deltaY < 0 ? box.scrollTop > 0 : box.scrollTop + box.clientHeight < box.scrollHeight - 1)) return;
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * main.clientHeight : e.deltaY;
+    main.scrollBy({ top: dy, behavior: "instant" });
+    e.preventDefault();
+  }, { passive: false });
 
   /** Prose has headings; code has declarations. Same rail, fetched after first paint. */
   let outlineSpy = null;
@@ -1555,7 +1700,7 @@
     outlineSpy = new IntersectionObserver(() => {
       let cur = -1;
       items.forEach((o, i) => { const el = lines[o.line - 1]; if (el && el.getBoundingClientRect().top < 140) cur = i; });
-      links.forEach((a, i) => a.classList.toggle("cur", i === cur));
+      markCur(links, cur);
     }, { root: main, rootMargin: "-120px 0px -60% 0px", threshold: 0 });
     tops.forEach(el => outlineSpy.observe(el));
   }
@@ -1765,6 +1910,9 @@
   });
   window.addEventListener("popstate", () => {
     const d = location.pathname.match(/^\/d\/([a-z0-9]+)$/);
+    // Back or forward to a hash on the document already on screen -- the `#`
+    // beside a heading pushes one -- is a move within it, not a rebuild.
+    if (d && state.view === "doc" && state.doc && state.doc.id === d[1] && !state.comparing) return jumpToHash();
     if (d) return showDoc(d[1], false);
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false);
@@ -1963,7 +2111,7 @@
       case "i": showInbox(true); break;
       case "w": toggleWide(); break;
       case "z": toggleWrap(); break;
-      case "t": root.dataset.rail = root.dataset.rail === "0" ? "1" : "0"; break;
+      case "t": { const off = root.dataset.rail !== "0"; root.dataset.rail = off ? "0" : "1"; store.set("snyvi.rail", off ? "0" : "1"); break; }
       // The diagram under the cursor, or the last one used: fit it, or fill the
       // screen with it. Both are no-ops on a page with no diagram on it.
       case "0": { const fig = mmdKeyed(); if (fig) { mmdFit(fig); mmdTouched = fig; } break; }
@@ -1980,7 +2128,12 @@
   });
 
   // ---------- boot ----------
-  if (state.view === "doc" && state.doc) { document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname + location.hash); }
+  if (state.view === "doc" && state.doc) {
+    document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname + location.hash);
+    // A link to a section: the browser's own fragment scroll aimed at a
+    // placeholder, the same way a smooth scroll does. Land it properly.
+    if (location.hash && !lineHash()) jumpToHash();
+  }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();

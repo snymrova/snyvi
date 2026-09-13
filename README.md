@@ -368,6 +368,16 @@ follows the language rather than guessing with patterns, and call sites
 and builtins stay out of it. It is fetched after the page has painted,
 so it never delays reading.
 
+The rail follows you. The entry for the section you are in is marked and
+kept in view, however long the contents are; the actions under them --
+pin, compare, delete, open source -- stay where they are. A wheel over
+either pane scrolls the pane until it has nothing left, then the
+document. Clicking an entry jumps to the heading without adding to the
+browser's history, so Back still means the previous document. The `#`
+beside a heading copies a link to that section, the way a line number
+copies a link to a line, and the contents write the same links. `t`
+hides the rail and stays hidden until you bring it back.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders

@@ -292,6 +292,14 @@ impl Renderer {
         let mut raw = Vec::with_capacity(source.len() * 2);
         let _ = format_html_with_plugins(root, &options, &mut raw, &plugins);
         let raw = String::from_utf8(raw).unwrap_or_default();
+        // comrak writes each heading's anchor `inert`, which makes the `#` the
+        // stylesheet shows beside a heading a thing that cannot be clicked --
+        // and the sanitizer strips the attribute, so a document with raw HTML
+        // in it had a working link where one without had a dead one. Out of
+        // the tab order instead, since it is aria-hidden: the heading's own
+        // text is what a screen reader reads, and the client makes a click on
+        // the mark copy the section's link.
+        let raw = raw.replace("<a inert href=\"#", "<a tabindex=\"-1\" href=\"#");
         let t_md = t.elapsed();
         let out = if has_raw_html { sanitize(&raw) } else { raw };
         if trace {
@@ -903,6 +911,7 @@ fn sanitize(html: &str) -> String {
                 "id",
                 "class",
                 "aria-hidden",
+                "tabindex",
                 "data-footnote-ref",
                 "data-footnote-backref",
             ],
@@ -1254,6 +1263,25 @@ mod tests {
         assert!(raw.contains("<details>"), "harmless html kept: {raw}");
         assert!(!raw.contains("<script"), "script removed: {raw}");
         assert!(!raw.contains("onerror"), "event handler removed: {raw}");
+    }
+
+    #[test]
+    fn heading_anchors_are_clickable_on_both_paths() {
+        let r = r();
+        for src in ["## Hello there\n\ntext\n", "## Hello there\n\n<b>raw</b>\n"] {
+            // The sanitizer rewrites the tag on the raw path, so the check is
+            // on the attributes rather than on the exact string.
+            let html = r.render(Kind::Markdown, None, src);
+            let a = html
+                .split("<a ")
+                .nth(1)
+                .and_then(|s| s.split('>').next())
+                .unwrap_or_default();
+            assert!(a.contains("tabindex=\"-1\""), "{html}");
+            assert!(a.contains("class=\"anchor\""), "{html}");
+            assert!(a.contains("href=\"#hello-there\""), "{html}");
+            assert!(!html.contains("inert"), "{html}");
+        }
     }
 
     #[test]
