@@ -242,6 +242,7 @@ jobs:
           export SNYVI_DATA_DIR=/tmp/s-wm SNYVI_CONFIG_DIR=/tmp/c-wm SNYVI_PORT=7814
           want=$(sed -n 's/^StartupWMClass=//p' /usr/share/applications/snyvi.desktop)
           test -n "$want" || { echo "snyvi.desktop declares no StartupWMClass"; exit 1; }
+          export want
           cat > /tmp/wmclass.sh <<'INNER'
           set -e
           snyvi send README.md >/dev/null 2>&1 || true
@@ -249,14 +250,26 @@ jobs:
           # WM_CLASS is two strings, instance then class ("snyvi-app",
           # "Snyvi-app"). GNOME matches StartupWMClass against either, so print
           # both and let the caller decide.
+          #
+          # The tray keeps a hidden X window of its own, class "tray-icon tray
+          # app snyvi", and on a slow runner it is mapped before the main
+          # window is. So a window of some other class is not the answer, only
+          # noted: keep looking until one carries the class the entry names,
+          # and when none does in fifteen seconds print what was seen, so a
+          # window of the wrong class still fails with the class it had.
+          : > /tmp/wm-seen
           for _ in $(seq 1 60); do
             for id in $(xwininfo -root -children | grep -oE '^ +0x[0-9a-f]+' | tr -d ' '); do
               out=$(xprop -id "$id" WM_CLASS 2>/dev/null || true)
-              case "$out" in *snyvi*|*Snyvi*) echo "$out"; exit 0;; esac
+              case "$out" in
+                *"\"$want\""*) echo "$out"; exit 0;;
+                *snyvi*|*Snyvi*) echo "$out" >> /tmp/wm-seen;;
+              esac
             done
             sleep 0.25
           done
-          echo "no window appeared"; cat /tmp/wm-app.log; exit 1
+          echo "no window of class $want appeared; windows seen:"; sort -u /tmp/wm-seen
+          cat /tmp/wm-app.log; exit 1
           INNER
           got=$(xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- \
                   sh /tmp/wmclass.sh | grep WM_CLASS)
