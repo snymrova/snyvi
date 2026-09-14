@@ -670,6 +670,10 @@ pre.code .ln::before { cursor: pointer; }
 .toast .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
 .toast .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toast .s { color: var(--fg-3); font-size: 12px; }
+/* The one thing a toast offers that has to be reached on purpose. */
+.toast .act { font: inherit; font-size: 12px; font-weight: 550; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: 6px; padding: 4px 10px; margin-left: auto; cursor: pointer; flex: none; }
+.toast .act:hover { background: var(--bg-side); }
+.toast .act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- palette / help ---------- */

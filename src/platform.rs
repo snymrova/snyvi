@@ -301,6 +301,120 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
+/// Raise a notification that opens something when it is clicked.
+///
+/// `open` runs on a thread of its own when the person clicks; it is dropped
+/// unrun when they do not, or when the desktop cannot carry an action at all,
+/// in which case this is exactly `notify`.
+///
+/// Only the free desktops can do this without a dependency: `notify-send -A`
+/// waits for the click and prints the action back. Windows wants a registered
+/// application id and a protocol handler to be clicked at all, and macOS's
+/// `display notification` has no action, so both raise the plain notification
+/// they raised before.
+///
+/// One notification at a time carries an action, and a new one replaces it.
+/// The alternative is a waiting `notify-send` per arrival -- an agent writing
+/// twelve files would leave twelve -- and the one worth clicking is the newest
+/// anyway, with the queue in the sidebar holding the rest.
+pub fn notify_open(title: &str, body: &str, open: impl FnOnce() + Send + 'static) {
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        if notify_send_takes_actions() {
+            let mut child = match Command::new("notify-send")
+                .args([
+                    "-a",
+                    "snyvi",
+                    "-i",
+                    "snyvi",
+                    "-A",
+                    "default=Open",
+                    "-t",
+                    "20000",
+                    title,
+                    body,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(_) => {
+                    notify(title, body);
+                    return;
+                }
+            };
+            let out = child.stdout.take();
+            let id = child.id();
+            // Replacing the last one, which is also what reaps it: the reader
+            // thread below only waits on a child still in this slot, so a
+            // process is ended and collected in exactly one place.
+            if let Some(mut old) = replace_clickable(Some(child)) {
+                let _ = old.kill();
+                let _ = old.wait();
+            }
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut said = String::new();
+                if let Some(mut out) = out {
+                    let _ = out.read_to_string(&mut said);
+                }
+                if let Some(mut mine) = take_clickable(id) {
+                    let _ = mine.wait();
+                }
+                if said.trim() == "default" {
+                    open();
+                }
+            });
+            return;
+        }
+    }
+    let _ = &open;
+    notify(title, body);
+}
+
+/// The one notification that is waiting to be clicked, if there is one.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+static CLICKABLE: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn replace_clickable(next: Option<std::process::Child>) -> Option<std::process::Child> {
+    let mut slot = CLICKABLE.lock().unwrap_or_else(|e| e.into_inner());
+    std::mem::replace(&mut slot, next)
+}
+
+/// Take the child back only if the slot still holds this one: a newer
+/// notification has already ended and collected it otherwise.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn take_clickable(id: u32) -> Option<std::process::Child> {
+    let mut slot = CLICKABLE.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.as_ref().map(std::process::Child::id) == Some(id) {
+        slot.take()
+    } else {
+        None
+    }
+}
+
+/// Whether this machine's notify-send can carry an action. libnotify grew
+/// `--action` in 0.7.9; older ones fail the whole call when handed one, which
+/// would trade a notification that cannot be clicked for no notification.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn notify_send_takes_actions() -> bool {
+    static OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OK.get_or_init(|| {
+        Command::new("notify-send")
+            .arg("--help")
+            .output()
+            .map(|o| {
+                let text = String::from_utf8_lossy(&o.stdout).into_owned()
+                    + &String::from_utf8_lossy(&o.stderr);
+                text.contains("--action")
+            })
+            .unwrap_or(false)
+    })
+}
+
 /// Single-quote a string for PowerShell, where doubling the quote escapes it.
 #[cfg(target_os = "windows")]
 fn ps_quote(s: &str) -> String {

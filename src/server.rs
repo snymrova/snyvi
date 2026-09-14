@@ -20,6 +20,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -69,6 +70,20 @@ pub struct App {
     pub asset_v: String,
     /// Last time any open tab reported having focus; drives desktop notifications.
     pub last_focus: std::sync::Mutex<Instant>,
+    /// How many native windows are reading. `snyvi app` opens the page with a
+    /// mark on it, the page carries the mark into its event stream, and the
+    /// count falls when that stream ends -- so this is exactly as live as the
+    /// window is, with nothing to time out and nothing to leave stale when a
+    /// window is quit.
+    pub windows: AtomicUsize,
+}
+
+impl App {
+    /// Is a native window up? What decides whether a link is handed to it or
+    /// opened in a browser beside it.
+    pub fn has_window(&self) -> bool {
+        self.windows.load(Ordering::Relaxed) > 0
+    }
 }
 
 type S = State<Arc<App>>;
@@ -117,6 +132,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         started: Instant::now(),
         asset_v,
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
+        windows: AtomicUsize::new(0),
     });
     crate::watch::spawn_browse_watcher(app.clone());
 
@@ -144,6 +160,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/queue", get(queue))
         .route("/api/queue/clear", post(clear_queue))
         .route("/api/docs/{id}/delete", post(delete_doc))
+        .route("/api/docs/{id}/undelete", post(undelete_doc))
         .route("/api/docs/{id}/history", get(history))
         .route("/api/projects/{id}/rename", post(rename_project))
         .route("/api/workflows/{id}/rename", post(rename_workflow))
@@ -454,6 +471,9 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // shutdown endpoint, without having to guess which snyvi it is.
         "pid": std::process::id(),
         "docs": app.store.count().unwrap_or(0),
+        // Whether a link should be handed to a window or opened in a browser.
+        // `snyvi open`, `snyvi browse` and the MCP server all ask here.
+        "window": app.has_window(),
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
@@ -639,6 +659,8 @@ async fn history(State(app): S, Path(id): Path<String>) -> Response {
     }
 }
 
+/// Delete at once, and say nothing first. The page offers Undo for a few
+/// seconds; the document is on disk until `prune` runs either way.
 async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
     match app.store.delete(&id) {
         Ok(true) => {
@@ -650,6 +672,28 @@ async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// The other half of Undo. Gone means pruned, which is the one delete that
+/// cannot be taken back.
+async fn undelete_doc(State(app): S, Path(id): Path<String>) -> Response {
+    match app.store.undelete(&id) {
+        Ok(true) => {
+            let doc = app.store.get(&id).ok().flatten();
+            emit(
+                &app,
+                "restored",
+                json!({ "id": id, "doc": doc, "waiting": waiting(&app) }),
+            );
+            Json(json!({ "ok": true, "doc": doc })).into_response()
+        }
+        Ok(false) => (
+            StatusCode::GONE,
+            Json(json!({ "error": "that document has been pruned" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -685,9 +729,21 @@ fn notify_desktop(app: &App, doc: &Doc) {
     if focused_recently {
         return;
     }
-    crate::platform::notify(
+    // Clicking it opens the document where the reader reads: the window it
+    // belongs to, raised, or a browser when there is no window. The daemon is
+    // the one process that knows which, so it decides here rather than handing
+    // a URL to the desktop and hoping.
+    let url = format!("{}/d/{}", config::base_url(), doc.id);
+    let has_window = app.has_window();
+    crate::platform::notify_open(
         &doc.title,
         &format!("{} · {}", doc.project, doc.workflow_title),
+        move || {
+            if has_window && crate::desktop::hand_to_window(&url) {
+                return;
+            }
+            platform::open_url(&url);
+        },
     );
 }
 
@@ -715,10 +771,48 @@ async fn compare(
     Json(json!({ "a": da, "b": db, "html": html })).into_response()
 }
 
+#[derive(Deserialize)]
+struct EventsQ {
+    /// Set by a page that is inside the native window, so the daemon knows
+    /// there is one to hand a link to. A string rather than a bool because a
+    /// query string is not JSON: `?window=1` is what a page would naturally
+    /// send, and it is not a bool to serde.
+    #[serde(default)]
+    window: Option<String>,
+}
+
+impl EventsQ {
+    fn is_window(&self) -> bool {
+        self.window
+            .as_deref()
+            .is_some_and(|v| !matches!(v, "" | "0" | "false" | "False"))
+    }
+}
+
+/// Held by the event stream of a window's page for as long as that stream
+/// lasts. A window that is quit, crashes, or is simply reloaded takes its
+/// connection with it, and the count follows on the next poll of the stream.
+struct WindowMark(Arc<App>);
+
+impl Drop for WindowMark {
+    fn drop(&mut self) {
+        self.0.windows.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Broadcast payloads are "<event name>\n<json>".
-async fn events(State(app): S) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+async fn events(
+    State(app): S,
+    Query(q): Query<EventsQ>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|m| {
+    let mark = q.is_window().then(|| {
+        app.windows.fetch_add(1, Ordering::Relaxed);
+        WindowMark(app.clone())
+    });
+    let stream = BroadcastStream::new(rx).filter_map(move |m| {
+        // Captured so that the mark lives exactly as long as the stream does.
+        let _keep = &mark;
         m.ok().map(|msg| {
             let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
             Ok(Event::default().event(name).data(data))
@@ -884,9 +978,15 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             };
             (
                 status,
-                Json(
-                    json!({ "id": doc.id, "url": url, "doc": doc, "existing": received.existing }),
-                ),
+                Json(json!({
+                    "id": doc.id,
+                    "url": url,
+                    "doc": doc,
+                    "existing": received.existing,
+                    // So the sender can say where the document went without a
+                    // second round trip: a window, or a link to click.
+                    "window": app.has_window(),
+                })),
             )
                 .into_response()
         }

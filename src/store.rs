@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS docs (
   content_hash TEXT NOT NULL,
   pinned INTEGER NOT NULL DEFAULT 0,
   origin TEXT NOT NULL DEFAULT 'cli',
-  unread INTEGER NOT NULL DEFAULT 0
+  unread INTEGER NOT NULL DEFAULT 0,
+  deleted_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS docs_recv ON docs(received_at DESC);
 CREATE INDEX IF NOT EXISTS docs_wf ON docs(workflow_id, received_at);
@@ -147,7 +148,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(id UNINDEXED, title, body
 
 const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash";
 const DOC_FROM: &str =
-    "FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
+    "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 
 impl Store {
     pub fn open(paths: &Paths) -> Result<Store> {
@@ -178,11 +179,26 @@ impl Store {
             // Read, for everything that was here before there was a queue: a
             // library's worth of old documents is not a backlog.
             "ALTER TABLE docs ADD COLUMN unread INTEGER NOT NULL DEFAULT 0",
+            // Deleted, and still here until `prune` says otherwise -- which is
+            // what makes "Undo" in the toast something the daemon can honour.
+            "ALTER TABLE docs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute_batch(stmt);
         }
-        // After the column is there on every database, old or new.
-        conn.execute_batch("CREATE INDEX IF NOT EXISTS docs_unread ON docs(unread, received_at);")?;
+        // After the columns are there on every database, old or new.
+        //
+        // Every read of the library goes through this view, so a document that
+        // has been deleted is gone from the tree, the inbox, search, the queue,
+        // history and the counts by construction -- rather than by a condition
+        // that a query written later could forget. `rowid` is named because the
+        // ordering everywhere breaks ties with it, and a view has none of its
+        // own. It is rebuilt at every start, so a column added by a migration
+        // is in it on the run that adds the column.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS docs_unread ON docs(unread, received_at);
+             DROP VIEW IF EXISTS live_docs;
+             CREATE VIEW live_docs AS SELECT rowid AS rowid, * FROM docs WHERE deleted_at = 0;",
+        )?;
         Ok(Store {
             conn: Mutex::new(conn),
             docs_dir: paths.docs_dir.clone(),
@@ -333,23 +349,30 @@ impl Store {
         .map_err(Into::into)
     }
 
+    /// Delete a document: gone from everything that reads the library, and
+    /// still on disk until `prune` runs.
+    ///
+    /// Nothing is asked first and nothing is destroyed, which is the trade the
+    /// confirmation used to make the other way round: a dialog before every
+    /// delete, and no way back after one. The row keeps its workflow, its
+    /// project and its place in the queue, so putting it back is one column.
     pub fn delete(&self, id: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        tx.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
-        let n = tx.execute("DELETE FROM docs WHERE id = ?1", params![id])?;
-        tx.execute(
-            "DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs)",
-            [],
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE docs SET deleted_at = ?2 WHERE id = ?1 AND deleted_at = 0",
+            params![id, now()],
         )?;
-        tx.execute(
-            "DELETE FROM projects WHERE id NOT IN (SELECT DISTINCT project_id FROM docs)",
-            [],
+        Ok(n > 0)
+    }
+
+    /// Put back a document that was deleted. False when there is nothing to put
+    /// back, which is what an Undo pressed twice, or after a prune, is.
+    pub fn undelete(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE docs SET deleted_at = 0 WHERE id = ?1 AND deleted_at != 0",
+            params![id],
         )?;
-        tx.commit()?;
-        drop(conn);
-        let _ = fs::remove_file(self.src_path(id));
-        let _ = fs::remove_file(self.html_path(id));
         Ok(n > 0)
     }
 
@@ -390,7 +413,7 @@ impl Store {
     pub fn waiting(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         Ok(
-            conn.query_row("SELECT COUNT(*) FROM docs WHERE unread = 1", [], |r| {
+            conn.query_row("SELECT COUNT(*) FROM live_docs WHERE unread = 1", [], |r| {
                 r.get(0)
             })?,
         )
@@ -411,7 +434,7 @@ impl Store {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let ids: Vec<String> = tx
-            .prepare("SELECT id FROM docs WHERE unread = 1")?
+            .prepare("SELECT id FROM live_docs WHERE unread = 1")?
             .query_map([], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
         tx.execute("UPDATE docs SET unread = 0 WHERE unread = 1", [])?;
@@ -457,10 +480,19 @@ impl Store {
     }
 
     /// Delete unpinned documents received before `before`. Returns what was (or would be) removed.
+    /// Delete for good: what is old enough, and what the reader deleted.
+    ///
+    /// A deleted document goes whatever its age and whether or not it is
+    /// pinned -- the reader has already said so, and the undo it could have
+    /// come back through belongs to the minute it was deleted in, not to the
+    /// next month.
     pub fn prune(&self, before: i64, dry_run: bool) -> Result<Vec<(String, String)>> {
         let mut conn = self.conn.lock().unwrap();
         let victims: Vec<(String, String)> = conn
-            .prepare("SELECT id, title FROM docs WHERE pinned = 0 AND received_at < ?1 ORDER BY received_at")?
+            .prepare(
+                "SELECT id, title FROM docs WHERE deleted_at != 0 OR (pinned = 0 AND received_at < ?1) \
+                 ORDER BY deleted_at, received_at",
+            )?
             .query_map(params![before], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<std::result::Result<_, _>>()?;
         if dry_run || victims.is_empty() {
@@ -540,7 +572,7 @@ impl Store {
         let mut wfs: Vec<TreeWorkflow> = conn
             .prepare(
                 "SELECT w.id, w.key, w.title, COUNT(d.id)
-                 FROM workflows w JOIN docs d ON d.workflow_id = w.id
+                 FROM workflows w JOIN live_docs d ON d.workflow_id = w.id
                  WHERE w.project_id = ?1
                  GROUP BY w.id ORDER BY MAX(d.received_at) DESC, w.id DESC LIMIT ?2",
             )?
@@ -555,7 +587,7 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         let mut doc_stmt = conn.prepare(
-            "SELECT id, title, kind, received_at, pinned, unread FROM docs
+            "SELECT id, title, kind, received_at, pinned, unread FROM live_docs
              WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
         for w in &mut wfs {
@@ -593,7 +625,7 @@ impl Store {
         };
         w.docs = conn
             .prepare(
-                "SELECT id, title, kind, received_at, pinned, unread FROM docs
+                "SELECT id, title, kind, received_at, pinned, unread FROM live_docs
                  WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
             )?
             .query_map(params![workflow_id], row_to_tree_doc)?
@@ -640,10 +672,10 @@ impl Store {
             String::from("SELECT d.id, d.title, p.name, w.title, d.kind, d.received_at, ");
         let filtered_only = terms.is_empty();
         if filtered_only {
-            sql.push_str("'' FROM docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id WHERE 1=1");
+            sql.push_str("'' FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id WHERE 1=1");
         } else {
             sql.push_str(
-                "snippet(docs_fts, 2, '<mark>', '</mark>', '…', 14) FROM docs_fts f JOIN docs d ON d.id = f.id \
+                "snippet(docs_fts, 2, '<mark>', '</mark>', '…', 14) FROM docs_fts f JOIN live_docs d ON d.id = f.id \
                  JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id WHERE docs_fts MATCH ?1",
             );
         }
@@ -690,7 +722,7 @@ impl Store {
 
     pub fn count(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
-        Ok(conn.query_row("SELECT COUNT(*) FROM docs", [], |r| r.get(0))?)
+        Ok(conn.query_row("SELECT COUNT(*) FROM live_docs", [], |r| r.get(0))?)
     }
 }
 
@@ -945,6 +977,48 @@ mod tests {
         assert!(s.get(&b.id).unwrap().is_none());
         assert!(s.html(&b.id).is_err(), "files removed");
         assert!(s.get(&a.id).unwrap().unwrap().pinned);
+    }
+
+    /// A delete is gone from everywhere that reads the library and still on
+    /// disk, so Undo is one column -- and `prune` is what makes it final.
+    #[test]
+    fn a_delete_can_be_taken_back_until_prune() {
+        let (s, _d) = temp_store();
+        let a = s.insert(&new_id("a"), new_doc("A", "alpha", "w")).unwrap();
+        let b = s.insert(&new_id("b"), new_doc("B", "bravo", "w")).unwrap();
+        assert!(s.delete(&b.id).unwrap());
+        assert!(
+            !s.delete(&b.id).unwrap(),
+            "deleting it again changes nothing"
+        );
+
+        // Gone from every way the library is read.
+        assert!(s.get(&b.id).unwrap().is_none());
+        assert_eq!(s.count().unwrap(), 1);
+        assert_eq!(s.inbox(10).unwrap().len(), 1);
+        assert_eq!(s.waiting().unwrap(), 1, "and off the queue");
+        assert!(s.search("bravo", 10).unwrap().is_empty());
+        let wfs = s.project_tree(a.project_id, 0, 0).unwrap();
+        assert_eq!(wfs[0].total, 1);
+        assert_eq!(wfs[0].docs.len(), 1);
+        assert!(s.html(&b.id).is_ok(), "still on disk");
+
+        // And back, queue place and all.
+        assert!(s.undelete(&b.id).unwrap());
+        assert!(!s.undelete(&b.id).unwrap(), "undoing twice changes nothing");
+        assert_eq!(s.get(&b.id).unwrap().unwrap().title, "B");
+        assert_eq!(s.waiting().unwrap(), 2);
+        assert_eq!(s.search("bravo", 10).unwrap().len(), 1);
+
+        // Pruned, and now it is gone for good -- pinned or not, old or not.
+        assert!(s.set_pinned(&b.id, true).unwrap());
+        assert!(s.delete(&b.id).unwrap());
+        let gone = s.prune(0, false).unwrap();
+        assert_eq!(gone.len(), 1, "nothing here is old enough but this one");
+        assert_eq!(gone[0].0, b.id);
+        assert!(!s.undelete(&b.id).unwrap(), "nothing left to put back");
+        assert!(s.html(&b.id).is_err(), "files removed");
+        assert_eq!(s.get(&a.id).unwrap().unwrap().title, "A");
     }
 
     /// The queue is the unread set in arrival order: every insert joins it,

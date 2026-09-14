@@ -132,10 +132,10 @@ snyvi send PLAN.md                 # send a file, print its link
 cat notes.md | snyvi send -t Notes # send stdin
 snyvi watch PLAN.md                # send now, and again on every save
 snyvi browse [dir]                 # read a folder from disk, nothing stored
-snyvi open                         # open the viewer in the browser
+snyvi open                         # open the viewer, in the window if one is up
 snyvi app                          # native window (see Desktop below)
 snyvi init-claude [--auto]         # register with Claude Code (user scope)
-snyvi prune --days 30 [--dry-run]  # delete unpinned documents older than N days
+snyvi prune --days 30 [--dry-run]  # delete what you deleted, and unpinned documents older than N days
 snyvi status                       # daemon health and version
 snyvi restart                      # after installing a new binary
 snyvi stop                         # shut the daemon down
@@ -269,7 +269,7 @@ From source, `cargo build --release` gives you snyvi alone; add
 | z     | wrap long lines                             |
 | p     | pin (kept by `prune`)                       |
 | n     | open the next document waiting              |
-| Del   | delete document                             |
+| Del   | delete document (⌘/ctrl Z undoes it)        |
 | i     | inbox                                       |
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
@@ -432,6 +432,31 @@ a block and an offset into it, the way a save already keeps it. In the
 desktop window, which has no toolbar, alt+← and alt+→ are Back and
 Forward; in a browser they are the same one step, not two.
 
+Deleting is one keystroke and no question. `Del` deletes the document
+you are reading at once, and the line at the corner offers "Undo" for
+eight seconds — or ⌘/ctrl Z, which is where your hand goes anyway.
+Nothing is destroyed in the meantime: the daemon marks the document
+deleted and keeps it until `prune` runs, which is what makes the offer
+real. It disappears from the tree, the inbox, search and the queue in
+every tab at once, and comes back to the same place.
+
+## Where a link opens
+
+With `snyvi app` running, a link opens in that window rather than in a
+browser beside it. The window's page says it is one when it connects to
+the daemon's event stream, so the daemon knows a window is up for
+exactly as long as there is one -- quit it and the next link opens in a
+browser again, within a few milliseconds. `snyvi open`, `snyvi send
+--open`, `snyvi browse` and a click on a notification all hand the URL
+to the window and raise it.
+
+It changes what an agent is told, too. `send_document` used to answer
+with `http://127.0.0.1:7777/d/…` whatever was running, so a click on the
+agent's link opened a second copy of the viewer in a browser next to the
+window you were using. With a window up, the tool now answers that the
+document is waiting in snyvi and gives no link at all; without one, it
+gives the link as before.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders
@@ -458,6 +483,11 @@ you have on screen a few times a second, only while a tab is connected,
 and only once a change has held still, so a file caught mid-write is
 never shown half-way. That is a handful of `stat` calls, not a
 recursive watch, so a repository of any size costs the same.
+
+A link into a folder lands where it points: `#L120` on a file opens it
+at that line, marked, and a section link opens it at that heading -- the
+same two the library's own documents answer to, and worth having because
+a link into a browsed file is how one agent tells you where to look.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does
@@ -495,8 +525,13 @@ came from the hook or from `send_document`; a SessionStart hook,
 installed by `init-claude`, records the session for the MCP server.
 When no snyvi tab has focus, a new document raises a desktop
 notification — `notify-send` on Linux, a toast on Windows, Notification
-Center on macOS (set `SNYVI_NOTIFY=0` to disable). In the page it joins
-the queue, under "Arrivals" above.
+Center on macOS (set `SNYVI_NOTIFY=0` to disable). On the free desktops
+the notification opens the document when you click it: in the window if
+one is running, raised, and in the browser otherwise. Windows wants a
+registered application id to be clickable at all and macOS's
+`display notification` carries no action, so there both are notices and
+not buttons. In the page a new document joins the queue, under
+"Arrivals" above.
 
 ## Languages
 
@@ -533,8 +568,10 @@ read by `bench/ui.mjs`: where the contents' marker is after a read to
 the end, what a wheel over the rail moves, what Back does, whether a
 save keeps the place, what `t` opens at 1000 px, whether Tab reaches
 every control, what a drag on a pane's edge does, what `f` fills and
-what Escape gives back, and what an arrival does to a reader in the
-middle of a page. Counts and positions, no clocks, so every one
+what Escape gives back, what an arrival does to a reader in the middle
+of a page, whether a delete can be taken back, where a link into a
+folder lands, and whether the daemon knows a window is up. Counts and
+positions, no clocks, so every one
 of its rows is enforced on every machine, CI's included. The desktop
 window's engine is not Chromium: `bench/webkit.py` drives the same page
 in WebKitGTK under Xvfb, by hand for now, and reads the two things only

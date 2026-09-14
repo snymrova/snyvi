@@ -5,11 +5,12 @@
  * over the rail moves, what Back does after a click on an entry, whether a
  * save keeps the reader's place, what `t` opens on a narrow window, whether
  * Tab reaches every control and a dialog gives focus back, what a drag on a
- * pane's edge does, what `f` fills and what Escape gives back, and what an
- * arrival does to a reader in the middle of a page. Every row
- * here was a fault once -- the 0.11 to 0.14 notes in docs/ROADMAP.md say
- * which -- and the point of running them on every push is that the rail
- * cannot quietly stop following again.
+ * pane's edge does, what `f` fills and what Escape gives back, what an
+ * arrival does to a reader in the middle of a page, whether a delete can be
+ * taken back, where a link into a browsed folder lands, and whether the
+ * daemon knows a window is up. Every row here was a fault once -- the 0.11 to
+ * 0.15 notes in docs/ROADMAP.md say which -- and the point of running them on
+ * every push is that the rail cannot quietly stop following again.
  *
  *   node bench/ui.mjs            report
  *   node bench/ui.mjs --check    and exit non-zero if a row fails
@@ -23,7 +24,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
@@ -146,6 +147,22 @@ async function main() {
       return (await r.json()).doc;
     };
 
+    // A folder to browse, for the rows that open a file at a section or a
+    // line the way a link from outside does.
+    const folder = join(tmp, "folder");
+    mkdirSync(folder);
+    writeFileSync(join(folder, "notes.md"), plan("browsed notes"));
+    writeFileSync(join(folder, "code.rs"), Array.from({ length: 400 }, (_, i) => `fn line_${i + 1}() { /* ${i + 1} */ }`).join("\n") + "\n");
+    const browsed = execFileSync(BIN, ["browse", folder, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
+    if (!/\/b\//.test(browsed)) throw new Error(`snyvi browse printed no URL:\n${browsed}`);
+    // One send through the MCP server, the way an agent's does it, so the row
+    // below can read what the agent is told about where the document went.
+    const mcpSend = title => {
+      const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "send_document", arguments: { content: `# ${title}\n\nSent the way an agent sends.\n`, title } } };
+      const out = execFileSync(BIN, ["mcp"], { env, cwd: tmp, encoding: "utf8", input: JSON.stringify(call) + "\n" });
+      return JSON.parse(out.trim().split("\n").pop()).result.content[0].text;
+    };
+
     const browser = await launch(join(tmp, "chrome"));
     chromeProc = browser.proc;
     const cdp = browser.cdp;
@@ -162,6 +179,9 @@ async function main() {
     sections.push(["the panes' edges", await widthRows(p, url)]);
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
+    sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
+    sections.push(["a link into a folder", await browseRows(p, browsed)]);
+    sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -198,6 +218,7 @@ const KEYS = {
   Enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
   ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", vk: 37 },
   ArrowRight: { key: "ArrowRight", code: "ArrowRight", vk: 39 },
+  Delete: { key: "Delete", code: "Delete", vk: 46 },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
   "\\": { key: "\\", code: "Backslash", vk: 220, text: "\\" },
@@ -748,6 +769,119 @@ async function queueRows(p, url, arrive) {
   rows.push(["an arrival on an empty inbox", openedItself && empty.bar === null && empty.marked === 0,
     !openedItself ? `stayed on "${empty.title}"` : empty.bar !== null ? "opened, but the bar counts it" : "opened itself, and is read"]);
   void late;
+  return rows;
+}
+
+/** 0.15: a delete is one keystroke and eight seconds of Undo, over a soft
+ *  delete the daemon keeps until `prune` runs. The confirmation it replaces
+ *  was a `window.confirm`, which the native window draws as the toolkit's own
+ *  dialog -- and which would hang every row below, since a blocked page
+ *  answers nothing. */
+async function deleteRows(p, arrive) {
+  const rows = [];
+  const listed = title => p.ev(`[...document.querySelectorAll(".inbox .title")].map(t => t.textContent).includes(${JSON.stringify(title)})`);
+  const toastEl = () => p.ev(`(() => { const t = document.querySelector("#toasts .toast"); return t ? { text: t.textContent, act: !!t.querySelector(".act") } : null; })()`);
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+
+  const doomed = await arrive();
+  await p.goto(`${await p.ev("location.origin")}/d/${doomed.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  await sleep(500);
+  const after = await toastEl();
+  const gone = !(await listed(doomed.title));
+  rows.push(["Del deletes at once", gone && !!after && after.act && /Deleted/.test(after.text) && await p.ev(`document.title === "snyvi"`),
+    !gone ? "the document is still in the inbox" : !after ? "nothing was said" : !after.act ? `"${after.text}" with no Undo in it` : `nothing asked, the row is gone, and the toast offers Undo`]);
+
+  await p.clickOn("#toasts .toast .act");
+  const back = await until(`document.title === ${JSON.stringify(doomed.title)}`);
+  rows.push(["Undo puts it back", back, back ? "the document is open again, where it was deleted from" : `landed on "${await p.ev("document.title")}"`]);
+
+  await p.press("Delete");
+  await sleep(400);
+  await p.press("z", { ctrl: true });
+  const byKey = await until(`document.title === ${JSON.stringify(doomed.title)}`);
+  rows.push(["and ⌘Z does the same", byKey, byKey ? "deleted and undone without touching the toast" : `landed on "${await p.ev("document.title")}"`]);
+
+  await p.press("Delete");
+  await sleep(500);
+  await p.reload();
+  const stillGone = !(await listed(doomed.title));
+  const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);
+  rows.push(["a delete a reload agrees with", stillGone && found === 0,
+    !stillGone ? "the inbox lists it again after the reload" : found ? `search still finds ${found}` : "gone from the inbox and from search, because the daemon did it"]);
+  return rows;
+}
+
+/** 0.15: a link into a browsed folder lands where it points, the way a link
+ *  into a document does. The browser's own fragment scroll is no use for
+ *  either: it aims at blocks that are still content-visibility placeholders. */
+async function browseRows(p, browsed) {
+  const rows = [];
+  const file = `${browsed}/notes.md`;
+  await p.goto(file);
+  await p.pointerAway();
+  // A heading well down the page, taken from the page itself rather than
+  // guessed from the fixture's wording.
+  const id = await p.ev(`(() => { const a = [...document.querySelectorAll("#toc a")]; return a[Math.floor(a.length * 0.7)].getAttribute("href").slice(1); })()`);
+  // Away first: a navigation that changes only the fragment is not a load,
+  // and what is being read here is what a link from outside the page does.
+  await p.goto(browsed);
+  await p.goto(`${file}#${id}`);
+  await sleep(400);
+  const at = await p.ui("headingOffset", id);
+  const scrolled = await p.ev(`Math.round(document.querySelector("#main").scrollTop)`);
+  rows.push(["a browsed file opens at a section", within(at, 0, 40) && scrolled > 100,
+    at === null ? "the heading is not in the page" : `the heading is ${at} px in, ${scrolled} px down the file`]);
+
+  await p.goto(`${browsed}/code.rs#L300`);
+  await sleep(400);
+  const line = await p.ev(`(() => { const m = [...document.querySelectorAll("pre.code .ln.at")];
+    if (!m.length) return { n: 0 };
+    const r = m[0].getBoundingClientRect(), main = document.querySelector("#main").getBoundingClientRect();
+    // The number is a CSS counter, so what the span holds is the code on it.
+    return { n: m.length, text: m[0].textContent.trim(), inView: r.top >= main.top && r.bottom <= main.bottom }; })()`);
+  const right = /line_300\b/.test(line.text || "");
+  rows.push(["and at a line", line.n === 1 && right && line.inView,
+    !line.n ? "no line was marked" : line.n !== 1 ? `${line.n} lines marked` : !right ? `the marked line reads "${line.text}"` : !line.inView ? "line 300 is marked but off the screen" : "line 300 marked and on the screen"]);
+  return rows;
+}
+
+/** 0.15: with a window running, a link belongs in it. The window's page says
+ *  so on its event stream, which is what makes the answer as live as the
+ *  window -- and what an agent is told changes with it, because a url to click
+ *  through a browser is the wrong answer when the viewer is already open. */
+async function windowRows(p, url, base, mcpSend) {
+  const rows = [];
+  const window_up = async () => (await (await fetch(`${base}/api/health`)).json()).window;
+  const until = async (want, tries = 40) => { for (let i = 0; i < tries; i++) { if (await window_up() === want) return true; await sleep(100); } return false; };
+
+  await p.goto(url);
+  const tab = await window_up();
+  rows.push(["a browser tab is not a window", tab === false, tab ? "the daemon thinks a tab is a window" : "the daemon says there is no window"]);
+
+  const said = mcpSend("Sent with no window");
+  const hasUrl = said.includes(`${base}/d/`);
+  rows.push(["what the agent is told, with none", hasUrl, hasUrl ? "the reply carries the link to give the user" : `the reply is "${said.slice(0, 60)}"`]);
+
+  await p.goto(`${base}/?window=1`);
+  const marked = await until(true);
+  const addr = await p.ev(`location.search + "|" + location.pathname`);
+  rows.push(["the window says it is one", marked && addr === "|/",
+    !marked ? "the daemon still says there is no window" : addr !== "|/" ? `the mark stayed in the address: "${addr}"` : "the daemon knows, and the mark is out of the address"]);
+
+  await p.goto(url);
+  const kept = await window_up();
+  rows.push(["and still, once it has navigated", kept === true, kept ? "a window that opened a document is still a window" : "the window was forgotten on the first navigation"]);
+
+  const inWindow = mcpSend("Sent with a window");
+  const quiet = !inWindow.includes("http");
+  rows.push(["what the agent is told, with one", quiet && /snyvi/.test(inWindow), quiet ? "the reply says it is waiting in snyvi, with no link to a browser" : `the reply still hands out a url: "${inWindow.slice(0, 70)}"`]);
+
+  await p.goto("about:blank");
+  const forgotten = await until(false);
+  rows.push(["and not once the window is gone", forgotten, forgotten ? "the stream ended and the daemon knows at once" : "the daemon still thinks a window is up"]);
+  await p.goto(url);
   return rows;
 }
 

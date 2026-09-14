@@ -652,8 +652,16 @@
     applyPreview();
     document.title = j.file.name;
     if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
-    if (fromHistory && history.state.browse === rootId && kept("path", path)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
+    const restored = fromHistory && history.state.browse === rootId && kept("path", path);
+    if (restored) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
+    // A link into a file: `#L120` is marked and landed by afterRender, and a
+    // section is landed here -- the same two the document path lands, which
+    // this one did not. The browser's own fragment scroll is no use in either:
+    // it aims at blocks that are still placeholders. Nothing to land when the
+    // reader's own place has just been put back, or on a navigation inside the
+    // page, which carries no fragment.
+    if (!restored && location.hash.length > 1 && !lineHash()) jumpToHash();
   }
 
   async function showInbox(push = true) {
@@ -718,19 +726,49 @@
     else toast("Split view", state.split ? "on, for diffs" : "off");
   }
 
+  /** How long Undo is on the screen, and how long it answers to ⌘Z. */
+  const UNDO_MS = 8000;
+  let undoing = null;
+
+  /** Delete now, ask nothing, and offer the way back.
+   *
+   *  The question used to be a `window.confirm`, which the native window draws
+   *  as the toolkit's own dialog in the toolkit's theme, over a page it has
+   *  nothing to do with -- and which had to be answered before anything else
+   *  could happen. The daemon keeps the document until `prune` runs, so the
+   *  eight seconds below are a real offer and not a hopeful one. */
   async function deleteCurrent() {
     if (!state.doc) return;
     const d = state.doc;
-    if (!window.confirm(`Delete "${d.title}"? This cannot be undone.`)) return;
     try {
-      await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
+      const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error(`${r.status}`);
       state.cache.delete(d.id);
       state.queue = state.queue.filter(x => x.id !== d.id);
       state.waiting = Math.max(0, state.waiting - (waitingRow(d) ? 1 : 0));
       await refreshTree(d.project_id);
-      toast("Deleted", d.title);
       showInbox(true);
+      offerUndo(d);
     } catch (e) { toast("Could not delete", String(e)); }
+  }
+
+  /** The other half of a delete: a button in the toast, and ⌘Z for as long as
+   *  it is there, which is where a reader's hand goes first. */
+  function offerUndo(d) {
+    const run = async () => {
+      if (undoing !== run) return;
+      undoing = null;
+      try {
+        const r = await fetch(`/api/docs/${d.id}/undelete`, { method: "POST" });
+        if (r.status === 410) return toast("Too late to undo", "it has been pruned");
+        if (!r.ok) throw new Error(`${r.status}`);
+        await refreshTree(d.project_id);
+        showDoc(d.id);
+      } catch (e) { toast("Could not undo", String(e)); }
+    };
+    undoing = run;
+    setTimeout(() => { if (undoing === run) undoing = null; }, UNDO_MS);
+    toast("Deleted", d.title, null, { label: "Undo", run });
   }
 
   function afterRender() {
@@ -2015,7 +2053,7 @@
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
       previewButton() +
-      `<button data-act="delete">Delete…<kbd>Del</kbd></button>` +
+      `<button data-act="delete">Delete<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button>` : "") +
@@ -2144,8 +2182,30 @@
   });
 
   // ---------- live arrivals ----------
+
+  /** Whether this page is the native window's, which decides where the daemon
+   *  sends a link that is opened from outside it -- `snyvi open`, a terminal, a
+   *  click on a notification.
+   *
+   *  `snyvi app` puts the mark on the first URL it hands the window, and the
+   *  page keeps it for the session rather than in the address: the window
+   *  navigates all day, and a mark in a URL would be lost by the first of
+   *  those and copied into every link the reader shares. Storage that belongs
+   *  to this one page and dies with it is exactly the lifetime wanted. */
+  const inWindow = (() => {
+    try {
+      if (new URLSearchParams(location.search).has("window")) {
+        sessionStorage.setItem("snyvi.window", "1");
+        // Out of the address bar at once, and out of the history entry, so
+        // Back never returns to a marked URL and no copied link carries it.
+        history.replaceState(history.state, "", location.pathname + location.hash);
+      }
+      return sessionStorage.getItem("snyvi.window") === "1";
+    } catch { return false; }
+  })();
+
   function connect() {
-    const es = new EventSource("/api/events");
+    const es = new EventSource("/api/events" + (inWindow ? "?window=1" : ""));
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
@@ -2207,6 +2267,15 @@
       await refreshTree();
       if (state.doc && state.doc.id === j.id) showInbox(true);
     });
+    // A delete that was taken back, in every tab and the window: the row is
+    // where it was, and so is its place in the queue if it never got read.
+    es.addEventListener("restored", async ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (j.waiting != null) state.waiting = j.waiting;
+      await refreshTree(j.doc && j.doc.project_id);
+      holdQueue();
+      if (state.view === "inbox") showInbox(false);
+    });
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
@@ -2222,13 +2291,25 @@
     es.onerror = () => { es.close(); setTimeout(connect, 2000); };
   }
 
-  function toast(title, sub, onClick) {
+  /** A line at the corner. `onClick` makes the whole toast one; `action`
+   *  ({label, run}) puts a button in it instead, for the one thing a toast
+   *  can offer that a reader must be able to reach deliberately. */
+  function toast(title, sub, onClick, action) {
     const el = document.createElement("div");
     el.className = "toast";
     el.innerHTML = `<span class="dot"></span><span><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
-    el.addEventListener("click", () => { el.remove(); onClick && onClick(); });
+    if (action) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "act"; b.textContent = action.label;
+      b.addEventListener("click", ev => { ev.stopPropagation(); el.remove(); action.run(); });
+      el.appendChild(b);
+    } else {
+      el.addEventListener("click", () => { el.remove(); onClick && onClick(); });
+    }
     $("#toasts").appendChild(el);
-    setTimeout(() => { el.style.transition = "opacity 160ms"; el.style.opacity = "0"; setTimeout(() => el.remove(), 180); }, onClick ? 8000 : 3500);
+    const life = action ? UNDO_MS : onClick ? 8000 : 3500;
+    setTimeout(() => { el.style.transition = "opacity 160ms"; el.style.opacity = "0"; setTimeout(() => el.remove(), 180); }, life);
+    return el;
   }
 
   // ---------- palette ----------
@@ -2460,6 +2541,14 @@
     if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       if (e.key === "ArrowLeft") history.back(); else history.forward();
+      return;
+    }
+    // Undo, for as long as the toast offering it is on the screen. The hand
+    // goes here before it goes to the button, and a delete is the only thing
+    // in a viewer there is anything to undo.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "z" || e.key === "Z") && undoing) {
+      e.preventDefault();
+      undoing();
       return;
     }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;

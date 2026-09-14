@@ -243,3 +243,27 @@ pub fn open_in_browser(url: &str) {
         eprintln!("open {url}");
     }
 }
+
+/// Open a link where the reader is: the native window if one is up, and the
+/// browser otherwise.
+///
+/// A window that is running is the whole viewer, so a second copy of the page
+/// in a browser beside it is not another view of the library, it is the reader
+/// losing the one they were using. The daemon says on /api/health whether a
+/// window's page is connected; the window's own single-instance handling does
+/// the rest -- it navigates and comes forward.
+pub fn open_where_the_reader_is(url: &str) {
+    if window_is_up() && crate::desktop::hand_to_window(url) {
+        return;
+    }
+    open_in_browser(url);
+}
+
+/// Whether the daemon has a window's page connected. False when there is no
+/// daemon to ask, or when it is old enough not to answer -- both of which mean
+/// a browser, which is what the caller then does.
+pub fn window_is_up() -> bool {
+    health()
+        .and_then(|h| h.get("window").and_then(Value::as_bool))
+        .unwrap_or(false)
+}

@@ -29,6 +29,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | A diagram fills the screen from inside the page | In the Linux window's engine a figure of its own in the top layer drew every glyph as nothing, and came back the size of its placeholder until the next scroll. The figure is laid over the page and the document asks for fullscreen: the same in every engine, and the labels are drawn in that one. | S | **done 0.13** |
 | Back returns to where the reader was | A document opened again through Back opened at the top. The place is in the history entry now, written as the reader leaves and after each scroll, the way a refresh keeps it; and alt+← is Back in the window, which had no way back at all. | XS | **done 0.14** |
 | An arrival never takes the page away | An arrival opened itself whenever the page had gone 2.5 s without a scroll or a key -- which is what reading a paragraph looks like -- and with several agents sending, the document changed under the reader many times an hour, with no way back in the window and no trace of the new one once its toast was gone. Arrivals join a queue: a row in the sidebar, a mark in the tree, a bar above the document that counts, `n` to read down the line. The one place an arrival opens itself is an inbox with nothing waiting. | S | **done 0.14** |
+| A link into a folder lands | `#L120` and a section link opened a document where they pointed and a browsed file at the top: the browse path rendered, scrolled to 0 and never looked at the fragment, so one agent's link into another's checkout landed nowhere. Both land now, the same way, past blocks that are still placeholders. | XS | **done 0.15** |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
 ## B. Library and organisation
@@ -39,7 +40,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | One workflow per Claude Code session | Hook sends and MCP sends from the same session land in two workflows because the MCP server cannot see Claude's session id. A `SessionStart` hook can record `cwd → session` in the config dir; the MCP server reads it. Result: one workflow per session, titled from its first document. | S | **done 0.2** |
 | Search filters | Scope search to a project, a kind, or a date range with prefixes (`p:snyvi kind:diff`). | S | **done 0.2** |
 | Delete a document from the UI | With confirmation. Prune covers bulk; users still want to remove one. | S | **done 0.2** |
-| Delete with undo instead of a dialog | The confirmation is `window.confirm`, which the native window draws as the toolkit's dialog in the toolkit's theme. Delete at once and offer "Undo" in the toast for eight seconds, over a soft delete that prune makes final. | M | next |
+| Delete with undo instead of a dialog | The confirmation was `window.confirm`, which the native window draws as the toolkit's own dialog in the toolkit's theme, over a page it has nothing to do with, and which had to be answered before anything else could happen. `Del` now deletes at once and the toast offers "Undo" for eight seconds, or ⌘/ctrl Z; underneath it is a `deleted_at` column that every read of the library goes past through one view, and `prune` makes it final. | M | **done 0.15** |
 | Arrivals that come in a burst | Each arrival was a toast and nothing capped them: an agent that writes twelve files stacked twelve. They are rows on the queue now, and the bar above the document says "12 waiting"; there is no arrival toast at all. | XS | **done 0.14** |
 | Rename workflow and project | Session-derived titles are guesses; let the user fix them inline. | S | **done 0.4** |
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
@@ -65,10 +66,10 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
 | Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
-| The window is where a link opens | With `snyvi-app` running, an agent's `send_document` still answers with `http://127.0.0.1:7777/d/…`, and a click on it opens the default browser beside the window; the window learns of the arrival only through its own tab's toast, and the desktop notification opens nothing. The daemon should know when a window is up, `snyvi open` and the notification should hand the URL to it and raise it, and the tool's reply should say the document is open in snyvi rather than print an address to click through a browser. | S | next |
+| The window is where a link opens | `send_document` answered with `http://127.0.0.1:7777/d/…` whatever was running, so a click opened a second viewer in a browser beside the window, and the desktop notification opened nothing at all. The window's page now says it is one when it opens its event stream, so the daemon knows for exactly as long as there is a window; `snyvi open`, `send --open`, `browse` and a click on the notification hand the URL to it and raise it, and the tool answers that the document is waiting in snyvi, with no link, when there is a window to wait in. | S | **done 0.15** |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
-| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. | S | next |
+| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. With 0.16. | S | later |
 | Split the window into its own binary | The desktop package was one binary, so `snyvi serve` carried the linked engine with no window open: 66 MB against the static build's 34 MB. `snyvi-app` is now the window alone, and an add-on that depends on snyvi rather than replacing it. Daemon back to 35 MB, and the install stops being a choice. | M | **done 0.6** |
 | Windows | One zip with both executables, because there is no static/dynamic fork to make: snyvi.exe links no engine and the window uses WebView2, which ships with the OS. The daemon, CLI, MCP server and hook all needed a platform layer first -- opening a URL, raising a notification, ending a process, starting detached. | M | **done 0.7** |
 | macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. Cheaper since 0.7: the platform layer already has the macOS path for notifications and for opening a URL, so what is left is the matrix leg and a .app bundle. | S | later |
@@ -827,6 +828,84 @@ The rows, in `bench/ui.mjs`, eight more for 40 in all:
 |---|---|
 | arrivals, while reading | an arrival at block 30 of the plan leaves the page at block 30, the bar reading "1 waiting" with its title, one row in the sidebar, one mark in the tree; `n` opens it and every mark is gone; alt+← lands on the plan at the same block and offset; alt+→ is the arrival again; twelve at once read "12 waiting", six rows and "6 more" in the daemon's order; a reload still says twelve; `i` lists the twelve first; an arrival on that inbox is a 13th row and not a page, and Mark all read empties it through a reload; an arrival on an empty inbox opens itself, read |
 
+## 0.15: the library in use
+
+Three things a reader does with a document that the viewer answered
+badly, all of them at the edge where snyvi meets the rest of the
+desktop.
+
+**A link belongs in the window.** With `snyvi app` running, an agent's
+`send_document` still answered with `http://127.0.0.1:7777/d/…`, so a
+click on the agent's link opened the default browser next to the window
+the reader was using: a second copy of the viewer, with the same library
+in it, and no way for either to know about the other. The daemon had no
+idea a window existed.
+
+It does now, and the way it learns is the cheapest one available: the
+window's own page says so. `snyvi app` opens the first URL with
+`?window=1` on it; the page latches that into session storage, takes it
+out of the address so nothing copied from the bar carries it, and puts
+it on the query of its event stream. The daemon counts window streams,
+and the count falls when the stream ends. So the answer is live by
+construction rather than by a timeout: a window that is quit, crashes or
+is closed to the tray-less taskbar takes its connection with it, and
+`/api/health` said so 32 ms later when it was measured. A window closed
+to the tray keeps its webview, and its connection, which is right --
+that window is still the place to open things.
+
+With that, `snyvi open`, `snyvi send --open`, `snyvi browse` and a click
+on a desktop notification all hand the URL to `snyvi-app`, whose own
+single-instance handling navigates the window and raises it. That was
+already there for a second `snyvi app`; it just had nobody calling it.
+And the notification, which opened nothing at all before, opens the
+document: `notify-send -A` waits for the click and prints the action
+back, so one waiting process at a time carries it and a new arrival
+replaces it. Windows needs a registered application id to be clicked at
+all and macOS's `display notification` has no action, so on those two it
+is the notice it always was.
+
+The last piece is what the agent is told, which is the part the reader
+noticed: with a window up, the tool now answers "Waiting in snyvi" and
+no URL, because a URL is an invitation to open the wrong thing. Without
+one it answers with the link, as before. The reply also stopped saying
+the document is *open*, which stopped being true in 0.14: it waits.
+
+**A delete asks nothing and can be undone.** The confirmation was a
+`window.confirm`, which in the native window is the toolkit's own dialog
+in the toolkit's theme, drawn over a page it has nothing to do with, and
+which has to be answered before anything else can happen -- and which,
+answered, destroyed the document. Now `Del` deletes at once and the line
+at the corner offers "Undo" for eight seconds, or ⌘/ctrl Z, which is
+where the hand goes first.
+
+Underneath is a `deleted_at` column and one SQL view. Every read of the
+library -- the tree, the inbox, search, history, the queue, the counts --
+goes through `live_docs` rather than `docs`, so a deleted document is
+gone from all of them by construction, and not by a condition that the
+next query written could forget. The view names `rowid`, which a view
+does not have of its own and which every ordering here breaks ties with.
+Undo is one column back. `prune` is what makes a delete final, and it
+takes deleted documents whatever their age and whether or not they are
+pinned: the reader has already said so, and the eight seconds they could
+have taken it back in belong to that minute, not to next month.
+
+**A link into a folder lands.** `#L120` and a section link opened a
+document where they pointed, and a browsed file at the top: the browse
+path rendered, scrolled to zero, and never looked at the fragment.
+Between two agents working in one checkout, a link into a browsed file
+is exactly how one says where to look. Both paths land the same way
+now, and neither leaves it to the browser's own fragment scroll, which
+aims at blocks that are still `content-visibility` placeholders and
+stops short.
+
+The rows, in `bench/ui.mjs`, thirteen more for 53 in all:
+
+| | reads |
+|---|---|
+| a delete, and the way back | `Del` on an open document leaves nothing asked -- a `confirm` would hang the probe, which is the check -- the row is out of the inbox and the toast carries an Undo; the button puts the document back where it was deleted from; ⌘Z does the same without the toast; and a delete the reader does not undo is still gone after a reload, from the inbox and from search, because the daemon did it |
+| a link into a folder | a browsed Markdown file opened at a section link lands with the heading 24 px into the pane, 11,208 px down the file; `code.rs#L300` marks one line, the one that reads `line_300`, and it is on the screen |
+| a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
@@ -838,7 +917,10 @@ behaviour of the page was measured the same way, and it found eleven
 faults in an afternoon; 0.12 made the measuring a check in CI, and the
 check found six more before it passed; 0.13's two faults were in an
 engine the check does not run, and got a harness of their own; 0.14's
-three came from a reader with several agents, and were the design's. So the rule for what is left: nothing goes into
+three came from a reader with several agents, and were the design's; and
+0.15's three were at the edge where snyvi meets the rest of the desktop,
+which is the part no probe had ever been pointed at. So the rule for
+what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
 
@@ -873,22 +955,31 @@ here before, came with 0.12's marker; the browse path landing a
 fragment moves to 0.15 with the rest of the library work.) Probe: the
 eight rows above. Cost M.
 
-**0.15: the three desktops, and the library in use.** macOS in the
-release matrix with a `.app`; the Linux window on arm64; the global
-shortcut the tray item was half of; the window as the place an agent's
-link opens when it is running, rather than a browser beside it; and the
-Windows list under "Not yet proven on Windows" watched by a person on a
-real machine, with the cold start measured there and the bench's
-Windows budget set from it. With them, delete without a dialog: the
-document goes at once and the toast offers "Undo" for eight seconds,
-over a soft delete that `prune` makes final -- the dialog is the
-toolkit's in the window, which is why it belongs with the desktops. And
-the browse path lands a fragment the way the document path does. Probe:
-delete, undo, the row is back. Cost M.
+**0.15: the library in use** (shipped; the notes above). The window as
+the place an agent's link opens when it is running, rather than a
+browser beside it, and as what the agent is told; delete without a
+dialog, undone from the toast or by ⌘Z, over a soft delete that `prune`
+makes final; and a link into a browsed folder that lands where it
+points. Probe: the three rows above. Cost M.
+
+This was half of one phase with the platform work below, on the
+argument that the dialog is the toolkit's in the window. The half that
+is code is checkable here and shipped; the half that is machines is
+not, so it is its own release rather than a release held open waiting
+for a laptop.
+
+**0.16: the three desktops.** macOS in the release matrix with a
+`.app`; the Linux window on arm64, which wants its own oldest-host
+runner so the package does not record a 24.04 glibc baseline; the
+global shortcut the tray item was half of; and the Windows list under
+"Not yet proven on Windows" watched by a person on a real machine, with
+the cold start measured there and the bench's Windows budget set from
+it. Probe: the release run itself, plus a `snyvi bench --check` from
+each of the three with its numbers written into the table. Cost M.
 
 **The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
 every push since 0.12, holds every row of the 0.11 table above and what
-0.12 added, plus what 0.13 and 0.14 add; the README's tables carry no number the bench does not read; the
+0.12 added, plus what 0.13, 0.14 and 0.15 add; the README's tables carry no number the bench does not read; the
 tables in this file have no row marked **next**; and `docs/BRAINSTORM.md`
 is read once more against what shipped, so that the budgets it set and
 the ones the bench enforces are the same budgets. Then the three
