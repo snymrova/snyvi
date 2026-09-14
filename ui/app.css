@@ -578,25 +578,28 @@ pre.mermaid::before { display: none; }
 .diff .meta { color: var(--fg-3); }
 .compare-note { color: var(--fg-3); font-size: 13px; margin: -28px 0 28px; }
 
-/* syntax (compact classes from the renderer) */
-.c { color: var(--s-comment); font-style: italic; }
-.k { color: var(--s-keyword); }
-.s { color: var(--s-string); }
-.n { color: var(--s-number); }
-.f { color: var(--s-function); }
-.t { color: var(--s-type); }
-.v { color: var(--s-variable); }
-.p { color: var(--s-punct); }
-.tg { color: var(--s-tag); }
-.at { color: var(--s-attr); }
-.hd { color: var(--s-keyword); font-weight: 600; }
-.b { font-weight: 600; }
-.i { font-style: italic; }
-.raw { color: var(--s-string); }
-.lnk { color: var(--accent); }
-.ins { color: var(--add-fg); background: var(--add); }
-.del { color: var(--del-fg); background: var(--del); }
-.inv { color: var(--del-fg); }
+/* syntax (compact classes from the renderer). Scoped to highlighted code,
+   which is the only place the renderer writes them: the names are one or
+   two letters, and the palette's and the toast's title and subtitle spans
+   are .t and .s too, which had them painted as a type and a string. */
+pre.code .c { color: var(--s-comment); font-style: italic; }
+pre.code .k { color: var(--s-keyword); }
+pre.code .s { color: var(--s-string); }
+pre.code .n { color: var(--s-number); }
+pre.code .f { color: var(--s-function); }
+pre.code .t { color: var(--s-type); }
+pre.code .v { color: var(--s-variable); }
+pre.code .p { color: var(--s-punct); }
+pre.code .tg { color: var(--s-tag); }
+pre.code .at { color: var(--s-attr); }
+pre.code .hd { color: var(--s-keyword); font-weight: 600; }
+pre.code .b { font-weight: 600; }
+pre.code .i { font-style: italic; }
+pre.code .raw { color: var(--s-string); }
+pre.code .lnk { color: var(--accent); }
+pre.code .ins { color: var(--add-fg); background: var(--add); }
+pre.code .del { color: var(--del-fg); background: var(--del); }
+pre.code .inv { color: var(--del-fg); }
 
 /* ---------- inbox ---------- */
 .inbox-head { margin-bottom: 28px; }

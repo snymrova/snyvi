@@ -35,6 +35,17 @@ jobs:
           desktop-file-validate /usr/share/applications/snyvi.desktop
           systemd-analyze verify /usr/lib/systemd/user/snyvi.service
           sudo dpkg -r snyvi
+      - name: Lay out the .app
+        # The other packaging script, which only a Mac can finish (the icon
+        # and the signature) but any machine can lay out. Run here so that an
+        # error in the script is found on every push and not on release day;
+        # the macos job below does the whole thing.
+        run: |
+          set -e
+          app=$(packaging/app.sh target/release/snyvi target/release/snyvi 0.0.0-ci /tmp/app 2>/dev/null)
+          test -x "$app/Contents/MacOS/snyvi-app"
+          test -x "$app/Contents/MacOS/snyvi"
+          python3 -c "import plistlib,sys; d=plistlib.load(open(sys.argv[1],'rb')); assert d['CFBundleExecutable']=='snyvi-app' and d['CFBundleShortVersionString']=='0.0.0-ci', d" "$app/Contents/Info.plist"
       - name: Perf budget
         # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
         # regression that triples a case still fails the build. Only the clocks scale:
@@ -123,26 +134,33 @@ jobs:
     # dpkg-shlibdeps records is whatever the build host had. 22.04 records
     # libc6 (>= 2.34), which installs on Ubuntu 22.04 and later and on Debian
     # 12 and later; building on 24.04 would record 2.39 and silently exclude
-    # both.
-    runs-on: ubuntu-22.04
+    # both. On both architectures since 0.16, each on its own 22.04 host.
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            deb_arch: amd64
+          - runner: ubuntu-22.04-arm
+            deb_arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # The distro is part of the key, not just "desktop": this job links
+          # The host is part of the key, not just "desktop": this job links
           # against the host's webkit and gtk, so artifacts built on another
-          # release are not interchangeable. Sharing one key across them
-          # restored 24.04 dependencies here and cargo then skipped rebuilding
-          # tauri whose rlib was not in them.
-          key: desktop-ubuntu-22.04
+          # release or architecture are not interchangeable. Sharing one key
+          # across them restored 24.04 dependencies here and cargo then
+          # skipped rebuilding tauri whose rlib was not in them.
+          key: desktop-${{ matrix.runner }}
       - name: WebKitGTK
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb \
                                       dpkg-dev desktop-file-utils dbus-x11 \
-                                      libayatana-appindicator3-dev x11-utils
+                                      libayatana-appindicator3-dev x11-utils xdotool
       - name: Build
         # Both: the window executable needs the feature, and snyvi itself must
         # still build here to be the thing the window is installed beside.
@@ -169,7 +187,43 @@ jobs:
           # It must have been the native window, not a browser fallback: `snyvi
           # app` execs the sibling, so the surviving process is snyvi-app.
           grep -q "install snyvi-app" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
+          # The global shortcut, since 0.16. Xvfb is an X11 display, which is
+          # the one kind the hotkey interface serves on Linux, so here it must
+          # register; the line is what says it did.
+          grep -q "shows or hides the window from anywhere" /tmp/app.log || {
+            echo "the window registered no global shortcut:"; cat /tmp/app.log; exit 1; }
           ./target/release/snyvi stop
+      - name: The shortcut reaches the window
+        # Registered is not the same as delivered. Press it, from outside the
+        # window, and watch the main window's map state: hidden or shown, it
+        # has to change. Within three presses, because Xvfb runs no window
+        # manager, so nothing has the focus at first and the first press can
+        # only give it -- which is the reveal half of the toggle, and leaves
+        # the map state as it was.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR=/tmp/s-key SNYVI_CONFIG_DIR=/tmp/c-key SNYVI_PORT=7815
+          cat > /tmp/press.sh <<'INNER'
+          set -e
+          ./target/release/snyvi app > /tmp/key-app.log 2>&1 &
+          for _ in $(seq 1 60); do grep -q "window from anywhere" /tmp/key-app.log && break; sleep 0.25; done
+          sleep 3
+          # The main window is the one titled snyvi; the tray keeps a hidden
+          # helper window of the same class.
+          state() { for id in $(xdotool search --classname snyvi-app); do
+                      [ "$(xdotool getwindowname "$id")" = snyvi ] && xwininfo -id "$id" | sed -n 's/.*Map State: //p'; done; }
+          first=$(state); echo "at first: $first"
+          test -n "$first" || { echo "no main window found"; cat /tmp/key-app.log; exit 1; }
+          for n in 1 2 3; do
+            xdotool key ctrl+shift+space; sleep 1.5
+            now=$(state); echo "press $n: $now"
+            [ "$now" != "$first" ] && exit 0
+          done
+          echo "three presses changed nothing"; cat /tmp/key-app.log; exit 1
+          INNER
+          xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- sh /tmp/press.sh
+          pkill -x snyvi-app || true
+          ./target/release/snyvi stop || true
 
       - name: Package both, install the way a person would
         # Same reason the static package is built here: a packaging path that
@@ -178,8 +232,8 @@ jobs:
         # dependencies.
         run: |
           set -e
-          main=$(packaging/deb.sh target/release/snyvi 0.0.0-ci amd64 /tmp/deb-split)
-          addon=$(packaging/deb.sh --desktop target/release/snyvi-app 0.0.0-ci amd64 /tmp/deb-split)
+          main=$(packaging/deb.sh target/release/snyvi 0.0.0-ci ${{ matrix.deb_arch }} /tmp/deb-split)
+          addon=$(packaging/deb.sh --desktop target/release/snyvi-app 0.0.0-ci ${{ matrix.deb_arch }} /tmp/deb-split)
           dpkg-deb -I "$addon"
           # The dependencies are read out of the binary, so they must name webkit
           # and the package it adds to; forgetting either installs something that
@@ -391,3 +445,78 @@ jobs:
           # Written by PowerShell, read by the tool everyone checks the Linux
           # assets with: two spaces, a bare filename, one newline and no BOM.
           sha256sum -c "$name.zip.sha256"
+
+  macos:
+    # The third desktop. Both executables in one bundle, the window using the
+    # WebKit that is part of the system, so there is no add-on here either.
+    # The two things a Mac alone can do to the bundle -- the icon and the
+    # ad-hoc signature -- are done and checked here; the layout is checked on
+    # Linux above.
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-${{ matrix.target }}
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        # Two passes, the same shape as Windows and the release: snyvi is
+        # never built with the desktop feature.
+        run: |
+          cargo build --release --bin snyvi
+          cargo build --release --bin snyvi-app --features desktop
+      - name: Smoke test the daemon
+        run: |
+          set -e
+          file target/release/snyvi target/release/snyvi-app
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c" SNYVI_PORT=7796
+          url=$(./target/release/snyvi send README.md)
+          echo "$url"
+          curl -sf "$url" > /dev/null
+          curl -sf http://127.0.0.1:7796/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7796/api/docs \
+            -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+          # SNYVI_BENCH_SHARED as on the Windows runner: the clocks here are
+          # this VM's, and the rows that are not clocks are enforced.
+          SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
+          ./target/release/snyvi stop
+      - name: Package the way the release does
+        run: |
+          set -e
+          app=$(packaging/app.sh target/release/snyvi target/release/snyvi-app 0.0.0-ci dist)
+          find "$app" -type f | sort
+          plutil -lint "$app/Contents/Info.plist"
+          test -f "$app/Contents/Resources/snyvi.icns"
+          # Ad-hoc: no identity, but the signature Apple silicon insists on.
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep -q 'Signature=adhoc'
+      - name: Open a window from the bundle, with no URL
+        # What a double-click does. snyvi-app with nothing on argv hands over
+        # to the snyvi beside it, which starts the daemon and runs the window
+        # with the URL; so the daemon must be answering and the window must be
+        # up, from one command that was given neither.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s2" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c2" SNYVI_PORT=7797
+          dist/snyvi.app/Contents/MacOS/snyvi-app > "$RUNNER_TEMP/app.log" 2>&1 &
+          sleep 20
+          cat "$RUNNER_TEMP/app.log"
+          curl -sf http://127.0.0.1:7797/api/health
+          pgrep -x snyvi-app >/dev/null || { echo "no native window is running"; exit 1; }
+          grep -q "install snyvi-app" "$RUNNER_TEMP/app.log" && { echo "fell back to a browser"; exit 1; } || true
+          # The daemon must know it has a window: the page said so when it
+          # opened its stream, which is what makes a link open there.
+          curl -s http://127.0.0.1:7797/api/health | grep -q '"window":true' || {
+            echo "the daemon does not see the window:"; curl -s http://127.0.0.1:7797/api/health; exit 1; }
+          pkill -x snyvi-app || true
+          dist/snyvi.app/Contents/MacOS/snyvi stop

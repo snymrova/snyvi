@@ -19,18 +19,32 @@ pub const WINDOW_MARK: &str = "?window=1";
 
 /// The window executable, looked for next to this binary before PATH so that a
 /// tarball install finds its own copy rather than an older one on PATH.
+///
+/// Next to the binary as it really is: on macOS the command on PATH is a
+/// symlink into `snyvi.app`, where the window sits beside the real file, and
+/// the path a process is started by is the link. Then PATH; then, on macOS,
+/// the two places an application is dragged to.
 fn window_binary() -> Option<PathBuf> {
     let name = crate::platform::exe("snyvi-app");
     if let Ok(exe) = std::env::current_exe() {
+        let exe = exe.canonicalize().unwrap_or(exe);
         if let Some(sibling) = exe.parent().map(|d| d.join(&name)) {
             if sibling.is_file() {
                 return Some(sibling);
             }
         }
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(&name))
+    if let Some(path) = std::env::var_os("PATH") {
+        if let Some(found) = std::env::split_paths(&path)
+            .map(|d| d.join(&name))
+            .find(|c| c.is_file())
+        {
+            return Some(found);
+        }
+    }
+    crate::platform::app_bundles("snyvi.app")
+        .into_iter()
+        .map(|app| app.join("Contents/MacOS").join(&name))
         .find(|c| c.is_file())
 }
 

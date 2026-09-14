@@ -59,6 +59,38 @@ There is no separate package for the window the way there is on Linux,
 because it uses WebView2, which is part of Windows 10 and 11 rather than
 a library to go and install.
 
+### macOS
+
+Download `snyvi-<version>-aarch64-apple-darwin.tar.gz` on Apple silicon
+or `-x86_64-apple-darwin` on Intel from the same page, unpack it, and
+drag `snyvi.app` into Applications. Both executables are inside the
+bundle: the window, which is what a double-click on the icon opens, and
+`snyvi` itself. The command line is a link to that one:
+
+```
+ln -s /Applications/snyvi.app/Contents/MacOS/snyvi /usr/local/bin/snyvi
+snyvi send README.md                              # starts the daemon, prints a link
+snyvi init-claude                                 # register with Claude Code
+snyvi app                                         # the window, from the terminal
+```
+
+Opening the app with nothing running does what `snyvi app` does: starts
+the daemon, then the window. The window uses the WebKit that is part of
+macOS, so as on Windows there is nothing to install for it.
+
+The bundle is signed, but not by an identity Apple knows — that takes a
+developer account — so the first open is refused as being from an
+unidentified developer. Either take the quarantine off the download,
+which is what Gatekeeper is reading:
+
+```
+xattr -dr com.apple.quarantine /Applications/snyvi.app
+```
+
+or open it once from System Settings → Privacy & Security → Open Anyway.
+A tarball unpacked with `tar` from a terminal carries no quarantine at
+all.
+
 ### Any other Linux
 
 Download the tarball for your architecture from the same page:
@@ -210,6 +242,19 @@ toggles the window and a right click opens the menu; Linux's tray
 protocol sends no clicks, so there the menu answers both. Running
 `snyvi app` again also just shows the window you already have.
 
+And from anywhere, without finding the tray: ⌘⇧Space on a Mac,
+Ctrl+Shift+Space on Windows and Linux, shows the window — or hides it,
+when it is the one in front. The key is a default and not a decision,
+because a global shortcut wins over any program's own use of the same
+chord, and some have one (a spreadsheet selects its sheet with it):
+`SNYVI_SHORTCUT=Alt+F9` names another, in the usual spelling, and
+`SNYVI_SHORTCUT=0` registers none. A key another program already holds
+is reported on the terminal and left with it. On a Wayland session
+there is no shortcut, since the interface it needs is X11's; the
+desktop's own keyboard settings do the same job there — bind a key to
+`snyvi app`, which shows the window that is already up rather than
+opening another.
+
 On a Linux desktop with no `libayatana-appindicator3`, there is no tray —
 snyvi says so, and closing the window goes back to meaning close.
 
@@ -238,12 +283,13 @@ What the window costs is what a browser engine costs, and it costs it
 | binary | 12.3 MB, static | 4.3 MB, links webkit |
 | download | 5.5 MB | 1.2 MB |
 | dependencies | **none** | webkit2gtk-4.1, gtk3, glibc 2.34+ |
-| runs on | any Linux, both architectures | Ubuntu 22.04+, Debian 12+, amd64 |
+| runs on | any Linux, both architectures | Ubuntu 22.04+, Debian 12+, both architectures |
 | resident | 35 MB | ~380 MB while a window is open |
 
 Those are the Linux numbers, where the two are packaged separately. On
 Windows both are in the one zip and the window costs whatever WebView2
-already costs the machine.
+already costs the machine; on macOS both are in the one bundle and the
+window costs whatever the system's WebKit does.
 
 That separation is the point. Before 0.6 the window was compiled into
 snyvi itself, so a machine that wanted one got an engine linked into the
@@ -620,11 +666,29 @@ that engine got wrong.
 `snyvi bench --check` fails when a case exceeds its budget; CI runs it
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
 factor scales the budgets that are clocks and not the size or the
-resident rows: a binary weighs the same on any machine. The Windows job
-adds `SNYVI_BENCH_SHARED=1`, which prints the cold-start row without
-enforcing it: that runner takes 400 ms to create a process where a dev
-box takes 11, and how much of that is Windows and how much the runner is
-not yet known. The Markdown
+resident rows: a binary weighs the same on any machine. The Windows and
+macOS jobs add `SNYVI_BENCH_SHARED=1`, which prints the clock rows
+without enforcing them: the Windows runner takes 400 ms to create a
+process where a dev box takes 11, and how much of that is Windows and
+how much the runner is not yet known.
+
+The same bench, on the three desktops CI builds for. These are the
+hosted runners' numbers, from one run each, and a runner is a slow and
+noisy machine; a reading from a real Mac or a real Windows desktop
+replaces its column when there is one, and sets the Windows budget the
+`SHARED` rows are waiting on.
+
+| Case                                   | Linux (amd64) | Linux (arm64) | macOS (arm64) | macOS (x86_64) | Windows |
+|----------------------------------------|---------------|---------------|---------------|----------------|---------|
+| Binary size, `snyvi`                   | 12.4 MB       | — | — | — | — |
+| Daemon cold start, to first health     | 11 to 14 ms   | — | — | — | — |
+| Daemon resident, three documents in    | 40 MB         | — | — | — | — |
+| Daemon resident, after the two fixtures | 82 MB        | — | — | — | — |
+| Send, 100 KB Markdown, round trip      | 12 to 14 ms   | — | — | — | — |
+| Render Markdown, 1 MB                  | 108 ms        | — | — | — | — |
+| Highlight Rust, 10k lines              | 143 ms        | — | — | — | — |
+
+The Markdown
 fast path skips the HTML sanitizer whenever a document contains no raw
 HTML, which is nearly always for agent output.
 

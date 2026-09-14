@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -56,6 +56,7 @@ desktop = [
   "dep:tauri-build",
   "dep:tauri-plugin-window-state",
   "dep:tauri-plugin-single-instance",
+  "dep:tauri-plugin-global-shortcut",
 ]
 
 [dependencies.tauri]
@@ -72,6 +73,10 @@ version = "2"
 optional = true
 
 [dependencies.tauri-plugin-single-instance]
+version = "2"
+optional = true
+
+[dependencies.tauri-plugin-global-shortcut]
 version = "2"
 optional = true
 

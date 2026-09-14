@@ -67,14 +67,14 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
 | Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
 | A sound on arrival | Asked for, and declined by default: a sound is the one signal a reader cannot ignore by not looking. `SNYVI_SOUND=1` puts a sound hint on the desktop notification -- the channel that already knows the volume and do-not-disturb -- and a burst sounds once. Nothing in the page plays anything. | XS | **done 0.15** |
-| Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
+| Global shortcut | The other half of the tray item: summon the window without finding the tray first. ⌘⇧Space on a Mac, Ctrl+Shift+Space elsewhere -- a chord no desktop's own shell holds, which was the part that was not obvious -- shows the window, or hides the one in front. `SNYVI_SHORTCUT` names another key or none, since a global shortcut wins over any program's own. X11 only on Linux: on Wayland the window says so and the desktop's settings bind a key to `snyvi app` instead, which reaches the running window the same way. | S | **done 0.16** |
 | The window is where a link opens | `send_document` answered with `http://127.0.0.1:7777/d/…` whatever was running, so a click opened a second viewer in a browser beside the window, and the desktop notification opened nothing at all. The window's page now says it is one when it opens its event stream, so the daemon knows for exactly as long as there is a window; `snyvi open`, `send --open`, `browse` and a click on the notification hand the URL to it and raise it, and the tool answers that the document is waiting in snyvi, with no link, when there is a window to wait in. | S | **done 0.15** |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
-| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. With 0.16. | S | later |
+| Desktop package for arm64 | Was amd64 only: the arm64 runners were 24.04, so the package would have recorded a glibc baseline excluding everything older. There is a 22.04 arm runner now, and the desktop job is a matrix over both, so `snyvi-app_<version>_arm64.deb` records the same baseline as amd64's. Only the 4 MB window carries it; snyvi itself was static on both architectures already. | S | **done 0.16** |
 | Split the window into its own binary | The desktop package was one binary, so `snyvi serve` carried the linked engine with no window open: 66 MB against the static build's 34 MB. `snyvi-app` is now the window alone, and an add-on that depends on snyvi rather than replacing it. Daemon back to 35 MB, and the install stops being a choice. | M | **done 0.6** |
 | Windows | One zip with both executables, because there is no static/dynamic fork to make: snyvi.exe links no engine and the window uses WebView2, which ships with the OS. The daemon, CLI, MCP server and hook all needed a platform layer first -- opening a URL, raising a notification, ending a process, starting detached. | M | **done 0.7** |
-| macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. Cheaper since 0.7: the platform layer already has the macOS path for notifications and for opening a URL, so what is left is the matrix leg and a .app bundle. | S | later |
+| macOS build | Two release legs, Apple silicon and Intel, each shipping `snyvi.app` with both executables inside: the window, which a double-click opens, and snyvi, which the command line is a symlink to. `snyvi-app` run with no URL hands over to the snyvi beside it, so the icon alone starts the daemon. Ad-hoc signed -- the signature Apple silicon requires, not the identity Gatekeeper wants, which takes a developer account -- so the README says how the first open goes. `packaging/app.sh`. | S | **done 0.16** |
 | AppImage | Measured before choosing: bundling WebKitGTK and its closure is 196 MB raw, 73 MB compressed, so the AppImage is ~80 MB against a 15 MB budget — 13x the `.deb` that does the same job by asking the distribution for webkit. It also puts nothing on `PATH`, which is where `snyvi send` has to be for the hook and the MCP server to call it. Not worth it for this shape of program. | M | **no** |
 
 ## E. Speed and hardening
@@ -591,7 +591,7 @@ bench with `SNYVI_BENCH_SHARED=1`, the switch `bench/browser.mjs` already
 had for rows that measure the runner: the cold start is printed there and
 not enforced, and the rest still is. What a cold start costs on a Windows
 machine a person uses is not known, and belongs with the other things
-"Not yet proven on Windows" below.
+"Not yet watched on Windows or macOS" below.
 
 ## 0.11: the rail follows the reader
 
@@ -968,6 +968,98 @@ The rows, in `bench/ui.mjs`, twenty-one more for 61 in all:
 | a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
 | what moves, and for how long | an arrival's row carries one wash, and 250 ms later, rebuilt under a tree refetch, the same wash is 250 ms in rather than starting over; a second arrival leaves the bar element in place with no rise running and the count ticking; nothing running is over 700 ms or endless; `n` draws the row it read closing, and it is gone 400 ms later; the `#` reads Copied and raises no toast; and under reduced motion the page has no animation at all |
 
+## 0.16: the three desktops
+
+The half of 0.15 that was machines rather than code, as its own release.
+What changed is what CI builds, on what, and what it checks after
+building; the page changed by one stylesheet rule, at the end.
+
+**macOS.** Two legs in the release matrix, Apple silicon on `macos-14`
+and Intel on `macos-15-intel`, and each ships one thing: `snyvi.app`.
+Both executables are inside it. The window is what the bundle runs, and
+when it is run with no URL -- which is what a double-click is -- it
+hands over to the `snyvi` beside it, which starts the daemon if it must
+and runs the window again with the URL. On unix that hand-over is an
+exec, so the process Finder launched is the process showing the window.
+The command line is a symlink to that inner `snyvi`, and `snyvi app`
+from it finds the window beside the real file: the launcher now resolves
+its own path before looking for a sibling, and on a Mac also looks in
+`/Applications` and `~/Applications`. The Chromium-family fallback learnt
+where a Mac keeps a browser, which is inside an application bundle and
+not on PATH.
+
+The bundle is laid out by `packaging/app.sh`, the way `deb.sh` lays out
+the packages, and the two things only a Mac can do to it -- compile the
+icon with `iconutil`, sign it with `codesign` -- are done when there is
+one and skipped when there is not, so the script runs on every Linux
+push too and a mistake in it is found before release day. The signature
+is ad-hoc: Apple silicon will not run an executable without one, and an
+identity Gatekeeper would accept takes a developer account. So the first
+open is refused as from an unidentified developer, and the README says
+what to do about it. That is the honest state of an open-source Mac app
+without an Apple account, and it is written down rather than worked
+around.
+
+CI's macOS job runs the tests, both builds, the daemon smoke test, the
+bench with `SNYVI_BENCH_SHARED`, packages the bundle, checks the plist,
+the icon and the signature, and then opens the window *from the bundle
+with no URL*: the daemon has to be answering on the port, the window has
+to be up, and the daemon has to say it has a window. That last one is
+0.15's window mark, read on a third desktop.
+
+**arm64.** The desktop job is a matrix over `ubuntu-22.04` and
+`ubuntu-22.04-arm`, in CI and in the release, so the arm64 window
+package records the same `libc6 (>= 2.34)` baseline as amd64's. The only
+thing that had kept it out was the runner.
+
+**The shortcut.** ⌘⇧Space on a Mac and Ctrl+Shift+Space elsewhere shows
+the window from anywhere, or hides it when it is the one in front. The
+key is the part that was "not obvious", and the answer is a chord that
+no desktop's *shell* holds: ⌘Space is Spotlight and ⌃Space changes the
+input source, Super+Space changes the layout on GNOME and Windows both,
+⌃⌥Space is the next input source on a Mac, and Ctrl+Alt+letter is AltGr
+on half of Europe's keyboards. Programs are another matter -- Excel
+selects the sheet with Ctrl+Shift+Space, Word types a non-breaking
+space -- and a global shortcut wins over a program's own, so it is a
+default and not a decision: `SNYVI_SHORTCUT` names another key, or `0`
+for none, and a key another program already holds is reported and left
+with it.
+
+Two things the plugin's source settled. Its hotkey interface on Linux is
+X11's, so on Wayland the shortcut would fire only while an X11 program
+had the focus, which is worse than none; the window registers it only on
+an X11 session and otherwise says that the desktop's own settings are the
+place, where a key bound to `snyvi app` reaches the running window
+through the single-instance hand-off 0.7 built. And the plugin opens
+that interface as it loads, and a failure there fails the whole window,
+which a shortcut is never worth -- so the plugin is added only when a
+key is wanted, and the key itself is registered from the window's own
+setup, where a failure is one line.
+
+CI presses it. Under Xvfb the Linux desktop job reads the line that says
+the key registered, then sends the chord with `xdotool` and watches the
+main window's map state, which has to change within three presses --
+three, because Xvfb runs no window manager, so nothing has the focus at
+first and the first press can only give it.
+
+**And one thing seen, not measured.** The search palette's result titles
+came up in cyan -- the colour of a type name in highlighted code, on a
+page whose own ink is warm grey and whose one accent is orange. The
+palette's title and subtitle spans are `.t` and `.s`, and so are the
+highlighter's classes for a type and a string, and the highlighter's
+rules were global. They are scoped to `pre.code` now, the only place the
+renderer writes them, and the toast's title, which had the same two
+spans, is quiet again too. One row in `bench/ui.mjs` reads the palette's
+computed colours against the page's: 62 rows in all.
+
+**What is still a person's.** The numbers. The README's per-desktop
+table carries the hosted runners' readings, marked as such, and a
+`snyvi bench --check` from a real Mac and a real Windows desktop
+replaces those columns and sets the Windows cold-start budget that the
+`SHARED` rows have been waiting on since 0.7. And the two lists under
+"Not yet watched" below: a desktop in use is the one thing no runner
+shows.
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
@@ -981,7 +1073,8 @@ check found six more before it passed; 0.13's two faults were in an
 engine the check does not run, and got a harness of their own; 0.14's
 three came from a reader with several agents, and were the design's; and
 0.15's three were at the edge where snyvi meets the rest of the desktop,
-which is the part no probe had ever been pointed at. So the rule for
+which is the part no probe had ever been pointed at; and 0.16 pointed
+CI at the two desktops it had never opened a window on. So the rule for
 what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
@@ -1031,14 +1124,15 @@ is code is checkable here and shipped; the half that is machines is
 not, so it is its own release rather than a release held open waiting
 for a laptop.
 
-**0.16: the three desktops.** macOS in the release matrix with a
-`.app`; the Linux window on arm64, which wants its own oldest-host
-runner so the package does not record a 24.04 glibc baseline; the
-global shortcut the tray item was half of; and the Windows list under
-"Not yet proven on Windows" watched by a person on a real machine, with
-the cold start measured there and the bench's Windows budget set from
-it. Probe: the release run itself, plus a `snyvi bench --check` from
-each of the three with its numbers written into the table. Cost M.
+**0.16: the three desktops** (shipped; the notes above). macOS in the
+release matrix with a `.app` that starts the daemon from a double-click;
+the Linux window on arm64 from its own 22.04 runner; the global shortcut
+the tray item was half of, configurable and honest about Wayland. Probe:
+CI opens the window on all three, and presses the key on the one that
+can be pressed from a script. What remains a person's: a `snyvi bench
+--check` from a real Mac and a real Windows machine, written into the
+README's per-desktop table, the Windows cold-start budget set from it,
+and the lists under "Not yet watched". Cost M.
 
 **The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
 every push since 0.12, holds every row of the 0.11 table above and what
@@ -1104,12 +1198,17 @@ right about its manifest, and they disagreed. Since 0.7 the release
 refuses to build when they do -- the first step of the first job, so a
 mismatch costs seconds rather than twelve assets.
 
-## Not yet proven on Windows
+## Not yet watched on Windows or macOS
 
 The build, the tests, the daemon and the window are all exercised by CI
-on a Windows runner. What no runner shows is a desktop in use: the
-toast, the tray's click behaviour, and how the window looks at the
-display scalings Windows actually ships with. Those are argued for, not
+on a Windows runner and, since 0.16, on two macOS runners. What no
+runner shows is a desktop in use. On Windows: the toast, the tray's
+click behaviour, the global shortcut pressed by a hand, and how the
+window looks at the display scalings Windows actually ships with. On
+macOS: Gatekeeper's refusal of the ad-hoc signature and the two ways
+past it the README gives, the Dock icon from the compiled `icns`, ⌘⇧Space
+against whatever the reader's other programs hold, the notification with
+its sound, and the window on a Retina display. Those are argued for, not
 yet watched.
 
 ## Still no purpose-built view

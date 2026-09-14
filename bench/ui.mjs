@@ -507,6 +507,22 @@ async function narrowRows(p, url) {
     rows.push([`every key at ${w} px`, broke.length === 0, broke.length ? `${broke.join(" ")} did nothing` : `${worked.join(" ")} do what the help box says`]);
   }
   await p.wide();
+
+  // The palette's rows are titled in the page's own colour. Its title and
+  // subtitle spans are .t and .s, which are also the highlighter's classes
+  // for a type and a string, and until 0.16 those rules were global: every
+  // result title came up in the cyan of a type name.
+  await p.press("k", { ctrl: true });
+  await p.type("a");
+  await sleep(500);
+  const inks = await p.ev(`(() => {
+    const t = document.querySelector("#palette-list .t"), s = document.querySelector("#palette-list .s");
+    const c = el => el ? getComputedStyle(el).color : "";
+    return { rows: document.querySelectorAll("#palette-list li").length, title: c(t), sub: c(s), page: getComputedStyle(document.body).color, type: getComputedStyle(document.documentElement).getPropertyValue("--s-type").trim() };
+  })()`);
+  await p.press("Escape");
+  rows.push(["the palette's rows, in ink", inks.rows > 0 && inks.title === inks.page && inks.sub !== inks.title,
+    !inks.rows ? "the palette found nothing to list" : inks.title !== inks.page ? `a title is ${inks.title}, the page ${inks.page} (a type is ${inks.type})` : inks.sub === inks.title ? "the subtitle is in the title's colour" : "titles in the page's colour, subtitles quieter, nothing from the syntax theme"]);
   return rows;
 }
 
