@@ -1052,6 +1052,20 @@ renderer writes them, and the toast's title, which had the same two
 spans, is quiet again too. One row in `bench/ui.mjs` reads the palette's
 computed colours against the page's: 62 rows in all.
 
+**What the first macOS run measured, and what it meant.** The bench's
+last row read 181 MB on the arm64 runner, against a budget of 100 and a
+Linux reading of 82. Not a leak: on macOS the allocator gives freed pages
+back with `MADV_FREE`, and the kernel leaves them in the resident count
+until it wants them, so `ps` reports what the process once touched, not
+what it holds. The number the budget means is the physical footprint --
+Activity Monitor's column -- and `vmmap --summary` prints it for any
+process of one's own. The bench reads that on a Mac and holds it to the
+budget; where `vmmap` is missing it prints the plain count in brackets
+and says what it is, so a machine without the command line tools gets a
+row that is honest rather than one that is red for the wrong reason. The
+CI job prints both numbers side by side for the same daemon, as the
+evidence.
+
 **What is still a person's.** The numbers. The README's per-desktop
 table carries the hosted runners' readings, marked as such, and a
 `snyvi bench --check` from a real Mac and a real Windows desktop

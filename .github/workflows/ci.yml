@@ -194,12 +194,12 @@ jobs:
             echo "the window registered no global shortcut:"; cat /tmp/app.log; exit 1; }
           ./target/release/snyvi stop
       - name: The shortcut reaches the window
-        # Registered is not the same as delivered. Press it, from outside the
-        # window, and watch the main window's map state: hidden or shown, it
-        # has to change. Within three presses, because Xvfb runs no window
-        # manager, so nothing has the focus at first and the first press can
-        # only give it -- which is the reveal half of the toggle, and leaves
-        # the map state as it was.
+        # Registered is not the same as delivered. Give the window the focus
+        # -- Xvfb runs no window manager, so nothing has it otherwise, and on
+        # the arm runner the window never took it from the toggle's own
+        # reveal -- then press: the window in front is hidden, and a second
+        # press brings it back. Both halves, in that order, or the key is
+        # not doing what the line above claims.
         run: |
           set -e
           export SNYVI_DATA_DIR=/tmp/s-key SNYVI_CONFIG_DIR=/tmp/c-key SNYVI_PORT=7815
@@ -210,16 +210,18 @@ jobs:
           sleep 3
           # The main window is the one titled snyvi; the tray keeps a hidden
           # helper window of the same class.
-          state() { for id in $(xdotool search --classname snyvi-app); do
-                      [ "$(xdotool getwindowname "$id")" = snyvi ] && xwininfo -id "$id" | sed -n 's/.*Map State: //p'; done; }
-          first=$(state); echo "at first: $first"
-          test -n "$first" || { echo "no main window found"; cat /tmp/key-app.log; exit 1; }
-          for n in 1 2 3; do
-            xdotool key ctrl+shift+space; sleep 1.5
-            now=$(state); echo "press $n: $now"
-            [ "$now" != "$first" ] && exit 0
-          done
-          echo "three presses changed nothing"; cat /tmp/key-app.log; exit 1
+          main() { for id in $(xdotool search --classname snyvi-app); do
+                     [ "$(xdotool getwindowname "$id")" = snyvi ] && echo "$id"; done; }
+          state() { xwininfo -id "$(main)" | sed -n 's/.*Map State: //p'; }
+          test -n "$(main)" || { echo "no main window found"; cat /tmp/key-app.log; exit 1; }
+          echo "at first: $(state)"
+          xdotool windowfocus --sync "$(main)"; sleep 1
+          xdotool key ctrl+shift+space; sleep 2
+          one=$(state); echo "press 1: $one"
+          xdotool key ctrl+shift+space; sleep 2
+          two=$(state); echo "press 2: $two"
+          [ "$one" = IsUnMapped ] && [ "$two" = IsViewable ] && exit 0
+          echo "the key did not hide and then show the window"; cat /tmp/key-app.log; exit 1
           INNER
           xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- sh /tmp/press.sh
           pkill -x snyvi-app || true
@@ -453,6 +455,8 @@ jobs:
     # ad-hoc signature -- are done and checked here; the layout is checked on
     # Linux above.
     strategy:
+      # Both legs report: one architecture's failure is not the other's.
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin
@@ -486,6 +490,14 @@ jobs:
           curl -sf http://127.0.0.1:7796/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7796/api/docs \
             -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+          # What the two ways of reading a process's memory say about this
+          # daemon, side by side, because on macOS they disagree: ps counts
+          # pages the allocator has given back with MADV_FREE and the kernel
+          # has not yet taken, and the footprint does not. The bench reads
+          # the footprint; this is the evidence for why.
+          pid=$(curl -s http://127.0.0.1:7796/api/health | sed -n 's/.*"pid":\([0-9]*\).*/\1/p')
+          echo "ps rss: $(ps -o rss= -p "$pid") kB"
+          vmmap --summary "$pid" | grep -i footprint || echo "vmmap could not read the daemon"
           # SNYVI_BENCH_SHARED as on the Windows runner: the clocks here are
           # this VM's, and the rows that are not clocks are enforced.
           SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
