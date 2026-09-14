@@ -86,6 +86,14 @@ jobs:
           curl -sf "$url" > /dev/null
           curl -sf http://127.0.0.1:7791/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
+      - name: The first ten minutes
+        # What a newcomer types, in a home that has never seen snyvi, against
+        # a claude that keeps user-scope servers where the real one does:
+        # init-claude twice, the binary moving onto PATH, status, --claude-md,
+        # uninstall-claude leaving the settings file as it was found, no
+        # claude at all, a taken port, no browser, install-cli. See
+        # bench/onboarding.sh and the 0.17 notes in docs/ROADMAP.md.
+        run: HOMEDIR=/tmp/snyvi-first B=target/release/snyvi bash bench/onboarding.sh
       - name: The terminal button opens nothing it should not
         # The one endpoint in snyvi whose effect is a process, so the one worth
         # checking from the outside. A runner has no display, which is the
@@ -187,7 +195,7 @@ jobs:
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
           # It must have been the native window, not a browser fallback: `snyvi
           # app` execs the sibling, so the surviving process is snyvi-app.
-          grep -q "install snyvi-app" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
+          grep -q "no native window" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
           # The global shortcut, since 0.16. Xvfb is an X11 display, which is
           # the one kind the hotkey interface serves on Linux, so here it must
           # register; the line is what says it did.
@@ -422,11 +430,23 @@ jobs:
           sleep 20
           tasklist //FI "IMAGENAME eq snyvi-app.exe" | grep -q snyvi-app.exe || {
             echo "no native window is running:"; cat "$RUNNER_TEMP/app.log"; exit 1; }
-          grep -q "install snyvi-app" "$RUNNER_TEMP/app.log" && {
+          grep -q "no native window" "$RUNNER_TEMP/app.log" && {
             echo "fell back to a browser"; exit 1; } || true
           taskkill //F //IM snyvi-app.exe
           kill "$launcher" 2>/dev/null || true
           ./target/release/snyvi.exe stop
+      - name: install-cli puts the folder on the user PATH
+        # There is nothing to link on Windows; what a newcomer needs is the
+        # folder they unzipped into on PATH, which is what this writes, once.
+        shell: bash
+        run: |
+          set -e
+          ./target/release/snyvi.exe install-cli | tee "$RUNNER_TEMP/cli.log"
+          grep -q "Added" "$RUNNER_TEMP/cli.log"
+          dir=$(cd target/release && pwd -W | sed 's|/|\\|g')
+          powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','User')" | tr ';' '\n' | grep -qiF "$dir" || {
+            echo "the user PATH does not carry $dir:"; powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','User')"; exit 1; }
+          ./target/release/snyvi.exe install-cli | grep -q "already on your PATH"
       - name: Package the way the release does
         # Same reason the .deb is built here: a packaging path that only runs
         # at release time is broken exactly when it matters. These are the
@@ -531,10 +551,25 @@ jobs:
           cat "$RUNNER_TEMP/app.log"
           curl -sf http://127.0.0.1:7797/api/health
           pgrep -x snyvi-app >/dev/null || { echo "no native window is running"; exit 1; }
-          grep -q "install snyvi-app" "$RUNNER_TEMP/app.log" && { echo "fell back to a browser"; exit 1; } || true
+          grep -q "no native window" "$RUNNER_TEMP/app.log" && { echo "fell back to a browser"; exit 1; } || true
           # The daemon must know it has a window: the page said so when it
           # opened its stream, which is what makes a link open there.
           curl -s http://127.0.0.1:7797/api/health | grep -q '"window":true' || {
             echo "the daemon does not see the window:"; curl -s http://127.0.0.1:7797/api/health; exit 1; }
           pkill -x snyvi-app || true
           dist/snyvi.app/Contents/MacOS/snyvi stop
+      - name: install-cli links the bundle's command line
+        # The README's old `ln -s` into /usr/local/bin fails on a fresh Mac,
+        # where that directory is root's or absent. The command tries it and
+        # falls to ~/.local/bin, and says when the one it used is not on PATH.
+        run: |
+          set -e
+          app=$(cd dist/snyvi.app/Contents/MacOS && pwd -P)
+          "$app/snyvi" install-cli "$RUNNER_TEMP/bin" | tee "$RUNNER_TEMP/cli.log"
+          test "$(readlink "$RUNNER_TEMP/bin/snyvi")" = "$app/snyvi"
+          "$RUNNER_TEMP/bin/snyvi" --version
+          grep -q "not on PATH" "$RUNNER_TEMP/cli.log"
+          # The default: /usr/local/bin when it can be written, else ~/.local/bin.
+          "$app/snyvi" install-cli | tee "$RUNNER_TEMP/cli2.log"
+          if [ -w /usr/local/bin ]; then want=/usr/local/bin/snyvi; else want=$HOME/.local/bin/snyvi; fi
+          test "$(readlink "$want")" = "$app/snyvi"

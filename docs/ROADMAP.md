@@ -58,6 +58,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Other agents | Config snippets for Codex CLI, Gemini CLI and Cursor: all speak MCP, so it is docs plus an `init` subcommand per tool. | S | later |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
+| The first ten minutes | `init-claude` reads what Claude Code has before touching it, is safe to run again, follows a binary that moved, and ends with what to try; `--claude-md` writes the CLAUDE.md line; `uninstall-claude` takes all of it back out and nothing else; `install-cli` puts the command on PATH where the README's `ln -s` could not; a taken port, a missing browser and a fallback rung each say what happened. `bench/onboarding.sh` types it all in CI. | S | **done 0.17** |
 
 ## D. Desktop
 
@@ -1096,7 +1097,8 @@ engine the check does not run, and got a harness of their own; 0.14's
 three came from a reader with several agents, and were the design's; and
 0.15's three were at the edge where snyvi meets the rest of the desktop,
 which is the part no probe had ever been pointed at; and 0.16 pointed
-CI at the two desktops it had never opened a window on. So the rule for
+CI at the two desktops it had never opened a window on; 0.17 typed the
+install as a newcomer does and found ten stalls before the first document. So the rule for
 what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
@@ -1155,6 +1157,12 @@ can be pressed from a script. What remains a person's: a `snyvi bench
 --check` from a real Mac and a real Windows machine, written into the
 README's per-desktop table, the Windows cold-start budget set from it,
 and the lists under "Not yet watched". Cost M.
+
+**0.17: the first ten minutes** (shipped; the notes above). The install
+walked as a newcomer walks it: `init-claude` safe to run again and
+following a binary that moved, `uninstall-claude`, `install-cli`, and a
+ladder, a port and a first send that say what happened. Probe:
+`bench/onboarding.sh`, on every push. Cost S.
 
 **The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
 every push since 0.12, holds every row of the 0.11 table above and what
@@ -1219,6 +1227,88 @@ could catch it: the workflow was right about the tag, the crate was
 right about its manifest, and they disagreed. Since 0.7 the release
 refuses to build when they do -- the first step of the first job, so a
 mismatch costs seconds rather than twelve assets.
+
+## 0.17: the first ten minutes
+
+0.16 put the window on three desktops; 0.17 is the install walked as a
+newcomer walks it, in a clean home with no browser and no `claude` on
+PATH, reading the README from the top. Ten places stalled. None was a
+bug in the viewer; every one was in the minute between the download and
+the first document, which is the minute no probe had been pointed at.
+
+**`init-claude` the second time.** The first run registered. Any later
+run -- after an update, after the binary moved, from notes on a second
+machine -- got "already exists" from Claude Code, and snyvi answered
+"Could not run `claude`", then installed its hooks again anyway. Two
+things were conflated: a `claude` that cannot be started, and one that
+ran and declined. And nothing was read before writing. Now the
+registration is read from where user scope lives (`~/.claude.json`,
+which needs no `claude` to answer), and there are three outcomes said
+in three sentences: already registered, registered now, or registered
+under a path that is not this binary and so re-registered.
+
+**The hook that followed nothing.** The hook line was the binary's
+absolute path at the moment `init-claude` ran. A tarball tidied into
+`~/.local/bin`, a zip moved out of Downloads: the path is gone, the hook
+fails on every tool call, and a hook is required to be silent. The line
+is `snyvi hook` now when the `snyvi` a shell would run is this file,
+and the absolute path only when it is not -- said so at the time, with
+"run this again if it moves" -- and a run of `init-claude` rewrites
+every hook of ours to the current binary, `--auto` or not. `snyvi
+status` ends with a line naming the registration and the hooks, and
+says when either points at a path that no longer exists.
+
+**Undo.** There was no way out but editing two JSON files by hand.
+`uninstall-claude` removes the MCP entry, every hook of ours, and the
+CLAUDE.md line, and leaves everything else exactly as found: an entry
+that also carried someone else's hook keeps it, an event emptied is
+dropped, and a file that had only ours goes back to having no `hooks`
+key at all. Tested on the parsed file, then in CI against a settings
+file that starts with another program's hook in it.
+
+**The ladder was silent.** `snyvi app` on a machine with no window
+package and no browser printed `open http://127.0.0.1:7777` and exit 0,
+which reads as either a message or a mistake. Each rung now says which
+it is and how to get the one above it, and a URL nobody could open is
+labelled as the reader's to open.
+
+**A taken port was "did not come up".** With another program on the
+port, the daemon died on bind with nothing to say and the client
+reported a timeout. The client now asks the port first: an answer that
+is not a snyvi daemon names the port and `SNYVI_PORT`.
+
+**The first send printed a URL.** A daemon started, a token was
+written, a data directory appeared, and stdout carried a link and
+nothing else -- as it should, for a script. The command that starts the
+daemon says so once on stderr, and only when stderr is a terminal, so a
+hook hears nothing.
+
+**The macOS symlink.** The README said `ln -s ... /usr/local/bin/snyvi`.
+On a fresh Mac that directory is root's; on Apple silicon it does not
+exist until Homebrew makes it. `install-cli` tries `/usr/local/bin`,
+falls to `~/.local/bin`, creates that one, and says when the one used
+is not on PATH. On Windows, where there is nothing to link, it puts the
+binary's folder on the user PATH, once, through the environment call
+rather than `setx`, which truncates at 1024 characters.
+
+**The README.** Windows now names a folder and the SmartScreen sheet;
+macOS runs `install-cli` from the bundle; there is an uninstall section
+naming the three directories; and every install path ends in
+`snyvi status`.
+
+CI types the whole thing (`bench/onboarding.sh`): init-claude in a home
+that has never seen snyvi, again, again after the binary moved onto
+PATH, `status`, `--claude-md` twice, `uninstall-claude` against a
+settings file that must come out byte-equal to how it went in, no
+`claude` at all, a port held by another program, no browser, and
+`install-cli` into a directory. The macOS job links the bundle's
+command line the way the README says to; the Windows job checks the
+user PATH after `install-cli` and that a second run says so.
+
+What is still argued for, not watched: the SmartScreen sheet itself, a
+real `claude mcp add` (the fake keeps its file the way the real one
+does, and refuses a second add the way it does), and a Mac whose
+`/usr/local/bin` is root's, which the runner's is not.
 
 ## Not yet watched on Windows or macOS
 

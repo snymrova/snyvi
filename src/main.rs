@@ -11,6 +11,7 @@ mod receive;
 mod render;
 mod server;
 mod session;
+mod setup;
 mod store;
 mod watch;
 
@@ -93,11 +94,21 @@ enum Cmd {
     Mcp,
     /// Claude Code PostToolUse hook: send Markdown files Claude writes (reads hook JSON on stdin).
     Hook,
-    /// Register snyvi with Claude Code as a user-scoped MCP server.
+    /// Register snyvi with Claude Code: the MCP server and a session hook. Safe to run again.
     InitClaude {
         /// Also install the PostToolUse hook so every Markdown file Claude writes is sent automatically.
         #[arg(long)]
         auto: bool,
+        /// Also add one line to ~/.claude/CLAUDE.md asking Claude to send you what it writes.
+        #[arg(long)]
+        claude_md: bool,
+    },
+    /// Undo init-claude: the MCP server, the hooks and the CLAUDE.md line. Documents are kept.
+    UninstallClaude,
+    /// Put `snyvi` on PATH: a link in /usr/local/bin or ~/.local/bin, or the binary's folder on Windows.
+    InstallCli {
+        /// Directory to link into (Linux and macOS). Defaults to /usr/local/bin when writable, else ~/.local/bin.
+        dir: Option<PathBuf>,
     },
     /// Delete unpinned documents older than N days.
     Prune {
@@ -240,7 +251,9 @@ fn main() -> Result<()> {
         }
         Cmd::Mcp => mcp::run(paths),
         Cmd::Hook => hook::run(&paths),
-        Cmd::InitClaude { auto } => init_claude(auto),
+        Cmd::InitClaude { auto, claude_md } => setup::init_claude(auto, claude_md),
+        Cmd::UninstallClaude => setup::uninstall_claude(),
+        Cmd::InstallCli { dir } => setup::install_cli(dir),
         Cmd::Prune { days, dry_run } => {
             let store = store::Store::open(&paths)?;
             let before = store::now() - i64::from(days) * 86_400;
@@ -295,35 +308,9 @@ fn main() -> Result<()> {
                 }
                 None => println!("not running (would listen on {})", config::base_url()),
             }
+            println!("{}", setup::claude_code_status());
             Ok(())
         }
         Cmd::Bench { check } => bench::run(check),
     }
-}
-
-fn init_claude(auto: bool) -> Result<()> {
-    let exe = std::env::current_exe()?.to_string_lossy().to_string();
-    let status = platform::shim("claude")
-        .args(["mcp", "add", "--scope", "user", "snyvi", "--", &exe, "mcp"])
-        .status();
-    match status {
-        Ok(s) if s.success() => println!("Registered snyvi with Claude Code (user scope)."),
-        _ => {
-            println!("Could not run `claude`. Register manually with:\n\n  claude mcp add --scope user snyvi -- {exe} mcp\n");
-        }
-    }
-    println!(
-        "Optional, in ~/.claude/CLAUDE.md:\n\n  When you produce a document for me to read (plan, review, summary), send it to snyvi with send_document and give me the link.\n"
-    );
-    let path = hook::install(&exe, auto)?;
-    if auto {
-        println!("Installed SessionStart and PostToolUse hooks in {} (Markdown files Claude writes are sent automatically).", path.display());
-    } else {
-        println!(
-            "Installed a SessionStart hook in {} so documents from one session share a workflow.",
-            path.display()
-        );
-        println!("Add --auto to also install a PostToolUse hook that sends every Markdown file Claude writes.");
-    }
-    Ok(())
 }

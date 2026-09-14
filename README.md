@@ -19,6 +19,7 @@ Download `snyvi_<version>_amd64.deb` (or `_arm64.deb`) from the
 sudo dpkg -i snyvi_*.deb
 snyvi send README.md                              # starts the daemon, prints a link
 snyvi init-claude                                 # register with Claude Code
+snyvi status                                      # what is running, what is registered
 ```
 
 The package depends on nothing at all — the binary is static — so it
@@ -44,10 +45,13 @@ browser. See [Desktop](#desktop) for what the window costs.
 ### Windows
 
 Download `snyvi-<version>-x86_64-pc-windows-msvc.zip` from the same page
-and unzip it somewhere on your `PATH`:
+and unzip it into a folder of its own -- `%LOCALAPPDATA%\snyvi` is the
+usual place for a program installed for one user. Then, from a terminal
+in that folder:
 
 ```
-snyvi send README.md                              # starts the daemon, prints a link
+.\snyvi install-cli                               # puts this folder on your PATH
+snyvi send README.md                              # in a new terminal: starts the daemon, prints a link
 snyvi init-claude                                 # register with Claude Code
 snyvi app                                         # a window of its own
 ```
@@ -59,20 +63,31 @@ There is no separate package for the window the way there is on Linux,
 because it uses WebView2, which is part of Windows 10 and 11 rather than
 a library to go and install.
 
+The executables are not signed, so the first time one runs Windows may
+show a SmartScreen sheet saying it protected your PC. *More info*, then
+*Run anyway*, once; it is not asked again for that file.
+
 ### macOS
 
 Download `snyvi-<version>-aarch64-apple-darwin.tar.gz` on Apple silicon
 or `-x86_64-apple-darwin` on Intel from the same page, unpack it, and
 drag `snyvi.app` into Applications. Both executables are inside the
 bundle: the window, which is what a double-click on the icon opens, and
-`snyvi` itself. The command line is a link to that one:
+`snyvi` itself. The command line is a link to that one, which the
+bundle writes for you:
 
 ```
-ln -s /Applications/snyvi.app/Contents/MacOS/snyvi /usr/local/bin/snyvi
+/Applications/snyvi.app/Contents/MacOS/snyvi install-cli
 snyvi send README.md                              # starts the daemon, prints a link
 snyvi init-claude                                 # register with Claude Code
 snyvi app                                         # the window, from the terminal
 ```
+
+`install-cli` links into `/usr/local/bin` when that can be written and
+into `~/.local/bin` otherwise, and says so when the one it used is not
+on your `PATH` yet. (A fresh Mac has no writable `/usr/local/bin`, and
+an Apple silicon one has none at all until Homebrew makes it; that is
+why this is a command and not an `ln -s` to type.)
 
 Opening the app with nothing running does what `snyvi app` does: starts
 the daemon, then the window. The window uses the WebKit that is part of
@@ -102,6 +117,10 @@ snyvi send README.md
 snyvi init-claude
 ```
 
+If `~/.local/bin` is not on your `PATH`, `snyvi init-claude` writes the
+binary's full path into Claude Code's settings and says so; run it again
+after moving the binary, and the registration follows.
+
 ### Updating
 
 snyvi runs as a background daemon, so a new binary on disk does not take
@@ -124,6 +143,20 @@ Run `snyvi restart` to pick up the new version.
 `snyvi status` shows both versions, `snyvi stop` shuts the daemon down,
 and both work against daemons old enough to predate the stop command.
 Under systemd use `systemctl --user restart snyvi` instead.
+
+### Uninstalling
+
+```
+snyvi uninstall-claude        # the MCP server, the hooks, the CLAUDE.md line
+snyvi stop                    # the daemon
+sudo apt remove snyvi-app snyvi   # or delete the binary, the .app, the folder
+```
+
+That leaves your documents and index in `~/.local/share/snyvi` and the
+token in `~/.config/snyvi` (the Windows and macOS places are under
+[Where things live](#where-things-live)); delete those two directories
+if you want nothing left. `uninstall-claude` takes out exactly what
+`init-claude` put in and nothing else in Claude Code's settings.
 
 It is fully static (musl), so it runs on any x86_64 or aarch64 Linux
 without extra packages. To build from source instead:
@@ -166,7 +199,9 @@ snyvi watch PLAN.md                # send now, and again on every save
 snyvi browse [dir]                 # read a folder from disk, nothing stored
 snyvi open                         # open the viewer, in the window if one is up
 snyvi app                          # native window (see Desktop below)
-snyvi init-claude [--auto]         # register with Claude Code (user scope)
+snyvi init-claude [--auto] [--claude-md]  # register with Claude Code; safe to run again
+snyvi uninstall-claude             # take that registration back out
+snyvi install-cli [dir]            # put `snyvi` on PATH
 snyvi prune --days 30 [--dry-run]  # delete what you deleted, and unpinned documents older than N days
 snyvi status                       # daemon health and version
 snyvi restart                      # after installing a new binary
@@ -187,6 +222,16 @@ when to use it; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
 > send it to snyvi with send_document and give me the link.
+
+`snyvi init-claude --claude-md` writes that line for you, once. The
+command is safe to run as often as you like: it reads what Claude Code
+already has before touching anything, says "already registered" when
+there is nothing to do, and when the binary has moved -- an update, a
+tarball tidied into `~/.local/bin` -- it re-registers and points the
+hooks at the new place rather than leaving them failing quietly on
+every tool call. `snyvi status` ends with a line saying what is
+registered and whether it still points at a binary that exists, and
+`snyvi uninstall-claude` takes all of it back out.
 
 `snyvi init-claude --auto` additionally installs a `PostToolUse` hook in
 `~/.claude/settings.json`, so every Markdown file Claude writes or edits

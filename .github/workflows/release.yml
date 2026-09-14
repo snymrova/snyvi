@@ -140,7 +140,7 @@ jobs:
           export SNYVI_DATA_DIR=/tmp/s-d SNYVI_CONFIG_DIR=/tmp/c-d SNYVI_PORT=7803
           xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
-          grep -q "install snyvi-app" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
+          grep -q "no native window" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
           ./target/release/snyvi stop
       - name: Package
         # The tarball carries the one executable; whoever unpacks it puts it
@@ -300,7 +300,7 @@ jobs:
           sleep 20
           curl -sf http://127.0.0.1:7806/api/health
           pgrep -x snyvi-app >/dev/null || { echo "no native window is running:"; cat "$RUNNER_TEMP/app.log"; exit 1; }
-          grep -q "install snyvi-app" "$RUNNER_TEMP/app.log" && { echo "fell back to a browser"; exit 1; } || true
+          grep -q "no native window" "$RUNNER_TEMP/app.log" && { echo "fell back to a browser"; exit 1; } || true
           cat "$RUNNER_TEMP/app.log"
           pkill -x snyvi-app || true
           "$app/Contents/MacOS/snyvi" stop

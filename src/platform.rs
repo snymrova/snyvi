@@ -26,6 +26,28 @@ pub fn exe(name: &str) -> String {
 /// reached, so the answer is yes; on Linux it is a question worth asking,
 /// because snyvi is often run over ssh, where a window would fail and a
 /// printed URL is the useful answer.
+/// The file a shell would run for `name`: the first match along PATH, with
+/// the executable suffixes Windows adds. None when there is none.
+pub fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let names: Vec<String> = if cfg!(windows) {
+        let ext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
+        let mut v = vec![name.to_string()];
+        v.extend(
+            ext.split(';')
+                .filter(|e| !e.is_empty())
+                .map(|e| format!("{name}{}", e.to_ascii_lowercase())),
+        );
+        v
+    } else {
+        vec![name.to_string()]
+    };
+    std::env::split_paths(&path)
+        .filter(|d| !d.as_os_str().is_empty())
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .find(|p| p.is_file())
+}
+
 pub fn has_display() -> bool {
     if cfg!(not(target_os = "linux")) {
         return true;
