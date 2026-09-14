@@ -218,7 +218,11 @@ jobs:
           cat > /tmp/press.sh <<'INNER'
           set -e
           openbox > /dev/null 2>&1 &
-          sleep 1
+          # The window must map under a running manager, or nobody holds the
+          # focus the toggle reads: on the arm runner a one-second sleep was
+          # once not enough. Wait for the manager to announce itself.
+          for _ in $(seq 1 40); do xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" && break; sleep 0.25; done
+          xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id" || { echo "openbox never came up"; exit 1; }
           ./target/release/snyvi app > /tmp/key-app.log 2>&1 &
           for _ in $(seq 1 60); do grep -q "window from anywhere" /tmp/key-app.log && break; sleep 0.25; done
           sleep 3
@@ -228,6 +232,10 @@ jobs:
                      [ "$(xdotool getwindowname "$id")" = snyvi ] && echo "$id"; done; }
           state() { xwininfo -id "$(main)" | sed -n 's/.*Map State: //p'; }
           test -n "$(main)" || { echo "no main window found"; cat /tmp/key-app.log; exit 1; }
+          # Focus is the manager's to give, and a probe should not hope for it:
+          # the first press must find the window in front to hide it.
+          xdotool windowactivate --sync "$(main)" || true
+          sleep 1
           seen=$(state); echo "at first: $seen"
           for n in 1 2 3 4; do
             xdotool key ctrl+shift+space; sleep 2
