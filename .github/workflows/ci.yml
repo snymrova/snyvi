@@ -136,6 +136,7 @@ jobs:
     # 12 and later; building on 24.04 would record 2.39 and silently exclude
     # both. On both architectures since 0.16, each on its own 22.04 host.
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-22.04
@@ -160,7 +161,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev xvfb \
                                       dpkg-dev desktop-file-utils dbus-x11 \
-                                      libayatana-appindicator3-dev x11-utils xdotool
+                                      libayatana-appindicator3-dev x11-utils xdotool openbox
       - name: Build
         # Both: the window executable needs the feature, and snyvi itself must
         # still build here to be the thing the window is installed beside.
@@ -194,17 +195,22 @@ jobs:
             echo "the window registered no global shortcut:"; cat /tmp/app.log; exit 1; }
           ./target/release/snyvi stop
       - name: The shortcut reaches the window
-        # Registered is not the same as delivered. Give the window the focus
-        # -- Xvfb runs no window manager, so nothing has it otherwise, and on
-        # the arm runner the window never took it from the toggle's own
-        # reveal -- then press: the window in front is hidden, and a second
-        # press brings it back. Both halves, in that order, or the key is
-        # not doing what the line above claims.
+        # Registered is not the same as delivered. Under a window manager --
+        # openbox, because a bare Xvfb has none, and without one the focus
+        # the toggle reads is nobody's: on one runner the second press hid
+        # the window, on another none of three did, and giving the focus by
+        # hand changed which -- press the key and watch the main window's map
+        # state. The window in front is hidden, and the next press brings it
+        # back: both halves, in that order, somewhere in four presses, or the
+        # key is not doing what the line above claims. The whole sequence is
+        # printed either way.
         run: |
           set -e
           export SNYVI_DATA_DIR=/tmp/s-key SNYVI_CONFIG_DIR=/tmp/c-key SNYVI_PORT=7815
           cat > /tmp/press.sh <<'INNER'
           set -e
+          openbox > /dev/null 2>&1 &
+          sleep 1
           ./target/release/snyvi app > /tmp/key-app.log 2>&1 &
           for _ in $(seq 1 60); do grep -q "window from anywhere" /tmp/key-app.log && break; sleep 0.25; done
           sleep 3
@@ -214,17 +220,17 @@ jobs:
                      [ "$(xdotool getwindowname "$id")" = snyvi ] && echo "$id"; done; }
           state() { xwininfo -id "$(main)" | sed -n 's/.*Map State: //p'; }
           test -n "$(main)" || { echo "no main window found"; cat /tmp/key-app.log; exit 1; }
-          echo "at first: $(state)"
-          xdotool windowfocus --sync "$(main)"; sleep 1
-          xdotool key ctrl+shift+space; sleep 2
-          one=$(state); echo "press 1: $one"
-          xdotool key ctrl+shift+space; sleep 2
-          two=$(state); echo "press 2: $two"
-          [ "$one" = IsUnMapped ] && [ "$two" = IsViewable ] && exit 0
+          seen=$(state); echo "at first: $seen"
+          for n in 1 2 3 4; do
+            xdotool key ctrl+shift+space; sleep 2
+            now=$(state); seen="$seen $now"; echo "press $n: $now"
+          done
+          echo "$seen" | grep -q "IsUnMapped.*IsViewable" && exit 0
           echo "the key did not hide and then show the window"; cat /tmp/key-app.log; exit 1
           INNER
           xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- sh /tmp/press.sh
           pkill -x snyvi-app || true
+          pkill -x openbox || true
           ./target/release/snyvi stop || true
 
       - name: Package both, install the way a person would

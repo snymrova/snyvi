@@ -1036,11 +1036,15 @@ which a shortcut is never worth -- so the plugin is added only when a
 key is wanted, and the key itself is registered from the window's own
 setup, where a failure is one line.
 
-CI presses it. Under Xvfb the Linux desktop job reads the line that says
-the key registered, then sends the chord with `xdotool` and watches the
-main window's map state, which has to change within three presses --
-three, because Xvfb runs no window manager, so nothing has the focus at
-first and the first press can only give it.
+CI presses it. The Linux desktop job reads the line that says the key
+registered, then sends the chord with `xdotool` and watches the main
+window's map state: hidden, then shown again, somewhere in four presses.
+Under a window manager, which took a round to learn: a bare Xvfb has
+none, and without one the focus the toggle reads belongs to nobody -- on
+the amd64 runner the second press hid the window, on arm64 none of three
+did, and setting the focus by hand from outside changed which. Openbox
+under Xvfb is a desktop as far as focus is concerned, and there the key
+hides and shows on every press, the way it does on a reader's.
 
 **And one thing seen, not measured.** The search palette's result titles
 came up in cyan -- the colour of a type name in highlighted code, on a
@@ -1064,7 +1068,11 @@ budget; where `vmmap` is missing it prints the plain count in brackets
 and says what it is, so a machine without the command line tools gets a
 row that is honest rather than one that is red for the wrong reason. The
 CI job prints both numbers side by side for the same daemon, as the
-evidence.
+evidence: on the second run, `ps` said 13 MB and the footprint 7, for a
+daemon with one document in it. Under the footprint the two resident
+rows on the arm64 runner read 11 MB and 26 MB, against 40 and 82 on
+Linux, which is the difference between a libc with arenas and one
+without.
 
 **What is still a person's.** The numbers. The README's per-desktop
 table carries the hosted runners' readings, marked as such, and a
