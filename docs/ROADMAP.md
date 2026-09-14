@@ -81,6 +81,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Content-Security-Policy header | The UI page has no CSP yet. Scripts and styles come only from the daemon; say so. | XS | **done 0.2** |
 | A sidebar that does not carry the library | `Store::tree()` returned every document there was, and the shell embeds what it returns in every page it serves: 383 KB and 13,213 rows at 3000 documents, with one 362-718 ms task building them before the reader could do anything, and the same cost again on every arrival. A project row is two numbers now and what is behind it is fetched when it is expanded. | M | **done 0.9** |
+| A page gives its socket back | Every page holds one connection open for its event stream, and a browser allows six to a host over HTTP/1.1. A page on its way out kept its own until it was destroyed, so eight page loads in a row left eight streams behind, the pool ran out at six, and the next page did not load for 25 seconds. The stream is closed on the way out now and opened again by a page that comes back from the back/forward cache. Six *live* tabs still spend all six, which is a real limit and its own fix. | XS | **done 0.15** |
+| Six tabs, six sockets | With the leak above fixed, six pages that are genuinely open still hold all six connections a browser allows to one host, and the seventh request from any of them waits. HTTP/2 would multiplex them and is not available to a plain `http://` origin, so the fix is one stream shared between tabs (a SharedWorker) or a poll that frees the socket between turns. Not felt yet: it takes six snyvi tabs at once. | M | later |
 | Virtualised rendering above ~200k lines | Chromium copes up to about 100k lines with `content-visibility`; beyond that, page the lines from the server on scroll. | M | later |
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
 | Size, start-up and memory in the bench | The README's binary size, cold start and resident rows were hand-measured and enforced by nothing, and had drifted. `snyvi bench` starts a daemon of its own and budgets all three, with sends and a page's first byte beside them. | S | **done 0.10** |
@@ -898,12 +900,33 @@ now, and neither leaves it to the browser's own fragment scroll, which
 aims at blocks that are still `content-visibility` placeholders and
 stops short.
 
-The rows, in `bench/ui.mjs`, thirteen more for 53 in all:
+**And one the probes found on the way.** The browse rows load a page,
+then another, then another, and on the third pass the harness reported
+that a document was being held open: no load event in 20 seconds. The
+daemon answered the same URL in 4 ms throughout, so it was not the
+daemon; what was pinned was the browser's connection pool. Every snyvi
+page holds one connection open for its event stream, a browser allows
+six to a host over HTTP/1.1, and a page on its way out keeps its own
+until it is destroyed -- so eight loads in a row left eight streams
+behind, the count sat at six, and the next page waited for the pool to
+time one out. The page closes its stream on the way out now, and a page
+restored from the back/forward cache opens one again and catches up on
+what it missed. The count sits at one or two through eight loads, and a
+row reads it off the daemon.
+
+That leaves the honest half of the same limit: six tabs that are really
+open do spend all six connections, and the seventh request waits. It
+wants one stream shared between tabs or a poll that frees the socket,
+and it is in the E table as its own piece of work. Nobody has six snyvi
+tabs open yet.
+
+The rows, in `bench/ui.mjs`, fourteen more for 54 in all:
 
 | | reads |
 |---|---|
 | a delete, and the way back | `Del` on an open document leaves nothing asked -- a `confirm` would hang the probe, which is the check -- the row is out of the inbox and the toast carries an Undo; the button puts the document back where it was deleted from; ⌘Z does the same without the toast; and a delete the reader does not undo is still gone after a reload, from the inbox and from search, because the daemon did it |
 | a link into a folder | a browsed Markdown file opened at a section link lands with the heading 24 px into the pane, 11,208 px down the file; `code.rs#L300` marks one line, the one that reads `line_300`, and it is on the screen |
+| the socket a page holds | eight page loads in a row all load, and the daemon is holding one event stream at the end of them, not eight |
 | a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
 
 ## 1.0: what done looks like

@@ -570,7 +570,8 @@ save keeps the place, what `t` opens at 1000 px, whether Tab reaches
 every control, what a drag on a pane's edge does, what `f` fills and
 what Escape gives back, what an arrival does to a reader in the middle
 of a page, whether a delete can be taken back, where a link into a
-folder lands, and whether the daemon knows a window is up. Counts and
+folder lands, whether a page gives its connection back when it leaves,
+and whether the daemon knows a window is up. Counts and
 positions, no clocks, so every one
 of its rows is enforced on every machine, CI's included. The desktop
 window's engine is not Chromium: `bench/webkit.py` drives the same page

@@ -7,8 +7,9 @@
  * Tab reaches every control and a dialog gives focus back, what a drag on a
  * pane's edge does, what `f` fills and what Escape gives back, what an
  * arrival does to a reader in the middle of a page, whether a delete can be
- * taken back, where a link into a browsed folder lands, and whether the
- * daemon knows a window is up. Every row here was a fault once -- the 0.11 to
+ * taken back, where a link into a browsed folder lands, whether a page gives
+ * its connection back when it leaves, and whether the daemon knows a window
+ * is up. Every row here was a fault once -- the 0.11 to
  * 0.15 notes in docs/ROADMAP.md say which -- and the point of running them on
  * every push is that the rail cannot quietly stop following again.
  *
@@ -181,6 +182,7 @@ async function main() {
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
     sections.push(["a link into a folder", await browseRows(p, browsed)]);
+    sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
 
     console.log("ui: what the page does\n");
@@ -844,6 +846,27 @@ async function browseRows(p, browsed) {
   const right = /line_300\b/.test(line.text || "");
   rows.push(["and at a line", line.n === 1 && right && line.inView,
     !line.n ? "no line was marked" : line.n !== 1 ? `${line.n} lines marked` : !right ? `the marked line reads "${line.text}"` : !line.inView ? "line 300 is marked but off the screen" : "line 300 marked and on the screen"]);
+  return rows;
+}
+
+/** 0.15: a page holds one connection open for its event stream, and a browser
+ *  allows six to a host. A page that does not give the connection back on the
+ *  way out spends one of the six for good: eight page loads left eight streams
+ *  behind, the pool ran out at six, and the next page did not load for 25
+ *  seconds -- which is what this harness reports as a document being held
+ *  open, and how the fault was found. */
+async function socketRows(p, url, base, browsed) {
+  const rows = [];
+  const health = async () => (await (await fetch(`${base}/api/health`)).json());
+  // Eight loads in a row, alternating so none of them is a same-document
+  // navigation. Each one throws here if it does not load, which is the first
+  // half of the row; the daemon's count is the second.
+  const loads = [url, `${browsed}/notes.md`, browsed, `${browsed}/code.rs`];
+  for (let i = 0; i < 8; i++) await p.goto(loads[i % loads.length]);
+  await sleep(600);
+  const { streams } = await health();
+  rows.push(["eight loads, and the streams left behind", streams <= 2,
+    `the daemon holds ${streams} event stream${streams === 1 ? "" : "s"} after eight page loads`]);
   return rows;
 }
 

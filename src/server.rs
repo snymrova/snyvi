@@ -76,6 +76,12 @@ pub struct App {
     /// window is, with nothing to time out and nothing to leave stale when a
     /// window is quit.
     pub windows: AtomicUsize,
+    /// How many event streams are open, window or not. One per page, and a
+    /// page holds a browser connection for as long as it holds one: a browser
+    /// allows six to a host, so a page that does not give its stream back on
+    /// the way out costs the next page a socket. Reported so a probe can say
+    /// that it does.
+    pub streams: AtomicUsize,
 }
 
 impl App {
@@ -133,6 +139,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         asset_v,
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
         windows: AtomicUsize::new(0),
+        streams: AtomicUsize::new(0),
     });
     crate::watch::spawn_browse_watcher(app.clone());
 
@@ -474,6 +481,7 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // Whether a link should be handed to a window or opened in a browser.
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
         "window": app.has_window(),
+        "streams": app.streams.load(Ordering::Relaxed),
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
@@ -789,14 +797,31 @@ impl EventsQ {
     }
 }
 
-/// Held by the event stream of a window's page for as long as that stream
-/// lasts. A window that is quit, crashes, or is simply reloaded takes its
-/// connection with it, and the count follows on the next poll of the stream.
-struct WindowMark(Arc<App>);
+/// Held by a page's event stream for as long as that stream lasts. A page that
+/// is closed, reloaded or navigated away from takes its connection with it,
+/// and both counts follow. Nothing here times out, so a window that is quit is
+/// not a window a moment later, and a page that is gone is not a socket.
+struct StreamMark {
+    app: Arc<App>,
+    window: bool,
+}
 
-impl Drop for WindowMark {
+impl StreamMark {
+    fn new(app: Arc<App>, window: bool) -> StreamMark {
+        app.streams.fetch_add(1, Ordering::Relaxed);
+        if window {
+            app.windows.fetch_add(1, Ordering::Relaxed);
+        }
+        StreamMark { app, window }
+    }
+}
+
+impl Drop for StreamMark {
     fn drop(&mut self) {
-        self.0.windows.fetch_sub(1, Ordering::Relaxed);
+        self.app.streams.fetch_sub(1, Ordering::Relaxed);
+        if self.window {
+            self.app.windows.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -806,10 +831,7 @@ async fn events(
     Query(q): Query<EventsQ>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
-    let mark = q.is_window().then(|| {
-        app.windows.fetch_add(1, Ordering::Relaxed);
-        WindowMark(app.clone())
-    });
+    let mark = StreamMark::new(app.clone(), q.is_window());
     let stream = BroadcastStream::new(rx).filter_map(move |m| {
         // Captured so that the mark lives exactly as long as the stream does.
         let _keep = &mark;

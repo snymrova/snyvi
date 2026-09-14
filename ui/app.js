@@ -2204,8 +2204,42 @@
     } catch { return false; }
   })();
 
+  /** The daemon's event stream, and the one socket this page holds open for
+   *  as long as it lives.
+   *
+   *  It is given back on the way out. A browser allows six connections to one
+   *  host over HTTP/1.1, a stream that never ends holds one of them for good,
+   *  and a document on its way out -- to the back/forward cache, or simply
+   *  being replaced -- keeps its own until it is destroyed. So six page loads
+   *  in a row left six streams behind, the pool ran out, and the seventh page
+   *  did not load for 25 seconds: measured at 6 sockets by bench/ui.mjs, which
+   *  is how this was found. A page restored from the cache connects again and
+   *  catches up on what it missed while it was away. */
+  let stream = null, retry = null;
+
+  addEventListener("pagehide", () => {
+    clearTimeout(retry);
+    if (stream) { stream.close(); stream = null; }
+  });
+  addEventListener("pageshow", e => { if (e.persisted && !stream) { connect(); catchUp(); } });
+
+  /** What a page that was away has to ask for, since it heard no events. */
+  async function catchUp() {
+    try {
+      const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
+      if (Array.isArray(q)) {
+        state.queue = q;
+        // Fewer than the page ever holds means these are all there are.
+        state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
+      }
+    } catch {}
+    await refreshTree();
+    if (state.view === "inbox") showInbox(false);
+  }
+
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? "?window=1" : ""));
+    stream = es;
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
@@ -2288,7 +2322,11 @@
       if (j.project != null) applyRename("project", j.project);
       else if (j.workflow != null) applyRename("workflow", j.workflow);
     });
-    es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+    es.onerror = () => {
+      es.close();
+      if (stream === es) stream = null;
+      retry = setTimeout(connect, 2000);
+    };
   }
 
   /** A line at the corner. `onClick` makes the whole toast one; `action`
