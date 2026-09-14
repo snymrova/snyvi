@@ -135,14 +135,48 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #app:has(#rail.empty) { grid-template-columns: var(--side-w) minmax(0,1fr) 0; }
 :root[data-side="0"] #app:has(#rail.empty) { grid-template-columns: 0 minmax(0,1fr) 0; }
 
-@media (max-width: 1100px) { #rail { display: none; } #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0 !important; } }
+
+#side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* The panes' edges drag. The gutter straddles the seam, so it takes nothing
+   from the grid, and sets the same variable the grid reads, so every rule
+   that knows the pane's width follows. app.js clamps it; boot.js applies the
+   stored width before first paint. Not on a sheet, which has its own width. */
+.gutter { position: absolute; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
+#side .gutter { right: -4px; }
+#rail .gutter { left: -4px; }
+.gutter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity var(--t); }
+.gutter:hover::after, .gutter:focus-visible::after, :root[data-resizing] .gutter::after { opacity: .6; }
+.gutter:focus-visible { outline: none; }
+:root[data-resizing] { cursor: col-resize; user-select: none; }
+:root[data-resizing] * { transition: none !important; }
+/* Narrow windows: a pane that no longer fits beside the document becomes a
+   sheet over it. `data-sheet` on the root names the one that is open; app.js
+   sets it only while the pane is at a sheet width, and clears it when the
+   window grows past that. The scrim behind a sheet is what a tap outside
+   lands on. The two buttons in #chrome exist for the same widths. */
+@media (max-width: 1100px) {
+  #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0 !important; }
+  #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: 20; box-shadow: var(--shadow); padding: 20px 0 20px 16px; }
+  :root[data-sheet="rail"] #rail { display: flex; animation: sheet-r 160ms cubic-bezier(.2,.7,.2,1); }
+  #chrome #btn-rail { display: inline-flex; }
+  #app:has(#rail.empty) #btn-rail { display: none; }
+  #find { padding-right: 56px; }
+  #rail .gutter { display: none; }
+}
 @media (max-width: 760px)  {
   #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
-  #side { position: fixed; inset: 0 auto 0 0; width: min(88vw, var(--side-w)); z-index: 20; box-shadow: var(--shadow); display: none; }
-  :root[data-side="1"] #side { display: flex; }
+  #side { display: none; position: fixed; inset: 0 auto 0 0; width: min(88vw, var(--side-w)); z-index: 20; box-shadow: var(--shadow); }
+  :root[data-sheet="side"] #side { display: flex; animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
+  #chrome #btn-side { display: inline-flex; }
+  #find { padding-left: 56px; }
+  #side .gutter { display: none; }
 }
-
-#side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; }
+@keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+@keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+#scrim { position: fixed; inset: 0; z-index: 15; background: rgba(20, 16, 10, .28); display: none; }
+:root[data-sheet] #scrim { display: block; }
+#chrome { position: fixed; top: 10px; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between; padding: 0 10px; pointer-events: none; }
+#chrome .icon { display: none; pointer-events: auto; background: var(--bg-raise); box-shadow: var(--shadow); }
 /* Pin each pane to its named area. Without this a hidden sidebar leaves the grid
    and the document pane slides into the zero-width first column. */
 #side { grid-area: side; }
@@ -165,7 +199,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .icon .aa { font-size: 12px; font-weight: 600; letter-spacing: -.02em; font-family: var(--serif); }
 .side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
 .side-foot .spacer { flex: 1; }
-.side-foot .hint { font-size: 11px; color: var(--fg-3); }
+.side-foot .hint { font-size: 11px; color: var(--fg-3); padding: 2px 4px; border-radius: 4px; }
+.side-foot .hint:hover { color: var(--fg); }
 
 #trees { overflow-y: auto; padding: 0 8px 8px; font-size: 13px; flex: 1; min-height: 0; }
 #tree ul { list-style: none; margin: 0; padding: 0; }
@@ -178,7 +213,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-proj > summary::before { content: ""; width: 0; height: 0; border: 4px solid transparent; border-left: 5px solid var(--fg-3); margin-left: 2px; transition: transform var(--t); }
 .t-proj[open] > summary::before { transform: rotate(90deg); }
 .t-proj > summary:hover { background: var(--rule); color: var(--fg); }
-.t-proj .badge { margin-left: auto; background: var(--accent); color: #fff; font-size: 10px; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; }
 .t-wf { margin: 2px 0 6px 6px; }
 .t-wf > .wf-name { font-size: 12px; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px 4px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
@@ -186,7 +220,28 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--accent); }
 .t-doc a.active::before { background: var(--accent); }
+/* A row waiting to be read: the bullet every row has, in the accent and a
+   little larger. It is the same mark in the queue section and in the tree,
+   and it goes when the document is opened from either. */
+.t-doc a.new::before { background: var(--accent); width: 6px; height: 6px; left: 4px; }
+.t-doc a.new .title { color: var(--fg); font-weight: 550; }
+.t-queue { margin: 0 0 10px; padding: 0 0 6px; border-bottom: 1px solid var(--rule); }
+.t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
+.t-queue .t-label .n { margin-left: auto; background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: 10px; }
+.t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
+.t-queue .t-more { margin-left: 8px; }
+.t-queue .t-more a { display: inline-block; font-size: 11px; color: var(--fg-3); padding: 3px 6px; border-radius: 5px; }
+.t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
+/* What moved in the sidebar, said once. An arrival's row, or one an undo put
+   back, is lit the way a heading is where a jump landed -- the same wash, so
+   the eye learns one sign. A row that was read or deleted closes where it
+   was, 140 ms, before the list moves up into its place. Both start at a
+   negative delay when the tree is rebuilt under them (see `moment` in
+   app.js), so a rebuild never plays them again. */
+.t-doc.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is */
+.t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
+@keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
 .t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
 .t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
@@ -222,6 +277,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .b-close { margin-left: auto; color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; }
 .b-root > summary:hover .b-close { opacity: 1; }
 .b-close:hover { background: var(--rule-2); color: var(--fg); }
+.b-close:focus-visible { opacity: 1; }
 .b-tree, .b-tree ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
 .b-tree .b-empty { padding: 3px 10px; color: var(--fg-3); font-size: 12px; font-style: italic; }
 .b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); display: flex; align-items: center; gap: 5px; }
@@ -265,7 +321,11 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 /* Not the headings: they are few and cheap, and the containment that comes
    with content-visibility clips to the box, which is where the `#` beside a
    heading was -- drawn outside it, and so never drawn at all. */
-.prose > h1, .prose > h2, .prose > h3, .prose > h4 { content-visibility: visible; }
+.prose > h1, .prose > h2, .prose > h3, .prose > h4, .prose > table { content-visibility: visible; }
+/* A table too: as a placeholder it counts as a scroller Tab can stop on,
+   and the moment it is laid out and fits, it is not one, and the browser
+   drops the focus it just gave it onto the body. Laid out from the start,
+   it is a stop only when it really scrolls. */
 .prose > :first-child { margin-top: 0; }
 .prose p { margin: 0 0 1.2em; text-wrap: pretty; }
 .prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--sans); font-weight: 650; line-height: 1.25; letter-spacing: -.015em; text-wrap: balance; margin: 2.2em 0 .6em; position: relative; scroll-margin-top: 28px; }
@@ -277,7 +337,10 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose a.anchor { position: absolute; left: -1.2em; top: 0; color: var(--fg-3); opacity: 0; font-weight: 400; }
 .prose a.anchor::before { content: "#"; }
 .prose h1:hover a.anchor, .prose h2:hover a.anchor, .prose h3:hover a.anchor, .prose h4:hover a.anchor { opacity: .7; }
-.prose a.anchor:hover { opacity: 1; text-decoration: none; }
+.prose a.anchor:hover, .prose a.anchor:focus-visible { opacity: 1; text-decoration: none; }
+/* Just clicked: the mark says so itself for a moment, in place of a toast. */
+.prose a.anchor[data-said] { opacity: 1; color: var(--accent); }
+.prose a.anchor[data-said]::before { content: "✓"; }
 /* Where a jump landed: the heading is lit for a moment, then not. A jump is
    instant -- see jumpTo in app.js for why it cannot be smooth -- and this is
    what tells the eye where it went. */
@@ -346,6 +409,14 @@ pre.code .copy { position: absolute; top: 6px; right: 8px; opacity: 0; transitio
 pre.code:hover .copy { opacity: 1; }
 pre.code:hover:has(.copy)::before { opacity: 0; }
 pre.code .copy:hover { color: var(--fg); }
+pre.code .copy:focus-visible { opacity: 1; }
+/* No pointer to hover with: everything that waits for one is simply there,
+   the way the diagram tools already are. */
+@media (hover: none) {
+  .ren, .b-close, pre.code .copy, pre.code::before { opacity: 1; }
+  pre.code:has(.copy)::before { opacity: 0; }
+  .prose a.anchor { opacity: .5; }
+}
 pre.code .ln { display: inline; }
 /* The number gutter, written once: the wrap rules below hang continuation lines past it. */
 pre.code { --num-pad: 14px; --num-w: 3.2ch; --num-gap: 1.6ch; --gutter: calc(var(--num-pad) + var(--num-w) + var(--num-gap)); }
@@ -367,6 +438,27 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 :root[data-wide="1"] #doc { --doc-pad: 64px; max-width: none; }
 
 /* find bar */
+/* ---------- the queue bar ---------- */
+/* Above the document while something is waiting, in the document's measure so
+   it reads as part of the page and not the chrome. Sticky like the find bar,
+   so a reader deep in a long page still sees the count. */
+#queue-bar[hidden] { display: none; }
+#queue-bar { position: sticky; top: 0; z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; box-sizing: border-box; font-size: 13px; }
+/* Its height is nothing, so a bar that appears mid-read lays over the page's
+   top margin rather than pushing the text down under the reader; the find
+   bar makes room for it instead. */
+#queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
+#queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 5px 5px 12px; animation: rise 160ms cubic-bezier(.2,.7,.2,1); }
+#queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The count changed under a bar that stayed: the new number settles in. */
+#queue-bar .qb-n.tick { animation: tick 180ms cubic-bezier(.2,.7,.2,1); }
+@keyframes tick { from { opacity: 0; transform: translateY(-4px); } }
+#queue-bar .qb-next { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
+#queue-bar .qb-next b { font-weight: 550; color: var(--fg); }
+#queue-bar button:not(.icon), #queue-bar .qb-all { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
+#queue-bar button:not(.icon):hover, #queue-bar .qb-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+#queue-bar kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
+#queue-bar .icon { width: 26px; height: 26px; }
 #find[hidden] { display: none; }
 #find { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }
 #find > * { background: var(--bg-raise); }
@@ -422,7 +514,7 @@ pre.mermaid::before { display: none; }
   border-radius: var(--radius); background: var(--bg-raise); box-shadow: 0 1px 3px rgba(0,0,0,.18);
   opacity: 0; transition: opacity .12s ease; pointer-events: none;
 }
-.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd:fullscreen .mmd-tools { opacity: 1; pointer-events: auto; }
+.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd[data-full] .mmd-tools { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .mmd-tools { opacity: 1; pointer-events: auto; } }
 .mmd-tools button {
   font-family: var(--sans); font-size: 12px; line-height: 1; color: var(--fg-2);
@@ -430,9 +522,16 @@ pre.mermaid::before { display: none; }
 }
 .mmd-tools button:hover { background: var(--rule); color: var(--fg); }
 .mmd-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Fullscreen is the one place a 4738 px graph is legible. */
-.mmd:fullscreen { margin: 0; background: var(--bg); display: flex; align-items: center; }
-.mmd:fullscreen .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
+/* Filling the screen is the one place a 4738 px graph is legible. The figure
+   is laid over the page from where it is, and the document -- not the figure
+   -- is what asks the browser for fullscreen. A figure of its own in the top
+   layer is what WebKitGTK, the Linux window's engine, drew every glyph of as
+   nothing: the boxes and arrows stayed and the labels, the tool bar and an
+   SVG's own text went; and on the way back it kept the figure at the size
+   its placeholder had until the next scroll. A fixed box has neither fault in
+   any engine. mmdFull in app.js. */
+.mmd[data-full] { position: fixed; inset: 0; z-index: 30; margin: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.mmd[data-full] .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
 /* Until the diagram lands the figure holds about the space it will want, so the
    text below it does not jump when it does. An estimate from the source, set by
    the client -- see mmdWeight in app.js. */
@@ -510,6 +609,14 @@ pre.mermaid::before { display: none; }
 .inbox .time { grid-area: time; font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .inbox .sub { grid-area: sub; font-size: 12.5px; color: var(--fg-3); }
 .inbox .sub b { font-weight: 500; color: var(--fg-2); }
+.inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
+.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; margin: 30px 0 4px; }
+.inbox-sec .n { background: var(--accent); color: #fff; border-radius: 9px; padding: 0 7px; line-height: 17px; letter-spacing: 0; font-size: 11px; }
+.inbox-sec button { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12.5px; color: var(--fg-2); padding: 3px 8px; border-radius: 5px; }
+.inbox-sec button + button { margin-left: 0; }
+.inbox-sec button:hover { background: var(--rule); color: var(--fg); }
+.inbox-sec kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
+.inbox.waiting { margin-bottom: 8px; }
 .empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
 .empty-state h1 { font-size: 22px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
 .empty-state p { margin: 0 0 18px; font-size: 15px; }
@@ -578,6 +685,10 @@ pre.code .ln::before { cursor: pointer; }
 .toast .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
 .toast .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toast .s { color: var(--fg-3); font-size: 12px; }
+/* The one thing a toast offers that has to be reached on purpose. */
+.toast .act { font: inherit; font-size: 12px; font-weight: 550; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: 6px; padding: 4px 10px; margin-left: auto; cursor: pointer; flex: none; }
+.toast .act:hover { background: var(--bg-side); }
+.toast .act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- palette / help ---------- */
@@ -593,7 +704,8 @@ pre.code .ln::before { cursor: pointer; }
 #palette-list .s { font-size: 12px; color: var(--fg-3); }
 #palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
-.help-box { padding: 18px 22px 20px; }
+.help-box { padding: 18px 22px 20px; position: relative; outline: none; }
+.help-close { position: absolute; top: 12px; right: 12px; }
 .help-box h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-3); }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 .help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }
@@ -601,7 +713,7 @@ pre.code .ln::before { cursor: pointer; }
 
 /* ---------- print ---------- */
 @media print {
-  #side, #rail, #toasts, #palette, #help, pre.code .copy { display: none !important; }
+  #side, #rail, #toasts, #palette, #help, #queue-bar, pre.code .copy { display: none !important; }
   #app { display: block; }
   #doc { max-width: none; padding: 0; }
   .prose { font-size: 11.5pt; }

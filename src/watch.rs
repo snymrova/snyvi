@@ -171,7 +171,7 @@ pub fn run_cli(paths: &Paths, files: &[PathBuf], base: &Payload, open: bool) -> 
         let url = send_one(paths, base, p)?;
         println!("{url}");
         if open {
-            client::open_in_browser(&url);
+            client::open_where_the_reader_is(&url);
         }
     }
     eprintln!(

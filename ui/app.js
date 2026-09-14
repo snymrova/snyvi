@@ -5,7 +5,7 @@
   const boot = JSON.parse($("#boot").textContent || "{}");
   const root = document.documentElement;
   const main = $("#main"), docEl = $("#doc"), treeEl = $("#tree"), tocEl = $("#toc"), metaEl = $("#meta"), rail = $("#rail");
-  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row");
+  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueEl = $("#queue"), queueBar = $("#queue-bar");
 
   const state = {
     tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded
@@ -14,8 +14,8 @@
     doc: boot.doc || null,
     previous: boot.previous || null,
     folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
-    unread: new Map(),          // project id -> count
-    lastActivity: 0,
+    queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
+    waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
     cache: new Map(),           // id -> {doc, html, previous}
     split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),
     comparing: null,            // {a, b} while a comparison is shown
@@ -42,9 +42,10 @@
   const fmt = ts => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const kindTag = k => ({ markdown: "md", code: "code", diff: "diff", text: "txt", image: "img", binary: "bin", table: "csv" }[k] || k);
   const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
-  const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
-  const idle = () => Date.now() - state.lastActivity > 2500 && !(window.getSelection() && String(window.getSelection()).length);
-  ["scroll", "keydown", "mousedown", "wheel", "touchstart"].forEach(e => window.addEventListener(e, () => { state.lastActivity = Date.now(); }, { passive: true, capture: true }));
+  const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }, del: k => { try { localStorage.removeItem(k); } catch {} } };
+  /** The ids on the queue, for the rows that carry a mark. Rebuilt whenever
+   *  the queue is drawn, which is after every change to it. */
+  let queueIds = new Set(state.queue.map(d => d.id));
 
   // ---------- tree ----------
   const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
@@ -89,9 +90,202 @@
   const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
 
   const docRow = d => {
-    const active = state.doc && state.doc.id === d.id ? "active" : "";
-    return `<li class="t-doc"><a href="/d/${d.id}" class="${active}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
+    const cls = [state.doc && state.doc.id === d.id ? "active" : "", waitingRow(d) ? "new" : ""].join(" ").trim();
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
   };
+
+  // ---------- the queue ----------
+  /* What arrived and has not been opened, in the order it came. An arrival
+   * joins it and an open leaves it, wherever the open came from: it is the
+   * unread set with an order, not a second list to keep. It never takes the
+   * page away from a reader. Before 0.14 an arrival opened itself whenever
+   * the reader had gone 2.5 s without touching anything -- which is what
+   * reading a paragraph looks like -- and with several agents sending, the
+   * document changed under them many times an hour. Now it is a row at the
+   * top of the sidebar, a bar above the document, and `n`. */
+  const QUEUE_ROWS = 6;    // in the sidebar; the inbox lists the rest
+  const QUEUE_HELD = 24;   // what a page opens with and keeps; the count is the daemon's, whatever is held
+  /** Whether a row is on the queue: held here, or marked by the daemon on a
+   *  row fetched with its project. */
+  const waitingRow = d => queueIds.has(d.id) || !!d.unread;
+  /** Rows fetched with their projects carry the daemon's mark; when a read
+   *  happens here, the mark comes off here too, rather than a refetch. */
+  function unmarkRows(ids) {
+    for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.unread && (!ids || ids.has(d.id))) d.unread = false;
+  }
+  /** Fewer held than are waiting, and room to hold more: ask for the oldest
+   *  again. A moment later, so a burst of twelve is one ask and not twelve. */
+  let holdTimer = 0;
+  function holdQueue() {
+    if (state.queue.length >= QUEUE_HELD || state.waiting <= state.queue.length) return;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(async () => {
+      try {
+        const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
+        if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
+      } catch {}
+    }, 150);
+  }
+  const queueRow = (d, extra = "") => `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span></a></li>`;
+
+  /* ---------- what moved, and when ----------
+   * The sidebar is rebuilt from state whenever the library moves, so a row
+   * has no life of its own to animate: an arrival is a row that was not there
+   * a render ago, a read is one that is gone. Both are kept here for as long
+   * as their motion lasts, with the moment they happened, and a row that is
+   * rebuilt mid-wash starts its animation at a negative delay -- where the
+   * last one was -- rather than from the top. So an arrival washes once,
+   * whatever the tree does underneath, and a row that has left is drawn a
+   * little longer, closing, in the place it had. */
+  const WASH_MS = 700, LEAVE_MS = 140;
+  const washes = new Map();   // id -> when it arrived, or came back
+  const leaving = new Map();  // id -> { d, at, when it left }
+  let lastQueue = [];          // the rows of the last render, for where a leaver was
+  let sweep = 0;
+  /** A style that starts this row's animation where the last render left it. */
+  function moment(id) {
+    const w = washes.get(id), l = leaving.get(id);
+    const t = l ? l.when : w;
+    if (t == null) return "";
+    const age = Date.now() - t;
+    return ` style="animation-delay:-${age}ms"`;
+  }
+  const washCls = id => (washes.has(id) ? " wash" : "");
+  /** Mark rows to be washed, once, on the next render. */
+  function wash(ids) {
+    const now = Date.now();
+    for (const id of ids) washes.set(id, now);
+    schedule();
+  }
+  /** Rows on their way out of the queue, closing where they were. */
+  function depart(ids) {
+    const now = Date.now();
+    for (const id of ids) {
+      const at = lastQueue.findIndex(d => d.id === id);
+      if (at >= 0 && !leaving.has(id)) leaving.set(id, { d: lastQueue[at], at, when: now });
+    }
+    schedule();
+  }
+  /** A re-render when the next motion is over, to draw what state says and
+   *  nothing more -- the render drops what has finished -- and then the one
+   *  after. The earliest deadline, not the last: a row that closed in 140 ms
+   *  must not sit there, closed, while an arrival's 700 ms wash runs on. */
+  function schedule() {
+    clearTimeout(sweep);
+    const now = Date.now();
+    const due = [...washes.values()].map(t => WASH_MS - (now - t))
+      .concat([...leaving.values()].map(l => LEAVE_MS - (now - l.when)));
+    if (!due.length) return;
+    sweep = setTimeout(() => { renderTree(); markActive(); schedule(); }, Math.max(0, Math.min(...due)) + 40);
+  }
+  const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+  /** The section at the top of the sidebar and the bar above the document,
+   *  both from the same rows. The bar is not drawn on the inbox, which lists
+   *  the queue itself. */
+  function renderQueue() {
+    queueIds = new Set(state.queue.map(d => d.id));
+    // What has finished moving is dropped here, at the render, and not only
+    // at the sweep: a sweep is put off by every arrival, and a row that had
+    // closed was otherwise drawn again, closed, until one ran.
+    const now = Date.now();
+    for (const [id, t] of washes) if (now - t >= WASH_MS) washes.delete(id);
+    for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
+    const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
+    // The rows state says, with the ones still closing put back where they
+    // were, so a read takes its row out rather than the list snapping up.
+    const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
+    const gone = [...leaving.values()].sort((a, b) => a.at - b.at);
+    for (const l of gone) if (!queueIds.has(l.d.id)) rows.splice(Math.min(l.at, rows.length), 0, queueRow(l.d, " leaving"));
+    const empty = (!n || !head) && !gone.length;
+    queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
+      rows.join("") +
+      (n > shown ? `<li class="t-more"><a href="/" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
+    lastQueue = state.queue.slice(0, QUEUE_ROWS);
+    const bar = n > 0 && !!head && state.view !== "inbox";
+    queueBar.hidden = !bar;
+    if (!bar) { queueBar.innerHTML = ""; return; }
+    // The bar rises when it appears and stays put after: a count that changes
+    // ticks in place. It used to be rebuilt on every render, which re-ran the
+    // rise for one more arrival, and twelve arrivals rose twelve times.
+    const count = `${n} waiting`, next = `<b>${esc(head.title)}</b> · ${esc(head.project)}`;
+    const qb = queueBar.querySelector(".qb");
+    if (!qb) {
+      queueBar.innerHTML = `<div class="qb"><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
+        `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+      return;
+    }
+    const num = qb.querySelector(".qb-n"), nx = qb.querySelector(".qb-next");
+    if (nx.innerHTML !== next) nx.innerHTML = next;
+    if (num.textContent !== count) {
+      num.textContent = count;
+      // Restarted by replacing the node: a class taken off and put back in
+      // one task runs nothing, and reading layout in between costs a reflow.
+      const fresh = num.cloneNode(true);
+      fresh.classList.add("tick");
+      num.replaceWith(fresh);
+    }
+  }
+
+  /** The reader opened a document: off the queue here at once, and on the
+   *  server so every other tab hears. */
+  function markRead(id) {
+    const held = queueIds.has(id);
+    let marked = false;
+    for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.id === id && d.unread) marked = true;
+    if (!held && !marked) return;
+    if (held) { state.queue = state.queue.filter(d => d.id !== id); queueIds.delete(id); depart([id]); }
+    unmarkRows(new Set([id]));
+    state.waiting = Math.max(0, state.waiting - 1);
+    renderTree(); markActive();   // now, so the row is drawn closing rather than found gone
+    fetch(`/api/docs/${id}/read`, { method: "POST" }).catch(() => {});
+  }
+
+  /** `n`: the oldest waiting document. Opening it takes it off, so the next
+   *  `n` is the one after; a reader drains the queue with one key. */
+  function openNext() {
+    const d = state.queue[0];
+    if (!d) { toast("Nothing waiting", "Every document that arrived has been opened."); return; }
+    showDoc(d.id, true);
+  }
+
+  /** Everything waiting, read without being opened: for the day an agent
+   *  sent thirty and the reader wants the sidebar back. */
+  async function clearQueue() {
+    const n = state.waiting;
+    if (!n) return;
+    depart(state.queue.map(d => d.id));
+    state.queue = []; state.waiting = 0;
+    unmarkRows(null);
+    renderTree(); markActive();
+    if (state.view === "inbox") showInbox(false);
+    try { await fetch("/api/queue/clear", { method: "POST" }); } catch {}
+    toast("Marked read", plural(n, "document"));
+  }
+
+  /** Rows leaving the queue, told by the server: this tab's own opens come
+   *  back this way too, and are already gone. */
+  function dropFromQueue(ids, waiting) {
+    const gone = new Set(ids);
+    const known = state.queue.some(d => gone.has(d.id)) || (waiting != null && waiting !== state.waiting);
+    depart(gone);
+    state.queue = state.queue.filter(d => !gone.has(d.id));
+    unmarkRows(gone);
+    if (waiting != null) state.waiting = waiting;
+    if (!known) return;
+    renderTree(); markActive();
+    if (state.view === "inbox") showInbox(false);
+    holdQueue();
+  }
+
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-q]");
+    if (!b) return;
+    e.preventDefault();
+    if (b.dataset.q === "next") openNext();
+    else if (b.dataset.q === "clear") clearQueue();
+  });
 
   /** The rows inside one project: its sessions, their documents, and — where a
    *  cap left something out — what it would take to see the rest. A project
@@ -122,6 +316,7 @@
     // A link, so the keyboard reaches it: a div with a click handler is a row
     // Tab walks straight past.
     inboxRowEl.innerHTML = `<a class="t-inbox ${state.view === "inbox" ? "active" : ""}" href="/" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></a>`;
+    renderQueue();
     renderBrowse();
     if (!projects.length) {
       treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
@@ -131,8 +326,7 @@
     let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
       const open = projOpen(p);
-      const unread = state.unread.get(p.id) || 0;
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${unread ? `<span class="badge">${unread}</span>` : ""}${renameBtn("project", p.id)}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -470,11 +664,12 @@
     return j;
   }
 
-  async function showDoc(id, push = true) {
+  async function showDoc(id, push = true, fromHistory = false) {
     let j;
     try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
+    if (push) leave();
     state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
-    state.unread.delete(j.doc.project_id);
+    markRead(id);
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
     swapIn();
@@ -482,21 +677,40 @@
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
     if (push) history.pushState({ id }, "", `/d/${id}`);
-    main.scrollTo({ top: 0, behavior: "instant" });
+    if (fromHistory && kept("id", id)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
+
+  /** Where the reader is, written into the page's history entry so that Back
+   *  (or Forward) opens it there rather than at the top -- the way a save
+   *  already keeps the place. A block and an offset into it, not a pixel
+   *  count, since the page may be laid out afresh by then. Written as they
+   *  leave, and a moment after each scroll for the departures the page never
+   *  sees: the browser's own Back and Forward. */
+  function leave() {
+    const reading = (state.view === "doc" && state.doc && !state.comparing) || (browsing() && state.browsePath);
+    if (reading) history.replaceState({ ...(history.state || {}), place: placeOf() }, "", location.pathname + location.hash);
+  }
+  let leaveTimer = 0;
+  main.addEventListener("scroll", () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(leave, 400); }, { passive: true });
+
+  /** Whether the entry history landed on is the page asked for, with a place
+   *  in it. Only a move through history asks: a re-render of the same page --
+   *  a preview toggled, a split view -- starts at the top as it always did. */
+  const kept = (key, value) => !!(history.state && history.state[key] === value && history.state.place);
 
   function browseHtml(f, root) {
     const sub = `${esc(root.name)} · ${esc(f.path)} · ${fmtSize(f.size)} · ${rel(f.modified)}`;
     return `<header class="doc-head"><h1 class="doc-title">${esc(f.name)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${f.kind}">${f.html}</article>`;
   }
 
-  async function showBrowse(rootId, path, push = true) {
+  async function showBrowse(rootId, path, push = true, fromHistory = false) {
     path = path || "";
     if (!path) {
       // No file asked for and no README: show the folder's contents.
       let entries = [], root = state.browse.find(r => r.id === rootId);
       try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=`)).json(); } catch {}
+      if (push) leave();
       state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
       state.browseRoot = root || state.browseRoot; state.browsePath = "";
       setPreview(null, null, `b:${rootId}:`);
@@ -515,6 +729,7 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       j = await r.json();
     } catch (e) { toast("Could not open file", String(e)); return; }
+    if (push) leave();
     state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
     state.browseRoot = j.root; state.browsePath = path;
     setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
@@ -523,11 +738,20 @@
     applyPreview();
     document.title = j.file.name;
     if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
-    main.scrollTo({ top: 0, behavior: "instant" });
+    const restored = fromHistory && history.state.browse === rootId && kept("path", path);
+    if (restored) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
+    // A link into a file: `#L120` is marked and landed by afterRender, and a
+    // section is landed here -- the same two the document path lands, which
+    // this one did not. The browser's own fragment scroll is no use in either:
+    // it aims at blocks that are still placeholders. Nothing to land when the
+    // reader's own place has just been put back, or on a navigation inside the
+    // page, which carries no fragment.
+    if (!restored && location.hash.length > 1 && !lineHash()) jumpToHash();
   }
 
   async function showInbox(push = true) {
+    if (push) leave();
     state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
     let items = boot.inbox;
     if (!items || push) {
@@ -536,14 +760,28 @@
     boot.inbox = null;
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
-    if (!items.length) {
-      docEl.innerHTML = `<div class="empty-state"><h1>Nothing to read yet</h1><p>Documents your agents send will appear here, filed by project.</p><pre>snyvi send PLAN.md\nsnyvi init-claude</pre></div>`;
-    } else {
-      docEl.innerHTML = `<div class="inbox-head"><h1>Inbox</h1><p>Newest first, across every project.</p></div><ul class="inbox">` +
-        items.map(d => `<li><a href="/d/${d.id}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`).join("") + `</ul>`;
-    }
+    docEl.innerHTML = inboxHtml(items);
     if (push) swapIn();
     afterRender();
+    // The inbox lists every waiting row, and the page opened with the oldest
+    // few: the rest come after the page is on screen, not before the sidebar is.
+    if (state.waiting > state.queue.length) {
+      try {
+        const q = await (await fetch("/api/queue")).json();
+        if (Array.isArray(q) && state.view === "inbox") { state.queue = q; docEl.innerHTML = inboxHtml(items); renderTree(); markActive(); }
+      } catch {}
+    }
+  }
+
+  function inboxHtml(items) {
+    const row = d => `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`;
+    if (!items.length) return `<div class="empty-state"><h1>Nothing to read yet</h1><p>Documents your agents send will appear here, filed by project.</p><pre>snyvi send PLAN.md\nsnyvi init-claude</pre></div>`;
+    // What is waiting comes first, oldest first, so the landing page answers
+    // "what is new" before "what is there".
+    const n = state.waiting;
+    return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
+      (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the first<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
+      `<ul class="inbox">${items.map(row).join("")}</ul>`;
   }
 
   async function showCompare(aId, bId) {
@@ -574,17 +812,51 @@
     else toast("Split view", state.split ? "on, for diffs" : "off");
   }
 
+  /** How long Undo is on the screen, and how long it answers to ⌘Z. */
+  const UNDO_MS = 8000;
+  let undoing = null;
+
+  /** Delete now, ask nothing, and offer the way back.
+   *
+   *  The question used to be a `window.confirm`, which the native window draws
+   *  as the toolkit's own dialog in the toolkit's theme, over a page it has
+   *  nothing to do with -- and which had to be answered before anything else
+   *  could happen. The daemon keeps the document until `prune` runs, so the
+   *  eight seconds below are a real offer and not a hopeful one. */
   async function deleteCurrent() {
     if (!state.doc) return;
     const d = state.doc;
-    if (!window.confirm(`Delete "${d.title}"? This cannot be undone.`)) return;
     try {
-      await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
+      const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error(`${r.status}`);
       state.cache.delete(d.id);
+      depart([d.id]);
+      state.queue = state.queue.filter(x => x.id !== d.id);
+      state.waiting = Math.max(0, state.waiting - (waitingRow(d) ? 1 : 0));
       await refreshTree(d.project_id);
-      toast("Deleted", d.title);
       showInbox(true);
+      offerUndo(d);
     } catch (e) { toast("Could not delete", String(e)); }
+  }
+
+  /** The other half of a delete: a button in the toast, and ⌘Z for as long as
+   *  it is there, which is where a reader's hand goes first. */
+  function offerUndo(d) {
+    const run = async () => {
+      if (undoing !== run) return;
+      undoing = null;
+      try {
+        const r = await fetch(`/api/docs/${d.id}/undelete`, { method: "POST" });
+        if (r.status === 410) return toast("Too late to undo", "it has been pruned");
+        if (!r.ok) throw new Error(`${r.status}`);
+        wash([d.id]);
+        await refreshTree(d.project_id);
+        showDoc(d.id);
+      } catch (e) { toast("Could not undo", String(e)); }
+    };
+    undoing = run;
+    setTimeout(() => { if (undoing === run) undoing = null; }, UNDO_MS);
+    toast("Deleted", d.title, null, { label: "Undo", run });
   }
 
   function afterRender() {
@@ -637,12 +909,16 @@
     const el = p.i >= 0 ? docEl.querySelectorAll(".prose > *")[p.i] : null;
     if (!el) { main.scrollTo({ top: p.top, behavior: "instant" }); return; }
     const put = () => {
+      if (!el.isConnected) return;   // the page moved on before a late put
       el.scrollIntoView({ block: "start", behavior: "instant" });
       main.scrollBy({ top: el.getBoundingClientRect().top - main.getBoundingClientRect().top - p.delta, behavior: "instant" });
     };
     put();
     // Once more after the blocks around it have been laid out for real.
     requestAnimationFrame(() => requestAnimationFrame(put));
+    // And once the swap-in has finished, when there is one: it translates the
+    // body 4 px while it runs, and a put measured during it lands 4 px off.
+    if (docEl.classList.contains("swap")) docEl.addEventListener("animationend", put, { once: true });
   }
 
   /** A stored document was overwritten (a hook or `snyvi watch` send) or finished
@@ -812,6 +1088,9 @@
   }
 
   function prepareMermaid() {
+    // A new document under a filled figure: the figure goes with the old one,
+    // and the browser's fullscreen, if it was granted, goes with it.
+    if (document.fullscreenElement) quiet(document.exitFullscreen());
     mmdToken++;
     mmdQueue = [];
     if (mmdWatcher) mmdWatcher.disconnect();
@@ -1154,10 +1433,11 @@
       mmdViews.delete(fig);
       return;
     }
-    const full = document.fullscreenElement === fig;
-    // A figure that is not laid out cannot be fitted -- which is every other
-    // diagram on the page while one of them is fullscreen. Leave it as it is;
-    // leaving fullscreen fits them all again.
+    const full = fig.dataset.full === "1";
+    // The window's width when the figure fills it, rather than the frame's:
+    // the frame is the window then, but measured before the browser has laid
+    // that out it still says what it was. A figure that is not laid out at
+    // all cannot be fitted; left as it is, it is fitted on the next pass.
     const width = full ? Math.round(innerWidth) : frame.clientWidth;
     if (!width) return;
     mmdViews.delete(fig);
@@ -1308,27 +1588,53 @@
     mmdZoom(fig, v.view.w / Math.max(1, r.width), null, null);
   }
 
-  /** Fill the screen with one diagram. The frame is re-measured on the way in
-   *  and on the way out, since its height is the one thing fullscreen changes. */
+  /** Fill the window with one diagram; the same key or button, or Escape,
+   *  gives the page back.
+   *
+   *  The figure is laid over the page from where it is (`.mmd[data-full]` in
+   *  app.css), and the document, not the figure, asks the browser for
+   *  fullscreen -- a courtesy that hides the browser's own chrome where it is
+   *  granted, and nothing here depends on the answer. 0.9 put the figure
+   *  itself in the top layer, and in WebKitGTK, the engine of the Linux
+   *  window, two things came of that: every glyph inside the fullscreen
+   *  element drew as nothing -- the boxes and arrows stayed; the labels, the
+   *  tool bar and an SVG's own <text> went -- and on the way back the figure,
+   *  a content-visibility placeholder again, kept the placeholder's size
+   *  until the next scroll laid it out. A fixed box in the page has neither
+   *  fault in any engine, and the figure is marked visible for good, since it
+   *  is the one the reader is looking at. bench/webkit.py is where both were
+   *  seen. */
+  let mmdFullFrom = 0;   // where the document was, to put it back there
+  function quiet(p) { if (p && p.catch) p.catch(() => {}); }   // a promise whose refusal is no news
   function mmdFull(fig) {
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-      return;
-    }
-    if (!fig.requestFullscreen) {
-      toast("No fullscreen", "this browser did not offer it");
-      return;
-    }
-    fig.requestFullscreen().catch(e => toast("No fullscreen", String(e && e.message ? e.message : e)));
+    const open = docEl.querySelector(".mmd[data-full]");
+    if (open) { mmdUnfill(open); return; }
+    mmdFullFrom = main.scrollTop;
+    fig.style.contentVisibility = "visible";
+    fig.dataset.full = "1";
+    mmdRefit();
+    if (document.documentElement.requestFullscreen && !document.fullscreenElement) quiet(document.documentElement.requestFullscreen());
   }
-
-  /* After the browser has finished resizing the page around it, not during:
-   *  measured mid-transition, a frame reports the width it is leaving and the
-   *  diagram comes back fitted to a column that is no longer there. */
-  document.addEventListener("fullscreenchange", () => {
+  function mmdUnfill(fig) {
+    delete fig.dataset.full;
+    main.scrollTo({ top: mmdFullFrom, behavior: "instant" });
+    mmdRefit();
+    if (document.fullscreenElement) quiet(document.exitFullscreen());
+  }
+  /** After the browser has laid the change out, not during: measured
+   *  mid-transition, a frame reports the width it is leaving and the diagram
+   *  comes back fitted to a column that is no longer there. */
+  function mmdRefit() {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
     }));
+  }
+  // The browser's own way out -- Escape, or whatever it binds -- ends the
+  // fill too; a window that changed size around it is measured again.
+  document.addEventListener("fullscreenchange", () => {
+    const open = docEl.querySelector(".mmd[data-full]");
+    if (open && !document.fullscreenElement) mmdUnfill(open);
+    else mmdRefit();
   });
 
   /** The controls, added once per figure and shown when it is under the cursor
@@ -1342,7 +1648,7 @@
       `<button type="button" data-mmd="out" title="Zoom out" aria-label="Zoom out">−</button>` +
       `<button type="button" data-mmd="in" title="Zoom in  (double-click, or ⌘/ctrl + scroll)" aria-label="Zoom in">+</button>` +
       `<button type="button" data-mmd="zoom" title="Show it at full size">100%</button>` +
-      `<button type="button" data-mmd="full" title="Fullscreen  f" aria-label="Fullscreen">⛶</button>`;
+      `<button type="button" data-mmd="full" title="Fill the screen  f" aria-label="Fill the screen">⛶</button>`;
     fig.appendChild(bar);
     mmdApply(fig);
   }
@@ -1520,7 +1826,7 @@
       frag.appendChild(document.createTextNode(text.slice(last)));
       t.parentNode.replaceChild(frag, t);
     }
-    if (findMarks.length) gotoFind(0); else findCount.textContent = "0";
+    if (findMarks.length) gotoFind(0); else findCount.textContent = "No matches";
   }
   function gotoFind(i) {
     if (!findMarks.length) return;
@@ -1562,11 +1868,35 @@
       a.classList.toggle("cur", on);
       if (on) { a.setAttribute("aria-current", "location"); cur = a; } else a.removeAttribute("aria-current");
     });
-    if (!cur || tocEl.matches(":hover")) return;
+    if (cur) keepCurInView(false);
+  }
+  /** Scroll the contents so the current entry is in view. `now` skips the
+   *  hover exemption and the smooth scroll: a sheet that has just opened has
+   *  no pointer over it yet and no place it is scrolling from. */
+  function keepCurInView(now) {
+    const cur = tocEl.querySelector("a.cur");
+    if (!cur || (!now && tocEl.matches(":hover"))) return;
     const top = cur.offsetTop, bottom = top + cur.offsetHeight;
     const seen = tocEl.scrollTop, h = tocEl.clientHeight;
     if (top >= seen + 24 && bottom <= seen + h - 24) return;
-    tocEl.scrollTo({ top: Math.max(0, top - h / 2) });
+    tocEl.scrollTo({ top: Math.max(0, top - h / 2), behavior: now ? "instant" : "smooth" });
+  }
+
+  /** Call `track` on the frame after every scroll or resize, and once now.
+   *  An IntersectionObserver did this before, firing when a heading crossed
+   *  a band below the top edge -- and a jump of a page or more can land with
+   *  no heading in the band, on which nothing fired and the marker stayed on
+   *  the section the reader had left. Reading every heading's position on a
+   *  scroll frame is cheap: headings opt out of content-visibility, so none
+   *  is a placeholder that has to be laid out to be asked. */
+  function follow(track) {
+    let queued = false;
+    const tick = () => { queued = false; track(); };
+    const poke = () => { if (!queued) { queued = true; requestAnimationFrame(tick); } };
+    main.addEventListener("scroll", poke, { passive: true });
+    addEventListener("resize", poke);
+    poke();
+    return { disconnect() { main.removeEventListener("scroll", poke); removeEventListener("resize", poke); } };
   }
 
   let spy = null;
@@ -1585,12 +1915,14 @@
         return `<li class="d${h.tagName[1]}"><a href="#${esc(id)}" data-i="${i}">${esc(h.textContent.replace(/^#\s*/, ""))}</a></li>`;
       }).join("") + `</ul>`;
       const links = [...tocEl.querySelectorAll("a")];
-      spy = new IntersectionObserver(() => {
+      spy = follow(() => {
         let cur = -1;
         hs.forEach((h, i) => { if (h.getBoundingClientRect().top < 120) cur = i; });
+        // At the very end the last section is the one being read, even when
+        // it is shorter than the fold and its heading never reaches the top.
+        if (main.scrollTop + main.clientHeight >= main.scrollHeight - 2) cur = hs.length - 1;
         markCur(links, cur);
-      }, { root: main, rootMargin: "-100px 0px -60% 0px", threshold: 0 });
-      hs.forEach(h => spy.observe(h));
+      });
     }
     rail.classList.toggle("empty", state.view === "inbox");
   }
@@ -1610,6 +1942,7 @@
     e.preventDefault();
     history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
     jumpTo(h);
+    if (root.dataset.sheet === "rail") closeSheet();
   });
 
   /** Go to a block of the document. Instant, not smooth, and on purpose: a
@@ -1649,7 +1982,30 @@
     e.preventDefault();
     history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
     navigator.clipboard?.writeText(location.href);
-    toast("Link copied", location.pathname + location.hash);
+    // Confirmed on the mark itself, which is where the eye is: a toast at the
+    // corner for a click at the heading is the wrong distance away.
+    a.dataset.said = "Copied";
+    clearTimeout(a._said);
+    a._said = setTimeout(() => delete a.dataset.said, 1200);
+  });
+
+  /* Tab into a code block below the fold and the browser focuses the copy
+   * button without bringing it on screen -- the block is a placeholder, see
+   * content-visibility in app.css -- and the next Tab, asked to go on from
+   * inside a placeholder, gives up and lands on the body; the rail's entries
+   * after it are never reached. Bring whatever takes focus on screen, which
+   * is what a keyboard reader wants anyway, and which makes the block real. */
+  docEl.addEventListener("focusin", e => {
+    const block = e.target.closest(".prose > *");
+    if (!block) return;
+    // A block with focus in it is never a placeholder again: the scroll
+    // below is aimed through placeholders and can overshoot by a screen,
+    // and a focused element that ends up inside a skipped block is blurred
+    // by the browser -- which is how Tab was reaching the body.
+    block.style.contentVisibility = "visible";
+    const put = () => e.target.scrollIntoView({ block: "nearest", behavior: "instant" });
+    put();
+    requestAnimationFrame(() => requestAnimationFrame(put));
   });
 
   /* Scroll chaining, restored. The document pane is a sibling of the two side
@@ -1696,13 +2052,11 @@
       flash(el);
     }));
     // Mark whichever declaration the reader has scrolled past.
-    const tops = items.map(o => lines[o.line - 1]).filter(Boolean);
-    outlineSpy = new IntersectionObserver(() => {
+    outlineSpy = follow(() => {
       let cur = -1;
       items.forEach((o, i) => { const el = lines[o.line - 1]; if (el && el.getBoundingClientRect().top < 140) cur = i; });
       markCur(links, cur);
-    }, { root: main, rootMargin: "-120px 0px -60% 0px", threshold: 0 });
-    tops.forEach(el => outlineSpy.observe(el));
+    });
   }
   let outlineToken = 0;
   function flash(el) {
@@ -1791,7 +2145,7 @@
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
       previewButton() +
-      `<button data-act="delete">Delete…<kbd>⌫</kbd></button>` +
+      `<button data-act="delete">Delete<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button>` : "") +
@@ -1902,7 +2256,7 @@
     if (a.dataset.nav === "inbox") showInbox(true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else showDoc(a.dataset.id, true);
-    if (window.innerWidth <= 760) root.dataset.side = "0";
+    if (root.dataset.sheet === "side") closeSheet();
   });
   document.addEventListener("mouseover", e => {
     const a = e.target.closest("a[data-id]");
@@ -1913,42 +2267,109 @@
     // Back or forward to a hash on the document already on screen -- the `#`
     // beside a heading pushes one -- is a move within it, not a rebuild.
     if (d && state.view === "doc" && state.doc && state.doc.id === d[1] && !state.comparing) return jumpToHash();
-    if (d) return showDoc(d[1], false);
+    if (d) return showDoc(d[1], false, true);
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
-    if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false);
+    if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     showInbox(false);
   });
 
   // ---------- live arrivals ----------
+
+  /** Whether this page is the native window's, which decides where the daemon
+   *  sends a link that is opened from outside it -- `snyvi open`, a terminal, a
+   *  click on a notification.
+   *
+   *  `snyvi app` puts the mark on the first URL it hands the window, and the
+   *  page keeps it for the session rather than in the address: the window
+   *  navigates all day, and a mark in a URL would be lost by the first of
+   *  those and copied into every link the reader shares. Storage that belongs
+   *  to this one page and dies with it is exactly the lifetime wanted. */
+  const inWindow = (() => {
+    try {
+      if (new URLSearchParams(location.search).has("window")) {
+        sessionStorage.setItem("snyvi.window", "1");
+        // Out of the address bar at once, and out of the history entry, so
+        // Back never returns to a marked URL and no copied link carries it.
+        history.replaceState(history.state, "", location.pathname + location.hash);
+      }
+      return sessionStorage.getItem("snyvi.window") === "1";
+    } catch { return false; }
+  })();
+
+  /** The daemon's event stream, and the one socket this page holds open for
+   *  as long as it lives.
+   *
+   *  It is given back on the way out. A browser allows six connections to one
+   *  host over HTTP/1.1, a stream that never ends holds one of them for good,
+   *  and a document on its way out -- to the back/forward cache, or simply
+   *  being replaced -- keeps its own until it is destroyed. So six page loads
+   *  in a row left six streams behind, the pool ran out, and the seventh page
+   *  did not load for 25 seconds: measured at 6 sockets by bench/ui.mjs, which
+   *  is how this was found. A page restored from the cache connects again and
+   *  catches up on what it missed while it was away. */
+  let stream = null, retry = null;
+
+  addEventListener("pagehide", () => {
+    clearTimeout(retry);
+    if (stream) { stream.close(); stream = null; }
+  });
+  addEventListener("pageshow", e => { if (e.persisted && !stream) { connect(); catchUp(); } });
+
+  /** What a page that was away has to ask for, since it heard no events. */
+  async function catchUp() {
+    try {
+      const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
+      if (Array.isArray(q)) {
+        state.queue = q;
+        // Fewer than the page ever holds means these are all there are.
+        state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
+      }
+    } catch {}
+    await refreshTree();
+    if (state.view === "inbox") showInbox(false);
+  }
+
   function connect() {
-    const es = new EventSource("/api/events");
+    const es = new EventSource("/api/events" + (inWindow ? "?window=1" : ""));
+    stream = es;
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
-      const elsewhere = !state.doc || state.doc.project_id !== d.project_id;
       // One project moved, so one project's rows are what is refetched. This
       // used to pull the whole library back down and rebuild the sidebar on
       // every arrival -- a file saved every few seconds paid it every few
-      // seconds -- and the unread count is set first so one render serves both.
+      // seconds.
       // An overwrite of a document already here is not an arrival: refresh it where
       // it is if it is on screen, never navigate to it, and never toast — a file
       // being watched changes on every save.
       if (j.existing) {
         if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
-        else { state.cache.delete(d.id); if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1); }
+        else state.cache.delete(d.id);
         await refreshTree(d.project_id);
         return;
       }
-      if (state.view === "inbox" || idle()) {
-        state.cache.delete(d.id);
-        await refreshTree(d.project_id);
-        await showDoc(d.id, true);
-        toast(d.title, `${d.project} · just now`);
-      } else {
-        if (elsewhere) state.unread.set(d.project_id, (state.unread.get(d.project_id) || 0) + 1);
-        await refreshTree(d.project_id);
-        toast(d.title, `${d.project} · click to open`, () => showDoc(d.id, true));
-      }
+      // An arrival joins the queue and the page stays where it is. The one
+      // place it opens by itself is the inbox with nothing waiting: the empty
+      // state exists to be filled, and a reader there has nothing to lose.
+      // An inbox with a queue on it is the queue, and the arrival is a row.
+      const opens = state.view === "inbox" && !state.waiting;
+      // Held in order only while everything waiting is held: past that the
+      // arrival is the newest, and belongs after rows this page never had.
+      if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
+      state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
+      if (!opens) wash([d.id]);
+      holdQueue();   // a burst's events carry counts ahead of the rows this page holds
+      state.cache.delete(d.id);
+      renderTree(); markActive();
+      await refreshTree(d.project_id);
+      if (opens) { await showDoc(d.id, true); toast(d.title, `${d.project} · just now`); }
+      else if (state.view === "inbox") showInbox(false);
+    });
+    // A document was opened somewhere -- this tab, another, the window -- and
+    // is off the queue everywhere.
+    es.addEventListener("read", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (Array.isArray(j.ids)) dropFromQueue(j.ids, j.waiting);
     });
     // A large code file finished highlighting in the background: swap the body in place.
     es.addEventListener("rendered", ev => {
@@ -1968,8 +2389,21 @@
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.cache.delete(j.id);
+      depart([j.id]);
+      state.queue = state.queue.filter(d => d.id !== j.id);
+      if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();
       if (state.doc && state.doc.id === j.id) showInbox(true);
+    });
+    // A delete that was taken back, in every tab and the window: the row is
+    // where it was, and so is its place in the queue if it never got read.
+    es.addEventListener("restored", async ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (j.waiting != null) state.waiting = j.waiting;
+      if (j.id != null) wash([j.id]);
+      await refreshTree(j.doc && j.doc.project_id);
+      holdQueue();
+      if (state.view === "inbox") showInbox(false);
     });
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -1983,29 +2417,45 @@
       if (j.project != null) applyRename("project", j.project);
       else if (j.workflow != null) applyRename("workflow", j.workflow);
     });
-    es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+    es.onerror = () => {
+      es.close();
+      if (stream === es) stream = null;
+      retry = setTimeout(connect, 2000);
+    };
   }
 
-  function toast(title, sub, onClick) {
+  /** A line at the corner. `onClick` makes the whole toast one; `action`
+   *  ({label, run}) puts a button in it instead, for the one thing a toast
+   *  can offer that a reader must be able to reach deliberately. */
+  function toast(title, sub, onClick, action) {
     const el = document.createElement("div");
     el.className = "toast";
     el.innerHTML = `<span class="dot"></span><span><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
-    el.addEventListener("click", () => { el.remove(); onClick && onClick(); });
+    if (action) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "act"; b.textContent = action.label;
+      b.addEventListener("click", ev => { ev.stopPropagation(); el.remove(); action.run(); });
+      el.appendChild(b);
+    } else {
+      el.addEventListener("click", () => { el.remove(); onClick && onClick(); });
+    }
     $("#toasts").appendChild(el);
-    setTimeout(() => { el.style.transition = "opacity 160ms"; el.style.opacity = "0"; setTimeout(() => el.remove(), 180); }, onClick ? 8000 : 3500);
+    const life = action ? UNDO_MS : onClick ? 8000 : 3500;
+    setTimeout(() => { el.style.transition = "opacity 160ms"; el.style.opacity = "0"; setTimeout(() => el.remove(), 180); }, life);
+    return el;
   }
 
   // ---------- palette ----------
   const pal = $("#palette"), palIn = $("#palette-input"), palList = $("#palette-list");
   let palSel = 0, palItems = [], palTimer = null;
   function openPalette() {
-    pal.hidden = false; palIn.value = "";
+    palIn.value = "";
     palIn.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
       : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff)";
-    palIn.focus(); palSearch("");
+    openDialog(pal, palIn); palSearch("");
   }
   const browsing = () => state.view === "browse" && state.browseRoot;
-  function closePalette() { pal.hidden = true; }
+  function closePalette() { closeDialog(pal); }
   async function palSearch(q) {
     // A line number is not a search term. `:120` and `L120` jump instead.
     const g = /^\s*[:lL]\s*(\d+)\s*$/.exec(q);
@@ -2079,13 +2529,161 @@
     next ? (root.dataset.font = next) : delete root.dataset.font;
     store.set("snyvi.font", next);
   });
-  const help = $("#help");
-  help.addEventListener("click", e => { if (e.target === help) help.hidden = true; });
+  // ---------- dialogs: focus goes in, stays in, and comes back ----------
+  const appEl = $("#app"), help = $("#help");
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  let dialogOpener = null;
+  /** Show a dialog. The page behind it goes inert, so Tab and a screen
+   *  reader stay inside it, and whatever had focus gets it back on close. */
+  function openDialog(el, focusEl) {
+    if (!el.hidden) { (focusEl || el).focus(); return; }
+    if (pal.hidden && help.hidden) dialogOpener = document.activeElement;
+    el.hidden = false;
+    appEl.inert = true;
+    (focusEl || el.querySelector(FOCUSABLE) || el.firstElementChild).focus();
+  }
+  function closeDialog(el) {
+    if (el.hidden) return;
+    el.hidden = true;
+    if (!pal.hidden || !help.hidden) return;
+    appEl.inert = false;
+    const back = dialogOpener; dialogOpener = null;
+    if (back && back.isConnected && back !== document.body) back.focus();
+  }
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const box = [pal, help].find(d => !d.hidden)?.firstElementChild;
+    if (!box) return;
+    const f = [...box.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null);
+    if (!f.length) { e.preventDefault(); return; }
+    const at = document.activeElement, first = f[0], last = f[f.length - 1];
+    if (e.shiftKey ? (at === first || !box.contains(at)) : (at === last || !box.contains(at))) {
+      e.preventDefault(); (e.shiftKey ? last : first).focus();
+    }
+  }, true);
+  help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
+  $("#help-close").addEventListener("click", () => closeDialog(help));
+  $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+
+  // ---------- the panes on a narrow window ----------
+  /* Past the widths in app.css the rail and then the sidebar stop fitting
+   * beside the document, and each becomes a sheet over it: `t` and `\`
+   * open the sheet rather than changing the setting the wide layout keeps,
+   * the two buttons in #chrome do the same for a finger, and Escape or a
+   * tap on the scrim closes it. The contents inside the sheet open on the
+   * current section, which the hidden pane could not scroll to. */
+  const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
+  const sideEl = $("#side");
+  let sheetOpener = null;
+  function openSheet(which, opener) {
+    if (root.dataset.sheet === which) return;
+    sheetOpener = opener || document.activeElement;
+    root.dataset.sheet = which;
+    if (which === "rail") keepCurInView(true);
+    const first = which === "rail"
+      ? tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a")
+      : sideEl.querySelector("#trees a[aria-current], #trees a, #trees summary");
+    (first || (which === "rail" ? rail : sideEl)).focus({ preventScroll: true });
+  }
+  function closeSheet() {
+    if (!root.dataset.sheet) return false;
+    delete root.dataset.sheet;
+    const back = sheetOpener; sheetOpener = null;
+    if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
+    return true;
+  }
+  const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
+  $("#scrim").addEventListener("click", closeSheet);
+  $("#btn-rail").addEventListener("click", e => toggleSheet("rail", e.currentTarget));
+  $("#btn-side").addEventListener("click", e => toggleSheet("side", e.currentTarget));
+  // The window grew past the width that made it a sheet: it is a pane again.
+  const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
+  for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
+
+  // ---------- the panes' widths ----------
+  /* Each pane's edge drags, between a floor where its rows stop being
+   * readable and a ceiling past which the document would be the pane that
+   * does not fit. The width goes into the custom property the grid already
+   * reads, so every rule that knows the pane's width follows, and into
+   * storage, which boot.js applies before first paint. Double-click puts the
+   * default back; for a keyboard the arrow keys move it and Home and End
+   * take it to either limit. */
+  const PANES = [
+    { el: sideEl, prop: "--side-w", key: "snyvi.side-w", min: 200, max: 440, dflt: 264, sign: 1 },
+    { el: rail, prop: "--rail-w", key: "snyvi.rail-w", min: 180, max: 400, dflt: 232, sign: -1 },
+  ];
+  for (const pane of PANES) {
+    const g = pane.el.querySelector(".gutter");
+    const width = () => parseFloat(getComputedStyle(root).getPropertyValue(pane.prop)) || pane.dflt;
+    const set = w => {
+      w = Math.round(Math.max(pane.min, Math.min(pane.max, w)));
+      root.style.setProperty(pane.prop, `${w}px`);
+      g.setAttribute("aria-valuenow", w);
+      return w;
+    };
+    g.setAttribute("aria-valuenow", width());
+    g.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      const x0 = e.clientX, w0 = width();
+      let w = w0;
+      g.setPointerCapture(e.pointerId);
+      root.dataset.resizing = "1";
+      const move = ev => { w = set(w0 + pane.sign * (ev.clientX - x0)); };
+      const up = () => {
+        delete root.dataset.resizing;
+        g.removeEventListener("pointermove", move);
+        g.removeEventListener("pointerup", up);
+        g.removeEventListener("pointercancel", up);
+        store.set(pane.key, String(w));
+      };
+      g.addEventListener("pointermove", move);
+      g.addEventListener("pointerup", up);
+      g.addEventListener("pointercancel", up);
+      e.preventDefault();
+    });
+    g.addEventListener("dblclick", () => {
+      root.style.removeProperty(pane.prop);
+      store.del(pane.key);
+      g.setAttribute("aria-valuenow", pane.dflt);
+    });
+    g.addEventListener("keydown", e => {
+      const step = e.shiftKey ? 64 : 16;
+      const to = e.key === "ArrowRight" ? width() + pane.sign * step
+        : e.key === "ArrowLeft" ? width() - pane.sign * step
+          : e.key === "Home" ? pane.min : e.key === "End" ? pane.max : null;
+      if (to === null) return;
+      store.set(pane.key, String(set(to)));
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  }
 
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
-    if (e.key === "Escape") { closePalette(); help.hidden = true; if (!findBar.hidden) closeFind(); return; }
+    if (e.key === "Escape") {
+      const filled = docEl.querySelector(".mmd[data-full]");
+      if (filled) mmdUnfill(filled);
+      closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind();
+      return;
+    }
+    // Back and forward, where the browser does not do it itself: the desktop
+    // window has no toolbar and no shortcut of its own for either. A browser
+    // that has one yields it to the page's preventDefault, so this is one
+    // step there too, not two.
+    if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      if (e.key === "ArrowLeft") history.back(); else history.forward();
+      return;
+    }
+    // Undo, for as long as the toast offering it is on the screen. The hand
+    // goes here before it goes to the button, and a delete is the only thing
+    // in a viewer there is anything to undo.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "z" || e.key === "Z") && undoing) {
+      e.preventDefault();
+      undoing();
+      return;
+    }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
     if (browsing() && (e.key === "j" || e.key === "k")) {
       const links = [...browseEl.querySelectorAll(".b-file a")];
@@ -2107,21 +2705,30 @@
       case "s": toggleSplit(); break;
       case "v": togglePreview(); break;
       case "/": openFind(); break;
-      case "Backspace": case "Delete": deleteCurrent(); break;
+      // Delete and not Backspace: a key a reader leans on while thinking is
+      // not a key to lose a document to.
+      case "Delete": deleteCurrent(); break;
+      case "n": openNext(); break;
       case "i": showInbox(true); break;
       case "w": toggleWide(); break;
       case "z": toggleWrap(); break;
-      case "t": { const off = root.dataset.rail !== "0"; root.dataset.rail = off ? "0" : "1"; store.set("snyvi.rail", off ? "0" : "1"); break; }
+      case "t":
+        if (railNarrow.matches) { if (!rail.classList.contains("empty")) toggleSheet("rail"); }
+        else { const off = root.dataset.rail !== "0"; root.dataset.rail = off ? "0" : "1"; store.set("snyvi.rail", off ? "0" : "1"); }
+        break;
       // The diagram under the cursor, or the last one used: fit it, or fill the
       // screen with it. Both are no-ops on a page with no diagram on it.
       case "0": { const fig = mmdKeyed(); if (fig) { mmdFit(fig); mmdTouched = fig; } break; }
       case "f": { const fig = mmdKeyed(); if (fig) { mmdFull(fig); mmdTouched = fig; } break; }
-      case "\\": { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); break; }
+      case "\\":
+        if (sideNarrow.matches) toggleSheet("side");
+        else { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); }
+        break;
       case "o":
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
         else if (browsing() && state.browsePath) window.open(rawUrl(state.browseRoot.id, state.browsePath), "_blank");
         break;
-      case "?": help.hidden = !help.hidden; break;
+      case "?": help.hidden ? openDialog(help, help.firstElementChild) : closeDialog(help); break;
       default: return;
     }
     e.preventDefault();
@@ -2129,6 +2736,8 @@
 
   // ---------- boot ----------
   if (state.view === "doc" && state.doc) {
+    // Opened from a link -- an agent's, or the notification's -- so it is read.
+    markRead(state.doc.id);
     document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname + location.hash);
     // A link to a section: the browser's own fragment scroll aimed at a
     // placeholder, the same way a smooth scroll does. Land it properly.

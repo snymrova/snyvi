@@ -15,17 +15,13 @@
  * whose whole pitch is one static binary would be a poor trade for a wrapper.
  */
 
-import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixture, families, DIAGRAMS } from "./fixture.mjs";
 import * as page from "./page.mjs";
-
-if (typeof WebSocket !== "function") {
-  console.error(`this harness drives Chromium over a WebSocket, and node ${process.version} does not have one.\nNode 22 or newer, or node --experimental-websocket.`);
-  process.exit(1);
-}
+import { launch, killTree, pageLoad, evaluate, call, sleep } from "./chrome.mjs";
 
 const args = process.argv.slice(2);
 /* Two kinds of number are printed here, and only one of them is a fact about
@@ -56,121 +52,9 @@ function flag(name) {
   return i >= 0 ? args[i + 1] : null;
 }
 
-/* Chromium, wherever this machine keeps it. The env var wins, so a runner with
- * an unusual path needs no change here. */
-function chromePath() {
-  const candidates = [
-    process.env.SNYVI_CHROME,
-    process.env.CHROME_PATH,
-    process.env.PLAYWRIGHT_BROWSERS_PATH && join(process.env.PLAYWRIGHT_BROWSERS_PATH, "chromium"),
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/snap/bin/chromium",
-  ].filter(Boolean);
-  for (const c of candidates) if (existsSync(c)) return c;
-  throw new Error(
-    "no Chromium found. Set SNYVI_CHROME to the binary. Tried:\n  " + candidates.join("\n  ")
-  );
-}
-
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-/** Kill the browser and everything it started. `detached` puts it at the head of
- *  its own group, and the negative pid is what reaches the rest of the group;
- *  the fallback is for a platform or a state where that does not apply. */
-function killTree(proc) {
-  if (!proc || proc.exitCode !== null) return;
-  try { process.kill(-proc.pid, "SIGKILL"); }
-  catch { try { proc.kill("SIGKILL"); } catch {} }
-}
-
-/* ---------- the DevTools protocol, in about forty lines ---------- */
-
-class CDP {
-  constructor(ws) {
-    this.ws = ws;
-    this.next = 1;
-    this.pending = new Map();
-    this.handlers = new Map();
-    ws.addEventListener("message", e => {
-      const m = JSON.parse(e.data);
-      if (m.id) {
-        const p = this.pending.get(m.id);
-        if (!p) return;
-        this.pending.delete(m.id);
-        m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result);
-      } else {
-        this.handlers.get(m.method)?.forEach(h => h(m.params, m.sessionId));
-      }
-    });
-  }
-  static async open(url) {
-    const ws = new WebSocket(url);
-    await new Promise((res, rej) => {
-      ws.addEventListener("open", res, { once: true });
-      ws.addEventListener("error", () => rej(new Error(`cannot reach ${url}`)), { once: true });
-    });
-    return new CDP(ws);
-  }
-  send(method, params = {}, sessionId) {
-    const id = this.next++;
-    this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
-  }
-  on(method, fn) {
-    if (!this.handlers.has(method)) this.handlers.set(method, []);
-    this.handlers.get(method).push(fn);
-  }
-  close() { this.ws.close(); }
-}
-
-/** A load event, or a failure saying so.
- *
- *  A page that never fires one used to hang this harness rather than fail it:
- *  a render loop in the sidebar held the document open for ever and this wait
- *  had no floor, so a fault that a reader would have felt as a pegged core read
- *  here as a build that never finished. */
-function pageLoad(cdp, sessionId, what) {
-  return new Promise((res, rej) => {
-    const timer = setTimeout(
-      () => rej(new Error(`${what}: no load event in 20s -- something is holding the document open, and a render loop will do it`)),
-      20_000);
-    cdp.on("Page.loadEventFired", (_p, sn) => {
-      if (sn !== sessionId) return;
-      clearTimeout(timer);
-      res();
-    });
-  });
-}
-
-/** A page function, as source the page can evaluate. Arguments are passed as
- *  JSON, so anything handed over has to survive a round trip -- which is the
- *  same constraint returning a value already imposes. */
-const call = (fn, ...args) => `(${fn})(${args.map(a => JSON.stringify(a)).join(", ")})`;
-
-/** Run an expression in the page and hand back its value, throwing what the page threw. */
-async function evaluate(cdp, session, expression) {
-  const r = await cdp.send(
-    "Runtime.evaluate",
-    { expression, awaitPromise: true, returnByValue: true },
-    session
-  );
-  if (r.exceptionDetails) {
-    throw new Error("page: " + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
-  }
-  return r.result.value;
-}
-
-/* ---------- what the page records about itself ---------- */
-
-
-
 /* ---------- running it ---------- */
 
 async function main() {
-  const chrome = chromePath();
   const tmp = mkdtempSync(join(tmpdir(), "snyvi-browser-bench-"));
   const env = {
     ...process.env,
@@ -191,48 +75,10 @@ async function main() {
     const url = execFileSync(BIN, ["send", md], { env, encoding: "utf8" }).trim().split("\n").pop();
     if (!/^https?:\/\//.test(url)) throw new Error(`snyvi send printed no URL:\n${url}`);
 
-    const profile = join(tmp, "chrome");
-    // Its own process group, so teardown takes the renderers and the zygote with
-    // it. Killing only the leader left chrome, its crashpad handlers and their
-    // pipes behind for the runner to reap. Nothing else here is tuned: flags
-    // that change how the browser starts change what first paint means.
-    chromeProc = spawn(chrome, [
-      "--headless=new",
-      "--remote-debugging-port=0",
-      `--user-data-dir=${profile}`,
-      "--no-sandbox",
-      "--disable-gpu",
-      "--disable-dev-shm-usage",
-      // Nothing should reach the network; the page is entirely local. These
-      // also stop a first-run profile from spending a second on housekeeping
-      // that the first long-task number would then carry.
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--disable-component-update",
-      "--disable-extensions",
-      "--window-size=1280,900",
-      "about:blank",
-    ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
-    let chromeErr = "";
-    chromeProc.stderr.on("data", d => { chromeErr += d; });
+    const browser = await launch(join(tmp, "chrome"));
+    chromeProc = browser.proc;
+    const cdp = browser.cdp;
 
-    // Sixty seconds, not ten: the first cold start on a hosted runner took longer
-    // than ten and failed the build for a reason that had nothing to do with
-    // snyvi. Nothing waits this long when the browser is behaving -- the file
-    // appears in a second or two and the loop ends there -- so the only cost of
-    // the larger number is how long a genuinely broken Chromium takes to say so.
-    const portFile = join(profile, "DevToolsActivePort");
-    let devPort = null;
-    for (let i = 0; i < 1200 && devPort === null; i++) {
-      await sleep(50);
-      if (existsSync(portFile)) devPort = readFileSync(portFile, "utf8").split("\n")[0].trim();
-      if (chromeProc.exitCode !== null) throw new Error(`chromium exited: ${chromeErr}`);
-    }
-    if (!devPort) throw new Error(`chromium never reported a debugging port in 60s: ${chromeErr}`);
-
-    const version = await (await fetch(`http://127.0.0.1:${devPort}/json/version`)).json();
-    const cdp = await CDP.open(version.webSocketDebuggerUrl);
 
     const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
     const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
@@ -348,9 +194,12 @@ async function main() {
   }
 }
 
-/** Fullscreen, which is the one gesture the page cannot fake for itself: the
- *  browser grants it to a real click and to nothing else, so the click is sent
- *  through the protocol. */
+/** Filling the screen, which is the one gesture the page cannot fake for
+ *  itself: the browser grants fullscreen to a real click and to nothing else,
+ *  so the click is sent through the protocol. What is read is the fill -- the
+ *  figure over the whole window, its labels laid out, and not the figure
+ *  itself in the top layer, which is the fault 0.13 took out -- and the way
+ *  back: the figure at column width again with no scroll to prompt it. */
 async function fullscreen(cdp, sessionId) {
   const at = await evaluate(cdp, sessionId, `(() => {
     const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
@@ -367,28 +216,38 @@ async function fullscreen(cdp, sessionId) {
   }
   await sleep(600);
   const inside = await evaluate(cdp, sessionId, `(() => {
-    const el = document.fullscreenElement;
+    const el = document.querySelector(".mmd[data-full]");
     const frame = el && el.querySelector(".mmd-frame");
-    return { is: !!el && el.classList.contains("mmd"),
+    const labels = el ? [...el.querySelectorAll("foreignObject, text")].filter(t => t.getBoundingClientRect().width > 0).length : 0;
+    return { is: !!el, topLayer: !!el && document.fullscreenElement === el, labels,
       height: frame ? Math.round(frame.getBoundingClientRect().height) : 0,
       window: Math.round(innerHeight) };
   })()`);
-  await evaluate(cdp, sessionId, `document.fullscreenElement ? document.exitFullscreen() : null`);
+  // Escape, the way a reader leaves.
+  for (const type of ["rawKeyDown", "keyUp"]) {
+    await cdp.send("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, sessionId);
+  }
   await sleep(600);
   const after = await evaluate(cdp, sessionId, `(() => {
     const fig = [...document.querySelectorAll('.mmd[data-state="done"]')].pop();
-    return { out: !document.fullscreenElement,
-      height: fig ? Math.round(fig.querySelector(".mmd-frame").getBoundingClientRect().height) : 0,
+    const frame = fig && fig.querySelector(".mmd-frame");
+    return { out: !document.querySelector(".mmd[data-full]") && !document.fullscreenElement,
+      width: frame ? frame.clientWidth : 0,
+      height: frame ? Math.round(frame.getBoundingClientRect().height) : 0,
       window: Math.round(innerHeight) };
   })()`);
-  const ok = inside.is && inside.height >= inside.window - 4 && after.out && after.height > 0 && after.height < after.window;
+  const ok = inside.is && !inside.topLayer && inside.labels > 0 && inside.height >= inside.window - 4
+    && after.out && after.width > 0 && after.height > 0 && after.height < after.window;
   return {
     ok, ...inside,
-    why: !inside.is ? "the button did not put it fullscreen"
-      : inside.height < inside.window - 4 ? `fullscreen left it ${inside.height} px tall in a ${inside.window} px screen`
-        : !after.out ? "it never came back out"
-          : after.height >= after.window ? `it came back ${after.height} px tall, still filling the page`
-            : `${inside.height} px of screen, and ${after.height} px back in the document`,
+    why: !inside.is ? "the button did not fill the screen"
+      : inside.topLayer ? "the figure itself went into the top layer"
+        : inside.labels === 0 ? "filled, with no label laid out"
+          : inside.height < inside.window - 4 ? `filled ${inside.height} px of a ${inside.window} px screen`
+            : !after.out ? "it never came back out"
+              : after.width === 0 ? "it came back with no size, waiting on a scroll"
+                : after.height >= after.window ? `it came back ${after.height} px tall, still filling the page`
+                  : `${inside.height} px of screen with ${inside.labels} labels, and ${after.height} px back in the document`,
   };
 }
 

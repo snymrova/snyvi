@@ -132,10 +132,10 @@ snyvi send PLAN.md                 # send a file, print its link
 cat notes.md | snyvi send -t Notes # send stdin
 snyvi watch PLAN.md                # send now, and again on every save
 snyvi browse [dir]                 # read a folder from disk, nothing stored
-snyvi open                         # open the viewer in the browser
+snyvi open                         # open the viewer, in the window if one is up
 snyvi app                          # native window (see Desktop below)
 snyvi init-claude [--auto]         # register with Claude Code (user scope)
-snyvi prune --days 30 [--dry-run]  # delete unpinned documents older than N days
+snyvi prune --days 30 [--dry-run]  # delete what you deleted, and unpinned documents older than N days
 snyvi status                       # daemon health and version
 snyvi restart                      # after installing a new binary
 snyvi stop                         # shut the daemon down
@@ -268,14 +268,24 @@ From source, `cargo build --release` gives you snyvi alone; add
 | w     | maximise width                              |
 | z     | wrap long lines                             |
 | p     | pin (kept by `prune`)                       |
-| ⌫     | delete document                             |
+| n     | open the next document waiting              |
+| Del   | delete document (⌘/ctrl Z undoes it)        |
 | i     | inbox                                       |
-| f     | fullscreen the diagram                      |
+| f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
 | t     | toggle contents                             |
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+| alt ← / → | back / forward                          |
+
+Everything the keys do, a finger can do too: on a screen with no
+pointer the controls that appear on hover -- copy, rename, the `#`
+beside a heading, a code block's language -- are simply there, and the
+`? for keys` in the sidebar's footer opens the same box. Tab reaches
+every control in the order they are on the page; the search palette and
+the keys box keep focus inside them while open and give it back to
+where it was on Escape, and the find count is read out as it changes.
 
 ## Lines
 
@@ -378,6 +388,86 @@ beside a heading copies a link to that section, the way a line number
 copies a link to a line, and the contents write the same links. `t`
 hides the rail and stays hidden until you bring it back.
 
+On a window under 1100 px wide the rail no longer fits beside the
+document, and under 760 px neither does the sidebar. Each becomes a
+sheet over the document instead: `t` and `\` open it, so do the two
+buttons at the top of the page that appear at those widths, and Escape
+or a tap outside closes it. The contents open on the section you are
+in, and a tap on an entry goes there and puts the sheet away. Widen the
+window and the panes are panes again, as you left them.
+
+Both panes resize. Drag the seam between a pane and the document -- the
+sidebar's right edge, the rail's left -- and the pane follows, between a
+width where its rows are still readable and one past which the document
+would be the pane that does not fit: 200 to 440 px for the sidebar, 180
+to 400 for the rail. Double-click the seam for the default. The seam is
+a Tab stop too, and the arrow keys move it. The width is kept.
+
+## Arrivals
+
+A document that arrives while you are reading never takes the page
+away. It joins a queue: a row at the top of the sidebar under
+"Waiting", a mark on its row in the tree, and a bar above the document
+that counts -- "3 waiting" and the title of the oldest. `n` opens the
+oldest and takes it off, so the next `n` is the one after; a reader
+drains the queue with one key, in the order things came. Opening a
+document any other way -- the sidebar, the inbox, an agent's link --
+takes it off the same way, since read is read wherever you got to it.
+The queue lives in the daemon, so it is the same in every tab and the
+window, and it survives a restart.
+
+The inbox lists what is waiting first, oldest first, then everything
+else. "Mark all read" empties the queue without opening anything, for
+the day an agent sent thirty. Twelve arrivals in two seconds are twelve
+rows and one bar that says twelve.
+
+The one place an arrival opens by itself is the inbox with nothing
+waiting: the empty state exists to be filled. Before 0.14 an arrival
+opened itself whenever the page had gone 2.5 seconds without a scroll
+or a key, which is what reading a paragraph looks like.
+
+Back opens a document where you left it, not at the top: the place is
+written into the history entry as you leave and after each scroll, as
+a block and an offset into it, the way a save already keeps it. In the
+desktop window, which has no toolbar, alt+← and alt+→ are Back and
+Forward; in a browser they are the same one step, not two.
+
+Deleting is one keystroke and no question. `Del` deletes the document
+you are reading at once, and the line at the corner offers "Undo" for
+eight seconds — or ⌘/ctrl Z, which is where your hand goes anyway.
+Nothing is destroyed in the meantime: the daemon marks the document
+deleted and keeps it until `prune` runs, which is what makes the offer
+real. It disappears from the tree, the inbox, search and the queue in
+every tab at once, and comes back to the same place.
+
+What moves in the sidebar says so once, and briefly. An arrival's row
+is lit for a moment, the way a heading is where a link landed -- the
+same wash, so there is one sign to learn; a row you have read or
+deleted closes where it was before the list moves up, and one an undo
+put back is lit again. The bar over the document rises when it appears
+and stays put after that: a count that changes settles in, in place.
+Every motion on the page is under 200 ms except that wash, none of it
+runs while you read, and `prefers-reduced-motion` turns all of it off
+rather than slowing it down. The `#` beside a heading confirms a copy
+on the mark itself, not at the corner of the screen.
+
+## Where a link opens
+
+With `snyvi app` running, a link opens in that window rather than in a
+browser beside it. The window's page says it is one when it connects to
+the daemon's event stream, so the daemon knows a window is up for
+exactly as long as there is one -- quit it and the next link opens in a
+browser again, within a few milliseconds. `snyvi open`, `snyvi send
+--open`, `snyvi browse` and a click on a notification all hand the URL
+to the window and raise it.
+
+It changes what an agent is told, too. `send_document` used to answer
+with `http://127.0.0.1:7777/d/…` whatever was running, so a click on the
+agent's link opened a second copy of the viewer in a browser next to the
+window you were using. With a window up, the tool now answers that the
+document is waiting in snyvi and gives no link at all; without one, it
+gives the link as before.
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders
@@ -404,6 +494,11 @@ you have on screen a few times a second, only while a tab is connected,
 and only once a change has held still, so a file caught mid-write is
 never shown half-way. That is a handful of `stat` calls, not a
 recursive watch, so a repository of any size costs the same.
+
+A link into a folder lands where it points: `#L120` on a file opens it
+at that line, marked, and a section link opens it at that heading -- the
+same two the library's own documents answer to, and worth having because
+a link into a browsed file is how one agent tells you where to look.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does
@@ -441,7 +536,20 @@ came from the hook or from `send_document`; a SessionStart hook,
 installed by `init-claude`, records the session for the MCP server.
 When no snyvi tab has focus, a new document raises a desktop
 notification — `notify-send` on Linux, a toast on Windows, Notification
-Center on macOS (set `SNYVI_NOTIFY=0` to disable).
+Center on macOS (set `SNYVI_NOTIFY=0` to disable). On the free desktops
+the notification opens the document when you click it: in the window if
+one is running, raised, and in the browser otherwise. Windows wants a
+registered application id to be clickable at all and macOS's
+`display notification` carries no action, so there both are notices and
+not buttons. In the page a new document joins the queue, under
+"Arrivals" above.
+
+A notification is silent unless you ask: `SNYVI_SOUND=1` asks the
+desktop for its message sound with it, and a burst of arrivals -- an
+agent writing twelve files -- sounds once, not twelve times. It is a
+hint on the notification, so your volume, focus mode and do-not-disturb
+still decide, and nothing in the page ever plays anything. Windows
+toasts sound by default; `SNYVI_SOUND=0` silences them.
 
 ## Languages
 
@@ -473,7 +581,21 @@ architecture, the performance budgets, and the milestones.
 
 Release build on a 4-core container, headless Chromium, best of three
 for the render and daemon rows (`snyvi bench`); the page rows come from
-`bench/browser.mjs`.
+`bench/browser.mjs`. What the page does, as opposed to how fast, is
+read by `bench/ui.mjs`: where the contents' marker is after a read to
+the end, what a wheel over the rail moves, what Back does, whether a
+save keeps the place, what `t` opens at 1000 px, whether Tab reaches
+every control, what a drag on a pane's edge does, what `f` fills and
+what Escape gives back, what an arrival does to a reader in the middle
+of a page, whether a delete can be taken back, where a link into a
+folder lands, whether a page gives its connection back when it leaves,
+whether the daemon knows a window is up, and whether what moves in the
+sidebar moves once and briefly. Counts and
+positions, no clocks, so every one
+of its rows is enforced on every machine, CI's included. The desktop
+window's engine is not Chromium: `bench/webkit.py` drives the same page
+in WebKitGTK under Xvfb, by hand for now, and reads the two things only
+that engine got wrong.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|

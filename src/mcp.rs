@@ -7,12 +7,13 @@ use crate::receive::Payload;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
-const TOOL_DESCRIPTION: &str = "Send a finished document to snyvi, the user's document viewer, and get back a link. \
+const TOOL_DESCRIPTION: &str = "Send a finished document to snyvi, the user's document viewer. \
 Call this whenever you finish writing a plan, report, review, summary, design note, or any document the user \
 will want to read, and whenever the user asks to see a file. Prefer `path` for files you wrote to disk; use \
 `content` for text that is not a file (a review, a summary, a diff). Markdown and every kind of source file \
-are supported. The document opens in the viewer immediately; include the returned url in your reply so the \
-user can click it.";
+are supported. The document arrives at once and waits in the viewer to be read. The result says how to tell \
+the user where it is: when snyvi has its own window open it is already there and a link would only send them \
+to a browser beside it, so say it is waiting in snyvi; otherwise give them the url the result carries.";
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()
@@ -46,7 +47,7 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "snyvi", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document and share the link."
+                "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document, and tell them where it went the way the result says."
             }}),
             "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
             "tools/list" => {
@@ -59,9 +60,9 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool {name}") } })
                 } else {
                     match call_send(&paths, args, cwd.as_deref(), &session) {
-                        Ok(url) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": format!("Document is open in snyvi: {url}") }],
-                            "structuredContent": { "url": url },
+                        Ok(sent) => json!({ "jsonrpc": "2.0", "id": id, "result": {
+                            "content": [{ "type": "text", "text": sent.say() }],
+                            "structuredContent": { "url": sent.url, "window": sent.window, "title": sent.title },
                             "isError": false
                         }}),
                         Err(e) => json!({ "jsonrpc": "2.0", "id": id, "result": {
@@ -100,12 +101,33 @@ fn tool_spec() -> Value {
     })
 }
 
-fn call_send(
-    paths: &Paths,
-    args: Value,
-    cwd: Option<&str>,
-    session: &str,
-) -> anyhow::Result<String> {
+/// What became of a document, and how to tell the user about it.
+struct Sent {
+    url: String,
+    title: String,
+    /// Whether the daemon has a native window reading, which is where the
+    /// document now is -- and so whether a link is worth giving at all.
+    window: bool,
+}
+
+impl Sent {
+    fn say(&self) -> String {
+        if self.window {
+            format!(
+                "Waiting in snyvi: \"{}\". It is in the snyvi window, at the top of the queue; \
+                 tell the user it is there rather than giving them a link.",
+                self.title
+            )
+        } else {
+            format!(
+                "Waiting in snyvi: \"{}\". Give the user this link to read it: {}",
+                self.title, self.url
+            )
+        }
+    }
+}
+
+fn call_send(paths: &Paths, args: Value, cwd: Option<&str>, session: &str) -> anyhow::Result<Sent> {
     let s = |k: &str| {
         args.get(k)
             .and_then(Value::as_str)
@@ -128,11 +150,20 @@ fn call_send(
         origin: Some("mcp".into()),
     };
     let resp = client::send(paths, &payload)?;
-    Ok(resp
-        .get("url")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string())
+    Ok(Sent {
+        url: resp
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        title: resp
+            .get("doc")
+            .and_then(|d| d.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or("document")
+            .to_string(),
+        window: resp.get("window").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 fn write_msg(out: &mut impl Write, v: &Value) -> io::Result<()> {

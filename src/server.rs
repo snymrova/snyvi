@@ -20,6 +20,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -69,9 +70,43 @@ pub struct App {
     pub asset_v: String,
     /// Last time any open tab reported having focus; drives desktop notifications.
     pub last_focus: std::sync::Mutex<Instant>,
+    /// How many native windows are reading. `snyvi app` opens the page with a
+    /// mark on it, the page carries the mark into its event stream, and the
+    /// count falls when that stream ends -- so this is exactly as live as the
+    /// window is, with nothing to time out and nothing to leave stale when a
+    /// window is quit.
+    pub windows: AtomicUsize,
+    /// How many event streams are open, window or not. One per page, and a
+    /// page holds a browser connection for as long as it holds one: a browser
+    /// allows six to a host, so a page that does not give its stream back on
+    /// the way out costs the next page a socket. Reported so a probe can say
+    /// that it does.
+    pub streams: AtomicUsize,
+}
+
+impl App {
+    /// Is a native window up? What decides whether a link is handed to it or
+    /// opened in a browser beside it.
+    pub fn has_window(&self) -> bool {
+        self.windows.load(Ordering::Relaxed) > 0
+    }
 }
 
 type S = State<Arc<App>>;
+
+/// The most the queue is ever sent as. Past this a reader is not going to
+/// read down the line; the count beside the rows says how many there are.
+const QUEUE_MAX: usize = 500;
+/// How much of it a page opens with. The sidebar shows six and the bar shows
+/// the oldest; the inbox, which lists them all, asks for the rest itself. A
+/// library with hundreds waiting used to double the shell page.
+const QUEUE_BOOT: usize = 24;
+
+/// The queue's length, for the events and the boot payload: every tab keeps
+/// its count from here rather than by arithmetic on what it happened to see.
+fn waiting(app: &App) -> i64 {
+    app.store.waiting().unwrap_or(0)
+}
 
 pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let token = config::load_or_create_token(&paths)?;
@@ -103,6 +138,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         started: Instant::now(),
         asset_v,
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
+        windows: AtomicUsize::new(0),
+        streams: AtomicUsize::new(0),
     });
     crate::watch::spawn_browse_watcher(app.clone());
 
@@ -126,7 +163,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs", post(receive_doc))
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
+        .route("/api/docs/{id}/read", post(mark_read))
+        .route("/api/queue", get(queue))
+        .route("/api/queue/clear", post(clear_queue))
         .route("/api/docs/{id}/delete", post(delete_doc))
+        .route("/api/docs/{id}/undelete", post(undelete_doc))
         .route("/api/docs/{id}/history", get(history))
         .route("/api/projects/{id}/rename", post(rename_project))
         .route("/api/workflows/{id}/rename", post(rename_workflow))
@@ -236,6 +277,15 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
     // through the markup: the Mermaid bundle.
     if let Some(o) = boot.as_object_mut() {
         o.insert("v".into(), serde_json::Value::String(app.asset_v.clone()));
+        // What is waiting to be read, on every page: the bar above the
+        // document and the section at the top of the sidebar draw from it
+        // before the first paint, so a reload never loses count.
+        o.insert(
+            "queue".into(),
+            serde_json::to_value(app.store.queue(QUEUE_BOOT).unwrap_or_default())
+                .unwrap_or_default(),
+        );
+        o.insert("waiting".into(), json!(waiting(app)));
     }
     let page = INDEX_HTML
         .replace("{{V}}", &app.asset_v)
@@ -428,6 +478,10 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // shutdown endpoint, without having to guess which snyvi it is.
         "pid": std::process::id(),
         "docs": app.store.count().unwrap_or(0),
+        // Whether a link should be handed to a window or opened in a browser.
+        // `snyvi open`, `snyvi browse` and the MCP server all ask here.
+        "window": app.has_window(),
+        "streams": app.streams.load(Ordering::Relaxed),
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
@@ -613,13 +667,41 @@ async fn history(State(app): S, Path(id): Path<String>) -> Response {
     }
 }
 
+/// Delete at once, and say nothing first. The page offers Undo for a few
+/// seconds; the document is on disk until `prune` runs either way.
 async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
     match app.store.delete(&id) {
         Ok(true) => {
-            emit(&app, "deleted", json!({ "id": id }));
+            emit(
+                &app,
+                "deleted",
+                json!({ "id": id, "waiting": waiting(&app) }),
+            );
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// The other half of Undo. Gone means pruned, which is the one delete that
+/// cannot be taken back.
+async fn undelete_doc(State(app): S, Path(id): Path<String>) -> Response {
+    match app.store.undelete(&id) {
+        Ok(true) => {
+            let doc = app.store.get(&id).ok().flatten();
+            emit(
+                &app,
+                "restored",
+                json!({ "id": id, "doc": doc, "waiting": waiting(&app) }),
+            );
+            Json(json!({ "ok": true, "doc": doc })).into_response()
+        }
+        Ok(false) => (
+            StatusCode::GONE,
+            Json(json!({ "error": "that document has been pruned" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -655,9 +737,21 @@ fn notify_desktop(app: &App, doc: &Doc) {
     if focused_recently {
         return;
     }
-    crate::platform::notify(
+    // Clicking it opens the document where the reader reads: the window it
+    // belongs to, raised, or a browser when there is no window. The daemon is
+    // the one process that knows which, so it decides here rather than handing
+    // a URL to the desktop and hoping.
+    let url = format!("{}/d/{}", config::base_url(), doc.id);
+    let has_window = app.has_window();
+    crate::platform::notify_open(
         &doc.title,
         &format!("{} · {}", doc.project, doc.workflow_title),
+        move || {
+            if has_window && crate::desktop::hand_to_window(&url) {
+                return;
+            }
+            platform::open_url(&url);
+        },
     );
 }
 
@@ -685,10 +779,62 @@ async fn compare(
     Json(json!({ "a": da, "b": db, "html": html })).into_response()
 }
 
+#[derive(Deserialize)]
+struct EventsQ {
+    /// Set by a page that is inside the native window, so the daemon knows
+    /// there is one to hand a link to. A string rather than a bool because a
+    /// query string is not JSON: `?window=1` is what a page would naturally
+    /// send, and it is not a bool to serde.
+    #[serde(default)]
+    window: Option<String>,
+}
+
+impl EventsQ {
+    fn is_window(&self) -> bool {
+        self.window
+            .as_deref()
+            .is_some_and(|v| !matches!(v, "" | "0" | "false" | "False"))
+    }
+}
+
+/// Held by a page's event stream for as long as that stream lasts. A page that
+/// is closed, reloaded or navigated away from takes its connection with it,
+/// and both counts follow. Nothing here times out, so a window that is quit is
+/// not a window a moment later, and a page that is gone is not a socket.
+struct StreamMark {
+    app: Arc<App>,
+    window: bool,
+}
+
+impl StreamMark {
+    fn new(app: Arc<App>, window: bool) -> StreamMark {
+        app.streams.fetch_add(1, Ordering::Relaxed);
+        if window {
+            app.windows.fetch_add(1, Ordering::Relaxed);
+        }
+        StreamMark { app, window }
+    }
+}
+
+impl Drop for StreamMark {
+    fn drop(&mut self) {
+        self.app.streams.fetch_sub(1, Ordering::Relaxed);
+        if self.window {
+            self.app.windows.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Broadcast payloads are "<event name>\n<json>".
-async fn events(State(app): S) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+async fn events(
+    State(app): S,
+    Query(q): Query<EventsQ>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|m| {
+    let mark = StreamMark::new(app.clone(), q.is_window());
+    let stream = BroadcastStream::new(rx).filter_map(move |m| {
+        // Captured so that the mark lives exactly as long as the stream does.
+        let _keep = &mark;
         m.ok().map(|msg| {
             let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
             Ok(Event::default().event(name).data(data))
@@ -768,6 +914,45 @@ async fn rename_workflow(
     }
 }
 
+/// The queue: what arrived and has not been opened, oldest first.
+async fn queue(State(app): S, Query(q): Query<Limit>) -> Response {
+    match app.store.queue(q.limit.unwrap_or(QUEUE_MAX).min(QUEUE_MAX)) {
+        Ok(q) => Json(q).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A tab opened a document. Every other tab hears, so the same row leaves
+/// the queue everywhere at once; a document already read answers the same
+/// and tells nobody, since nothing changed.
+async fn mark_read(State(app): S, Path(id): Path<String>) -> Response {
+    match app.store.mark_read(&id) {
+        Ok(true) => {
+            emit(
+                &app,
+                "read",
+                json!({ "ids": [id], "waiting": waiting(&app) }),
+            );
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Everything waiting, read without being opened.
+async fn clear_queue(State(app): S) -> Response {
+    match app.store.mark_all_read() {
+        Ok(ids) => {
+            if !ids.is_empty() {
+                emit(&app, "read", json!({ "ids": ids, "waiting": 0 }));
+            }
+            Json(json!({ "ok": true, "n": ids.len() })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
 /// Pinning is UI state, so it needs no token; it only affects what `prune` keeps.
 async fn pin(State(app): S, Path(id): Path<String>, Json(b): Json<PinBody>) -> Response {
     match app.store.set_pinned(&id, b.pinned) {
@@ -800,7 +985,7 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             emit(
                 &app,
                 "doc",
-                json!({ "doc": doc, "url": url, "existing": received.existing }),
+                json!({ "doc": doc, "url": url, "existing": received.existing, "waiting": waiting(&app) }),
             );
             if !received.existing {
                 notify_desktop(&app, &doc);
@@ -815,9 +1000,15 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             };
             (
                 status,
-                Json(
-                    json!({ "id": doc.id, "url": url, "doc": doc, "existing": received.existing }),
-                ),
+                Json(json!({
+                    "id": doc.id,
+                    "url": url,
+                    "doc": doc,
+                    "existing": received.existing,
+                    // So the sender can say where the document went without a
+                    // second round trip: a window, or a link to click.
+                    "window": app.has_window(),
+                })),
             )
                 .into_response()
         }

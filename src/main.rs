@@ -77,7 +77,7 @@ enum Cmd {
         #[arg(short, long)]
         open: bool,
     },
-    /// Open the viewer (or a document) in the browser.
+    /// Open the viewer (or a document) in the native window if one is running, else the browser.
     Open { id: Option<String> },
     /// Read a folder straight from disk. Nothing is stored or added to the library.
     Browse {
@@ -187,7 +187,7 @@ fn main() -> Result<()> {
                 .to_string();
             println!("{url}");
             if open {
-                client::open_in_browser(&url);
+                client::open_where_the_reader_is(&url);
             }
             Ok(())
         }
@@ -217,7 +217,7 @@ fn main() -> Result<()> {
                 Some(id) => format!("{}/d/{id}", config::base_url()),
                 None => config::base_url(),
             };
-            client::open_in_browser(&url);
+            client::open_where_the_reader_is(&url);
             Ok(())
         }
         Cmd::Browse { dir, no_open } => {
@@ -230,7 +230,7 @@ fn main() -> Result<()> {
             let url = client::browse(&paths, &dir.to_string_lossy())?;
             println!("{url}");
             if !no_open {
-                client::open_in_browser(&url);
+                client::open_where_the_reader_is(&url);
             }
             Ok(())
         }

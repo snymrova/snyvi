@@ -11,7 +11,7 @@
 </head>
 <body>
 <div id="app">
-  <aside id="side">
+  <aside id="side" tabindex="-1">
     <div class="side-head">
       <a class="brand" href="/" data-nav="inbox"><span class="brand-mark"></span>snyvi</a>
       <button class="icon" id="btn-search" title="Search  ⌘K" aria-label="Search">
@@ -20,6 +20,7 @@
     </div>
     <div id="trees">
       <div id="inbox-row"></div>
+      <nav id="queue" aria-label="Waiting to be read"></nav>
       <nav id="browse-nav" aria-label="Folders"></nav>
       <nav id="tree" aria-label="Projects"></nav>
     </div>
@@ -35,27 +36,40 @@
         <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14M3 10h10a2.5 2.5 0 0 1 0 5H8M10 13l-2 2 2 2M3 15h2"/></svg>
       </button>
       <span class="spacer"></span>
-      <span class="hint">? for keys</span>
+      <button class="hint" id="btn-help" aria-label="Keyboard shortcuts">? for keys</button>
     </div>
+    <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="440" tabindex="0" title="Drag to resize · double-click to reset"></div>
   </aside>
   <main id="main">
-    <div id="find" hidden><input id="find-input" type="text" placeholder="Find in document" autocomplete="off" spellcheck="false"><span id="find-count"></span><button class="icon" id="find-prev" title="Previous (Shift+Enter)">↑</button><button class="icon" id="find-next" title="Next (Enter)">↓</button><button class="icon" id="find-close" title="Close (Esc)">✕</button></div>
+    <div id="chrome">
+      <button class="icon" id="btn-side" title="Sidebar  \" aria-label="Show sidebar" aria-controls="side">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+      </button>
+      <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
+      </button>
+    </div>
+    <div id="queue-bar" hidden role="status" aria-live="polite"></div>
+    <div id="find" hidden role="search"><input id="find-input" type="text" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span id="find-count" role="status" aria-live="polite"></span><button class="icon" id="find-prev" title="Previous (Shift+Enter)">↑</button><button class="icon" id="find-next" title="Next (Enter)">↓</button><button class="icon" id="find-close" title="Close (Esc)">✕</button></div>
     <div id="doc">{{INITIAL_HTML}}</div>
   </main>
-  <aside id="rail">
+  <aside id="rail" tabindex="-1">
     <nav id="toc" aria-label="Contents"></nav>
     <div id="meta"></div>
+    <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Contents width" aria-valuemin="180" aria-valuemax="400" tabindex="0" title="Drag to resize · double-click to reset"></div>
   </aside>
 </div>
+<div id="scrim"></div>
 <div id="toasts" aria-live="polite"></div>
 <div id="palette" hidden>
-  <div class="palette-box" role="dialog" aria-label="Search">
+  <div class="palette-box" role="dialog" aria-modal="true" aria-label="Search">
     <input id="palette-input" type="text" placeholder="Search documents…" autocomplete="off" spellcheck="false">
     <ul id="palette-list" role="listbox"></ul>
   </div>
 </div>
 <div id="help" hidden>
-  <div class="help-box" role="dialog" aria-label="Keyboard shortcuts">
+  <div class="help-box" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabindex="-1">
+    <button class="icon help-close" id="help-close" title="Close (Esc)" aria-label="Close">✕</button>
     <h2>Keys</h2>
     <dl>
       <dt>⌘K</dt><dd>search</dd>
@@ -65,7 +79,8 @@
       <dt>s</dt><dd>split / inline diff view</dd>
       <dt>v</dt><dd>preview page / source</dd>
       <dt>/</dt><dd>find in document</dd>
-      <dt>⌫</dt><dd>delete document</dd>
+      <dt>n</dt><dd>open the next document waiting</dd>
+      <dt>Del</dt><dd>delete document (⌘/ctrl Z undoes it)</dd>
       <dt>p</dt><dd>pin (kept by prune)</dd>
       <dt>i</dt><dd>inbox</dd>
       <dt>w</dt><dd>maximise width</dd>
@@ -76,6 +91,7 @@
       <dt>\</dt><dd>toggle sidebar</dd>
       <dt>o</dt><dd>open source</dd>
       <dt>⌘K :120</dt><dd>go to line 120</dd>
+      <dt>alt ← / →</dt><dd>back / forward</dd>
       <dt>esc</dt><dd>close</dd>
     </dl>
   </div>

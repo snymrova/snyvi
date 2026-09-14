@@ -11,6 +11,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Mermaid diagrams | Agents put flowcharts and sequence diagrams in almost every plan. Today they show as code. Vendor the library in the binary, load it only when a page has a `mermaid` block, render after first paint so text never waits. | M | **done 0.2** |
 | A big diagram you can read | A 20000-unit flowchart fitted into the reading column drew 30 px tall: the one diagram worth drawing was the one nobody could read. Each is a viewport now — ⌘/ctrl + scroll zooms toward the cursor, drag pans, `f` fills the screen, `0` fits — driving the SVG's own `viewBox`, so strokes stay crisp and nothing is scaled twice. `docs/DIAGRAMS.md` phase 3. | M | **done 0.9** |
+| What moves, moves once | The sidebar is rebuilt from state whenever the library moves, so an arrival's row appeared from nowhere, a read's row was just gone, and the bar over the document re-ran its rise for every arrival after the first. The page keeps the moment a row arrived or left and a rebuilt row resumes its animation at a negative delay, so an arrival washes once, a read closes its row where it was, an undo washes it back, and the count settles into a bar that stays. Reduced motion means none. | S | **done 0.15** |
 | Side-by-side diff with word-level highlights | "Compare with previous" and sent patches are inline only. Reviews read far better in two columns with changed words emphasised. Toggle with `s`. | M | **done 0.2** |
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
@@ -24,8 +25,12 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | The rail follows the reader | The contents were marked and never moved: on a plan with 46 headings the marker left the visible rail at section 4 and stayed gone, the actions under the contents were a scroll away, a wheel over either pane reached nothing, and a click on an entry added a history entry that Back turned into a rebuild at the top. Contents and actions scroll apart, the marker is kept in view, a wheel the pane cannot use goes to the document, a jump is instant and lands. | S | **done 0.11** |
 | A refresh keeps the place | A watched file saved while it is being read swapped the body and restored a pixel offset into blocks that were still 60 px placeholders: the reader landed 57 paragraphs from where they were. The place is a block and an offset into it now. | S | **done 0.11** |
 | Section links | The `#` beside a heading was rendered `inert` and drawn outside a box that paint containment clips to, so it existed in the markup and nowhere else. It is a link now: a click writes the section into the URL and the clipboard, the way a line number does, and the contents write the same slugs. | XS | **done 0.11** |
-| Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key. | S | next |
-| Back returns to where the reader was | A document opened again through Back opens at the top. Keep the place in the history entry, the way a refresh now keeps it. | XS | next |
+| Contents on a narrow window | Below 1100 px the rail is gone and `t` does nothing; below 760 px the sidebar is an overlay with no backdrop, no tap-outside and no Escape. Each becomes a sheet over the document, opened by its key or a button in the header, closed by Escape or a tap outside, and the contents open on the current section. | S | **done 0.12** |
+| Panes that resize | The sidebar was 264 px and every title in it was cut at 26 characters, three plans with the same first words among them. Both panes' edges drag, between a floor and a ceiling, by keyboard too, and the width is kept. | S | **done 0.13** |
+| A diagram fills the screen from inside the page | In the Linux window's engine a figure of its own in the top layer drew every glyph as nothing, and came back the size of its placeholder until the next scroll. The figure is laid over the page and the document asks for fullscreen: the same in every engine, and the labels are drawn in that one. | S | **done 0.13** |
+| Back returns to where the reader was | A document opened again through Back opened at the top. The place is in the history entry now, written as the reader leaves and after each scroll, the way a refresh keeps it; and alt+← is Back in the window, which had no way back at all. | XS | **done 0.14** |
+| An arrival never takes the page away | An arrival opened itself whenever the page had gone 2.5 s without a scroll or a key -- which is what reading a paragraph looks like -- and with several agents sending, the document changed under the reader many times an hour, with no way back in the window and no trace of the new one once its toast was gone. Arrivals join a queue: a row in the sidebar, a mark in the tree, a bar above the document that counts, `n` to read down the line. The one place an arrival opens itself is an inbox with nothing waiting. | S | **done 0.14** |
+| A link into a folder lands | `#L120` and a section link opened a document where they pointed and a browsed file at the top: the browse path rendered, scrolled to 0 and never looked at the fragment, so one agent's link into another's checkout landed nowhere. Both land now, the same way, past blocks that are still placeholders. | XS | **done 0.15** |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
 ## B. Library and organisation
@@ -36,11 +41,11 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | One workflow per Claude Code session | Hook sends and MCP sends from the same session land in two workflows because the MCP server cannot see Claude's session id. A `SessionStart` hook can record `cwd → session` in the config dir; the MCP server reads it. Result: one workflow per session, titled from its first document. | S | **done 0.2** |
 | Search filters | Scope search to a project, a kind, or a date range with prefixes (`p:snyvi kind:diff`). | S | **done 0.2** |
 | Delete a document from the UI | With confirmation. Prune covers bulk; users still want to remove one. | S | **done 0.2** |
-| Delete with undo instead of a dialog | The confirmation is `window.confirm`, which the native window draws as the toolkit's dialog in the toolkit's theme. Delete at once and offer "Undo" in the toast for eight seconds, over a soft delete that prune makes final. | M | next |
-| Arrivals that come in a burst | Each arrival is a toast and nothing caps them: an agent that writes twelve files stacks twelve. Past three in a few seconds, one toast that counts. | XS | next |
+| Delete with undo instead of a dialog | The confirmation was `window.confirm`, which the native window draws as the toolkit's own dialog in the toolkit's theme, over a page it has nothing to do with, and which had to be answered before anything else could happen. `Del` now deletes at once and the toast offers "Undo" for eight seconds, or ⌘/ctrl Z; underneath it is a `deleted_at` column that every read of the library goes past through one view, and `prune` makes it final. | M | **done 0.15** |
+| Arrivals that come in a burst | Each arrival was a toast and nothing capped them: an agent that writes twelve files stacked twelve. They are rows on the queue now, and the bar above the document says "12 waiting"; there is no arrival toast at all. | XS | **done 0.14** |
 | Rename workflow and project | Session-derived titles are guesses; let the user fix them inline. | S | **done 0.4** |
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
-| Unread state persisted | Badges survive restarts. | XS | later |
+| Unread state persisted | The badge was a count per project in one tab's memory: a sibling document from the project being read left no mark, and a restart forgot the rest. Unread is a column now and the queue is a query on it, so it is the same in every tab and the window and survives a restart. | XS | **done 0.14** |
 | Archive a project | Hide finished projects from the tree without deleting. | S | later |
 | Export | Copy as Markdown, print stylesheet polish, save as PDF via print. | S | maybe |
 
@@ -61,10 +66,12 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
 | Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
+| A sound on arrival | Asked for, and declined by default: a sound is the one signal a reader cannot ignore by not looking. `SNYVI_SOUND=1` puts a sound hint on the desktop notification -- the channel that already knows the volume and do-not-disturb -- and a burst sounds once. Nothing in the page plays anything. | XS | **done 0.15** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
+| The window is where a link opens | `send_document` answered with `http://127.0.0.1:7777/d/…` whatever was running, so a click opened a second viewer in a browser beside the window, and the desktop notification opened nothing at all. The window's page now says it is one when it opens its event stream, so the daemon knows for exactly as long as there is a window; `snyvi open`, `send --open`, `browse` and a click on the notification hand the URL to it and raise it, and the tool answers that the document is waiting in snyvi, with no link, when there is a window to wait in. | S | **done 0.15** |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
-| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. | S | next |
+| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. With 0.16. | S | later |
 | Split the window into its own binary | The desktop package was one binary, so `snyvi serve` carried the linked engine with no window open: 66 MB against the static build's 34 MB. `snyvi-app` is now the window alone, and an add-on that depends on snyvi rather than replacing it. Daemon back to 35 MB, and the install stops being a choice. | M | **done 0.6** |
 | Windows | One zip with both executables, because there is no static/dynamic fork to make: snyvi.exe links no engine and the window uses WebView2, which ships with the OS. The daemon, CLI, MCP server and hook all needed a platform layer first -- opening a URL, raising a notification, ending a process, starting detached. | M | **done 0.7** |
 | macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. Cheaper since 0.7: the platform layer already has the macOS path for notifications and for opening a URL, so what is left is the matrix leg and a .app bundle. | S | later |
@@ -76,12 +83,14 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Content-Security-Policy header | The UI page has no CSP yet. Scripts and styles come only from the daemon; say so. | XS | **done 0.2** |
 | A sidebar that does not carry the library | `Store::tree()` returned every document there was, and the shell embeds what it returns in every page it serves: 383 KB and 13,213 rows at 3000 documents, with one 362-718 ms task building them before the reader could do anything, and the same cost again on every arrival. A project row is two numbers now and what is behind it is fetched when it is expanded. | M | **done 0.9** |
+| A page gives its socket back | Every page holds one connection open for its event stream, and a browser allows six to a host over HTTP/1.1. A page on its way out kept its own until it was destroyed, so eight page loads in a row left eight streams behind, the pool ran out at six, and the next page did not load for 25 seconds. The stream is closed on the way out now and opened again by a page that comes back from the back/forward cache. Six *live* tabs still spend all six, which is a real limit and its own fix. | XS | **done 0.15** |
+| Six tabs, six sockets | With the leak above fixed, six pages that are genuinely open still hold all six connections a browser allows to one host, and the seventh request from any of them waits. HTTP/2 would multiplex them and is not available to a plain `http://` origin, so the fix is one stream shared between tabs (a SharedWorker) or a poll that frees the socket between turns. Not felt yet: it takes six snyvi tabs at once. | M | later |
 | Virtualised rendering above ~200k lines | Chromium copes up to about 100k lines with `content-visibility`; beyond that, page the lines from the server on scroll. | M | later |
 | Token rotation | `snyvi token --rotate` for when a token leaks into a log. | XS | later |
 | Size, start-up and memory in the bench | The README's binary size, cold start and resident rows were hand-measured and enforced by nothing, and had drifted. `snyvi bench` starts a daemon of its own and budgets all three, with sends and a page's first byte beside them. | S | **done 0.10** |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
-| The UI's behaviour in CI | Every fault in 0.11 was found by driving Chromium against a daemon and measuring: where the marker was, what a wheel moved, what Back did. Those probes belong beside the browser bench, run on every push, so the rail cannot quietly stop following again. | S | next |
-| Keyboard and screen-reader pass | The palette and the help box trap no focus and return it nowhere; the find count is not announced; hover-only controls (copy, rename, the `#`) have no equivalent under a finger. One pass, with the checks kept. | S | next |
+| The UI's behaviour in CI | Every fault in 0.11 was found by driving Chromium against a daemon and measuring: where the marker was, what a wheel moved, what Back did. Those probes are `bench/ui.mjs` now, beside the browser bench and on every push, so the rail cannot quietly stop following again. | S | **done 0.12** |
+| Keyboard and screen-reader pass | The palette and the help box trap no focus and return it nowhere; the find count is not announced; hover-only controls (copy, rename, the `#`) have no equivalent under a finger. One pass, with the checks kept in `bench/ui.mjs`. | S | **done 0.12** |
 
 ## Explicitly not planned
 
@@ -641,22 +650,347 @@ Also: the inbox row is a link rather than a div with a click handler, so
 Tab reaches it; the active row and the current entry carry
 `aria-current`; the panes' scrollbars are thin.
 
+## 0.12: the chrome at every width, and by keyboard
+
+The rule 1.0 set below: nothing goes in that a probe cannot check, and
+nothing is checked off without one. So this release is two things, the
+chrome and the probe of it, and the probe is `bench/ui.mjs`: the 0.11
+measurements kept, beside `bench/browser.mjs` and run by CI on every
+push, plus the rows for what 0.12 adds. Twenty-three rows, counts and
+positions only, so every one is enforced on every machine:
+
+| | reads |
+|---|---|
+| the rail, 1280 px | contents scroll on their own; marker in view at 60% and at the end; 5600 px of wheel over the rail moves the document; a wheel over the sidebar does; a click on an entry adds no history and lands 28 px in; Back moves to the previous section without a rebuild; a save keeps block and offset; `j` puts the contents back at the top; `t` survives a reload; a link to a section lands with the marker in view; the `#` writes the URL and moves nothing |
+| narrow windows | at 1000 px `t` opens a 320 px sheet on the current section with focus inside, and Escape closes it; the button opens it and a tap outside closes it; an entry in the sheet goes to its section and closes; at 700 px `\` opens the sidebar the same way; a row in it opens the document and closes, and at 1280 px again both panes are back; `? / ⌘K w z t \ i j` do what the help box says at both widths |
+| by keyboard | Tab from the top reaches every control, 66 stops; the palette and the help box keep focus in and give it back; the find count is a live region; copy, rename and the `#` are visible with no pointer to hover with |
+
+What the chrome does now: under 1100 px the rail is a sheet over the
+document, under 760 px so is the sidebar; `t` and `\` open the sheet
+instead of changing the setting the wide layout keeps, two buttons at
+the top of the page do the same for a finger, Escape or a tap on the
+scrim closes it, and the contents inside open on the current section,
+which the hidden pane could never scroll to. The palette and the help
+box are dialogs: the page behind them is inert, Tab stays inside, and
+whatever had focus gets it back. The help box has a close button and
+the "? for keys" in the footer opens it, because a phone has neither a
+`?` nor a pointer. Under `(hover: none)` the controls that appear on
+hover are simply there. The find count is a polite live region.
+
+What the probe found on the way, none of it visible from the code:
+
+- The sheet's rules sat above the rule that gives both panes
+  `display: flex`, at equal specificity, and lost. The first run read
+  the rail still beside the document at 1000 px.
+- The marker was an IntersectionObserver firing when a heading crossed
+  a band 100 to 320 px below the top edge. A jump of a page or more can
+  land with no heading in that band, and then nothing fires and the
+  marker stays on the section the reader left -- or, on a fresh page,
+  never appears: the sheet opened at 50% of the document with no
+  current entry at all. Both rails now read every heading's position on
+  the frame after a scroll, which headings can afford because they opt
+  out of `content-visibility`. At the very end the last section is
+  current even when it is shorter than the fold, which the plan for the
+  next release had listed.
+- Tab reached the copy button of a code block below the fold and the
+  next Tab landed on the body, so the rail's entries were never reached
+  by keyboard. The browser focuses an element inside a placeholder
+  without bringing it on screen; the scroll that does, aimed through
+  placeholders, overshoots by a screen; and a focused element that ends
+  up inside a skipped block is blurred. A block with focus in it is
+  never a placeholder again, and the scroll is applied twice, as
+  `jumpTo` does.
+- A table below the fold was a Tab stop, because as a placeholder it
+  counts as a scroller, and stopped being one the moment it was laid
+  out and fit, at which point the browser dropped the focus it had just
+  given it. Tables opt out of `content-visibility` with the headings.
+- Navigating from the sidebar overlay at 700 px used to set the wide
+  layout's `data-side` to hidden, so a window widened afterwards had no
+  sidebar. The sheet closes instead, and the row that widens the
+  window back holds it.
+- Headless Chromium has no pointing device and answers `(hover: none)`
+  already, and the DevTools media emulation does not change that; the
+  row asks for a touch screen instead, which is the case the rule is
+  for.
+- A wheel that takes the contents to their end is spent there, as it
+  would be on any pane the browser chained itself; the next one moves
+  the document. The row allows one wheel's worth.
+
+## 0.13: the panes fit the reader
+
+A screenshot of the library in use, in the window: a 264 px sidebar
+with every title in it cut at 26 characters -- "Generation model
+comparison: Op…" three times over, three plans with the same first
+words -- and a report that a diagram filled to the screen showed its
+boxes and none of its words, and came back blank until the page was
+scrolled. The first was a width nobody had meant as a limit; the second
+was two faults, and neither showed in Chromium.
+
+Each pane's edge drags now, the sidebar's right and the rail's left,
+between a width where the rows are still readable and one past which
+the document would be the pane that does not fit -- 200 to 440 px and
+180 to 400 -- with double-click for the default, the arrow keys for a
+keyboard, and the width kept, applied by boot.js before first paint so
+nothing jumps. The width is the custom property the grid already read,
+so the sheet at 760 px, the wide layout's rules and the rail's own
+scroll follow without a change.
+
+The diagram was WebKitGTK, the engine of the Linux window. Driven under
+Xvfb, a plain page with a bold word, a button, an SVG `<text>` and a
+`foreignObject` went fullscreen as an element and drew none of them: the
+rects stayed, every glyph went, and the button shrank to its padding,
+so the glyphs had no width either. The same page with the document as
+the fullscreen element drew everything; so did the element with the
+DMA-BUF renderer off, or compositing off. The fault is the engine's
+element fullscreen on its default path, and nothing in a page mends it
+there; what a page can do is keep the figure out of the top layer. `f`
+and the button lay the figure over the page from where it is, as a
+fixed box, and the document asks the browser for fullscreen as a
+courtesy that hides the browser's chrome where it is granted. The same
+result in every engine, and the labels are drawn in this one.
+
+The blank on the way back was `content-visibility: auto`. Leaving the
+top layer put the figure back in the flow as a placeholder, and WebKit
+did not read again whether it was near the viewport until the next
+scroll, so the frame measured 0 × 0 and the fit that runs after
+fullscreen returned early with the fullscreen's zoom still on it.
+Chromium got this right for a click on the button only because 0.12's
+focus handler had marked the block visible, and would have got it wrong
+for `f`. A figure that has filled the screen is marked visible for
+good: it is the one the reader is looking at.
+
+The rows, in `bench/ui.mjs` beside the 0.11 and 0.12 ones, 32 in all:
+
+| | reads |
+|---|---|
+| the panes' edges | a 120 px drag makes a 384 px sidebar and the document starts at 384; 600 more stops at 440; 440 after a reload; ArrowLeft makes 424 and announces it; double-click gives 264 and a reload keeps it; the rail goes from 232 to 332 and back |
+| a diagram, filled | `f` makes the frame the window, the figure not in the top layer, the labels laid out; Escape gives back a fitted figure at column width with no scroll, the document where it was; the button does both |
+
+`bench/webkit.py` reads the same two rows in WebKitGTK, off the pixels
+for the first -- the label's box has ink in it -- since layout was what
+said the labels were there when the screen said they were not. By hand
+for now: the only runners with the engine are the ones that build the
+window.
+
+## 0.14: a read that is never interrupted
+
+A report from use, with several agents sending: "I was reading a doc,
+then another doc came and everything changed. It just showed the doc,
+and I was not able to go to the previous one, and it did not ask."
+Three faults, and all three were in the design rather than in the code.
+
+The page opened an arrival by itself whenever the reader had gone 2.5
+seconds without a scroll, a key, a click or a wheel and had nothing
+selected. That is what reading a paragraph looks like. The rule was
+written for a tab left open on another monitor, and it cannot tell
+reading from absence; with three agents finishing at once it guessed
+wrong many times an hour. There was no way back in the window, which
+has no toolbar and had no key for it. And once the arrival's toast had
+gone, eight seconds later, nothing said it had come: the badge was a
+count per project, kept in one tab's memory, skipped for the project on
+screen, and forgotten on restart.
+
+The reader's proposal was a queue, and it is a better design than the
+"open or dismiss" strip it replaced in the plan: a strip asks a question
+and the question expires; a queue makes no demand. What arrives and is
+not opened is on it, in arrival order. It is the unread set with an
+order and nothing more -- an `unread` column, one query -- so it lives
+in the daemon, is the same in every tab and the window, and survives a
+restart. It shows in three places from one state: a "Waiting" section
+at the top of the sidebar with the oldest six and "N more"; the same
+mark on each row in the tree; and a bar above the document, in the
+document's measure, that counts and names the oldest, with Open, Show
+all and Mark all read. The bar has no height, so a bar that appears
+mid-read lays over the page's top margin rather than pushing the text
+down under the reader. `n` opens the oldest and takes it off, so the
+next `n` is the one after. Opening a document any other way takes it
+off the same way, and every tab hears through a `read` event. The
+inbox lists what is waiting first, then everything else. The one place
+an arrival still opens itself is an inbox with nothing waiting, which
+is the empty state that exists to be filled; an inbox with a queue on it
+is the queue, and the arrival is a row. There is no arrival toast any
+more: the row and the bar are the notice, and twelve in two seconds are
+twelve rows and a bar that says twelve.
+
+Back opens a document where the reader left it. The place -- a block
+and an offset into it, the shape a save already keeps -- is written into
+the history entry as they leave and 400 ms after each scroll, the second
+for the departures the page never sees: the browser's own Back and
+Forward. It is read only on a move through history, so a preview
+toggled or a split view still starts at the top. alt+← and alt+→ are
+Back and Forward in the page, for the window; a browser with the same
+shortcut yields it to the page's preventDefault, so there it is one step
+and not two.
+
+And Backspace no longer deletes: a key a reader leans on while thinking
+is not a key to lose a document to, least of all once delete loses its
+dialog in 0.15. Delete is on Del, and on the button.
+
+The rows, in `bench/ui.mjs`, eight more for 40 in all:
+
+| | reads |
+|---|---|
+| arrivals, while reading | an arrival at block 30 of the plan leaves the page at block 30, the bar reading "1 waiting" with its title, one row in the sidebar, one mark in the tree; `n` opens it and every mark is gone; alt+← lands on the plan at the same block and offset; alt+→ is the arrival again; twelve at once read "12 waiting", six rows and "6 more" in the daemon's order; a reload still says twelve; `i` lists the twelve first; an arrival on that inbox is a 13th row and not a page, and Mark all read empties it through a reload; an arrival on an empty inbox opens itself, read |
+
+## 0.15: the library in use
+
+Three things a reader does with a document that the viewer answered
+badly, all of them at the edge where snyvi meets the rest of the
+desktop.
+
+**A link belongs in the window.** With `snyvi app` running, an agent's
+`send_document` still answered with `http://127.0.0.1:7777/d/…`, so a
+click on the agent's link opened the default browser next to the window
+the reader was using: a second copy of the viewer, with the same library
+in it, and no way for either to know about the other. The daemon had no
+idea a window existed.
+
+It does now, and the way it learns is the cheapest one available: the
+window's own page says so. `snyvi app` opens the first URL with
+`?window=1` on it; the page latches that into session storage, takes it
+out of the address so nothing copied from the bar carries it, and puts
+it on the query of its event stream. The daemon counts window streams,
+and the count falls when the stream ends. So the answer is live by
+construction rather than by a timeout: a window that is quit, crashes or
+is closed to the tray-less taskbar takes its connection with it, and
+`/api/health` said so 32 ms later when it was measured. A window closed
+to the tray keeps its webview, and its connection, which is right --
+that window is still the place to open things.
+
+With that, `snyvi open`, `snyvi send --open`, `snyvi browse` and a click
+on a desktop notification all hand the URL to `snyvi-app`, whose own
+single-instance handling navigates the window and raises it. That was
+already there for a second `snyvi app`; it just had nobody calling it.
+And the notification, which opened nothing at all before, opens the
+document: `notify-send -A` waits for the click and prints the action
+back, so one waiting process at a time carries it and a new arrival
+replaces it. Windows needs a registered application id to be clicked at
+all and macOS's `display notification` has no action, so on those two it
+is the notice it always was.
+
+The last piece is what the agent is told, which is the part the reader
+noticed: with a window up, the tool now answers "Waiting in snyvi" and
+no URL, because a URL is an invitation to open the wrong thing. Without
+one it answers with the link, as before. The reply also stopped saying
+the document is *open*, which stopped being true in 0.14: it waits.
+
+**A delete asks nothing and can be undone.** The confirmation was a
+`window.confirm`, which in the native window is the toolkit's own dialog
+in the toolkit's theme, drawn over a page it has nothing to do with, and
+which has to be answered before anything else can happen -- and which,
+answered, destroyed the document. Now `Del` deletes at once and the line
+at the corner offers "Undo" for eight seconds, or ⌘/ctrl Z, which is
+where the hand goes first.
+
+Underneath is a `deleted_at` column and one SQL view. Every read of the
+library -- the tree, the inbox, search, history, the queue, the counts --
+goes through `live_docs` rather than `docs`, so a deleted document is
+gone from all of them by construction, and not by a condition that the
+next query written could forget. The view names `rowid`, which a view
+does not have of its own and which every ordering here breaks ties with.
+Undo is one column back. `prune` is what makes a delete final, and it
+takes deleted documents whatever their age and whether or not they are
+pinned: the reader has already said so, and the eight seconds they could
+have taken it back in belong to that minute, not to next month.
+
+**A link into a folder lands.** `#L120` and a section link opened a
+document where they pointed, and a browsed file at the top: the browse
+path rendered, scrolled to zero, and never looked at the fragment.
+Between two agents working in one checkout, a link into a browsed file
+is exactly how one says where to look. Both paths land the same way
+now, and neither leaves it to the browser's own fragment scroll, which
+aims at blocks that are still `content-visibility` placeholders and
+stops short.
+
+**And one the probes found on the way.** The browse rows load a page,
+then another, then another, and on the third pass the harness reported
+that a document was being held open: no load event in 20 seconds. The
+daemon answered the same URL in 4 ms throughout, so it was not the
+daemon; what was pinned was the browser's connection pool. Every snyvi
+page holds one connection open for its event stream, a browser allows
+six to a host over HTTP/1.1, and a page on its way out keeps its own
+until it is destroyed -- so eight loads in a row left eight streams
+behind, the count sat at six, and the next page waited for the pool to
+time one out. The page closes its stream on the way out now, and a page
+restored from the back/forward cache opens one again and catches up on
+what it missed. The count sits at one or two through eight loads, and a
+row reads it off the daemon.
+
+That leaves the honest half of the same limit: six tabs that are really
+open do spend all six connections, and the seventh request waits. It
+wants one stream shared between tabs or a poll that frees the socket,
+and it is in the E table as its own piece of work. Nobody has six snyvi
+tabs open yet.
+
+**What moves, moves once.** The page had a motion system already --
+one curve, 140 to 180 ms, enters only, off under reduced motion -- and
+the question was not what to add but which changes were still a cut a
+reader could miss. Three were, and one was noise. The sidebar is
+rebuilt from state whenever the library moves, so a row had no past to
+animate from: an arrival's row simply appeared, a read's row was simply
+gone, and the bar over the document, rebuilt with the rest, ran its
+rise again for every arrival after the first -- twelve arrivals rose
+twelve times. Now the page keeps the moment a row arrived or left, for
+as long as its motion lasts, and a row rebuilt mid-motion starts its
+animation at a negative delay, where the last one was. So an arrival
+washes its row once, the way a heading is lit where a jump landed,
+whatever the tree does under it; a row that was read or deleted is
+drawn closing, 140 ms, in the place it had; an undo washes it back;
+and the bar rises when it appears and stays, the count settling in
+when it changes. The `#` beside a heading confirms a copy on the mark
+itself rather than by a toast at the corner, which for a click at the
+heading is the wrong distance away.
+
+What was not added is the longer list: nothing runs while the page is
+read, nothing bounces, nothing waits for a spinner that would outlast
+the work, and reduced motion means none rather than slower. The rows
+read the page's own animation list, so a wash that plays twice, a bar
+that rises twice, a row that is just gone, anything past 700 ms or
+running forever, and anything at all under reduced motion, all fail.
+
+And a sound, since it was asked for: not in the page, and not by
+default. A sound is the one signal a reader cannot decline by not
+looking, which is the opposite of what 0.14 built, and a page cannot
+play one in a browser tab without a gesture anyway. The desktop's own
+notification is the channel that already knows the volume, the focus
+mode and do-not-disturb, so `SNYVI_SOUND=1` puts the freedesktop
+`sound-name` hint on it (a named sound on macOS; Windows toasts sound
+unless told not to, and `SNYVI_SOUND=0` tells them), and a burst is one
+sound: at most one every two seconds, which a test holds.
+
+The rows, in `bench/ui.mjs`, twenty-one more for 61 in all:
+
+| | reads |
+|---|---|
+| a delete, and the way back | `Del` on an open document leaves nothing asked -- a `confirm` would hang the probe, which is the check -- the row is out of the inbox and the toast carries an Undo; the button puts the document back where it was deleted from; ⌘Z does the same without the toast; and a delete the reader does not undo is still gone after a reload, from the inbox and from search, because the daemon did it |
+| a link into a folder | a browsed Markdown file opened at a section link lands with the heading 24 px into the pane, 11,208 px down the file; `code.rs#L300` marks one line, the one that reads `line_300`, and it is on the screen |
+| the socket a page holds | eight page loads in a row all load, and the daemon is holding one event stream at the end of them, not eight |
+| a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
+| what moves, and for how long | an arrival's row carries one wash, and 250 ms later, rebuilt under a tree refetch, the same wash is 250 ms in rather than starting over; a second arrival leaves the bar element in place with no rise running and the count ticking; nothing running is over 700 ms or endless; `n` draws the row it read closing, and it is gone 400 ms later; the `#` reads Copied and raises no toast; and under reduced motion the page has no animation at all |
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
 the three desktops, a reader who has never seen it is not surprised by
 anything it does, and every number the README quotes is a test that
 would fail if it stopped being true. The bench already does the last of
-these for the daemon and the renderer; 0.11 is the first time the
+these for the daemon and the renderer; 0.11 was the first time the
 behaviour of the page was measured the same way, and it found eleven
-faults in an afternoon. So the rule for what is left: nothing goes into
+faults in an afternoon; 0.12 made the measuring a check in CI, and the
+check found six more before it passed; 0.13's two faults were in an
+engine the check does not run, and got a harness of their own; 0.14's
+three came from a reader with several agents, and were the design's; and
+0.15's three were at the edge where snyvi meets the rest of the desktop,
+which is the part no probe had ever been pointed at. So the rule for
+what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
 
 Each phase is a release, in this order, because each one's probes are
 what the next one is measured with.
 
-**0.12: the chrome at every width, and by keyboard.** Below 1100 px the
+**0.12: the chrome at every width, and by keyboard** (shipped; the notes
+above). Below 1100 px the
 rail is removed and `t` is dead; below 760 px the sidebar is an overlay
 with no backdrop and no way out but its key. Each becomes a sheet over
 the document, opened by its key or a button in the header, closed by
@@ -668,28 +1002,47 @@ diagram tools already are. Probe: Tab from the top of the page reaches
 every control; at 700 and 1000 px every key still does what the help box
 says. Cost M.
 
-**0.13: a read that never loses its place.** Back to a document opens it
-where the reader left it, the way a refresh now does; the last heading
-of a document becomes current when its section is shorter than the fold,
-instead of the one before it; the browse path lands a fragment the way
-the document path now does. Probe: read to the end, `j`, Back, same
-block. Cost S.
+**0.13: the panes fit the reader** (shipped; the notes above). The
+sidebar and the rail resize by drag and by key, within limits, and
+remember it; a diagram fills the screen from inside the page, since the
+Linux window's engine draws no text in an element of its own in the top
+layer. Probe: the nine rows above. Cost S.
 
-**0.14: the library, in use.** Delete without a dialog: the document goes
-at once and the toast offers "Undo" for eight seconds, over a soft
-delete that `prune` makes final. Arrivals that come in a burst become
-one toast that counts. Unread badges survive a restart. Probe: delete,
-undo, the row is back; twelve sends in two seconds, one toast. Cost M.
+**0.14: a read that is never interrupted** (shipped; the notes above).
+An arrival joins a queue and never takes the page away; `n` reads down
+the line; Back opens a document where the reader left it and works in
+the window; unread is the daemon's and survives a restart. (The last
+heading becoming current at the end of a short final section, listed
+here before, came with 0.12's marker; the browse path landing a
+fragment moves to 0.15 with the rest of the library work.) Probe: the
+eight rows above. Cost M.
 
-**0.15: the three desktops.** macOS in the release matrix with a `.app`;
-the Linux window on arm64; the global shortcut the tray item was half
-of; and the Windows list under "Not yet proven on Windows" watched by a
-person on a real machine, with the cold start measured there and the
-bench's Windows budget set from it. Cost M.
+**0.15: the library in use** (shipped; the notes above). The window as
+the place an agent's link opens when it is running, rather than a
+browser beside it, and as what the agent is told; delete without a
+dialog, undone from the toast or by ⌘Z, over a soft delete that `prune`
+makes final; a link into a browsed folder that lands where it points;
+and what moves in the sidebar moving once, with a sound on the
+notification for whoever asks. Probe: the four rows above. Cost M.
 
-**The gate.** `bench/ui.mjs` runs beside `bench/browser.mjs` on every
-push and holds every row of the 0.11 table above, plus what 0.12-0.14
-add; the README's tables carry no number the bench does not read; the
+This was half of one phase with the platform work below, on the
+argument that the dialog is the toolkit's in the window. The half that
+is code is checkable here and shipped; the half that is machines is
+not, so it is its own release rather than a release held open waiting
+for a laptop.
+
+**0.16: the three desktops.** macOS in the release matrix with a
+`.app`; the Linux window on arm64, which wants its own oldest-host
+runner so the package does not record a 24.04 glibc baseline; the
+global shortcut the tray item was half of; and the Windows list under
+"Not yet proven on Windows" watched by a person on a real machine, with
+the cold start measured there and the bench's Windows budget set from
+it. Probe: the release run itself, plus a `snyvi bench --check` from
+each of the three with its numbers written into the table. Cost M.
+
+**The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
+every push since 0.12, holds every row of the 0.11 table above and what
+0.12 added, plus what 0.13, 0.14 and 0.15 add; the README's tables carry no number the bench does not read; the
 tables in this file have no row marked **next**; and `docs/BRAINSTORM.md`
 is read once more against what shipped, so that the budgets it set and
 the ones the bench enforces are the same budgets. Then the three
