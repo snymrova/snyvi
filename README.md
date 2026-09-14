@@ -440,6 +440,17 @@ deleted and keeps it until `prune` runs, which is what makes the offer
 real. It disappears from the tree, the inbox, search and the queue in
 every tab at once, and comes back to the same place.
 
+What moves in the sidebar says so once, and briefly. An arrival's row
+is lit for a moment, the way a heading is where a link landed -- the
+same wash, so there is one sign to learn; a row you have read or
+deleted closes where it was before the list moves up, and one an undo
+put back is lit again. The bar over the document rises when it appears
+and stays put after that: a count that changes settles in, in place.
+Every motion on the page is under 200 ms except that wash, none of it
+runs while you read, and `prefers-reduced-motion` turns all of it off
+rather than slowing it down. The `#` beside a heading confirms a copy
+on the mark itself, not at the corner of the screen.
+
 ## Where a link opens
 
 With `snyvi app` running, a link opens in that window rather than in a
@@ -533,6 +544,13 @@ registered application id to be clickable at all and macOS's
 not buttons. In the page a new document joins the queue, under
 "Arrivals" above.
 
+A notification is silent unless you ask: `SNYVI_SOUND=1` asks the
+desktop for its message sound with it, and a burst of arrivals -- an
+agent writing twelve files -- sounds once, not twelve times. It is a
+hint on the notification, so your volume, focus mode and do-not-disturb
+still decide, and nothing in the page ever plays anything. Windows
+toasts sound by default; `SNYVI_SOUND=0` silences them.
+
 ## Languages
 
 Everything syntect ships (Rust, Python, JavaScript, Go, C, C++, Java,
@@ -571,7 +589,8 @@ every control, what a drag on a pane's edge does, what `f` fills and
 what Escape gives back, what an arrival does to a reader in the middle
 of a page, whether a delete can be taken back, where a link into a
 folder lands, whether a page gives its connection back when it leaves,
-and whether the daemon knows a window is up. Counts and
+whether the daemon knows a window is up, and whether what moves in the
+sidebar moves once and briefly. Counts and
 positions, no clocks, so every one
 of its rows is enforced on every machine, CI's included. The desktop
 window's engine is not Chromium: `bench/webkit.py` drives the same page

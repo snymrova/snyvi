@@ -247,10 +247,61 @@ pub fn shim(name: &str) -> Command {
     Command::new(name)
 }
 
+/// Whether a notification asks the desktop for a sound.
+///
+/// Off unless asked, with `SNYVI_SOUND=1`. A sound is the one signal a reader
+/// cannot decline by not looking, and it is only ever raised on a
+/// notification, which is only ever raised when no snyvi page has focus. An
+/// agent writing twelve files is twelve notifications, so a burst sounds
+/// once: `Asked` at most every two seconds, `Declined` for the rest.
+/// `SNYVI_SOUND=0` declines every time, which matters on Windows, where a
+/// toast sounds unless told not to; unset, `Unsaid` leaves each desktop to
+/// its own default -- none on the free desktops and macOS, one on Windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sound {
+    Asked,
+    Declined,
+    Unsaid,
+}
+
+const BURST: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn sound() -> Sound {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let want = match std::env::var("SNYVI_SOUND").as_deref() {
+        Ok("1") | Ok("true") | Ok("yes") => Some(true),
+        Ok("0") | Ok("false") | Ok("no") | Ok("") => Some(false),
+        _ => None,
+    };
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    sound_for(want, &mut last, std::time::Instant::now())
+}
+
+/// The decision, apart from the clock and the environment so it can be tested.
+fn sound_for(
+    want: Option<bool>,
+    last: &mut Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> Sound {
+    match want {
+        None => Sound::Unsaid,
+        Some(false) => Sound::Declined,
+        Some(true) => {
+            if last.is_some_and(|t| now.duration_since(t) < BURST) {
+                Sound::Declined
+            } else {
+                *last = Some(now);
+                Sound::Asked
+            }
+        }
+    }
+}
+
 /// Raise a desktop notification. Best effort and never blocking: a machine
 /// with no notification daemon is not an error, it is a machine that will not
-/// show one.
-pub fn notify(title: &str, body: &str) {
+/// show one. `sound` is decided by the caller, once per notification.
+#[allow(unused_variables)]
+fn notify_with(title: &str, body: &str, sound: Sound) {
     #[cfg(target_os = "windows")]
     {
         // PowerShell holds the only toast API reachable without a dependency
@@ -266,10 +317,16 @@ pub fn notify(title: &str, body: &str) {
              $x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(5);\
              $t = $x.GetElementsByTagName('text');\
              $t.Item(0).AppendChild($x.CreateTextNode('{}')) > $null;\
-             $t.Item(1).AppendChild($x.CreateTextNode('{}')) > $null;\
+             $t.Item(1).AppendChild($x.CreateTextNode('{}')) > $null;{}\
              [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))",
             ps_quote(title),
             ps_quote(body),
+            // A toast sounds by default; declining is an element that says not to.
+            if sound == Sound::Declined {
+                "$a = $x.CreateElement('audio'); $a.SetAttribute('silent', 'true'); $x.DocumentElement.AppendChild($a) > $null;"
+            } else {
+                ""
+            },
         );
         let _ = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -281,9 +338,14 @@ pub fn notify(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {
         let script = format!(
-            "display notification \"{}\" with title \"{}\"",
+            "display notification \"{}\" with title \"{}\"{}",
             body.replace('\\', "\\\\").replace('"', "\\\""),
             title.replace('\\', "\\\\").replace('"', "\\\""),
+            if sound == Sound::Asked {
+                " sound name \"Glass\""
+            } else {
+                ""
+            },
         );
         let _ = Command::new("osascript")
             .args(["-e", &script])
@@ -294,7 +356,9 @@ pub fn notify(title: &str, body: &str) {
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         let _ = Command::new("notify-send")
-            .args(["-a", "snyvi", "-i", "snyvi", title, body])
+            .args(["-a", "snyvi", "-i", "snyvi"])
+            .args(sound_hint(sound))
+            .args([title, body])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
@@ -318,6 +382,9 @@ pub fn notify(title: &str, body: &str) {
 /// twelve files would leave twelve -- and the one worth clicking is the newest
 /// anyway, with the queue in the sidebar holding the rest.
 pub fn notify_open(title: &str, body: &str, open: impl FnOnce() + Send + 'static) {
+    // Decided once: the fallback below must not ask again and find the burst
+    // already spent by this very notification.
+    let sound = sound();
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         if notify_send_takes_actions() {
@@ -331,9 +398,9 @@ pub fn notify_open(title: &str, body: &str, open: impl FnOnce() + Send + 'static
                     "default=Open",
                     "-t",
                     "20000",
-                    title,
-                    body,
                 ])
+                .args(sound_hint(sound))
+                .args([title, body])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
@@ -341,7 +408,7 @@ pub fn notify_open(title: &str, body: &str, open: impl FnOnce() + Send + 'static
             {
                 Ok(c) => c,
                 Err(_) => {
-                    notify(title, body);
+                    notify_with(title, body, sound);
                     return;
                 }
             };
@@ -371,7 +438,18 @@ pub fn notify_open(title: &str, body: &str, open: impl FnOnce() + Send + 'static
         }
     }
     let _ = &open;
-    notify(title, body);
+    notify_with(title, body, sound);
+}
+
+/// The freedesktop `sound-name` hint, which the daemons that play sounds
+/// honour and the rest ignore. Nothing when a sound was not asked for.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn sound_hint(sound: Sound) -> &'static [&'static str] {
+    if sound == Sound::Asked {
+        &["-h", "string:sound-name:message-new-instant"]
+    } else {
+        &[]
+    }
 }
 
 /// The one notification that is waiting to be clicked, if there is one.
@@ -548,7 +626,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(test)]
 mod tests {
-    use super::terminals;
+    use super::{sound_for, terminals, Sound};
     use std::path::Path;
 
     /// The property the whole feature rests on, stated so it cannot quietly
@@ -581,6 +659,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A burst of arrivals is one sound. Twelve files from an agent are twelve
+    /// notifications, and the reader who asked for a sound asked to be told,
+    /// not told twelve times.
+    #[test]
+    fn a_burst_sounds_once_and_only_when_asked() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut last = None;
+        assert_eq!(sound_for(None, &mut last, t0), Sound::Unsaid);
+        assert_eq!(sound_for(Some(false), &mut last, t0), Sound::Declined);
+        assert!(
+            last.is_none(),
+            "declining or saying nothing spent the burst"
+        );
+        assert_eq!(sound_for(Some(true), &mut last, t0), Sound::Asked);
+        for ms in [1, 500, 1999] {
+            assert_eq!(
+                sound_for(Some(true), &mut last, t0 + Duration::from_millis(ms)),
+                Sound::Declined,
+                "a second sound {ms} ms into the burst"
+            );
+        }
+        assert_eq!(
+            sound_for(Some(true), &mut last, t0 + Duration::from_millis(2000)),
+            Sound::Asked
+        );
     }
 
     /// Every candidate has to be told the directory one way or another: by a

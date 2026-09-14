@@ -91,7 +91,7 @@
 
   const docRow = d => {
     const cls = [state.doc && state.doc.id === d.id ? "active" : "", waitingRow(d) ? "new" : ""].join(" ").trim();
-    return `<li class="t-doc"><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
   };
 
   // ---------- the queue ----------
@@ -126,7 +126,58 @@
       } catch {}
     }, 150);
   }
-  const queueRow = d => `<li class="t-doc"><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span></a></li>`;
+  const queueRow = (d, extra = "") => `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span></a></li>`;
+
+  /* ---------- what moved, and when ----------
+   * The sidebar is rebuilt from state whenever the library moves, so a row
+   * has no life of its own to animate: an arrival is a row that was not there
+   * a render ago, a read is one that is gone. Both are kept here for as long
+   * as their motion lasts, with the moment they happened, and a row that is
+   * rebuilt mid-wash starts its animation at a negative delay -- where the
+   * last one was -- rather than from the top. So an arrival washes once,
+   * whatever the tree does underneath, and a row that has left is drawn a
+   * little longer, closing, in the place it had. */
+  const WASH_MS = 700, LEAVE_MS = 140;
+  const washes = new Map();   // id -> when it arrived, or came back
+  const leaving = new Map();  // id -> { d, at, when it left }
+  let lastQueue = [];          // the rows of the last render, for where a leaver was
+  let sweep = 0;
+  /** A style that starts this row's animation where the last render left it. */
+  function moment(id) {
+    const w = washes.get(id), l = leaving.get(id);
+    const t = l ? l.when : w;
+    if (t == null) return "";
+    const age = Date.now() - t;
+    return ` style="animation-delay:-${age}ms"`;
+  }
+  const washCls = id => (washes.has(id) ? " wash" : "");
+  /** Mark rows to be washed, once, on the next render. */
+  function wash(ids) {
+    const now = Date.now();
+    for (const id of ids) washes.set(id, now);
+    schedule();
+  }
+  /** Rows on their way out of the queue, closing where they were. */
+  function depart(ids) {
+    const now = Date.now();
+    for (const id of ids) {
+      const at = lastQueue.findIndex(d => d.id === id);
+      if (at >= 0 && !leaving.has(id)) leaving.set(id, { d: lastQueue[at], at, when: now });
+    }
+    schedule();
+  }
+  /** A re-render when the next motion is over, to draw what state says and
+   *  nothing more -- the render drops what has finished -- and then the one
+   *  after. The earliest deadline, not the last: a row that closed in 140 ms
+   *  must not sit there, closed, while an arrival's 700 ms wash runs on. */
+  function schedule() {
+    clearTimeout(sweep);
+    const now = Date.now();
+    const due = [...washes.values()].map(t => WASH_MS - (now - t))
+      .concat([...leaving.values()].map(l => LEAVE_MS - (now - l.when)));
+    if (!due.length) return;
+    sweep = setTimeout(() => { renderTree(); markActive(); schedule(); }, Math.max(0, Math.min(...due)) + 40);
+  }
   const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
   /** The section at the top of the sidebar and the bar above the document,
@@ -134,15 +185,47 @@
    *  the queue itself. */
   function renderQueue() {
     queueIds = new Set(state.queue.map(d => d.id));
+    // What has finished moving is dropped here, at the render, and not only
+    // at the sweep: a sweep is put off by every arrival, and a row that had
+    // closed was otherwise drawn again, closed, until one ran.
+    const now = Date.now();
+    for (const [id, t] of washes) if (now - t >= WASH_MS) washes.delete(id);
+    for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
     const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
-    queueEl.innerHTML = !n || !head ? "" : `<div class="t-queue"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
-      state.queue.slice(0, QUEUE_ROWS).map(queueRow).join("") +
+    // The rows state says, with the ones still closing put back where they
+    // were, so a read takes its row out rather than the list snapping up.
+    const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
+    const gone = [...leaving.values()].sort((a, b) => a.at - b.at);
+    for (const l of gone) if (!queueIds.has(l.d.id)) rows.splice(Math.min(l.at, rows.length), 0, queueRow(l.d, " leaving"));
+    const empty = (!n || !head) && !gone.length;
+    queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
+      rows.join("") +
       (n > shown ? `<li class="t-more"><a href="/" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
+    lastQueue = state.queue.slice(0, QUEUE_ROWS);
     const bar = n > 0 && !!head && state.view !== "inbox";
     queueBar.hidden = !bar;
-    queueBar.innerHTML = !bar ? "" : `<div class="qb"><span class="qb-n">${n} waiting</span><span class="qb-next"><b>${esc(head.title)}</b> · ${esc(head.project)}</span>` +
-      `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
-      `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+    if (!bar) { queueBar.innerHTML = ""; return; }
+    // The bar rises when it appears and stays put after: a count that changes
+    // ticks in place. It used to be rebuilt on every render, which re-ran the
+    // rise for one more arrival, and twelve arrivals rose twelve times.
+    const count = `${n} waiting`, next = `<b>${esc(head.title)}</b> · ${esc(head.project)}`;
+    const qb = queueBar.querySelector(".qb");
+    if (!qb) {
+      queueBar.innerHTML = `<div class="qb"><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
+        `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+      return;
+    }
+    const num = qb.querySelector(".qb-n"), nx = qb.querySelector(".qb-next");
+    if (nx.innerHTML !== next) nx.innerHTML = next;
+    if (num.textContent !== count) {
+      num.textContent = count;
+      // Restarted by replacing the node: a class taken off and put back in
+      // one task runs nothing, and reading layout in between costs a reflow.
+      const fresh = num.cloneNode(true);
+      fresh.classList.add("tick");
+      num.replaceWith(fresh);
+    }
   }
 
   /** The reader opened a document: off the queue here at once, and on the
@@ -152,9 +235,10 @@
     let marked = false;
     for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.id === id && d.unread) marked = true;
     if (!held && !marked) return;
-    if (held) { state.queue = state.queue.filter(d => d.id !== id); queueIds.delete(id); }
+    if (held) { state.queue = state.queue.filter(d => d.id !== id); queueIds.delete(id); depart([id]); }
     unmarkRows(new Set([id]));
     state.waiting = Math.max(0, state.waiting - 1);
+    renderTree(); markActive();   // now, so the row is drawn closing rather than found gone
     fetch(`/api/docs/${id}/read`, { method: "POST" }).catch(() => {});
   }
 
@@ -171,6 +255,7 @@
   async function clearQueue() {
     const n = state.waiting;
     if (!n) return;
+    depart(state.queue.map(d => d.id));
     state.queue = []; state.waiting = 0;
     unmarkRows(null);
     renderTree(); markActive();
@@ -184,6 +269,7 @@
   function dropFromQueue(ids, waiting) {
     const gone = new Set(ids);
     const known = state.queue.some(d => gone.has(d.id)) || (waiting != null && waiting !== state.waiting);
+    depart(gone);
     state.queue = state.queue.filter(d => !gone.has(d.id));
     unmarkRows(gone);
     if (waiting != null) state.waiting = waiting;
@@ -744,6 +830,7 @@
       const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status}`);
       state.cache.delete(d.id);
+      depart([d.id]);
       state.queue = state.queue.filter(x => x.id !== d.id);
       state.waiting = Math.max(0, state.waiting - (waitingRow(d) ? 1 : 0));
       await refreshTree(d.project_id);
@@ -762,6 +849,7 @@
         const r = await fetch(`/api/docs/${d.id}/undelete`, { method: "POST" });
         if (r.status === 410) return toast("Too late to undo", "it has been pruned");
         if (!r.ok) throw new Error(`${r.status}`);
+        wash([d.id]);
         await refreshTree(d.project_id);
         showDoc(d.id);
       } catch (e) { toast("Could not undo", String(e)); }
@@ -1894,7 +1982,11 @@
     e.preventDefault();
     history.replaceState(history.state, "", location.pathname + a.getAttribute("href"));
     navigator.clipboard?.writeText(location.href);
-    toast("Link copied", location.pathname + location.hash);
+    // Confirmed on the mark itself, which is where the eye is: a toast at the
+    // corner for a click at the heading is the wrong distance away.
+    a.dataset.said = "Copied";
+    clearTimeout(a._said);
+    a._said = setTimeout(() => delete a.dataset.said, 1200);
   });
 
   /* Tab into a code block below the fold and the browser focuses the copy
@@ -2265,6 +2357,7 @@
       // arrival is the newest, and belongs after rows this page never had.
       if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
       state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
+      if (!opens) wash([d.id]);
       holdQueue();   // a burst's events carry counts ahead of the rows this page holds
       state.cache.delete(d.id);
       renderTree(); markActive();
@@ -2296,6 +2389,7 @@
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.cache.delete(j.id);
+      depart([j.id]);
       state.queue = state.queue.filter(d => d.id !== j.id);
       if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();
@@ -2306,6 +2400,7 @@
     es.addEventListener("restored", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       if (j.waiting != null) state.waiting = j.waiting;
+      if (j.id != null) wash([j.id]);
       await refreshTree(j.doc && j.doc.project_id);
       holdQueue();
       if (state.view === "inbox") showInbox(false);

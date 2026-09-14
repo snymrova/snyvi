@@ -8,8 +8,9 @@
  * pane's edge does, what `f` fills and what Escape gives back, what an
  * arrival does to a reader in the middle of a page, whether a delete can be
  * taken back, where a link into a browsed folder lands, whether a page gives
- * its connection back when it leaves, and whether the daemon knows a window
- * is up. Every row here was a fault once -- the 0.11 to
+ * its connection back when it leaves, whether the daemon knows a window
+ * is up, and whether what moves in the sidebar moves once and briefly. Every
+ * row here was a fault once -- the 0.11 to
  * 0.15 notes in docs/ROADMAP.md say which -- and the point of running them on
  * every push is that the rail cannot quietly stop following again.
  *
@@ -184,6 +185,7 @@ async function main() {
     sections.push(["a link into a folder", await browseRows(p, browsed)]);
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
+    sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -413,9 +415,10 @@ async function railRows(p, url, md, send) {
   const pre = await p.ev(`({ top: document.querySelector("#main").scrollTop, hist: history.length })`);
   await p.ev(`document.getElementById(${JSON.stringify(anchorTarget)}).click()`);
   await sleep(300);
-  const anchored = await p.ev(`({ hash: location.hash.slice(1), top: document.querySelector("#main").scrollTop, hist: history.length, toast: document.querySelector(".toast .t")?.textContent || "" })`);
-  rows.push(["the # beside a heading", anchored.hash === anchorTarget && anchored.top === pre.top && anchored.hist === pre.hist && /copied/i.test(anchored.toast),
-    anchored.hash !== anchorTarget ? "did not write the section into the URL" : anchored.top !== pre.top ? "scrolled" : anchored.hist !== pre.hist ? "added a history entry" : `URL written, "${anchored.toast}", nothing moved`]);
+  // Since 0.15 the mark confirms the copy itself, for a moment, in place of a toast.
+  const anchored = await p.ev(`({ hash: location.hash.slice(1), top: document.querySelector("#main").scrollTop, hist: history.length, said: document.getElementById(${JSON.stringify(anchorTarget)}).dataset.said || "" })`);
+  rows.push(["the # beside a heading", anchored.hash === anchorTarget && anchored.top === pre.top && anchored.hist === pre.hist && /copied/i.test(anchored.said),
+    anchored.hash !== anchorTarget ? "did not write the section into the URL" : anchored.top !== pre.top ? "scrolled" : anchored.hist !== pre.hist ? "added a history entry" : `URL written, the mark reads "${anchored.said}", nothing moved`]);
 
   return rows;
 }
@@ -905,6 +908,81 @@ async function windowRows(p, url, base, mcpSend) {
   const forgotten = await until(false);
   rows.push(["and not once the window is gone", forgotten, forgotten ? "the stream ended and the daemon knows at once" : "the daemon still thinks a window is up"]);
   await p.goto(url);
+  return rows;
+}
+
+/** 0.15: what moves in the sidebar, said once and briefly. The sidebar is
+ *  rebuilt from state whenever the library moves, which is how the bar over
+ *  the document came to rise again for every arrival after the first, and
+ *  why an arrival's row and a read's row could show nothing at all: a rebuilt
+ *  row has no past to animate from. These rows read the page's own animation
+ *  list, so a wash that plays twice, a bar that rises twice, or a row that
+ *  is simply gone all fail here -- and so does anything that runs long, or at
+ *  all under reduced motion. */
+async function motionRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const anims = () => p.ev(`document.getAnimations().map(a => ({ name: a.animationName || a.transitionProperty || "", ms: Number(a.effect.getTiming().duration), n: a.effect.getTiming().iterations }))`);
+
+  await p.goto(url);
+  await p.pointerAway();
+  // From nothing waiting, so the first arrival is what makes the bar appear
+  // and the oldest \`n\` opens; the sections before this one leave a queue.
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" })`);
+  await until(`document.querySelector("#queue-bar").hidden`);
+  const first = await arrive();
+  await until(`!document.querySelector("#queue-bar").hidden`);
+  await p.ev(`window.__bar = document.querySelector("#queue-bar .qb")`);
+  const washed = await p.ev(`(() => { const li = document.querySelector('#queue li.t-doc.wash:has(> a[data-id="${first.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
+  rows.push(["an arrival washes its row", washed === 1, washed < 0 ? "the row is not marked as washed" : `${washed} wash animation${washed === 1 ? "" : "s"} on the row`]);
+
+  // A second arrival 300 ms in rebuilds every row. The first one's wash
+  // carries on from where it was: a restart would read near zero. Where a
+  // wash is, is its time less its delay -- a negative delay is how the page
+  // resumes it, and the animation's own clock restarts from zero.
+  await sleep(300);
+  const second = await arrive();
+  await until(`/^2 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  const resumed = await p.ev(`(() => { const li = document.querySelector('#queue li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
+  rows.push(["once, whatever the tree does under it", resumed >= 250 && resumed < 700, resumed < 0 ? "the wash is gone or was never there" : `the wash is ${resumed} ms in, on a row rebuilt by the next arrival`]);
+  const bar = await p.ev(`(() => { const qb = document.querySelector("#queue-bar .qb"); const n = qb && qb.querySelector(".qb-n");
+    return { kept: qb === window.__bar, rise: qb ? qb.getAnimations().some(a => a.animationName === "rise") : null, tick: n ? n.getAnimations().some(a => a.animationName === "tick") : null }; })()`);
+  rows.push(["the bar stays put and the count ticks", bar.kept && !bar.rise && bar.tick,
+    !bar.kept ? "the bar was rebuilt for the second arrival" : bar.rise ? "the bar rose again" : !bar.tick ? "the count changed with nothing to say so" : "the same bar, and the new count settled in"]);
+
+  const running = await anims();
+  const long = running.filter(a => a.ms > 700 || a.n === Infinity);
+  rows.push(["nothing runs long", running.length > 0 && long.length === 0,
+    !running.length ? "nothing is animating at all, which the rows above say is wrong" : long.length ? `${long.map(a => `${a.name} ${a.n === Infinity ? "forever" : a.ms + " ms"}`).join(", ")}` : `${running.length} animations running, the longest ${Math.max(...running.map(a => a.ms))} ms`]);
+
+  // \`n\` opens the oldest: its row is drawn closing, briefly, then gone.
+  // \`void\`: the harness awaits a promise an expression returns, and this one
+  // is meant to be read after the key, not before it.
+  await p.ev(`void (window.__left = new Promise(r => { const t = setTimeout(() => r(null), 2000); new MutationObserver((_, o) => { const li = document.querySelector("#queue li.leaving"); if (li) { clearTimeout(t); o.disconnect(); r({ id: li.querySelector("a").dataset.id, anim: li.getAnimations().some(a => a.animationName === "leave") }); } }).observe(document.querySelector("#queue"), { childList: true, subtree: true, attributes: true }); }))`);
+  await p.press("n");
+  const left = await p.ev(`window.__left`);
+  await sleep(400);
+  const after = await p.ev(`({ leaving: document.querySelectorAll("#queue li.leaving").length, there: !!document.querySelector('#queue a[data-id="${first.id}"]') })`);
+  rows.push(["a read closes its row where it was", !!left && left.id === first.id && left.anim && !after.leaving && !after.there,
+    !left ? "the row was gone with nothing drawn" : left.id !== first.id ? "a different row was drawn closing" : !left.anim ? "the row was marked but not moving" : after.leaving || after.there ? "the row is still there 400 ms later" : "drawn closing, and gone 400 ms later"]);
+
+  // The \`#\` beside a heading says it copied, itself, and raises no toast.
+  // Back on the plan: \`n\` opened the arrival, which is one heading long.
+  await p.goto(url);
+  const toasts = await p.ev(`document.querySelectorAll("#toasts .toast").length`);
+  await p.clickOn(".prose h2 a.anchor");
+  const said = await p.ev(`({ said: document.querySelector(".prose a.anchor[data-said]")?.dataset.said || null, toasts: document.querySelectorAll("#toasts .toast").length })`);
+  rows.push(["the # says it copied, itself", said.said === "Copied" && said.toasts === toasts,
+    said.said !== "Copied" ? "the mark says nothing" : said.toasts !== toasts ? "and a toast came up as well" : "the mark reads Copied for a moment, and no toast"]);
+
+  // Under reduced motion there is no motion: not slower, none.
+  await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] }, p.s);
+  await arrive();
+  await until(`/^2 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  const quiet = await anims();
+  await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "" }] }, p.s);
+  rows.push(["reduced motion means none", quiet.length === 0, quiet.length ? `${quiet.length} still running: ${[...new Set(quiet.map(a => a.name))].join(", ")}` : "no animation on the page at all"]);
+  void second;
   return rows;
 }
 

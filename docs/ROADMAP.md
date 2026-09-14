@@ -11,6 +11,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Mermaid diagrams | Agents put flowcharts and sequence diagrams in almost every plan. Today they show as code. Vendor the library in the binary, load it only when a page has a `mermaid` block, render after first paint so text never waits. | M | **done 0.2** |
 | A big diagram you can read | A 20000-unit flowchart fitted into the reading column drew 30 px tall: the one diagram worth drawing was the one nobody could read. Each is a viewport now — ⌘/ctrl + scroll zooms toward the cursor, drag pans, `f` fills the screen, `0` fits — driving the SVG's own `viewBox`, so strokes stay crisp and nothing is scaled twice. `docs/DIAGRAMS.md` phase 3. | M | **done 0.9** |
+| What moves, moves once | The sidebar is rebuilt from state whenever the library moves, so an arrival's row appeared from nowhere, a read's row was just gone, and the bar over the document re-ran its rise for every arrival after the first. The page keeps the moment a row arrived or left and a rebuilt row resumes its animation at a negative delay, so an arrival washes once, a read closes its row where it was, an undo washes it back, and the count settles into a bar that stays. Reduced motion means none. | S | **done 0.15** |
 | Side-by-side diff with word-level highlights | "Compare with previous" and sent patches are inline only. Reviews read far better in two columns with changed words emphasised. Toggle with `s`. | M | **done 0.2** |
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
@@ -65,6 +66,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Remember window size and position | Basic expectation of a native app. | XS | **done 0.2** |
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
 | Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
+| A sound on arrival | Asked for, and declined by default: a sound is the one signal a reader cannot ignore by not looking. `SNYVI_SOUND=1` puts a sound hint on the desktop notification -- the channel that already knows the volume and do-not-disturb -- and a burst sounds once. Nothing in the page plays anything. | XS | **done 0.15** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
 | The window is where a link opens | `send_document` answered with `http://127.0.0.1:7777/d/…` whatever was running, so a click opened a second viewer in a browser beside the window, and the desktop notification opened nothing at all. The window's page now says it is one when it opens its event stream, so the daemon knows for exactly as long as there is a window; `snyvi open`, `send --open`, `browse` and a click on the notification hand the URL to it and raise it, and the tool answers that the document is waiting in snyvi, with no link, when there is a window to wait in. | S | **done 0.15** |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
@@ -920,7 +922,43 @@ wants one stream shared between tabs or a poll that frees the socket,
 and it is in the E table as its own piece of work. Nobody has six snyvi
 tabs open yet.
 
-The rows, in `bench/ui.mjs`, fourteen more for 54 in all:
+**What moves, moves once.** The page had a motion system already --
+one curve, 140 to 180 ms, enters only, off under reduced motion -- and
+the question was not what to add but which changes were still a cut a
+reader could miss. Three were, and one was noise. The sidebar is
+rebuilt from state whenever the library moves, so a row had no past to
+animate from: an arrival's row simply appeared, a read's row was simply
+gone, and the bar over the document, rebuilt with the rest, ran its
+rise again for every arrival after the first -- twelve arrivals rose
+twelve times. Now the page keeps the moment a row arrived or left, for
+as long as its motion lasts, and a row rebuilt mid-motion starts its
+animation at a negative delay, where the last one was. So an arrival
+washes its row once, the way a heading is lit where a jump landed,
+whatever the tree does under it; a row that was read or deleted is
+drawn closing, 140 ms, in the place it had; an undo washes it back;
+and the bar rises when it appears and stays, the count settling in
+when it changes. The `#` beside a heading confirms a copy on the mark
+itself rather than by a toast at the corner, which for a click at the
+heading is the wrong distance away.
+
+What was not added is the longer list: nothing runs while the page is
+read, nothing bounces, nothing waits for a spinner that would outlast
+the work, and reduced motion means none rather than slower. The rows
+read the page's own animation list, so a wash that plays twice, a bar
+that rises twice, a row that is just gone, anything past 700 ms or
+running forever, and anything at all under reduced motion, all fail.
+
+And a sound, since it was asked for: not in the page, and not by
+default. A sound is the one signal a reader cannot decline by not
+looking, which is the opposite of what 0.14 built, and a page cannot
+play one in a browser tab without a gesture anyway. The desktop's own
+notification is the channel that already knows the volume, the focus
+mode and do-not-disturb, so `SNYVI_SOUND=1` puts the freedesktop
+`sound-name` hint on it (a named sound on macOS; Windows toasts sound
+unless told not to, and `SNYVI_SOUND=0` tells them), and a burst is one
+sound: at most one every two seconds, which a test holds.
+
+The rows, in `bench/ui.mjs`, twenty-one more for 61 in all:
 
 | | reads |
 |---|---|
@@ -928,6 +966,7 @@ The rows, in `bench/ui.mjs`, fourteen more for 54 in all:
 | a link into a folder | a browsed Markdown file opened at a section link lands with the heading 24 px into the pane, 11,208 px down the file; `code.rs#L300` marks one line, the one that reads `line_300`, and it is on the screen |
 | the socket a page holds | eight page loads in a row all load, and the daemon is holding one event stream at the end of them, not eight |
 | a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
+| what moves, and for how long | an arrival's row carries one wash, and 250 ms later, rebuilt under a tree refetch, the same wash is 250 ms in rather than starting over; a second arrival leaves the bar element in place with no rise running and the count ticking; nothing running is over 700 ms or endless; `n` draws the row it read closing, and it is gone 400 ms later; the `#` reads Copied and raises no toast; and under reduced motion the page has no animation at all |
 
 ## 1.0: what done looks like
 
@@ -982,8 +1021,9 @@ eight rows above. Cost M.
 the place an agent's link opens when it is running, rather than a
 browser beside it, and as what the agent is told; delete without a
 dialog, undone from the toast or by ⌘Z, over a soft delete that `prune`
-makes final; and a link into a browsed folder that lands where it
-points. Probe: the three rows above. Cost M.
+makes final; a link into a browsed folder that lands where it points;
+and what moves in the sidebar moving once, with a sound on the
+notification for whoever asks. Probe: the four rows above. Cost M.
 
 This was half of one phase with the platform work below, on the
 argument that the dialog is the toolkit's in the window. The half that

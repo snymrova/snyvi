@@ -233,6 +233,15 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .t-queue .t-more a { display: inline-block; font-size: 11px; color: var(--fg-3); padding: 3px 6px; border-radius: 5px; }
 .t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
+/* What moved in the sidebar, said once. An arrival's row, or one an undo put
+   back, is lit the way a heading is where a jump landed -- the same wash, so
+   the eye learns one sign. A row that was read or deleted closes where it
+   was, 140 ms, before the list moves up into its place. Both start at a
+   negative delay when the tree is rebuilt under them (see `moment` in
+   app.js), so a rebuild never plays them again. */
+.t-doc.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is */
+.t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
+@keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
 .t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
 .t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
@@ -329,6 +338,9 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose a.anchor::before { content: "#"; }
 .prose h1:hover a.anchor, .prose h2:hover a.anchor, .prose h3:hover a.anchor, .prose h4:hover a.anchor { opacity: .7; }
 .prose a.anchor:hover, .prose a.anchor:focus-visible { opacity: 1; text-decoration: none; }
+/* Just clicked: the mark says so itself for a moment, in place of a toast. */
+.prose a.anchor[data-said] { opacity: 1; color: var(--accent); }
+.prose a.anchor[data-said]::before { content: "✓"; }
 /* Where a jump landed: the heading is lit for a moment, then not. A jump is
    instant -- see jumpTo in app.js for why it cannot be smooth -- and this is
    what tells the eye where it went. */
@@ -438,6 +450,9 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 #queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
 #queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 5px 5px 12px; animation: rise 160ms cubic-bezier(.2,.7,.2,1); }
 #queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The count changed under a bar that stayed: the new number settles in. */
+#queue-bar .qb-n.tick { animation: tick 180ms cubic-bezier(.2,.7,.2,1); }
+@keyframes tick { from { opacity: 0; transform: translateY(-4px); } }
 #queue-bar .qb-next { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
 #queue-bar .qb-next b { font-weight: 550; color: var(--fg); }
 #queue-bar button:not(.icon), #queue-bar .qb-all { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
