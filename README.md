@@ -680,13 +680,13 @@ replaces its column when there is one, and sets the Windows budget the
 
 | Case                                    | Linux, this container | macOS (arm64) runner | macOS (x86_64) runner | Windows runner |
 |-----------------------------------------|---------------|---------------|----------------|---------|
-| Binary size, `snyvi`                    | 12.4 MB       | 10.0 MB | — | 10.8 MB |
-| Daemon cold start, to first health      | 11 to 14 ms   | 20 to 35 ms | — | 408 ms |
-| Daemon resident, three documents in     | 40 MB         | 11 MB   | — | 22 MB |
-| Daemon resident, after the two fixtures | 82 MB         | 26 MB   | — | 33 MB |
-| Send, 100 KB Markdown, round trip       | 12 to 14 ms   | 25 to 41 ms | — | 31 ms |
-| Render Markdown, 1 MB                   | 108 ms        | 127 to 182 ms | — | 173 ms |
-| Highlight Rust, 10k lines               | 143 ms        | 166 to 282 ms | — | 263 ms |
+| Binary size, `snyvi`                    | 12.4 MB       | 10.0 MB | 10.9 MB | 10.8 MB |
+| Daemon cold start, to first health      | 11 to 14 ms   | 20 to 35 ms | 32 ms | 408 ms |
+| Daemon resident, three documents in     | 40 MB         | 11 MB   | 8 MB  | 22 MB |
+| Daemon resident, after the two fixtures | 82 MB         | 26 MB   | 30 MB | 33 MB |
+| Send, 100 KB Markdown, round trip       | 12 to 14 ms   | 25 to 41 ms | 37 ms | 31 ms |
+| Render Markdown, 1 MB                   | 108 ms        | 127 to 182 ms | 298 ms | 173 ms |
+| Highlight Rust, 10k lines               | 143 ms        | 166 to 282 ms | 431 ms | 263 ms |
 
 The binary is smaller on the two desktops that ship no static libc. The
 resident rows on macOS are the process's physical footprint, which is
