@@ -47,6 +47,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
 | Unread state persisted | The badge was a count per project in one tab's memory: a sibling document from the project being read left no mark, and a restart forgot the rest. Unread is a column now and the queue is a query on it, so it is the same in every tab and the window and survives a restart. | XS | **done 0.14** |
 | Archive a project | Hide finished projects from the tree without deleting. | S | later |
+| Reset to a fresh install | `snyvi reset` removes every document, the index, the token and the page's preferences, and leaves the agents registered, so the next `send_document` lands in an empty library; `--agents` takes the registrations out too. It is the one action that cannot be undone, so the friction is real on both surfaces: the sentence says what goes and what stays, and the confirmation is the number of documents typed back, not "yes". `--yes` for scripts, `--dry-run` to read the sentence and stop, and a refusal while anything is pinned unless `--pinned` is given. 0.18. | S | **next** |
 | Export | Copy as Markdown, print stylesheet polish, save as PDF via print. | S | maybe |
 
 ## C. Agent integration
@@ -55,7 +56,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux, a PowerShell toast on Windows, osascript on macOS. | S | **done 0.2** |
 | `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
-| Other agents | Config snippets for Codex CLI, Gemini CLI and Cursor: all speak MCP, so it is docs plus an `init` subcommand per tool. | S | later |
+| Connect an agent, from the page | `snyvi mcp` is a plain stdio MCP server and already works with every client that speaks MCP, and nothing says so: the only setup path is `init-claude`, and the viewer never mentions an agent at all. The empty library becomes a page with one row per agent -- connected, not set up, or pointing at a binary that is gone, read from the agent's own config file -- with the command or the copyable snippet that fixes it, the line for its instructions file, and when it last sent something. `snyvi init <agent>` writes the files snyvi can safely own (Claude Code, Codex CLI, Cursor), `uninstall <agent>` takes each back out byte-equal; the rest are snippets until asked for. 0.18. | M | **next** |
+| An about box | Nothing in the viewer says what it is, which version is running, where its data lives or under what license; a reader who arrived from an agent's link has no way to find out. One panel inside `?`, naming the same version `snyvi --version` prints. 0.18. | XS | **next** |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
 | The first ten minutes | `init-claude` reads what Claude Code has before touching it, is safe to run again, follows a binary that moved, and ends with what to try; `--claude-md` writes the CLAUDE.md line; `uninstall-claude` takes all of it back out and nothing else; `install-cli` puts the command on PATH where the README's `ln -s` could not; a taken port, a missing browser and a fallback rung each say what happened. `bench/onboarding.sh` types it all in CI. | S | **done 0.17** |
@@ -100,6 +102,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 - Reading documents back into the agent. The channel is one-way by design.
 - Hosted multi-user mode, until the local tool has real users asking for it.
 - A terminal or a command runner inside snyvi. A viewer that runs what a document told it to run is a one-click path from agent-written content to a side effect on the reader's machine, and it turns a leaked write token from a nuisance into code execution. `docs/TERMINAL.md` has the argument and what is built instead.
+- Messages from the agent to the reader: a channel beside `send_document` for encouragement, or for something the model has noticed about the person. The tool's contract is "a finished document the reader asked for", and the reader relies on it: every arrival is work. The moment an arrival can be the model speaking, each one has to be read with the question of which it is, which is the interruption 0.14 removed. Something inferred about the reader from their documents and shown back to them reads as surveillance the first time it is slightly wrong, and it has no probe -- there is no test for "the message was welcome". And a free-text line addressed to the reader is the softest target a document can aim an agent at. The warmth belongs to the product's own voice, fixed and authored: the empty state, the about box, the first-run line.
+- A pet in the chrome. A character that lives beside the document needs a place, a state and attention, and every one of those is taken from the page; the document is the hero. The icon is the mascot, and it may appear as a still mark where there is nothing to read. One frame, not a life.
 
 ## 0.2 (built)
 
@@ -1098,7 +1102,9 @@ three came from a reader with several agents, and were the design's; and
 0.15's three were at the edge where snyvi meets the rest of the desktop,
 which is the part no probe had ever been pointed at; and 0.16 pointed
 CI at the two desktops it had never opened a window on; 0.17 typed the
-install as a newcomer does and found ten stalls before the first document. So the rule for
+install as a newcomer does and found ten stalls before the first
+document; and 0.18 is for the newcomer who never read the README, and
+for getting back to being one. So the rule for
 what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
@@ -1163,6 +1169,19 @@ walked as a newcomer walks it: `init-claude` safe to run again and
 following a binary that moved, `uninstall-claude`, `install-cli`, and a
 ladder, a port and a first send that say what happened. Probe:
 `bench/onboarding.sh`, on every push. Cost S.
+
+**0.18: connect an agent** (next; the notes below). 0.17 fixed the
+minute between the download and the first document for a person with
+Claude Code who read the README. 0.18 is for the person who did not,
+or has a different agent: the empty library is a page that says which
+agents are connected and how to connect the rest, with `snyvi init
+<agent>` behind the ones snyvi can write for; an about box inside `?`;
+and `snyvi reset`, which puts an install back to that page, with the
+friction an action that cannot be undone deserves. Probe:
+`bench/onboarding.sh` types `init`, `init` again, `init` after the
+binary moved and `uninstall` byte-equal for every agent snyvi writes
+for, reads the page's state at each step, and resets between; the page
+rows in `bench/ui.mjs`. Cost M.
 
 **The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
 every push since 0.12, holds every row of the 0.11 table above and what
@@ -1309,6 +1328,115 @@ What is still argued for, not watched: the SmartScreen sheet itself, a
 real `claude mcp add` (the fake keeps its file the way the real one
 does, and refuses a second add the way it does), and a Mac whose
 `/usr/local/bin` is root's, which the runner's is not.
+
+## 0.18: connect an agent
+
+0.17 walked the install as a newcomer walks it, with the README open
+and Claude Code on the machine. 0.18 is for the newcomer who has
+neither: who opened the window from an icon, is looking at "Nothing to
+read yet" and two commands meant for a person, and has Codex or Cursor
+in the other window. `snyvi mcp` is a plain stdio MCP server and has
+worked with every client that speaks MCP since 0.2. Nothing has ever
+said so, in the README or on the page. That, an about box, and the way
+back to the beginning, and then the 1.0 gate.
+
+**The page.** When the library is empty the document pane is a page
+called "Connect an agent", and it is reachable at any time from `?` and
+the palette, because the second agent arrives after the first document
+did. One row per agent. Each row says three things.
+
+*What state it is in*, read by the daemon from the agent's own config
+file and nothing else -- `~/.claude.json` for Claude Code, `~/.codex/config.toml`,
+`~/.cursor/mcp.json`, the desktop app's `claude_desktop_config.json`,
+and the files Gemini CLI, Windsurf, VS Code and Zed keep. Read-only, so
+it is cheap and cannot be wrong about anything it did not do. Three
+states, the 0.17 distinction carried to every agent: connected, not set
+up, or registered under a path that no longer exists. A file that is
+not there is "not set up", not an error; the agent may simply not be
+installed, and the row says so without guessing which.
+
+*What fixes it*: a one-line command where snyvi has one, or a config
+snippet where it does not, with a copy button, since the whole page is
+"put this somewhere". Beside it, the line for the agent's instructions
+file -- `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `GEMINI.md` -- with
+the same button, because a registration only lets the model send; the
+line is what makes it want to. The snippet names the binary the daemon
+is running from, absolute when `snyvi` on PATH is not this file, the
+way `init-claude` decides its hook line.
+
+*Whether it has worked*: once a document has arrived from that agent
+the row says when, because a registration that has never been used is
+the exact state the newcomer is stuck in, and "connected" alone would
+tell them it is fine. The `initialize` request every MCP client opens
+with carries its `clientInfo.name`; the server answers it today without
+reading it, and will keep it, so the daemon can store the sender's name
+and the time with the document.
+
+**`snyvi init <agent>`.** `init-claude` generalised to the files snyvi
+can safely own, with `init-claude` kept as the name it has had. Claude
+Code, Codex CLI and Cursor to begin with, because that is where the
+readers are; the rest stay snippets until someone asks, since each
+writer is one more file format that has to come out byte-equal in CI.
+Everything 0.17 established holds for each: read before writing, the
+three outcomes said in three sentences, following a binary that moved,
+and `snyvi uninstall <agent>` that leaves the file as it was found
+down to the byte, keeping whatever else was in it. TOML for Codex
+means a second parser that preserves comments, or the honest fallback:
+say the file has something snyvi does not understand and print the
+snippet instead of editing.
+
+**About.** One panel inside `?`: what snyvi is in a sentence, the
+version and the build, the data directory, the config directory, the
+registration line `status` ends with, the license, the repository. The
+version is read from the daemon, so the panel cannot say a number
+`snyvi --version` would not.
+
+**Reset.** `snyvi reset` puts the install back to the page above. What
+goes: every document and version, the index, the token -- regenerated
+on the next start, so the old one is dead -- and the page's own
+preferences, which the daemon tells every open page to drop. What
+stays, and this is the part to get right: the agents. Un-registering
+them is `uninstall`'s job and touches files that are not snyvi's, and a
+reset that quietly did it would mean the next `send_document` fails
+against a tool that no longer exists. The default leaves them
+connected, so the very next send lands in an empty library, which is
+the connect page working. `--agents` takes them out too, for the person
+who wants snyvi gone.
+
+It is the one action in snyvi that cannot be undone, where 0.15 made
+sure a delete could be, so the friction is real and it is the same on
+both surfaces. The command prints one sentence: how many documents in
+how many projects, the index, the token, the preferences, and that the
+agents stay; then asks for the number of documents typed back. Not
+"yes" -- the number means the sentence was read. `--yes` for scripts
+and for the bench, refused without a terminal unless given; `--dry-run`
+prints the sentence and stops, like `prune`'s; and while anything is
+pinned the command refuses unless `--pinned` is also given, because a
+pin is the reader's explicit "keep this". In the viewer it is a palette
+entry with no key, opening a dialog with the same sentence and the same
+typed number, the button disabled until it matches. Then the page drops
+its `snyvi.*` keys, the daemon stops, removes its directories and comes
+back, and the page lands on the connect page with every agent row still
+saying connected -- which is the proof the reset did what the sentence
+said.
+
+**Probe.** `bench/onboarding.sh` grows a block per agent snyvi writes
+for: `init` into a home that has never seen it, again, again after the
+binary moved, `uninstall` against a file that began with another
+program's entry and must come out byte-equal, and the page's state read
+from the daemon at every step. Then: three documents sent, `reset
+--yes`, data directory gone, token gone, `status` says fresh, the
+agent's file byte-equal to before; `reset --agents --yes` and the
+registration gone too; `reset` with a pin refused, and with `--pinned`
+not. `bench/ui.mjs`: the empty library shows the connect page; the
+about panel names the version the daemon serves; the reset dialog's
+button stays disabled for the wrong number and enables for the right
+one; afterwards no `snyvi.*` key is left in the page's storage.
+
+What this is not: a tour, coach marks, a checklist that persists. They
+are chrome, and the reader with three plans waiting has already learnt
+the program. The page appears once, to exactly the person who needs it,
+and is gone when the first document lands.
 
 ## Not yet watched on Windows or macOS
 
