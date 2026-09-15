@@ -27,6 +27,9 @@ use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The commit and target from build.rs, "" outside a checkout.
+pub const BUILD_SHA: &str = env!("SNYVI_GIT_SHA");
+pub const BUILD_TARGET: &str = env!("SNYVI_TARGET");
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_CSS: &str = include_str!("../ui/app.css");
@@ -61,7 +64,11 @@ pub struct App {
     pub store: Store,
     pub renderer: Renderer,
     pub browse: Browser,
-    pub token: String,
+    /// Where the store and the token live; a reset needs to know.
+    pub paths: Paths,
+    /// Behind a lock because a reset replaces it: the old token is dead from
+    /// that moment, which is the point of replacing it.
+    pub token: std::sync::RwLock<String>,
     pub events: broadcast::Sender<String>,
     /// Fires when `snyvi stop` asks the daemon to exit.
     pub shutdown: broadcast::Sender<()>,
@@ -132,7 +139,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         store,
         renderer,
         browse: Browser::new(),
-        token,
+        paths: paths.clone(),
+        token: std::sync::RwLock::new(token),
         events: tx,
         shutdown: stop_tx,
         started: Instant::now(),
@@ -145,6 +153,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/", get(shell_home))
+        .route("/connect", get(shell_connect))
         .route("/d/{id}", get(shell_doc))
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
@@ -155,6 +164,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/files/{id}/{*path}", get(doc_file))
         .route("/assets/fonts/{name}", get(asset_font))
         .route("/api/health", get(health))
+        .route("/api/about", get(about))
+        .route("/api/agents", get(agents))
         .route("/api/tree", get(tree))
         .route("/api/projects/{id}/tree", get(project_tree))
         .route("/api/workflows/{id}/tree", get(workflow_tree))
@@ -175,6 +186,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/outline", get(doc_outline))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
+        .route("/api/reset", get(reset_census).post(reset))
         .route("/api/terminal", post(terminal))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/{id}/close", post(browse_close))
@@ -352,8 +364,20 @@ async fn shell_home(State(app): S) -> Response {
         [only] => subtree(&app, only.id, None),
         _ => serde_json::Value::Object(Default::default()),
     };
-    let boot = json!({ "view": "inbox", "tree": tree, "sub": sub, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
+    let mut boot = json!({ "view": "inbox", "tree": tree, "sub": sub, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
+    // An empty library opens on the connect page, and the page is on screen
+    // with the sidebar rather than a round trip after it.
+    if inbox.is_empty() {
+        boot["agents"] = agents_json(&app);
+    }
     shell(&app, boot, "", "snyvi")
+}
+
+/// The connect page, asked for: from `?`, or by its address.
+async fn shell_connect(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "connect", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION, "agents": agents_json(&app) });
+    shell(&app, boot, "", "Connect an agent · snyvi")
 }
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
@@ -474,6 +498,7 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
     Json(json!({
         "ok": true,
         "version": VERSION,
+        "commit": BUILD_SHA,
         // So `snyvi stop` can end this exact process if it ignores the
         // shutdown endpoint, without having to guess which snyvi it is.
         "pid": std::process::id(),
@@ -482,9 +507,54 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
         "window": app.has_window(),
         "streams": app.streams.load(Ordering::Relaxed),
+        // The bundle this daemon serves, so a page that reconnects after an
+        // upgrade can tell it is running another one's and reload.
+        "v": app.asset_v,
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
+}
+
+/// The about panel: what this is, which build is answering, where its
+/// files are, and what Claude Code has of it. The version comes from here
+/// and not from the page's bundle, so the panel cannot name a number
+/// `snyvi --version` would not.
+async fn about(State(app): S) -> Json<serde_json::Value> {
+    let exe = std::env::current_exe().ok();
+    Json(json!({
+        "name": "snyvi",
+        "description": env!("CARGO_PKG_DESCRIPTION"),
+        "version": VERSION,
+        "commit": BUILD_SHA,
+        "target": BUILD_TARGET,
+        "binary": exe.as_deref().map(|p| p.display().to_string()),
+        "data_dir": app.paths.data_dir.display().to_string(),
+        "config_dir": app.paths.config_dir.display().to_string(),
+        "agents": std::iter::once(crate::setup::claude_code_status())
+            .chain(crate::agents::status_lines())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        "license": env!("CARGO_PKG_LICENSE"),
+        "repository": env!("CARGO_PKG_REPOSITORY"),
+        "docs": app.store.count().unwrap_or(0),
+        "uptime_s": app.started.elapsed().as_secs(),
+    }))
+}
+
+/// The connect page's rows: every agent and what its own file says it has
+/// of snyvi, read now, and when each last sent something. `program` is how
+/// this binary is spelled to them, for the page to show in its commands.
+async fn agents(State(app): S) -> Response {
+    Json(agents_json(&app)).into_response()
+}
+
+fn agents_json(app: &App) -> serde_json::Value {
+    let senders = app.store.senders().unwrap_or_default();
+    json!({
+        "program": crate::setup::program().0,
+        "rows": crate::agents::rows(&senders),
+        "now": crate::store::now(),
+    })
 }
 
 async fn tree(State(app): S) -> Response {
@@ -719,6 +789,87 @@ async fn shutdown(State(app): S, headers: HeaderMap) -> Response {
     Json(json!({ "ok": true, "version": VERSION })).into_response()
 }
 
+/// What a reset would take, for the sentence that asks.
+async fn reset_census(State(app): S) -> Response {
+    match app.store.census() {
+        Ok(c) => Json(c).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct ResetBody {
+    /// The number of documents the caller was shown and typed back. It has to
+    /// be the number there is now: a document that arrived between the
+    /// sentence and the answer makes the answer stale, and the caller is told
+    /// to look again rather than reset a library other than the one described.
+    documents: i64,
+    /// Said explicitly, or the pinned documents keep the reset from happening.
+    #[serde(default)]
+    pinned: bool,
+}
+
+/// Back to a fresh install: every document and version, the index, the token,
+/// and -- by the event this ends with -- the preferences every open page keeps.
+/// The daemon stays up and the agents stay registered, so the next send lands
+/// in an empty library. The one action here that cannot be undone, and the one
+/// that asks for a number rather than a click.
+///
+/// A same-origin POST is accepted beside the token, as `terminal` explains:
+/// the page has no token, and the dialog is the page's.
+async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> Response {
+    if !from_this_page(&headers) && !authorized(&app, &headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not from this page, and no token" })),
+        )
+            .into_response();
+    }
+    let census = match app.store.census() {
+        Ok(c) => c,
+        Err(e) => return err(e),
+    };
+    if b.documents != census.documents {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("the library has changed: {} document(s) now, not {}; look again", census.documents, b.documents),
+                "census": census,
+            })),
+        )
+            .into_response();
+    }
+    if census.pinned > 0 && !b.pinned {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("{} pinned document(s) would go with it; say so", census.pinned),
+                "census": census,
+            })),
+        )
+            .into_response();
+    }
+    // The wipe and the VACUUM are disk work, and on a disk under pressure
+    // they take as long as they take: off the runtime, so the other pages'
+    // requests -- and the reload they are about to make -- are still answered.
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || app2.store.reset()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return err(e),
+        Err(e) => return err(anyhow::anyhow!("reset task: {e}")),
+    }
+    for root in app.browse.list() {
+        app.browse.close(&root.id);
+    }
+    let _ = std::fs::remove_file(app.paths.config_dir.join("sessions.json"));
+    match config::rotate_token(&app.paths) {
+        Ok(t) => *app.token.write().unwrap() = t,
+        Err(e) => return err(e),
+    }
+    emit(&app, "reset", json!({}));
+    Json(json!({ "ok": true, "removed": census })).into_response()
+}
+
 /// Open tabs report focus so arrivals only raise a desktop notification when nobody is looking.
 async fn focus(State(app): S) -> StatusCode {
     *app.last_focus.lock().unwrap() = Instant::now();
@@ -826,20 +977,34 @@ impl Drop for StreamMark {
 }
 
 /// Broadcast payloads are "<event name>\n<json>".
+///
+/// The stream ends when the daemon is asked to stop. A graceful shutdown
+/// closes the listener and then waits for every response in flight to
+/// finish, and a stream that never ends is a response that never finishes:
+/// the old daemon stayed up for as long as the window did, listening on
+/// nothing, and the window stayed on it -- it heard no more arrivals, and the
+/// daemon that took the port counted no window and handed every agent a link
+/// to open in a browser instead. Seen on this machine: ten hours, one tab per
+/// document. Ended here, the page reconnects to whatever is on the port now.
 async fn events(
     State(app): S,
     Query(q): Query<EventsQ>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
+    let stop = BroadcastStream::new(app.shutdown.subscribe()).map(|_| None);
     let mark = StreamMark::new(app.clone(), q.is_window());
-    let stream = BroadcastStream::new(rx).filter_map(move |m| {
-        // Captured so that the mark lives exactly as long as the stream does.
-        let _keep = &mark;
-        m.ok().map(|msg| {
-            let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
-            Ok(Event::default().event(name).data(data))
+    let stream = BroadcastStream::new(rx)
+        .filter_map(move |m| {
+            // Captured so that the mark lives exactly as long as the stream does.
+            let _keep = &mark;
+            m.ok().map(|msg| {
+                let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
+                Some(Ok(Event::default().event(name).data(data)))
+            })
         })
-    });
+        .merge(stop)
+        .take_while(Option::is_some)
+        .map(Option::unwrap);
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
@@ -1397,7 +1562,7 @@ fn authorized(app: &App, headers: &HeaderMap) -> bool {
         .map(str::trim);
     bearer
         .or(alt)
-        .map(|t| constant_eq(t, &app.token))
+        .map(|t| constant_eq(t, &app.token.read().unwrap()))
         .unwrap_or(false)
 }
 

@@ -1,5 +1,11 @@
 /* Runs before first paint: apply the saved theme, font and pane state so nothing flashes. */
 try {
+  /* After a reset, nothing saved is read: the page that reset dropped the
+     keys, but was still running as it left and may have written one back. */
+  if (sessionStorage.getItem("snyvi.reset")) {
+    sessionStorage.removeItem("snyvi.reset");
+    Object.keys(localStorage).filter(function (k) { return k.indexOf("snyvi.") === 0; }).forEach(function (k) { localStorage.removeItem(k); });
+  }
   var d = document.documentElement, t = localStorage.getItem("snyvi.theme");
   if (t) d.dataset.theme = t;
   var f = localStorage.getItem("snyvi.font");

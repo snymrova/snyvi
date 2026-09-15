@@ -94,7 +94,29 @@
       <dt>alt ← / →</dt><dd>back / forward</dd>
       <dt>esc</dt><dd>close</dd>
     </dl>
+    <div class="help-foot"><button class="text" id="btn-connect">Connect an agent…</button><button class="text" id="btn-about">About snyvi</button><button class="text" id="btn-reset">Reset snyvi…</button></div>
   </div>
+</div>
+<div id="about" hidden>
+  <div class="help-box about-box" role="dialog" aria-modal="true" aria-labelledby="about-title" tabindex="-1">
+    <button class="icon help-close" id="about-close" title="Close (Esc)" aria-label="Close">✕</button>
+    <h2 id="about-title">snyvi</h2>
+    <p id="about-say">A fast, beautiful viewer for the documents your agents produce.</p>
+    <dl id="about-facts"></dl>
+  </div>
+</div>
+<div id="reset" hidden>
+  <form class="help-box reset-box" role="dialog" aria-modal="true" aria-labelledby="reset-title" tabindex="-1">
+    <button class="icon help-close" id="reset-close" type="button" title="Close (Esc)" aria-label="Close">✕</button>
+    <h2 id="reset-title">Reset snyvi</h2>
+    <p id="reset-say">Reading what there is…</p>
+    <label id="reset-pinned-row" hidden><input type="checkbox" id="reset-pinned"> <span id="reset-pinned-say"></span></label>
+    <label class="reset-ask">Type the number of documents to continue
+      <input id="reset-n" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="reset-say">
+    </label>
+    <p id="reset-err" class="reset-err" role="alert" hidden></p>
+    <div class="reset-act"><button class="text" type="button" id="reset-cancel">Cancel</button><button class="danger" type="submit" id="reset-go" disabled>Reset</button></div>
+  </form>
 </div>
 <script id="boot" type="application/json">{{BOOT_JSON}}</script>
 <script src="/assets/app.js?v={{V}}" defer></script>

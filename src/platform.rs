@@ -26,6 +26,28 @@ pub fn exe(name: &str) -> String {
 /// reached, so the answer is yes; on Linux it is a question worth asking,
 /// because snyvi is often run over ssh, where a window would fail and a
 /// printed URL is the useful answer.
+/// The file a shell would run for `name`: the first match along PATH, with
+/// the executable suffixes Windows adds. None when there is none.
+pub fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let names: Vec<String> = if cfg!(windows) {
+        let ext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
+        let mut v = vec![name.to_string()];
+        v.extend(
+            ext.split(';')
+                .filter(|e| !e.is_empty())
+                .map(|e| format!("{name}{}", e.to_ascii_lowercase())),
+        );
+        v
+    } else {
+        vec![name.to_string()]
+    };
+    std::env::split_paths(&path)
+        .filter(|d| !d.as_os_str().is_empty())
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .find(|p| p.is_file())
+}
+
 pub fn has_display() -> bool {
     if cfg!(not(target_os = "linux")) {
         return true;
@@ -103,6 +125,24 @@ pub fn app_mode_browsers() -> Vec<String> {
             }
         }
         out
+    } else if cfg!(target_os = "macos") {
+        // Nothing on PATH on a Mac either: a browser is an application
+        // bundle, and the executable is inside it.
+        let mut out = vec![];
+        for (bundle, exe) in [
+            ("Google Chrome.app", "Google Chrome"),
+            ("Chromium.app", "Chromium"),
+            ("Brave Browser.app", "Brave Browser"),
+            ("Microsoft Edge.app", "Microsoft Edge"),
+        ] {
+            for app in app_bundles(bundle) {
+                let p = app.join("Contents/MacOS").join(exe);
+                if p.is_file() {
+                    out.push(p.to_string_lossy().into_owned());
+                }
+            }
+        }
+        out
     } else {
         [
             "chromium",
@@ -115,6 +155,20 @@ pub fn app_mode_browsers() -> Vec<String> {
         .map(|s| s.to_string())
         .collect()
     }
+}
+
+/// Where a macOS application bundle of that name would be, whether or not it
+/// is: `/Applications` and the user's own. Empty anywhere else, so a caller
+/// needs no `#[cfg]` of its own.
+pub fn app_bundles(name: &str) -> Vec<std::path::PathBuf> {
+    if cfg!(not(target_os = "macos")) {
+        return vec![];
+    }
+    let mut out = vec![std::path::PathBuf::from("/Applications").join(name)];
+    if let Some(home) = dirs::home_dir() {
+        out.push(home.join("Applications").join(name));
+    }
+    out.into_iter().filter(|p| p.is_dir()).collect()
 }
 
 /// Open the machine's own terminal, with its working directory set.
