@@ -2532,8 +2532,8 @@
     store.set("snyvi.font", next);
   });
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
-  const appEl = $("#app"), help = $("#help"), resetDlg = $("#reset");
-  const dialogs = [pal, help, resetDlg];
+  const appEl = $("#app"), help = $("#help"), aboutDlg = $("#about"), resetDlg = $("#reset");
+  const dialogs = [pal, help, aboutDlg, resetDlg];
   const anyDialogOpen = () => dialogs.some(d => !d.hidden);
   const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
   let dialogOpener = null;
@@ -2568,6 +2568,45 @@
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
   $("#help-close").addEventListener("click", () => closeDialog(help));
   $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+
+  // ---------- about: what this is, from the daemon ----------
+  /* Every number here is read from the daemon when the panel opens, not
+   * baked into this bundle, so the version it names is the one answering
+   * and the one `snyvi --version` prints. */
+  const aboutFacts = $("#about-facts");
+  async function openAbout() {
+    closeDialog(help);
+    aboutFacts.replaceChildren();
+    openDialog(aboutDlg, aboutDlg.firstElementChild);
+    let a;
+    try { a = await (await fetch("/api/about")).json(); } catch { $("#about-say").textContent = "The daemon did not answer."; return; }
+    $("#about-say").textContent = `${a.description}.`;
+    const fact = (k, v, cls) => {
+      if (v == null || v === "") return;
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); if (cls) dd.className = cls;
+      if (v instanceof Node) dd.append(v); else dd.textContent = v;
+      aboutFacts.append(dt, dd);
+    };
+    const ver = document.createDocumentFragment();
+    ver.append(a.version);
+    const build = [a.commit, a.target].filter(Boolean).join(", ");
+    if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
+    fact("Version", ver);
+    fact("Binary", a.binary, "path");
+    fact("Documents", a.data_dir, "path");
+    fact("Settings", a.config_dir, "path");
+    fact("Agents", a.agents, "pre");
+    fact("License", a.license);
+    if (a.repository) {
+      const link = document.createElement("a"); link.href = a.repository; link.target = "_blank"; link.rel = "noopener";
+      link.textContent = a.repository.replace(/^https?:\/\//, "");
+      fact("Source", link);
+    }
+  }
+  $("#btn-about").addEventListener("click", openAbout);
+  $("#about-close").addEventListener("click", () => closeDialog(aboutDlg));
+  aboutDlg.addEventListener("click", e => { if (e.target === aboutDlg) closeDialog(aboutDlg); });
 
   // ---------- reset: the one thing that cannot be undone ----------
   /* A delete has Undo; this has a number. The dialog says what goes and what
@@ -2726,7 +2765,7 @@
     if (e.key === "Escape") {
       const filled = docEl.querySelector(".mmd[data-full]");
       if (filled) mmdUnfill(filled);
-      closePalette(); closeDialog(help); closeDialog(resetDlg); closeSheet(); if (!findBar.hidden) closeFind();
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); if (!findBar.hidden) closeFind();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

@@ -1386,9 +1386,12 @@ say the file has something snyvi does not understand and print the
 snippet instead of editing.
 
 **About.** One panel inside `?`: what snyvi is in a sentence, the
-version and the build, the data directory, the config directory, the
-registration line `status` ends with, the license, the repository. The
-version is read from the daemon, so the panel cannot say a number
+version and the build -- the commit and the target, which `build.rs`
+reads from the checkout, so two builds between the same two tags can be
+told apart -- the binary, the data directory, the config directory, the
+registration line `status` ends with, the license, the repository.
+Every line is read from the daemon when the panel opens (`/api/about`),
+not baked into the page's bundle, so the panel cannot say a number
 `snyvi --version` would not.
 
 **Reset.** `snyvi reset` puts the install back to the page above. What
@@ -1440,9 +1443,11 @@ so is the registration. `bench/ui.mjs`, the five rows shipped with it:
 cursor in the field and the button dead; the button waits for the
 number; a stale number is refused and the sentence brought up to date;
 and a reset lands on the empty library with a preference forgotten and
-no `snyvi.*` key left in storage. Still to come with the page: the
-empty library shows the connect page; the about panel names the version
-the daemon serves.
+no `snyvi.*` key left in storage. The about box, three rows: `?` opens
+it in the help box's place; every fact on it is what `/api/about` says,
+the version with the commit; Escape closes it and the page is live
+again. Still to come with the page: the empty library shows the connect
+page.
 
 What this is not: a tour, coach marks, a checklist that persists. They
 are chrome, and the reader with three plans waiting has already learnt

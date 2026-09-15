@@ -389,6 +389,13 @@ every control in the order they are on the page; the search palette and
 the keys box keep focus inside them while open and give it back to
 where it was on Escape, and the find count is read out as it changes.
 
+The foot of the keys box has two lines. *About snyvi* says what this
+is, the version and the commit the daemon is running -- read from the
+daemon, so it is the number `snyvi --version` prints -- where the
+documents and the settings live, what Claude Code has of it, the
+license and the repository. *Reset snyvi…* is described under
+[Uninstalling](#uninstalling).
+
 ## Lines
 
 A code or text document addresses its lines. `#L120` opens it at line 120

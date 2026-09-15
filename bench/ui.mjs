@@ -187,6 +187,7 @@ async function main() {
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
+    sections.push(["the about box", await aboutRows(p, url)]);
     // Last, because it takes the library with it.
     sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
 
@@ -1012,6 +1013,35 @@ main().catch(e => { console.error(e.message); process.exit(1); });
  *  arrives while the dialog is open makes the number stale and the daemon
  *  refuses; and what a reset leaves is the page a newcomer sees, with
  *  nothing remembered for the reader who was here before. */
+/** One panel inside `?`, and everything on it read from the daemon when it
+ *  opens, so the version it names is the one answering. */
+async function aboutRows(p, url) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  await p.goto(url);
+  await p.pointerAway();
+  await p.press("?");
+  const offered = (await p.ui("vis", "#help")) && (await p.ui("vis", "#btn-about"));
+  await p.clickOn("#btn-about");
+  const opened = await until(`!document.querySelector("#about").hidden && document.querySelector("#about-facts dd") !== null`);
+  const helpGone = await p.ev(`document.querySelector("#help").hidden`);
+  rows.push(["? opens it", offered && opened && helpGone, !offered ? "no About in the help box" : !opened ? "the panel did not open, or said nothing" : !helpGone ? "the help box stayed open behind it" : "one line in the help box, one panel in its place"]);
+
+  const served = await p.ev(`fetch("/api/about").then(r => r.json())`);
+  const facts = await p.ev(`Object.fromEntries([...document.querySelectorAll("#about-facts dt")].map(dt => [dt.textContent, dt.nextElementSibling.textContent]))`);
+  const version = (facts.Version || "").startsWith(served.version) && (!served.commit || facts.Version.includes(served.commit));
+  const dirs = facts.Documents === served.data_dir && facts.Settings === served.config_dir;
+  const agents = facts.Agents === served.agents && /^Claude Code:/.test(facts.Agents);
+  const source = await p.ev(`(() => { const a = document.querySelector("#about-facts a"); return a && a.href === ${JSON.stringify(served.repository)} && a.target === "_blank"; })()`);
+  rows.push(["and it says what the daemon says", version && dirs && agents && source && facts.License === "MIT",
+    !version ? `version "${facts.Version}" for a daemon serving ${served.version} ${served.commit}` : !dirs ? "the directories are not the daemon's" : !agents ? `agents line "${facts.Agents}"` : !source ? "the source link is wrong or missing" : `${facts.Version}, both directories, the agents line, MIT, the repository`]);
+
+  await p.press("Escape");
+  const closed = await until(`document.querySelector("#about").hidden && !document.querySelector("#app").inert`);
+  rows.push(["Escape closes it", closed, closed ? "and the page is live again" : "still open, or the page still inert"]);
+  return rows;
+}
+
 async function resetRows(p, url, arrive) {
   const rows = [];
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };

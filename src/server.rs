@@ -27,6 +27,9 @@ use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The commit and target from build.rs, "" outside a checkout.
+pub const BUILD_SHA: &str = env!("SNYVI_GIT_SHA");
+pub const BUILD_TARGET: &str = env!("SNYVI_TARGET");
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_CSS: &str = include_str!("../ui/app.css");
@@ -160,6 +163,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/files/{id}/{*path}", get(doc_file))
         .route("/assets/fonts/{name}", get(asset_font))
         .route("/api/health", get(health))
+        .route("/api/about", get(about))
         .route("/api/tree", get(tree))
         .route("/api/projects/{id}/tree", get(project_tree))
         .route("/api/workflows/{id}/tree", get(workflow_tree))
@@ -480,6 +484,7 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
     Json(json!({
         "ok": true,
         "version": VERSION,
+        "commit": BUILD_SHA,
         // So `snyvi stop` can end this exact process if it ignores the
         // shutdown endpoint, without having to guess which snyvi it is.
         "pid": std::process::id(),
@@ -489,6 +494,29 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         "window": app.has_window(),
         "streams": app.streams.load(Ordering::Relaxed),
         "languages": app.renderer.languages().len(),
+        "uptime_s": app.started.elapsed().as_secs(),
+    }))
+}
+
+/// The about panel: what this is, which build is answering, where its
+/// files are, and what Claude Code has of it. The version comes from here
+/// and not from the page's bundle, so the panel cannot name a number
+/// `snyvi --version` would not.
+async fn about(State(app): S) -> Json<serde_json::Value> {
+    let exe = std::env::current_exe().ok();
+    Json(json!({
+        "name": "snyvi",
+        "description": env!("CARGO_PKG_DESCRIPTION"),
+        "version": VERSION,
+        "commit": BUILD_SHA,
+        "target": BUILD_TARGET,
+        "binary": exe.as_deref().map(|p| p.display().to_string()),
+        "data_dir": app.paths.data_dir.display().to_string(),
+        "config_dir": app.paths.config_dir.display().to_string(),
+        "agents": crate::setup::claude_code_status(),
+        "license": env!("CARGO_PKG_LICENSE"),
+        "repository": env!("CARGO_PKG_REPOSITORY"),
+        "docs": app.store.count().unwrap_or(0),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
 }
