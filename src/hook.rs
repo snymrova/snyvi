@@ -48,6 +48,7 @@ pub fn run(paths: &Paths) -> Result<()> {
             .and_then(Value::as_str)
             .map(crate::session::workflow_key),
         origin: Some("hook".into()),
+        sender: Some("claude-code".into()),
         ..Default::default()
     };
     // Errors are deliberately ignored: the hook must not break Claude's turn.

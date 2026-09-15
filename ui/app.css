@@ -620,6 +620,33 @@ pre.code .inv { color: var(--del-fg); }
 .inbox-sec button:hover { background: var(--rule); color: var(--fg); }
 .inbox-sec kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
 .inbox.waiting { margin-bottom: 8px; }
+/* The connect page: one row per agent, the state as a dot and a word, and
+ * everything to paste in a block with its own Copy. It sits in the document
+ * pane at the document's measure, so it reads as a page and not as chrome. */
+.connect .agents { list-style: none; margin: 0; padding: 0; }
+.agent { padding: 16px 0; border-top: 1px solid var(--rule); }
+.agent:last-child { border-bottom: 1px solid var(--rule); }
+.agent-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); align-self: center; flex: none; }
+.agent.is-connected .agent-dot { background: var(--add-fg); }
+.agent.is-stale .agent-dot { background: var(--del-fg); }
+.agent-name { font-size: 16px; font-weight: 600; }
+.agent-state { color: var(--fg-3); font-size: 13px; }
+.agent-say { margin: 6px 0 0; font-size: 14.5px; color: var(--fg-2); line-height: 1.5; }
+.connect code { font-family: var(--mono); font-size: 12.5px; }
+.agent-fix { margin-top: 10px; }
+.agent-instr { margin: 8px 0 0; font-size: 13.5px; color: var(--fg-3); }
+.connect-line { margin-top: 28px; }
+.connect-line p { margin: 0 0 8px; font-size: 14px; color: var(--fg-2); }
+pre.cmd { position: relative; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border-radius: var(--radius); padding: 8px 72px 8px 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.cmd code { background: none; padding: 0; font-size: inherit; }
+pre.cmd .copy { position: absolute; top: 6px; right: 8px; font: inherit; font-family: var(--sans); font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--bg-raise); color: var(--fg-2); box-shadow: 0 1px 2px rgba(0,0,0,.12); border: 0; cursor: pointer; }
+pre.cmd .copy:hover { color: var(--fg); }
+pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.agent-fix details { margin-top: 8px; }
+.agent-fix summary { cursor: pointer; font-size: 13px; color: var(--fg-3); }
+.agent-fix details[open] summary { margin-bottom: 6px; }
+.connect-foot { margin-top: 24px; color: var(--fg-3); font-size: 13.5px; }
 .empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
 .empty-state h1 { font-size: 22px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
 .empty-state p { margin: 0 0 18px; font-size: 15px; }

@@ -209,8 +209,10 @@ snyvi watch PLAN.md                # send now, and again on every save
 snyvi browse [dir]                 # read a folder from disk, nothing stored
 snyvi open                         # open the viewer, in the window if one is up
 snyvi app                          # native window (see Desktop below)
-snyvi init-claude [--auto] [--claude-md]  # register with Claude Code; safe to run again
-snyvi uninstall-claude             # take that registration back out
+snyvi init <agent> [--instructions]  # register with claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed
+snyvi init                         # every agent, and what each has of snyvi
+snyvi uninstall <agent>            # take that registration back out
+snyvi init-claude [--auto] [--claude-md]  # the same as `init claude`, with its hook
 snyvi install-cli [dir]            # put `snyvi` on PATH
 snyvi prune --days 30 [--dry-run]  # delete what you deleted, and unpinned documents older than N days
 snyvi reset [--dry-run] [--agents]  # back to a fresh install; asks for the number of documents
@@ -224,9 +226,32 @@ The first `send` starts the daemon in the background; it stays resident
 (about 25 MB) so every later send and every page open is instant. It
 listens on `127.0.0.1:7777` only. Set `SNYVI_PORT` to change the port.
 
+### Connecting an agent
+
+`snyvi mcp` is a plain stdio MCP server, so any agent that speaks MCP can
+send documents here. `snyvi init <agent>` puts the entry in the agent's
+own file -- `~/.claude.json`, `~/.codex/config.toml`, `~/.cursor/mcp.json`,
+Claude Desktop's, Gemini CLI's, Windsurf's, VS Code's or Zed's -- after
+reading what is there: it says "already registered" when there is
+nothing to do, re-registers when the entry names a binary that has
+moved, and leaves everything else in the file as it found it (Codex's
+TOML keeps its comments; a JSON file with comments in it, which snyvi
+cannot parse, is left alone and the snippet printed instead).
+`--instructions` adds one line to the agent's instructions file, where
+it has one, asking it to send what it writes; `snyvi uninstall <agent>`
+takes the entry and the line back out.
+
+The viewer says the same thing. When the library is empty the page is
+*Connect an agent*: one row per agent, read by the daemon from the
+agent's own file, saying whether it is connected, not set up, or
+registered under a path that no longer exists, with the command or the
+snippet that fixes it and, once a document has come from it, when. It
+is reachable at any time from the foot of the `?` box, and `snyvi init`
+with no agent prints the same rows.
+
 ### Claude Code
 
-`snyvi init-claude` runs `claude mcp add --scope user snyvi -- snyvi mcp`.
+`snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
 That exposes a single MCP tool, `send_document`, which takes a file path
 or inline content and returns a URL. The tool description tells Claude
 when to use it; a line in your global `CLAUDE.md` helps it remember:

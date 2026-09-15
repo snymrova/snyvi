@@ -35,13 +35,20 @@ pub fn run(paths: &Paths, o: Opts) -> Result<()> {
     if !installed && census == Census::default() {
         println!("Nothing to reset: snyvi is as it was installed.");
         if o.agents {
-            println!();
-            crate::setup::uninstall_claude()?;
+            for a in registered_agents() {
+                println!();
+                if a.id == "claude" {
+                    crate::setup::uninstall_claude()?;
+                } else {
+                    crate::agents::uninstall(&a)?;
+                }
+            }
         }
         return Ok(());
     }
 
-    println!("{}", sentence(&census, o.agents));
+    let registered = registered_agents();
+    println!("{}", sentence(&census, o.agents, &registered));
     if o.dry_run {
         return Ok(());
     }
@@ -76,14 +83,51 @@ pub fn run(paths: &Paths, o: Opts) -> Result<()> {
         count(census.documents, "document", "documents")
     );
     if o.agents {
-        println!();
-        crate::setup::uninstall_claude_keeping(false)?;
-    } else if crate::setup::registered().is_some() {
-        println!("Claude Code is still registered: the next document an agent sends lands in an empty library.");
+        for a in &registered {
+            println!();
+            if a.id == "claude" {
+                crate::setup::uninstall_claude_keeping(false)?;
+            } else {
+                crate::agents::uninstall_keeping(a, false)?;
+            }
+        }
+    } else if !registered.is_empty() {
+        println!(
+            "{} still registered: the next document an agent sends lands in an empty library.",
+            names(&registered, "is", "are")
+        );
     } else {
-        println!("No agent is registered; `snyvi init-claude` connects Claude Code.");
+        println!(
+            "No agent is registered; the page at {} says how to connect one.",
+            config::base_url()
+        );
     }
     Ok(())
+}
+
+/// Every agent whose own file names snyvi, stale or not: what a reset
+/// leaves alone, and what `--agents` takes out.
+fn registered_agents() -> Vec<crate::agents::Agent> {
+    crate::agents::all()
+        .into_iter()
+        .filter(|a| {
+            matches!(
+                crate::agents::state(a),
+                crate::agents::State::Connected { .. } | crate::agents::State::Stale { .. }
+            )
+        })
+        .collect()
+}
+
+/// "Claude Code is", "Claude Code and Codex CLI are".
+fn names(agents: &[crate::agents::Agent], one: &str, many: &str) -> String {
+    let n: Vec<&str> = agents.iter().map(|a| a.name).collect();
+    let list = match n.len() {
+        0 => String::new(),
+        1 => n[0].to_string(),
+        k => format!("{} and {}", n[..k - 1].join(", "), n[k - 1]),
+    };
+    format!("{list} {}", if n.len() == 1 { one } else { many })
 }
 
 /// The numbers, from whoever holds the store: the daemon when it is up, the
@@ -111,15 +155,23 @@ fn count(n: i64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-fn sentence(c: &Census, agents: bool) -> String {
+fn sentence(c: &Census, agents: bool, registered: &[crate::agents::Agent]) -> String {
+    let list: Vec<&str> = registered.iter().map(|a| a.name).collect();
+    let list = match list.len() {
+        0 => String::new(),
+        1 => list[0].to_string(),
+        k => format!("{} and {}", list[..k - 1].join(", "), list[k - 1]),
+    };
     format!(
         "This removes {} in {}, the index, the token and the page's preferences, and {}. Nothing can be undone.",
         count(c.documents, "document", "documents"),
         count(c.projects, "project", "projects"),
-        if agents {
-            "takes snyvi out of Claude Code".to_string()
+        if registered.is_empty() {
+            "no agent is registered".to_string()
+        } else if agents {
+            format!("takes snyvi out of {list}")
         } else {
-            "leaves Claude Code registered (add --agents to take that out too)".to_string()
+            format!("leaves {list} registered (add --agents to take that out too)")
         }
     )
 }
@@ -189,19 +241,28 @@ mod tests {
             projects: 9,
             pinned: 0,
         };
-        let s = sentence(&c, false);
+        let both: Vec<_> = crate::agents::all()
+            .into_iter()
+            .filter(|a| a.id == "claude" || a.id == "codex")
+            .collect();
+        let s = sentence(&c, false, &both[..1]);
         assert!(s.contains("214 documents in 9 projects"), "{s}");
         assert!(s.contains("leaves Claude Code registered"), "{s}");
         assert!(s.contains("--agents"), "{s}");
-        let s = sentence(
-            &Census {
-                documents: 1,
-                projects: 1,
-                pinned: 1,
-            },
-            true,
-        );
+        let one = Census {
+            documents: 1,
+            projects: 1,
+            pinned: 1,
+        };
+        let s = sentence(&one, true, &both);
         assert!(s.contains("1 document in 1 project"), "{s}");
-        assert!(s.contains("takes snyvi out of Claude Code"), "{s}");
+        assert!(
+            s.contains("takes snyvi out of Claude Code and Codex CLI"),
+            "{s}"
+        );
+        let s = sentence(&one, true, &[]);
+        assert!(s.contains("and no agent is registered"), "{s}");
+        assert_eq!(names(&both, "is", "are"), "Claude Code and Codex CLI are");
+        assert_eq!(names(&both[..1], "is", "are"), "Claude Code is");
     }
 }

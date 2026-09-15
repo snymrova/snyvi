@@ -153,6 +153,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/", get(shell_home))
+        .route("/connect", get(shell_connect))
         .route("/d/{id}", get(shell_doc))
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
@@ -164,6 +165,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/fonts/{name}", get(asset_font))
         .route("/api/health", get(health))
         .route("/api/about", get(about))
+        .route("/api/agents", get(agents))
         .route("/api/tree", get(tree))
         .route("/api/projects/{id}/tree", get(project_tree))
         .route("/api/workflows/{id}/tree", get(workflow_tree))
@@ -362,8 +364,20 @@ async fn shell_home(State(app): S) -> Response {
         [only] => subtree(&app, only.id, None),
         _ => serde_json::Value::Object(Default::default()),
     };
-    let boot = json!({ "view": "inbox", "tree": tree, "sub": sub, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
+    let mut boot = json!({ "view": "inbox", "tree": tree, "sub": sub, "inbox": inbox, "browse": app.browse.list(), "version": VERSION });
+    // An empty library opens on the connect page, and the page is on screen
+    // with the sidebar rather than a round trip after it.
+    if inbox.is_empty() {
+        boot["agents"] = agents_json(&app);
+    }
     shell(&app, boot, "", "snyvi")
+}
+
+/// The connect page, asked for: from `?`, or by its address.
+async fn shell_connect(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "connect", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION, "agents": agents_json(&app) });
+    shell(&app, boot, "", "Connect an agent · snyvi")
 }
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
@@ -513,12 +527,31 @@ async fn about(State(app): S) -> Json<serde_json::Value> {
         "binary": exe.as_deref().map(|p| p.display().to_string()),
         "data_dir": app.paths.data_dir.display().to_string(),
         "config_dir": app.paths.config_dir.display().to_string(),
-        "agents": crate::setup::claude_code_status(),
+        "agents": std::iter::once(crate::setup::claude_code_status())
+            .chain(crate::agents::status_lines())
+            .collect::<Vec<_>>()
+            .join("\n"),
         "license": env!("CARGO_PKG_LICENSE"),
         "repository": env!("CARGO_PKG_REPOSITORY"),
         "docs": app.store.count().unwrap_or(0),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
+}
+
+/// The connect page's rows: every agent and what its own file says it has
+/// of snyvi, read now, and when each last sent something. `program` is how
+/// this binary is spelled to them, for the page to show in its commands.
+async fn agents(State(app): S) -> Response {
+    Json(agents_json(&app)).into_response()
+}
+
+fn agents_json(app: &App) -> serde_json::Value {
+    let senders = app.store.senders().unwrap_or_default();
+    json!({
+        "program": crate::setup::program().0,
+        "rows": crate::agents::rows(&senders),
+        "now": crate::store::now(),
+    })
 }
 
 async fn tree(State(app): S) -> Response {

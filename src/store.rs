@@ -95,6 +95,8 @@ pub struct NewDoc<'a> {
     pub source_path: Option<&'a str>,
     pub branch: Option<&'a str>,
     pub origin: &'a str,
+    /// The MCP client's name, "" when it came another way.
+    pub sender: &'a str,
     /// The document body as stored. Bytes, not text, so an image or any other
     /// binary keeps exactly what arrived instead of a lossy decode.
     pub source: &'a [u8],
@@ -182,6 +184,9 @@ impl Store {
             // Deleted, and still here until `prune` says otherwise -- which is
             // what makes "Undo" in the toast something the daemon can honour.
             "ALTER TABLE docs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0",
+            // Who sent it, by the name the MCP client gave in `initialize`,
+            // so the connect page can say when an agent last worked.
+            "ALTER TABLE docs ADD COLUMN sender TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -245,9 +250,9 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1)",
-            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin],
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13)",
+            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin, d.sender],
         )?;
         tx.execute(
             "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
@@ -535,7 +540,7 @@ impl Store {
         let rows = conn
             .prepare(
                 "SELECT p.id, p.name, p.root, COUNT(d.id), COUNT(DISTINCT d.workflow_id)
-                 FROM projects p JOIN docs d ON d.project_id = p.id
+                 FROM projects p JOIN live_docs d ON d.project_id = p.id
                  GROUP BY p.id ORDER BY MAX(d.received_at) DESC, p.id DESC",
             )?
             .query_map([], |r| {
@@ -725,6 +730,18 @@ impl Store {
         Ok(conn.query_row("SELECT COUNT(*) FROM live_docs", [], |r| r.get(0))?)
     }
 
+    /// Every MCP client that has sent something, and when it last did.
+    /// Over `docs`, not `live_docs`: a document the reader deleted still
+    /// proves the agent's registration worked.
+    pub fn senders(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut st = conn.prepare(
+            "SELECT sender, MAX(received_at) FROM docs WHERE sender <> '' GROUP BY sender",
+        )?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     /// What a reset would take, in the numbers the sentence says and the
     /// reader types back: the documents that can be seen, the projects they
     /// are in, and how many of them are pinned. A document already deleted is
@@ -851,6 +868,7 @@ mod tests {
             source_path: Some("/p/PLAN.md"),
             branch: None,
             origin: "cli",
+            sender: "",
             source: src.as_bytes(),
             search_body: src,
             html: "<p>x</p>",
@@ -1090,6 +1108,7 @@ mod tests {
         let wfs = s.project_tree(a.project_id, 0, 0).unwrap();
         assert_eq!(wfs[0].total, 1);
         assert_eq!(wfs[0].docs.len(), 1);
+        assert_eq!(s.projects().unwrap()[0].docs, 1, "the sidebar's count too");
         assert!(s.html(&b.id).is_ok(), "still on disk");
 
         // And back, queue place and all.

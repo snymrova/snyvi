@@ -102,7 +102,61 @@ snyvi install-cli $HOME/cli | tee $HOME/cli.log
 test "$(readlink $HOME/cli/snyvi)" = "$HOME/bin/snyvi"
 grep -q "not on PATH" $HOME/cli.log
 snyvi install-cli $HOME/cli | tee $HOME/cli2.log
-echo "--- 11. reset: the sentence, the number, and what stays"
+echo "--- 11. init codex, cursor: read first, three sentences, the page's state at every step"
+snyvi restart >/dev/null
+agents() { curl -s "http://127.0.0.1:$SNYVI_PORT/api/agents" | python3 -c "import json,sys
+rows={r['id']:r for r in json.load(sys.stdin)['rows']}
+$1" || { echo "FAILED: $1"; exit 1; }; }
+agents "assert all(r['state']=='not_set_up' for r in rows.values()), rows"
+# A Codex config with a comment and another server in it, which has to come out byte-equal.
+mkdir -p $HOME/.codex
+printf '# mine\nmodel = "o3"   # keep\n\n[mcp_servers.other]\ncommand = "x"\n' > $HOME/.codex/config.toml
+cp $HOME/.codex/config.toml $HOME/codex-before.toml
+snyvi init codex | tee $HOME/codex1.log
+grep -q "Registered snyvi with Codex CLI: snyvi mcp, in ~/.codex/config.toml" $HOME/codex1.log
+grep -q "init codex --instructions" $HOME/codex1.log
+head -c $(wc -c < $HOME/codex-before.toml) $HOME/.codex/config.toml | cmp - $HOME/codex-before.toml
+agents "assert rows['codex']['state']=='connected' and rows['codex']['command']=='snyvi', rows['codex']; assert rows['codex']['instructions']['present'] is False"
+snyvi init codex --instructions | tee $HOME/codex2.log
+grep -q "already has snyvi registered: snyvi mcp" $HOME/codex2.log
+grep -q "Added a line to ~/.codex/AGENTS.md" $HOME/codex2.log
+test "$(grep -c send_document $HOME/.codex/AGENTS.md)" = 1
+agents "assert rows['codex']['instructions']['present'] is True"
+# The binary moved: the entry names a path that is gone, the page says so, init follows it.
+sed -i 's|^command = "snyvi"|command = "/gone/snyvi"|' $HOME/.codex/config.toml
+agents "assert rows['codex']['state']=='stale', rows['codex']; assert rows['codex']['fix']['command']=='snyvi init codex'"
+snyvi init codex | tee $HOME/codex3.log
+grep -q "which is not this binary. Re-registering" $HOME/codex3.log
+agents "assert rows['codex']['state']=='connected'"
+# Cursor, whose file began with another program's entry; a comment in a JSON file is left alone.
+mkdir -p $HOME/.cursor
+echo '{"mcpServers":{"other":{"command":"x"}},"theme":"dark"}' > $HOME/.cursor/mcp.json
+snyvi init cursor | grep -q "Registered snyvi with Cursor: snyvi mcp, in ~/.cursor/mcp.json"
+agents "assert rows['cursor']['state']=='connected'"
+python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.cursor/mcp.json'))); assert d['mcpServers']['other']=={'command':'x'} and d['theme']=='dark' and d['mcpServers']['snyvi']['args']==['mcp'], d"
+printf '// mine\n{}' > $HOME/.gemini-settings.json; mkdir -p $HOME/.gemini; mv $HOME/.gemini-settings.json $HOME/.gemini/settings.json
+snyvi init gemini | tee $HOME/gemini.log
+grep -q "does not understand" $HOME/gemini.log
+grep -q '"mcpServers"' $HOME/gemini.log
+test "$(cat $HOME/.gemini/settings.json)" = "$(printf '// mine\n{}')"
+agents "assert rows['gemini']['state']=='unreadable', rows['gemini']"
+rm -r $HOME/.gemini
+# One document the way an agent sends it, under Codex's name: the row says when.
+printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"codex-mcp-client","version":"0"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_document","arguments":{"content":"# From codex\n\nhello","title":"From codex"}}}' | snyvi mcp | grep -q "Waiting in snyvi"
+agents "assert rows['codex']['last_sent'] and rows['codex']['sender']=='codex-mcp-client', rows['codex']; assert rows['cursor']['last_sent'] is None"
+snyvi init | tee $HOME/list.log
+grep -q "Codex CLI: connected (snyvi mcp), last sent just now" $HOME/list.log
+grep -q "Zed: not set up; run \`snyvi init zed\`" $HOME/list.log
+# Out again: the Codex file byte-equal to before, the Cursor file with only what it had.
+snyvi uninstall codex | tee $HOME/uncodex.log
+grep -q "Removed snyvi from Codex CLI" $HOME/uncodex.log
+grep -q "Removed the snyvi line from ~/.codex/AGENTS.md" $HOME/uncodex.log
+cmp $HOME/.codex/config.toml $HOME/codex-before.toml
+! grep -q send_document $HOME/.codex/AGENTS.md
+snyvi uninstall cursor | grep -q "Removed snyvi from Cursor"
+python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.cursor/mcp.json'))); assert d=={'mcpServers':{'other':{'command':'x'}},'theme':'dark'}, d"
+agents "assert rows['codex']['state']=='not_set_up' and rows['cursor']['state']=='not_set_up'; assert rows['codex']['last_sent'], 'a document that arrived still says so'"
+echo "--- 12. reset: the sentence, the number, and what stays"
 cat > $HOME/bin/claude <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -116,7 +170,7 @@ PY
 chmod +x $HOME/bin/claude
 snyvi init-claude >/dev/null
 cp $HOME/.claude.json $HOME/claude-before.json
-for f in README.md LICENSE docs/ROADMAP.md; do snyvi send $f >/dev/null; done
+for f in README.md LICENSE; do snyvi send $f >/dev/null; done   # three with the one from Codex
 cp $SNYVI_CONFIG_DIR/token $HOME/token-before
 snyvi reset --dry-run | tee $HOME/reset-dry.log
 grep -q "This removes 3 documents in 1 project" $HOME/reset-dry.log
@@ -124,7 +178,7 @@ grep -q "leaves Claude Code registered" $HOME/reset-dry.log
 snyvi status | grep -q '"docs": 3'
 ! snyvi reset </dev/null 2>$HOME/reset-tty.log
 grep -q "add --yes" $HOME/reset-tty.log
-echo "--- 12. a pin refuses it, --pinned allows it"
+echo "--- 13. a pin refuses it, --pinned allows it"
 id=$(curl -s "http://127.0.0.1:$SNYVI_PORT/api/inbox?limit=1" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')
 curl -s -X POST -H "Authorization: Bearer $(cat $SNYVI_CONFIG_DIR/token)" -H 'content-type: application/json' -d '{"pinned":true}' "http://127.0.0.1:$SNYVI_PORT/api/docs/$id/pin" >/dev/null
 ! snyvi reset --yes 2>$HOME/reset-pin.log
@@ -137,7 +191,7 @@ test "$(ls $SNYVI_DATA_DIR/docs | wc -l)" = 0
 curl -s "http://127.0.0.1:$SNYVI_PORT/api/reset" | grep -q '"documents":0'
 cmp $HOME/.claude.json $HOME/claude-before.json
 test ! -e $SNYVI_CONFIG_DIR/sessions.json
-echo "--- 13. --agents takes the registration out too; with no daemon, the files go"
+echo "--- 14. --agents takes the registration out too; with no daemon, the files go"
 snyvi stop
 snyvi send README.md >/dev/null; snyvi stop
 snyvi reset --yes --agents | tee $HOME/reset-agents.log

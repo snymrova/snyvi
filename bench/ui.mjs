@@ -103,7 +103,11 @@ function prelude() {
 
 async function main() {
   const tmp = mkdtempSync(join(tmpdir(), "snyvi-ui-bench-"));
-  const env = { ...process.env, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
+  // A home of its own, so the connect page reads agent files the probe
+  // wrote and not whatever this machine has.
+  const home = join(tmp, "home");
+  mkdirSync(home);
+  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
   const base = `http://127.0.0.1:${PORT}`;
   let chromeProc = null, failed = false;
   try {
@@ -160,9 +164,12 @@ async function main() {
     if (!/\/b\//.test(browsed)) throw new Error(`snyvi browse printed no URL:\n${browsed}`);
     // One send through the MCP server, the way an agent's does it, so the row
     // below can read what the agent is told about where the document went.
+    // It opens with `initialize` the way every client does, under a name no
+    // agent in the table has, so the connect page has a sender of its own to show.
     const mcpSend = title => {
-      const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "send_document", arguments: { content: `# ${title}\n\nSent the way an agent sends.\n`, title } } };
-      const out = execFileSync(BIN, ["mcp"], { env, cwd: tmp, encoding: "utf8", input: JSON.stringify(call) + "\n" });
+      const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "bench-agent", version: "0" } } };
+      const call = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "send_document", arguments: { content: `# ${title}\n\nSent the way an agent sends.\n`, title } } };
+      const out = execFileSync(BIN, ["mcp"], { env, cwd: tmp, encoding: "utf8", input: JSON.stringify(init) + "\n" + JSON.stringify(call) + "\n" });
       return JSON.parse(out.trim().split("\n").pop()).result.content[0].text;
     };
 
@@ -188,6 +195,7 @@ async function main() {
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["the about box", await aboutRows(p, url)]);
+    sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
     // Last, because it takes the library with it.
     sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
 
@@ -1042,6 +1050,52 @@ async function aboutRows(p, url) {
   return rows;
 }
 
+/** The page the empty library is: one row per agent, each read from the
+ *  agent's own file by the daemon, turning as the file does. */
+async function connectRows(p, url, home, env) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const stateOf = id => p.ev(`document.querySelector('.agent[data-agent="${id}"]')?.className.replace(/.*is-(\\w+).*/, "$1")`);
+
+  await p.goto(url);
+  await p.pointerAway();
+  await p.press("?");
+  const offered = await p.ui("vis", "#btn-connect");
+  await p.clickOn("#btn-connect");
+  const opened = await until(`location.pathname === "/connect" && document.querySelectorAll(".connect .agent").length >= 8`);
+  const served = await p.ev(`fetch("/api/agents").then(r => r.json())`);
+  const names = await p.ev(`[...document.querySelectorAll(".agent-name")].map(e => e.textContent)`);
+  const same = opened && JSON.stringify(names) === JSON.stringify(served.rows.map(r => r.name));
+  const allOff = same && (await p.ev(`[...document.querySelectorAll(".agent:not([data-agent^='sender:'])")].every(e => e.classList.contains("is-off"))`));
+  rows.push(["? reaches it, one row per agent", offered && same && allOff,
+    !offered ? "no Connect an agent in the help box" : !opened ? "the page did not open" : !same ? `rows ${JSON.stringify(names)}` : !allOff ? "a row is not 'not set up' in a home that has never seen an agent" : `${names.length} rows, in the daemon's order, every agent not set up`]);
+
+  const sender = await p.ev(`(() => { const e = document.querySelector('.agent[data-agent="sender:bench-agent"]'); return e && e.classList.contains("is-connected") && /sent/.test(e.querySelector(".agent-state").textContent); })()`);
+  rows.push(["a sender it never heard of has a row", !!sender, sender ? "bench-agent, connected, with when it sent" : "no row for the MCP client that sent under its own name"]);
+
+  // A Cursor file appears with snyvi under a path that is gone, then the fix
+  // is run in a terminal: the row turns twice, without a reload.
+  mkdirSync(join(home, ".cursor"), { recursive: true });
+  writeFileSync(join(home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { other: { command: "x" }, snyvi: { command: "/gone/snyvi", args: ["mcp"] } } }));
+  const stale = await until(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-stale")`, 60);
+  const says = stale && await p.ev(`document.querySelector('.agent[data-agent="cursor"] .agent-say').textContent`);
+  const fixShown = stale && await p.ev(`/init cursor$/.test(document.querySelector('.agent[data-agent="cursor"] .agent-fix code').textContent)`);
+  execFileSync(BIN, ["init", "cursor"], { env, encoding: "utf8" });
+  const connected = await until(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`, 60);
+  const kept = JSON.parse(readFileSync(join(home, ".cursor", "mcp.json"), "utf8")).mcpServers.other?.command === "x";
+  rows.push(["a row turns as its file does", stale && fixShown && connected && kept,
+    !stale ? `Cursor stayed "${await stateOf("cursor")}" after its file named a path that is gone` : !fixShown ? "the fix is not the init command" : !connected ? "init cursor ran and the row did not turn" : !kept ? "the other server in the file was lost" : `needs fixing — "${says}" — then connected, the other entry kept`]);
+
+  await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
+  const copied = await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy').textContent === "Copied"`, 10);
+  rows.push(["Copy says it copied", copied, copied ? "the button reads Copied for a moment" : "the button did not change"]);
+
+  await p.press("ArrowLeft", { alt: true });
+  const back = await until(`location.pathname !== "/connect" && !!document.querySelector(".prose")`);
+  rows.push(["Back leaves it", back, back ? "the document is back on screen" : `still on ${await p.ev("location.pathname")}`]);
+  return rows;
+}
+
 async function resetRows(p, url, arrive) {
   const rows = [];
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
@@ -1081,11 +1135,13 @@ async function resetRows(p, url, arrive) {
 
   await p.type(String(census.documents + 1));
   await p.press("Enter");
-  const landed = await until(`location.pathname === "/" && !!document.querySelector(".empty-state")`, 80);
+  const landed = await until(`location.pathname === "/" && !!document.querySelector(".connect .agent")`, 80);
   const forgotten = landed && await p.ev(`(() => { try { return !Object.keys(localStorage).some(k => k.startsWith("snyvi.")); } catch { return true; } })()`);
   const wideOff = landed && !(await p.ev(`document.documentElement.dataset.wide`));
   const empty = (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === 0;
-  rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty,
-    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? "a snyvi.* key is still in the page's storage" : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : "the empty library, the width forgotten, nothing in storage"]);
+  // The agents were not touched: the row the connect rows turned is still connected.
+  const stillConnected = landed && await p.ev(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`);
+  rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty && stillConnected,
+    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? "a snyvi.* key is still in the page's storage" : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
   return rows;
 }

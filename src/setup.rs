@@ -37,7 +37,7 @@ pub fn program() -> (String, bool) {
 }
 
 /// Whether two program spellings run the same file.
-fn same_program(a: &str, b: &str) -> bool {
+pub fn same_program(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
@@ -248,47 +248,15 @@ fn claude_md_has() -> Result<bool> {
 /// Append the line unless something in the file already names the tool.
 fn claude_md_add() -> Result<(PathBuf, bool)> {
     let path = claude_md_path()?;
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    if text.contains("send_document") {
-        return Ok((path, false));
-    }
-    let mut out = text;
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(CLAUDE_MD_LINE);
-    out.push('\n');
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    std::fs::write(&path, out)?;
-    Ok((path, true))
+    let added = crate::agents::line_add(&path)?;
+    Ok((path, added))
 }
 
 /// Take out exactly the line `--claude-md` wrote, and a reworded one only
 /// if it still names the tool on a line of its own.
 fn claude_md_remove() -> Result<Option<PathBuf>> {
     let path = claude_md_path()?;
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Ok(None);
-    };
-    let kept: Vec<&str> = text
-        .lines()
-        .filter(|l| !(l.contains("send_document") && l.contains("snyvi")))
-        .collect();
-    if kept.len() == text.lines().count() {
-        return Ok(None);
-    }
-    let mut out = kept.join("\n");
-    while out.ends_with("\n\n") {
-        out.pop();
-    }
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    std::fs::write(&path, out)?;
-    Ok(Some(path))
+    Ok(crate::agents::line_remove(&path)?.then_some(path))
 }
 
 /// One line for `snyvi status`: what Claude Code has of snyvi, and whether

@@ -1,3 +1,4 @@
+mod agents;
 mod bench;
 mod browse;
 mod client;
@@ -95,7 +96,23 @@ enum Cmd {
     Mcp,
     /// Claude Code PostToolUse hook: send Markdown files Claude writes (reads hook JSON on stdin).
     Hook,
-    /// Register snyvi with Claude Code: the MCP server and a session hook. Safe to run again.
+    /// Register snyvi with an agent: claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed. Safe to run again.
+    Init {
+        /// Which agent. Alone, lists every agent and what each has of snyvi.
+        agent: Option<String>,
+        /// Claude Code: also install the PostToolUse hook so every Markdown file Claude writes is sent automatically.
+        #[arg(long)]
+        auto: bool,
+        /// Also add one line to the agent's instructions file (CLAUDE.md, AGENTS.md, GEMINI.md, ...) asking it to send you what it writes.
+        #[arg(long, visible_alias = "claude-md")]
+        instructions: bool,
+    },
+    /// Undo `init <agent>`: the MCP server entry and the instructions line. Documents are kept.
+    Uninstall {
+        /// Which agent: claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed.
+        agent: String,
+    },
+    /// The same as `init claude`: the MCP server and a session hook. Safe to run again.
     InitClaude {
         /// Also install the PostToolUse hook so every Markdown file Claude writes is sent automatically.
         #[arg(long)]
@@ -104,7 +121,7 @@ enum Cmd {
         #[arg(long)]
         claude_md: bool,
     },
-    /// Undo init-claude: the MCP server, the hooks and the CLAUDE.md line. Documents are kept.
+    /// The same as `uninstall claude`: the MCP server, the hooks and the CLAUDE.md line. Documents are kept.
     UninstallClaude,
     /// Put `snyvi` on PATH: a link in /usr/local/bin or ~/.local/bin, or the binary's folder on Windows.
     InstallCli {
@@ -205,6 +222,7 @@ fn main() -> Result<()> {
                 cwd,
                 session: None,
                 origin: Some("cli".into()),
+                sender: None,
             };
             let resp = client::send(&paths, &payload)?;
             let url = resp
@@ -267,6 +285,35 @@ fn main() -> Result<()> {
         }
         Cmd::Mcp => mcp::run(paths),
         Cmd::Hook => hook::run(&paths),
+        Cmd::Init {
+            agent: None,
+            auto: _,
+            instructions: _,
+        } => agents::list(&paths),
+        Cmd::Init {
+            agent: Some(id),
+            auto,
+            instructions,
+        } => match agents::find(&id) {
+            Some(a) if a.id == "claude" => setup::init_claude(auto, instructions),
+            Some(a) if auto => anyhow::bail!(
+                "--auto is Claude Code's hook; `snyvi init {}` takes no flags but --instructions",
+                a.id
+            ),
+            Some(a) => agents::init(&a, instructions),
+            None => anyhow::bail!(
+                "no agent called `{id}`; one of {}",
+                agents::ids().join(", ")
+            ),
+        },
+        Cmd::Uninstall { agent: id } => match agents::find(&id) {
+            Some(a) if a.id == "claude" => setup::uninstall_claude(),
+            Some(a) => agents::uninstall(&a),
+            None => anyhow::bail!(
+                "no agent called `{id}`; one of {}",
+                agents::ids().join(", ")
+            ),
+        },
         Cmd::InitClaude { auto, claude_md } => setup::init_claude(auto, claude_md),
         Cmd::UninstallClaude => setup::uninstall_claude(),
         Cmd::InstallCli { dir } => setup::install_cli(dir),
@@ -339,6 +386,9 @@ fn main() -> Result<()> {
                 None => println!("not running (would listen on {})", config::base_url()),
             }
             println!("{}", setup::claude_code_status());
+            for line in agents::status_lines() {
+                println!("{line}");
+            }
             Ok(())
         }
         Cmd::Bench { check } => bench::run(check),

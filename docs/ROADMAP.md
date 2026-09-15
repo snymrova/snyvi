@@ -56,7 +56,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux, a PowerShell toast on Windows, osascript on macOS. | S | **done 0.2** |
 | `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
-| Connect an agent, from the page | `snyvi mcp` is a plain stdio MCP server and already works with every client that speaks MCP, and nothing says so: the only setup path is `init-claude`, and the viewer never mentions an agent at all. The empty library becomes a page with one row per agent -- connected, not set up, or pointing at a binary that is gone, read from the agent's own config file -- with the command or the copyable snippet that fixes it, the line for its instructions file, and when it last sent something. `snyvi init <agent>` writes the files snyvi can safely own (Claude Code, Codex CLI, Cursor), `uninstall <agent>` takes each back out byte-equal; the rest are snippets until asked for. 0.18. | M | **next** |
+| Connect an agent, from the page | `snyvi mcp` is a plain stdio MCP server and already works with every client that speaks MCP, and nothing says so: the only setup path is `init-claude`, and the viewer never mentions an agent at all. The empty library becomes a page with one row per agent -- connected, not set up, or pointing at a binary that is gone, read from the agent's own config file -- with the command or the copyable snippet that fixes it, the line for its instructions file, and when it last sent something. `snyvi init <agent>` writes every agent's file -- two writers, JSON and TOML, cover all eight -- and `uninstall <agent>` takes the entry back out leaving the rest of the file; a file snyvi cannot parse is left alone with the snippet printed. 0.18. | M | **next** |
 | An about box | Nothing in the viewer says what it is, which version is running, where its data lives or under what license; a reader who arrived from an agent's link has no way to find out. One panel inside `?`, naming the same version `snyvi --version` prints. 0.18. | XS | **next** |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
@@ -1341,9 +1341,11 @@ said so, in the README or on the page. That, an about box, and the way
 back to the beginning, and then the 1.0 gate.
 
 **The page.** When the library is empty the document pane is a page
-called "Connect an agent", and it is reachable at any time from `?` and
-the palette, because the second agent arrives after the first document
-did. One row per agent. Each row says three things.
+called "Connect an agent", and it is reachable at any time from the foot
+of the `?` box and at `/connect`, because the second agent arrives after
+the first document did. One row per agent, and one more for any sender
+that is none of them, because a client snyvi has never heard of that
+has sent is connected by definition. Each row says three things.
 
 *What state it is in*, read by the daemon from the agent's own config
 file and nothing else -- `~/.claude.json` for Claude Code, `~/.codex/config.toml`,
@@ -1368,22 +1370,28 @@ way `init-claude` decides its hook line.
 the row says when, because a registration that has never been used is
 the exact state the newcomer is stuck in, and "connected" alone would
 tell them it is fine. The `initialize` request every MCP client opens
-with carries its `clientInfo.name`; the server answers it today without
-reading it, and will keep it, so the daemon can store the sender's name
-and the time with the document.
+with carries its `clientInfo.name`; the server keeps it and sends it
+with every document, the store keeps it beside the document, and the
+row matches it by the pieces each agent's name is known to contain. The
+page asks the daemon again every few seconds while it is on screen, so
+`snyvi init codex` in the terminal beside it turns the row without a
+reload.
 
 **`snyvi init <agent>`.** `init-claude` generalised to the files snyvi
-can safely own, with `init-claude` kept as the name it has had. Claude
-Code, Codex CLI and Cursor to begin with, because that is where the
-readers are; the rest stay snippets until someone asks, since each
-writer is one more file format that has to come out byte-equal in CI.
-Everything 0.17 established holds for each: read before writing, the
-three outcomes said in three sentences, following a binary that moved,
-and `snyvi uninstall <agent>` that leaves the file as it was found
-down to the byte, keeping whatever else was in it. TOML for Codex
-means a second parser that preserves comments, or the honest fallback:
-say the file has something snyvi does not understand and print the
-snippet instead of editing.
+can safely own, with `init-claude` kept as the name it has had and
+Claude Code kept on `claude mcp add`, since that file is Claude Code's.
+The rest turned out to be two writers, not eight: every other agent
+keeps a JSON object of servers under one key or another, and Codex
+keeps TOML, so all of them are written, and a ninth would be a row in
+the table. Everything 0.17 established holds for each: read before
+writing, the three outcomes said in three sentences, following a binary
+that moved, and `snyvi uninstall <agent>` that leaves whatever else was
+in the file. TOML goes through `toml_edit` and comes back byte-equal,
+comments and all; JSON is parsed and printed back in the two-space form
+the agents write themselves, keys in the order they were, and a JSON
+file with comments in it -- Zed's and VS Code's allow them -- is the
+honest fallback: the file has something snyvi does not understand, the
+snippet is printed, and nothing is edited.
 
 **About.** One panel inside `?`: what snyvi is in a sentence, the
 version and the build -- the commit and the target, which `build.rs`
@@ -1429,11 +1437,19 @@ the proof the reset did what the sentence said. With no daemon running,
 the command removes what snyvi put on disk by name, never a directory
 it was merely pointed at.
 
-**Probe.** `bench/onboarding.sh` grows a block per agent snyvi writes
-for: `init` into a home that has never seen it, again, again after the
-binary moved, `uninstall` against a file that began with another
-program's entry and must come out byte-equal, and the page's state read
-from the daemon at every step. Then, shipped with the reset: three
+**Probe.** `bench/onboarding.sh` grew one block for the writers: Codex
+`init` into a file that began with a comment and another program's
+entry, again with `--instructions`, again after the entry was pointed
+at a path that is gone, then `uninstall` and the file byte-equal to
+before; Cursor the same in JSON, JSON-equal after; a Gemini file with a
+comment in it left alone with the snippet printed; one document through
+`snyvi mcp` under Codex's name and the row saying when; and the page's
+state read from the daemon at every step. `bench/ui.mjs`, five rows:
+`?` reaches it with one row per agent in a home that has seen none; the
+sender it never heard of has a row; a Cursor file naming a gone path
+turns its row to "needs fixing" and `snyvi init cursor` in a terminal
+turns it to connected, neither with a reload; Copy says it copied; and
+Back leaves it. Then, shipped with the reset: three
 documents sent, `reset --dry-run` says three, `reset` with no terminal
 refuses, with a pin refuses, with `--pinned --yes` empties the library,
 replaces the token and leaves the agent's file byte-equal to before;
@@ -1446,8 +1462,8 @@ and a reset lands on the empty library with a preference forgotten and
 no `snyvi.*` key left in storage. The about box, three rows: `?` opens
 it in the help box's place; every fact on it is what `/api/about` says,
 the version with the commit; Escape closes it and the page is live
-again. Still to come with the page: the empty library shows the connect
-page.
+again. The reset lands on the connect page with the Cursor row still
+connected, which is the proof the reset did what the sentence said.
 
 What this is not: a tour, coach marks, a checklist that persists. They
 are chrome, and the reader with three plans waiting has already learnt
