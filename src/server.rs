@@ -61,7 +61,11 @@ pub struct App {
     pub store: Store,
     pub renderer: Renderer,
     pub browse: Browser,
-    pub token: String,
+    /// Where the store and the token live; a reset needs to know.
+    pub paths: Paths,
+    /// Behind a lock because a reset replaces it: the old token is dead from
+    /// that moment, which is the point of replacing it.
+    pub token: std::sync::RwLock<String>,
     pub events: broadcast::Sender<String>,
     /// Fires when `snyvi stop` asks the daemon to exit.
     pub shutdown: broadcast::Sender<()>,
@@ -132,7 +136,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         store,
         renderer,
         browse: Browser::new(),
-        token,
+        paths: paths.clone(),
+        token: std::sync::RwLock::new(token),
         events: tx,
         shutdown: stop_tx,
         started: Instant::now(),
@@ -175,6 +180,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/outline", get(doc_outline))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
+        .route("/api/reset", get(reset_census).post(reset))
         .route("/api/terminal", post(terminal))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/{id}/close", post(browse_close))
@@ -717,6 +723,81 @@ async fn shutdown(State(app): S, headers: HeaderMap) -> Response {
     }
     let _ = app.shutdown.send(());
     Json(json!({ "ok": true, "version": VERSION })).into_response()
+}
+
+/// What a reset would take, for the sentence that asks.
+async fn reset_census(State(app): S) -> Response {
+    match app.store.census() {
+        Ok(c) => Json(c).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct ResetBody {
+    /// The number of documents the caller was shown and typed back. It has to
+    /// be the number there is now: a document that arrived between the
+    /// sentence and the answer makes the answer stale, and the caller is told
+    /// to look again rather than reset a library other than the one described.
+    documents: i64,
+    /// Said explicitly, or the pinned documents keep the reset from happening.
+    #[serde(default)]
+    pinned: bool,
+}
+
+/// Back to a fresh install: every document and version, the index, the token,
+/// and -- by the event this ends with -- the preferences every open page keeps.
+/// The daemon stays up and the agents stay registered, so the next send lands
+/// in an empty library. The one action here that cannot be undone, and the one
+/// that asks for a number rather than a click.
+///
+/// A same-origin POST is accepted beside the token, as `terminal` explains:
+/// the page has no token, and the dialog is the page's.
+async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> Response {
+    if !from_this_page(&headers) && !authorized(&app, &headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not from this page, and no token" })),
+        )
+            .into_response();
+    }
+    let census = match app.store.census() {
+        Ok(c) => c,
+        Err(e) => return err(e),
+    };
+    if b.documents != census.documents {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("the library has changed: {} document(s) now, not {}; look again", census.documents, b.documents),
+                "census": census,
+            })),
+        )
+            .into_response();
+    }
+    if census.pinned > 0 && !b.pinned {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("{} pinned document(s) would go with it; say so", census.pinned),
+                "census": census,
+            })),
+        )
+            .into_response();
+    }
+    if let Err(e) = app.store.reset() {
+        return err(e);
+    }
+    for root in app.browse.list() {
+        app.browse.close(&root.id);
+    }
+    let _ = std::fs::remove_file(app.paths.config_dir.join("sessions.json"));
+    match config::rotate_token(&app.paths) {
+        Ok(t) => *app.token.write().unwrap() = t,
+        Err(e) => return err(e),
+    }
+    emit(&app, "reset", json!({}));
+    Json(json!({ "ok": true, "removed": census })).into_response()
 }
 
 /// Open tabs report focus so arrivals only raise a desktop notification when nobody is looking.
@@ -1397,7 +1478,7 @@ fn authorized(app: &App, headers: &HeaderMap) -> bool {
         .map(str::trim);
     bearer
         .or(alt)
-        .map(|t| constant_eq(t, &app.token))
+        .map(|t| constant_eq(t, &app.token.read().unwrap()))
         .unwrap_or(false)
 }
 

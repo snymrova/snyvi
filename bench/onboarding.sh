@@ -102,5 +102,47 @@ snyvi install-cli $HOME/cli | tee $HOME/cli.log
 test "$(readlink $HOME/cli/snyvi)" = "$HOME/bin/snyvi"
 grep -q "not on PATH" $HOME/cli.log
 snyvi install-cli $HOME/cli | tee $HOME/cli2.log
+echo "--- 11. reset: the sentence, the number, and what stays"
+cat > $HOME/bin/claude <<'PY'
+#!/usr/bin/env python3
+import json, os, sys
+f = os.path.expanduser("~/.claude.json")
+d = json.load(open(f)) if os.path.exists(f) else {}
+srv = d.setdefault("mcpServers", {}); a = sys.argv[1:]
+if a[:2] == ["mcp", "add"]: srv[a[a.index("--")-1]] = {"type": "stdio", "command": a[a.index("--")+1], "args": a[a.index("--")+2:]}
+elif a[:2] == ["mcp", "remove"]: srv.pop(a[-1], None)
+json.dump(d, open(f, "w"))
+PY
+chmod +x $HOME/bin/claude
+snyvi init-claude >/dev/null
+cp $HOME/.claude.json $HOME/claude-before.json
+for f in README.md LICENSE docs/ROADMAP.md; do snyvi send $f >/dev/null; done
+cp $SNYVI_CONFIG_DIR/token $HOME/token-before
+snyvi reset --dry-run | tee $HOME/reset-dry.log
+grep -q "This removes 3 documents in 1 project" $HOME/reset-dry.log
+grep -q "leaves Claude Code registered" $HOME/reset-dry.log
+snyvi status | grep -q '"docs": 3'
+! snyvi reset </dev/null 2>$HOME/reset-tty.log
+grep -q "add --yes" $HOME/reset-tty.log
+echo "--- 12. a pin refuses it, --pinned allows it"
+id=$(curl -s "http://127.0.0.1:$SNYVI_PORT/api/inbox?limit=1" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')
+curl -s -X POST -H "Authorization: Bearer $(cat $SNYVI_CONFIG_DIR/token)" -H 'content-type: application/json' -d '{"pinned":true}' "http://127.0.0.1:$SNYVI_PORT/api/docs/$id/pin" >/dev/null
+! snyvi reset --yes 2>$HOME/reset-pin.log
+grep -q "a pin means keep" $HOME/reset-pin.log
+snyvi reset --yes --pinned | tee $HOME/reset.log
+grep -q "Reset. 3 documents gone" $HOME/reset.log
+grep -q "still registered" $HOME/reset.log
+! cmp -s $SNYVI_CONFIG_DIR/token $HOME/token-before || { echo "the token was not rotated"; exit 1; }
+test "$(ls $SNYVI_DATA_DIR/docs | wc -l)" = 0
+curl -s "http://127.0.0.1:$SNYVI_PORT/api/reset" | grep -q '"documents":0'
+cmp $HOME/.claude.json $HOME/claude-before.json
+test ! -e $SNYVI_CONFIG_DIR/sessions.json
+echo "--- 13. --agents takes the registration out too; with no daemon, the files go"
 snyvi stop
+snyvi send README.md >/dev/null; snyvi stop
+snyvi reset --yes --agents | tee $HOME/reset-agents.log
+grep -q "Removed snyvi from Claude Code" $HOME/reset-agents.log
+python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude.json'))); assert 'snyvi' not in d['mcpServers'], d"
+test ! -e $SNYVI_DATA_DIR/snyvi.db && test ! -e $SNYVI_CONFIG_DIR/token
+snyvi reset --yes | grep -q "Nothing to reset"
 echo "first ten minutes: ok"

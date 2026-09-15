@@ -1412,26 +1412,37 @@ agents stay; then asks for the number of documents typed back. Not
 and for the bench, refused without a terminal unless given; `--dry-run`
 prints the sentence and stops, like `prune`'s; and while anything is
 pinned the command refuses unless `--pinned` is also given, because a
-pin is the reader's explicit "keep this". In the viewer it is a palette
-entry with no key, opening a dialog with the same sentence and the same
-typed number, the button disabled until it matches. Then the page drops
-its `snyvi.*` keys, the daemon stops, removes its directories and comes
-back, and the page lands on the connect page with every agent row still
-saying connected -- which is the proof the reset did what the sentence
-said.
+pin is the reader's explicit "keep this". In the viewer it is one line
+at the foot of the `?` box, with no key, opening a dialog with the same
+sentence and the same typed number, the button dead until it matches.
+The number is sent with the request and the daemon refuses if it is no
+longer true -- a document that arrived while the dialog was open makes
+the answer stale, and the dialog says the new number and asks again --
+so a library other than the one described is never reset. Then the
+daemon empties its store in place and stays up, the token is replaced,
+every open page hears it, drops its `snyvi.*` keys and lands on the
+connect page with every agent row still saying connected -- which is
+the proof the reset did what the sentence said. With no daemon running,
+the command removes what snyvi put on disk by name, never a directory
+it was merely pointed at.
 
 **Probe.** `bench/onboarding.sh` grows a block per agent snyvi writes
 for: `init` into a home that has never seen it, again, again after the
 binary moved, `uninstall` against a file that began with another
 program's entry and must come out byte-equal, and the page's state read
-from the daemon at every step. Then: three documents sent, `reset
---yes`, data directory gone, token gone, `status` says fresh, the
-agent's file byte-equal to before; `reset --agents --yes` and the
-registration gone too; `reset` with a pin refused, and with `--pinned`
-not. `bench/ui.mjs`: the empty library shows the connect page; the
-about panel names the version the daemon serves; the reset dialog's
-button stays disabled for the wrong number and enables for the right
-one; afterwards no `snyvi.*` key is left in the page's storage.
+from the daemon at every step. Then, shipped with the reset: three
+documents sent, `reset --dry-run` says three, `reset` with no terminal
+refuses, with a pin refuses, with `--pinned --yes` empties the library,
+replaces the token and leaves the agent's file byte-equal to before;
+with no daemon and `--agents`, the database and the token are gone and
+so is the registration. `bench/ui.mjs`, the five rows shipped with it:
+`?` offers it and nothing else does; the dialog says what goes with the
+cursor in the field and the button dead; the button waits for the
+number; a stale number is refused and the sentence brought up to date;
+and a reset lands on the empty library with a preference forgotten and
+no `snyvi.*` key left in storage. Still to come with the page: the
+empty library shows the connect page; the about panel names the version
+the daemon serves.
 
 What this is not: a tour, coach marks, a checklist that persists. They
 are chrome, and the reader with three plans waiting has already learnt

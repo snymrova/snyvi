@@ -9,6 +9,7 @@ mod platform;
 mod project;
 mod receive;
 mod render;
+mod reset;
 mod server;
 mod session;
 mod setup;
@@ -117,6 +118,21 @@ enum Cmd {
         /// List what would be deleted without deleting.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Back to a fresh install: every document, the index, the token and the page's preferences go; the agents stay registered.
+    Reset {
+        /// Do not ask. Without it the number of documents has to be typed back, at a terminal.
+        #[arg(long)]
+        yes: bool,
+        /// Say what would go, and stop.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also take snyvi out of Claude Code (what `uninstall-claude` does).
+        #[arg(long)]
+        agents: bool,
+        /// Reset even though some documents are pinned. Refused otherwise: a pin means keep.
+        #[arg(long)]
+        pinned: bool,
     },
     /// Stop the background daemon.
     Stop,
@@ -275,6 +291,20 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
+        Cmd::Reset {
+            yes,
+            dry_run,
+            agents,
+            pinned,
+        } => reset::run(
+            &paths,
+            reset::Opts {
+                yes,
+                dry_run,
+                agents,
+                pinned,
+            },
+        ),
         Cmd::Stop => {
             if !client::stop(&paths)? {
                 println!("not running");

@@ -2405,6 +2405,8 @@
       holdQueue();
       if (state.view === "inbox") showInbox(false);
     });
+    // The library is gone, from this tab or another: every page starts over.
+    es.addEventListener("reset", () => afterReset());
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
@@ -2530,14 +2532,16 @@
     store.set("snyvi.font", next);
   });
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
-  const appEl = $("#app"), help = $("#help");
+  const appEl = $("#app"), help = $("#help"), resetDlg = $("#reset");
+  const dialogs = [pal, help, resetDlg];
+  const anyDialogOpen = () => dialogs.some(d => !d.hidden);
   const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
   let dialogOpener = null;
   /** Show a dialog. The page behind it goes inert, so Tab and a screen
    *  reader stay inside it, and whatever had focus gets it back on close. */
   function openDialog(el, focusEl) {
     if (!el.hidden) { (focusEl || el).focus(); return; }
-    if (pal.hidden && help.hidden) dialogOpener = document.activeElement;
+    if (!anyDialogOpen()) dialogOpener = document.activeElement;
     el.hidden = false;
     appEl.inert = true;
     (focusEl || el.querySelector(FOCUSABLE) || el.firstElementChild).focus();
@@ -2545,14 +2549,14 @@
   function closeDialog(el) {
     if (el.hidden) return;
     el.hidden = true;
-    if (!pal.hidden || !help.hidden) return;
+    if (anyDialogOpen()) return;
     appEl.inert = false;
     const back = dialogOpener; dialogOpener = null;
     if (back && back.isConnected && back !== document.body) back.focus();
   }
   document.addEventListener("keydown", e => {
     if (e.key !== "Tab") return;
-    const box = [pal, help].find(d => !d.hidden)?.firstElementChild;
+    const box = dialogs.find(d => !d.hidden)?.firstElementChild;
     if (!box) return;
     const f = [...box.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null);
     if (!f.length) { e.preventDefault(); return; }
@@ -2564,6 +2568,64 @@
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
   $("#help-close").addEventListener("click", () => closeDialog(help));
   $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+
+  // ---------- reset: the one thing that cannot be undone ----------
+  /* A delete has Undo; this has a number. The dialog says what goes and what
+   * stays, and the button stays dead until the number of documents is typed
+   * back -- the number, not "yes", because the number means the sentence was
+   * read. The daemon is sent that number and refuses if it is no longer
+   * true, so a document that arrived while the dialog was open is not reset
+   * unseen. Every open tab hears the event and comes back to the empty
+   * library with its preferences dropped; the agents stay registered. */
+  const resetSay = $("#reset-say"), resetN = $("#reset-n"), resetGo = $("#reset-go"), resetErr = $("#reset-err");
+  const resetPinRow = $("#reset-pinned-row"), resetPin = $("#reset-pinned");
+  let resetCensus = null;
+  function resetArm() {
+    resetGo.disabled = !resetCensus || resetN.value.trim() !== String(resetCensus.documents) || (resetCensus.pinned > 0 && !resetPin.checked);
+  }
+  async function openReset() {
+    closeDialog(help);
+    resetCensus = null; resetN.value = ""; resetErr.hidden = true; resetPin.checked = false; resetPinRow.hidden = true;
+    resetSay.textContent = "Reading what there is…";
+    resetArm();
+    openDialog(resetDlg, resetN);
+    try { resetCensus = await (await fetch("/api/reset")).json(); } catch { resetSay.textContent = "The daemon did not answer."; return; }
+    resetSay.textContent = `This removes ${plural(resetCensus.documents, "document")} in ${plural(resetCensus.projects, "project")}, the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
+    if (resetCensus.pinned > 0) {
+      $("#reset-pinned-say").textContent = `Also the ${plural(resetCensus.pinned, "pinned document")} — a pin means keep`;
+      resetPinRow.hidden = false;
+    }
+    resetArm();
+  }
+  /** What every tab does when the library is gone: forget what it kept for
+   *  the reader, and start over where a newcomer does. The window keeps its
+   *  mark -- it is a fact about the window, not a preference. */
+  function afterReset() {
+    try { Object.keys(localStorage).filter(k => k.startsWith("snyvi.")).forEach(k => localStorage.removeItem(k)); } catch {}
+    location.replace("/");
+  }
+  $("#btn-reset").addEventListener("click", openReset);
+  $("#reset-close").addEventListener("click", () => closeDialog(resetDlg));
+  $("#reset-cancel").addEventListener("click", () => closeDialog(resetDlg));
+  resetDlg.addEventListener("click", e => { if (e.target === resetDlg) closeDialog(resetDlg); });
+  resetN.addEventListener("input", resetArm);
+  resetPin.addEventListener("change", resetArm);
+  resetDlg.firstElementChild.addEventListener("submit", async e => {
+    e.preventDefault();
+    if (resetGo.disabled) return;
+    resetGo.disabled = true;
+    let r;
+    try {
+      r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, pinned: resetPin.checked }) });
+    } catch { resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
+    if (r.ok) { afterReset(); return; }
+    let j = {}; try { j = await r.json(); } catch {}
+    resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
+    resetErr.hidden = false;
+    // The number has moved: say the new sentence and ask for the new number.
+    if (j.census) { resetCensus = j.census; resetN.value = ""; resetSay.textContent = resetSay.textContent.replace(/^This removes [^,]+,/, `This removes ${plural(j.census.documents, "document")} in ${plural(j.census.projects, "project")},`); }
+    resetArm();
+  });
 
   // ---------- the panes on a narrow window ----------
   /* Past the widths in app.css the rail and then the sidebar stop fitting
@@ -2664,7 +2726,7 @@
     if (e.key === "Escape") {
       const filled = docEl.querySelector(".mmd[data-full]");
       if (filled) mmdUnfill(filled);
-      closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind();
+      closePalette(); closeDialog(help); closeDialog(resetDlg); closeSheet(); if (!findBar.hidden) closeFind();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

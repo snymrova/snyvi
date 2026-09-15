@@ -196,6 +196,13 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
 /// Undo `init-claude`: the MCP entry, every hook of ours, the CLAUDE.md line.
 /// The library is not touched, and says where it is.
 pub fn uninstall_claude() -> Result<()> {
+    uninstall_claude_keeping(true)
+}
+
+/// `keeping` says whether to end by naming what is left -- the documents and
+/// the token -- which is true after `uninstall-claude` and false after a
+/// `reset --agents`, where there is nothing left to name.
+pub fn uninstall_claude_keeping(keeping: bool) -> Result<()> {
     match registered() {
         Some(_) => match claude(&["mcp", "remove", "--scope", "user", "snyvi"]) {
             Claude::Ok => println!("Removed snyvi from Claude Code's MCP servers."),
@@ -211,6 +218,9 @@ pub fn uninstall_claude() -> Result<()> {
     }
     if let Some(path) = claude_md_remove()? {
         println!("Removed the snyvi line from {}.", path.display());
+    }
+    if !keeping {
+        return Ok(());
     }
     let paths = crate::config::paths();
     println!(

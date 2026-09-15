@@ -724,6 +724,52 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row("SELECT COUNT(*) FROM live_docs", [], |r| r.get(0))?)
     }
+
+    /// What a reset would take, in the numbers the sentence says and the
+    /// reader types back: the documents that can be seen, the projects they
+    /// are in, and how many of them are pinned. A document already deleted is
+    /// not counted -- the reader has said goodbye to it once -- but it goes
+    /// with the rest.
+    pub fn census(&self) -> Result<Census> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT project_id), COALESCE(SUM(pinned), 0) FROM live_docs",
+            [],
+            |r| {
+                Ok(Census {
+                    documents: r.get(0)?,
+                    projects: r.get(1)?,
+                    pinned: r.get(2)?,
+                })
+            },
+        )?)
+    }
+
+    /// Every row and every file, gone; the schema stays, so the store is what
+    /// `open` makes on a machine that has never seen snyvi. `VACUUM` gives the
+    /// space back and folds the write-ahead log in, so the database file is
+    /// as small as a new one and not a record of what it used to hold.
+    pub fn reset(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "DELETE FROM docs_fts; DELETE FROM docs; DELETE FROM workflows; DELETE FROM projects; VACUUM;",
+        )?;
+        drop(conn);
+        if let Ok(entries) = fs::read_dir(&self.docs_dir) {
+            for e in entries.flatten() {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The numbers a reset is asked to confirm with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct Census {
+    pub documents: i64,
+    pub projects: i64,
+    pub pinned: i64,
 }
 
 /// A tree row, which is the five columns of a document the sidebar draws and
@@ -977,6 +1023,49 @@ mod tests {
         assert!(s.get(&b.id).unwrap().is_none());
         assert!(s.html(&b.id).is_err(), "files removed");
         assert!(s.get(&a.id).unwrap().unwrap().pinned);
+    }
+
+    /// The census is what the reset sentence says and the reader types back:
+    /// a deleted document is not in it, a pinned one is counted twice over.
+    /// After the reset the store answers as a new one does, and the files are
+    /// gone with the rows.
+    #[test]
+    fn census_and_reset() {
+        let (s, d) = temp_store();
+        let a = s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap();
+        let b = s.insert(&new_id("b"), new_doc("B", "bbb", "w")).unwrap();
+        let c = s
+            .insert(&new_id("c"), new_doc("C", "ccc", "other"))
+            .unwrap();
+        assert!(s.set_pinned(&a.id, true).unwrap());
+        assert!(s.delete(&c.id).unwrap());
+        assert_eq!(
+            s.census().unwrap(),
+            Census {
+                documents: 2,
+                projects: 1,
+                pinned: 1
+            }
+        );
+        assert_eq!(std::fs::read_dir(d.path.join("docs")).unwrap().count(), 6);
+        s.reset().unwrap();
+        assert_eq!(s.census().unwrap(), Census::default());
+        assert_eq!(s.count().unwrap(), 0);
+        assert!(s.get(&a.id).unwrap().is_none());
+        assert!(
+            s.undelete(&c.id).unwrap() == false,
+            "the deleted one went too"
+        );
+        assert!(
+            s.search("aaa", 10).unwrap().is_empty(),
+            "and the index with it"
+        );
+        assert_eq!(std::fs::read_dir(d.path.join("docs")).unwrap().count(), 0);
+        // And it is a store again: the next document is the first.
+        let again = s.insert(&new_id("b"), new_doc("B", "bbb", "w")).unwrap();
+        assert_eq!(s.count().unwrap(), 1);
+        assert!(s.previous(&again).unwrap().is_none());
+        let _ = b;
     }
 
     /// A delete is gone from everywhere that reads the library and still on

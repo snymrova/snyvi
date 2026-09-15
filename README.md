@@ -158,6 +158,16 @@ token in `~/.config/snyvi` (the Windows and macOS places are under
 if you want nothing left. `uninstall-claude` takes out exactly what
 `init-claude` put in and nothing else in Claude Code's settings.
 
+To start over rather than leave, `snyvi reset` puts the install back to
+the way it was: every document and version, the index, the token and
+the page's preferences go, and the agents stay registered, so the next
+document an agent sends lands in an empty library. `--agents` takes the
+registration out as well. It is the one thing snyvi does that cannot be
+undone, so it asks for the number of documents to be typed back rather
+than a "yes" -- `--dry-run` prints the sentence and stops, `--yes` is
+for scripts, and a pinned document refuses it until `--pinned` says so.
+The same dialog is at the foot of the `?` box in the viewer.
+
 It is fully static (musl), so it runs on any x86_64 or aarch64 Linux
 without extra packages. To build from source instead:
 
@@ -203,6 +213,7 @@ snyvi init-claude [--auto] [--claude-md]  # register with Claude Code; safe to r
 snyvi uninstall-claude             # take that registration back out
 snyvi install-cli [dir]            # put `snyvi` on PATH
 snyvi prune --days 30 [--dry-run]  # delete what you deleted, and unpinned documents older than N days
+snyvi reset [--dry-run] [--agents]  # back to a fresh install; asks for the number of documents
 snyvi status                       # daemon health and version
 snyvi restart                      # after installing a new binary
 snyvi stop                         # shut the daemon down

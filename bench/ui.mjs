@@ -9,7 +9,8 @@
  * arrival does to a reader in the middle of a page, whether a delete can be
  * taken back, where a link into a browsed folder lands, whether a page gives
  * its connection back when it leaves, whether the daemon knows a window
- * is up, and whether what moves in the sidebar moves once and briefly. Every
+ * is up, whether what moves in the sidebar moves once and briefly, and
+ * whether a reset waits for the number and lands on the empty library. Every
  * row here was a fault once -- the 0.11 to
  * 0.15 notes in docs/ROADMAP.md say which -- and the point of running them on
  * every push is that the rail cannot quietly stop following again.
@@ -186,6 +187,8 @@ async function main() {
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
+    // Last, because it takes the library with it.
+    sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -1003,3 +1006,56 @@ async function motionRows(p, url, arrive) {
 }
 
 main().catch(e => { console.error(e.message); process.exit(1); });
+
+/** 0.18: the one thing that cannot be undone asks for a number. The button
+ *  is dead until the number of documents is typed back; a document that
+ *  arrives while the dialog is open makes the number stale and the daemon
+ *  refuses; and what a reset leaves is the page a newcomer sees, with
+ *  nothing remembered for the reader who was here before. */
+async function resetRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const goDisabled = () => p.ev(`document.querySelector("#reset-go").disabled`);
+  const say = () => p.ev(`document.querySelector("#reset-say").textContent`);
+
+  await p.goto(url);
+  await p.press("w");   // a preference to be forgotten
+  await p.pointerAway();
+  await p.press("?");
+  const offered = (await p.ui("vis", "#help")) && (await p.ui("vis", "#btn-reset"));
+  rows.push(["? offers it, and nothing else does", offered && !(await p.ev(`[...document.querySelectorAll("#chrome button, #side button")].some(b => /reset/i.test(b.textContent))`)),
+    offered ? "one line at the foot of the help box, no key, no button in the chrome" : "no Reset in the help box"]);
+
+  await p.clickOn("#btn-reset");
+  const opened = await until(`!document.querySelector("#reset").hidden && /This removes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
+  const census = await p.ev(`fetch("/api/reset").then(r => r.json())`);
+  const focused = await p.ui("at", "#reset-n");
+  rows.push(["the dialog says what goes", opened && focused && (await say()).includes(`${census.documents} document`) && (await say()).includes("Agents stay") && await goDisabled(),
+    !opened ? "the dialog did not open, or said nothing" : !focused ? "focus is not in the number field" : `"${await say()}", the button dead, the cursor in the field`]);
+
+  await p.type(String(census.documents + 1));
+  const wrongDead = await goDisabled();
+  await p.ev(`(() => { const i = document.querySelector("#reset-n"); i.value = ""; i.dispatchEvent(new Event("input")); })()`);
+  await p.type(String(census.documents));
+  const rightLive = !(await goDisabled());
+  rows.push(["the button waits for the number", wrongDead && rightLive, !wrongDead ? "enabled for the wrong number" : !rightLive ? "still dead for the right one" : `dead for ${census.documents + 1}, live for ${census.documents}`]);
+
+  await arrive();
+  await sleep(300);
+  await p.press("Enter");
+  const refused = await until(`!document.querySelector("#reset-err").hidden && /has changed/.test(document.querySelector("#reset-err").textContent)`);
+  const stillHere = !(await p.ev(`document.querySelector("#reset").hidden`)) && (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === census.documents + 1;
+  const reasked = (await say()).includes(`${census.documents + 1} document`) && await goDisabled();
+  rows.push(["a stale number is refused", refused && stillHere && reasked,
+    !refused ? "nothing said, or the wrong thing" : !stillHere ? "the library was reset on a number that was no longer true" : !reasked ? "the sentence was not brought up to date" : "refused, the sentence says the new number, and the button is dead again"]);
+
+  await p.type(String(census.documents + 1));
+  await p.press("Enter");
+  const landed = await until(`location.pathname === "/" && !!document.querySelector(".empty-state")`, 80);
+  const forgotten = landed && await p.ev(`(() => { try { return !Object.keys(localStorage).some(k => k.startsWith("snyvi.")); } catch { return true; } })()`);
+  const wideOff = landed && !(await p.ev(`document.documentElement.dataset.wide`));
+  const empty = (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === 0;
+  rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty,
+    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? "a snyvi.* key is still in the page's storage" : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : "the empty library, the width forgotten, nothing in storage"]);
+  return rows;
+}
