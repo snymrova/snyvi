@@ -846,8 +846,14 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         )
             .into_response();
     }
-    if let Err(e) = app.store.reset() {
-        return err(e);
+    // The wipe and the VACUUM are disk work, and on a disk under pressure
+    // they take as long as they take: off the runtime, so the other pages'
+    // requests -- and the reload they are about to make -- are still answered.
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || app2.store.reset()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return err(e),
+        Err(e) => return err(anyhow::anyhow!("reset task: {e}")),
     }
     for root in app.browse.list() {
         app.browse.close(&root.id);

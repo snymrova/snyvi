@@ -2733,12 +2733,13 @@
   resetDlg.firstElementChild.addEventListener("submit", async e => {
     e.preventDefault();
     if (resetGo.disabled) return;
-    resetGo.disabled = true;
+    resetGo.disabled = true; resetGo.textContent = "Resetting…";
     let r;
     try {
       r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, pinned: resetPin.checked }) });
-    } catch { resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
+    } catch { resetGo.textContent = "Reset"; resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
     if (r.ok) { afterReset(); return; }
+    resetGo.textContent = "Reset";
     let j = {}; try { j = await r.json(); } catch {}
     resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
     resetErr.hidden = false;
