@@ -1136,12 +1136,13 @@ async function resetRows(p, url, arrive) {
   await p.type(String(census.documents + 1));
   await p.press("Enter");
   const landed = await until(`location.pathname === "/" && !!document.querySelector(".connect .agent")`, 80);
-  const forgotten = landed && await p.ev(`(() => { try { return !Object.keys(localStorage).some(k => k.startsWith("snyvi.")); } catch { return true; } })()`);
+  const left = landed ? await p.ev(`(() => { try { return Object.keys(localStorage).filter(k => k.startsWith("snyvi.")); } catch { return []; } })()`) : [];
+  const forgotten = landed && left.length === 0;
   const wideOff = landed && !(await p.ev(`document.documentElement.dataset.wide`));
   const empty = (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === 0;
   // The agents were not touched: the row the connect rows turned is still connected.
   const stillConnected = landed && await p.ev(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`);
   rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty && stillConnected,
-    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? "a snyvi.* key is still in the page's storage" : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
+    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
   return rows;
 }

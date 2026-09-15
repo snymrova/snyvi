@@ -2720,7 +2720,13 @@
   /** What every tab does when the library is gone: forget what it kept for
    *  the reader, and start over where a newcomer does. The window keeps its
    *  mark -- it is a fact about the window, not a preference. */
+  /** Drop the preferences and start over. The drop is done again by boot.js
+   *  on the page that lands, because this page is still running until the
+   *  navigation commits, and a task it already queued -- the toggle event a
+   *  rendered `<details open>` fires, which writes `snyvi.open` -- can run
+   *  after the drop here. Seen once in CI: one key back in storage. */
   function afterReset() {
+    try { sessionStorage.setItem("snyvi.reset", "1"); } catch {}
     try { Object.keys(localStorage).filter(k => k.startsWith("snyvi.")).forEach(k => localStorage.removeItem(k)); } catch {}
     location.replace("/");
   }
