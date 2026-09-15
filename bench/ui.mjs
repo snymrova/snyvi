@@ -198,6 +198,8 @@ async function main() {
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
     // Last, because it takes the library with it.
     sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
+    // And after it, because it takes the daemon.
+    sections.push(["a daemon that stops, and the page that follows", await stopRows(p, base, tmp, env, second)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -1144,5 +1146,41 @@ async function resetRows(p, url, arrive) {
   const stillConnected = landed && await p.ev(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`);
   rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty && stillConnected,
     !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
+  return rows;
+}
+
+/** 0.19: a page outlives the daemon that served it -- `snyvi stop`, an
+ *  upgrade taking the port -- and has to know. The stream used to outlive the
+ *  daemon instead: a graceful shutdown waits for every response in flight,
+ *  and a stream that never ends kept the old process up, listening on
+ *  nothing, with the window still on it. The daemon that took the port then
+ *  counted no window and handed every agent a link, one browser tab per
+ *  document. Seen for ten hours on the machine this was written on. */
+async function stopRows(p, base, tmp, env, second) {
+  const rows = [];
+  const health = async () => { try { return await (await fetch(`${base}/api/health`)).json(); } catch { return null; } };
+  const until = async (fn, tries = 50) => { for (let i = 0; i < tries; i++) { if (await fn()) return true; await sleep(100); } return false; };
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+  const before = await health();
+  const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
+  await fetch(`${base}/api/shutdown`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  const gone = await until(() => !alive(before.pid), 30);
+  rows.push(["the daemon exits with a page on it", gone, gone ? `pid ${before.pid} gone within 3 s, ${before.streams} stream${before.streams === 1 ? "" : "s"} open on it` : `pid ${before.pid} is still up 3 s after it was asked to stop`]);
+
+  const said = await until(() => p.ev(`document.documentElement.dataset.link === "off"`));
+  rows.push(["and the page says so", said, said ? "the brand mark went hollow" : "the page shows nothing"]);
+
+  // Another daemon, the way one always comes up: on a send. Its arrival is
+  // what the page has to catch up on, since it was heard by nobody.
+  execFileSync(BIN, ["send", second], { env, cwd: tmp, encoding: "utf8" });
+  const after = await health();
+  const back = await until(async () => { const h = await health(); return h && h.pid !== before.pid && h.window === true; }, 80);
+  const solid = back && await until(() => p.ev(`!document.documentElement.dataset.link`));
+  rows.push(["the page is on the next one, a window still", back && solid && before.window === true,
+    before.window !== true ? "the page was not a window before, so this proves nothing" : !back ? `the new daemon (pid ${after && after.pid}) says window: ${after && after.window} after 8 s` : !solid ? "the daemon knows, but the mark is still hollow" : `pid ${after.pid} counts the window, and the mark is solid again`]);
+
+  const caught = await until(() => p.ev(`[...document.querySelectorAll(".inbox.waiting .title")].some(t => /second plan/.test(t.textContent))`), 30);
+  rows.push(["and caught up on what it missed", caught, caught ? "the document that raised the daemon is in the inbox" : `the inbox does not list it: "${await p.ev(`document.querySelector("#doc").textContent.trim().slice(0, 60)`)}"`]);
   return rows;
 }

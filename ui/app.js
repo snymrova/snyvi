@@ -2409,9 +2409,32 @@
     if (state.view === "inbox") showInbox(false);
   }
 
+  /** The brand mark is the state of the stream: solid while the page hears
+   *  the daemon, hollow while it does not. The one place a page that has
+   *  quietly lost its daemon -- one that stopped, or was replaced by an
+   *  upgrade -- shows it, and the reason a reader is not left wondering why
+   *  nothing arrives. */
+  const mark = $(".brand-mark");
+  function linked(on) {
+    if (on) { delete root.dataset.link; mark.title = ""; }
+    else { root.dataset.link = "off"; mark.title = "Not connected to snyvi; trying again"; }
+  }
+
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? "?window=1" : ""));
     stream = es;
+    es.onopen = async () => {
+      // A first connection is not a return.
+      if (root.dataset.link !== "off") return;
+      linked(true);
+      // The daemon on the port now may be a newer build than the one that
+      // served this page: its bundle is the one to run, so start over on it.
+      // Otherwise catch up on what arrived while nothing was heard.
+      let h = null;
+      try { h = await (await fetch("/api/health")).json(); } catch {}
+      if (h && h.v && boot.v && h.v !== boot.v) { location.reload(); return; }
+      catchUp();
+    };
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
@@ -2502,6 +2525,7 @@
     es.onerror = () => {
       es.close();
       if (stream === es) stream = null;
+      linked(false);
       retry = setTimeout(connect, 2000);
     };
   }

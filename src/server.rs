@@ -507,6 +507,9 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
         "window": app.has_window(),
         "streams": app.streams.load(Ordering::Relaxed),
+        // The bundle this daemon serves, so a page that reconnects after an
+        // upgrade can tell it is running another one's and reload.
+        "v": app.asset_v,
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
@@ -974,20 +977,34 @@ impl Drop for StreamMark {
 }
 
 /// Broadcast payloads are "<event name>\n<json>".
+///
+/// The stream ends when the daemon is asked to stop. A graceful shutdown
+/// closes the listener and then waits for every response in flight to
+/// finish, and a stream that never ends is a response that never finishes:
+/// the old daemon stayed up for as long as the window did, listening on
+/// nothing, and the window stayed on it -- it heard no more arrivals, and the
+/// daemon that took the port counted no window and handed every agent a link
+/// to open in a browser instead. Seen on this machine: ten hours, one tab per
+/// document. Ended here, the page reconnects to whatever is on the port now.
 async fn events(
     State(app): S,
     Query(q): Query<EventsQ>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
+    let stop = BroadcastStream::new(app.shutdown.subscribe()).map(|_| None);
     let mark = StreamMark::new(app.clone(), q.is_window());
-    let stream = BroadcastStream::new(rx).filter_map(move |m| {
-        // Captured so that the mark lives exactly as long as the stream does.
-        let _keep = &mark;
-        m.ok().map(|msg| {
-            let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
-            Ok(Event::default().event(name).data(data))
+    let stream = BroadcastStream::new(rx)
+        .filter_map(move |m| {
+            // Captured so that the mark lives exactly as long as the stream does.
+            let _keep = &mark;
+            m.ok().map(|msg| {
+                let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
+                Some(Ok(Event::default().event(name).data(data)))
+            })
         })
-    });
+        .merge(stop)
+        .take_while(Option::is_some)
+        .map(Option::unwrap);
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
