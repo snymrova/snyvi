@@ -1633,16 +1633,28 @@ extra arguments now for a caller that is not measuring anything. And
 version before it of the same file, so the two plans are sent last and
 adjacent.
 
-**The film.** Twenty-six seconds from the page's own screencast: the
-plan being read, the revision arriving from the agent, `n`, `c`, the
-diagram filling the screen, `⌘K`. Every frame the page painted and when,
-which ffmpeg turns into a constant-rate mp4 of 1.6 MB. No gif: half a
-minute of a full page does not go under 7 MB with the text readable.
-GitHub plays a video inline from a `user-attachments` URL and nothing
-else, so the film is added to the README by hand once -- dropped into a
-comment box, and the link it gives pasted on a line of its own -- which
-an agent's token cannot do, and the README says so in a comment where
-the line goes.
+**The film.** Thirty-five seconds in two panes. Above, a Claude Code
+session: the reader asks for the plan to be revised against the review
+and sent, and the model's `send_document` call is made for real -- the
+script makes it through the `snyvi mcp` it holds open, and what the
+terminal prints under the call is the reply that came back, the one a
+reader with the window open gets: *waiting in snyvi, at the top of the
+queue, tell the user rather than giving a link*. Below, the viewer, as
+the window: the plan being read, the bar saying one is waiting at the
+moment the reply lands, `n`, `c`, the diagram drawn on the way down,
+`⌘K`. The words in the terminal are a re-enactment; the call and the
+reply are not. Each pane is its own headless Chromium's screencast --
+one paints only the tab in front, so two tabs in one give one screencast
+and a blank -- every frame with the time it was painted, on one clock,
+and ffmpeg stacks the two into one constant-rate mp4 of 1.8 MB. `f` is
+not in it: it goes fullscreen, and a headless screen is 800x600 whatever
+the window, which leaves the viewport another size for the rest. No gif:
+half a minute of a full page does not go under 7 MB with the text
+readable. GitHub plays a video inline from a `user-attachments` URL and
+nothing else, so the film is added to the README by hand once -- dropped
+into a comment box, and the link it gives pasted on a line of its own --
+which an agent's token cannot do, and the README says so in a comment
+where the line goes.
 
 **The probe.** CI takes the stills into a folder it throws away, so a
 view the camera points at that has moved fails the push rather than the
