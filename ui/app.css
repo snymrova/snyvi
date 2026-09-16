@@ -195,6 +195,15 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .brand-mark { width: 14px; height: 14px; border-radius: 4px; background: var(--accent); display: inline-block; transition: background var(--t), box-shadow var(--t); }
 /* Hollow while the page has no daemon to hear: it stopped, or an upgrade replaced it. */
 html[data-link="off"] .brand-mark { background: transparent; box-shadow: inset 0 0 0 2px var(--fg-3); }
+/* How many agents are here now, beside the mark: dim at none, the accent
+   once one is. The mark says whether the page hears the daemon; this says
+   whether anyone is on the other end of it. It opens the connect page,
+   where each row says which. */
+.live { margin: 0 auto 0 4px; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg-3); background: var(--rule); transition: background var(--t), color var(--t); }
+.live:hover { text-decoration: none; color: var(--fg); }
+.live.on { color: var(--accent); background: var(--accent-bg); }
+.live.on:hover { color: var(--accent); }
+html[data-link="off"] .live { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
 .icon.on { color: var(--accent); background: var(--accent-bg); }
@@ -631,6 +640,9 @@ pre.code .inv { color: var(--del-fg); }
 .agent-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); align-self: center; flex: none; }
 .agent.is-connected .agent-dot { background: var(--add-fg); }
+/* Here now: the accent, with a ring, so an open session reads apart from one that is only set up. */
+.agent.is-live .agent-dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.agent.is-live .agent-state { color: var(--accent); }
 .agent.is-stale .agent-dot { background: var(--del-fg); }
 .agent-name { font-size: 16px; font-weight: 600; }
 .agent-state { color: var(--fg-3); font-size: 13px; }

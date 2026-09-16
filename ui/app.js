@@ -26,6 +26,7 @@
     previewUrl: null,
     previewOn: false,
     previewKey: null,           // what previewOn belongs to, so a toggle survives a re-render
+    online: boot.online || {},  // agent name -> how many of it hold a stream on the daemon now
   };
 
   // ---------- helpers ----------
@@ -808,14 +809,21 @@
     const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
     const row = r => {
       const other = r.id.startsWith("sender:");
+      const live = r.live || 0;
       const when = r.last_sent != null ? ` · sent ${rel(r.last_sent)}` : "";
       let say, state;
-      if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and has sent: connected.`; }
+      if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and ${live ? "is here now" : "has sent"}: connected.`; }
       else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet." : ""}`; }
       else if (r.state === "stale") { state = "stale"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)}</code>, which no longer exists — every send fails.`; }
       else if (r.state === "unreadable") { state = "stale"; say = `<code>${esc(r.file)}</code> could not be read (${esc(r.error)}), so it is not edited. Put the entry in by hand.`; }
+      // Here, and nothing in its user file: registered somewhere the daemon
+      // does not read -- a project's own settings, most often.
+      else if (live) { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>, yet it is here: registered somewhere else, a project's own settings perhaps.` : `Here, though not set up in any file snyvi reads.`; }
       else { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>.` : `Not set up.`; }
-      const word = { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
+      // An agent that is here now says so in place of "connected": a session
+      // of it is open on the daemon this moment, not only set up to be.
+      const word = live ? `online${live > 1 ? ` ×${live}` : ""}` : { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
+      if (live) state += " is-live";
       const fix = other || r.state === "connected" ? "" :
         `<div class="agent-fix">${r.state === "unreadable" ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : "Or by hand, in"} <code>${esc(r.fix.place)}</code></summary>${cmd(r.fix.snippet, "snippet")}</details></div>`;
       const i = r.instructions;
@@ -847,15 +855,34 @@
   /** Ask again while the page is on screen; redraw only when something changed. */
   function watchAgents() {
     clearInterval(agentsTimer);
-    agentsTimer = setInterval(async () => {
-      if (!docEl.querySelector(".connect") || document.hidden) return;
-      let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
-      if (JSON.stringify(a.rows) === agentsSeen) return;
-      const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
-      docEl.innerHTML = connectHtml(a);
-      for (const id of open) docEl.querySelector(`.agent[data-agent="${CSS.escape(id)}"] details`)?.setAttribute("open", "");
-    }, 2500);
+    agentsTimer = setInterval(refreshAgents, 2500);
   }
+  async function refreshAgents() {
+    if (!docEl.querySelector(".connect") || document.hidden) return;
+    let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
+    if (JSON.stringify(a.rows) === agentsSeen) return;
+    const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
+    docEl.innerHTML = connectHtml(a);
+    for (const id of open) docEl.querySelector(`.agent[data-agent="${CSS.escape(id)}"] details`)?.setAttribute("open", "");
+  }
+
+  /** The count beside the brand mark: how many agents hold a stream on the
+   *  daemon now, by the name each gave. Zero is drawn too, dim -- "no agent
+   *  is connected" is the answer a reader asks it for most. */
+  const liveEl = $("#live");
+  function renderLive() {
+    const names = Object.entries(state.online).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const n = names.reduce((t, [, k]) => t + k, 0);
+    liveEl.textContent = String(n);
+    liveEl.classList.toggle("on", n > 0);
+    liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
+  }
+  function setOnline(map) {
+    state.online = map && typeof map === "object" ? map : {};
+    renderLive();
+    refreshAgents();
+  }
+  renderLive();
   docEl.addEventListener("click", e => {
     const b = e.target.closest(".connect pre.cmd .copy");
     if (!b) return;
@@ -2333,6 +2360,7 @@
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
     e.preventDefault();
     if (a.dataset.nav === "inbox") showInbox(true);
+    else if (a.dataset.nav === "connect") showConnect(true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else showDoc(a.dataset.id, true);
     if (root.dataset.sheet === "side") closeSheet();
@@ -2433,8 +2461,14 @@
       let h = null;
       try { h = await (await fetch("/api/health")).json(); } catch {}
       if (h && h.v && boot.v && h.v !== boot.v) { location.reload(); return; }
+      if (h) setOnline(h.agents);
       catchUp();
     };
+    // An agent arrived or left: its process opened or ended a stream.
+    es.addEventListener("agents", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      setOnline(j.online);
+    });
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;

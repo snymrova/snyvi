@@ -58,6 +58,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
 | Connect an agent, from the page | `snyvi mcp` is a plain stdio MCP server and already works with every client that speaks MCP, and nothing says so: the only setup path is `init-claude`, and the viewer never mentions an agent at all. The empty library becomes a page with one row per agent -- connected, not set up, or pointing at a binary that is gone, read from the agent's own config file -- with the command or the copyable snippet that fixes it, the line for its instructions file, and when it last sent something. `snyvi init <agent>` writes every agent's file -- two writers, JSON and TOML, cover all eight -- and `uninstall <agent>` takes the entry back out leaving the rest of the file; a file snyvi cannot parse is left alone with the snippet printed. | M | **done 0.18** |
 | An about box | Nothing in the viewer says what it is, which version is running, where its data lives or under what license; a reader who arrived from an agent's link has no way to find out. One panel inside `?`, naming the same version `snyvi --version` prints. | XS | **done 0.18** |
+| Who is here now | The daemon heard of an agent only when one sent, so the connect page could say "sent 12 minutes ago" of a session closed for eleven, and nothing on any page said whether an agent was connected at all. The MCP server holds an event stream on the daemon under its client's name from `initialize` until its process ends, counted the way the window's is; a count beside the brand mark says how many are here, its title which, and the connect page's row says *online*. Nothing times out: the count is the streams. | S | **done 0.19** |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
 | The first ten minutes | `init-claude` reads what Claude Code has before touching it, is safe to run again, follows a binary that moved, and ends with what to try; `--claude-md` writes the CLAUDE.md line; `uninstall-claude` takes all of it back out and nothing else; `install-cli` puts the command on PATH where the README's `ln -s` could not; a taken port, a missing browser and a fallback rung each say what happened. `bench/onboarding.sh` types it all in CI. | S | **done 0.17** |
@@ -1469,6 +1470,46 @@ What this is not: a tour, coach marks, a checklist that persists. They
 are chrome, and the reader with three plans waiting has already learnt
 the program. The page appears once, to exactly the person who needs it,
 and is gone when the first document lands.
+
+## 0.19: who is here
+
+The window's brand mark, since 0.18, says whether the page hears the
+daemon. Nothing said whether anyone was on the other end of it. The
+daemon learnt of an agent only when one sent: `snyvi mcp` spoke to it
+at send time and never otherwise, so with ten Claude Code sessions open
+the daemon could name none of them, and the connect page's "sent 12
+minutes ago" was as true of a session closed for eleven as of one about
+to send again.
+
+**The stream.** On `initialize`, the MCP server takes the client's name
+and a thread holds `GET /api/events?agent=<name>` on the daemon for as
+long as the process lives -- the same stream the window's page holds
+with `?window=1`, counted by the same mark, so an agent is here for
+exactly as long as its stream is and nothing has to time out. No daemon:
+the thread asks again every three seconds, which is a refused connection
+each time and nothing more; the first send starts one and the next ask
+finds it. A daemon that stops ends every stream, since 0.18, and the
+thread finds the one that took the port the way the page does.
+
+**What it shows.** `/api/health` carries `agents`, the names and how
+many of each; the boot payload and `/api/agents` carry the same map, and
+an `agents` event says when it changes, so the page never polls for it.
+Beside the brand mark, a count: dim at zero -- "no agent is connected"
+is the answer it is asked for most -- and the accent once one is here,
+with the names in its title, and it opens the connect page, whose rows
+say *online*, and *online ×3*, in place of *connected*. `snyvi init`
+with no agent prints the same. The mark keeps its one meaning; the
+count is the other question.
+
+**The probe.** `bench/ui.mjs`, four rows: the count says none; a real
+`snyvi mcp` initializes and the count turns, with health agreeing; the
+count opens the connect page and the row says online; the process ends
+and the count falls. And the arm64 runner's "shortcut reaches the
+window" step, which had failed three pushes on three unrelated commits:
+every failure was four `IsViewable` in a row, which is the toggle's
+*show* branch four times -- the manager had not given the window focus,
+so the probe was pressing a key at nobody. The step now asks for focus
+and checks the active window before every press.
 
 ## Not yet watched on Windows or macOS
 

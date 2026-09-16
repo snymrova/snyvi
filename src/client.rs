@@ -299,6 +299,44 @@ pub fn open_where_the_reader_is(url: &str) {
     open_in_browser(url);
 }
 
+/// Tell the daemon this agent is here, for as long as it is.
+///
+/// A thread holds an event stream on the daemon under the agent's name, the
+/// way the window's page holds one with a mark on it, and the daemon counts
+/// it for exactly as long as the stream lasts. The MCP server otherwise
+/// speaks to the daemon only when it sends, so before this the daemon could
+/// say of an agent that it had sent twelve minutes ago and nothing about
+/// whether its session was still open. The thread dies with the process --
+/// the agent closing its end of stdin ends the process, and the stream with
+/// it -- so it is never a count that outlives what it counts.
+///
+/// No daemon: try again every few seconds. A connection refused is cheap,
+/// even from ten of these at once, and the first send starts a daemon, which
+/// the next try finds. A daemon that stops ends the stream, so the one that
+/// takes the port next is found the same way.
+pub fn hold_presence(name: String) {
+    let url = format!(
+        "{}/api/events?agent={}",
+        config::base_url(),
+        crate::browse::urlencode(&name)
+    );
+    let _ = std::thread::Builder::new()
+        .name("presence".into())
+        .spawn(move || loop {
+            let held = ureq::get(&url)
+                .config()
+                .timeout_connect(Some(Duration::from_secs(2)))
+                .build()
+                .call();
+            if let Ok(mut resp) = held {
+                // Read until the daemon ends the stream. What is read is the
+                // library's events, which this process has no use for.
+                let _ = std::io::copy(&mut resp.body_mut().as_reader(), &mut std::io::sink());
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        });
+}
+
 /// Whether the daemon has a window's page connected. False when there is no
 /// daemon to ask, or when it is old enough not to answer -- both of which mean
 /// a browser, which is what the caller then does.
