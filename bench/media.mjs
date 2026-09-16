@@ -357,18 +357,20 @@ const OUTRO = card([`<p>${TAGLINE}</p>`, `<div class="u">github.com/snymrova/sny
  * speech endpoint, which takes the OpenAI shape and answers with the
  * bytes, and kept by the hash of what was asked for, so a re-take of the
  * film with the same words costs nothing and a changed word costs one
- * line. */
+ * line. The name is written the way it is said -- sny as in sky -- since
+ * spelt as it is, the voice said it three ways in one film. */
+const NAME = "snyvee";
 const LINES = {
-  intro: "snyvi. A fast, beautiful viewer for the documents your agents produce.",
-  open: "An agent wrote this plan and sent it. It is open in snyvi's own window, filed under its project.",
-  ask: "Above it, in Claude Code, the reader asks for a revision against the review, sent back to snyvi.",
-  call: "The call is real: send document, through snyvi's MCP server.",
+  intro: `${NAME}. A fast, beautiful viewer for the documents your agents produce.`,
+  open: `An agent wrote this plan and sent it. It is open in ${NAME}'s own window, filed under its project.`,
+  ask: `Above it, in Claude Code, the reader asks for a revision against the review, sent back to ${NAME}.`,
+  call: `The call is real: send document, through ${NAME}'s MCP server.`,
   reply: "The reply says the document is waiting, at the top of the queue. It never takes the page away.",
   next: "N opens it.",
   diff: "C shows what changed against the version before.",
   diagram: "Diagrams are drawn in the page's own colours.",
   find: "And command K finds a word across everything every agent has sent.",
-  outro: "One static binary, for Linux, macOS and Windows. snyvi, on GitHub.",
+  outro: `One static binary, for Linux, macOS and Windows. ${NAME}, on GitHub.`,
 };
 const TTS_MODEL = process.env.SNYVI_TTS_MODEL || "microsoft/mai-voice-2";
 const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "en-US-Harper:MAI-Voice-2";
