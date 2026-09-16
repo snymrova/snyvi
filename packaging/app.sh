@@ -54,6 +54,11 @@ else
   echo "app.sh: no iconutil here, so no icon; the bundle is otherwise complete" >&2
 fi
 
+# CFBundleURLTypes is what makes snyvi:// links open here. Launch Services
+# reads it when the bundle is first seen (put in Applications, or opened
+# once) and from then on hands such a link to the running app, or starts it
+# for one. Said here rather than in the plist: an XML comment cannot hold
+# a double dash, and one did, which no Mac ever read but plistlib refused.
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -73,9 +78,6 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
-  <!-- snyvi:// links open here. Launch Services reads this when the bundle
-       is first seen -- put in Applications, or opened once -- and from then
-       on hands such a link to the running app, or starts it for one. -->
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
