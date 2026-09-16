@@ -1661,33 +1661,48 @@ view the camera points at that has moved fails the push rather than the
 release. The film is left to the release, since it needs ffmpeg and a
 minute.
 
-## After 0.21: the film speaks
+## After 0.21: the film is a hero
 
-The film showed and said nothing: two panes for thirty-five seconds, and
-a reader who did not already know what the queue was had to infer it
-from a bar that said "1 waiting". Eight lines now say what is on the
-screen as it happens -- what the plan is, what is asked above, that the
-call is real, what the reply means, and one line each for `n`, `c`, the
-diagram and ⌘K. Ninety words; the voice of the README, not a pitch.
+The film was two panes and no words: a terminal set flush over the
+viewer, which read as one program with a terminal in it, for thirty-five
+seconds, ending on a palette with a word typed in. A reader who did not
+already know what the queue was had to infer it from a bar that said
+"1 waiting", and nothing said what the thing was called or where to get
+it.
 
-The lines are spoken by a text-to-speech model through OpenRouter's
-speech endpoint, which takes the OpenAI shape and answers with the bytes,
-so it is one `fetch` and no dependency. Each line is fetched once and kept
-under `~/.cache/snyvi-media` by the hash of the model, the voice and the
-words, so a re-take costs nothing and a changed word costs one line.
-`SNYVI_TTS_MODEL` and `SNYVI_TTS_VOICE` pick another voice; the default
-is Microsoft's MAI Voice 2, which is what OpenRouter's own example uses.
-Without `OPENROUTER_API_KEY` the film is silent, as it was, and says so:
-CI has no key and takes only the stills.
+**A stage.** The two are windows now, on a desktop, apart, each under a
+title bar of its own: *Claude Code — ~/ledger* above, dark, and *snyvi*
+below, light, with the mark. A card opens the film -- the mark, the name,
+the line the README opens with -- and a card closes it, with the link and
+the one line about the binary. The bars and the cards are HTML, drawn by
+the same Chromium in the page's own Inter, so nothing is set in a font
+ffmpeg found; ffmpeg stacks each window under its bar, lays both on the
+desktop, crossfades the cards in and out and fades to black. 1488x1036,
+fifty-nine seconds, 2.9 MB.
+
+**A voice.** Ten lines say what is on the screen as it happens: one for
+each card, and one for what the plan is, what is asked above and where,
+that the call is real, what the reply means, and `n`, `c`, the diagram
+and ⌘K. The voice of the README, not a pitch. They are spoken by a
+text-to-speech model through OpenRouter's speech endpoint, which takes
+the OpenAI shape and answers with the bytes, so it is one `fetch` and no
+dependency. Each line is fetched once and kept under
+`~/.cache/snyvi-media` by the hash of the model, the voice and the words,
+so a re-take costs nothing and a changed word costs one line.
+`SNYVI_TTS_MODEL` and `SNYVI_TTS_VOICE` pick another voice; the default is
+Microsoft's MAI Voice 2, which is what OpenRouter's own example uses.
+Without `OPENROUTER_API_KEY` the film is silent and says so: CI has no
+key and takes only the stills.
 
 The timing runs the other way from what a voice-over usually is. The
 lines are fetched and measured before the first frame, and each beat of
-the film is a cue: it stamps the moment on the clock the screencast's
+the take is a cue: it stamps the moment on the clock the screencast's
 frames already carry, and it does not begin until the line before it has
 ended -- so the picture holds for the voice, and the voice is never cut
-by the picture. The film grew from 34 to 47 seconds, all of it the beats
-waiting for a sentence to finish; ffmpeg lays each clip at its stamp and
-mixes them under the stacked video. 2.5 MB.
+by the picture. The cards are held for their lines the same way. The
+take grew from 34 to 47 seconds, all of it beats waiting for a sentence
+to finish; ffmpeg lays each clip at its stamp, moved by where the take
+begins in the film, and mixes them under the picture.
 
 ## Not yet watched on Windows or macOS
 

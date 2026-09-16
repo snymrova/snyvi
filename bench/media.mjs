@@ -13,7 +13,8 @@
  * the plan is being read -- and a second project so the sidebar has a shape.
  * Then Chromium, at 1440x900, on each of the views the README shows: the
  * stills at 2x in both themes, and the film at 1x from the page's own
- * screencast, cut to an mp4 by ffmpeg. Nothing here is measured;
+ * screencast, set on a stage between two cards and cut to an mp4 by
+ * ffmpeg. Nothing here is measured;
  * bench/ui.mjs is the probe. This is the camera.
  */
 
@@ -298,16 +299,14 @@ function mcpClient(proc) {
 const TERM_H = 250;
 const TERM = `<!doctype html><meta charset="utf-8"><style>
   html, body { margin: 0; background: #16181d; color: #d5d8de; height: 100%; overflow: hidden; }
-  body { font: 15px/1.5 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; padding: 14px 22px; box-sizing: border-box; }
-  .bar { color: #6b7280; font-size: 13px; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
-  .bar i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #3a3f48; }
+  body { font: 15px/1.5 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; padding: 12px 22px; box-sizing: border-box; }
   .l { white-space: pre-wrap; }
   .p { color: #9aa3b2; } .p b { color: #d5d8de; font-weight: 500; }
   .t { color: #e0763e; } .r { color: #9aa3b2; padding-left: 2ch; }
   .a { color: #d5d8de; }
   .cur { display: inline-block; width: 8px; height: 17px; background: #d5d8de; vertical-align: -3px; animation: b 1s steps(1) infinite; }
   @keyframes b { 50% { opacity: 0; } }
-</style><div class="bar"><i></i><i></i><i></i>&nbsp; ~/ledger — claude</div><div id="o"></div>
+</style><div id="o"></div>
 <script>
   const o = document.getElementById("o");
   window.term = {
@@ -316,20 +315,60 @@ const TERM = `<!doctype html><meta charset="utf-8"><style>
   };
 </script>`;
 
+/* The stage the film is played on: a desktop with two windows on it, each
+ * under a title bar of its own, so the terminal reads as Claude Code and
+ * the viewer as snyvi and neither as a part of the other; a card before
+ * them with the mark and the line the README opens with, and a card after
+ * with where to get it. The bars and the cards are HTML, drawn by the same
+ * Chromium in the page's own Inter, so ffmpeg only stacks and fades. */
+const PAD = 24, GAP = 20, BAR = 34, XFADE = 0.6;
+const VIEW_H = H - TERM_H;
+const STAGE_W = W + 2 * PAD, STAGE_H = PAD + BAR + TERM_H + GAP + BAR + VIEW_H + PAD;
+const DESK = "#0b0d11";
+const MARK = readFileSync(join(HERE, "..", "icons", "icon.svg"), "utf8");
+const INTER = readFileSync(join(HERE, "..", "ui", "fonts", "inter.woff2")).toString("base64");
+const TYPE = `@font-face { font-family: Inter; font-weight: 400 700; src: url(data:font/woff2;base64,${INTER}) format("woff2"); }`;
+const TAGLINE = "A fast, beautiful viewer for the documents your agents produce.";
+
+/** A window's title bar: three dots and a name, in the window's theme. */
+const bar = (title, dark) => `<!doctype html><meta charset="utf-8"><style>${TYPE}
+  body { margin: 0; height: ${BAR}px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+         font: 500 13px Inter, system-ui, sans-serif; background: ${dark ? "#1c2029" : "#f3f1ec"}; color: ${dark ? "#9aa3b2" : "#5c574f"}; }
+  i { width: 12px; height: 12px; border-radius: 50%; background: ${dark ? "#3a3f48" : "#d9d5cc"}; }
+  .t { flex: 1; text-align: center; margin-right: 52px; display: flex; justify-content: center; align-items: center; gap: 7px; }
+  .t svg { width: 15px; height: 15px; }
+</style><i></i><i></i><i></i><span class="t">${title}</span>`;
+
+/** A card: the mark, the name, and a line or three under it. */
+const card = lines => `<!doctype html><meta charset="utf-8"><style>${TYPE}
+  html, body { margin: 0; height: 100%; background: #15181f; color: rgba(255,255,255,.87); font-family: Inter, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+  svg { width: 104px; height: 104px; margin-bottom: 10px; }
+  h1 { font-size: 64px; font-weight: 600; letter-spacing: -.025em; margin: 0; line-height: 1; }
+  p { margin: 0; font-size: 24px; color: #9aa3b2; }
+  .u { font-size: 22px; color: #e0763e; margin-top: 26px; font-weight: 500; }
+  .m { font-size: 17px; color: #6b7280; }
+</style>${MARK}<h1>snyvi</h1>${lines.join("")}`;
+const INTRO = card([`<p>${TAGLINE}</p>`]);
+const OUTRO = card([`<p>${TAGLINE}</p>`, `<div class="u">github.com/snymrova/snyvi</div>`, `<div class="m">One static binary · Linux, macOS and Windows · MIT</div>`]);
+
 /* The narration: one line per beat of the film, in the order the beats
- * come. Each is spoken once through OpenRouter's speech endpoint, which
- * takes the OpenAI shape and answers with the bytes, and kept by the hash
- * of what was asked for, so a re-take of the film with the same words
- * costs nothing and a changed word costs one line. */
+ * come, and one for each card. Each is spoken once through OpenRouter's
+ * speech endpoint, which takes the OpenAI shape and answers with the
+ * bytes, and kept by the hash of what was asked for, so a re-take of the
+ * film with the same words costs nothing and a changed word costs one
+ * line. */
 const LINES = {
-  open: "An agent wrote this plan and sent it to snyvi. It is being read in the window.",
-  ask: "Above, Claude Code is asked to revise it against a review, and send it back.",
-  call: "The call is real: send document, through snyvi's own MCP server.",
-  reply: "The reply says the document is waiting, at the top of the queue. It never takes the page away from the reader.",
+  intro: "snyvi. A fast, beautiful viewer for the documents your agents produce.",
+  open: "An agent wrote this plan and sent it. It is open in snyvi's own window, filed under its project.",
+  ask: "Above it, in Claude Code, the reader asks for a revision against the review, sent back to snyvi.",
+  call: "The call is real: send document, through snyvi's MCP server.",
+  reply: "The reply says the document is waiting, at the top of the queue. It never takes the page away.",
   next: "N opens it.",
   diff: "C shows what changed against the version before.",
   diagram: "Diagrams are drawn in the page's own colours.",
   find: "And command K finds a word across everything every agent has sent.",
+  outro: "One static binary, for Linux, macOS and Windows. snyvi, on GitHub.",
 };
 const TTS_MODEL = process.env.SNYVI_TTS_MODEL || "microsoft/mai-voice-2";
 const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "en-US-Harper:MAI-Voice-2";
@@ -365,6 +404,8 @@ async function narration() {
  *  so the picture holds for the voice and never the other way. */
 class Voice {
   constructor(clips) { this.clips = clips; this.cues = []; this.until = 0; }
+  /** How long a line runs, or 0 without a voice. */
+  length(name) { return this.clips ? this.clips[name].seconds : 0; }
   async cue(name) {
     if (!this.clips) return;
     const now = Date.now() / 1000;
@@ -373,37 +414,61 @@ class Voice {
     this.cues.push({ ...this.clips[name], at });
     this.until = at + this.clips[name].seconds;
   }
+  /** A line at a fixed second of the finished film: the cards' lines. */
+  pin(name, t) { if (this.clips) this.cues.push({ ...this.clips[name], t }); }
   /** Hold until the current line has ended. */
   async done() { const now = Date.now() / 1000; if (this.until > now) await sleep((this.until - now) * 1000); }
-  /** ffmpeg's inputs and filter for the track, laid against `t0`. */
-  track(t0) {
-    if (!this.cues.length) return { inputs: [], filter: "", map: [] };
+  /** ffmpeg's inputs and filter for the track: a cue on the take's clock is
+   *  laid against `t0` and moved by `shift`, where the take begins in the
+   *  film; a pinned line is where it says. `first` is the index of the
+   *  first audio input; `total` the film's length, which the track is cut
+   *  to and fades out at. */
+  track({ t0, shift, first, total }) {
+    if (!this.cues.length) return { inputs: [], filter: "", map: ["-map", "[v]"] };
     const inputs = this.cues.flatMap(c => ["-i", c.file]);
-    const delayed = this.cues.map((c, i) => `[${i + 2}:a]adelay=${Math.round((c.at - t0) * 1000)}:all=1[n${i}]`);
-    const filter = `;${delayed.join(";")};${this.cues.map((_, i) => `[n${i}]`).join("")}amix=inputs=${this.cues.length}:normalize=0,aresample=44100[a]`;
+    const at = c => "t" in c ? c.t : c.at - t0 + shift;
+    const delayed = this.cues.map((c, i) => `[${first + i}:a]adelay=${Math.round(at(c) * 1000)}:all=1[n${i}]`);
+    const filter = `;${delayed.join(";")};${this.cues.map((_, i) => `[n${i}]`).join("")}amix=inputs=${this.cues.length}:normalize=0,`
+      + `aresample=44100,apad,atrim=0:${total.toFixed(3)},afade=t=out:st=${(total - 1).toFixed(3)}:d=1[a]`;
     return { inputs, filter, map: ["-map", "[v]", "-map", "[a]", "-c:a", "aac", "-b:a", "96k"] };
   }
 }
 
-/** Forty-odd seconds, in two panes and a voice. Above, a Claude Code session: the
- *  reader asks for the plan to be revised and sent, and the model's
- *  send_document call is made for real through the MCP server and answered
- *  by it. Below, the viewer: the plan is being read, its revision arrives,
- *  `n` opens it, `c` shows what changed, the diagram is drawn on the way
- *  down, and ⌘K finds a word across the library. Each pane is its own tab's
- *  screencast -- a frame for every paint and the time it was painted, on
- *  one clock -- and ffmpeg stacks the two into one constant-rate film. */
+/** A minute, less a little: a card, then two windows on a desktop and a
+ *  voice, then a card. Above, Claude Code: the reader asks for the plan to
+ *  be revised and sent, and the model's send_document call is made for
+ *  real through the MCP server and answered by it. Below, snyvi: the plan
+ *  is being read, its revision arrives, `n` opens it, `c` shows what
+ *  changed, the diagram is drawn on the way down, and ⌘K finds a word
+ *  across the library. Each window is its own tab's screencast -- a frame
+ *  for every paint and the time it was painted, on one clock -- and ffmpeg
+ *  sets the two on the stage, under their bars, between the cards. */
 async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
-  const VIEW_H = H - TERM_H;
   const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
   // The terminal, in a browser of its own: a headless Chromium paints only
   // the tab in front, so two tabs in one would give one screencast and a
-  // blank.
-  const second = await launch(join(tmp, "chrome-term"), { windowSize: `${W},${TERM_H}` });
+  // blank. Before it is a terminal it draws the stills the stage is built
+  // from: the two cards and the two title bars.
+  const second = await launch(join(tmp, "chrome-term"), { windowSize: `${STAGE_W},${STAGE_H}` });
   const t = new Driver(second.cdp, (await tab(second.cdp)).sessionId);
-  await second.cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: TERM_H, deviceScaleFactor: 1, mobile: false }, t.s);
   await t.goto("about:blank");
+  const still = async (name, html, w, h) => {
+    await second.cdp.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false }, t.s);
+    await t.ev(`document.open(); document.write(${JSON.stringify(html)}); document.close(); document.fonts.ready.then(() => true)`);
+    await sleep(200);
+    const { data } = await second.cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }, t.s);
+    const file = join(tmp, `${name}.png`);
+    writeFileSync(file, Buffer.from(data, "base64"));
+    return file;
+  };
+  const stills = {
+    intro: await still("intro", INTRO, STAGE_W, STAGE_H),
+    outro: await still("outro", OUTRO, STAGE_W, STAGE_H),
+    termBar: await still("bar-term", bar("Claude Code — ~/ledger", true), W, BAR),
+    viewBar: await still("bar-view", bar(`${MARK.replace(/ width="32" height="32"/, "")}snyvi`, false), W, BAR),
+  };
+  await second.cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: TERM_H, deviceScaleFactor: 1, mobile: false }, t.s);
   await t.ev(`document.open(); document.write(${JSON.stringify(TERM)}); document.close(); !!window.term`);
   const say = (cls, html) => t.ev(`term.add(${JSON.stringify(cls)}, ${JSON.stringify(html)})`);
   const cursor = on => t.ev(`term.cursor(${on})`);
@@ -517,16 +582,38 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
     return join(d, "list.txt");
   };
   const a = list(top, "top"), b = list(bottom, "bottom");
-  const audio = voice.track(t0);
-  execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b, ...audio.inputs,
-    "-filter_complex", "[0:v]fps=30[a];[1:v]fps=30[b];[a][b]vstack,format=yuv420p[v]" + audio.filter,
-    ...(audio.map.length ? audio.map : ["-map", "[v]"]),
+
+  // The cut: the intro card, held for its line and a breath; the take,
+  // faded in over the card's last moments; the outro card, faded in the
+  // same way and held for its line, then out to black with the sound.
+  const take = t1 - t0;
+  const intro = Math.max(3, voice.length("intro") + 1.2);
+  const outro = Math.max(4.5, voice.length("outro") + 2);
+  const total = intro + take + outro - 2 * XFADE;
+  voice.pin("intro", 0.5);
+  voice.pin("outro", intro - XFADE + take - XFADE + 0.4);
+  const audio = voice.track({ t0, shift: intro - XFADE, first: 6, total });
+  const held = (file, seconds) => ["-loop", "1", "-framerate", "30", "-t", seconds.toFixed(3), "-i", file];
+  const graph = [
+    `[0:v]fps=30[t];[1:v]fps=30[b]`,
+    `[2:v][t]vstack[tw];[3:v][b]vstack[bw]`,
+    `color=c=${DESK}:s=${STAGE_W}x${STAGE_H}:r=30:d=${take.toFixed(3)}[desk]`,
+    `[desk][tw]overlay=x=${PAD}:y=${PAD}[d1];[d1][bw]overlay=x=${PAD}:y=${PAD + BAR + TERM_H + GAP},format=yuv420p,settb=AVTB[take]`,
+    `[4:v]format=yuv420p,settb=AVTB[in];[5:v]format=yuv420p,settb=AVTB[out]`,
+    `[in][take]xfade=transition=fade:duration=${XFADE}:offset=${(intro - XFADE).toFixed(3)}[m1]`,
+    `[m1][out]xfade=transition=fade:duration=${XFADE}:offset=${(intro - XFADE + take - XFADE).toFixed(3)}[m2]`,
+    `[m2]fade=t=out:st=${(total - 0.8).toFixed(3)}:d=0.8[v]`,
+  ].join(";") + audio.filter;
+  execFileSync("ffmpeg", ["-y", "-loglevel", "error",
+    "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b,
+    "-i", stills.termBar, "-i", stills.viewBar, ...held(stills.intro, intro), ...held(stills.outro, outro), ...audio.inputs,
+    "-filter_complex", graph, ...audio.map,
     "-c:v", "libx264", "-crf", "20", "-preset", "slow", "-movflags", "+faststart", join(OUT, "demo.mp4")],
     { stdio: ["ignore", "ignore", "inherit"] });
   // No gif: half a minute of a full page does not go under 7 MB with the
-  // text still readable, and the mp4 is under 2. The README carries the
+  // text still readable, and the mp4 is under 3. The README carries the
   // mp4 the one way GitHub plays one inline, which the release notes say.
-  console.log(`  demo.mp4 (${top.length + bottom.length} frames, ${(t1 - t0).toFixed(1)} s${voice.cues.length ? `, ${voice.cues.length} lines spoken` : ", silent"})`);
+  console.log(`  demo.mp4 (${top.length + bottom.length} frames, ${total.toFixed(1)} s${voice.cues.length ? `, ${voice.cues.length} lines spoken` : ", silent"})`);
 
   // Back to a plain tab for the stills: the page latched the window mark
   // for the life of the tab, and the terminal is not needed again.
