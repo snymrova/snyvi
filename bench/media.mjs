@@ -339,18 +339,22 @@ const bar = (title, dark) => `<!doctype html><meta charset="utf-8"><style>${TYPE
   .t svg { width: 15px; height: 15px; }
 </style><i></i><i></i><i></i><span class="t">${title}</span>`;
 
-/** A card: the mark, the name, and a line or three under it. */
-const card = lines => `<!doctype html><meta charset="utf-8"><style>${TYPE}
+/** A card: a title, with the mark over it or not, and a line or three under. */
+const card = ({ mark = true, title = "snyvi", lines = [] }) => `<!doctype html><meta charset="utf-8"><style>${TYPE}
   html, body { margin: 0; height: 100%; background: #15181f; color: rgba(255,255,255,.87); font-family: Inter, system-ui, sans-serif; }
-  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 120px; box-sizing: border-box; text-align: center; }
   svg { width: 104px; height: 104px; margin-bottom: 10px; }
   h1 { font-size: 64px; font-weight: 600; letter-spacing: -.025em; margin: 0; line-height: 1; }
-  p { margin: 0; font-size: 24px; color: #9aa3b2; }
+  h1.q { font-size: 52px; letter-spacing: -.02em; line-height: 1.15; max-width: 22ch; margin-bottom: 8px; }
+  p { margin: 0; font-size: 24px; color: #9aa3b2; line-height: 1.45; max-width: 52ch; }
   .u { font-size: 22px; color: #e0763e; margin-top: 26px; font-weight: 500; }
   .m { font-size: 17px; color: #6b7280; }
-</style>${MARK}<h1>snyvi</h1>${lines.join("")}`;
-const INTRO = card([`<p>${TAGLINE}</p>`]);
-const OUTRO = card([`<p>${TAGLINE}</p>`, `<div class="u">github.com/snymrova/snyvi</div>`, `<div class="m">One static binary · Linux, macOS and Windows · MIT</div>`]);
+</style>${mark ? MARK : ""}<h1${mark ? "" : ' class="q"'}>${title}</h1>${lines.join("")}`;
+const PROBLEM = card({ mark: false, title: "Your agents write all day.",
+  lines: [`<p>Plans, reviews, reports — read as raw text in a terminal, or found by hand in a folder, and gone by the next session.</p>`] });
+const INTRO = card({ lines: [`<p>${TAGLINE}</p>`] });
+const OUTRO = card({ lines: [`<p>${TAGLINE}</p>`, `<div class="u">github.com/snymrova/snyvi</div>`,
+  `<div class="m">Runs on your machine · one static binary · Linux, macOS and Windows · nothing phones home · MIT</div>`] });
 
 /* The narration: one line per beat of the film, in the order the beats
  * come, and one for each card. Each is spoken once through OpenRouter's
@@ -361,6 +365,7 @@ const OUTRO = card([`<p>${TAGLINE}</p>`, `<div class="u">github.com/snymrova/sny
  * spelt as it is, the voice said it three ways in one film. */
 const NAME = "snyvee";
 const LINES = {
+  problem: "Your agents write all day: plans, reviews, reports. You read them as raw text in a terminal, or go looking for the file, and by the next session they are gone.",
   intro: `${NAME}. A fast, beautiful viewer for the documents your agents produce.`,
   open: `An agent wrote this plan and sent it. It is open in ${NAME}'s own window, filed under its project.`,
   ask: `Above it, in Claude Code, the reader asks for a revision against the review, sent back to ${NAME}.`,
@@ -370,42 +375,67 @@ const LINES = {
   diff: "C shows what changed against the version before.",
   diagram: "Diagrams are drawn in the page's own colours.",
   find: "And command K finds a word across everything every agent has sent.",
-  outro: `One static binary, for Linux, macOS and Windows. ${NAME}, on GitHub.`,
+  outro: `${NAME} runs on your machine: one static binary, for Linux, macOS and Windows. Nothing phones home. ${NAME}, on GitHub.`,
 };
+/* The music: an instrumental bed from a music model through the same
+ * endpoint, asked for once and kept the same way as a line. It is laid
+ * under the whole film, faded in and out, and pushed down while a line is
+ * being said. */
+const MUSIC_MODEL = process.env.SNYVI_MUSIC_MODEL || "google/lyria-3-pro-preview";
+const MUSIC = "Instrumental only, no vocals. A calm, warm, minimal electronic bed for a software product demo: soft piano and pads, gentle pulse, 90 bpm, unobtrusive, no drops, no melody that competes with a voice-over. Steady from the first bar; about ninety seconds.";
 const TTS_MODEL = process.env.SNYVI_TTS_MODEL || "microsoft/mai-voice-2";
 const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "en-US-Harper:MAI-Voice-2";
 
-/** The lines as mp3s, with how long each runs, or null without a key. */
+/** The lines and the music as mp3s, with how long each runs, or null
+ *  without a key. */
 async function narration() {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) { console.log("  no OPENROUTER_API_KEY: the film is silent"); return null; }
   const cache = join(homedir(), ".cache", "snyvi-media");
   mkdirSync(cache, { recursive: true });
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${key}` };
+  const seconds = file => parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { encoding: "utf8" }));
+  const kept = async (what, key, fetchIt) => {
+    const file = join(cache, `${createHash("sha256").update(JSON.stringify(key)).digest("hex").slice(0, 16)}.mp3`);
+    if (!existsSync(file)) {
+      const res = await fetchIt();
+      if (!res.ok) throw new Error(`${what}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+      writeFileSync(file, await fetchIt.read(res));
+    }
+    return { file, seconds: seconds(file) };
+  };
   const clips = {};
   for (const [name, input] of Object.entries(LINES)) {
-    const id = createHash("sha256").update(JSON.stringify([TTS_MODEL, TTS_VOICE, input])).digest("hex").slice(0, 16);
-    const file = join(cache, `${id}.mp3`);
-    if (!existsSync(file)) {
-      const res = await fetch("https://openrouter.ai/api/v1/audio/speech", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model: TTS_MODEL, voice: TTS_VOICE, input, response_format: "mp3" }),
-      });
-      if (!res.ok) throw new Error(`speech for "${name}": ${res.status} ${(await res.text()).slice(0, 200)}`);
-      writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-    }
-    const seconds = parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { encoding: "utf8" }));
-    clips[name] = { file, seconds };
+    const speak = () => fetch("https://openrouter.ai/api/v1/audio/speech", { method: "POST", headers,
+      body: JSON.stringify({ model: TTS_MODEL, voice: TTS_VOICE, input, response_format: "mp3" }) });
+    speak.read = async res => Buffer.from(await res.arrayBuffer());
+    clips[name] = await kept(`speech for "${name}"`, [TTS_MODEL, TTS_VOICE, input], speak);
   }
-  console.log(`  narration: ${Object.keys(clips).length} lines, ${Object.values(clips).reduce((s, c) => s + c.seconds, 0).toFixed(1)} s, ${TTS_MODEL} as ${TTS_VOICE}`);
-  return clips;
+  // A music model answers only as a stream, the audio in base64 pieces on
+  // the deltas of a chat completion.
+  const play = () => fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers,
+    body: JSON.stringify({ model: MUSIC_MODEL, modalities: ["audio", "text"], audio: { format: "mp3" }, stream: true, messages: [{ role: "user", content: MUSIC }] }) });
+  play.read = async res => {
+    let b64 = "";
+    for (const line of (await res.text()).split("\n")) {
+      if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+      const j = JSON.parse(line.slice(6));
+      if (j.error) throw new Error(`music: ${JSON.stringify(j.error).slice(0, 200)}`);
+      b64 += j.choices?.[0]?.delta?.audio?.data || "";
+    }
+    if (!b64) throw new Error("music: the stream carried no audio");
+    return Buffer.from(b64, "base64");
+  };
+  const music = await kept("music", [MUSIC_MODEL, MUSIC], play);
+  console.log(`  narration: ${Object.keys(clips).length} lines, ${Object.values(clips).reduce((s, c) => s + c.seconds, 0).toFixed(1)} s, ${TTS_MODEL} as ${TTS_VOICE}; music ${music.seconds.toFixed(0)} s, ${MUSIC_MODEL}`);
+  return { clips, music };
 }
 
 /** The voice over a take: `cue(name)` says a line from now, on the clock
  *  the screencast's frames carry, after the line before it has finished --
  *  so the picture holds for the voice and never the other way. */
 class Voice {
-  constructor(clips) { this.clips = clips; this.cues = []; this.until = 0; }
+  constructor(sound) { this.clips = sound?.clips ?? null; this.music = sound?.music ?? null; this.cues = []; this.until = 0; }
   /** How long a line runs, or 0 without a voice. */
   length(name) { return this.clips ? this.clips[name].seconds : 0; }
   async cue(name) {
@@ -427,12 +457,19 @@ class Voice {
    *  to and fades out at. */
   track({ t0, shift, first, total }) {
     if (!this.cues.length) return { inputs: [], filter: "", map: ["-map", "[v]"] };
-    const inputs = this.cues.flatMap(c => ["-i", c.file]);
+    const inputs = [...this.cues.flatMap(c => ["-i", c.file]), "-i", this.music.file];
     const at = c => "t" in c ? c.t : c.at - t0 + shift;
     const delayed = this.cues.map((c, i) => `[${first + i}:a]adelay=${Math.round(at(c) * 1000)}:all=1[n${i}]`);
+    const end = total.toFixed(3);
+    // The lines, laid out and cut to the film; then the music under them,
+    // quiet, faded in and out, and compressed against the lines so it
+    // steps back while one is being said and returns between them.
     const filter = `;${delayed.join(";")};${this.cues.map((_, i) => `[n${i}]`).join("")}amix=inputs=${this.cues.length}:normalize=0,`
-      + `aresample=44100,apad,atrim=0:${total.toFixed(3)},afade=t=out:st=${(total - 1).toFixed(3)}:d=1[a]`;
-    return { inputs, filter, map: ["-map", "[v]", "-map", "[a]", "-c:a", "aac", "-b:a", "96k"] };
+      + `aresample=44100,apad,atrim=0:${end},asplit[voice][key]`
+      + `;[${first + this.cues.length}:a]aresample=44100,atrim=0:${end},volume=0.3,afade=t=in:d=2,afade=t=out:st=${(total - 3).toFixed(3)}:d=3[bed]`
+      + `;[bed][key]sidechaincompress=threshold=0.03:ratio=3:attack=60:release=700:level_sc=1[duck]`
+      + `;[voice][duck]amix=inputs=2:normalize=0,afade=t=out:st=${(total - 1).toFixed(3)}:d=1[a]`;
+    return { inputs, filter, map: ["-map", "[v]", "-map", "[a]", "-c:a", "aac", "-b:a", "128k"] };
   }
 }
 
@@ -465,6 +502,7 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
     return file;
   };
   const stills = {
+    problem: await still("problem", PROBLEM, STAGE_W, STAGE_H),
     intro: await still("intro", INTRO, STAGE_W, STAGE_H),
     outro: await still("outro", OUTRO, STAGE_W, STAGE_H),
     termBar: await still("bar-term", bar("Claude Code — ~/ledger", true), W, BAR),
@@ -585,30 +623,38 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   };
   const a = list(top, "top"), b = list(bottom, "bottom");
 
-  // The cut: the intro card, held for its line and a breath; the take,
-  // faded in over the card's last moments; the outro card, faded in the
-  // same way and held for its line, then out to black with the sound.
+  // The cut: the problem, then the name, each a card held for its line and
+  // a breath; the take, faded in over the card's last moments; the outro
+  // card, faded in the same way and held for its line, then out to black
+  // with the sound. Each part begins where the last one's fade begins.
   const take = t1 - t0;
-  const intro = Math.max(3, voice.length("intro") + 1.2);
-  const outro = Math.max(4.5, voice.length("outro") + 2);
-  const total = intro + take + outro - 2 * XFADE;
-  voice.pin("intro", 0.5);
-  voice.pin("outro", intro - XFADE + take - XFADE + 0.4);
-  const audio = voice.track({ t0, shift: intro - XFADE, first: 6, total });
+  const parts = [
+    { name: "problem", len: Math.max(4, voice.length("problem") + 1.2), still: stills.problem },
+    { name: "intro", len: Math.max(3, voice.length("intro") + 1.2), still: stills.intro },
+    { name: "take", len: take },
+    { name: "outro", len: Math.max(5, voice.length("outro") + 2), still: stills.outro },
+  ];
+  let start = 0;
+  for (const part of parts) { part.at = start; start += part.len - XFADE; }
+  const total = start + XFADE;
+  const begin = name => parts.find(p => p.name === name).at;
+  voice.pin("problem", 0.5);
+  voice.pin("intro", begin("intro") + 0.4);
+  voice.pin("outro", begin("outro") + 0.4);
+  const audio = voice.track({ t0, shift: begin("take"), first: 7, total });
   const held = (file, seconds) => ["-loop", "1", "-framerate", "30", "-t", seconds.toFixed(3), "-i", file];
   const graph = [
     `[0:v]fps=30[t];[1:v]fps=30[b]`,
     `[2:v][t]vstack[tw];[3:v][b]vstack[bw]`,
     `color=c=${DESK}:s=${STAGE_W}x${STAGE_H}:r=30:d=${take.toFixed(3)}[desk]`,
     `[desk][tw]overlay=x=${PAD}:y=${PAD}[d1];[d1][bw]overlay=x=${PAD}:y=${PAD + BAR + TERM_H + GAP},format=yuv420p,settb=AVTB[take]`,
-    `[4:v]format=yuv420p,settb=AVTB[in];[5:v]format=yuv420p,settb=AVTB[out]`,
-    `[in][take]xfade=transition=fade:duration=${XFADE}:offset=${(intro - XFADE).toFixed(3)}[m1]`,
-    `[m1][out]xfade=transition=fade:duration=${XFADE}:offset=${(intro - XFADE + take - XFADE).toFixed(3)}[m2]`,
-    `[m2]fade=t=out:st=${(total - 0.8).toFixed(3)}:d=0.8[v]`,
+    `[4:v]format=yuv420p,settb=AVTB[problem];[5:v]format=yuv420p,settb=AVTB[intro];[6:v]format=yuv420p,settb=AVTB[outro]`,
+    ...parts.slice(1).map((part, i) => `[${i ? `m${i}` : "problem"}][${part.name}]xfade=transition=fade:duration=${XFADE}:offset=${part.at.toFixed(3)}[m${i + 1}]`),
+    `[m${parts.length - 1}]fade=t=out:st=${(total - 0.8).toFixed(3)}:d=0.8[v]`,
   ].join(";") + audio.filter;
   execFileSync("ffmpeg", ["-y", "-loglevel", "error",
     "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b,
-    "-i", stills.termBar, "-i", stills.viewBar, ...held(stills.intro, intro), ...held(stills.outro, outro), ...audio.inputs,
+    "-i", stills.termBar, "-i", stills.viewBar, ...parts.filter(p => p.still).flatMap(p => held(p.still, p.len)), ...audio.inputs,
     "-filter_complex", graph, ...audio.map,
     "-c:v", "libx264", "-crf", "20", "-preset", "slow", "-movflags", "+faststart", join(OUT, "demo.mp4")],
     { stdio: ["ignore", "ignore", "inherit"] });
