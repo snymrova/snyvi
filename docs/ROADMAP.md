@@ -73,6 +73,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | A sound on arrival | Asked for, and declined by default: a sound is the one signal a reader cannot ignore by not looking. `SNYVI_SOUND=1` puts a sound hint on the desktop notification -- the channel that already knows the volume and do-not-disturb -- and a burst sounds once. Nothing in the page plays anything. | XS | **done 0.15** |
 | Global shortcut | The other half of the tray item: summon the window without finding the tray first. ⌘⇧Space on a Mac, Ctrl+Shift+Space elsewhere -- a chord no desktop's own shell holds, which was the part that was not obvious -- shows the window, or hides the one in front. `SNYVI_SHORTCUT` names another key or none, since a global shortcut wins over any program's own. X11 only on Linux: on Wayland the window says so and the desktop's settings bind a key to `snyvi app` instead, which reaches the running window the same way. | S | **done 0.16** |
 | The window is where a link opens | `send_document` answered with `http://127.0.0.1:7777/d/…` whatever was running, so a click opened a second viewer in a browser beside the window, and the desktop notification opened nothing at all. The window's page now says it is one when it opens its event stream, so the daemon knows for exactly as long as there is a window; `snyvi open`, `send --open`, `browse` and a click on the notification hand the URL to it and raise it, and the tool answers that the document is waiting in snyvi, with no link, when there is a window to wait in. | S | **done 0.15** |
+| A link that opens in the window | 0.15 gave the agent no link while a window was up. Without one the link was still `http://…/d/…`, and a click on it opened a browser beside the window it would have started. Where `snyvi-app` is installed the tool now answers `snyvi://d/<id>` as well, with the `http://` one beside it for a terminal that does not know the scheme; the desktop hands the link to the window that is up, or starts one, or starts the daemon and then one. The scheme is registered three ways -- the `.deb`'s desktop entry, `snyvi.app`'s Info.plist, and the window itself on first run for a tarball or zip -- and `snyvi app <link\|id\|url>` does from a terminal what a click does. | S | **done 0.20** |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
 | Desktop package for arm64 | Was amd64 only: the arm64 runners were 24.04, so the package would have recorded a glibc baseline excluding everything older. There is a 22.04 arm runner now, and the desktop job is a matrix over both, so `snyvi-app_<version>_arm64.deb` records the same baseline as amd64's. Only the 4 MB window carries it; snyvi itself was static on both architectures already. | S | **done 0.16** |
@@ -1510,6 +1511,71 @@ every failure was four `IsViewable` in a row, which is the toggle's
 *show* branch four times -- the manager had not given the window focus,
 so the probe was pressing a key at nobody. The step now asks for focus
 and checks the active window before every press.
+
+## 0.20: a link that opens in the window
+
+0.15 settled the case with a window up: the tool says the document is
+waiting in snyvi and gives no link, because the only link it had was
+`http://127.0.0.1:7777/d/…`, and a click on that opens a browser. It
+left the other case as it was. With the window closed -- put away to the
+tray, or never opened this morning -- the agent still handed out the
+`http://` link, and a click on it opened a second viewer in a browser
+beside the one the window would have been, one `snyvi app` away. The
+link was the wrong kind, not the wrong address.
+
+**The link.** `snyvi://d/<id>` is the same document, for the desktop
+rather than a browser. `send_document` answers with it as `app_url`
+beside `url`, and the tool tells the model to give it and to put the
+`http://` one after it in brackets -- but only where the machine has a
+window executable for the desktop to hand it to, read the way the daemon
+has always looked for one: beside its own binary, then on `PATH`, then in
+the places a Mac drags an application to. Anywhere else the link would
+open nothing, and the answer is the `http://` link as before. With a
+window up, still no link at all: that answer was right and stays.
+
+**Where it goes.** Three ways for the desktop to know that `snyvi://` is
+snyvi's. The `.deb`'s desktop entry now says `MimeType=x-scheme-handler/snyvi`
+and runs `snyvi app %u`; `snyvi.app`'s Info.plist declares the scheme in
+`CFBundleURLTypes`, which Launch Services reads the first time it sees
+the bundle; and for a tarball or a zip, where nothing installs an entry,
+the window claims the scheme for itself the first time it runs, on Linux
+and Windows, through `tauri-plugin-deep-link` -- unless something else
+already answers for it, which is a choice and is left alone. The plugin
+does registration only. Delivery is what the window had already: on
+Linux and Windows a link arrives on `argv`, and the single-instance
+plugin passes it to the window that is up or lets this process become
+one; on macOS it is the run loop's `Opened` event, since a link there
+never comes as an argument.
+
+`snyvi app` takes an argument now -- a `snyvi://` link, a document id, or
+a URL on the daemon -- and does from a terminal what a click does: hands
+it to a window that is up, which comes forward on it, or starts the
+daemon if it must and becomes the window. A window handed a link reads
+it against the origin it is already showing, so no environment travels
+with the click. The mark that says a page is a window joins whatever
+query a URL already carries, where before it was appended as a path.
+
+**One thing to know.** A terminal decides for itself which links are
+clickable, and several -- kitty, Ghostty, the VTE family -- know a fixed
+list of schemes. `snyvi://` can usually be added (kitty's `url_prefixes`,
+for one), and the `http://` link is always given beside it. And a
+machine that ran the window from a tarball and then installed the `.deb`
+keeps the tarball's handler as its default until any window runs again,
+which rewrites it to wherever the window now is.
+
+**The probe.** Six rows in `bench/ui.mjs`, deciding for themselves
+whether a window executable is installed: the daemon runs from a copy in
+a directory of the probe's own, with no `snyvi-app` beside it and none on
+its `PATH`, and the rows write a stub there and take it out. No stub: the
+send and the agent get the `http://` link alone. Stub: `app_url` is the
+scheme and the id, and the agent is told to give it with the `http://`
+one beside. The stub writes down what it was handed, which is how `snyvi
+app <link>` is read on a machine with no display: the address the link
+stands for, marked as a window when it starts one, with the mark joined
+to a query that was already there, and bare when it is handed to a window
+that is up -- and with one up, the agent is given no link at all. Watched
+by hand on this desktop too, all four paths: no window, a window up, no
+daemon, and `xdg-open` with nothing in its environment.
 
 ## Not yet watched on Windows or macOS
 

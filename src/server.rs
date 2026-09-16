@@ -1226,6 +1226,11 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
                 Json(json!({
                     "id": doc.id,
                     "url": url,
+                    // The same document as a `snyvi://` link, which opens in
+                    // the window rather than a browser -- given only where
+                    // there is a window executable for the desktop to hand
+                    // it to, since anywhere else the link opens nothing.
+                    "app_url": crate::desktop::window_installed().then(|| crate::desktop::app_url(&doc.id)),
                     "doc": doc,
                     "existing": received.existing,
                     // So the sender can say where the document went without a

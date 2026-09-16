@@ -9,7 +9,8 @@
  * arrival does to a reader in the middle of a page, whether a delete can be
  * taken back, where a link into a browsed folder lands, whether a page gives
  * its connection back when it leaves, whether the daemon knows a window
- * is up, whether what moves in the sidebar moves once and briefly, and
+ * is up, which link an agent is given and where `snyvi app` sends it,
+ * whether what moves in the sidebar moves once and briefly, and
  * whether a reset waits for the number and lands on the empty library. Every
  * row here was a fault once -- the 0.11 to
  * 0.15 notes in docs/ROADMAP.md say which -- and the point of running them on
@@ -27,16 +28,17 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
 import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
 
 const args = process.argv.slice(2);
 const CHECK = args.includes("--check");
 const KEEP = args.includes("--keep");
-const BIN = resolve(flag("--bin") || "./target/release/snyvi");   // absolute: one send runs from the fixture's folder
+const BIN_SRC = resolve(flag("--bin") || "./target/release/snyvi");   // absolute: one send runs from the fixture's folder
+let BIN = BIN_SRC;   // the copy the daemon runs from, once main() has made it
 const PORT = flag("--port") || "7797";   // 7796 is browser.mjs; 7791, 7794-7795 and 7812-7814 are CI's
 
 function flag(name) {
@@ -107,7 +109,20 @@ async function main() {
   // wrote and not whatever this machine has.
   const home = join(tmp, "home");
   mkdirSync(home);
-  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
+  // The daemon runs from a copy in a directory of the probe's own, with no
+  // `snyvi-app` beside it and none on its PATH, so whether a window executable
+  // is installed is the rows' to decide: the ones about the `snyvi://` link
+  // write a stub beside the copy and take it out again, and the daemon looks
+  // each time it is asked, so one daemon answers both ways.
+  const bin = join(tmp, "bin");
+  mkdirSync(bin);
+  BIN = join(bin, basename(BIN_SRC));
+  copyFileSync(BIN_SRC, BIN);
+  const app = process.platform === "win32" ? "snyvi-app.exe" : "snyvi-app";
+  const sep = process.platform === "win32" ? ";" : ":";
+  const path = (process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app))).join(sep);
+  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, PATH: path };
+  const stub = join(bin, app);
   const base = `http://127.0.0.1:${PORT}`;
   let chromeProc = null, failed = false;
   try {
@@ -193,6 +208,7 @@ async function main() {
     sections.push(["a link into a folder", await browseRows(p, browsed)]);
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
+    sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["the about box", await aboutRows(p, url)]);
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
@@ -938,6 +954,88 @@ async function windowRows(p, url, base, mcpSend) {
   await p.goto("about:blank");
   const forgotten = await until(false);
   rows.push(["and not once the window is gone", forgotten, forgotten ? "the stream ended and the daemon knows at once" : "the daemon still thinks a window is up"]);
+  await p.goto(url);
+  return rows;
+}
+
+/** 0.20: which link an agent is given, and where `snyvi app` sends it. With
+ *  no window up, the tool answered with `http://…/d/…` whatever was installed,
+ *  and a click on it opened a browser beside a window that was a click away.
+ *  Now the answer depends on what is installed: where a window executable is,
+ *  `snyvi://d/<id>` too, which the desktop hands to it. These rows decide
+ *  that themselves -- a stub `snyvi-app` beside the daemon's copy, written
+ *  and removed -- and the stub writes down what it was handed, which is how
+ *  `snyvi app <link>` is read without a display: the address the link stands
+ *  for, marked as a window when it becomes one and bare when it is handed to
+ *  one that is up. */
+async function linkRows(p, url, base, env, tmp, token, stub, mcpSend) {
+  const rows = [];
+  const health = async () => (await (await fetch(`${base}/api/health`)).json());
+  const until = async (fn, tries = 40) => { for (let i = 0; i < tries; i++) { if (await fn()) return true; await sleep(100); } return false; };
+  const post = async title => {
+    const r = await fetch(`${base}/api/docs`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ content: `# ${title}\n\nFor the link rows.\n`, title, lang: "md" }),
+    });
+    if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
+    return r.json();
+  };
+  // The stub stands in for the window: it writes its arguments down and
+  // exits, so what `snyvi app` would have opened a window on can be read.
+  const argv = join(tmp, "argv");
+  const handed = async () => { if (!await until(() => existsSync(argv), 30)) return null; const a = readFileSync(argv, "utf8").trim(); unlinkSync(argv); return a; };
+  // A display it never uses: `snyvi app` opens a browser where there is none,
+  // and the question here is what it hands the window, not whether there is one.
+  const shown = { ...env, DISPLAY: process.env.DISPLAY ?? ":99" };
+  const app = args => execFileSync(BIN, ["app", ...args], { env: shown, cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  // The tab is still a window from the rows before: the page keeps the mark
+  // in session storage for the tab's life, which is the design. Taken out
+  // here; the row that opens a window puts it back, and the rows after
+  // these expect it there.
+  await p.ev(`sessionStorage.removeItem("snyvi.window")`);
+  await p.goto(url);
+  if (!await until(async () => (await health()).window === false)) throw new Error("the tab is still a window with the mark taken out");
+  const bare = await post("With nothing to open it in");
+  const bareSaid = mcpSend("Told with nothing to open it in");
+  const none = bare.app_url == null && !/snyvi:\/\//.test(bareSaid) && bareSaid.includes(`${base}/d/`);
+  rows.push(["no window executable, no app link", none,
+    none ? "the send answers with the http link alone, and so is the agent told" : `app_url: ${JSON.stringify(bare.app_url)}; the agent is told "${bareSaid.slice(0, 80)}"`]);
+
+  writeFileSync(stub, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argv}"\n`, { mode: 0o755 });
+  const linked = await post("With a window executable installed");
+  const linkedSaid = mcpSend("Told with a window executable installed");
+  const want = `snyvi://d/${linked.id}`;
+  const both = linkedSaid.includes("snyvi://d/") && linkedSaid.includes(`${base}/d/`);
+  rows.push(["with one, the link is snyvi://d/<id>", linked.app_url === want && both,
+    linked.app_url !== want ? `app_url is ${JSON.stringify(linked.app_url)}, not ${want}` : !both ? `the agent is told "${linkedSaid.slice(0, 90)}"` : "the send answers with it, and the agent is told to give it, with the http link beside"]);
+
+  app([want]);
+  const opened = await handed();
+  const marked = `${base}/d/${linked.id}?window=1`;
+  rows.push(["snyvi app <link>, no window: opens one on it", opened === marked,
+    opened === marked ? "the window was started on the document, marked as a window" : `the window was handed ${JSON.stringify(opened)}`]);
+
+  app([`${base}/d/${linked.id}?v=2`]);
+  const query = await handed();
+  rows.push(["and a url with a query keeps it", query === `${base}/d/${linked.id}?v=2&window=1`,
+    query === `${base}/d/${linked.id}?v=2&window=1` ? "the mark joined the query rather than replacing it" : `the window was handed ${JSON.stringify(query)}`]);
+
+  await p.goto(`${base}/?window=1`);
+  const up = await until(async () => (await health()).window === true);
+  app([linked.id]);
+  const given = up && await handed();
+  rows.push(["with a window up, an id is handed to it, bare", given === `${base}/d/${linked.id}`,
+    !up ? "the daemon never counted the page as a window" : given === `${base}/d/${linked.id}` ? "the window that is up was handed the document's address, with no mark" : `the window was handed ${JSON.stringify(given)}`]);
+
+  const quiet = mcpSend("Told with a window up and a window executable");
+  const noLink = !/https?:\/\//.test(quiet) && !/snyvi:\/\//.test(quiet);
+  rows.push(["and the agent is given no link at all", noLink,
+    noLink ? "waiting in snyvi, and neither link is offered" : `the agent is told "${quiet.slice(0, 90)}"`]);
+
+  unlinkSync(stub);
+  // Left as it was found: a window, for the rows that follow.
   await p.goto(url);
   return rows;
 }

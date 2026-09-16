@@ -10,8 +10,15 @@
 //! with no argument at all -- a double-clicked `snyvi.app` on macOS, or a bare
 //! `snyvi-app` in a terminal -- it hands over to the `snyvi` beside it, which
 //! starts the daemon if need be and comes back here with the URL.
+//!
+//! The URL may also be a `snyvi://` link, which is what the desktop hands
+//! this executable when one is clicked anywhere: `snyvi://d/<id>` is the
+//! document at `/d/<id>` on the daemon, and `snyvi://` alone is the viewer.
+//! With a daemon up it is read as that address; without one it is handed to
+//! `snyvi app`, which starts the daemon and comes back here with it.
 
 use std::sync::Once;
+use std::time::Duration;
 
 use tauri::{
     image::Image,
@@ -45,10 +52,22 @@ const SHORTCUT: &str = "Cmd+Shift+Space";
 #[cfg(not(target_os = "macos"))]
 const SHORTCUT: &str = "Ctrl+Shift+Space";
 
+/// The scheme of a link that opens here rather than in a browser. The same
+/// name as the command, so `snyvi://d/<id>` reads as what it is.
+const SCHEME: &str = "snyvi";
+
+/// The daemon's port, as `snyvi` itself reads it. Copied rather than shared
+/// because this binary links none of that crate.
+const DEFAULT_PORT: u16 = 7777;
+
+/// What the page in this window carries on its first URL, so the daemon
+/// counts it as a window. The same mark `snyvi app` puts there.
+const WINDOW_MARK: &str = "window=1";
+
 fn main() {
     let url = match std::env::args().nth(1) {
         Some(u) => u,
-        None => hand_to_snyvi(),
+        None => hand_to_snyvi(None),
     };
     // The caller checks for a display too, and falls back to a browser when
     // there is none. Checked again here because this is also reachable
@@ -67,6 +86,19 @@ fn main() {
             std::process::exit(2);
         }
     };
+    // A `snyvi://` link needs a daemon to read it from. A window already up
+    // has one, and the single-instance plugin below hands the link to that
+    // window before this process builds anything. Otherwise the daemon may
+    // be down -- this is a click on a link in a terminal or a chat, not a
+    // hand-off from `snyvi app` -- and starting it is `snyvi`'s job.
+    let parsed = if parsed.scheme() == SCHEME {
+        if !daemon_up() {
+            hand_to_snyvi(Some(&url));
+        }
+        resolve(&parsed, &base_url(None))
+    } else {
+        parsed
+    };
     let shortcut = shortcut_wanted();
     let builder = tauri::Builder::default()
         // Before every other plugin, which is what this one requires: it has
@@ -80,11 +112,12 @@ fn main() {
                 return;
             };
             if let Some(u) = argv.get(1).and_then(|u| u.parse::<tauri::Url>().ok()) {
-                let _ = w.navigate(u);
+                open_in(&w, u);
             }
             reveal(&w);
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build());
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_deep_link::init());
     // Only when a key is wanted: the plugin opens the display's hotkey
     // interface as it loads, and a failure there is fatal to the whole window,
     // which a shortcut is never worth. The key itself is registered in setup
@@ -138,6 +171,16 @@ fn main() {
                 }
             }
 
+            // Off the main thread: it runs the desktop's own tools, and the
+            // window should not wait on them. Nothing on macOS, where the
+            // scheme is declared in the bundle's Info.plist and cannot be
+            // claimed at runtime.
+            #[cfg(any(target_os = "linux", windows))]
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || claim_scheme(&handle));
+            }
+
             let window = w.clone();
             let handle = app.handle().clone();
             w.on_window_event(move |event| {
@@ -163,10 +206,122 @@ fn main() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!());
-    if let Err(e) = run {
-        eprintln!("snyvi-app: {e}");
-        std::process::exit(1);
+        .build(tauri::generate_context!());
+    let app = match run {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("snyvi-app: {e}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|_app, _event| {
+        // A `snyvi://` link on macOS arrives here, from the desktop, whether
+        // the app was running or was started for it -- there is no argv for
+        // a link on macOS. Anything else on the run loop is Tauri's own.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = _event {
+            let Some(w) = _app.get_webview_window("main") else {
+                return;
+            };
+            if let Some(u) = urls.into_iter().find(|u| u.scheme() == SCHEME) {
+                open_in(&w, u);
+            }
+            reveal(&w);
+        }
+    });
+}
+
+/// Show a URL in the window: a `snyvi://` link as the daemon's address for
+/// it, anything else as it is.
+fn open_in(w: &WebviewWindow, url: tauri::Url) {
+    let url = if url.scheme() == SCHEME {
+        resolve(&url, &base_url(Some(w)))
+    } else {
+        url
+    };
+    let _ = w.navigate(url);
+}
+
+/// A `snyvi://` link as the address it stands for on the daemon:
+/// `snyvi://d/<id>` is `<base>/d/<id>`, `snyvi://` alone is the viewer, and
+/// a query rides along. The window's mark is added, since where a link opens
+/// here is a window -- the page keeps the mark for its session and drops it
+/// from the address, so one more copy of it does no harm.
+fn resolve(link: &tauri::Url, base: &str) -> tauri::Url {
+    let mut path = String::new();
+    if let Some(host) = link.host_str().filter(|h| !h.is_empty()) {
+        path.push('/');
+        path.push_str(host);
+    }
+    path.push_str(link.path());
+    if path.is_empty() {
+        path.push('/');
+    }
+    let url = match link.query() {
+        Some(q) => format!("{base}{path}?{q}&{WINDOW_MARK}"),
+        None => format!("{base}{path}?{WINDOW_MARK}"),
+    };
+    url.parse()
+        .unwrap_or_else(|_| format!("{base}/").parse().expect("base url"))
+}
+
+/// Where the daemon is: the origin of what the window is showing, when there
+/// is a window, since that is the daemon it has been reading from; else the
+/// address `snyvi` would compute, from `SNYVI_PORT` or the default.
+fn base_url(w: Option<&WebviewWindow>) -> String {
+    if let Some(u) = w.and_then(|w| w.url().ok()) {
+        if u.scheme().starts_with("http") {
+            return u.origin().ascii_serialization();
+        }
+    }
+    format!("http://127.0.0.1:{}", port())
+}
+
+fn port() -> u16 {
+    std::env::var("SNYVI_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(DEFAULT_PORT)
+}
+
+/// Whether anything answers on the daemon's port. A connection and nothing
+/// more: the question is whether to start one, not what it says.
+fn daemon_up() -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port()));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// Make this executable the desktop's handler for `snyvi://`, unless a
+/// package's own desktop entry already is. The .deb installs one that says
+/// `snyvi app %u`; a tarball or a zip installs nothing, and this is what
+/// makes the links work for it too. Written once per launch, to a handler
+/// entry of the plugin's own in the user's applications directory (Linux)
+/// or the user's registry classes (Windows), and rewritten only when the
+/// executable has moved.
+#[cfg(any(target_os = "linux", windows))]
+fn claim_scheme(app: &tauri::AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    #[cfg(target_os = "linux")]
+    {
+        // What the desktop opens the scheme with now. Empty when nothing is
+        // registered; the plugin's own handler entry when this ran before;
+        // anything else is a choice -- the package's entry, or the reader's
+        // own -- and is left as it is.
+        let owner = std::process::Command::new("xdg-mime")
+            .args(["query", "default", &format!("x-scheme-handler/{SCHEME}")])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !owner.is_empty() && !owner.contains("snyvi-app-handler") {
+            return;
+        }
+    }
+    #[cfg(windows)]
+    if app.deep_link().is_registered(SCHEME).unwrap_or(false) {
+        return;
+    }
+    if let Err(e) = app.deep_link().register(SCHEME) {
+        eprintln!("snyvi-app: {SCHEME}:// links will not open here ({e})");
     }
 }
 
@@ -270,12 +425,13 @@ fn shortcut_wanted() -> Option<String> {
     Some(key)
 }
 
-/// No URL was given, so there is no daemon known to be up and no page to
-/// open. The `snyvi` beside this executable knows how to do both -- `snyvi
-/// app` starts the daemon if it must and runs this again with the URL -- so
-/// hand over to it. On unix that is an exec, so the window that follows is
-/// this same process as far as whoever launched it can tell.
-fn hand_to_snyvi() -> String {
+/// No daemon is known to be up: no URL was given, or a `snyvi://` link was
+/// and nothing answers on the port. The `snyvi` beside this executable knows
+/// how to start one -- `snyvi app` does, and runs this again with the URL,
+/// the link's own if there was one -- so hand over to it. On unix that is an
+/// exec, so the window that follows is this same process as far as whoever
+/// launched it can tell.
+fn hand_to_snyvi(link: Option<&str>) -> ! {
     let sibling = std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
@@ -287,6 +443,9 @@ fn hand_to_snyvi() -> String {
     if let Some(snyvi) = sibling {
         let mut cmd = std::process::Command::new(&snyvi);
         cmd.arg("app");
+        if let Some(l) = link {
+            cmd.arg(l);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -299,7 +458,13 @@ fn hand_to_snyvi() -> String {
             Err(e) => eprintln!("snyvi-app: {}: {e}", snyvi.display()),
         }
     }
-    eprintln!("usage: snyvi-app <url>    (normally run for you by `snyvi app`)");
+    match link {
+        Some(l) => eprintln!(
+            "snyvi-app: {l}: no daemon on port {} and no snyvi beside this executable to start one; run `snyvi app` first",
+            port()
+        ),
+        None => eprintln!("usage: snyvi-app <url>    (normally run for you by `snyvi app`)"),
+    }
     std::process::exit(2);
 }
 
@@ -312,4 +477,24 @@ fn said_where_it_went() {
             "snyvi-app: hidden to the tray. Click the tray icon to show it, or Quit from its menu."
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(link: &str) -> String {
+        resolve(&link.parse().unwrap(), "http://127.0.0.1:7777").to_string()
+    }
+
+    #[test]
+    fn a_link_is_the_daemon_address_with_the_mark() {
+        assert_eq!(r("snyvi://d/abc"), "http://127.0.0.1:7777/d/abc?window=1");
+        assert_eq!(r("snyvi:///d/abc"), "http://127.0.0.1:7777/d/abc?window=1");
+        assert_eq!(r("snyvi://"), "http://127.0.0.1:7777/?window=1");
+        assert_eq!(
+            r("snyvi://d/abc?v=2"),
+            "http://127.0.0.1:7777/d/abc?v=2&window=1"
+        );
+    }
 }

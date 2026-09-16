@@ -91,7 +91,11 @@ enum Cmd {
         no_open: bool,
     },
     /// Open the viewer in a native window (needs the `desktop` build feature; falls back to the browser).
-    App,
+    App {
+        /// What to open there: a document id, a `snyvi://` link, or a URL on the daemon.
+        /// This is what the desktop runs for a click on a `snyvi://` link.
+        target: Option<String>,
+    },
     /// Run the MCP server on stdio (for Claude Code).
     Mcp,
     /// Claude Code PostToolUse hook: send Markdown files Claude writes (reads hook JSON on stdin).
@@ -279,9 +283,18 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::App => {
+        Cmd::App { target } => {
             client::ensure_daemon()?;
-            desktop::open(&config::base_url())
+            let url = match target {
+                Some(t) => desktop::resolve(&t),
+                None => config::base_url(),
+            };
+            // A window that is up takes the link and comes forward; there is
+            // no starting another. Without one, this becomes the window.
+            if client::window_is_up() && desktop::hand_to_window(&url) {
+                return Ok(());
+            }
+            desktop::open(&url)
         }
         Cmd::Mcp => mcp::run(paths),
         Cmd::Hook => hook::run(&paths),

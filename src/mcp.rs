@@ -74,7 +74,7 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                     match call_send(&paths, args, cwd.as_deref(), &session, sender.as_deref()) {
                         Ok(sent) => json!({ "jsonrpc": "2.0", "id": id, "result": {
                             "content": [{ "type": "text", "text": sent.say() }],
-                            "structuredContent": { "url": sent.url, "window": sent.window, "title": sent.title },
+                            "structuredContent": { "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },
                             "isError": false
                         }}),
                         Err(e) => json!({ "jsonrpc": "2.0", "id": id, "result": {
@@ -116,6 +116,10 @@ fn tool_spec() -> Value {
 /// What became of a document, and how to tell the user about it.
 struct Sent {
     url: String,
+    /// The same document as a `snyvi://` link, when the machine has a window
+    /// executable for it to open in. The link to give in place of the `http`
+    /// one, which a click sends to a browser.
+    app_url: Option<String>,
     title: String,
     /// Whether the daemon has a native window reading, which is where the
     /// document now is -- and so whether a link is worth giving at all.
@@ -129,6 +133,12 @@ impl Sent {
                 "Waiting in snyvi: \"{}\". It is in the snyvi window, at the top of the queue; \
                  tell the user it is there rather than giving them a link.",
                 self.title
+            )
+        } else if let Some(app) = &self.app_url {
+            format!(
+                "Waiting in snyvi: \"{}\". Give the user this link, which opens it in the snyvi app: {} \
+                 (the same document in a browser: {})",
+                self.title, app, self.url
             )
         } else {
             format!(
@@ -175,6 +185,10 @@ fn call_send(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        app_url: resp
+            .get("app_url")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         title: resp
             .get("doc")
             .and_then(|d| d.get("title"))

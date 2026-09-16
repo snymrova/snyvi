@@ -200,7 +200,12 @@ jobs:
           set -e
           export SNYVI_DATA_DIR="$RUNNER_TEMP/s" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c" SNYVI_PORT=7804
           ./target/release/snyvi.exe send README.md
-          SNYVI_BENCH_FACTOR=3 ./target/release/snyvi.exe bench --check
+          # SNYVI_BENCH_SHARED, as ci.yml has had for this runner: a hosted
+          # Windows runner creates a process in ~400 ms against a 300 ms
+          # budget, and that row is the operating system's, not snyvi's. The
+          # 0.19 release stopped here on exactly that, with no Windows zip
+          # and no .app after it.
+          SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 ./target/release/snyvi.exe bench --check
           # The window, from the copy about to be shipped. A release that
           # contains a window nobody opened is what the desktop job exists to
           # prevent, and that goes double for the one platform where the window

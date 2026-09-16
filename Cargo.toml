@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -59,6 +59,7 @@ desktop = [
   "dep:tauri-plugin-window-state",
   "dep:tauri-plugin-single-instance",
   "dep:tauri-plugin-global-shortcut",
+  "dep:tauri-plugin-deep-link",
 ]
 
 [dependencies.tauri]
@@ -79,6 +80,15 @@ version = "2"
 optional = true
 
 [dependencies.tauri-plugin-global-shortcut]
+version = "2"
+optional = true
+
+# Only for registering `snyvi://` with the desktop at runtime, on Linux and
+# Windows, so a tarball or zip install answers for the scheme too. Delivery
+# of a link is not its job: on Linux and Windows the link arrives on argv,
+# through the single-instance plugin, and on macOS as the run loop's Opened
+# event, both of which the window handles itself.
+[dependencies.tauri-plugin-deep-link]
 version = "2"
 optional = true
 
