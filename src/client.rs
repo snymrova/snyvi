@@ -155,6 +155,13 @@ pub fn ensure_daemon() -> Result<()> {
         warn_if_stale(&h);
         return Ok(());
     }
+    if port_answers() {
+        bail!(
+            "something is listening on {} and it is not a snyvi daemon. Another program holds port {}; set SNYVI_PORT to a free one (for every snyvi command, or in the service) and try again",
+            config::base_url(),
+            config::port()
+        );
+    }
     let exe = std::env::current_exe().context("locating snyvi binary")?;
     crate::platform::spawn_daemon(&exe).context("starting snyvi daemon")?;
     // A daemon is listening about 25 ms after it is started -- it reads a
@@ -167,12 +174,45 @@ pub fn ensure_daemon() -> Result<()> {
     let mut wait = Duration::from_millis(5);
     while Instant::now() < deadline {
         if health().is_some() {
+            announce_start();
             return Ok(());
         }
         std::thread::sleep(wait);
         wait = (wait * 2).min(Duration::from_millis(80));
     }
-    bail!("snyvi daemon did not come up on {}", config::base_url())
+    if port_answers() {
+        bail!(
+            "the daemon started but something else answers on {}; another program took port {}. Set SNYVI_PORT to a free one",
+            config::base_url(),
+            config::port()
+        );
+    }
+    bail!(
+        "the snyvi daemon did not come up on {} within 4 s. Run `snyvi serve` in a terminal to see why",
+        config::base_url()
+    )
+}
+
+/// Whether anything at all accepts a connection on our port. Health has
+/// already said no when this is asked, so a yes is another program, and the
+/// daemon about to be started would die on bind with nothing to say.
+fn port_answers() -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], config::port()));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// Said once, by the command that started the daemon, and only to a person:
+/// the first `send` prints a link and nothing else, and a newcomer has no way
+/// to know a process was left behind, where it listens, or how to end it. A
+/// hook or a script has no terminal on stderr and hears nothing.
+fn announce_start() {
+    use std::io::IsTerminal;
+    if std::io::stderr().is_terminal() {
+        eprintln!(
+            "snyvi started at {} and stays running in the background; `snyvi stop` ends it",
+            config::base_url()
+        );
+    }
 }
 
 pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
@@ -240,7 +280,7 @@ pub fn browse(paths: &Paths, dir: &str) -> Result<String> {
 
 pub fn open_in_browser(url: &str) {
     if !crate::platform::open_url(url) {
-        eprintln!("open {url}");
+        eprintln!("snyvi: no browser could be opened from here; open this yourself:\n  {url}");
     }
 }
 

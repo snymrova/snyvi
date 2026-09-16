@@ -9,7 +9,8 @@
  * arrival does to a reader in the middle of a page, whether a delete can be
  * taken back, where a link into a browsed folder lands, whether a page gives
  * its connection back when it leaves, whether the daemon knows a window
- * is up, and whether what moves in the sidebar moves once and briefly. Every
+ * is up, whether what moves in the sidebar moves once and briefly, and
+ * whether a reset waits for the number and lands on the empty library. Every
  * row here was a fault once -- the 0.11 to
  * 0.15 notes in docs/ROADMAP.md say which -- and the point of running them on
  * every push is that the rail cannot quietly stop following again.
@@ -102,7 +103,11 @@ function prelude() {
 
 async function main() {
   const tmp = mkdtempSync(join(tmpdir(), "snyvi-ui-bench-"));
-  const env = { ...process.env, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
+  // A home of its own, so the connect page reads agent files the probe
+  // wrote and not whatever this machine has.
+  const home = join(tmp, "home");
+  mkdirSync(home);
+  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
   const base = `http://127.0.0.1:${PORT}`;
   let chromeProc = null, failed = false;
   try {
@@ -159,9 +164,12 @@ async function main() {
     if (!/\/b\//.test(browsed)) throw new Error(`snyvi browse printed no URL:\n${browsed}`);
     // One send through the MCP server, the way an agent's does it, so the row
     // below can read what the agent is told about where the document went.
+    // It opens with `initialize` the way every client does, under a name no
+    // agent in the table has, so the connect page has a sender of its own to show.
     const mcpSend = title => {
-      const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "send_document", arguments: { content: `# ${title}\n\nSent the way an agent sends.\n`, title } } };
-      const out = execFileSync(BIN, ["mcp"], { env, cwd: tmp, encoding: "utf8", input: JSON.stringify(call) + "\n" });
+      const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "bench-agent", version: "0" } } };
+      const call = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "send_document", arguments: { content: `# ${title}\n\nSent the way an agent sends.\n`, title } } };
+      const out = execFileSync(BIN, ["mcp"], { env, cwd: tmp, encoding: "utf8", input: JSON.stringify(init) + "\n" + JSON.stringify(call) + "\n" });
       return JSON.parse(out.trim().split("\n").pop()).result.content[0].text;
     };
 
@@ -186,6 +194,12 @@ async function main() {
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
+    sections.push(["the about box", await aboutRows(p, url)]);
+    sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
+    // Last, because it takes the library with it.
+    sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
+    // And after it, because it takes the daemon.
+    sections.push(["a daemon that stops, and the page that follows", await stopRows(p, base, tmp, env, second)]);
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -507,6 +521,22 @@ async function narrowRows(p, url) {
     rows.push([`every key at ${w} px`, broke.length === 0, broke.length ? `${broke.join(" ")} did nothing` : `${worked.join(" ")} do what the help box says`]);
   }
   await p.wide();
+
+  // The palette's rows are titled in the page's own colour. Its title and
+  // subtitle spans are .t and .s, which are also the highlighter's classes
+  // for a type and a string, and until 0.16 those rules were global: every
+  // result title came up in the cyan of a type name.
+  await p.press("k", { ctrl: true });
+  await p.type("a");
+  await sleep(500);
+  const inks = await p.ev(`(() => {
+    const t = document.querySelector("#palette-list .t"), s = document.querySelector("#palette-list .s");
+    const c = el => el ? getComputedStyle(el).color : "";
+    return { rows: document.querySelectorAll("#palette-list li").length, title: c(t), sub: c(s), page: getComputedStyle(document.body).color, type: getComputedStyle(document.documentElement).getPropertyValue("--s-type").trim() };
+  })()`);
+  await p.press("Escape");
+  rows.push(["the palette's rows, in ink", inks.rows > 0 && inks.title === inks.page && inks.sub !== inks.title,
+    !inks.rows ? "the palette found nothing to list" : inks.title !== inks.page ? `a title is ${inks.title}, the page ${inks.page} (a type is ${inks.type})` : inks.sub === inks.title ? "the subtitle is in the title's colour" : "titles in the page's colour, subtitles quieter, nothing from the syntax theme"]);
   return rows;
 }
 
@@ -987,3 +1017,170 @@ async function motionRows(p, url, arrive) {
 }
 
 main().catch(e => { console.error(e.message); process.exit(1); });
+
+/** 0.18: the one thing that cannot be undone asks for a number. The button
+ *  is dead until the number of documents is typed back; a document that
+ *  arrives while the dialog is open makes the number stale and the daemon
+ *  refuses; and what a reset leaves is the page a newcomer sees, with
+ *  nothing remembered for the reader who was here before. */
+/** One panel inside `?`, and everything on it read from the daemon when it
+ *  opens, so the version it names is the one answering. */
+async function aboutRows(p, url) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  await p.goto(url);
+  await p.pointerAway();
+  await p.press("?");
+  const offered = (await p.ui("vis", "#help")) && (await p.ui("vis", "#btn-about"));
+  await p.clickOn("#btn-about");
+  const opened = await until(`!document.querySelector("#about").hidden && document.querySelector("#about-facts dd") !== null`);
+  const helpGone = await p.ev(`document.querySelector("#help").hidden`);
+  rows.push(["? opens it", offered && opened && helpGone, !offered ? "no About in the help box" : !opened ? "the panel did not open, or said nothing" : !helpGone ? "the help box stayed open behind it" : "one line in the help box, one panel in its place"]);
+
+  const served = await p.ev(`fetch("/api/about").then(r => r.json())`);
+  const facts = await p.ev(`Object.fromEntries([...document.querySelectorAll("#about-facts dt")].map(dt => [dt.textContent, dt.nextElementSibling.textContent]))`);
+  const version = (facts.Version || "").startsWith(served.version) && (!served.commit || facts.Version.includes(served.commit));
+  const dirs = facts.Documents === served.data_dir && facts.Settings === served.config_dir;
+  const agents = facts.Agents === served.agents && /^Claude Code:/.test(facts.Agents);
+  const source = await p.ev(`(() => { const a = document.querySelector("#about-facts a"); return a && a.href === ${JSON.stringify(served.repository)} && a.target === "_blank"; })()`);
+  rows.push(["and it says what the daemon says", version && dirs && agents && source && facts.License === "MIT",
+    !version ? `version "${facts.Version}" for a daemon serving ${served.version} ${served.commit}` : !dirs ? "the directories are not the daemon's" : !agents ? `agents line "${facts.Agents}"` : !source ? "the source link is wrong or missing" : `${facts.Version}, both directories, the agents line, MIT, the repository`]);
+
+  await p.press("Escape");
+  const closed = await until(`document.querySelector("#about").hidden && !document.querySelector("#app").inert`);
+  rows.push(["Escape closes it", closed, closed ? "and the page is live again" : "still open, or the page still inert"]);
+  return rows;
+}
+
+/** The page the empty library is: one row per agent, each read from the
+ *  agent's own file by the daemon, turning as the file does. */
+async function connectRows(p, url, home, env) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const stateOf = id => p.ev(`document.querySelector('.agent[data-agent="${id}"]')?.className.replace(/.*is-(\\w+).*/, "$1")`);
+
+  await p.goto(url);
+  await p.pointerAway();
+  await p.press("?");
+  const offered = await p.ui("vis", "#btn-connect");
+  await p.clickOn("#btn-connect");
+  const opened = await until(`location.pathname === "/connect" && document.querySelectorAll(".connect .agent").length >= 8`);
+  const served = await p.ev(`fetch("/api/agents").then(r => r.json())`);
+  const names = await p.ev(`[...document.querySelectorAll(".agent-name")].map(e => e.textContent)`);
+  const same = opened && JSON.stringify(names) === JSON.stringify(served.rows.map(r => r.name));
+  const allOff = same && (await p.ev(`[...document.querySelectorAll(".agent:not([data-agent^='sender:'])")].every(e => e.classList.contains("is-off"))`));
+  rows.push(["? reaches it, one row per agent", offered && same && allOff,
+    !offered ? "no Connect an agent in the help box" : !opened ? "the page did not open" : !same ? `rows ${JSON.stringify(names)}` : !allOff ? "a row is not 'not set up' in a home that has never seen an agent" : `${names.length} rows, in the daemon's order, every agent not set up`]);
+
+  const sender = await p.ev(`(() => { const e = document.querySelector('.agent[data-agent="sender:bench-agent"]'); return e && e.classList.contains("is-connected") && /sent/.test(e.querySelector(".agent-state").textContent); })()`);
+  rows.push(["a sender it never heard of has a row", !!sender, sender ? "bench-agent, connected, with when it sent" : "no row for the MCP client that sent under its own name"]);
+
+  // A Cursor file appears with snyvi under a path that is gone, then the fix
+  // is run in a terminal: the row turns twice, without a reload.
+  mkdirSync(join(home, ".cursor"), { recursive: true });
+  writeFileSync(join(home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { other: { command: "x" }, snyvi: { command: "/gone/snyvi", args: ["mcp"] } } }));
+  const stale = await until(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-stale")`, 60);
+  const says = stale && await p.ev(`document.querySelector('.agent[data-agent="cursor"] .agent-say').textContent`);
+  const fixShown = stale && await p.ev(`/init cursor$/.test(document.querySelector('.agent[data-agent="cursor"] .agent-fix code').textContent)`);
+  execFileSync(BIN, ["init", "cursor"], { env, encoding: "utf8" });
+  const connected = await until(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`, 60);
+  const kept = JSON.parse(readFileSync(join(home, ".cursor", "mcp.json"), "utf8")).mcpServers.other?.command === "x";
+  rows.push(["a row turns as its file does", stale && fixShown && connected && kept,
+    !stale ? `Cursor stayed "${await stateOf("cursor")}" after its file named a path that is gone` : !fixShown ? "the fix is not the init command" : !connected ? "init cursor ran and the row did not turn" : !kept ? "the other server in the file was lost" : `needs fixing — "${says}" — then connected, the other entry kept`]);
+
+  await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
+  const copied = await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy').textContent === "Copied"`, 10);
+  rows.push(["Copy says it copied", copied, copied ? "the button reads Copied for a moment" : "the button did not change"]);
+
+  await p.press("ArrowLeft", { alt: true });
+  const back = await until(`location.pathname !== "/connect" && !!document.querySelector(".prose")`);
+  rows.push(["Back leaves it", back, back ? "the document is back on screen" : `still on ${await p.ev("location.pathname")}`]);
+  return rows;
+}
+
+async function resetRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const goDisabled = () => p.ev(`document.querySelector("#reset-go").disabled`);
+  const say = () => p.ev(`document.querySelector("#reset-say").textContent`);
+
+  await p.goto(url);
+  await p.press("w");   // a preference to be forgotten
+  await p.pointerAway();
+  await p.press("?");
+  const offered = (await p.ui("vis", "#help")) && (await p.ui("vis", "#btn-reset"));
+  rows.push(["? offers it, and nothing else does", offered && !(await p.ev(`[...document.querySelectorAll("#chrome button, #side button")].some(b => /reset/i.test(b.textContent))`)),
+    offered ? "one line at the foot of the help box, no key, no button in the chrome" : "no Reset in the help box"]);
+
+  await p.clickOn("#btn-reset");
+  const opened = await until(`!document.querySelector("#reset").hidden && /This removes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
+  const census = await p.ev(`fetch("/api/reset").then(r => r.json())`);
+  const focused = await p.ui("at", "#reset-n");
+  rows.push(["the dialog says what goes", opened && focused && (await say()).includes(`${census.documents} document`) && (await say()).includes("Agents stay") && await goDisabled(),
+    !opened ? "the dialog did not open, or said nothing" : !focused ? "focus is not in the number field" : `"${await say()}", the button dead, the cursor in the field`]);
+
+  await p.type(String(census.documents + 1));
+  const wrongDead = await goDisabled();
+  await p.ev(`(() => { const i = document.querySelector("#reset-n"); i.value = ""; i.dispatchEvent(new Event("input")); })()`);
+  await p.type(String(census.documents));
+  const rightLive = !(await goDisabled());
+  rows.push(["the button waits for the number", wrongDead && rightLive, !wrongDead ? "enabled for the wrong number" : !rightLive ? "still dead for the right one" : `dead for ${census.documents + 1}, live for ${census.documents}`]);
+
+  await arrive();
+  await sleep(300);
+  await p.press("Enter");
+  const refused = await until(`!document.querySelector("#reset-err").hidden && /has changed/.test(document.querySelector("#reset-err").textContent)`);
+  const stillHere = !(await p.ev(`document.querySelector("#reset").hidden`)) && (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === census.documents + 1;
+  const reasked = (await say()).includes(`${census.documents + 1} document`) && await goDisabled();
+  rows.push(["a stale number is refused", refused && stillHere && reasked,
+    !refused ? "nothing said, or the wrong thing" : !stillHere ? "the library was reset on a number that was no longer true" : !reasked ? "the sentence was not brought up to date" : "refused, the sentence says the new number, and the button is dead again"]);
+
+  await p.type(String(census.documents + 1));
+  await p.press("Enter");
+  const landed = await until(`location.pathname === "/" && !!document.querySelector(".connect .agent")`, 80);
+  const left = landed ? await p.ev(`(() => { try { return Object.keys(localStorage).filter(k => k.startsWith("snyvi.")); } catch { return []; } })()`) : [];
+  const forgotten = landed && left.length === 0;
+  const wideOff = landed && !(await p.ev(`document.documentElement.dataset.wide`));
+  const empty = (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === 0;
+  // The agents were not touched: the row the connect rows turned is still connected.
+  const stillConnected = landed && await p.ev(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`);
+  rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty && stillConnected,
+    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
+  return rows;
+}
+
+/** 0.19: a page outlives the daemon that served it -- `snyvi stop`, an
+ *  upgrade taking the port -- and has to know. The stream used to outlive the
+ *  daemon instead: a graceful shutdown waits for every response in flight,
+ *  and a stream that never ends kept the old process up, listening on
+ *  nothing, with the window still on it. The daemon that took the port then
+ *  counted no window and handed every agent a link, one browser tab per
+ *  document. Seen for ten hours on the machine this was written on. */
+async function stopRows(p, base, tmp, env, second) {
+  const rows = [];
+  const health = async () => { try { return await (await fetch(`${base}/api/health`)).json(); } catch { return null; } };
+  const until = async (fn, tries = 50) => { for (let i = 0; i < tries; i++) { if (await fn()) return true; await sleep(100); } return false; };
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+  const before = await health();
+  const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
+  await fetch(`${base}/api/shutdown`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  const gone = await until(() => !alive(before.pid), 30);
+  rows.push(["the daemon exits with a page on it", gone, gone ? `pid ${before.pid} gone within 3 s, ${before.streams} stream${before.streams === 1 ? "" : "s"} open on it` : `pid ${before.pid} is still up 3 s after it was asked to stop`]);
+
+  const said = await until(() => p.ev(`document.documentElement.dataset.link === "off"`));
+  rows.push(["and the page says so", said, said ? "the brand mark went hollow" : "the page shows nothing"]);
+
+  // Another daemon, the way one always comes up: on a send. Its arrival is
+  // what the page has to catch up on, since it was heard by nobody.
+  execFileSync(BIN, ["send", second], { env, cwd: tmp, encoding: "utf8" });
+  const after = await health();
+  const back = await until(async () => { const h = await health(); return h && h.pid !== before.pid && h.window === true; }, 80);
+  const solid = back && await until(() => p.ev(`!document.documentElement.dataset.link`));
+  rows.push(["the page is on the next one, a window still", back && solid && before.window === true,
+    before.window !== true ? "the page was not a window before, so this proves nothing" : !back ? `the new daemon (pid ${after && after.pid}) says window: ${after && after.window} after 8 s` : !solid ? "the daemon knows, but the mark is still hollow" : `pid ${after.pid} counts the window, and the mark is solid again`]);
+
+  const caught = await until(() => p.ev(`[...document.querySelectorAll(".inbox.waiting .title")].some(t => /second plan/.test(t.textContent))`), 30);
+  rows.push(["and caught up on what it missed", caught, caught ? "the document that raised the daemon is in the inbox" : `the inbox does not list it: "${await p.ev(`document.querySelector("#doc").textContent.trim().slice(0, 60)`)}"`]);
+  return rows;
+}

@@ -317,10 +317,17 @@ impl Rows {
     }
 
     /// A platform this cannot be read on prints the row and enforces nothing,
-    /// so a check there is not a silent pass dressed as a measurement.
-    fn memory(&mut self, name: &str, mb: Option<f64>, budget: f64) {
+    /// so a check there is not a silent pass dressed as a measurement. So
+    /// does one where the only number to be had is not the one the budget
+    /// means (see `resident_bytes` for macOS), which says so on the row.
+    fn memory(&mut self, name: &str, mb: Option<(f64, bool)>, budget: f64) {
         match mb {
-            Some(mb) => self.size(name, mb, budget),
+            Some((mb, true)) => self.size(name, mb, budget),
+            Some((mb, false)) => println!(
+                "{name:<48} {:>9}   {:>9} counts pages given back but not yet taken; not enforced",
+                format!("{mb:.1} MB"),
+                format!("({budget:.0} MB)")
+            ),
             None => println!(
                 "{name:<48} {:>9}   {:>9} not measured here",
                 "-",
@@ -466,7 +473,7 @@ impl Daemon {
     /// runtime in main.rs). So this waits for the event, then three seconds,
     /// then reads: what the daemon holds while nobody is sending, which is
     /// the number a reader lives with.
-    fn settled_mb(&self, done: Option<(Events, &str)>) -> Result<Option<f64>> {
+    fn settled_mb(&self, done: Option<(Events, &str)>) -> Result<Option<(f64, bool)>> {
         if let Some((events, name)) = done {
             events.wait_for(name)?;
         }
@@ -474,9 +481,10 @@ impl Daemon {
         Ok(self.resident_mb())
     }
 
-    /// The daemon's resident set, in MB. None where there is no way to read it.
-    fn resident_mb(&self) -> Option<f64> {
-        resident_bytes(&self.child).map(|b| b as f64 / MB)
+    /// The daemon's resident set, in MB, and whether that number is one a
+    /// budget can be held to. None where there is no way to read it.
+    fn resident_mb(&self) -> Option<(f64, bool)> {
+        resident_bytes(&self.child).map(|(b, exact)| (b as f64 / MB, exact))
     }
 }
 
@@ -546,8 +554,13 @@ fn free_port() -> Result<u16> {
     Ok(l.local_addr()?.port())
 }
 
+/// What the daemon holds, in bytes, and whether the number is the one the
+/// budget means: memory the process is actually keeping. On Linux and
+/// Windows it is. On macOS the plain resident count is not, so the footprint
+/// is read instead, and the plain count is returned marked inexact only when
+/// the footprint cannot be.
 #[cfg(target_os = "linux")]
-fn resident_bytes(child: &Child) -> Option<u64> {
+fn resident_bytes(child: &Child) -> Option<(u64, bool)> {
     let status = std::fs::read_to_string(format!("/proc/{}/status", child.id())).ok()?;
     let kb: u64 = status
         .lines()
@@ -557,21 +570,61 @@ fn resident_bytes(child: &Child) -> Option<u64> {
         .trim()
         .parse()
         .ok()?;
-    Some(kb * 1024)
+    Some((kb * 1024, true))
 }
 
+/// On macOS the allocator gives freed pages back with MADV_FREE, and the
+/// kernel leaves them counted in the resident set until it needs them: `ps`
+/// read 181 MB for a daemon whose Linux twin settled at 82, most of it pages
+/// nobody was using. The physical footprint is the count without those --
+/// what Activity Monitor shows -- and `vmmap`, which ships with the command
+/// line tools, prints it for any process of one's own. Without `vmmap` the
+/// plain count is all there is, and it is returned marked as such.
 #[cfg(target_os = "macos")]
-fn resident_bytes(child: &Child) -> Option<u64> {
+fn resident_bytes(child: &Child) -> Option<(u64, bool)> {
+    let pid = child.id().to_string();
+    let footprint = Command::new("vmmap")
+        .args(["--summary", &pid])
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let value = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("Physical footprint:"))?
+                .trim()
+                .to_string();
+            parse_size(&value)
+        });
+    if let Some(b) = footprint {
+        return Some((b, true));
+    }
     let out = Command::new("ps")
-        .args(["-o", "rss=", "-p", &child.id().to_string()])
+        .args(["-o", "rss=", "-p", &pid])
         .output()
         .ok()?;
     let kb: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
-    Some(kb * 1024)
+    Some((kb * 1024, false))
+}
+
+/// A size as `vmmap` prints one: a number and a unit letter, `38.9M`.
+#[cfg(target_os = "macos")]
+fn parse_size(s: &str) -> Option<u64> {
+    let (num, unit) = s.split_at(s.len().checked_sub(1)?);
+    let n: f64 = num.parse().ok()?;
+    let mul = match unit {
+        "K" => 1024.0,
+        "M" => 1024.0 * 1024.0,
+        "G" => 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some((n * mul) as u64)
 }
 
 #[cfg(windows)]
-fn resident_bytes(child: &Child) -> Option<u64> {
+fn resident_bytes(child: &Child) -> Option<(u64, bool)> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
@@ -582,10 +635,10 @@ fn resident_bytes(child: &Child) -> Option<u64> {
     // as it exists, and the structure is the size the call is told it is.
     let ok =
         unsafe { GetProcessMemoryInfo(child.as_raw_handle() as _, &mut counters, counters.cb) };
-    (ok != 0).then_some(counters.WorkingSetSize as u64)
+    (ok != 0).then_some((counters.WorkingSetSize as u64, true))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn resident_bytes(_: &Child) -> Option<u64> {
+fn resident_bytes(_: &Child) -> Option<(u64, bool)> {
     None
 }

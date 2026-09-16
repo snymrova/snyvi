@@ -758,11 +758,19 @@
       try { items = await (await fetch("/api/inbox?limit=60")).json(); } catch { items = []; }
     }
     boot.inbox = null;
+    // Nothing to read: the page is the connect page, with the rows the shell
+    // came with or, on a later visit, fetched now.
+    let agents = null;
+    if (!items.length) {
+      agents = boot.agents; boot.agents = null;
+      if (!agents) { try { agents = await (await fetch("/api/agents")).json(); } catch {} }
+    }
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
-    docEl.innerHTML = inboxHtml(items);
+    docEl.innerHTML = inboxHtml(items, agents);
     if (push) swapIn();
     afterRender();
+    if (!items.length) watchAgents();
     // The inbox lists every waiting row, and the page opened with the oldest
     // few: the rest come after the page is on screen, not before the sidebar is.
     if (state.waiting > state.queue.length) {
@@ -773,9 +781,9 @@
     }
   }
 
-  function inboxHtml(items) {
+  function inboxHtml(items, agents) {
     const row = d => `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`;
-    if (!items.length) return `<div class="empty-state"><h1>Nothing to read yet</h1><p>Documents your agents send will appear here, filed by project.</p><pre>snyvi send PLAN.md\nsnyvi init-claude</pre></div>`;
+    if (!items.length) return connectHtml(agents);
     // What is waiting comes first, oldest first, so the landing page answers
     // "what is new" before "what is there".
     const n = state.waiting;
@@ -783,6 +791,77 @@
       (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the first<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
       `<ul class="inbox">${items.map(row).join("")}</ul>`;
   }
+
+  // ---------- connect an agent ----------
+  /* The page the empty library is, and the page `?` reaches once it is not:
+   * one row per agent, saying what its own config file has of snyvi, what
+   * fixes it, the line for its instructions file, and when it last sent
+   * something. Every fact comes from /api/agents, read by the daemon from the
+   * agent's file; the page asks again every few seconds while it is on
+   * screen, so `snyvi init codex` in the terminal beside it turns the row
+   * without a reload. It is not a tour: it appears to exactly the person who
+   * needs it, and the first document to arrive replaces it. */
+  let agentsSeen = "", agentsTimer = 0;
+  function connectHtml(a) {
+    const rows = a ? a.rows : [];
+    agentsSeen = JSON.stringify(rows);
+    const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
+    const row = r => {
+      const other = r.id.startsWith("sender:");
+      const when = r.last_sent != null ? ` · sent ${rel(r.last_sent)}` : "";
+      let say, state;
+      if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and has sent: connected.`; }
+      else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet." : ""}`; }
+      else if (r.state === "stale") { state = "stale"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)}</code>, which no longer exists — every send fails.`; }
+      else if (r.state === "unreadable") { state = "stale"; say = `<code>${esc(r.file)}</code> could not be read (${esc(r.error)}), so it is not edited. Put the entry in by hand.`; }
+      else { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>.` : `Not set up.`; }
+      const word = { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
+      const fix = other || r.state === "connected" ? "" :
+        `<div class="agent-fix">${r.state === "unreadable" ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : "Or by hand, in"} <code>${esc(r.fix.place)}</code></summary>${cmd(r.fix.snippet, "snippet")}</details></div>`;
+      const i = r.instructions;
+      const line = other || !i ? "" : `<p class="agent-instr">${
+        i.present ? `Asked to send what it writes, in <code>${esc(i.place)}</code>.`
+        : state === "connected" ? `Not yet asked to send what it writes: the line below goes in <code>${esc(i.place)}</code>.`
+        : `Then the line below, in <code>${esc(i.place)}</code>.`}</p>`;
+      return `<li class="agent is-${state}" data-agent="${esc(r.id)}"><div class="agent-head"><span class="agent-dot"></span><b class="agent-name">${esc(r.name)}</b><span class="agent-state">${word}${when}</span></div><p class="agent-say">${say}</p>${fix}${line}</li>`;
+    };
+    const line = rows.find(r => r.instructions)?.instructions.line || "";
+    return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Connect an agent</h1><p class="doc-sub">Any agent that speaks MCP can send documents here. Each row is what that agent's own settings say about snyvi, right now.</p></header>` +
+      `<ul class="agents">${rows.map(row).join("")}</ul>` +
+      (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
+      `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand.</p></div>`;
+  }
+  async function showConnect(push = true) {
+    if (push) leave();
+    state.view = "connect"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "Connect an agent · snyvi";
+    if (push) history.pushState({ connect: true }, "", "/connect");
+    let a = boot.agents; boot.agents = null;
+    if (!a) { try { a = await (await fetch("/api/agents")).json(); } catch { a = null; } }
+    docEl.innerHTML = connectHtml(a);
+    if (push) swapIn();
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+    watchAgents();
+  }
+  /** Ask again while the page is on screen; redraw only when something changed. */
+  function watchAgents() {
+    clearInterval(agentsTimer);
+    agentsTimer = setInterval(async () => {
+      if (!docEl.querySelector(".connect") || document.hidden) return;
+      let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
+      if (JSON.stringify(a.rows) === agentsSeen) return;
+      const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
+      docEl.innerHTML = connectHtml(a);
+      for (const id of open) docEl.querySelector(`.agent[data-agent="${CSS.escape(id)}"] details`)?.setAttribute("open", "");
+    }, 2500);
+  }
+  docEl.addEventListener("click", e => {
+    const b = e.target.closest(".connect pre.cmd .copy");
+    if (!b) return;
+    navigator.clipboard?.writeText(b.parentElement.querySelector("code").textContent);
+    b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200);
+  });
 
   async function showCompare(aId, bId) {
     const cur = state.doc;
@@ -1924,7 +2003,7 @@
         markCur(links, cur);
       });
     }
-    rail.classList.toggle("empty", state.view === "inbox");
+    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect");
   }
 
   /* A contents entry is a hash link, and the browser's own handling of one
@@ -2270,6 +2349,7 @@
     if (d) return showDoc(d[1], false, true);
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
+    if (location.pathname === "/connect") return showConnect(false);
     showInbox(false);
   });
 
@@ -2329,9 +2409,32 @@
     if (state.view === "inbox") showInbox(false);
   }
 
+  /** The brand mark is the state of the stream: solid while the page hears
+   *  the daemon, hollow while it does not. The one place a page that has
+   *  quietly lost its daemon -- one that stopped, or was replaced by an
+   *  upgrade -- shows it, and the reason a reader is not left wondering why
+   *  nothing arrives. */
+  const mark = $(".brand-mark");
+  function linked(on) {
+    if (on) { delete root.dataset.link; mark.title = ""; }
+    else { root.dataset.link = "off"; mark.title = "Not connected to snyvi; trying again"; }
+  }
+
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? "?window=1" : ""));
     stream = es;
+    es.onopen = async () => {
+      // A first connection is not a return.
+      if (root.dataset.link !== "off") return;
+      linked(true);
+      // The daemon on the port now may be a newer build than the one that
+      // served this page: its bundle is the one to run, so start over on it.
+      // Otherwise catch up on what arrived while nothing was heard.
+      let h = null;
+      try { h = await (await fetch("/api/health")).json(); } catch {}
+      if (h && h.v && boot.v && h.v !== boot.v) { location.reload(); return; }
+      catchUp();
+    };
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
@@ -2405,6 +2508,8 @@
       holdQueue();
       if (state.view === "inbox") showInbox(false);
     });
+    // The library is gone, from this tab or another: every page starts over.
+    es.addEventListener("reset", () => afterReset());
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
@@ -2420,6 +2525,7 @@
     es.onerror = () => {
       es.close();
       if (stream === es) stream = null;
+      linked(false);
       retry = setTimeout(connect, 2000);
     };
   }
@@ -2530,14 +2636,16 @@
     store.set("snyvi.font", next);
   });
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
-  const appEl = $("#app"), help = $("#help");
+  const appEl = $("#app"), help = $("#help"), aboutDlg = $("#about"), resetDlg = $("#reset");
+  const dialogs = [pal, help, aboutDlg, resetDlg];
+  const anyDialogOpen = () => dialogs.some(d => !d.hidden);
   const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
   let dialogOpener = null;
   /** Show a dialog. The page behind it goes inert, so Tab and a screen
    *  reader stay inside it, and whatever had focus gets it back on close. */
   function openDialog(el, focusEl) {
     if (!el.hidden) { (focusEl || el).focus(); return; }
-    if (pal.hidden && help.hidden) dialogOpener = document.activeElement;
+    if (!anyDialogOpen()) dialogOpener = document.activeElement;
     el.hidden = false;
     appEl.inert = true;
     (focusEl || el.querySelector(FOCUSABLE) || el.firstElementChild).focus();
@@ -2545,14 +2653,14 @@
   function closeDialog(el) {
     if (el.hidden) return;
     el.hidden = true;
-    if (!pal.hidden || !help.hidden) return;
+    if (anyDialogOpen()) return;
     appEl.inert = false;
     const back = dialogOpener; dialogOpener = null;
     if (back && back.isConnected && back !== document.body) back.focus();
   }
   document.addEventListener("keydown", e => {
     if (e.key !== "Tab") return;
-    const box = [pal, help].find(d => !d.hidden)?.firstElementChild;
+    const box = dialogs.find(d => !d.hidden)?.firstElementChild;
     if (!box) return;
     const f = [...box.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null);
     if (!f.length) { e.preventDefault(); return; }
@@ -2564,6 +2672,111 @@
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
   $("#help-close").addEventListener("click", () => closeDialog(help));
   $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+
+  // ---------- about: what this is, from the daemon ----------
+  /* Every number here is read from the daemon when the panel opens, not
+   * baked into this bundle, so the version it names is the one answering
+   * and the one `snyvi --version` prints. */
+  const aboutFacts = $("#about-facts");
+  async function openAbout() {
+    closeDialog(help);
+    aboutFacts.replaceChildren();
+    openDialog(aboutDlg, aboutDlg.firstElementChild);
+    let a;
+    try { a = await (await fetch("/api/about")).json(); } catch { $("#about-say").textContent = "The daemon did not answer."; return; }
+    $("#about-say").textContent = `${a.description}.`;
+    const fact = (k, v, cls) => {
+      if (v == null || v === "") return;
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); if (cls) dd.className = cls;
+      if (v instanceof Node) dd.append(v); else dd.textContent = v;
+      aboutFacts.append(dt, dd);
+    };
+    const ver = document.createDocumentFragment();
+    ver.append(a.version);
+    const build = [a.commit, a.target].filter(Boolean).join(", ");
+    if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
+    fact("Version", ver);
+    fact("Binary", a.binary, "path");
+    fact("Documents", a.data_dir, "path");
+    fact("Settings", a.config_dir, "path");
+    fact("Agents", a.agents, "pre");
+    fact("License", a.license);
+    if (a.repository) {
+      const link = document.createElement("a"); link.href = a.repository; link.target = "_blank"; link.rel = "noopener";
+      link.textContent = a.repository.replace(/^https?:\/\//, "");
+      fact("Source", link);
+    }
+  }
+  $("#btn-about").addEventListener("click", openAbout);
+  $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
+  $("#about-close").addEventListener("click", () => closeDialog(aboutDlg));
+  aboutDlg.addEventListener("click", e => { if (e.target === aboutDlg) closeDialog(aboutDlg); });
+
+  // ---------- reset: the one thing that cannot be undone ----------
+  /* A delete has Undo; this has a number. The dialog says what goes and what
+   * stays, and the button stays dead until the number of documents is typed
+   * back -- the number, not "yes", because the number means the sentence was
+   * read. The daemon is sent that number and refuses if it is no longer
+   * true, so a document that arrived while the dialog was open is not reset
+   * unseen. Every open tab hears the event and comes back to the empty
+   * library with its preferences dropped; the agents stay registered. */
+  const resetSay = $("#reset-say"), resetN = $("#reset-n"), resetGo = $("#reset-go"), resetErr = $("#reset-err");
+  const resetPinRow = $("#reset-pinned-row"), resetPin = $("#reset-pinned");
+  let resetCensus = null;
+  function resetArm() {
+    resetGo.disabled = !resetCensus || resetN.value.trim() !== String(resetCensus.documents) || (resetCensus.pinned > 0 && !resetPin.checked);
+  }
+  async function openReset() {
+    closeDialog(help);
+    resetCensus = null; resetN.value = ""; resetErr.hidden = true; resetPin.checked = false; resetPinRow.hidden = true;
+    resetSay.textContent = "Reading what there is…";
+    resetArm();
+    openDialog(resetDlg, resetN);
+    try { resetCensus = await (await fetch("/api/reset")).json(); } catch { resetSay.textContent = "The daemon did not answer."; return; }
+    resetSay.textContent = `This removes ${plural(resetCensus.documents, "document")} in ${plural(resetCensus.projects, "project")}, the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
+    if (resetCensus.pinned > 0) {
+      $("#reset-pinned-say").textContent = `Also the ${plural(resetCensus.pinned, "pinned document")} — a pin means keep`;
+      resetPinRow.hidden = false;
+    }
+    resetArm();
+  }
+  /** What every tab does when the library is gone: forget what it kept for
+   *  the reader, and start over where a newcomer does. The window keeps its
+   *  mark -- it is a fact about the window, not a preference. */
+  /** Drop the preferences and start over. The drop is done again by boot.js
+   *  on the page that lands, because this page is still running until the
+   *  navigation commits, and a task it already queued -- the toggle event a
+   *  rendered `<details open>` fires, which writes `snyvi.open` -- can run
+   *  after the drop here. Seen once in CI: one key back in storage. */
+  function afterReset() {
+    try { sessionStorage.setItem("snyvi.reset", "1"); } catch {}
+    try { Object.keys(localStorage).filter(k => k.startsWith("snyvi.")).forEach(k => localStorage.removeItem(k)); } catch {}
+    location.replace("/");
+  }
+  $("#btn-reset").addEventListener("click", openReset);
+  $("#reset-close").addEventListener("click", () => closeDialog(resetDlg));
+  $("#reset-cancel").addEventListener("click", () => closeDialog(resetDlg));
+  resetDlg.addEventListener("click", e => { if (e.target === resetDlg) closeDialog(resetDlg); });
+  resetN.addEventListener("input", resetArm);
+  resetPin.addEventListener("change", resetArm);
+  resetDlg.firstElementChild.addEventListener("submit", async e => {
+    e.preventDefault();
+    if (resetGo.disabled) return;
+    resetGo.disabled = true; resetGo.textContent = "Resetting…";
+    let r;
+    try {
+      r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, pinned: resetPin.checked }) });
+    } catch { resetGo.textContent = "Reset"; resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
+    if (r.ok) { afterReset(); return; }
+    resetGo.textContent = "Reset";
+    let j = {}; try { j = await r.json(); } catch {}
+    resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
+    resetErr.hidden = false;
+    // The number has moved: say the new sentence and ask for the new number.
+    if (j.census) { resetCensus = j.census; resetN.value = ""; resetSay.textContent = resetSay.textContent.replace(/^This removes [^,]+,/, `This removes ${plural(j.census.documents, "document")} in ${plural(j.census.projects, "project")},`); }
+    resetArm();
+  });
 
   // ---------- the panes on a narrow window ----------
   /* Past the widths in app.css the rail and then the sidebar stop fitting
@@ -2664,7 +2877,7 @@
     if (e.key === "Escape") {
       const filled = docEl.querySelector(".mmd[data-full]");
       if (filled) mmdUnfill(filled);
-      closePalette(); closeDialog(help); closeSheet(); if (!findBar.hidden) closeFind();
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); if (!findBar.hidden) closeFind();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop
@@ -2744,6 +2957,7 @@
     if (location.hash && !lineHash()) jumpToHash();
   }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
+  else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();
 })();

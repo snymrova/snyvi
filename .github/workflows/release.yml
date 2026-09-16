@@ -99,16 +99,26 @@ jobs:
     # and Debian 12 and later. The dependencies themselves are read out of the
     # binary by dpkg-shlibdeps in packaging/deb.sh, so they are never a guess.
     #
-    # amd64 only for now. The arm64 runners are 24.04, which would record a
-    # glibc baseline excluding every distribution older than that. Now that the
-    # window is one small executable and snyvi itself is static everywhere, an
-    # arm64 add-on costs only its own oldest-host runner.
+    # Both architectures, each on its own oldest host: the window is one small
+    # executable, so an arm64 add-on costs only the 22.04 arm runner that keeps
+    # its baseline the same as amd64's. Until 0.16 it was amd64 only, because
+    # the only arm runners were 24.04 and a package built there would have
+    # excluded every distribution older than that.
     #
     # After `build`, because both jobs upload to the same release: running them
     # in sequence keeps two writers off one release, and lets the static
     # package's job be the one that authors the notes.
     needs: build
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            deb_arch: amd64
+            name: x86_64-linux
+          - runner: ubuntu-22.04-arm
+            deb_arch: arm64
+            name: aarch64-linux
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -130,7 +140,7 @@ jobs:
           export SNYVI_DATA_DIR=/tmp/s-d SNYVI_CONFIG_DIR=/tmp/c-d SNYVI_PORT=7803
           xvfb-run -a -s "-screen 0 1280x860x24" timeout 20 ./target/release/snyvi app > /tmp/app.log 2>&1 || code=$?
           test "${code:-0}" = "124" || { echo "window exited early:"; cat /tmp/app.log; exit 1; }
-          grep -q "install snyvi-app" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
+          grep -q "no native window" /tmp/app.log && { echo "fell back to a browser"; exit 1; } || true
           ./target/release/snyvi stop
       - name: Package
         # The tarball carries the one executable; whoever unpacks it puts it
@@ -139,12 +149,12 @@ jobs:
           version="${{ github.event.inputs.version || github.ref_name }}"
           version="${version#v}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          name=snyvi-app-$version-x86_64-linux
+          name=snyvi-app-$version-${{ matrix.name }}
           mkdir -p dist/$name
           cp target/release/snyvi-app README.md dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
-          deb=$(packaging/deb.sh --desktop target/release/snyvi-app "$version" amd64 dist)
+          deb=$(packaging/deb.sh --desktop target/release/snyvi-app "$version" ${{ matrix.deb_arch }} dist)
           dpkg-deb -I "$deb"
           # Installing it must pull in snyvi rather than replace it, but the
           # static package is not in an apt repository, so satisfy it from the
@@ -221,4 +231,83 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: |
             dist/*.zip
+            dist/*.sha256
+
+  macos:
+    # One bundle per architecture, and the bundle is the whole download: both
+    # executables are inside snyvi.app, the window is what a double-click
+    # runs, and the command line is a symlink to the snyvi beside it. There
+    # is no static/dynamic fork here either -- the window uses the WebKit
+    # that is part of macOS -- so, as on Windows, nothing is a second step.
+    #
+    # After `windows` for the same reason `windows` is after `desktop`: one
+    # writer on the release at a time.
+    needs: windows
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        # Two passes, the same shape as Windows: snyvi is never built with the
+        # desktop feature, so tauri's build script cannot follow it into a
+        # binary that never opens a window.
+        run: |
+          cargo build --release --bin snyvi
+          cargo build --release --bin snyvi-app --features desktop
+      - name: Smoke test the daemon
+        run: |
+          set -e
+          file target/release/snyvi target/release/snyvi-app
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c" SNYVI_PORT=7805
+          ./target/release/snyvi send README.md
+          # SNYVI_BENCH_SHARED as on the Windows runner: how fast this VM
+          # creates a process is the runner's to answer, not snyvi's. The
+          # rows that are not clocks are enforced.
+          SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
+          ./target/release/snyvi stop
+      - name: Package
+        run: |
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          version="${version#v}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          name=snyvi-$version-${{ matrix.target }}
+          mkdir -p dist/$name
+          packaging/app.sh target/release/snyvi target/release/snyvi-app "$version" dist/$name
+          cp README.md dist/$name/
+          plutil -lint dist/$name/snyvi.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/$name/snyvi.app
+          test -f dist/$name/snyvi.app/Contents/Resources/snyvi.icns
+          tar -C dist -czf dist/$name.tar.gz $name
+          (cd dist && shasum -a 256 $name.tar.gz > $name.tar.gz.sha256)
+      - name: Open a window from the bundle
+        # From the copy about to be shipped, and with no URL: that is what a
+        # double-click does, and it must start the daemon and come back with
+        # one. The window then holds the foreground; a browser fallback would
+        # have returned at once.
+        run: |
+          set -e
+          export SNYVI_DATA_DIR="$RUNNER_TEMP/s2" SNYVI_CONFIG_DIR="$RUNNER_TEMP/c2" SNYVI_PORT=7806
+          app=dist/snyvi-$VERSION-${{ matrix.target }}/snyvi.app
+          "$app/Contents/MacOS/snyvi-app" > "$RUNNER_TEMP/app.log" 2>&1 &
+          sleep 20
+          curl -sf http://127.0.0.1:7806/api/health
+          pgrep -x snyvi-app >/dev/null || { echo "no native window is running:"; cat "$RUNNER_TEMP/app.log"; exit 1; }
+          grep -q "no native window" "$RUNNER_TEMP/app.log" && { echo "fell back to a browser"; exit 1; } || true
+          cat "$RUNNER_TEMP/app.log"
+          pkill -x snyvi-app || true
+          "$app/Contents/MacOS/snyvi" stop
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.tar.gz
             dist/*.sha256

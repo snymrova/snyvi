@@ -19,18 +19,32 @@ pub const WINDOW_MARK: &str = "?window=1";
 
 /// The window executable, looked for next to this binary before PATH so that a
 /// tarball install finds its own copy rather than an older one on PATH.
+///
+/// Next to the binary as it really is: on macOS the command on PATH is a
+/// symlink into `snyvi.app`, where the window sits beside the real file, and
+/// the path a process is started by is the link. Then PATH; then, on macOS,
+/// the two places an application is dragged to.
 fn window_binary() -> Option<PathBuf> {
     let name = crate::platform::exe("snyvi-app");
     if let Ok(exe) = std::env::current_exe() {
+        let exe = exe.canonicalize().unwrap_or(exe);
         if let Some(sibling) = exe.parent().map(|d| d.join(&name)) {
             if sibling.is_file() {
                 return Some(sibling);
             }
         }
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(&name))
+    if let Some(path) = std::env::var_os("PATH") {
+        if let Some(found) = std::env::split_paths(&path)
+            .map(|d| d.join(&name))
+            .find(|c| c.is_file())
+        {
+            return Some(found);
+        }
+    }
+    crate::platform::app_bundles("snyvi.app")
+        .into_iter()
+        .map(|app| app.join("Contents/MacOS").join(&name))
         .find(|c| c.is_file())
 }
 
@@ -85,7 +99,7 @@ pub fn open(url: &str) -> anyhow::Result<()> {
 
     // A Chromium-family "app" window has no browser chrome and starts fast.
     for browser in crate::platform::app_mode_browsers() {
-        let ok = Command::new(browser)
+        let ok = Command::new(&browser)
             .arg(format!("--app={url}"))
             .arg("--window-size=1280,860")
             .stdout(Stdio::null())
@@ -93,12 +107,44 @@ pub fn open(url: &str) -> anyhow::Result<()> {
             .spawn()
             .is_ok();
         if ok {
+            say_rung(&format!("this is {} in app mode", program_name(&browser)));
             return Ok(());
         }
     }
-    crate::client::open_in_browser(url);
-    if crate::platform::has_display() && window_binary().is_none() {
-        eprintln!("(install snyvi-app for a native window)");
+    if crate::platform::open_url(url) {
+        say_rung("this is the default browser");
+    } else {
+        say_rung("and no browser could be opened from here");
+        eprintln!("  open this yourself: {url}");
     }
     Ok(())
+}
+
+/// Which rung of the ladder was taken, and how to get the one above it. The
+/// ladder used to be silent, so a person with no window package could not
+/// tell a fallback from the thing itself.
+fn say_rung(what: &str) {
+    if !crate::platform::has_display() {
+        eprintln!("snyvi: no display, so no window; {what}");
+        return;
+    }
+    if window_binary().is_some() {
+        eprintln!("snyvi: the native window could not be started; {what}");
+        return;
+    }
+    let get = if cfg!(target_os = "macos") {
+        "put snyvi.app in Applications for one"
+    } else if cfg!(windows) {
+        "put snyvi-app.exe beside snyvi.exe for one"
+    } else {
+        "install the snyvi-app package for one"
+    };
+    eprintln!("snyvi: no native window installed, so {what}; {get}");
+}
+
+fn program_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
 }

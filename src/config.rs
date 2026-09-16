@@ -69,6 +69,15 @@ pub fn load_or_create_token(paths: &Paths) -> Result<String> {
     Ok(token)
 }
 
+/// A new token in place of the old one, which is dead from here on. What a
+/// reset does, and what a leaked token asks for.
+pub fn rotate_token(paths: &Paths) -> Result<String> {
+    if paths.token_path.exists() {
+        fs::remove_file(&paths.token_path).context("removing the old token")?;
+    }
+    load_or_create_token(paths)
+}
+
 /// Client side: read the token if the daemon has created one.
 pub fn read_token(paths: &Paths) -> Option<String> {
     fs::read_to_string(&paths.token_path)

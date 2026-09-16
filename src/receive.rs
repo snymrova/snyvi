@@ -25,6 +25,10 @@ pub struct Payload {
     /// Who sent it: "mcp", "cli", "hook" or "watch". Hook and watch sends of the same
     /// file are coalesced.
     pub origin: Option<String>,
+    /// The MCP client's name from its `initialize`, so the connect page can
+    /// say when an agent last sent something.
+    #[serde(default)]
+    pub sender: Option<String>,
 }
 
 pub struct Received {
@@ -177,6 +181,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         source_path: path.as_deref(),
         branch: branch.as_deref(),
         origin,
+        sender: p.sender.as_deref().unwrap_or(""),
         source: &body,
         search_body: &text,
         html: &html,

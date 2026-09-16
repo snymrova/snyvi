@@ -20,6 +20,9 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
         .ok()
         .map(|p| p.to_string_lossy().to_string());
     let session = session_key();
+    // The client's name from `initialize`, kept for every send after it, so
+    // the connect page can say which agent last worked and when.
+    let mut sender: Option<String> = None;
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -43,12 +46,18 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
         // Notifications have no id and get no reply.
         let Some(id) = id else { continue };
         let reply = match method {
-            "initialize" => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "snyvi", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document, and tell them where it went the way the result says."
-            }}),
+            "initialize" => {
+                sender = params
+                    .pointer("/clientInfo/name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                json!({ "jsonrpc": "2.0", "id": id, "result": {
+                    "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "snyvi", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document, and tell them where it went the way the result says."
+                }})
+            }
             "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
             "tools/list" => {
                 json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [ tool_spec() ] } })
@@ -59,7 +68,7 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 if name != "send_document" {
                     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool {name}") } })
                 } else {
-                    match call_send(&paths, args, cwd.as_deref(), &session) {
+                    match call_send(&paths, args, cwd.as_deref(), &session, sender.as_deref()) {
                         Ok(sent) => json!({ "jsonrpc": "2.0", "id": id, "result": {
                             "content": [{ "type": "text", "text": sent.say() }],
                             "structuredContent": { "url": sent.url, "window": sent.window, "title": sent.title },
@@ -127,7 +136,13 @@ impl Sent {
     }
 }
 
-fn call_send(paths: &Paths, args: Value, cwd: Option<&str>, session: &str) -> anyhow::Result<Sent> {
+fn call_send(
+    paths: &Paths,
+    args: Value,
+    cwd: Option<&str>,
+    session: &str,
+    sender: Option<&str>,
+) -> anyhow::Result<Sent> {
     let s = |k: &str| {
         args.get(k)
             .and_then(Value::as_str)
@@ -148,6 +163,7 @@ fn call_send(paths: &Paths, args: Value, cwd: Option<&str>, session: &str) -> an
         cwd: cwd.map(str::to_string),
         session: Some(session.to_string()),
         origin: Some("mcp".into()),
+        sender: sender.map(str::to_string),
     };
     let resp = client::send(paths, &payload)?;
     Ok(Sent {

@@ -19,6 +19,7 @@ Download `snyvi_<version>_amd64.deb` (or `_arm64.deb`) from the
 sudo dpkg -i snyvi_*.deb
 snyvi send README.md                              # starts the daemon, prints a link
 snyvi init-claude                                 # register with Claude Code
+snyvi status                                      # what is running, what is registered
 ```
 
 The package depends on nothing at all — the binary is static — so it
@@ -44,10 +45,13 @@ browser. See [Desktop](#desktop) for what the window costs.
 ### Windows
 
 Download `snyvi-<version>-x86_64-pc-windows-msvc.zip` from the same page
-and unzip it somewhere on your `PATH`:
+and unzip it into a folder of its own -- `%LOCALAPPDATA%\snyvi` is the
+usual place for a program installed for one user. Then, from a terminal
+in that folder:
 
 ```
-snyvi send README.md                              # starts the daemon, prints a link
+.\snyvi install-cli                               # puts this folder on your PATH
+snyvi send README.md                              # in a new terminal: starts the daemon, prints a link
 snyvi init-claude                                 # register with Claude Code
 snyvi app                                         # a window of its own
 ```
@@ -59,6 +63,49 @@ There is no separate package for the window the way there is on Linux,
 because it uses WebView2, which is part of Windows 10 and 11 rather than
 a library to go and install.
 
+The executables are not signed, so the first time one runs Windows may
+show a SmartScreen sheet saying it protected your PC. *More info*, then
+*Run anyway*, once; it is not asked again for that file.
+
+### macOS
+
+Download `snyvi-<version>-aarch64-apple-darwin.tar.gz` on Apple silicon
+or `-x86_64-apple-darwin` on Intel from the same page, unpack it, and
+drag `snyvi.app` into Applications. Both executables are inside the
+bundle: the window, which is what a double-click on the icon opens, and
+`snyvi` itself. The command line is a link to that one, which the
+bundle writes for you:
+
+```
+/Applications/snyvi.app/Contents/MacOS/snyvi install-cli
+snyvi send README.md                              # starts the daemon, prints a link
+snyvi init-claude                                 # register with Claude Code
+snyvi app                                         # the window, from the terminal
+```
+
+`install-cli` links into `/usr/local/bin` when that can be written and
+into `~/.local/bin` otherwise, and says so when the one it used is not
+on your `PATH` yet. (A fresh Mac has no writable `/usr/local/bin`, and
+an Apple silicon one has none at all until Homebrew makes it; that is
+why this is a command and not an `ln -s` to type.)
+
+Opening the app with nothing running does what `snyvi app` does: starts
+the daemon, then the window. The window uses the WebKit that is part of
+macOS, so as on Windows there is nothing to install for it.
+
+The bundle is signed, but not by an identity Apple knows — that takes a
+developer account — so the first open is refused as being from an
+unidentified developer. Either take the quarantine off the download,
+which is what Gatekeeper is reading:
+
+```
+xattr -dr com.apple.quarantine /Applications/snyvi.app
+```
+
+or open it once from System Settings → Privacy & Security → Open Anyway.
+A tarball unpacked with `tar` from a terminal carries no quarantine at
+all.
+
 ### Any other Linux
 
 Download the tarball for your architecture from the same page:
@@ -69,6 +116,10 @@ install -m 755 snyvi-*/snyvi ~/.local/bin/snyvi   # or /usr/local/bin
 snyvi send README.md
 snyvi init-claude
 ```
+
+If `~/.local/bin` is not on your `PATH`, `snyvi init-claude` writes the
+binary's full path into Claude Code's settings and says so; run it again
+after moving the binary, and the registration follows.
 
 ### Updating
 
@@ -92,6 +143,30 @@ Run `snyvi restart` to pick up the new version.
 `snyvi status` shows both versions, `snyvi stop` shuts the daemon down,
 and both work against daemons old enough to predate the stop command.
 Under systemd use `systemctl --user restart snyvi` instead.
+
+### Uninstalling
+
+```
+snyvi uninstall-claude        # the MCP server, the hooks, the CLAUDE.md line
+snyvi stop                    # the daemon
+sudo apt remove snyvi-app snyvi   # or delete the binary, the .app, the folder
+```
+
+That leaves your documents and index in `~/.local/share/snyvi` and the
+token in `~/.config/snyvi` (the Windows and macOS places are under
+[Where things live](#where-things-live)); delete those two directories
+if you want nothing left. `uninstall-claude` takes out exactly what
+`init-claude` put in and nothing else in Claude Code's settings.
+
+To start over rather than leave, `snyvi reset` puts the install back to
+the way it was: every document and version, the index, the token and
+the page's preferences go, and the agents stay registered, so the next
+document an agent sends lands in an empty library. `--agents` takes the
+registration out as well. It is the one thing snyvi does that cannot be
+undone, so it asks for the number of documents to be typed back rather
+than a "yes" -- `--dry-run` prints the sentence and stops, `--yes` is
+for scripts, and a pinned document refuses it until `--pinned` says so.
+The same dialog is at the foot of the `?` box in the viewer.
 
 It is fully static (musl), so it runs on any x86_64 or aarch64 Linux
 without extra packages. To build from source instead:
@@ -134,8 +209,13 @@ snyvi watch PLAN.md                # send now, and again on every save
 snyvi browse [dir]                 # read a folder from disk, nothing stored
 snyvi open                         # open the viewer, in the window if one is up
 snyvi app                          # native window (see Desktop below)
-snyvi init-claude [--auto]         # register with Claude Code (user scope)
+snyvi init <agent> [--instructions]  # register with claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed
+snyvi init                         # every agent, and what each has of snyvi
+snyvi uninstall <agent>            # take that registration back out
+snyvi init-claude [--auto] [--claude-md]  # the same as `init claude`, with its hook
+snyvi install-cli [dir]            # put `snyvi` on PATH
 snyvi prune --days 30 [--dry-run]  # delete what you deleted, and unpinned documents older than N days
+snyvi reset [--dry-run] [--agents]  # back to a fresh install; asks for the number of documents
 snyvi status                       # daemon health and version
 snyvi restart                      # after installing a new binary
 snyvi stop                         # shut the daemon down
@@ -146,15 +226,48 @@ The first `send` starts the daemon in the background; it stays resident
 (about 25 MB) so every later send and every page open is instant. It
 listens on `127.0.0.1:7777` only. Set `SNYVI_PORT` to change the port.
 
+### Connecting an agent
+
+`snyvi mcp` is a plain stdio MCP server, so any agent that speaks MCP can
+send documents here. `snyvi init <agent>` puts the entry in the agent's
+own file -- `~/.claude.json`, `~/.codex/config.toml`, `~/.cursor/mcp.json`,
+Claude Desktop's, Gemini CLI's, Windsurf's, VS Code's or Zed's -- after
+reading what is there: it says "already registered" when there is
+nothing to do, re-registers when the entry names a binary that has
+moved, and leaves everything else in the file as it found it (Codex's
+TOML keeps its comments; a JSON file with comments in it, which snyvi
+cannot parse, is left alone and the snippet printed instead).
+`--instructions` adds one line to the agent's instructions file, where
+it has one, asking it to send what it writes; `snyvi uninstall <agent>`
+takes the entry and the line back out.
+
+The viewer says the same thing. When the library is empty the page is
+*Connect an agent*: one row per agent, read by the daemon from the
+agent's own file, saying whether it is connected, not set up, or
+registered under a path that no longer exists, with the command or the
+snippet that fixes it and, once a document has come from it, when. It
+is reachable at any time from the foot of the `?` box, and `snyvi init`
+with no agent prints the same rows.
+
 ### Claude Code
 
-`snyvi init-claude` runs `claude mcp add --scope user snyvi -- snyvi mcp`.
+`snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
 That exposes a single MCP tool, `send_document`, which takes a file path
 or inline content and returns a URL. The tool description tells Claude
 when to use it; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
 > send it to snyvi with send_document and give me the link.
+
+`snyvi init-claude --claude-md` writes that line for you, once. The
+command is safe to run as often as you like: it reads what Claude Code
+already has before touching anything, says "already registered" when
+there is nothing to do, and when the binary has moved -- an update, a
+tarball tidied into `~/.local/bin` -- it re-registers and points the
+hooks at the new place rather than leaving them failing quietly on
+every tool call. `snyvi status` ends with a line saying what is
+registered and whether it still points at a binary that exists, and
+`snyvi uninstall-claude` takes all of it back out.
 
 `snyvi init-claude --auto` additionally installs a `PostToolUse` hook in
 `~/.claude/settings.json`, so every Markdown file Claude writes or edits
@@ -210,6 +323,19 @@ toggles the window and a right click opens the menu; Linux's tray
 protocol sends no clicks, so there the menu answers both. Running
 `snyvi app` again also just shows the window you already have.
 
+And from anywhere, without finding the tray: ⌘⇧Space on a Mac,
+Ctrl+Shift+Space on Windows and Linux, shows the window — or hides it,
+when it is the one in front. The key is a default and not a decision,
+because a global shortcut wins over any program's own use of the same
+chord, and some have one (a spreadsheet selects its sheet with it):
+`SNYVI_SHORTCUT=Alt+F9` names another, in the usual spelling, and
+`SNYVI_SHORTCUT=0` registers none. A key another program already holds
+is reported on the terminal and left with it. On a Wayland session
+there is no shortcut, since the interface it needs is X11's; the
+desktop's own keyboard settings do the same job there — bind a key to
+`snyvi app`, which shows the window that is already up rather than
+opening another.
+
 On a Linux desktop with no `libayatana-appindicator3`, there is no tray —
 snyvi says so, and closing the window goes back to meaning close.
 
@@ -238,12 +364,13 @@ What the window costs is what a browser engine costs, and it costs it
 | binary | 12.3 MB, static | 4.3 MB, links webkit |
 | download | 5.5 MB | 1.2 MB |
 | dependencies | **none** | webkit2gtk-4.1, gtk3, glibc 2.34+ |
-| runs on | any Linux, both architectures | Ubuntu 22.04+, Debian 12+, amd64 |
+| runs on | any Linux, both architectures | Ubuntu 22.04+, Debian 12+, both architectures |
 | resident | 35 MB | ~380 MB while a window is open |
 
 Those are the Linux numbers, where the two are packaged separately. On
 Windows both are in the one zip and the window costs whatever WebView2
-already costs the machine.
+already costs the machine; on macOS both are in the one bundle and the
+window costs whatever the system's WebKit does.
 
 That separation is the point. Before 0.6 the window was compiled into
 snyvi itself, so a machine that wanted one got an engine linked into the
@@ -286,6 +413,13 @@ beside a heading, a code block's language -- are simply there, and the
 every control in the order they are on the page; the search palette and
 the keys box keep focus inside them while open and give it back to
 where it was on Escape, and the find count is read out as it changes.
+
+The foot of the keys box has two lines. *About snyvi* says what this
+is, the version and the commit the daemon is running -- read from the
+daemon, so it is the number `snyvi --version` prints -- where the
+documents and the settings live, what Claude Code has of it, the
+license and the repository. *Reset snyvi…* is described under
+[Uninstalling](#uninstalling).
 
 ## Lines
 
@@ -620,11 +754,38 @@ that engine got wrong.
 `snyvi bench --check` fails when a case exceeds its budget; CI runs it
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
 factor scales the budgets that are clocks and not the size or the
-resident rows: a binary weighs the same on any machine. The Windows job
-adds `SNYVI_BENCH_SHARED=1`, which prints the cold-start row without
-enforcing it: that runner takes 400 ms to create a process where a dev
-box takes 11, and how much of that is Windows and how much the runner is
-not yet known. The Markdown
+resident rows: a binary weighs the same on any machine. The Windows and
+macOS jobs add `SNYVI_BENCH_SHARED=1`, which prints the clock rows
+without enforcing them: the Windows runner takes 400 ms to create a
+process where a dev box takes 11, and how much of that is Windows and
+how much the runner is not yet known.
+
+The same bench, on the three desktops CI builds for. These are the
+hosted runners' numbers, from one run each, and a runner is a slow and
+noisy machine; a reading from a real Mac or a real Windows desktop
+replaces its column when there is one, and sets the Windows budget the
+`SHARED` rows are waiting on.
+
+| Case                                    | Linux, this container | macOS (arm64) runner | macOS (x86_64) runner | Windows runner |
+|-----------------------------------------|---------------|---------------|----------------|---------|
+| Binary size, `snyvi`                    | 12.4 MB       | 10.0 MB | 10.9 MB | 10.8 MB |
+| Daemon cold start, to first health      | 11 to 14 ms   | 20 to 35 ms | 32 ms | 408 ms |
+| Daemon resident, three documents in     | 40 MB         | 11 MB   | 8 MB  | 22 MB |
+| Daemon resident, after the two fixtures | 82 MB         | 26 MB   | 30 MB | 33 MB |
+| Send, 100 KB Markdown, round trip       | 12 to 14 ms   | 25 to 41 ms | 37 ms | 31 ms |
+| Render Markdown, 1 MB                   | 108 ms        | 127 to 182 ms | 298 ms | 173 ms |
+| Highlight Rust, 10k lines               | 143 ms        | 166 to 282 ms | 431 ms | 263 ms |
+
+The binary is smaller on the two desktops that ship no static libc. The
+resident rows on macOS are the process's physical footprint, which is
+what Activity Monitor shows: the plain resident count there keeps pages
+the allocator has given back and the kernel has not yet taken, and read
+181 MB for a daemon whose Linux twin settled at 82. `snyvi bench` reads
+the footprint through `vmmap`, which comes with the command line tools,
+and says so on the row when it cannot. Two runs of the same job gave the
+ranges: a hosted Mac is not the same machine twice.
+
+The Markdown
 fast path skips the HTML sanitizer whenever a document contains no raw
 HTML, which is nearly always for agent output.
 

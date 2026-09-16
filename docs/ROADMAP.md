@@ -47,6 +47,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tags from the sender | `send_document(tags: ["review"])`, filter chips in the sidebar. | S | later |
 | Unread state persisted | The badge was a count per project in one tab's memory: a sibling document from the project being read left no mark, and a restart forgot the rest. Unread is a column now and the queue is a query on it, so it is the same in every tab and the window and survives a restart. | XS | **done 0.14** |
 | Archive a project | Hide finished projects from the tree without deleting. | S | later |
+| Reset to a fresh install | `snyvi reset` removes every document, the index, the token and the page's preferences, and leaves the agents registered, so the next `send_document` lands in an empty library; `--agents` takes the registrations out too. It is the one action that cannot be undone, so the friction is real on both surfaces: the sentence says what goes and what stays, and the confirmation is the number of documents typed back, not "yes". `--yes` for scripts, `--dry-run` to read the sentence and stop, and a refusal while anything is pinned unless `--pinned` is given. | S | **done 0.18** |
 | Export | Copy as Markdown, print stylesheet polish, save as PDF via print. | S | maybe |
 
 ## C. Agent integration
@@ -55,9 +56,11 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 |---|---|---|---|
 | Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux, a PowerShell toast on Windows, osascript on macOS. | S | **done 0.2** |
 | `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
-| Other agents | Config snippets for Codex CLI, Gemini CLI and Cursor: all speak MCP, so it is docs plus an `init` subcommand per tool. | S | later |
+| Connect an agent, from the page | `snyvi mcp` is a plain stdio MCP server and already works with every client that speaks MCP, and nothing says so: the only setup path is `init-claude`, and the viewer never mentions an agent at all. The empty library becomes a page with one row per agent -- connected, not set up, or pointing at a binary that is gone, read from the agent's own config file -- with the command or the copyable snippet that fixes it, the line for its instructions file, and when it last sent something. `snyvi init <agent>` writes every agent's file -- two writers, JSON and TOML, cover all eight -- and `uninstall <agent>` takes the entry back out leaving the rest of the file; a file snyvi cannot parse is left alone with the snippet printed. | M | **done 0.18** |
+| An about box | Nothing in the viewer says what it is, which version is running, where its data lives or under what license; a reader who arrived from an agent's link has no way to find out. One panel inside `?`, naming the same version `snyvi --version` prints. | XS | **done 0.18** |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
+| The first ten minutes | `init-claude` reads what Claude Code has before touching it, is safe to run again, follows a binary that moved, and ends with what to try; `--claude-md` writes the CLAUDE.md line; `uninstall-claude` takes all of it back out and nothing else; `install-cli` puts the command on PATH where the README's `ln -s` could not; a taken port, a missing browser and a fallback rung each say what happened. `bench/onboarding.sh` types it all in CI. | S | **done 0.17** |
 
 ## D. Desktop
 
@@ -67,14 +70,14 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Tray icon | Summon the window from anywhere; the daemon is resident anyway. Closing the window hides it instead of quitting, so reopening costs nothing. | M | **done 0.7** |
 | Open a terminal here | A document that says what to do next means leaving snyvi and re-finding the directory. A button opens the machine's own terminal with its working directory set to the document's, or the browsed root's. It passes no command, so nothing a document contains ever reaches a command line. `docs/TERMINAL.md`. | XS | **done 0.8** |
 | A sound on arrival | Asked for, and declined by default: a sound is the one signal a reader cannot ignore by not looking. `SNYVI_SOUND=1` puts a sound hint on the desktop notification -- the channel that already knows the volume and do-not-disturb -- and a burst sounds once. Nothing in the page plays anything. | XS | **done 0.15** |
-| Global shortcut | The other half of the tray item: summon the window without finding the tray first. Wants a key that is free on every desktop, which is the part that is not obvious. | S | later |
+| Global shortcut | The other half of the tray item: summon the window without finding the tray first. ⌘⇧Space on a Mac, Ctrl+Shift+Space elsewhere -- a chord no desktop's own shell holds, which was the part that was not obvious -- shows the window, or hides the one in front. `SNYVI_SHORTCUT` names another key or none, since a global shortcut wins over any program's own. X11 only on Linux: on Wayland the window says so and the desktop's settings bind a key to `snyvi app` instead, which reaches the running window the same way. | S | **done 0.16** |
 | The window is where a link opens | `send_document` answered with `http://127.0.0.1:7777/d/…` whatever was running, so a click opened a second viewer in a browser beside the window, and the desktop notification opened nothing at all. The window's page now says it is one when it opens its event stream, so the daemon knows for exactly as long as there is a window; `snyvi open`, `send --open`, `browse` and a click on the notification hand the URL to it and raise it, and the tool answers that the document is waiting in snyvi, with no link, when there is a window to wait in. | S | **done 0.15** |
 | Packages | `.deb` for Debian and Ubuntu, built for both architectures by the release workflow: the CLI, an application menu entry and a systemd user service, depending on nothing because the binary is static. AppImage, AUR and a Homebrew tap remain. | M | **done 0.4** |
 | Ship the native window | The Tauri window existed but no release contained it: the release builds are static musl, and WebKitGTK cannot be linked into those. A second `snyvi-desktop` package carries it, with its dependencies read out of the binary. | M | **done 0.5** |
-| Desktop package for arm64 | amd64 only so far. The arm64 runners are 24.04, so the package would record a glibc baseline excluding everything older; it wants its own oldest-host runner. Cheaper since 0.6: only the 4 MB window carries that baseline, and snyvi itself is static on both architectures already. With 0.16. | S | later |
+| Desktop package for arm64 | Was amd64 only: the arm64 runners were 24.04, so the package would have recorded a glibc baseline excluding everything older. There is a 22.04 arm runner now, and the desktop job is a matrix over both, so `snyvi-app_<version>_arm64.deb` records the same baseline as amd64's. Only the 4 MB window carries it; snyvi itself was static on both architectures already. | S | **done 0.16** |
 | Split the window into its own binary | The desktop package was one binary, so `snyvi serve` carried the linked engine with no window open: 66 MB against the static build's 34 MB. `snyvi-app` is now the window alone, and an add-on that depends on snyvi rather than replacing it. Daemon back to 35 MB, and the install stops being a choice. | M | **done 0.6** |
 | Windows | One zip with both executables, because there is no static/dynamic fork to make: snyvi.exe links no engine and the window uses WebView2, which ships with the OS. The daemon, CLI, MCP server and hook all needed a platform layer first -- opening a URL, raising a notification, ending a process, starting detached. | M | **done 0.7** |
-| macOS build | Tauri and the plain build both work on macOS; add it to the release matrix. Cheaper since 0.7: the platform layer already has the macOS path for notifications and for opening a URL, so what is left is the matrix leg and a .app bundle. | S | later |
+| macOS build | Two release legs, Apple silicon and Intel, each shipping `snyvi.app` with both executables inside: the window, which a double-click opens, and snyvi, which the command line is a symlink to. `snyvi-app` run with no URL hands over to the snyvi beside it, so the icon alone starts the daemon. Ad-hoc signed -- the signature Apple silicon requires, not the identity Gatekeeper wants, which takes a developer account -- so the README says how the first open goes. `packaging/app.sh`. | S | **done 0.16** |
 | AppImage | Measured before choosing: bundling WebKitGTK and its closure is 196 MB raw, 73 MB compressed, so the AppImage is ~80 MB against a 15 MB budget — 13x the `.deb` that does the same job by asking the distribution for webkit. It also puts nothing on `PATH`, which is where `snyvi send` has to be for the hook and the MCP server to call it. Not worth it for this shape of program. | M | **no** |
 
 ## E. Speed and hardening
@@ -99,6 +102,8 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 - Reading documents back into the agent. The channel is one-way by design.
 - Hosted multi-user mode, until the local tool has real users asking for it.
 - A terminal or a command runner inside snyvi. A viewer that runs what a document told it to run is a one-click path from agent-written content to a side effect on the reader's machine, and it turns a leaked write token from a nuisance into code execution. `docs/TERMINAL.md` has the argument and what is built instead.
+- Messages from the agent to the reader: a channel beside `send_document` for encouragement, or for something the model has noticed about the person. The tool's contract is "a finished document the reader asked for", and the reader relies on it: every arrival is work. The moment an arrival can be the model speaking, each one has to be read with the question of which it is, which is the interruption 0.14 removed. Something inferred about the reader from their documents and shown back to them reads as surveillance the first time it is slightly wrong, and it has no probe -- there is no test for "the message was welcome". And a free-text line addressed to the reader is the softest target a document can aim an agent at. The warmth belongs to the product's own voice, fixed and authored: the empty state, the about box, the first-run line.
+- A pet in the chrome. A character that lives beside the document needs a place, a state and attention, and every one of those is taken from the page; the document is the hero. The icon is the mascot, and it may appear as a still mark where there is nothing to read. One frame, not a life.
 
 ## 0.2 (built)
 
@@ -591,7 +596,7 @@ bench with `SNYVI_BENCH_SHARED=1`, the switch `bench/browser.mjs` already
 had for rows that measure the runner: the cold start is printed there and
 not enforced, and the rest still is. What a cold start costs on a Windows
 machine a person uses is not known, and belongs with the other things
-"Not yet proven on Windows" below.
+"Not yet watched on Windows or macOS" below.
 
 ## 0.11: the rail follows the reader
 
@@ -968,6 +973,120 @@ The rows, in `bench/ui.mjs`, twenty-one more for 61 in all:
 | a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
 | what moves, and for how long | an arrival's row carries one wash, and 250 ms later, rebuilt under a tree refetch, the same wash is 250 ms in rather than starting over; a second arrival leaves the bar element in place with no rise running and the count ticking; nothing running is over 700 ms or endless; `n` draws the row it read closing, and it is gone 400 ms later; the `#` reads Copied and raises no toast; and under reduced motion the page has no animation at all |
 
+## 0.16: the three desktops
+
+The half of 0.15 that was machines rather than code, as its own release.
+What changed is what CI builds, on what, and what it checks after
+building; the page changed by one stylesheet rule, at the end.
+
+**macOS.** Two legs in the release matrix, Apple silicon on `macos-14`
+and Intel on `macos-15-intel`, and each ships one thing: `snyvi.app`.
+Both executables are inside it. The window is what the bundle runs, and
+when it is run with no URL -- which is what a double-click is -- it
+hands over to the `snyvi` beside it, which starts the daemon if it must
+and runs the window again with the URL. On unix that hand-over is an
+exec, so the process Finder launched is the process showing the window.
+The command line is a symlink to that inner `snyvi`, and `snyvi app`
+from it finds the window beside the real file: the launcher now resolves
+its own path before looking for a sibling, and on a Mac also looks in
+`/Applications` and `~/Applications`. The Chromium-family fallback learnt
+where a Mac keeps a browser, which is inside an application bundle and
+not on PATH.
+
+The bundle is laid out by `packaging/app.sh`, the way `deb.sh` lays out
+the packages, and the two things only a Mac can do to it -- compile the
+icon with `iconutil`, sign it with `codesign` -- are done when there is
+one and skipped when there is not, so the script runs on every Linux
+push too and a mistake in it is found before release day. The signature
+is ad-hoc: Apple silicon will not run an executable without one, and an
+identity Gatekeeper would accept takes a developer account. So the first
+open is refused as from an unidentified developer, and the README says
+what to do about it. That is the honest state of an open-source Mac app
+without an Apple account, and it is written down rather than worked
+around.
+
+CI's macOS job runs the tests, both builds, the daemon smoke test, the
+bench with `SNYVI_BENCH_SHARED`, packages the bundle, checks the plist,
+the icon and the signature, and then opens the window *from the bundle
+with no URL*: the daemon has to be answering on the port, the window has
+to be up, and the daemon has to say it has a window. That last one is
+0.15's window mark, read on a third desktop.
+
+**arm64.** The desktop job is a matrix over `ubuntu-22.04` and
+`ubuntu-22.04-arm`, in CI and in the release, so the arm64 window
+package records the same `libc6 (>= 2.34)` baseline as amd64's. The only
+thing that had kept it out was the runner.
+
+**The shortcut.** ⌘⇧Space on a Mac and Ctrl+Shift+Space elsewhere shows
+the window from anywhere, or hides it when it is the one in front. The
+key is the part that was "not obvious", and the answer is a chord that
+no desktop's *shell* holds: ⌘Space is Spotlight and ⌃Space changes the
+input source, Super+Space changes the layout on GNOME and Windows both,
+⌃⌥Space is the next input source on a Mac, and Ctrl+Alt+letter is AltGr
+on half of Europe's keyboards. Programs are another matter -- Excel
+selects the sheet with Ctrl+Shift+Space, Word types a non-breaking
+space -- and a global shortcut wins over a program's own, so it is a
+default and not a decision: `SNYVI_SHORTCUT` names another key, or `0`
+for none, and a key another program already holds is reported and left
+with it.
+
+Two things the plugin's source settled. Its hotkey interface on Linux is
+X11's, so on Wayland the shortcut would fire only while an X11 program
+had the focus, which is worse than none; the window registers it only on
+an X11 session and otherwise says that the desktop's own settings are the
+place, where a key bound to `snyvi app` reaches the running window
+through the single-instance hand-off 0.7 built. And the plugin opens
+that interface as it loads, and a failure there fails the whole window,
+which a shortcut is never worth -- so the plugin is added only when a
+key is wanted, and the key itself is registered from the window's own
+setup, where a failure is one line.
+
+CI presses it. The Linux desktop job reads the line that says the key
+registered, then sends the chord with `xdotool` and watches the main
+window's map state: hidden, then shown again, somewhere in four presses.
+Under a window manager, which took a round to learn: a bare Xvfb has
+none, and without one the focus the toggle reads belongs to nobody -- on
+the amd64 runner the second press hid the window, on arm64 none of three
+did, and setting the focus by hand from outside changed which. Openbox
+under Xvfb is a desktop as far as focus is concerned, and there the key
+hides and shows on every press, the way it does on a reader's.
+
+**And one thing seen, not measured.** The search palette's result titles
+came up in cyan -- the colour of a type name in highlighted code, on a
+page whose own ink is warm grey and whose one accent is orange. The
+palette's title and subtitle spans are `.t` and `.s`, and so are the
+highlighter's classes for a type and a string, and the highlighter's
+rules were global. They are scoped to `pre.code` now, the only place the
+renderer writes them, and the toast's title, which had the same two
+spans, is quiet again too. One row in `bench/ui.mjs` reads the palette's
+computed colours against the page's: 62 rows in all.
+
+**What the first macOS run measured, and what it meant.** The bench's
+last row read 181 MB on the arm64 runner, against a budget of 100 and a
+Linux reading of 82. Not a leak: on macOS the allocator gives freed pages
+back with `MADV_FREE`, and the kernel leaves them in the resident count
+until it wants them, so `ps` reports what the process once touched, not
+what it holds. The number the budget means is the physical footprint --
+Activity Monitor's column -- and `vmmap --summary` prints it for any
+process of one's own. The bench reads that on a Mac and holds it to the
+budget; where `vmmap` is missing it prints the plain count in brackets
+and says what it is, so a machine without the command line tools gets a
+row that is honest rather than one that is red for the wrong reason. The
+CI job prints both numbers side by side for the same daemon, as the
+evidence: on the second run, `ps` said 13 MB and the footprint 7, for a
+daemon with one document in it. Under the footprint the two resident
+rows on the arm64 runner read 11 MB and 26 MB, against 40 and 82 on
+Linux, which is the difference between a libc with arenas and one
+without.
+
+**What is still a person's.** The numbers. The README's per-desktop
+table carries the hosted runners' readings, marked as such, and a
+`snyvi bench --check` from a real Mac and a real Windows desktop
+replaces those columns and sets the Windows cold-start budget that the
+`SHARED` rows have been waiting on since 0.7. And the two lists under
+"Not yet watched" below: a desktop in use is the one thing no runner
+shows.
+
 ## 1.0: what done looks like
 
 1.0 is not a feature. It is the point where a person can install snyvi on
@@ -981,7 +1100,11 @@ check found six more before it passed; 0.13's two faults were in an
 engine the check does not run, and got a harness of their own; 0.14's
 three came from a reader with several agents, and were the design's; and
 0.15's three were at the edge where snyvi meets the rest of the desktop,
-which is the part no probe had ever been pointed at. So the rule for
+which is the part no probe had ever been pointed at; and 0.16 pointed
+CI at the two desktops it had never opened a window on; 0.17 typed the
+install as a newcomer does and found ten stalls before the first
+document; and 0.18 is for the newcomer who never read the README, and
+for getting back to being one. So the rule for
 what is left: nothing goes into
 the 1.0 list that cannot be checked by a probe or a test, and nothing is
 checked off without one.
@@ -1031,14 +1154,34 @@ is code is checkable here and shipped; the half that is machines is
 not, so it is its own release rather than a release held open waiting
 for a laptop.
 
-**0.16: the three desktops.** macOS in the release matrix with a
-`.app`; the Linux window on arm64, which wants its own oldest-host
-runner so the package does not record a 24.04 glibc baseline; the
-global shortcut the tray item was half of; and the Windows list under
-"Not yet proven on Windows" watched by a person on a real machine, with
-the cold start measured there and the bench's Windows budget set from
-it. Probe: the release run itself, plus a `snyvi bench --check` from
-each of the three with its numbers written into the table. Cost M.
+**0.16: the three desktops** (shipped; the notes above). macOS in the
+release matrix with a `.app` that starts the daemon from a double-click;
+the Linux window on arm64 from its own 22.04 runner; the global shortcut
+the tray item was half of, configurable and honest about Wayland. Probe:
+CI opens the window on all three, and presses the key on the one that
+can be pressed from a script. What remains a person's: a `snyvi bench
+--check` from a real Mac and a real Windows machine, written into the
+README's per-desktop table, the Windows cold-start budget set from it,
+and the lists under "Not yet watched". Cost M.
+
+**0.17: the first ten minutes** (shipped; the notes above). The install
+walked as a newcomer walks it: `init-claude` safe to run again and
+following a binary that moved, `uninstall-claude`, `install-cli`, and a
+ladder, a port and a first send that say what happened. Probe:
+`bench/onboarding.sh`, on every push. Cost S.
+
+**0.18: connect an agent** (shipped; the notes below). 0.17 fixed the
+minute between the download and the first document for a person with
+Claude Code who read the README. 0.18 is for the person who did not,
+or has a different agent: the empty library is a page that says which
+agents are connected and how to connect the rest, with `snyvi init
+<agent>` behind the ones snyvi can write for; an about box inside `?`;
+and `snyvi reset`, which puts an install back to that page, with the
+friction an action that cannot be undone deserves. Probe:
+`bench/onboarding.sh` types `init`, `init` again, `init` after the
+binary moved and `uninstall` byte-equal for every agent snyvi writes
+for, reads the page's state at each step, and resets between; the page
+rows in `bench/ui.mjs`. Cost M.
 
 **The gate.** `bench/ui.mjs`, which runs beside `bench/browser.mjs` on
 every push since 0.12, holds every row of the 0.11 table above and what
@@ -1104,12 +1247,240 @@ right about its manifest, and they disagreed. Since 0.7 the release
 refuses to build when they do -- the first step of the first job, so a
 mismatch costs seconds rather than twelve assets.
 
-## Not yet proven on Windows
+## 0.17: the first ten minutes
+
+0.16 put the window on three desktops; 0.17 is the install walked as a
+newcomer walks it, in a clean home with no browser and no `claude` on
+PATH, reading the README from the top. Ten places stalled. None was a
+bug in the viewer; every one was in the minute between the download and
+the first document, which is the minute no probe had been pointed at.
+
+**`init-claude` the second time.** The first run registered. Any later
+run -- after an update, after the binary moved, from notes on a second
+machine -- got "already exists" from Claude Code, and snyvi answered
+"Could not run `claude`", then installed its hooks again anyway. Two
+things were conflated: a `claude` that cannot be started, and one that
+ran and declined. And nothing was read before writing. Now the
+registration is read from where user scope lives (`~/.claude.json`,
+which needs no `claude` to answer), and there are three outcomes said
+in three sentences: already registered, registered now, or registered
+under a path that is not this binary and so re-registered.
+
+**The hook that followed nothing.** The hook line was the binary's
+absolute path at the moment `init-claude` ran. A tarball tidied into
+`~/.local/bin`, a zip moved out of Downloads: the path is gone, the hook
+fails on every tool call, and a hook is required to be silent. The line
+is `snyvi hook` now when the `snyvi` a shell would run is this file,
+and the absolute path only when it is not -- said so at the time, with
+"run this again if it moves" -- and a run of `init-claude` rewrites
+every hook of ours to the current binary, `--auto` or not. `snyvi
+status` ends with a line naming the registration and the hooks, and
+says when either points at a path that no longer exists.
+
+**Undo.** There was no way out but editing two JSON files by hand.
+`uninstall-claude` removes the MCP entry, every hook of ours, and the
+CLAUDE.md line, and leaves everything else exactly as found: an entry
+that also carried someone else's hook keeps it, an event emptied is
+dropped, and a file that had only ours goes back to having no `hooks`
+key at all. Tested on the parsed file, then in CI against a settings
+file that starts with another program's hook in it.
+
+**The ladder was silent.** `snyvi app` on a machine with no window
+package and no browser printed `open http://127.0.0.1:7777` and exit 0,
+which reads as either a message or a mistake. Each rung now says which
+it is and how to get the one above it, and a URL nobody could open is
+labelled as the reader's to open.
+
+**A taken port was "did not come up".** With another program on the
+port, the daemon died on bind with nothing to say and the client
+reported a timeout. The client now asks the port first: an answer that
+is not a snyvi daemon names the port and `SNYVI_PORT`.
+
+**The first send printed a URL.** A daemon started, a token was
+written, a data directory appeared, and stdout carried a link and
+nothing else -- as it should, for a script. The command that starts the
+daemon says so once on stderr, and only when stderr is a terminal, so a
+hook hears nothing.
+
+**The macOS symlink.** The README said `ln -s ... /usr/local/bin/snyvi`.
+On a fresh Mac that directory is root's; on Apple silicon it does not
+exist until Homebrew makes it. `install-cli` tries `/usr/local/bin`,
+falls to `~/.local/bin`, creates that one, and says when the one used
+is not on PATH. On Windows, where there is nothing to link, it puts the
+binary's folder on the user PATH, once, through the environment call
+rather than `setx`, which truncates at 1024 characters.
+
+**The README.** Windows now names a folder and the SmartScreen sheet;
+macOS runs `install-cli` from the bundle; there is an uninstall section
+naming the three directories; and every install path ends in
+`snyvi status`.
+
+CI types the whole thing (`bench/onboarding.sh`): init-claude in a home
+that has never seen snyvi, again, again after the binary moved onto
+PATH, `status`, `--claude-md` twice, `uninstall-claude` against a
+settings file that must come out byte-equal to how it went in, no
+`claude` at all, a port held by another program, no browser, and
+`install-cli` into a directory. The macOS job links the bundle's
+command line the way the README says to; the Windows job checks the
+user PATH after `install-cli` and that a second run says so.
+
+What is still argued for, not watched: the SmartScreen sheet itself, a
+real `claude mcp add` (the fake keeps its file the way the real one
+does, and refuses a second add the way it does), and a Mac whose
+`/usr/local/bin` is root's, which the runner's is not.
+
+## 0.18: connect an agent
+
+0.17 walked the install as a newcomer walks it, with the README open
+and Claude Code on the machine. 0.18 is for the newcomer who has
+neither: who opened the window from an icon, is looking at "Nothing to
+read yet" and two commands meant for a person, and has Codex or Cursor
+in the other window. `snyvi mcp` is a plain stdio MCP server and has
+worked with every client that speaks MCP since 0.2. Nothing has ever
+said so, in the README or on the page. That, an about box, and the way
+back to the beginning, and then the 1.0 gate.
+
+**The page.** When the library is empty the document pane is a page
+called "Connect an agent", and it is reachable at any time from the foot
+of the `?` box and at `/connect`, because the second agent arrives after
+the first document did. One row per agent, and one more for any sender
+that is none of them, because a client snyvi has never heard of that
+has sent is connected by definition. Each row says three things.
+
+*What state it is in*, read by the daemon from the agent's own config
+file and nothing else -- `~/.claude.json` for Claude Code, `~/.codex/config.toml`,
+`~/.cursor/mcp.json`, the desktop app's `claude_desktop_config.json`,
+and the files Gemini CLI, Windsurf, VS Code and Zed keep. Read-only, so
+it is cheap and cannot be wrong about anything it did not do. Three
+states, the 0.17 distinction carried to every agent: connected, not set
+up, or registered under a path that no longer exists. A file that is
+not there is "not set up", not an error; the agent may simply not be
+installed, and the row says so without guessing which.
+
+*What fixes it*: a one-line command where snyvi has one, or a config
+snippet where it does not, with a copy button, since the whole page is
+"put this somewhere". Beside it, the line for the agent's instructions
+file -- `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `GEMINI.md` -- with
+the same button, because a registration only lets the model send; the
+line is what makes it want to. The snippet names the binary the daemon
+is running from, absolute when `snyvi` on PATH is not this file, the
+way `init-claude` decides its hook line.
+
+*Whether it has worked*: once a document has arrived from that agent
+the row says when, because a registration that has never been used is
+the exact state the newcomer is stuck in, and "connected" alone would
+tell them it is fine. The `initialize` request every MCP client opens
+with carries its `clientInfo.name`; the server keeps it and sends it
+with every document, the store keeps it beside the document, and the
+row matches it by the pieces each agent's name is known to contain. The
+page asks the daemon again every few seconds while it is on screen, so
+`snyvi init codex` in the terminal beside it turns the row without a
+reload.
+
+**`snyvi init <agent>`.** `init-claude` generalised to the files snyvi
+can safely own, with `init-claude` kept as the name it has had and
+Claude Code kept on `claude mcp add`, since that file is Claude Code's.
+The rest turned out to be two writers, not eight: every other agent
+keeps a JSON object of servers under one key or another, and Codex
+keeps TOML, so all of them are written, and a ninth would be a row in
+the table. Everything 0.17 established holds for each: read before
+writing, the three outcomes said in three sentences, following a binary
+that moved, and `snyvi uninstall <agent>` that leaves whatever else was
+in the file. TOML goes through `toml_edit` and comes back byte-equal,
+comments and all; JSON is parsed and printed back in the two-space form
+the agents write themselves, keys in the order they were, and a JSON
+file with comments in it -- Zed's and VS Code's allow them -- is the
+honest fallback: the file has something snyvi does not understand, the
+snippet is printed, and nothing is edited.
+
+**About.** One panel inside `?`: what snyvi is in a sentence, the
+version and the build -- the commit and the target, which `build.rs`
+reads from the checkout, so two builds between the same two tags can be
+told apart -- the binary, the data directory, the config directory, the
+registration line `status` ends with, the license, the repository.
+Every line is read from the daemon when the panel opens (`/api/about`),
+not baked into the page's bundle, so the panel cannot say a number
+`snyvi --version` would not.
+
+**Reset.** `snyvi reset` puts the install back to the page above. What
+goes: every document and version, the index, the token -- regenerated
+on the next start, so the old one is dead -- and the page's own
+preferences, which the daemon tells every open page to drop. What
+stays, and this is the part to get right: the agents. Un-registering
+them is `uninstall`'s job and touches files that are not snyvi's, and a
+reset that quietly did it would mean the next `send_document` fails
+against a tool that no longer exists. The default leaves them
+connected, so the very next send lands in an empty library, which is
+the connect page working. `--agents` takes them out too, for the person
+who wants snyvi gone.
+
+It is the one action in snyvi that cannot be undone, where 0.15 made
+sure a delete could be, so the friction is real and it is the same on
+both surfaces. The command prints one sentence: how many documents in
+how many projects, the index, the token, the preferences, and that the
+agents stay; then asks for the number of documents typed back. Not
+"yes" -- the number means the sentence was read. `--yes` for scripts
+and for the bench, refused without a terminal unless given; `--dry-run`
+prints the sentence and stops, like `prune`'s; and while anything is
+pinned the command refuses unless `--pinned` is also given, because a
+pin is the reader's explicit "keep this". In the viewer it is one line
+at the foot of the `?` box, with no key, opening a dialog with the same
+sentence and the same typed number, the button dead until it matches.
+The number is sent with the request and the daemon refuses if it is no
+longer true -- a document that arrived while the dialog was open makes
+the answer stale, and the dialog says the new number and asks again --
+so a library other than the one described is never reset. Then the
+daemon empties its store in place and stays up, the token is replaced,
+every open page hears it, drops its `snyvi.*` keys and lands on the
+connect page with every agent row still saying connected -- which is
+the proof the reset did what the sentence said. With no daemon running,
+the command removes what snyvi put on disk by name, never a directory
+it was merely pointed at.
+
+**Probe.** `bench/onboarding.sh` grew one block for the writers: Codex
+`init` into a file that began with a comment and another program's
+entry, again with `--instructions`, again after the entry was pointed
+at a path that is gone, then `uninstall` and the file byte-equal to
+before; Cursor the same in JSON, JSON-equal after; a Gemini file with a
+comment in it left alone with the snippet printed; one document through
+`snyvi mcp` under Codex's name and the row saying when; and the page's
+state read from the daemon at every step. `bench/ui.mjs`, five rows:
+`?` reaches it with one row per agent in a home that has seen none; the
+sender it never heard of has a row; a Cursor file naming a gone path
+turns its row to "needs fixing" and `snyvi init cursor` in a terminal
+turns it to connected, neither with a reload; Copy says it copied; and
+Back leaves it. Then, shipped with the reset: three
+documents sent, `reset --dry-run` says three, `reset` with no terminal
+refuses, with a pin refuses, with `--pinned --yes` empties the library,
+replaces the token and leaves the agent's file byte-equal to before;
+with no daemon and `--agents`, the database and the token are gone and
+so is the registration. `bench/ui.mjs`, the five rows shipped with it:
+`?` offers it and nothing else does; the dialog says what goes with the
+cursor in the field and the button dead; the button waits for the
+number; a stale number is refused and the sentence brought up to date;
+and a reset lands on the empty library with a preference forgotten and
+no `snyvi.*` key left in storage. The about box, three rows: `?` opens
+it in the help box's place; every fact on it is what `/api/about` says,
+the version with the commit; Escape closes it and the page is live
+again. The reset lands on the connect page with the Cursor row still
+connected, which is the proof the reset did what the sentence said.
+
+What this is not: a tour, coach marks, a checklist that persists. They
+are chrome, and the reader with three plans waiting has already learnt
+the program. The page appears once, to exactly the person who needs it,
+and is gone when the first document lands.
+
+## Not yet watched on Windows or macOS
 
 The build, the tests, the daemon and the window are all exercised by CI
-on a Windows runner. What no runner shows is a desktop in use: the
-toast, the tray's click behaviour, and how the window looks at the
-display scalings Windows actually ships with. Those are argued for, not
+on a Windows runner and, since 0.16, on two macOS runners. What no
+runner shows is a desktop in use. On Windows: the toast, the tray's
+click behaviour, the global shortcut pressed by a hand, and how the
+window looks at the display scalings Windows actually ships with. On
+macOS: Gatekeeper's refusal of the ad-hoc signature and the two ways
+past it the README gives, the Dock icon from the compiled `icns`, ⌘⇧Space
+against whatever the reader's other programs hold, the notification with
+its sound, and the window on a Retina display. Those are argued for, not
 yet watched.
 
 ## Still no purpose-built view
