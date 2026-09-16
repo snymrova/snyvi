@@ -233,13 +233,24 @@ jobs:
           state() { xwininfo -id "$(main)" | sed -n 's/.*Map State: //p'; }
           test -n "$(main)" || { echo "no main window found"; cat /tmp/key-app.log; exit 1; }
           # Focus is the manager's to give, and a probe should not hope for it:
-          # the first press must find the window in front to hide it.
-          xdotool windowactivate --sync "$(main)" || true
-          sleep 1
-          seen=$(state); echo "at first: $seen"
+          # a press finds the window in front and hides it, or finds it not
+          # and shows it, so a press on a window the manager has not focused
+          # yet shows a window that is already shown, and the map state never
+          # moves. Four such presses in a row is what this step's failures on
+          # the arm runner were, every time. So the window is not pressed
+          # until the manager says it is the active one, checked and asked
+          # again while it is not, and the active window is in the log.
+          active() { xdotool getactivewindow 2>/dev/null || echo none; }
+          focus() { for _ in 1 2 3 4 5 6 7 8; do
+                      xdotool windowactivate --sync "$(main)" 2>/dev/null || true
+                      xdotool windowfocus --sync "$(main)" 2>/dev/null || true
+                      sleep 0.5; [ "$(active)" = "$(main)" ] && return 0; done; return 1; }
+          focus || echo "the manager did not make the window active (active: $(active), main: $(main))"
+          seen=$(state); echo "at first: $seen, active $(active)"
           for n in 1 2 3 4; do
+            [ "$(state)" = IsViewable ] && focus
             xdotool key ctrl+shift+space; sleep 2
-            now=$(state); seen="$seen $now"; echo "press $n: $now"
+            now=$(state); seen="$seen $now"; echo "press $n: $now, active $(active)"
           done
           echo "$seen" | grep -q "IsUnMapped.*IsViewable" && exit 0
           echo "the key did not hide and then show the window"; cat /tmp/key-app.log; exit 1

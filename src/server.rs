@@ -89,9 +89,21 @@ pub struct App {
     /// the way out costs the next page a socket. Reported so a probe can say
     /// that it does.
     pub streams: AtomicUsize,
+    /// Which agents are here now, and how many of each: the MCP server holds
+    /// an event stream under its client's name from `initialize` until its
+    /// process ends, so this is exactly as live as the agent is, the way the
+    /// window count is. Before it, the daemon heard of an agent only when one
+    /// sent, and the page could say "last sent 12 minutes ago" of a session
+    /// that had been closed for eleven.
+    pub online: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
 }
 
 impl App {
+    /// The live agents, for health, the boot payload and the `agents` event.
+    pub fn online(&self) -> serde_json::Value {
+        let m = self.online.lock().unwrap_or_else(|e| e.into_inner());
+        json!(*m)
+    }
     /// Is a native window up? What decides whether a link is handed to it or
     /// opened in a browser beside it.
     pub fn has_window(&self) -> bool {
@@ -148,6 +160,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
         windows: AtomicUsize::new(0),
         streams: AtomicUsize::new(0),
+        online: std::sync::Mutex::new(Default::default()),
     });
     crate::watch::spawn_browse_watcher(app.clone());
 
@@ -298,6 +311,8 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
                 .unwrap_or_default(),
         );
         o.insert("waiting".into(), json!(waiting(app)));
+        // Who is here, for the count beside the brand mark on the first paint.
+        o.insert("online".into(), app.online());
     }
     let page = INDEX_HTML
         .replace("{{V}}", &app.asset_v)
@@ -507,6 +522,8 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
         "window": app.has_window(),
         "streams": app.streams.load(Ordering::Relaxed),
+        // Which agents hold a stream right now, by the name each gave.
+        "agents": app.online(),
         // The bundle this daemon serves, so a page that reconnects after an
         // upgrade can tell it is running another one's and reload.
         "v": app.asset_v,
@@ -542,17 +559,20 @@ async fn about(State(app): S) -> Json<serde_json::Value> {
 }
 
 /// The connect page's rows: every agent and what its own file says it has
-/// of snyvi, read now, and when each last sent something. `program` is how
-/// this binary is spelled to them, for the page to show in its commands.
+/// of snyvi, read now, whether it is here now, and when each last sent
+/// something. `program` is how this binary is spelled to them, for the page
+/// to show in its commands.
 async fn agents(State(app): S) -> Response {
     Json(agents_json(&app)).into_response()
 }
 
 fn agents_json(app: &App) -> serde_json::Value {
     let senders = app.store.senders().unwrap_or_default();
+    let online = app.online.lock().unwrap_or_else(|e| e.into_inner()).clone();
     json!({
         "program": crate::setup::program().0,
-        "rows": crate::agents::rows(&senders),
+        "rows": crate::agents::rows(&senders, &online),
+        "online": online,
         "now": crate::store::now(),
     })
 }
@@ -938,6 +958,10 @@ struct EventsQ {
     /// send, and it is not a bool to serde.
     #[serde(default)]
     window: Option<String>,
+    /// Set by the MCP server, with the name its client gave in `initialize`,
+    /// so the daemon knows that agent is here for as long as the stream is.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 impl EventsQ {
@@ -946,24 +970,45 @@ impl EventsQ {
             .as_deref()
             .is_some_and(|v| !matches!(v, "" | "0" | "false" | "False"))
     }
+
+    /// The agent's name, trimmed and cut to a length the header can hold.
+    /// None when it is empty, which is a page and not an agent.
+    fn agent(&self) -> Option<String> {
+        let name = self.agent.as_deref()?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(name.chars().take(64).collect())
+    }
 }
 
-/// Held by a page's event stream for as long as that stream lasts. A page that
-/// is closed, reloaded or navigated away from takes its connection with it,
-/// and both counts follow. Nothing here times out, so a window that is quit is
-/// not a window a moment later, and a page that is gone is not a socket.
+/// Held by an event stream for as long as that stream lasts. A page that is
+/// closed, reloaded or navigated away from takes its connection with it, and
+/// an agent's process that ends takes its own; every count follows. Nothing
+/// here times out, so a window that is quit is not a window a moment later,
+/// a page that is gone is not a socket, and an agent whose session was
+/// closed is not here.
 struct StreamMark {
     app: Arc<App>,
     window: bool,
+    agent: Option<String>,
 }
 
 impl StreamMark {
-    fn new(app: Arc<App>, window: bool) -> StreamMark {
+    fn new(app: Arc<App>, window: bool, agent: Option<String>) -> StreamMark {
         app.streams.fetch_add(1, Ordering::Relaxed);
         if window {
             app.windows.fetch_add(1, Ordering::Relaxed);
         }
-        StreamMark { app, window }
+        if let Some(name) = &agent {
+            let changed = {
+                let mut m = app.online.lock().unwrap_or_else(|e| e.into_inner());
+                *m.entry(name.clone()).or_insert(0) += 1;
+                json!(*m)
+            };
+            emit(&app, "agents", json!({ "online": changed }));
+        }
+        StreamMark { app, window, agent }
     }
 }
 
@@ -972,6 +1017,19 @@ impl Drop for StreamMark {
         self.app.streams.fetch_sub(1, Ordering::Relaxed);
         if self.window {
             self.app.windows.fetch_sub(1, Ordering::Relaxed);
+        }
+        if let Some(name) = &self.agent {
+            let changed = {
+                let mut m = self.app.online.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(n) = m.get_mut(name) {
+                    *n -= 1;
+                    if *n == 0 {
+                        m.remove(name);
+                    }
+                }
+                json!(*m)
+            };
+            emit(&self.app, "agents", json!({ "online": changed }));
         }
     }
 }
@@ -992,7 +1050,7 @@ async fn events(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
     let stop = BroadcastStream::new(app.shutdown.subscribe()).map(|_| None);
-    let mark = StreamMark::new(app.clone(), q.is_window());
+    let mark = StreamMark::new(app.clone(), q.is_window(), q.agent());
     let stream = BroadcastStream::new(rx)
         .filter_map(move |m| {
             // Captured so that the mark lives exactly as long as the stream does.

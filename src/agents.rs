@@ -23,6 +23,7 @@ use crate::setup::{self, same_program};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The line an instructions file gets. A registration lets the model send;
@@ -699,6 +700,9 @@ pub struct Row {
     /// the name it gave.
     pub last_sent: Option<i64>,
     pub sender: Option<String>,
+    /// How many of this agent hold a stream on the daemon right now: its
+    /// sessions that are open, whether or not any has sent.
+    pub live: usize,
 }
 
 #[derive(Serialize)]
@@ -719,25 +723,29 @@ pub struct Instructions {
     pub line: &'static str,
 }
 
-/// One row per agent, and one more for each sender the daemon has heard
-/// from that is none of them, so a client snyvi has never heard of still
-/// shows as connected once it has proved it. `senders` is what the store
-/// knows: each `clientInfo.name`, and when it last sent.
-pub fn rows(senders: &[(String, i64)]) -> Vec<Row> {
+/// One row per agent, and one more for each name the daemon has heard
+/// that is none of them, so a client snyvi has never heard of still shows
+/// as connected once it has proved it. `senders` is what the store knows:
+/// each `clientInfo.name`, and when it last sent. `online` is what the
+/// daemon knows now: each name holding a stream, and how many of it.
+pub fn rows(senders: &[(String, i64)], online: &BTreeMap<String, usize>) -> Vec<Row> {
     let (program, _) = setup::program();
-    let mut claimed = vec![false; senders.len()];
+    let mut claimed_sender = vec![false; senders.len()];
+    let mut claimed_online: BTreeMap<&str, bool> =
+        online.keys().map(|k| (k.as_str(), false)).collect();
     let mut out: Vec<Row> = all()
         .iter()
         .map(|a| {
+            let is_theirs = |name: &str| {
+                let n = name.to_ascii_lowercase();
+                a.client.iter().any(|c| n.contains(c))
+            };
             let latest = senders
                 .iter()
                 .enumerate()
-                .filter(|(_, (name, _))| {
-                    let n = name.to_ascii_lowercase();
-                    a.client.iter().any(|c| n.contains(c))
-                })
+                .filter(|(_, (name, _))| is_theirs(name))
                 .map(|(i, (name, t))| {
-                    claimed[i] = true;
+                    claimed_sender[i] = true;
                     (*t, name.clone())
                 })
                 .max();
@@ -745,6 +753,14 @@ pub fn rows(senders: &[(String, i64)]) -> Vec<Row> {
                 Some((t, n)) => (Some(t), Some(n)),
                 None => (None, None),
             };
+            let live = online
+                .iter()
+                .filter(|(name, _)| is_theirs(name))
+                .map(|(name, n)| {
+                    claimed_online.insert(name.as_str(), true);
+                    *n
+                })
+                .sum();
             Row {
                 id: a.id.to_string(),
                 name: a.name.to_string(),
@@ -769,16 +785,27 @@ pub fn rows(senders: &[(String, i64)]) -> Vec<Row> {
                 }),
                 last_sent,
                 sender,
+                live,
             }
         })
         .collect();
+    // The names none of the table's agents own: a sender, an agent that is
+    // here now, or both, under the one row its name is.
+    let mut others: BTreeMap<&str, (Option<i64>, usize)> = BTreeMap::new();
     for (i, (name, t)) in senders.iter().enumerate() {
-        if claimed[i] {
-            continue;
+        if !claimed_sender[i] {
+            others.entry(name).or_insert((None, 0)).0 = Some(*t);
         }
+    }
+    for (name, n) in online {
+        if !claimed_online[name.as_str()] {
+            others.entry(name).or_insert((None, 0)).1 = *n;
+        }
+    }
+    for (name, (last_sent, live)) in others {
         out.push(Row {
             id: format!("sender:{name}"),
-            name: name.clone(),
+            name: name.to_string(),
             state: State::Connected {
                 command: String::new(),
                 args: vec![],
@@ -790,23 +817,32 @@ pub fn rows(senders: &[(String, i64)]) -> Vec<Row> {
                 place: String::new(),
             },
             instructions: None,
-            last_sent: Some(*t),
-            sender: Some(name.clone()),
+            last_sent,
+            sender: Some(name.to_string()),
+            live,
         });
     }
     out
 }
 
-/// `snyvi init` with no agent: the page, as text. The senders come from
-/// the daemon when it is up and from the database when it is not, and are
-/// none when there is neither.
+/// `snyvi init` with no agent: the page, as text. The senders and who is
+/// here now come from the daemon when it is up; the senders alone from the
+/// database when it is not, and are none when there is neither.
 pub fn list(paths: &crate::config::Paths) -> Result<()> {
+    let mut online = BTreeMap::new();
     let senders = if crate::client::health().is_some() {
         ureq::get(&format!("{}/api/agents", crate::config::base_url()))
             .call()
             .ok()
             .and_then(|mut r| r.body_mut().read_json::<Value>().ok())
             .map(|v| {
+                online = v
+                    .get("online")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(k, n)| Some((k.clone(), n.as_u64()? as usize)))
+                    .collect();
                 v.get("rows")
                     .and_then(Value::as_array)
                     .into_iter()
@@ -826,9 +862,15 @@ pub fn list(paths: &crate::config::Paths) -> Result<()> {
         Vec::new()
     };
     let now = crate::store::now();
-    for r in rows(&senders) {
+    for r in rows(&senders, &online) {
         let what = match &r.state {
-            State::Connected { command, args } if command.is_empty() => "sent to snyvi".to_string(),
+            State::Connected { command, .. } if command.is_empty() => {
+                if r.last_sent.is_some() {
+                    "sent to snyvi".to_string()
+                } else {
+                    "here, under its own name".to_string()
+                }
+            }
             State::Connected { command, args } => {
                 format!("connected ({command} {})", args.join(" "))
             }
@@ -843,11 +885,16 @@ pub fn list(paths: &crate::config::Paths) -> Result<()> {
                 format!("{} could not be read: {error}", r.file.unwrap_or_default())
             }
         };
+        let here = match r.live {
+            0 => String::new(),
+            1 => ", online".to_string(),
+            n => format!(", online \u{d7}{n}"),
+        };
         let when = match r.last_sent {
             Some(t) => format!(", last sent {}", ago(now - t)),
             None => String::new(),
         };
-        println!("{}: {what}{when}", r.name);
+        println!("{}: {what}{here}{when}", r.name);
     }
     Ok(())
 }
@@ -993,11 +1040,14 @@ mod tests {
 
     #[test]
     fn senders_land_on_their_agent_or_on_a_row_of_their_own() {
-        let rows = rows(&[
-            ("claude-code".into(), 10),
-            ("codex-mcp-client".into(), 20),
-            ("Something Else".into(), 30),
-        ]);
+        let rows = rows(
+            &[
+                ("claude-code".into(), 10),
+                ("codex-mcp-client".into(), 20),
+                ("Something Else".into(), 30),
+            ],
+            &BTreeMap::new(),
+        );
         let by = |id: &str| rows.iter().find(|r| r.id == id).unwrap();
         assert_eq!(by("claude").last_sent, Some(10));
         assert_eq!(by("codex").last_sent, Some(20));
@@ -1005,5 +1055,30 @@ mod tests {
         let other = by("sender:Something Else");
         assert_eq!(other.last_sent, Some(30));
         assert!(matches!(other.state, State::Connected { .. }));
+        assert!(rows.iter().all(|r| r.live == 0));
+    }
+
+    #[test]
+    fn the_agents_here_now_count_on_their_row() {
+        let online: BTreeMap<String, usize> = [
+            ("claude-code".to_string(), 3),
+            ("Something Else".to_string(), 1),
+            ("never-sent".to_string(), 2),
+        ]
+        .into_iter()
+        .collect();
+        let rows = rows(&[("Something Else".into(), 30)], &online);
+        let by = |id: &str| rows.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(by("claude").live, 3);
+        assert_eq!(by("codex").live, 0);
+        // One row for a name, whether it has sent, is here, or both.
+        let other = by("sender:Something Else");
+        assert_eq!((other.last_sent, other.live), (Some(30), 1));
+        let quiet = by("sender:never-sent");
+        assert_eq!((quiet.last_sent, quiet.live), (None, 2));
+        assert_eq!(
+            rows.iter().filter(|r| r.id.starts_with("sender:")).count(),
+            2
+        );
     }
 }

@@ -51,6 +51,9 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                     .pointer("/clientInfo/name")
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                if let Some(name) = &sender {
+                    client::hold_presence(name.clone());
+                }
                 json!({ "jsonrpc": "2.0", "id": id, "result": {
                     "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
                     "capabilities": { "tools": {} },

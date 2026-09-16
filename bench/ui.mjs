@@ -26,7 +26,7 @@
  * being looked for.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -196,6 +196,7 @@ async function main() {
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["the about box", await aboutRows(p, url)]);
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
+    sections.push(["an agent that is here", await presenceRows(p, url, base, env, tmp)]);
     // Last, because it takes the library with it.
     sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
     // And after it, because it takes the daemon.
@@ -1095,6 +1096,45 @@ async function connectRows(p, url, home, env) {
   await p.press("ArrowLeft", { alt: true });
   const back = await until(`location.pathname !== "/connect" && !!document.querySelector(".prose")`);
   rows.push(["Back leaves it", back, back ? "the document is back on screen" : `still on ${await p.ev("location.pathname")}`]);
+  return rows;
+}
+
+/** 0.19: who is here now. The MCP server holds an event stream on the daemon
+ *  under its client's name from `initialize` until its process ends, so the
+ *  count beside the brand mark says how many agents are connected this
+ *  moment and the connect page says which -- not only who last sent, and
+ *  when. These rows run a real `snyvi mcp`, keep its stdin open, and end it. */
+async function presenceRows(p, url, base, env, tmp) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const live = () => p.ev(`(e => ({ n: e.textContent, on: e.classList.contains("on"), title: e.title }))(document.querySelector("#live"))`);
+  const health = async () => (await (await fetch(`${base}/api/health`)).json());
+
+  await p.goto(url);
+  const none = await live();
+  rows.push(["none, and the count says none", none.n === "0" && !none.on && /no agent/i.test(none.title),
+    none.n === "0" && !none.on ? `"0", dim, "${none.title}"` : `the count reads "${none.n}"${none.on ? ", lit" : ""} with no agent on the daemon`]);
+
+  const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "bench-agent", version: "0" } } };
+  const agent = spawn(BIN, ["mcp"], { env, cwd: tmp, stdio: ["pipe", "ignore", "ignore"] });
+  agent.stdin.write(JSON.stringify(init) + "\n");
+  const lit = await until(`document.querySelector("#live").textContent === "1" && document.querySelector("#live").classList.contains("on")`, 40);
+  const one = await live();
+  const h = await health();
+  rows.push(["one arrives, and the count turns", lit && h.agents["bench-agent"] === 1 && /bench-agent/.test(one.title),
+    !lit ? `the count reads "${one.n}" 4 s after an agent initialized` : h.agents["bench-agent"] !== 1 ? `health says ${JSON.stringify(h.agents)}` : `"1", lit, "${one.title}", and health agrees`]);
+
+  await p.clickOn("#live");
+  const row = await until(`location.pathname === "/connect" && document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live") && /^online/.test(document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent)`, 40);
+  const said = row && await p.ev(`document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent`);
+  rows.push(["the count opens the rows, and its row says online", row, row ? `the connect page, bench-agent "${said}"` : `at ${await p.ev("location.pathname")}, the row does not say online`]);
+
+  agent.stdin.end();
+  const fell = await until(`document.querySelector("#live").textContent === "0" && !document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live")`, 40);
+  const after = await health();
+  rows.push(["and leaves, and the count falls", fell && !after.agents["bench-agent"],
+    fell ? "0 again, and the row no longer says online, within 4 s of the agent's end" : `the count reads "${(await live()).n}" 4 s after the agent's stdin closed; health says ${JSON.stringify(after.agents)}`]);
+  await p.goto(url);
   return rows;
 }
 

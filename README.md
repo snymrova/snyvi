@@ -245,9 +245,13 @@ The viewer says the same thing. When the library is empty the page is
 *Connect an agent*: one row per agent, read by the daemon from the
 agent's own file, saying whether it is connected, not set up, or
 registered under a path that no longer exists, with the command or the
-snippet that fixes it and, once a document has come from it, when. It
-is reachable at any time from the foot of the `?` box, and `snyvi init`
-with no agent prints the same rows.
+snippet that fixes it and, once a document has come from it, when. An
+agent whose session is open this moment says *online* instead -- the
+MCP server holds a connection to the daemon from the agent's first
+message until its process ends, so the row is as live as the session
+-- and the count beside the mark in the sidebar says how many are, on
+every page. It is reachable at any time from the foot of the `?` box
+and from that count, and `snyvi init` with no agent prints the same rows.
 
 ### Claude Code
 
