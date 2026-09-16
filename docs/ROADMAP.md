@@ -61,6 +61,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Who is here now | The daemon heard of an agent only when one sent, so the connect page could say "sent 12 minutes ago" of a session closed for eleven, and nothing on any page said whether an agent was connected at all. The MCP server holds an event stream on the daemon under its client's name from `initialize` until its process ends, counted the way the window's is; a count beside the brand mark says how many are here, its title which, and the connect page's row says *online*. Nothing times out: the count is the streams. | S | **done 0.19** |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
+| The front page | The README was the manual: 860 lines, no picture, `## Install` on the first screen. It is now a landing page -- the film, the hero in both themes, install in four lines per desktop, six pictures each saying one thing, the keys, the numbers -- and the manual is `docs/GUIDE.md`, verbatim. Every picture and the film come from `bench/media.mjs`, a camera over a seeded library, so a release re-takes them and CI proves the views it points at still exist. | S | **done 0.21** |
 | The first ten minutes | `init-claude` reads what Claude Code has before touching it, is safe to run again, follows a binary that moved, and ends with what to try; `--claude-md` writes the CLAUDE.md line; `uninstall-claude` takes all of it back out and nothing else; `install-cli` puts the command on PATH where the README's `ln -s` could not; a taken port, a missing browser and a fallback rung each say what happened. `bench/onboarding.sh` types it all in CI. | S | **done 0.17** |
 
 ## D. Desktop
@@ -1219,10 +1220,17 @@ session's token, which writes commits and nothing else. So a release
 is three commands, from a person:
 
 ```
+gh pr list --state open
 git fetch origin main
 git show origin/main:Cargo.toml | awk '/^\[/{t=$0} t=="[package]" && /^version/'
 git tag -a v0.7.0 -m "snyvi 0.7.0" origin/main && git push origin v0.7.0
 ```
+
+The first line has to print nothing. v0.20.0 was tagged on the branch
+tip with its pull request still open; the tag was right about the
+commit and the commit was not on `main`, and the fix was a merge and a
+moved tag. Nothing below catches it: the manifest on the branch already
+said 0.20.0.
 
 The fetch is not ceremony and neither is naming `origin/main` on the tag.
 A tag is a pointer to a commit, and the only commit worth naming is the
@@ -1576,6 +1584,82 @@ to a query that was already there, and bare when it is handed to a window
 that is up -- and with one up, the agent is given no link at all. Watched
 by hand on this desktop too, all four paths: no window, a window up, no
 daemon, and `xdg-open` with nothing in its environment.
+
+## 0.21: the front page
+
+The README was the manual. It said everything -- the install on each
+desktop, every command, every agent, the window, the keys, where things
+live, what the bench reads -- in 860 lines, and the first screen of it
+on GitHub was a paragraph and `## Install`. Nobody saw the product before
+being asked to `dpkg -i` it, and nothing on the page was a picture; the
+repository had never held a screenshot. The voice is the project's asset,
+so the page is not replaced but given a front door: the manual moves to
+`docs/GUIDE.md` word for word, its anchors intact, and the README is what
+a reader sees first.
+
+**The page.** The mark, one line, four badges, the film, the hero in
+whichever theme the reader's browser is in (`<picture>` with
+`prefers-color-scheme`, which GitHub honours), and the pitch. Install in
+four lines per desktop, with the guide for the rest. Six pictures in two
+columns, each with one sentence saying the one thing it shows: an
+arrival that never takes the page away, `c` against the version before,
+a diagram drawn in the page's colours, a source file with its outline,
+`⌘K` across the library, and the connect page. Then how it works in a
+paragraph and six commands, ten keys, the seven numbers that matter, and
+the links out.
+
+**The camera.** `bench/media.mjs`. A daemon of its own on 7798, from a
+copy of the binary first on `PATH` so agents register it by name and no
+temporary path is in the pictures; a home of its own with three agents
+registered and one of them a real `snyvi mcp` under Claude Code's name,
+held open, so the count beside the mark reads 1 and the connect page says
+*online*. The library is seeded from `bench/seed`: one project, `ledger`,
+on a branch, with a plan for rate limiting the public API, a review of
+the PR, the plan again as revised, the reviewed source file from another
+agent, and a summary that arrives while the plan is being read; and a
+second project so the sidebar has a shape. Written to look like what an
+agent sends, because the pictures are only as good as what is on the
+screen, and the fixture prose the probes read is noise on purpose.
+
+Chromium at 1440x900 and 2x, both themes, WebP at quality 92: sixteen
+pictures in 3 MB, crisp at the width GitHub draws them. Two things the
+camera had to be told that the probe never did. Headless Chromium says
+it has no pointer that hovers, so everything the page shows on hover --
+the `#` on a heading, Copy on a code block, a diagram's zoom -- showed
+everywhere, and `Emulation.setEmulatedMedia` cannot say otherwise; a
+`--blink-settings` flag can, and `launch()` in `bench/chrome.mjs` takes
+extra arguments now for a caller that is not measuring anything. And
+`c` compares with the document before it in the workflow, not the
+version before it of the same file, so the two plans are sent last and
+adjacent.
+
+**The film.** Thirty-five seconds in two panes. Above, a Claude Code
+session: the reader asks for the plan to be revised against the review
+and sent, and the model's `send_document` call is made for real -- the
+script makes it through the `snyvi mcp` it holds open, and what the
+terminal prints under the call is the reply that came back, the one a
+reader with the window open gets: *waiting in snyvi, at the top of the
+queue, tell the user rather than giving a link*. Below, the viewer, as
+the window: the plan being read, the bar saying one is waiting at the
+moment the reply lands, `n`, `c`, the diagram drawn on the way down,
+`⌘K`. The words in the terminal are a re-enactment; the call and the
+reply are not. Each pane is its own headless Chromium's screencast --
+one paints only the tab in front, so two tabs in one give one screencast
+and a blank -- every frame with the time it was painted, on one clock,
+and ffmpeg stacks the two into one constant-rate mp4 of 1.8 MB. `f` is
+not in it: it goes fullscreen, and a headless screen is 800x600 whatever
+the window, which leaves the viewport another size for the rest. No gif:
+half a minute of a full page does not go under 7 MB with the text
+readable. GitHub plays a video inline from a `user-attachments` URL and
+nothing else, so the film is added to the README by hand once -- dropped
+into a comment box, and the link it gives pasted on a line of its own --
+which an agent's token cannot do, and the README says so in a comment
+where the line goes.
+
+**The probe.** CI takes the stills into a folder it throws away, so a
+view the camera points at that has moved fails the push rather than the
+release. The film is left to the release, since it needs ffmpeg and a
+minute.
 
 ## Not yet watched on Windows or macOS
 

@@ -122,8 +122,10 @@ export async function evaluate(cdp, session, expression) {
 }
 
 /** Start a browser on its own profile and connect to it. Returns the process,
- *  for killTree, and the connection. */
-export async function launch(profile, { windowSize = "1280,900" } = {}) {
+ *  for killTree, and the connection. `args` is for a caller that is not
+ *  measuring anything -- the camera in media.mjs -- and is empty for the two
+ *  that are. */
+export async function launch(profile, { windowSize = "1280,900", args = [] } = {}) {
   const chrome = chromePath();
   // Its own process group, so teardown takes the renderers and the zygote with
   // it. Killing only the leader left chrome, its crashpad handlers and their
@@ -145,6 +147,7 @@ export async function launch(profile, { windowSize = "1280,900" } = {}) {
     "--disable-component-update",
     "--disable-extensions",
     `--window-size=${windowSize}`,
+    ...args,
     "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
   let err = "";

@@ -77,6 +77,12 @@ jobs:
         # reaches every control. Counts and positions, so every row holds on
         # any machine. See the 0.11 and 0.12 notes in docs/ROADMAP.md.
         run: node bench/ui.mjs --check
+      - name: The README's pictures can still be taken
+        # bench/media.mjs is the camera the README's pictures come from; a
+        # release re-takes them. Taken here into a folder that is thrown
+        # away, so a view it points at that has moved fails the push and
+        # not the release. The film needs ffmpeg and is left to the release.
+        run: node bench/media.mjs --stills --out /tmp/snyvi-media
       - name: Smoke test the daemon
         run: |
           set -e
