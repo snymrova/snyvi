@@ -3,3 +3,6 @@
 *.db-*
 /dist
 /gen
+
+# Playwright MCP writes its logs and screenshots beside the checkout
+.playwright-mcp/
