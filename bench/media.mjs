@@ -3,6 +3,10 @@
  *
  *   node bench/media.mjs [--out docs/media] [--bin target/release/snyvi] [--keep] [--stills] [--film]
  *
+ * With OPENROUTER_API_KEY set the film is narrated: one line per beat, spoken
+ * by a text-to-speech model through OpenRouter, fetched once and cached under
+ * ~/.cache/snyvi-media. Without it the film is silent, and says so.
+ *
  * A daemon of its own on a port of its own, seeded from bench/seed with the
  * documents an agent would send over an afternoon on one project -- a plan,
  * a review of the PR, the plan again as revised, a summary that arrives while
@@ -14,8 +18,9 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, copyFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
@@ -311,7 +316,76 @@ const TERM = `<!doctype html><meta charset="utf-8"><style>
   };
 </script>`;
 
-/** Twenty-eight seconds, in two panes. Above, a Claude Code session: the
+/* The narration: one line per beat of the film, in the order the beats
+ * come. Each is spoken once through OpenRouter's speech endpoint, which
+ * takes the OpenAI shape and answers with the bytes, and kept by the hash
+ * of what was asked for, so a re-take of the film with the same words
+ * costs nothing and a changed word costs one line. */
+const LINES = {
+  open: "An agent wrote this plan and sent it to snyvi. It is being read in the window.",
+  ask: "Above, Claude Code is asked to revise it against a review, and send it back.",
+  call: "The call is real: send document, through snyvi's own MCP server.",
+  reply: "The reply says the document is waiting, at the top of the queue. It never takes the page away from the reader.",
+  next: "N opens it.",
+  diff: "C shows what changed against the version before.",
+  diagram: "Diagrams are drawn in the page's own colours.",
+  find: "And command K finds a word across everything every agent has sent.",
+};
+const TTS_MODEL = process.env.SNYVI_TTS_MODEL || "microsoft/mai-voice-2";
+const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "en-US-Harper:MAI-Voice-2";
+
+/** The lines as mp3s, with how long each runs, or null without a key. */
+async function narration() {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) { console.log("  no OPENROUTER_API_KEY: the film is silent"); return null; }
+  const cache = join(homedir(), ".cache", "snyvi-media");
+  mkdirSync(cache, { recursive: true });
+  const clips = {};
+  for (const [name, input] of Object.entries(LINES)) {
+    const id = createHash("sha256").update(JSON.stringify([TTS_MODEL, TTS_VOICE, input])).digest("hex").slice(0, 16);
+    const file = join(cache, `${id}.mp3`);
+    if (!existsSync(file)) {
+      const res = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: TTS_MODEL, voice: TTS_VOICE, input, response_format: "mp3" }),
+      });
+      if (!res.ok) throw new Error(`speech for "${name}": ${res.status} ${(await res.text()).slice(0, 200)}`);
+      writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+    }
+    const seconds = parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { encoding: "utf8" }));
+    clips[name] = { file, seconds };
+  }
+  console.log(`  narration: ${Object.keys(clips).length} lines, ${Object.values(clips).reduce((s, c) => s + c.seconds, 0).toFixed(1)} s, ${TTS_MODEL} as ${TTS_VOICE}`);
+  return clips;
+}
+
+/** The voice over a take: `cue(name)` says a line from now, on the clock
+ *  the screencast's frames carry, after the line before it has finished --
+ *  so the picture holds for the voice and never the other way. */
+class Voice {
+  constructor(clips) { this.clips = clips; this.cues = []; this.until = 0; }
+  async cue(name) {
+    if (!this.clips) return;
+    const now = Date.now() / 1000;
+    if (this.until > now) await sleep((this.until - now) * 1000 + 250);
+    const at = Date.now() / 1000;
+    this.cues.push({ ...this.clips[name], at });
+    this.until = at + this.clips[name].seconds;
+  }
+  /** Hold until the current line has ended. */
+  async done() { const now = Date.now() / 1000; if (this.until > now) await sleep((this.until - now) * 1000); }
+  /** ffmpeg's inputs and filter for the track, laid against `t0`. */
+  track(t0) {
+    if (!this.cues.length) return { inputs: [], filter: "", map: [] };
+    const inputs = this.cues.flatMap(c => ["-i", c.file]);
+    const delayed = this.cues.map((c, i) => `[${i + 2}:a]adelay=${Math.round((c.at - t0) * 1000)}:all=1[n${i}]`);
+    const filter = `;${delayed.join(";")};${this.cues.map((_, i) => `[n${i}]`).join("")}amix=inputs=${this.cues.length}:normalize=0,aresample=44100[a]`;
+    return { inputs, filter, map: ["-map", "[v]", "-map", "[a]", "-c:a", "aac", "-b:a", "96k"] };
+  }
+}
+
+/** Forty-odd seconds, in two panes and a voice. Above, a Claude Code session: the
  *  reader asks for the plan to be revised and sent, and the model's
  *  send_document call is made for real through the MCP server and answered
  *  by it. Below, the viewer: the plan is being read, its revision arrives,
@@ -352,14 +426,20 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await p.settled();
   for (let i = 0; i < 40 && !(await (await fetch(`${base}/api/health`)).json()).window; i++) await sleep(100);
 
+  // The lines are fetched before the first frame, so no network wait is in
+  // the picture.
+  const voice = new Voice(await narration());
   const recV = await p.record(W, VIEW_H);
   const recT = await t.record(W, TERM_H);
   await cursor(true);
-  await sleep(1200);
+  await sleep(600);
+  await voice.cue("open");
+  await sleep(600);
   await p.scroll(320);
   await sleep(400);
 
   await cursor(false);
+  await voice.cue("ask");
   await type("Revise docs/rate-limiting.md against the review of #142, then send it to snyvi.");
   await sleep(700);
   await say("p", "");
@@ -368,6 +448,7 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await sleep(500);
   await say("r", "⎿  Updated docs/rate-limiting.md");
   await sleep(1100);
+  await voice.cue("call");
   await say("t", `⏺ <span class=a>snyvi - send_document</span> (MCP)(path: "docs/rate-limiting.md", workflow: "${workflow}")`);
   // The call itself, the way the model makes it.
   copyFileSync(join(SEED, "plan-v2.md"), planV1);
@@ -375,6 +456,7 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   const reply = res.content?.[0]?.text || JSON.stringify(res);
   await sleep(300);
   await say("r", "⎿  " + esc(reply));
+  await voice.cue("reply");
   await sleep(1400);
   await say("t", "⏺ Revised and sent. The burst limits come down to what the dark week's logs showed, writes cost five tokens, and Redis fails open with an alarm. It is at the top of the queue in snyvi.");
   await sleep(800);
@@ -382,13 +464,16 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await cursor(true);
   await sleep(1400);
 
+  await voice.cue("next");
   await p.press("n");
   await sleep(2200);
+  await voice.cue("diff");
   await p.press("c");
   await p.settled();
   await sleep(1200);
   await p.scroll(520);
   await sleep(1800);
+  await voice.done();
   await p.click('[data-act="back"]');
   await p.settled();
   await sleep(600);
@@ -398,20 +483,24 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await p.ev(`document.querySelector(".mmd").scrollIntoView({ block: "center", behavior: "smooth" })`);
   await sleep(1200);
   await p.settled();
+  await voice.cue("diagram");
   await sleep(2400);
+  await voice.cue("find");
   await p.press("k", { meta: true });
   await sleep(500);
   for (const ch of "retry") { await p.type(ch); await sleep(140); }
   await sleep(1800);
   await p.press("Enter");
   await sleep(2200);
+  await voice.done();
   const top = await recT.stop();
   const bottom = await recV.stop();
 
   // Frames to disk, each held until the next was painted; both panes cut
-  // from the same first moment to the same last, so they stay in step.
+  // from the same first moment to the same last, so they stay in step, and
+  // the film runs on past the last frame until the last line has been said.
   const t0 = Math.min(top[0].at, bottom[0].at);
-  const t1 = Math.max(top.at(-1).at, bottom.at(-1).at) + 1.5;
+  const t1 = Math.max(top.at(-1).at, bottom.at(-1).at, voice.until) + 1.5;
   const dir = join(tmp, "frames");
   const list = (frames, name) => {
     const d = join(dir, name);
@@ -428,14 +517,16 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
     return join(d, "list.txt");
   };
   const a = list(top, "top"), b = list(bottom, "bottom");
-  execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b,
-    "-filter_complex", "[0:v]fps=30[a];[1:v]fps=30[b];[a][b]vstack,format=yuv420p",
+  const audio = voice.track(t0);
+  execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b, ...audio.inputs,
+    "-filter_complex", "[0:v]fps=30[a];[1:v]fps=30[b];[a][b]vstack,format=yuv420p[v]" + audio.filter,
+    ...(audio.map.length ? audio.map : ["-map", "[v]"]),
     "-c:v", "libx264", "-crf", "20", "-preset", "slow", "-movflags", "+faststart", join(OUT, "demo.mp4")],
     { stdio: ["ignore", "ignore", "inherit"] });
   // No gif: half a minute of a full page does not go under 7 MB with the
   // text still readable, and the mp4 is under 2. The README carries the
   // mp4 the one way GitHub plays one inline, which the release notes say.
-  console.log(`  demo.mp4 (${top.length + bottom.length} frames, ${(t1 - t0).toFixed(1)} s)`);
+  console.log(`  demo.mp4 (${top.length + bottom.length} frames, ${(t1 - t0).toFixed(1)} s${voice.cues.length ? `, ${voice.cues.length} lines spoken` : ", silent"})`);
 
   // Back to a plain tab for the stills: the page latched the window mark
   // for the life of the tab, and the terminal is not needed again.
