@@ -73,6 +73,17 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <!-- snyvi:// links open here. Launch Services reads this when the bundle
+       is first seen -- put in Applications, or opened once -- and from then
+       on hands such a link to the running app, or starts it for one. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>rocks.ohmydog.snyvi</string>
+      <key>CFBundleURLSchemes</key><array><string>snyvi</string></array>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

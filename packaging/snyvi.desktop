@@ -3,9 +3,17 @@ Type=Application
 Name=snyvi
 GenericName=Document Viewer
 Comment=A fast, beautiful viewer for the documents your agents produce
-Exec=snyvi app
+# %u is a snyvi:// link when the desktop opens one with this entry, and
+# nothing when the entry is launched from a menu. `snyvi app` reads the link
+# as a document on the daemon, starting the daemon if it must, and shows it
+# in the window that is up or in a new one.
+Exec=snyvi app %u
 Icon=snyvi
 Terminal=false
+# The desktop's name for "opens snyvi:// links": what makes a click on one,
+# in a terminal or a chat, run the line above. The window claims the scheme
+# for itself on first run where no entry does, so a tarball works too.
+MimeType=x-scheme-handler/snyvi;
 # The shell finds this entry from the window, and the window is snyvi-app --
 # a second executable, with a name of its own. Tauri leaves the GTK
 # application id unset unless enableGTKAppId is on, so GTK falls back to the

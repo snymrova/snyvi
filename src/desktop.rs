@@ -15,7 +15,46 @@ use std::process::{Command, Stdio};
 /// What a page loaded in the native window carries, so the daemon knows there
 /// is a window to hand a link to. The page latches it for the session, so it
 /// survives the navigations the window then does.
-pub const WINDOW_MARK: &str = "?window=1";
+pub const WINDOW_MARK: &str = "window=1";
+
+/// A URL with the window's mark on it, whether or not it has a query already.
+fn marked(url: &str) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{WINDOW_MARK}")
+}
+
+/// The scheme of a link that opens in the window rather than a browser:
+/// `snyvi://d/<id>` is the document at `/d/<id>`, and `snyvi://` alone is
+/// the viewer. The desktop hands such a link to `snyvi-app` (registered by
+/// the package's desktop entry, the bundle's Info.plist, or the window
+/// itself on first run), which reads it as the daemon's address for it.
+pub const SCHEME: &str = "snyvi";
+
+/// The `snyvi://` link to a document.
+pub fn app_url(id: &str) -> String {
+    format!("{SCHEME}://d/{id}")
+}
+
+/// What a thing to open means as an address on the daemon: a `snyvi://` link
+/// as the path it names, an `http` link as it is, and anything else as a
+/// document id.
+pub fn resolve(target: &str) -> String {
+    let base = crate::config::base_url();
+    if let Some(rest) = target.strip_prefix(&format!("{SCHEME}:")) {
+        let rest = rest.trim_start_matches('/');
+        return format!("{base}/{rest}");
+    }
+    if target.starts_with("http://") || target.starts_with("https://") {
+        return target.to_string();
+    }
+    format!("{base}/d/{target}")
+}
+
+/// Whether the window executable is installed here, and so whether a
+/// `snyvi://` link has anything to open in.
+pub fn window_installed() -> bool {
+    window_binary().is_some()
+}
 
 /// The window executable, looked for next to this binary before PATH so that a
 /// tarball install finds its own copy rather than an older one on PATH.
@@ -79,7 +118,7 @@ pub fn open(url: &str) -> anyhow::Result<()> {
             // The mark rides on the first page only: the page keeps it for
             // the session, and the rungs below it are not windows anything
             // can raise, so they are opened unmarked.
-            let marked = format!("{url}/{WINDOW_MARK}");
+            let marked = marked(url);
             // Replace this process: the window is the foreground program from
             // here on, and `snyvi app` should live exactly as long as it does.
             #[cfg(unix)]
@@ -147,4 +186,32 @@ fn program_name(path: &str) -> String {
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_link_a_url_and_an_id_all_resolve_on_the_daemon() {
+        let base = crate::config::base_url();
+        assert_eq!(resolve("snyvi://d/abc"), format!("{base}/d/abc"));
+        assert_eq!(resolve("snyvi://"), format!("{base}/"));
+        assert_eq!(resolve("abc"), format!("{base}/d/abc"));
+        assert_eq!(
+            resolve("http://127.0.0.1:7777/d/abc"),
+            "http://127.0.0.1:7777/d/abc"
+        );
+    }
+
+    #[test]
+    fn the_mark_joins_whatever_query_is_there() {
+        assert_eq!(marked("http://h:1"), "http://h:1?window=1");
+        assert_eq!(marked("http://h:1/d/x?v=2"), "http://h:1/d/x?v=2&window=1");
+    }
+
+    #[test]
+    fn app_url_is_the_scheme_and_the_document() {
+        assert_eq!(app_url("abc"), "snyvi://d/abc");
+    }
 }

@@ -604,7 +604,23 @@ with `http://127.0.0.1:7777/d/…` whatever was running, so a click on the
 agent's link opened a second copy of the viewer in a browser next to the
 window you were using. With a window up, the tool now answers that the
 document is waiting in snyvi and gives no link at all; without one, it
-gives the link as before.
+gives a link.
+
+Which link depends on what is installed. Where `snyvi-app` is, the link
+is `snyvi://d/…`: the desktop hands it to the app, which shows the
+document in the window that is up, or starts the daemon and opens one.
+Where it is not, the link is the `http://` one, and opens in a browser.
+The `snyvi://` scheme is registered by the `.deb`'s desktop entry, by
+`snyvi.app`'s Info.plist, and — for a tarball or zip, where nothing
+installs an entry — by the window itself the first time it runs, on Linux
+and Windows. `snyvi app snyvi://d/…`, `snyvi app <id>` and `snyvi app
+<url>` do from the terminal what a click does.
+
+One thing to know: a terminal decides for itself which links are
+clickable, and several — kitty, Ghostty, VTE-based ones — only recognise
+a fixed list of schemes. `snyvi://` can usually be added to that list
+(kitty's `url_prefixes`, for one), and the `http://` link is always given
+alongside for a terminal that does not know it.
 
 ## Browsing a folder
 
