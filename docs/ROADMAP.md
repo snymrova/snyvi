@@ -618,7 +618,7 @@ what a reader of that plan gets, and none of it was a style problem:
 | a wheel over the sidebar | nothing moved at all | the document |
 | a click on an entry | +1 history entry; Back rebuilt the document at the top | 0 entries; Back moves within the document |
 | the entry's heading, on landing | flush with the pane's edge | 28 px in, lit for a moment |
-| a jump of 5000 px, smooth | stopped 1658 px short | lands, and is corrected two frames later |
+| a jump of 5000 px, smooth | stopped 1658 px short | instant instead, and corrected two frames later |
 | a watched file saved at 12,000 px in | reader moved from block 68 to block 125 | same block, same offset |
 | the contents after `j` to the next document | still scrolled 400 px into the last one | at the top |
 | `t` after a reload | rail back | rail as left |
@@ -671,7 +671,7 @@ positions only, so every one is enforced on every machine:
 |---|---|
 | the rail, 1280 px | contents scroll on their own; marker in view at 60% and at the end; 5600 px of wheel over the rail moves the document; a wheel over the sidebar does; a click on an entry adds no history and lands 28 px in; Back moves to the previous section without a rebuild; a save keeps block and offset; `j` puts the contents back at the top; `t` survives a reload; a link to a section lands with the marker in view; the `#` writes the URL and moves nothing |
 | narrow windows | at 1000 px `t` opens a 320 px sheet on the current section with focus inside, and Escape closes it; the button opens it and a tap outside closes it; an entry in the sheet goes to its section and closes; at 700 px `\` opens the sidebar the same way; a row in it opens the document and closes, and at 1280 px again both panes are back; `? / ⌘K w z t \ i j` do what the help box says at both widths |
-| by keyboard | Tab from the top reaches every control, 66 stops; the palette and the help box keep focus in and give it back; the find count is a live region; copy, rename and the `#` are visible with no pointer to hover with |
+| by keyboard | Tab from the top reaches every control (66 stops the day it was counted; the row holds the controls, not the count); the palette and the help box keep focus in and give it back; the find count is a live region; copy, rename and the `#` are visible with no pointer to hover with |
 
 What the chrome does now: under 1100 px the rail is a sheet over the
 document, under 760 px so is the sidebar; `t` and `\` open the sheet
@@ -972,7 +972,7 @@ The rows, in `bench/ui.mjs`, twenty-one more for 61 in all:
 |---|---|
 | a delete, and the way back | `Del` on an open document leaves nothing asked -- a `confirm` would hang the probe, which is the check -- the row is out of the inbox and the toast carries an Undo; the button puts the document back where it was deleted from; ⌘Z does the same without the toast; and a delete the reader does not undo is still gone after a reload, from the inbox and from search, because the daemon did it |
 | a link into a folder | a browsed Markdown file opened at a section link lands with the heading 24 px into the pane, 11,208 px down the file; `code.rs#L300` marks one line, the one that reads `line_300`, and it is on the screen |
-| the socket a page holds | eight page loads in a row all load, and the daemon is holding one event stream at the end of them, not eight |
+| the socket a page holds | eight page loads in a row all load, and the daemon is holding one event stream at the end of them -- two while the page before is still in the back/forward cache -- not eight |
 | a window to hand a link to | a browser tab is not a window, and the MCP reply carries a link; the page opened with the mark is one, and the mark is out of the address; it is still one after it navigates to a document; the MCP reply then says it is waiting in snyvi and carries no URL at all; and the moment the page goes, the daemon says there is no window again |
 | what moves, and for how long | an arrival's row carries one wash, and 250 ms later, rebuilt under a tree refetch, the same wash is 250 ms in rather than starting over; a second arrival leaves the bar element in place with no rise running and the count ticking; nothing running is over 700 ms or endless; `n` draws the row it read closing, and it is gone 400 ms later; the `#` reads Copied and raises no toast; and under reduced motion the page has no animation at all |
 
@@ -1123,8 +1123,8 @@ the document, opened by its key or a button in the header, closed by
 Escape or a tap outside, with the marker inside it. The palette and the
 help box become dialogs that trap focus and give it back. The find count
 is announced. Everything that appears on hover -- copy, rename, the `#`,
-a code block's language -- is present under `(hover: none)`, as the
-diagram tools already are. Probe: Tab from the top of the page reaches
+a code block's language where no copy button has its corner -- is
+present under `(hover: none)`, as the diagram tools already are. Probe: Tab from the top of the page reaches
 every control; at 700 and 1000 px every key still does what the help box
 says. Cost M.
 
@@ -1193,6 +1193,28 @@ tables in this file have no row marked **next**; and `docs/BRAINSTORM.md`
 is read once more against what shipped, so that the budgets it set and
 the ones the bench enforces are the same budgets. Then the three
 commands under "Release hygiene", from a person, and the tag says 1.0.0.
+
+**The gate, walked (2026-09-17).** Every row in the tables above has a
+row in `bench/ui.mjs` behind it, and three of those rows were looser
+than the words here: the sheet was held under 400 px where the table
+says 320, the heading's flash on landing was never read, and the stream
+count was allowed two without saying why. The first two are pinned now
+and the third says why. Two numbers the tables quoted are not held and
+never will be, since they move with the fixture -- 66 Tab stops, 11,208
+px down a file -- and the rows say so. The README's own table was clean;
+the guide's longer one held one budget the bench does not (200 ms for
+the drawing row, which is 250) and five numbers no probe reads (the
+window's binary, the two `.deb`s, the window's start and its resident
+set, an arrival's latency), which are now a sentence under the table
+rather than rows in it. `docs/BRAINSTORM.md` was read against what
+shipped and got a closing section that puts each target beside the
+budget the bench holds and each claim beside the shape that stands:
+the 1 MB render budget is 400 where it asked 200, and stays; the UI is
+63.5 KB gzipped where it asked 60, and nothing reads the sum; the
+160 ms animation cap became 700; and the store, the ids, the tool's
+reply, the hook and the file count of the page are all other than
+drawn. Nothing in that read is a fault in what shipped. What is left is
+the three commands.
 
 What 1.0 is not, so it is not waited for: editing, streaming, a hosted
 or shared library, more than one reader. See "Explicitly not planned".

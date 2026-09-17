@@ -529,3 +529,89 @@ Not built: hosted mode (milestone 4), Mermaid/KaTeX, image embedding.
 
 **Milestone 4 (only if wanted): hosted.**
 11. Streamable-HTTP MCP, per-user tokens, isolation.
+
+## 14. Read again at 1.0 (2026-09-17)
+
+Everything above is the map as it was drawn on 2026-09-10; nothing in
+it has been edited since, so that it stays the reasoning and not a
+second changelog. This section is the one read-through the 1.0 gate
+asked for: each target in section 1 beside the budget the bench holds
+today, and each claim about the shape of the thing beside what shipped.
+`snyvi bench` is `src/bench.rs`; the page's half is `bench/browser.mjs`;
+what the page does rather than how fast is `bench/ui.mjs`.
+
+### The budgets
+
+| Section 1 asked for | The bench holds | Measured | Which is which |
+|---|---|---|---|
+| Cold start to first paint, desktop, < 150 ms | Daemon cold start to first health, 100 ms | 11 to 14 ms | The window's first paint is read by hand (about 150 ms); the daemon is the part the bench can start on every push. |
+| Cold start to first paint, web tab, < 100 ms after load | First contentful paint, 250 ms | 65 to 170 ms | 100 was the number for a tab with fonts cached; the row measures a cold Chromium with fonts to fetch, and is enforced on a machine of one's own, not a shared runner. |
+| Resident, one document open, < 60 MB desktop, < 20 MB tab | Daemon resident, three documents in, 60 MB; after the 1 MB and 100k-line fixtures, 100 MB | 40 MB; 82 MB | 60 held, and for a harder case than one document. The tab is not measured: a Chromium tab is Chromium's. The daemon-alone target of 20 MB in section 8.1 was for a daemon without the renderer resident; it is 40 with. |
+| Render 1 MB Markdown < 200 ms | 400 ms | 108 ms | The budget was set at 400 when comrak with every extension on landed at 265, and left there when the sanitizer fast path took it to 108. 200 would hold on every desktop CI builds for (the slowest is 298 on the Intel Mac runner, under a ×3 factor); it stays at 400 because the budget is the line a change must not cross, not the number to be proud of. |
+| 50k-line code scrolls at 60 fps, virtualized | Not measured | | No virtualization shipped; `content-visibility` on sections and the 256 KB highlight cap are what stand in for it. No row reads frame rate. |
+| Binary < 15 MB | 15 MB | 12.4 MB | Same. |
+| First load < 60 KB gzipped UI | Shell page, 48 KB as transferred | 36 KB | The shell alone is under. HTML, CSS and both scripts together gzip to 63.5 KB, over the 60 the table asked for by the sidebar and the diagram scheduler; no row reads the sum. |
+| Open a received document, < 30 ms request to first paint | Time to first byte, 30 ms | 1 to 2 ms | The server's half. The browser's half is the first-paint row above. |
+| Any interaction < 100 ms | Not timed | | `bench/ui.mjs` reads what an interaction did, in counts and positions, never how long it took, so it holds on every machine. One clock survives: no animation over 700 ms. |
+| Library of 10,000 documents, instant | Sidebar rows ≤ 20 closed, ≤ 130 open; ≤ 8 renders after settling; on 202 documents | | Instant was made a structure rather than a clock: the sidebar is a row per project and a page of ten per session, so the library's size is not on the page. Search is not timed; FTS5 on 10,000 documents has not been seeded. |
+
+Section 8.7 also asked for a 2 vCPU, 2 GB container and a lint rule for
+a 160 ms animation cap. CI runs on the hosted runner as it comes, with
+every clock budget ×3; and the cap was not kept: the arrival's wash is
+700 ms and the document swap 180, since 160 was too fast to be seen as
+motion at all, and the rule that survives is the 700 ms ceiling and
+`prefers-reduced-motion` turning everything off, both read by
+`bench/ui.mjs`.
+
+### The shape
+
+What section 2 drew and what stands, where they differ:
+
+- **Store.** Not one directory per project and workflow with a JSON
+  sidecar. Every document is two flat files, `docs/<id>.src` and
+  `docs/<id>.html`, and everything about it is a row in SQLite. Ids are
+  ten hex characters of a blake3 over hash, time, pid and a counter, not
+  hash plus timestamp; the content hash is its own column.
+- **Kinds.** `markdown | code | diff | text` grew `image` and `binary`;
+  images embed, and the files a document references are served beside it.
+- **UI.** Not one HTML, one CSS, one JS. The page is four files plus
+  five fonts, and Mermaid is a fifth script, 3.6 MB uncompressed,
+  vendored and fetched only when a document has a diagram, after first
+  paint, as 8.5 said. KaTeX is not built. Diagrams are drawn in the
+  browser, so "no client-side parsing" is true of Markdown and code and
+  not of them.
+- **One binary.** Two: `snyvi`, static, and `snyvi-app`, the window,
+  because the engine could not be carried in the daemon (0.6). The
+  command is `snyvi app`, not `snyvi --app`.
+- **Push-only.** Still the rule for the library: nothing reads back to
+  an agent. But `snyvi browse` reads a folder straight from disk without
+  storing it, and `snyvi watch` re-sends a file on every save, so
+  "agents are the only senders" has two exceptions, both the reader's
+  own hand.
+- **The tool.** `send_document` takes what section 4 said. It returns a
+  sentence and a structure, `{url, app_url, window, title}`, not a bare
+  URL: the sentence is for the agent to relay, and `window` says whether
+  the document is already showing so the agent can stop offering links.
+- **The hook.** On `Write`, `Edit`, `MultiEdit` and `NotebookEdit`, with
+  a `SessionStart` hook always installed beside it so the session name is
+  known. Duplicates collapse only for the same path with the same
+  content, and automatic sends within 180 s of each other coalesce.
+- **Big files.** The 256 KB synchronous highlight cap shipped as written.
+  The remainder is not swapped in chunks: it is one background
+  re-highlight, announced by a `rendered` event. Line paging for files
+  beyond a few MB was not built; the whole document is in the page.
+- **Search.** The debounce is 60 ms in the palette and 80 in find, not
+  50. Lists are not virtualized; they are cut with an offer of the rest.
+- **Type.** 17 px over 1.65, not 1.6; the serif fonts are 122 and
+  130 KB, not the 30 to 60 KB each the estimate allowed.
+- **Security.** 127.0.0.1 only, a token at `~/.config/snyvi/token` on
+  every write, ammonia, a strict CSP: all as written. The store is not
+  chmod'd to the user beyond the token file, and the per-project "do not
+  collect" setting was never built.
+- **No JavaScript.** The document's HTML is inlined into the page, so it
+  is there to read with scripts off; nothing checks that it is readable
+  that way, and no promise is made about it.
+
+Section 12's status is a week old and wrong in two places: Mermaid and
+image embedding are built. Everything else under "built" is, and
+milestone 4, hosted, is still not and not planned.

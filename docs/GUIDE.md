@@ -755,34 +755,42 @@ window's engine is not Chromium: `bench/webkit.py` drives the same page
 in WebKitGTK under Xvfb, by hand for now, and reads the two things only
 that engine got wrong.
 
+Every row here is one the bench reads, with the budget the bench holds
+it to; a number no probe reads is in the short list after the table,
+not in it.
+
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|
 | Binary size, `snyvi`                        | 12.4 MB     | 15 MB  |
-| Binary size, `snyvi-app` (the window)       | 4.3 MB      |        |
-| Download, `.deb` (snyvi / snyvi-app)        | 5.5 MB / 1.2 MB | |
 | Daemon cold start, to first health          | 11 to 14 ms | 100 ms |
 | Daemon resident, three documents in, settled | 40 MB      | 60 MB  |
 | Daemon resident, after a 1 MB document and a 100k-line file, settled | 82 MB | 100 MB |
-| Native window, to the web process           | ~150 ms     | 150 ms to first paint |
-| Native window process, resident             | ~380 MB     | see below |
 | Renderer init (86 grammars from the pack)   | 6 ms        |        |
 | Send, 100 KB Markdown, round trip           | 12 to 14 ms | 100 ms |
 | Document page, time to first byte           | 1 to 2 ms   | 30 ms  |
-| Document page, first contentful paint       | 65 to 170 ms (cold fonts) | |
-| Longest frozen frame, page with a 220-node diagram | 66 ms (was 3193) | 200 ms |
-| New document visible after send (SSE)       | ~50 ms      | 100 ms |
+| Document page, first contentful paint       | 65 to 170 ms (cold fonts) | 250 ms |
+| Longest task booting a page with a 220-node diagram | 66 ms (was 3193) | 200 ms |
+| Longest task drawing a diagram              | 70 to 80 ms | 250 ms |
+| First diagram drawn, library parse included | ~550 ms     | 2 s    |
 | Render Markdown, 100 KB                     | 10 ms       | 50 ms  |
 | Render Markdown, 1 MB                       | 108 ms      | 400 ms |
 | Highlight Rust, 10k lines                   | 143 ms      | 500 ms |
+
+Read by hand, once, and not held to anything: the window's own binary,
+`snyvi-app`, is 4.3 MB; the two `.deb` downloads are 5.5 MB and
+1.2 MB; the native window has its web process up in about 150 ms and
+sits at about 380 MB resident, which is the engine (see below); and a
+document sent is on the page about 50 ms later, over the event stream.
 
 `snyvi bench --check` fails when a case exceeds its budget; CI runs it
 with `SNYVI_BENCH_FACTOR=3` to allow for slower hosted runners. The
 factor scales the budgets that are clocks and not the size or the
 resident rows: a binary weighs the same on any machine. The Windows and
-macOS jobs add `SNYVI_BENCH_SHARED=1`, which prints the clock rows
-without enforcing them: the Windows runner takes 400 ms to create a
-process where a dev box takes 11, and how much of that is Windows and
-how much the runner is not yet known.
+macOS jobs add `SNYVI_BENCH_SHARED=1`, which prints the cold-start row
+without enforcing it, and it alone: the Windows runner takes 400 ms to
+create a process where a dev box takes 11, and how much of that is
+Windows and how much the runner is not yet known. The send, first-byte
+and render clocks are held on every desktop.
 
 The same bench, on the three desktops CI builds for. These are the
 hosted runners' numbers, from one run each, and a runner is a slow and
@@ -844,12 +852,14 @@ installs neither.
 See [DIAGRAMS.md](DIAGRAMS.md), which is where the 3193 ms in
 the table above came from and what removing it took.
 
-Only the window row is over, and it is the one fact that will not
-change: WebKitGTK is 90 MB of shared library before snyvi's first
-instruction. The budgets in [BRAINSTORM.md](BRAINSTORM.md) —
-15 MB, 60 MB resident, 150 ms to first paint — were written for one
-static binary, and snyvi still meets every one of them whether or not
-you have a window installed.
+Only the window's resident number is over what
+[BRAINSTORM.md](BRAINSTORM.md) asked for, and it is the one fact that
+will not change: WebKitGTK is 90 MB of shared library before snyvi's
+first instruction. The budgets there — 15 MB, 60 MB resident, 150 ms
+to first paint — were written for one static binary, and snyvi still
+meets every one of them whether or not you have a window installed.
+Which of the rest of that document's targets became the bench's
+budgets, and which did not, is its last section.
 
 That was not true in 0.5. The window was compiled into snyvi, so the
 daemon carried the engine too and sat at 66 MB. Moving the window into
