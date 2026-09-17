@@ -65,7 +65,7 @@ CloseApplications=force
 RestartApplications=no
 
 [Tasks]
-Name: claude; Description: "Connect Claude Code, if it is installed, and send it every Markdown file Claude writes (snyvi init-claude --auto)"
+Name: claude; Description: "Connect Claude Code, if installed: every Markdown file Claude writes opens in snyvi"
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Files]
