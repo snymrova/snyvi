@@ -5,6 +5,24 @@ edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
 repository = "https://github.com/snymrova/snyvi"
+homepage = "https://mrova.rocks/snyvi"
+readme = "README.md"
+keywords = ["mcp", "markdown", "viewer", "agent", "documents"]
+categories = ["command-line-utilities", "text-processing", "development-tools"]
+
+# What a build needs and nothing else. The film is 70 MB of frames and
+# narration, the README's pictures another 10, and a crate is capped at 10:
+# `cargo package` came to 18.2 MB before this list and 4.6 MB after it. What
+# stays is what `cargo install snyvi` compiles -- `ui/` and `syntaxes/` are
+# embedded by `include_bytes!`, `icons/` is the Windows resource and the
+# tray, `desktop-dist/` is the window's frontend -- plus the prose, which is
+# small and is half of what the crate is for.
+exclude = [
+    "/film",
+    "/docs/media",
+    "/bench",
+    "/.github",
+]
 
 [dependencies]
 axum = { version = "0.8", features = ["json"] }

@@ -1815,11 +1815,74 @@ release-day job; proving its frames can still be taken is not.
 
 Ninety-four seconds, 1920x1080. `film/README.md` is how to cut it again.
 
+## After 1.0: a way in that is not a download
+
+1.0 shipped with every row of this file closed and a repository with no
+stars and no topics. Its install story was the releases page: pick the
+right one of twenty-two assets, unpack it, and on a Mac, get past a
+refusal. Nothing that follows makes reading better or faster, and it is
+here anyway, because none of that matters to a reader who never gets to
+the first document.
+
+**`cargo install snyvi`.** The crate was already shaped for it, since the
+window has been behind the `desktop` feature since 0.6: default features
+build the static daemon and CLI and never link WebKitGTK. What stopped
+it was size. `cargo package` swept in the film's narration and the
+README's pictures and came to 18.2 MB, against a cap of 10. An `exclude`
+list brings it to 2.2 MB compressed, and `cargo package` builds from the
+packaged tarball with the checkout out of reach, so a missing file fails
+here, not on someone else's machine. The name was unclaimed.
+
+**`brew install --cask snymrova/snyvi/snyvi`.** A cask, not a formula,
+because the macOS download already is an app with the CLI inside it.
+`packaging/homebrew.sh` writes it from the `.sha256` files the release
+uploaded, so the cask can only claim hashes the release published. It
+was checked against 1.0.0: the arm64 hash it read is the hash of the
+tarball downloaded, and the `app` and `binary` paths are the paths in it.
+The cask takes the quarantine off what it installs, which is a decision
+and not a detail: the bundle is signed ad-hoc, Homebrew quarantines like
+a browser, and without it the first open is the refusal the guide spends
+a paragraph on. Notarisation is the real fix and needs a paid account.
+
+**Neither is bumped by hand.** Two jobs at the end of `release.yml`,
+after every binary is on the release: `crate` publishes, `homebrew`
+writes the cask and pushes it to the tap. Each is skipped with a warning
+rather than failed when its token is missing, so a release is never held
+up by a channel. A version in a package manager that someone has to
+remember to change is a number enforced by nothing, and this file has
+named that failure enough times.
+
+**Windows is a `setup.exe`.** The zip was five steps before anything
+opened: pick a folder, unzip, open a terminal there, `install-cli`, open
+another terminal. `packaging/windows.iss` is an Inno Setup installer that
+does the same things and asks only whether to go on. It installs for the
+reader alone into `%LOCALAPPDATA%\Programs\snyvi`, so there is no
+administrator prompt. It adds a Start menu entry, puts the folder on the
+user's `PATH`, runs `init-claude --auto`, and opens the window at the end. An
+upgrade stops the daemon and the window before replacing them, and the
+uninstall takes snyvi out of Claude Code and off `PATH` but leaves the
+library alone. Building it turned up a bug: `snyvi-app.exe` was built as
+a console program, so opening it from anywhere but a terminal would have
+put a console window beside the viewer. The same would happen when it
+started `snyvi.exe`. Both are fixed. CI now reads the subsystem out of the
+PE header and runs the installer silently: install, open the Start menu
+entry's target, check that a daemon and a window came up, uninstall, and
+check that they went. SmartScreen still asks once, because neither the
+installer nor the executables are signed. The zip stays on the release for
+a folder managed by hand.
+
+What is a person's: claiming the crate name with the first `cargo
+publish`, creating `snymrova/homebrew-snyvi`, and setting
+`CARGO_REGISTRY_TOKEN` and `HOMEBREW_TAP_TOKEN` on this repository.
+Unwatched: the cask installed on a real Mac. `brew audit` and a first
+open after the postflight are the check.
+
 ## Not yet watched on Windows or macOS
 
 The build, the tests, the daemon and the window are all exercised by CI
 on a Windows runner and, since 0.16, on two macOS runners. What no
-runner shows is a desktop in use. On Windows: the toast, the tray's
+runner shows is a desktop in use. On Windows: the installer clicked
+through by hand, the toast, the tray's
 click behaviour, the global shortcut pressed by a hand, and how the
 window looks at the display scalings Windows actually ships with. On
 macOS: Gatekeeper's refusal of the ad-hoc signature and the two ways

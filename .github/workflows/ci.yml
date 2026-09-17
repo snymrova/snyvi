@@ -35,6 +35,25 @@ jobs:
           desktop-file-validate /usr/share/applications/snyvi.desktop
           systemd-analyze verify /usr/lib/systemd/user/snyvi.service
           sudo dpkg -r snyvi
+      - name: The crate fits, and the Homebrew cask can be written
+        # Both run only on release day otherwise. The crate is capped at 10 MB
+        # and the checkout holds 80 of film and pictures; one media file
+        # committed outside the exclude list would fail `cargo publish` after
+        # every binary had shipped. --no-verify because the build above is the
+        # verification. The cask is written from the latest release's hashes
+        # and syntax-checked, so a change to homebrew.sh fails here.
+        run: |
+          set -e
+          # Fresh: a .crate rewritten over a larger one keeps the old tail.
+          rm -rf target/package
+          cargo package --no-verify --allow-dirty
+          size=$(stat -c %s target/package/snyvi-*.crate)
+          echo "crate: $size bytes"
+          test "$size" -lt 8000000 || { echo "the crate is $size bytes; crates.io takes 10 MB. Add to exclude in Cargo.toml."; exit 1; }
+          latest=$(gh release view --json tagName -q .tagName)
+          ruby -c "$(packaging/homebrew.sh "$latest" /tmp/cask)"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Lay out the .app
         # The other packaging script, which only a Mac can finish (the icon
         # and the signature) but any machine can lay out. Run here so that an
@@ -511,6 +530,62 @@ jobs:
           # Written by PowerShell, read by the tool everyone checks the Linux
           # assets with: two spaces, a bare filename, one newline and no BOM.
           sha256sum -c "$name.zip.sha256"
+      - name: The window is a window, not a console program
+        # A double-click on a console program opens a terminal beside it. The
+        # subsystem is one number in the PE header: 2 is a window, 3 a console.
+        shell: pwsh
+        run: |
+          $b = [IO.File]::ReadAllBytes("target/release/snyvi-app.exe")
+          $pe = [BitConverter]::ToInt32($b, 0x3C)
+          $sub = [BitConverter]::ToUInt16($b, $pe + 0x5C)
+          if ($sub -ne 2) { throw "snyvi-app.exe has subsystem $sub, not 2 (a window)" }
+      - name: Build the installer
+        shell: pwsh
+        run: pwsh packaging/windows.ps1 0.0.0-ci
+      - name: Install, open the way a double-click does, uninstall
+        # The installer is the Windows install the README gives, so it is run
+        # here the way a reader runs it, only silently: files where they
+        # should be, snyvi on PATH, the Start menu entry opening a window and
+        # a daemon, and an uninstall that takes all of that back out and
+        # leaves the library alone.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:SNYVI_DATA_DIR = "$env:RUNNER_TEMP\si"; $env:SNYVI_CONFIG_DIR = "$env:RUNNER_TEMP\ci"
+          $env:SNYVI_PORT = "7796"
+          $setup = "dist\snyvi-0.0.0-ci-x86_64-pc-windows-msvc-setup.exe"
+          $app = "$env:LOCALAPPDATA\Programs\snyvi"
+          $userPath = { [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' }
+
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\setup.log"
+          foreach ($f in "$app\snyvi.exe", "$app\snyvi-app.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\snyvi.lnk") {
+            if (-not (Test-Path $f)) { Get-Content "$env:RUNNER_TEMP\setup.log"; throw "not installed: $f" }
+          }
+          if (-not ((& $userPath) -contains $app)) { throw "the user PATH does not carry $app" }
+
+          # What the Start menu entry runs: the window with no argument.
+          Start-Process -FilePath "$app\snyvi-app.exe"
+          $up = $false
+          foreach ($i in 1..60) {
+            Start-Sleep -Milliseconds 500
+            try { Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:7796/api/health" | Out-Null; $up = $true; break } catch {}
+          }
+          if (-not $up) { throw "no daemon answered after opening snyvi-app.exe" }
+          Start-Sleep -Seconds 10
+          if (-not (Get-Process snyvi-app -ErrorAction SilentlyContinue)) { throw "no window is running" }
+          & "$app\snyvi.exe" send README.md
+          if ($LASTEXITCODE -ne 0) { throw "the installed snyvi could not send" }
+
+          # The uninstaller hands itself to a copy in %TEMP% and exits, so
+          # its exit is not the end of it; the files going is.
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          foreach ($i in 1..60) { if (-not (Test-Path "$app\snyvi.exe")) { break }; Start-Sleep -Milliseconds 500 }
+          if (Test-Path "$app\snyvi.exe") { throw "the uninstall left $app\snyvi.exe" }
+          if ((& $userPath) -contains $app) { throw "the uninstall left $app on PATH" }
+          if (Get-Process snyvi-app -ErrorAction SilentlyContinue) { throw "the uninstall left the window running" }
+          try { Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:7796/api/health" | Out-Null; throw "the uninstall left the daemon running" }
+          catch { if ($_.Exception.Message -like "*left the daemon*") { throw } }
+          if (-not (Test-Path "$env:SNYVI_DATA_DIR")) { throw "the uninstall took the library" }
 
   macos:
     # The third desktop. Both executables in one bundle, the window using the
