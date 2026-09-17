@@ -81,8 +81,21 @@ jobs:
         # bench/media.mjs is the camera the README's pictures come from; a
         # release re-takes them. Taken here into a folder that is thrown
         # away, so a view it points at that has moved fails the push and
-        # not the release. The film needs ffmpeg and is left to the release.
-        run: node bench/media.mjs --stills --out /tmp/snyvi-media
+        # not the release.
+        run: node bench/media.mjs --out /tmp/snyvi-media
+      - name: The film's frames can still be taken
+        # film/capture.mjs is the camera the demo is cut from, and it points
+        # at views of its own -- the arrival bar, the diff, the palette. Taken
+        # here into a folder that is thrown away, for the same reason as the
+        # pictures above: a view that has moved should fail the push. Cutting
+        # the film itself is a release-day job, and lives in film/README.md.
+        #
+        # The camera asks Blink for the raster scale it wants rather than
+        # shelling out to scale the file afterwards, so this step needs no
+        # ffmpeg -- which the runner does not have, and which is why the
+        # first version of this step failed the build. The rest of the film's
+        # pipeline does need it, and stays a release-day job.
+        run: node film/capture.mjs --out /tmp/snyvi-film
       - name: Smoke test the daemon
         run: |
           set -e

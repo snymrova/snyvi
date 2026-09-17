@@ -6,3 +6,15 @@
 
 # Playwright MCP writes its logs and screenshots beside the checkout
 .playwright-mcp/
+
+# The film: the cut is committed as docs/media/demo.mp4, and so is the
+# narration, which cost a model call and cannot be spoken the same way
+# twice. The frames are not: `node film/capture.mjs` takes them again from
+# the release binary in a minute, and they are the release either way.
+/film/renders
+/film/snapshots
+/film/node_modules
+/film/frames
+# The film is set in the page's own two faces; capture.mjs copies them out
+# of ui/fonts so the film cannot drift from the product it is about.
+/film/fonts

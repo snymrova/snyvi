@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>snyvi — the film</title>
+    <script src="vendor/gsap.min.js"></script>
+    <style>
+      /* The two faces snyvi renders documents with: the machine's fixed
+         pitch and the document's optical serif. Inter is here for the
+         wordmark alone, because that is how the product draws its name. */
+      @font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 200 900; src: url(fonts/source-serif.woff2) format("woff2"); }
+      @font-face { font-family: "Source Serif 4"; font-style: italic; font-weight: 200 900; src: url(fonts/source-serif-italic.woff2) format("woff2"); }
+      @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 800; src: url(fonts/jetbrains-mono.woff2) format("woff2"); }
+      @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; src: url(fonts/inter.woff2) format("woff2"); }
+
+      :root {
+        --ground: #0a0c11;
+        --panel: #141821;
+        --rule: #272d3a;
+        --ink: #ece9e3;
+        --mute: #8b93a3;
+        --flame: #e0763e;
+        --ember: #c2410c;
+        --bone: #f3f1ec;
+        --serif: "Source Serif 4", serif;
+        --mono: "JetBrains Mono", ui-monospace, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { background: var(--ground); color: var(--ink); }
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--ground); }
+
+      .scene { position: absolute; inset: 0; overflow: hidden; background: var(--ground); }
+      .inner { position: absolute; inset: 0; opacity: 0; will-change: transform, opacity, filter; }
+      #s-hook .inner { opacity: 1; }
+      .pad { position: absolute; inset: 0; padding: 84px 96px; display: flex; }
+
+      /* ---- the film's furniture ---------------------------------------- */
+
+      .eyebrow { display: flex; align-items: center; gap: 16px; font: 500 21px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--mute); }
+      .eyebrow i { display: block; width: 11px; height: 11px; border-radius: 2px; background: var(--flame); flex: none; }
+      .eyebrow u { display: block; height: 1px; width: 150px; background: var(--rule); text-decoration: none; transform-origin: left center; }
+
+      .stmt { font-family: var(--serif); font-variation-settings: "opsz" 60; font-weight: 900; letter-spacing: -.032em; line-height: .98; color: var(--ink); }
+      .aside { font-family: var(--serif); font-variation-settings: "opsz" 36; font-style: italic; font-weight: 300; color: var(--mute); letter-spacing: -.01em; }
+      .mono { font-family: var(--mono); }
+
+      .key { display: inline-flex; align-items: center; justify-content: center; min-width: 78px; height: 78px; padding: 0 20px;
+             font: 700 34px/1 var(--mono); color: var(--flame); background: #171c26; border: 1px solid var(--rule);
+             border-bottom: 4px solid #323a4a; border-radius: 12px; }
+
+      /* A product window: the bone page under a bar of its own. */
+      .win { position: relative; border-radius: 16px; overflow: hidden; background: var(--bone);
+             box-shadow: 0 60px 120px -30px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.07); }
+      .win-bar { height: 44px; background: #e9e6df; display: flex; align-items: center; gap: 9px; padding: 0 16px; position: relative; }
+      .win-bar b { display: block; width: 12px; height: 12px; border-radius: 50%; background: #cfcabf; }
+      .win-bar span { position: absolute; left: 0; right: 0; text-align: center; font: 500 17px/1 var(--mono); color: #6b6459; letter-spacing: .02em; }
+      .win-body { position: relative; overflow: hidden; }
+      .win-body img { display: block; width: 100%; will-change: transform; }
+      .win-body img.over { position: absolute; inset: 0; opacity: 0; }
+
+      .glow { position: absolute; border-radius: 50%; pointer-events: none;
+              background: radial-gradient(circle, rgba(224,118,62,.34) 0%, rgba(224,118,62,.11) 42%, rgba(224,118,62,0) 70%); }
+      .grain { position: absolute; inset: 0; opacity: .5; pointer-events: none;
+               background-image: radial-gradient(rgba(255,255,255,.035) 1px, rgba(0,0,0,0) 1px); background-size: 3px 3px; }
+      .vig { position: absolute; inset: 0; pointer-events: none;
+             background: radial-gradient(120% 90% at 50% 45%, rgba(10,12,17,0) 38%, rgba(10,12,17,.86) 100%); }
+
+      /* ---- 1 · hook ----------------------------------------------------- */
+
+      #s-hook .wall { position: absolute; left: -60px; right: -60px; top: -200px; height: 2400px; display: flex; gap: 70px; }
+      #s-hook .wall pre { flex: 1; font: 400 20px/1.62 var(--mono); color: #2f3747; white-space: pre-wrap; word-break: break-word; }
+      /* The words are read against the wall they are about, so the wall is
+         put out behind them rather than left to compete. */
+      #s-hook .scrim { position: absolute; left: -200px; bottom: -200px; width: 1750px; height: 1100px; pointer-events: none;
+             background: radial-gradient(52% 52% at 40% 62%, rgba(10,12,17,.96) 0%, rgba(10,12,17,.82) 46%, rgba(10,12,17,0) 100%); }
+      #s-hook .stack { position: absolute; left: 96px; bottom: 300px; }
+      #s-hook .stack div { font-size: 136px; }
+      #s-hook .kicker { position: absolute; left: 96px; top: 96px; }
+      #s-hook .tail { position: absolute; left: 96px; bottom: 150px; font-size: 48px; max-width: 1180px; opacity: 0; }
+
+      /* ---- 2 · reveal --------------------------------------------------- */
+
+      #s-reveal .pad { flex-direction: column; align-items: center; justify-content: center; gap: 34px; }
+      #s-reveal .lock { display: flex; align-items: center; gap: 38px; }
+      #s-reveal .lock svg { width: 148px; height: 148px; display: block; }
+      #s-reveal .lock b { font: 600 142px/1 Inter, system-ui, sans-serif; letter-spacing: -.045em; color: var(--ink); display: flex; }
+      #s-reveal .lock b span { display: block; }
+      #s-reveal .tag { font-size: 52px; text-align: center; max-width: 1180px; line-height: 1.25; }
+      #s-reveal .brow { font: 500 21px/1 var(--mono); letter-spacing: .34em; text-transform: uppercase; color: var(--mute); }
+
+      /* ---- 3 · ask ------------------------------------------------------ */
+
+      #s-ask .pad { align-items: center; gap: 70px; }
+      #s-ask .col { width: 560px; flex: none; display: flex; flex-direction: column; gap: 30px; }
+      #s-ask .col .stmt { font-size: 88px; }
+      #s-ask .col p { font: 400 25px/1.6 var(--mono); color: var(--mute); }
+      /* A height of its own, so the box does not grow under the session as
+         each line lands and shift everything beside it. */
+      #s-ask .term { flex: 1; align-self: center; height: 540px; background: #13161c; border: 1px solid var(--rule); border-radius: 16px;
+                     overflow: hidden; box-shadow: 0 50px 100px -30px rgba(0,0,0,.8); display: flex; flex-direction: column; }
+      #s-ask .term-bar { height: 46px; background: #1b2029; display: flex; align-items: center; gap: 9px; padding: 0 16px; position: relative; flex: none; }
+      #s-ask .term-bar b { display: block; width: 12px; height: 12px; border-radius: 50%; background: #39404e; }
+      #s-ask .term-bar span { position: absolute; left: 0; right: 0; text-align: center; font: 500 17px/1 var(--mono); color: #868da0; }
+      #s-ask .term-body { padding: 30px 34px 38px; font: 400 21px/1.68 var(--mono); color: #cfd4dd; }
+      #s-ask .term-body .l { white-space: pre-wrap; opacity: 0; }
+      #s-ask .term-body .p { color: #8b93a3; }
+      #s-ask .term-body .p em { color: #e7eaef; font-style: normal; }
+      #s-ask .term-body .t { color: var(--flame); }
+      #s-ask .term-body .t em { color: #e7eaef; font-style: normal; }
+      #s-ask .term-body .r { color: #8b93a3; padding-left: 2.2ch; }
+      #s-ask .term-body .gap { height: 20px; }
+      #s-ask .cur { display: inline-block; width: 10px; height: 21px; background: #cfd4dd; vertical-align: -4px; }
+      #s-ask .mark { position: relative; }
+      #s-ask .mark u { display: block; position: absolute; left: -2px; right: -2px; bottom: -5px; height: 3px; background: var(--flame); transform: scaleX(0); transform-origin: left center; }
+
+      /* ---- 4 · arrive --------------------------------------------------- */
+
+      #s-arrive .pad { flex-direction: column; align-items: center; justify-content: flex-start; padding: 56px 96px 42px; gap: 30px; }
+      #s-arrive .win { width: 1400px; }
+      #s-arrive .cap { font: 400 22px/1 var(--mono); color: var(--mute); letter-spacing: .04em; display: flex; gap: 18px; align-items: center; }
+      #s-arrive .cap i { display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--flame); }
+
+      /* ---- 5-9 · the split features ------------------------------------- */
+
+      .feat .pad { align-items: center; gap: 64px; }
+      .feat .col { width: 520px; flex: none; display: flex; flex-direction: column; gap: 28px; align-items: flex-start; }
+      .feat .col .stmt { font-size: 78px; }
+      .feat .col p { font: 400 23px/1.6 var(--mono); color: var(--mute); }
+      .feat .win { flex: 1; }
+      /* The window is 1144 wide beside a 520 column; a 1800x1125 frame at
+         that width is 715 tall, so the body is cut to it and no bone shows
+         under the picture. */
+      .feat .win-body { height: 715px; }
+
+      #s-source .chip { display: flex; align-items: baseline; gap: 14px; font-family: var(--mono); }
+      #s-source .chip b { font: 700 62px/1 var(--mono); color: var(--flame); font-variant-numeric: tabular-nums; }
+      #s-source .chip span { font: 400 23px/1 var(--mono); color: var(--mute); }
+
+      /* ---- 10 · numbers -------------------------------------------------- */
+
+      #s-numbers .pad { flex-direction: column; justify-content: center; gap: 46px; }
+      #s-numbers .head { display: flex; flex-direction: column; gap: 26px; }
+      #s-numbers .head .stmt { font-size: 84px; }
+      #s-numbers .grid { display: flex; gap: 28px; flex: none; height: 330px; align-items: stretch; }
+      #s-numbers .stat { flex: 1; background: var(--panel); border: 1px solid var(--rule); border-radius: 18px; padding: 30px 30px 28px;
+                         display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
+      #s-numbers .stat::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--rule); }
+      #s-numbers .stat .v { display: flex; align-items: baseline; gap: 10px; }
+      #s-numbers .stat .v b { font: 700 96px/1 var(--mono); color: var(--flame); font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+      #s-numbers .stat .v span { font: 500 34px/1 var(--mono); color: var(--flame); }
+      #s-numbers .stat .l { font: 500 21px/1.4 var(--mono); color: var(--ink); letter-spacing: .02em; }
+      #s-numbers .stat .b { height: 6px; background: #1f2530; border-radius: 3px; overflow: hidden; margin: 22px 0 14px; }
+      #s-numbers .stat .b i { display: block; height: 100%; width: 100%; background: var(--flame); border-radius: 3px; transform-origin: left center; transform: scaleX(0); }
+      #s-numbers .stat .budget { font: 400 19px/1 var(--mono); color: var(--mute); }
+      #s-numbers .foot { font: 400 23px/1 var(--mono); color: var(--mute); display: flex; align-items: center; gap: 16px; }
+      #s-numbers .foot code { color: var(--ink); }
+
+      /* ---- 11 · agents --------------------------------------------------- */
+
+      #s-agents .pad { align-items: center; gap: 80px; }
+      #s-agents .col { width: 760px; flex: none; display: flex; flex-direction: column; gap: 34px; align-items: flex-start; }
+      #s-agents .col .stmt { font-size: 86px; }
+      #s-agents .cmd { display: flex; align-items: center; gap: 16px; background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 20px 26px; }
+      #s-agents .cmd i { color: var(--flame); font: 700 30px/1 var(--mono); }
+      #s-agents .cmd code { font: 500 30px/1 var(--mono); color: var(--ink); }
+      #s-agents .list { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+      #s-agents .row { display: flex; align-items: center; gap: 20px; padding: 15px 4px; border-bottom: 1px solid #1a1f29; }
+      #s-agents .row i { display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--flame); flex: none; }
+      #s-agents .row b { font: 500 32px/1 var(--mono); color: var(--ink); letter-spacing: -.01em; }
+      #s-agents .row span { margin-left: auto; font: 400 20px/1 var(--mono); color: var(--mute); }
+
+      /* ---- 12 · outro ---------------------------------------------------- */
+
+      #s-outro .pad { flex-direction: column; align-items: center; justify-content: center; gap: 30px; }
+      #s-outro .lock { display: flex; align-items: center; gap: 24px; }
+      #s-outro .lock svg { width: 86px; height: 86px; display: block; }
+      #s-outro .lock b { font: 600 82px/1 Inter, system-ui, sans-serif; letter-spacing: -.045em; }
+      #s-outro .stmt { font-size: 96px; text-align: center; margin-top: 10px; }
+      #s-outro .url { font: 600 40px/1 var(--mono); color: var(--flame); letter-spacing: -.01em; margin-top: 14px; }
+      #s-outro .badges { font: 400 23px/1 var(--mono); color: var(--mute); letter-spacing: .04em; }
+
+      /* ---- transitions --------------------------------------------------- */
+
+      #leak { position: absolute; inset: -20%; opacity: 0; pointer-events: none; z-index: 50;
+              background: radial-gradient(60% 60% at 42% 52%, rgba(255,232,214,.95) 0%, rgba(224,118,62,.55) 38%, rgba(224,118,62,0) 72%); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="94.3">
+
+      <!-- 1 · the trouble -->
+      <section id="s-hook" class="scene clip" data-start="0" data-duration="9.8" data-track-index="0">
+        <div class="inner">
+          <!-- The wall is texture, not copy: the raw source of the very
+               document snyvi renders later, dimmed until it is unreadable,
+               because being unreadable is the point the scene is making. The
+               words over it carry the contrast. Marked so the layout and
+               contrast audits read it as the decoration it is. -->
+          <div class="wall" data-layout-ignore>
+            <pre id="wall-a" data-layout-ignore></pre><pre id="wall-b" data-layout-ignore></pre><pre id="wall-c" data-layout-ignore></pre>
+          </div>
+          <div class="vig"></div>
+          <div class="scrim"></div>
+          <div class="grain"></div>
+          <div class="pad"></div>
+          <div class="kicker eyebrow"><i></i>Your agents write all day<u></u></div>
+          <!-- Each word is struck from 46px below its place, so for the
+               400 ms of its entrance its box is inside the one above. -->
+          <div class="stack" data-layout-allow-overlap>
+            <div class="stmt" id="hk-1" data-layout-allow-overlap>Plans.</div>
+            <div class="stmt" id="hk-2" data-layout-allow-overlap>Reviews.</div>
+            <div class="stmt" id="hk-3" data-layout-allow-overlap>Reports.</div>
+          </div>
+          <div class="tail aside" id="hk-tail">…and you read them as raw text, in a terminal.</div>
+        </div>
+      </section>
+
+      <!-- 2 · the name -->
+      <section id="s-reveal" class="scene clip" data-start="9.2" data-duration="7.95" data-track-index="0">
+        <div class="inner">
+          <div class="glow" id="rv-glow" style="width: 1500px; height: 1500px; left: 210px; top: -210px;"></div>
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="brow" id="rv-brow">A viewer for what your agents write</div>
+            <div class="lock">
+              <svg id="rv-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect width="32" height="32" rx="7" fill="#c2410c" />
+                <path d="M9 10H23M9 16H23M9 22H18" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
+              </svg>
+              <b id="rv-name"><span>s</span><span>n</span><span>y</span><span>v</span><span>i</span></b>
+            </div>
+            <div class="tag aside" id="rv-tag">A fast, beautiful viewer for everything your agents produce.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 · the ask -->
+      <section id="s-ask" class="scene clip" data-start="16.7" data-duration="10.7" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="ak-brow"><i></i>01 — the ask<u></u></div>
+              <div class="stmt" id="ak-stmt">Ask for a plan.</div>
+              <p id="ak-sub">It writes one.<br />Then it sends it.</p>
+            </div>
+            <div class="term" id="ak-term">
+              <div class="term-bar"><b></b><b></b><b></b><span>Claude Code — ~/ledger</span></div>
+              <div class="term-body">
+                <div class="l p" id="ak-l1"><em>&gt;</em> <span id="ak-type"></span><span class="cur" id="ak-cur"></span></div>
+                <div class="gap"></div>
+                <div class="l t" id="ak-l2">⏺ <em>Update</em>(docs/rate-limiting.md)</div>
+                <div class="l r" id="ak-l3">⎿  Updated docs/rate-limiting.md</div>
+                <div class="gap"></div>
+                <div class="l t" id="ak-l4">⏺ <em class="mark" id="ak-mark">snyvi · send_document<u id="ak-ul"></u></em> (MCP)(path: "docs/rate-limiting.md", workflow: "Rate limiting")</div>
+                <div class="l r" id="ak-l5">⎿  Waiting in snyvi: "Rate limiting the public API". It is in the snyvi window, at the top of the queue; tell the user it is there rather than giving them a link.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 · it is already open -->
+      <section id="s-arrive" class="scene clip" data-start="26.9" data-duration="8" data-track-index="0">
+        <div class="inner">
+          <div class="glow" id="ar-glow" style="width: 1800px; height: 1300px; left: 60px; top: 260px;"></div>
+          <div class="pad">
+            <div class="win" id="ar-win">
+              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
+              <div class="win-body" style="height: 875px"><img id="ar-img" src="frames/plan.png" alt="" /></div>
+            </div>
+            <div class="cap" id="ar-cap"><i></i>docs/rate-limiting.md · ledger · rate-limits · rendered and filed on arrival</div>
+          </div>
+          <div class="grain"></div>
+        </div>
+      </section>
+
+      <!-- 5 · the queue -->
+      <section id="s-queue" class="scene clip feat" data-start="34.5" data-duration="7.1" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="qu-brow"><i></i>02 — arrivals<u></u></div>
+              <div class="stmt" id="qu-stmt">It never steals the page.</div>
+              <p id="qu-sub">A new document waits at the top.</p>
+              <div class="key" id="qu-key">N</div>
+            </div>
+            <div class="win" id="qu-win">
+              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
+              <div class="win-body">
+                <img id="qu-a" src="frames/arrival.png" alt="" />
+                <img id="qu-b" class="over" src="frames/opened.png" alt="" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6 · versions -->
+      <section id="s-diff" class="scene clip feat" data-start="41.2" data-duration="5.3" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="df-brow"><i></i>03 — versions<u></u></div>
+              <div class="stmt" id="df-stmt">What changed.</div>
+              <p id="df-sub">Sends of one file are versions.</p>
+              <div class="key" id="df-key">C</div>
+            </div>
+            <div class="win" id="df-win">
+              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
+              <div class="win-body"><img id="df-img" src="frames/diff.png" alt="" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7 · diagrams -->
+      <section id="s-diagram" class="scene clip feat" data-start="46.1" data-duration="5.4" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="dg-brow"><i></i>04 — diagrams<u></u></div>
+              <div class="stmt" id="dg-stmt">Drawn in the page.</div>
+              <p id="dg-sub">Mermaid, in the document's own colours.</p>
+            </div>
+            <div class="win" id="dg-win">
+              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
+              <div class="win-body"><img id="dg-img" src="frames/diagram.png" alt="" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8 · search -->
+      <section id="s-search" class="scene clip feat" data-start="51.1" data-duration="6.5" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="se-brow"><i></i>05 — search<u></u></div>
+              <div class="stmt" id="se-stmt">Across everything.</div>
+              <p id="se-sub">Every document every agent has sent.</p>
+              <div class="key" id="se-key">⌘K</div>
+            </div>
+            <div class="win" id="se-win">
+              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
+              <div class="win-body"><img id="se-img" src="frames/search.png" alt="" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9 · source -->
+      <section id="s-source" class="scene clip feat" data-start="57.2" data-duration="10.1" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="sr-brow"><i></i>06 — source<u></u></div>
+              <div class="stmt" id="sr-stmt">Source files, with an outline.</div>
+              <div class="chip" id="sr-chip"><b id="sr-num">0</b><span>ms to highlight 10,000 lines of Rust</span></div>
+            </div>
+            <div class="win" id="sr-win">
+              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
+              <div class="win-body">
+                <img id="sr-a" src="frames/source.png" alt="" />
+                <img id="sr-b" class="over" src="frames/source-body.png" alt="" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 10 · measured -->
+      <section id="s-numbers" class="scene clip" data-start="66.8" data-duration="10.3" data-track-index="0">
+        <div class="inner">
+          <div class="glow" id="nm-glow" style="width: 1400px; height: 1000px; left: 900px; top: 380px;"></div>
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="head">
+              <div class="eyebrow" id="nm-brow"><i></i>07 — measured<u></u></div>
+              <div class="stmt" id="nm-stmt">Small enough to forget it is running.</div>
+            </div>
+            <div class="grid">
+              <div class="stat" data-to="12.4" data-dp="1">
+                <div class="v"><b>0</b><span>MB</span></div>
+                <div><div class="b"><i style="--w: .83"></i></div><div class="l">The whole binary</div><div class="budget">budget 15 MB</div></div>
+              </div>
+              <div class="stat" data-to="11" data-dp="0">
+                <div class="v"><b>0</b><span>ms</span></div>
+                <div><div class="b"><i style="--w: .11"></i></div><div class="l">Cold start, to first health</div><div class="budget">budget 100 ms</div></div>
+              </div>
+              <div class="stat" data-to="12" data-dp="0">
+                <div class="v"><b>0</b><span>ms</span></div>
+                <div><div class="b"><i style="--w: .12"></i></div><div class="l">A send, there and back</div><div class="budget">budget 100 ms</div></div>
+              </div>
+              <div class="stat" data-to="40" data-dp="0">
+                <div class="v"><b>0</b><span>MB</span></div>
+                <div><div class="b"><i style="--w: .67"></i></div><div class="l">Resident, three documents in</div><div class="budget">budget 60 MB</div></div>
+              </div>
+            </div>
+            <div class="foot" id="nm-foot"><code>snyvi bench --check</code> fails the build when a number goes over its budget · <code>127.0.0.1</code> only · nothing phones home</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 11 · the agents -->
+      <section id="s-agents" class="scene clip" data-start="76.7" data-duration="10.9" data-track-index="0">
+        <div class="inner">
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="col">
+              <div class="eyebrow" id="ag-brow"><i></i>08 — agents<u></u></div>
+              <div class="stmt" id="ag-stmt">Any agent that speaks MCP.</div>
+              <div class="cmd" id="ag-cmd"><i>$</i><code>snyvi init claude</code></div>
+            </div>
+            <div class="list" id="ag-list">
+              <div class="row"><i></i><b>Claude Code</b><span>~/.claude.json</span></div>
+              <div class="row"><i></i><b>Codex CLI</b><span>~/.codex/config.toml</span></div>
+              <div class="row"><i></i><b>Cursor</b><span>~/.cursor/mcp.json</span></div>
+              <div class="row"><i></i><b>Gemini CLI</b><span>~/.gemini/settings.json</span></div>
+              <div class="row"><i></i><b>Zed</b><span>~/.config/zed/settings.json</span></div>
+              <div class="row"><i></i><b>Claude Desktop</b><span>claude_desktop_config.json</span></div>
+              <div class="row"><i></i><b>Windsurf</b><span>~/.codeium/windsurf</span></div>
+              <div class="row"><i></i><b>VS Code</b><span>~/.config/Code/User</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 12 · the end -->
+      <section id="s-outro" class="scene clip" data-start="86.8" data-duration="7.5" data-track-index="0">
+        <div class="inner">
+          <div class="glow" id="ot-glow" style="width: 1600px; height: 1200px; left: 160px; top: -60px;"></div>
+          <div class="grain"></div>
+          <div class="pad">
+            <div class="lock" id="ot-lock">
+              <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect width="32" height="32" rx="7" fill="#c2410c" />
+                <path d="M9 10H23M9 16H23M9 22H18" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
+              </svg>
+              <b>snyvi</b>
+            </div>
+            <div class="stmt" id="ot-stmt">Agents send. snyvi shows.</div>
+            <div class="url" id="ot-url">github.com/snymrova/snyvi</div>
+            <div class="badges" id="ot-badges">Linux · macOS · Windows — one static binary · nothing phones home · MIT</div>
+          </div>
+        </div>
+      </section>
+
+      <div id="leak"></div>
+
+      <audio id="track" src="audio/mix.mp3" data-start="0" data-duration="94.3" data-track-index="1" data-volume="1"></audio>
+    </div>
+
+    <script src="beats.js"></script>
+    <script>
+      const T = FILM.t;                       // a moment inside a beat, in film seconds
+      const at = name => FILM.by[name].at;    // where a scene begins
+      const el = id => document.getElementById(id);
+
+      /* Every scene's window comes from the clock, so the seconds are written
+       * once. A scene is up for its own length plus the cut into the next
+       * one, which is how both are on screen while they hand over. The
+       * attributes in the markup are the same numbers, kept there for `lint`
+       * to read without running anything; these are what the runtime uses.
+       * The one number that cannot be set from here is the root's
+       * data-duration, which is read before any script runs -- it has to be
+       * FILM.total by hand. */
+      for (const b of FILM.beats) {
+        const scene = el("s-" + b.name);
+        scene.dataset.start = b.at;
+        scene.dataset.duration = +(b.dur + (b.out ? b.out[1] : 0)).toFixed(3);
+      }
+      el("track").dataset.duration = FILM.total;
+
+      const tl = gsap.timeline({ paused: true });
+
+      /* ---- the trouble ------------------------------------------------- */
+
+      // The wall is the real document, as the terminal shows it: the source
+      // of the plan snyvi renders later in the film.
+      const RAW = `## 2. Design
+
+A token bucket per API key, refilled at the key's rate, and a second
+bucket per organisation that every key in the organisation draws from.
+Both live in Redis, one \`MULTI\` per request, so a request costs one round
+trip whatever the answer is.
+
+\`\`\`mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway
+    C->>G: POST /v1/transactions
+    G->>R: MULTI · DECR key · DECR org · EXEC
+    alt both buckets above zero
+        R-->>G: [n, m]
+        A-->>C: 201 Created
+    else either bucket empty
+        G-->>C: 429 · Retry-After: 2
+    end
+\`\`\`
+
+### 2.1 Refill
+
+Buckets refill lazily: the stored value is \`(tokens, updated_at)\` and the
+gateway computes the current level when it reads it. No timers, nothing
+to keep running, and a key that is never used costs nothing.
+
+| Plan | Per key | Per organisation | Burst |
+|---|---|---|---|
+| Free | 10 rps | 20 rps | 30 |
+| Team | 100 rps | 400 rps | 400 |
+
+### 2.2 Limits
+
+The per-organisation bucket is the point. A partner with forty keys is
+one partner, and the gateway should say so with one number.
+
+> **Status:** proposed · **Scope:** \`api/\` and \`gateway/\`
+`;
+      const wall = RAW + RAW.slice(0, 900);
+      ["wall-a", "wall-b", "wall-c"].forEach((id, i) => {
+        document.getElementById(id).textContent = wall.slice(i * 260) + wall.slice(0, i * 260);
+      });
+
+      const hook = FILM.by.hook;
+      tl.fromTo("#s-hook .wall", { y: 0 }, { y: -560, duration: hook.dur + hook.out[1], ease: "none" }, 0);
+      // The kicker is up from the first frame rather than faded in. That
+      // frame is the poster: GitHub shows it under the play button, and a
+      // wall of dim source with nothing on it is not an invitation. So the
+      // line the voice is about to say is already there, and what moves at
+      // the top of the film is the wall behind it and the words to come.
+      tl.fromTo("#s-hook .kicker u", { scaleX: 0.6 }, { scaleX: 1, duration: 1.2, ease: "power2.out" }, 0.15);
+      // One word struck per sentence, on the pause the voice leaves for it.
+      [["#hk-1", "plans"], ["#hk-2", "reviews"], ["#hk-3", "reports"]].forEach(([sel, cue]) => {
+        tl.fromTo(sel, { opacity: 0, y: 46, scaleY: 1.12 },
+          { opacity: 1, y: 0, scaleY: 1, duration: 0.42, ease: "power4.out" }, T("hook", cue) - 0.1);
+      });
+      tl.to("#s-hook .stack", { opacity: 0.34, duration: 1.1, ease: "sine.inOut" }, T("hook", "raw") - 0.15);
+      tl.fromTo("#hk-tail", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: "power2.out" }, T("hook", "raw"));
+
+      /* ---- the name ---------------------------------------------------- */
+
+      tl.fromTo("#rv-brow", { opacity: 0, y: -16 }, { opacity: 1, y: 0, duration: 0.7, ease: "power2.out" }, at("reveal") + 0.35);
+      tl.fromTo("#rv-mark", { scale: 0.55, rotate: -14, opacity: 0 },
+        { scale: 1, rotate: 0, opacity: 1, duration: 0.85, ease: "back.out(1.7)" }, T("reveal", "name") - 0.3);
+      // The letters draw together into the wordmark: each glyph carries its
+      // own spread, so nothing reflows and nothing snaps.
+      tl.fromTo("#rv-name span", { opacity: 0, x: 26, y: 18 },
+        { opacity: 1, x: 0, y: 0, duration: 0.9, ease: "expo.out", stagger: 0.055 }, T("reveal", "name") - 0.15);
+      tl.fromTo("#rv-glow", { scale: 0.2, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.5, ease: "power2.out" }, T("reveal", "name") - 0.35);
+      tl.to("#rv-glow", { scale: 1.12, duration: 4.2, ease: "sine.inOut" }, T("reveal", "name") + 1.15);
+      tl.fromTo("#rv-tag", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 1, ease: "power3.out" }, T("reveal", "tagline"));
+
+      /* ---- the ask ----------------------------------------------------- */
+
+      brow(el("ak-brow"), at("ask") + 0.3);
+      tl.fromTo("#ak-stmt", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, at("ask") + 0.45);
+      tl.fromTo("#ak-sub", { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power1.out" }, at("ask") + 0.75);
+      tl.fromTo("#ak-term", { opacity: 0, y: 60, scale: 0.97 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.9, ease: "expo.out" }, at("ask") + 0.5);
+
+      // The prompt, typed a character at a time -- driven by the timeline, so
+      // any frame of it can be asked for by its second.
+      const PROMPT = "Revise docs/rate-limiting.md against the review of #142, then send it to snyvi.";
+      const typed = document.getElementById("ak-type");
+      tl.set("#ak-l1", { opacity: 1 }, at("ask") + 1.1);
+      tl.fromTo({ i: 0 }, { i: 0 }, {
+        i: PROMPT.length, duration: 2.1, ease: "none", snap: { i: 1 },
+        onUpdate() { typed.textContent = PROMPT.slice(0, this.targets()[0].i | 0); },
+      }, at("ask") + 1.15);
+      // The cursor blinks while it is being read, and goes out when the
+      // model takes over.
+      const blinks = Math.max(0, Math.floor(3.4 / 0.9) - 1);
+      tl.fromTo("#ak-cur", { opacity: 1 }, { opacity: 0, duration: 0.45, ease: "steps(1)", repeat: blinks, yoyo: true }, at("ask") + 3.4);
+      tl.set("#ak-cur", { opacity: 0 }, T("ask", "writes"));
+      tl.fromTo("#ak-l2", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, T("ask", "writes"));
+      tl.fromTo("#ak-l3", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, T("ask", "writes") + 0.45);
+      tl.fromTo("#ak-l4", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.35, ease: "power2.out" }, T("ask", "call"));
+      tl.fromTo("#ak-ul", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.inOut" }, T("ask", "call") + 0.3);
+      tl.fromTo("#ak-l5", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.4, ease: "power2.out" }, T("ask", "reply"));
+
+      /* ---- it is already open ------------------------------------------ */
+
+      tl.fromTo("#ar-win", { opacity: 0, y: 190, scale: 0.94 },
+        { opacity: 1, y: 0, scale: 1, duration: 1.15, ease: "expo.out" }, at("arrive") + 0.15);
+      tl.fromTo("#ar-glow", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 1.4, ease: "power2.out" }, at("arrive") + 0.15);
+      tl.fromTo("#ar-cap", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, T("arrive", "filed") - 0.6);
+      // A slow push in, so the page is read rather than presented.
+      tl.fromTo("#ar-img", { scale: 1, y: 0 }, { scale: 1.06, y: -26, duration: 6.6, ease: "sine.inOut" }, at("arrive") + 0.9);
+
+      /* ---- the queue --------------------------------------------------- */
+
+      feature("queue", el("qu-brow"), el("qu-stmt"), el("qu-sub"), el("qu-win"), el("qu-key"), T("queue", "key"));
+      // Into the bar that says one is waiting -- 1.4 about the middle, moved
+      // so the bar sits near the top of the window and no bone shows above
+      // it -- then out again on the document it opens.
+      const QU = { scale: 1.4, x: -192, y: 143 };
+      tl.fromTo("#qu-a", { scale: 1, x: 0, y: 0 }, { ...QU, duration: 2.2, ease: "power2.inOut" }, at("queue") + 0.7);
+      tl.to("#qu-a", { opacity: 0, duration: 0.5, ease: "power1.inOut" }, T("queue", "key") + 0.35);
+      tl.fromTo("#qu-b", { opacity: 0, ...QU }, { opacity: 1, duration: 0.5, ease: "power1.inOut" }, T("queue", "key") + 0.35);
+      tl.to("#qu-b", { scale: 1.03, x: 0, y: 0, duration: 1.7, ease: "power2.out" }, T("queue", "key") + 0.6);
+
+      /* ---- versions ---------------------------------------------------- */
+
+      feature("diff", el("df-brow"), el("df-stmt"), el("df-sub"), el("df-win"), el("df-key"), T("diff", "key"));
+      tl.fromTo("#df-img", { scale: 1.02, y: 0 }, { scale: 1.36, y: -86, duration: 3.6, ease: "power1.inOut" }, at("diff") + 0.7);
+
+      /* ---- diagrams ---------------------------------------------------- */
+
+      feature("diagram", el("dg-brow"), el("dg-stmt"), el("dg-sub"), el("dg-win"), null, null);
+      tl.fromTo("#dg-img", { scale: 1.34, y: -150, x: 60 }, { scale: 1.5, y: -190, x: 40, duration: 4.4, ease: "sine.inOut" }, at("diagram") + 0.3);
+
+      /* ---- search ------------------------------------------------------ */
+
+      feature("search", el("se-brow"), el("se-stmt"), el("se-sub"), el("se-win"), el("se-key"), T("search", "key"));
+      tl.fromTo("#se-img", { scale: 1.02, y: 0 }, { scale: 1.46, y: 60, x: -120, duration: 4.2, ease: "power1.inOut" }, T("search", "key") + 0.2);
+
+      /* ---- source ------------------------------------------------------ */
+
+      feature("source", el("sr-brow"), el("sr-stmt"), null, el("sr-win"), null, null);
+      tl.fromTo("#sr-a", { scale: 1.06, y: 0 }, { scale: 1.1, y: -40, duration: 4, ease: "sine.inOut" }, at("source") + 0.3);
+      tl.to("#sr-a", { opacity: 0, duration: 0.8, ease: "power1.inOut" }, T("source", "speed") - 0.4);
+      tl.fromTo("#sr-b", { opacity: 0, scale: 1.1, y: -40 }, { opacity: 1, duration: 0.8, ease: "power1.inOut" }, T("source", "speed") - 0.4);
+      tl.to("#sr-b", { scale: 1.16, y: -90, duration: 3.4, ease: "sine.inOut" }, T("source", "speed") - 0.4);
+      tl.fromTo("#sr-chip", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, T("source", "speed") - 0.3);
+      count("#sr-num", 143, 0, T("source", "speed") - 0.25, 1.1);
+
+      /* ---- measured ----------------------------------------------------- */
+
+      brow(el("nm-brow"), at("numbers") + 0.3);
+      tl.fromTo("#nm-stmt", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at("numbers") + 0.4);
+      tl.fromTo("#nm-glow", { opacity: 0, scale: 0.7 }, { opacity: 0.8, scale: 1, duration: 1.8, ease: "power2.out" }, at("numbers") + 0.5);
+      const statCues = ["binary", "size", "start", "home"];
+      document.querySelectorAll("#s-numbers .stat").forEach((el, i) => {
+        const when = T("numbers", statCues[i]);
+        const dp = +el.dataset.dp;
+        tl.fromTo(el, { opacity: 0, y: 54 }, { opacity: 1, y: 0, duration: 0.55, ease: "power4.out" }, when - 0.12);
+        count(el.querySelector(".v b"), +el.dataset.to, dp, when, 0.85);
+        tl.fromTo(el.querySelector(".b i"), { scaleX: 0 },
+          { scaleX: +getComputedStyle(el.querySelector(".b i")).getPropertyValue("--w"), duration: 1.1, ease: "power2.out" }, when + 0.15);
+      });
+      tl.fromTo("#nm-foot", { opacity: 0 }, { opacity: 1, duration: 0.9, ease: "power1.out" }, T("numbers", "home") + 0.2);
+
+      /* ---- the agents ---------------------------------------------------- */
+
+      brow(el("ag-brow"), at("agents") + 0.3);
+      // The statement is the scene's title, so it is up while the names are
+      // still being read, not held back for the sentence that repeats it.
+      tl.fromTo("#ag-stmt", { opacity: 0, y: 42 }, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at("agents") + 0.4);
+      tl.fromTo("#ag-cmd", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: "back.out(1.4)" }, T("agents", "cmd") - 0.2);
+      // The five the voice names land one by one; the rest of the roster
+      // follows under the sentence that says there are more.
+      const rows = document.querySelectorAll("#ag-list .row");
+      ["a1", "a2", "a3", "a4", "a5"].forEach((cue, i) => {
+        tl.fromTo(rows[i], { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.5, ease: "power4.out" }, T("agents", cue));
+        tl.fromTo(rows[i].querySelector("i"), { scale: 0 }, { scale: 1, duration: 0.4, ease: "back.out(3)" }, T("agents", cue) + 0.08);
+      });
+      [5, 6, 7].forEach((n, i) => {
+        tl.fromTo(rows[n], { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, T("agents", "mcp") + 0.9 + i * 0.12);
+        tl.fromTo(rows[n].querySelector("i"), { scale: 0 }, { scale: 1, duration: 0.35, ease: "back.out(3)" }, T("agents", "mcp") + 0.96 + i * 0.12);
+      });
+
+      /* ---- the end ------------------------------------------------------- */
+
+      tl.fromTo("#ot-lock", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.9, ease: "power3.out" }, at("outro") + 0.35);
+      tl.fromTo("#ot-glow", { opacity: 0, scale: 0.75 }, { opacity: 1, scale: 1, duration: 2.2, ease: "power2.out" }, at("outro") + 0.35);
+      tl.fromTo("#ot-stmt", { opacity: 0, y: 46 }, { opacity: 1, y: 0, duration: 0.9, ease: "expo.out" }, T("outro", "shows") - 0.55);
+      tl.fromTo("#ot-url", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, T("outro", "github") - 0.35);
+      tl.fromTo("#ot-badges", { opacity: 0 }, { opacity: 1, duration: 0.9, ease: "power1.out" }, T("outro", "github") + 0.15);
+      // The one scene that is allowed to leave.
+      tl.to("#s-outro .pad", { opacity: 0, duration: 1.1, ease: "power2.in" }, FILM.total - 1.3);
+      tl.to("#ot-glow", { opacity: 0, duration: 1.1, ease: "power2.in" }, FILM.total - 1.3);
+
+      /* ---- the cuts ------------------------------------------------------ */
+
+      // Each scene hands over at the second the next one begins: a push for
+      // the ordinary cut, and something of its own where the film turns.
+      FILM.beats.forEach((b, i) => {
+        if (!b.out) return;
+        const [kind, d] = b.out;
+        const from = el("s-" + b.name).querySelector(".inner");
+        const to = el("s-" + FILM.beats[i + 1].name).querySelector(".inner");
+        const t = b.at + b.dur;
+        if (kind === "leak") {
+          // The dark blown open: a warm bloom that swallows the frame and
+          // leaves the name behind it.
+          tl.fromTo("#leak", { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1.08, duration: d * 0.55, ease: "power2.in" }, t - d * 0.55);
+          tl.to("#leak", { opacity: 0, duration: d * 0.9, ease: "power2.out" }, t + d * 0.1);
+          tl.to(from, { opacity: 0, duration: d * 0.5, ease: "power1.in" }, t - 0.1);
+          tl.fromTo(to, { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: d * 1.5, ease: "power2.out" }, t - 0.1);
+        } else if (kind === "zoom") {
+          // Through the terminal and out the other side, into the page.
+          tl.to(from, { opacity: 0, scale: 1.3, duration: d, ease: "power2.in" }, t);
+          tl.fromTo(to, { opacity: 0, scale: 1.14 }, { opacity: 1, scale: 1, duration: d * 1.25, ease: "expo.out" }, t + 0.06);
+        } else if (kind === "blur") {
+          tl.to(from, { opacity: 0, filter: "blur(16px)", duration: d, ease: "power2.inOut" }, t);
+          tl.fromTo(to, { opacity: 0, filter: "blur(12px)" }, { opacity: 1, filter: "blur(0px)", duration: d, ease: "power2.out" }, t);
+        } else if (kind === "up") {
+          tl.to(from, { opacity: 0, yPercent: -9, duration: d, ease: "power3.inOut" }, t);
+          tl.fromTo(to, { opacity: 0, yPercent: 7 }, { opacity: 1, yPercent: 0, duration: d, ease: "power3.out" }, t);
+        } else {
+          tl.to(from, { opacity: 0, xPercent: -8, duration: d, ease: "power3.inOut" }, t);
+          tl.fromTo(to, { opacity: 0, xPercent: 6 }, { opacity: 1, xPercent: 0, duration: d, ease: "power3.out" }, t);
+        }
+      });
+
+      /* ---- the parts each scene shares ------------------------------------ */
+
+      /** An eyebrow: the tick, the words, the rule. */
+      function brow(node, when) {
+        tl.fromTo(node.querySelector("i"), { scale: 0 }, { scale: 1, duration: 0.45, ease: "back.out(2.6)" }, when);
+        tl.fromTo(node, { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, when + 0.04);
+        tl.fromTo(node.querySelector("u"), { scaleX: 0 }, { scaleX: 1, duration: 0.7, ease: "power2.out" }, when + 0.2);
+      }
+
+      /** One of the five split scenes: the words on the left, the window on
+       *  the right, and the key that did it, struck. */
+      function feature(name, browEl, stmt, sub, win, key, keyAt) {
+        const when = at(name);
+        brow(browEl, when + 0.25);
+        tl.fromTo(stmt, { opacity: 0, y: 38 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, when + 0.35);
+        if (sub) tl.fromTo(sub, { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power1.out" }, when + 0.6);
+        tl.fromTo(win, { opacity: 0, x: 70, scale: 0.98 },
+          { opacity: 1, x: 0, scale: 1, duration: 0.85, ease: "expo.out" }, when + 0.3);
+        if (key) {
+          tl.fromTo(key, { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(2.2)" }, keyAt - 0.25);
+          // Struck: down on the beat, up after it.
+          tl.to(key, { y: 6, duration: 0.09, ease: "power2.in" }, keyAt);
+          tl.to(key, { y: 0, duration: 0.3, ease: "back.out(3)" }, keyAt + 0.09);
+        }
+      }
+
+      /** A number counted up to, with the decimals it is quoted at. */
+      function count(target, to, dp, when, dur) {
+        const el = typeof target === "string" ? document.querySelector(target) : target;
+        tl.fromTo({ n: 0 }, { n: 0 }, {
+          n: to, duration: dur, ease: "power2.out",
+          onUpdate() { el.textContent = this.targets()[0].n.toFixed(dp); },
+        }, when);
+      }
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

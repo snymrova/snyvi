@@ -1,0 +1,53 @@
+{
+  "hook": {
+    "text": "Your agents write all day. Plans. Reviews. Reports. And you read them... as raw text, in a terminal.",
+    "seconds": 7.8
+  },
+  "reveal": {
+    "text": "Meet snigh-vee. A fast, beautiful viewer for everything your agents produce.",
+    "seconds": 6.024
+  },
+  "ask": {
+    "text": "Ask Claude Code for a plan. It writes one. And sends it. One real MCP call: send document.",
+    "seconds": 8.544
+  },
+  "arrive": {
+    "text": "By the time you read the reply, it's already open. Rendered. Filed under the project.",
+    "seconds": 6.024
+  },
+  "queue": {
+    "text": "A new document never steals the page. It waits at the top. N opens it.",
+    "seconds": 5.328
+  },
+  "diff": {
+    "text": "C shows exactly what changed since the last version.",
+    "seconds": 3.528
+  },
+  "diagram": {
+    "text": "Diagrams draw themselves, in the page's own colours.",
+    "seconds": 3.648
+  },
+  "search": {
+    "text": "Command K searches everything every agent has ever sent. Code included.",
+    "seconds": 4.752
+  },
+  "source": {
+    "text": "Source files, highlighted, with an outline. Ten thousand lines of Rust, in a hundred and forty-three milliseconds.",
+    "seconds": 8.088
+  },
+  "numbers": {
+    "text": "One static binary. Twelve megabytes. Cold start in eleven milliseconds. And nothing phones home.",
+    "seconds": 8.4
+  },
+  "agents": {
+    "text": "Claude Code, Codex, Cursor, Gemini, Zed. Any agent that speaks MCP. One command each.",
+    "seconds": 8.736
+  },
+  "outro": {
+    "text": "Agents send. snigh-vee shows. Get it on GitHub.",
+    "seconds": 4.968
+  },
+  "music": {
+    "seconds": 91.638
+  }
+}
