@@ -1815,6 +1815,49 @@ release-day job; proving its frames can still be taken is not.
 
 Ninety-four seconds, 1920x1080. `film/README.md` is how to cut it again.
 
+## After 1.0: a way in that is not a download
+
+1.0 shipped with every row of this file closed and a repository with no
+stars and no topics. Its install story was the releases page: pick the
+right one of twenty-two assets, unpack it, and on a Mac, get past a
+refusal. Nothing that follows makes reading better or faster, and it is
+here anyway, because none of that matters to a reader who never gets to
+the first document.
+
+**`cargo install snyvi`.** The crate was already shaped for it, since the
+window has been behind the `desktop` feature since 0.6: default features
+build the static daemon and CLI and never link WebKitGTK. What stopped
+it was size. `cargo package` swept in the film's narration and the
+README's pictures and came to 18.2 MB, against a cap of 10. An `exclude`
+list brings it to 2.2 MB compressed, and `cargo package` builds from the
+packaged tarball with the checkout out of reach, so a missing file fails
+here, not on someone else's machine. The name was unclaimed.
+
+**`brew install --cask snymrova/snyvi/snyvi`.** A cask, not a formula,
+because the macOS download already is an app with the CLI inside it.
+`packaging/homebrew.sh` writes it from the `.sha256` files the release
+uploaded, so the cask can only claim hashes the release published. It
+was checked against 1.0.0: the arm64 hash it read is the hash of the
+tarball downloaded, and the `app` and `binary` paths are the paths in it.
+The cask takes the quarantine off what it installs, which is a decision
+and not a detail: the bundle is signed ad-hoc, Homebrew quarantines like
+a browser, and without it the first open is the refusal the guide spends
+a paragraph on. Notarisation is the real fix and needs a paid account.
+
+**Neither is bumped by hand.** Two jobs at the end of `release.yml`,
+after every binary is on the release: `crate` publishes, `homebrew`
+writes the cask and pushes it to the tap. Each is skipped with a warning
+rather than failed when its token is missing, so a release is never held
+up by a channel. A version in a package manager that someone has to
+remember to change is a number enforced by nothing, and this file has
+named that failure enough times.
+
+What is a person's: claiming the crate name with the first `cargo
+publish`, creating `snymrova/homebrew-snyvi`, and setting
+`CARGO_REGISTRY_TOKEN` and `HOMEBREW_TAP_TOKEN` on this repository.
+Unwatched: the cask installed on a real Mac. `brew audit` and a first
+open after the postflight are the check.
+
 ## Not yet watched on Windows or macOS
 
 The build, the tests, the daemon and the window are all exercised by CI

@@ -316,3 +316,64 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.sha256
+
+  crate:
+    # `cargo install snyvi`. Last, after every binary is on the release, so a
+    # crate never names a version whose downloads are still being built.
+    # Default features only: `snyvi-app` is behind `desktop`, so what a
+    # crates.io user compiles is the static daemon and CLI and never WebKitGTK.
+    #
+    # Skipped, not failed, without the token: a fork, or a release cut before
+    # the secret was set, still ships every download above.
+    needs: macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set; the crate was not published."
+            exit 0
+          fi
+          # The crate is capped at 10 MB and the checkout is 80: the exclude
+          # list in Cargo.toml is what keeps it at 2. Say the size in the log.
+          cargo package --no-verify 2>&1 | tail -1
+          cargo publish
+
+  homebrew:
+    # `brew install --cask snymrova/snyvi/snyvi`. The cask is written from the
+    # .sha256 files the macos job just uploaded (packaging/homebrew.sh), and
+    # pushed to the tap, so the tap cannot fall behind a release: the version
+    # in it is bumped by the same run that published the version.
+    #
+    # GITHUB_TOKEN cannot write to another repository, so this needs a token
+    # with contents:write on snymrova/homebrew-snyvi. Skipped without one.
+    needs: macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the cask and push it to the tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; the tap was not updated."
+            exit 0
+          fi
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          version="${version#v}"
+          cask=$(packaging/homebrew.sh "$version" dist)
+          ruby -c "$cask"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/snymrova/homebrew-snyvi.git" tap
+          mkdir -p tap/Casks
+          cp "$cask" tap/Casks/snyvi.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add Casks/snyvi.rb
+          git diff --cached --quiet && { echo "the tap already says $version"; exit 0; }
+          git commit -m "snyvi $version"
+          git push

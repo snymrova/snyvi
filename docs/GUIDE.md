@@ -110,6 +110,12 @@ or open it once from System Settings → Privacy & Security → Open Anyway.
 A tarball unpacked with `tar` from a terminal carries no quarantine at
 all.
 
+With Homebrew, `brew install --cask snymrova/snyvi/snyvi` does all of the
+above in one command: it puts `snyvi.app` in Applications, links `snyvi`
+onto your `PATH`, and takes the quarantine off the app it installed.
+`brew upgrade` stops the daemon before it swaps the binary; `brew zap`,
+and only `brew zap`, deletes the library.
+
 ### Any other Linux
 
 Download the tarball for your architecture from the same page:

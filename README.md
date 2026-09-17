@@ -50,7 +50,17 @@ snyvi send README.md         # starts the daemon, prints a link
 snyvi init-claude            # register with Claude Code
 ```
 
-**macOS** — unpack the tarball, drag `snyvi.app` into Applications, then:
+**macOS, with Homebrew** — the window and the command line in one step.
+The cask clears the quarantine on the app it installs, so there is no
+Gatekeeper dialog to get past:
+
+```
+brew install --cask snymrova/snyvi/snyvi
+snyvi send README.md
+snyvi init-claude
+```
+
+**macOS, by hand** — unpack the tarball, drag `snyvi.app` into Applications, then:
 
 ```
 /Applications/snyvi.app/Contents/MacOS/snyvi install-cli
@@ -67,6 +77,12 @@ snyvi init-claude
 ```
 
 **Any other Linux** — `install -m 755 snyvi ~/.local/bin/snyvi`, then the same two commands.
+
+**With a Rust toolchain**, anywhere — the daemon and CLI, built from source (no window):
+
+```
+cargo install snyvi
+```
 
 Updating is `snyvi restart` after installing over the old one. Nothing
 phones home; the daemon listens on `127.0.0.1` only.

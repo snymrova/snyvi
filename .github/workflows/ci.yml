@@ -35,6 +35,25 @@ jobs:
           desktop-file-validate /usr/share/applications/snyvi.desktop
           systemd-analyze verify /usr/lib/systemd/user/snyvi.service
           sudo dpkg -r snyvi
+      - name: The crate fits, and the Homebrew cask can be written
+        # Both run only on release day otherwise. The crate is capped at 10 MB
+        # and the checkout holds 80 of film and pictures; one media file
+        # committed outside the exclude list would fail `cargo publish` after
+        # every binary had shipped. --no-verify because the build above is the
+        # verification. The cask is written from the latest release's hashes
+        # and syntax-checked, so a change to homebrew.sh fails here.
+        run: |
+          set -e
+          # Fresh: a .crate rewritten over a larger one keeps the old tail.
+          rm -rf target/package
+          cargo package --no-verify --allow-dirty
+          size=$(stat -c %s target/package/snyvi-*.crate)
+          echo "crate: $size bytes"
+          test "$size" -lt 8000000 || { echo "the crate is $size bytes; crates.io takes 10 MB. Add to exclude in Cargo.toml."; exit 1; }
+          latest=$(gh release view --json tagName -q .tagName)
+          ruby -c "$(packaging/homebrew.sh "$latest" /tmp/cask)"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Lay out the .app
         # The other packaging script, which only a Mac can finish (the icon
         # and the signature) but any machine can lay out. Run here so that an
