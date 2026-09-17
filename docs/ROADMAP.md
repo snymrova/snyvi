@@ -62,6 +62,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
 | Per-project opt-out | `.snyvi.toml` in a repo with `collect = false` so the hook never sends from that project. | XS | later |
 | The front page | The README was the manual: 860 lines, no picture, `## Install` on the first screen. It is now a landing page -- the film, the hero in both themes, install in four lines per desktop, six pictures each saying one thing, the keys, the numbers -- and the manual is `docs/GUIDE.md`, verbatim. Every picture and the film come from `bench/media.mjs`, a camera over a seeded library, so a release re-takes them and CI proves the views it points at still exist. | S | **done 0.21** |
+| A film worth watching | The first film was a screen recording: two windows on a desktop, a voice reading captions, one long take. It showed the product and sold nothing, partly because a headless Chromium paints only when something changes, so a recording of a document being read came back at three frames a second. The film is cut now, not recorded -- `film/`: stills at 2880x1800 from the same seeded library, twelve scenes on one GSAP timeline, panned and punched into at sixty, a narration whose every word lands on a measured pause in the voice track rather than a guess, and music under it. Set in the two faces snyvi renders documents with, because the argument the film makes -- a stream of tokens becomes a document a person reads -- is the same one the letterforms make. | M | **done 1.1** |
 | The first ten minutes | `init-claude` reads what Claude Code has before touching it, is safe to run again, follows a binary that moved, and ends with what to try; `--claude-md` writes the CLAUDE.md line; `uninstall-claude` takes all of it back out and nothing else; `install-cli` puts the command on PATH where the README's `ln -s` could not; a taken port, a missing browser and a fallback rung each say what happened. `bench/onboarding.sh` types it all in CI. | S | **done 0.17** |
 
 ## D. Desktop
@@ -1741,6 +1742,78 @@ bar and without a melody that competes with a voice. It sits about six
 decibels under the lines, fades in over the first two seconds and out
 over the last three, and is compressed against the voice, so it steps
 back while a line is being said and returns between them.
+
+## After 1.0: the film is cut, not recorded
+
+The 0.21 film was honest and dull. Everything above it is true and none
+of it made anyone want the thing. Three reasons, and only the first was
+a matter of taste.
+
+**It was one long take of a page being read.** A headless Chromium paints
+only when something changes, so `Page.startScreencast` over a document
+came back at about three frames a second: a scroll that stutters, and
+seventy-six seconds of it. Measured on the same beats the new camera
+takes: twelve frames for 4.2 seconds, twenty-seven for 7.9. Nothing in
+the grade could fix a source that had no frames in it.
+
+**So the camera takes stills.** `film/capture.mjs` drives the same seeded
+daemon and photographs each beat at 2880x1800 instead of recording it.
+The composition pans those, punches into them and cuts between them at
+sixty frames a second, which is both sharper than the recording and more
+motion than the recording ever had. Each frame is then kept at the width
+the film actually magnifies it to -- 1800 across for a window held at
+1144, 2200 for the one held nearly full frame -- because the full 2880
+cost three hundred megabytes of decoded bitmap and six seconds of load
+for pixels nothing ever shows.
+
+**It was ffmpeg stacking rectangles.** The stage was two screencasts, two
+title bars and three cards, composed by a filter graph. That is a cut
+list, not a design: there was no way to put a word on the screen, hold a
+number, or show a key being pressed. The film is a HyperFrames
+composition now -- `film/index.html`, twelve scenes on one paused GSAP
+timeline, rendered frame by frame from the DOM -- so the things the
+README says in prose can be said in pictures: the three words the first
+line names, struck one at a time; the keycap for `n`, `c` and ⌘K, pressed
+on the beat; the four measured numbers counting up against their budgets;
+the eight agents landing as their names are read.
+
+**The words land on the words.** The old film's timing was a queue: a beat
+waited for the line before it to finish. That keeps the voice from being
+cut, and it also means the picture is always a little behind. Each line's
+mp3 is now measured with `silencedetect` for the pauses the voice actually
+leaves, and those seconds are written into `film/beats.js` as the beat's
+cues -- `plans` at 1.92, `reviews` at 2.76, `reports` at 3.62. The
+composition reads the same file the mixer does, so a word and the thing it
+names arrive together, and the two cannot quietly disagree: `film/mix.mjs`
+refuses to run if an mp3 has drifted more than sixty milliseconds from
+what the clock claims.
+
+**And it is set in the product's own two faces.** Source Serif 4 at its
+display cut for the statements, JetBrains Mono for every key, command and
+number -- the two snyvi renders documents with. The argument the film
+makes is that a stream of tokens becomes a document a person reads, and
+fixed pitch against optical sizing is that argument in letterforms.
+`film/DESIGN.md` has the palette and the rest of the reasoning.
+
+**The name, twice.** 0.21 found that a voice given `snyvi` says it three
+ways in one film, and spelled it `snyvee`. That was not enough either: the
+new voice read the same spelling as `/ˈsnaɪvi/` in the reveal and
+`/ˈsniːviː/` in the outro — one take, one voice, two pronunciations, three
+sentences apart. It is spelled `snigh-vee` now, on the grounds that `igh` is
+the one English spelling never read any other way. The lesson is not the
+spelling, it is the checking: a model that takes audio will say what it
+heard, so every line carrying the name is listened back to after it is
+recorded, and six candidates were put through both sentences before one was
+chosen. `film/README.md` has the method.
+
+**And CI watches this camera too.** The stills camera has had a step since
+0.21 that takes the README's pictures into a folder it throws away, so a
+view that has moved fails the push rather than the release. `film/`'s camera
+points at views of its own — the arrival bar, the diff, the palette, the
+outline — and now has the same step beside it. Cutting the film is still a
+release-day job; proving its frames can still be taken is not.
+
+Ninety-four seconds, 1920x1080. `film/README.md` is how to cut it again.
 
 ## Not yet watched on Windows or macOS
 
