@@ -31,6 +31,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Back returns to where the reader was | A document opened again through Back opened at the top. The place is in the history entry now, written as the reader leaves and after each scroll, the way a refresh keeps it; and alt+← is Back in the window, which had no way back at all. | XS | **done 0.14** |
 | An arrival never takes the page away | An arrival opened itself whenever the page had gone 2.5 s without a scroll or a key -- which is what reading a paragraph looks like -- and with several agents sending, the document changed under the reader many times an hour, with no way back in the window and no trace of the new one once its toast was gone. Arrivals join a queue: a row in the sidebar, a mark in the tree, a bar above the document that counts, `n` to read down the line. The one place an arrival opens itself is an inbox with nothing waiting. | S | **done 0.14** |
 | A link into a folder lands | `#L120` and a section link opened a document where they pointed and a browsed file at the top: the browse path rendered, scrolled to 0 and never looked at the fragment, so one agent's link into another's checkout landed nowhere. Both land now, the same way, past blocks that are still placeholders. | XS | **done 0.15** |
+| A link out of a document lands too | comrak writes a bare `<a href>`, and the viewer is a page in a window with no address bar and no Back button of its own, so a click on a link to a repository left the reader there with nothing to come home by but the tray -- and `[notes](./notes.md)` in a sent document resolved against `/d/<id>` and landed on a bare "Not found". Every link is sorted at receive time: the web gets `target="_blank"` and a `↗`, a scheme the desktop answers for is marked without one, a fragment or a relative path is left alone. The window keeps its own origin and hands the rest to the desktop; a same-origin path the viewer has is turned to, and one it has not says so, with the browser offered. | S | **done 1.0.2** |
 | Focus mode | `f` hides both panes and centres the text. One keystroke, but most of it exists via `\` and `t`. | XS | maybe |
 
 ## B. Library and organisation
@@ -1876,6 +1877,81 @@ publish`, creating `snymrova/homebrew-snyvi`, and setting
 `CARGO_REGISTRY_TOKEN` and `HOMEBREW_TAP_TOKEN` on this repository.
 Unwatched: the cask installed on a real Mac. `brew audit` and a first
 open after the postflight are the check.
+
+## 1.0.2: a link that leaves
+
+0.20 settled which link an agent hands out, and where a click on one
+goes. It said nothing about the links already inside a document, which
+are the ones a reader actually clicks: every plan an agent writes
+carries them, to a repository, to an issue, to a file beside it.
+
+**What it was.** comrak writes a bare `<a href="...">`, and the viewer
+is a page. In a browser tab that is merely rude: the viewer is replaced
+and Back comes home. In the window it is a dead end, because there is no
+address bar and no Back button -- Back is the page's own key handler,
+and a page from somewhere else does not have it. A click on a link to a
+repository left the reader on that repository with nothing to come home
+by but the tray. The other direction was worse in both:
+`[notes](./notes.md)` in a sent document resolves against `/d/<id>`,
+which is not a page the viewer has, so it landed on a bare "Not found"
+-- in the window, with no way back at all.
+
+**Sorted where the document is made.** The renderer stamps every link
+once, at receive time, the way everything else here is done once per
+document and never again: `target="_blank" rel="noopener noreferrer"`
+and `data-ext` for `http` and `https`, `data-ext` alone for a scheme the
+desktop answers for -- `mailto:`, `file:` -- and nothing at all for a
+fragment or anything relative, which stay inside snyvi and are the
+client's to resolve. A pass over the rendered string rather than the
+AST, because comrak's `Link` node carries a URL and a title and no way
+to add an attribute. The one thing that had to be told twice is
+ammonia: `target` and `data-ext` are on neither of its lists, so a
+document with raw HTML in it would otherwise have been the one kind
+whose outbound links still opened in the viewer. `data-ext` is also
+what the `↗` hangs on, so a link says it leaves before it is
+followed -- never on a link wrapped around an image, where the mark
+would land in the middle of the picture.
+
+**The window keeps its origin.** `on_navigation` measures every
+navigation against the origin the window was opened on and hands
+anything else to the desktop, and `on_new_window` does the same for
+`window.open` and `target="_blank"`, which the engine treats as a
+request for a second window rather than a navigation. snyvi has one
+window, so those go out too -- including the viewer's own "Open
+source", whose raw text is a thing to read beside snyvi rather than
+inside it. `about:` stays: it is the engine's own, a frame with nothing
+in it yet, and not a place a reader can be stranded. The opener is
+written again in that binary rather than borrowed, because it links
+none of the library -- which is the point of it being separate -- and a
+URL that would not open is a line on stderr and never a window taken
+down.
+
+**And the page for what is left.** Same-origin and unmarked falls in
+three parts. A document or a browsed file is a place in snyvi, so it is
+navigated to without a reload, which is how a relative link between two
+files in a browsed folder comes to work at all. The inbox and the
+connect page are pages too. Anything else same-origin is not a page
+this viewer has, and says so in a toast that names the path and offers
+the browser for the reader who meant it, rather than replacing the
+document with "Not found". A document rendered before any of this
+existed keeps the HTML it was given, so the page sends an unmarked
+cross-origin link away itself.
+
+**The probe.** Five rows in `bench/ui.mjs`. The web is read as an
+attribute rather than clicked -- a click on it is a second tab, and
+what the native window does with one is `stays_home`'s to say, under
+test beside it in `src/bin/app.rs`. Everything same-origin is clicked
+for real: the relative path raises the toast and the document is still
+open behind it, and a link to another document turns the page without a
+load. Both render paths are covered in the renderer's own tests, since
+the sanitized one is the path that forgot.
+
+What remains a person's: the click itself, in the window, on each
+desktop. `on_navigation` and `on_new_window` are the toolkit's callbacks
+and no harness here drives them -- what is checked is the decision they
+hand a URL to, which is `stays_home` and is a unit test. That a browser
+comes forward with the page, and that the window stays where it was, is
+watched by hand.
 
 ## Not yet watched on Windows or macOS
 

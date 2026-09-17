@@ -70,11 +70,28 @@ jobs:
         run: |
           version="${{ github.event.inputs.version || github.ref_name }}"
           deb=$(packaging/deb.sh target/${{ matrix.target }}/release/snyvi "${version#v}" ${{ matrix.deb_arch }} dist)
+          echo "DEB=$deb" >> "$GITHUB_ENV"
           dpkg-deb -I "$deb"
           sudo dpkg -i "$deb"
           test "$(command -v snyvi)" = /usr/bin/snyvi
           snyvi --version
           (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
+      - name: The same downloads, under names that do not move
+        # The README links straight at a file: /releases/latest/download/<name>,
+        # which GitHub resolves only for an exact asset name. A name with the
+        # version in it therefore goes stale the day the next release is cut,
+        # and the README would have to be rewritten on every tag to keep its
+        # own download links alive. A copy under a fixed name is what makes
+        # that link permanent instead. The version-stamped originals stay and
+        # are still the canonical ones: they are what the cask reads, what a
+        # checksum is published against, and what a file should be called once
+        # it is sitting in somebody's downloads folder.
+        run: |
+          case "${{ matrix.deb_arch }}" in amd64) arch=x64;; *) arch=arm64;; esac
+          cp "dist/snyvi-$VERSION-${{ matrix.target }}.tar.gz" "dist/snyvi-linux-$arch.tar.gz"
+          cp "$DEB" "dist/snyvi-linux-$arch.deb"
+          (cd dist && sha256sum "snyvi-linux-$arch.tar.gz" > "snyvi-linux-$arch.tar.gz.sha256")
+          (cd dist && sha256sum "snyvi-linux-$arch.deb" > "snyvi-linux-$arch.deb.sha256")
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
@@ -234,6 +251,16 @@ jobs:
           # the zip stays for anyone who would rather have a folder.
           pwsh packaging/windows.ps1 $version
           if ($LASTEXITCODE -ne 0) { throw "the installer did not build" }
+      - name: The same download, under a name that does not move
+        # See the Linux job: the README links at an exact asset name, so the
+        # installer needs one that outlives this version.
+        shell: pwsh
+        run: |
+          $v = $env:VERSION
+          $alias = "snyvi-windows-x64-setup.exe"
+          Copy-Item "dist/snyvi-$v-x86_64-pc-windows-msvc-setup.exe" "dist/$alias"
+          $hash = (Get-FileHash "dist/$alias" -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path "dist") "$alias.sha256"), "$hash  $alias`n")
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
@@ -314,6 +341,12 @@ jobs:
           cat "$RUNNER_TEMP/app.log"
           pkill -x snyvi-app || true
           "$app/Contents/MacOS/snyvi" stop
+      - name: The same download, under a name that does not move
+        # See the Linux job. The cask keeps reading the version-stamped names.
+        run: |
+          case "${{ matrix.target }}" in aarch64-*) arch=arm64;; *) arch=x64;; esac
+          cp "dist/snyvi-$VERSION-${{ matrix.target }}.tar.gz" "dist/snyvi-macos-$arch.tar.gz"
+          (cd dist && shasum -a 256 "snyvi-macos-$arch.tar.gz" > "snyvi-macos-$arch.tar.gz.sha256")
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}

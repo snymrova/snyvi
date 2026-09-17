@@ -105,6 +105,9 @@ fn main() {
     } else {
         parsed
     };
+    // The origin the window reads from, kept before the URL is handed to the
+    // builder. Every navigation is measured against it below.
+    let home = parsed.origin().ascii_serialization();
     let shortcut = shortcut_wanted();
     let builder = tauri::Builder::default()
         // Before every other plugin, which is what this one requires: it has
@@ -146,10 +149,33 @@ fn main() {
     let run = builder
         .setup(move |app| {
             use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+            let at_home = home.clone();
             let w = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
                 .title("snyvi")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(480.0, 320.0)
+                // The web belongs in a browser. This window has no address bar
+                // and no Back button -- Back is the page's own key handler, and
+                // a page from somewhere else does not have it -- so a link
+                // followed here would strand the reader on a site with no way
+                // home but the tray. Anything off the daemon's origin is handed
+                // to the desktop instead and the window stays where it was.
+                .on_navigation(move |url| {
+                    if stays_home(url, &at_home) {
+                        return true;
+                    }
+                    hand_to_desktop(url.as_str());
+                    false
+                })
+                // `window.open` and `target="_blank"`, which the engine treats
+                // as a request for a second window rather than a navigation.
+                // snyvi has one window, so these go to the desktop too --
+                // including the viewer's own "Open source", whose raw text is
+                // a thing to read beside snyvi rather than inside it.
+                .on_new_window(|url, _features| {
+                    hand_to_desktop(url.as_str());
+                    tauri::webview::NewWindowResponse::Deny
+                })
                 .icon(Image::from_bytes(WINDOW_ICON)?)?
                 .build()?;
             // Size and position from the last run, saved by the plugin on close.
@@ -331,6 +357,66 @@ fn claim_scheme(app: &tauri::AppHandle) {
     }
 }
 
+/// Whether a URL is somewhere this window should go itself.
+///
+/// The daemon's own origin is snyvi, and everything else is the web. `about:`
+/// is the engine's own -- a frame with nothing in it yet, or the blank page a
+/// webview starts on -- and is not a place a reader can be stranded, so it is
+/// not handed to a browser either.
+fn stays_home(url: &tauri::Url, home: &str) -> bool {
+    url.scheme() == "about" || url.origin().ascii_serialization() == home
+}
+
+/// Hand a URL to whatever the desktop opens links with.
+///
+/// The same thing `snyvi`'s own `platform::open_url` does, written again here
+/// because this binary links none of that crate -- which is the point of it
+/// being separate. Failure is a line and nothing more: a link that would not
+/// open is worth saying, and is never worth taking the window down for.
+fn hand_to_desktop(url: &str) {
+    use std::process::{Command, Stdio};
+    #[cfg(windows)]
+    {
+        // `start` is a builtin of cmd, not a program, so this goes through the
+        // shell -- and a command line for cmd has to be built rather than
+        // passed as arguments. An unquoted `&` is where cmd stops reading a
+        // URL and starts reading a second command, so the URL is written out
+        // quoted, with any quote inside it dropped so it cannot close that
+        // quoting and be read as one. The empty pair before it is the window
+        // title, which `start` would otherwise take the URL for.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let safe: String = url
+            .chars()
+            .filter(|c| *c != '"' && *c != '\n' && *c != '\r')
+            .collect();
+        if Command::new("cmd")
+            .arg("/C")
+            .raw_arg(format!("start \"\" \"{safe}\""))
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return;
+        }
+    }
+    #[cfg(not(windows))]
+    for opener in ["xdg-open", "open"] {
+        if Command::new(opener)
+            .arg(url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            return;
+        }
+    }
+    eprintln!("snyvi-app: nothing on this desktop opens {url}");
+}
+
 /// The tray icon: how a hidden window is found again, and how snyvi is quit.
 ///
 /// Two items, because there is nothing else a tray should decide. The library,
@@ -501,6 +587,25 @@ mod tests {
 
     fn r(link: &str) -> String {
         resolve(&link.parse().unwrap(), "http://127.0.0.1:7777").to_string()
+    }
+
+    fn goes(url: &str) -> bool {
+        stays_home(&url.parse().unwrap(), "http://127.0.0.1:7777")
+    }
+
+    #[test]
+    fn the_window_keeps_the_daemon_and_gives_the_web_away() {
+        // Everything the viewer is made of stays.
+        assert!(goes("http://127.0.0.1:7777/"));
+        assert!(goes("http://127.0.0.1:7777/d/abc?window=1"));
+        assert!(goes("http://127.0.0.1:7777/api/docs/abc/raw"));
+        assert!(goes("about:blank"));
+        // The web, and a port that is not the daemon's, do not.
+        assert!(!goes("https://github.com/snymrova/snyvi"));
+        assert!(!goes("http://127.0.0.1:7778/d/abc"));
+        assert!(!goes("https://127.0.0.1:7777/d/abc"));
+        assert!(!goes("mailto:a@b.c"));
+        assert!(!goes("file:///etc/hosts"));
     }
 
     #[test]
