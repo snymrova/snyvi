@@ -71,7 +71,8 @@ snyvi init-claude
 **Windows** — download `snyvi-*-setup.exe` from the
 [releases page](https://github.com/snymrova/snyvi/releases/latest) and
 double-click it. No administrator needed. It puts snyvi in the Start menu
-and on your `PATH`, connects Claude Code if you have it, and opens the
+and on your `PATH`, connects Claude Code if you have it (every Markdown
+file Claude writes then arrives on its own), and opens the
 viewer when it finishes. The first run shows a SmartScreen warning because
 the installer isn't signed: *More info*, then *Run anyway*.
 

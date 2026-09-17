@@ -56,8 +56,9 @@ page and double-click it. That is the install:
 - *snyvi* appears in the Start menu (and on the desktop, if you tick it);
 - the folder is added to your `PATH`, so `snyvi` runs in any terminal you
   open afterwards;
-- `snyvi init-claude` is run for you, if the box is left ticked and Claude
-  Code is installed;
+- `snyvi init-claude --auto` is run for you, if the box is left ticked and
+  Claude Code is installed: snyvi is registered with Claude Code, and every
+  Markdown file Claude writes is sent to the viewer;
 - *Open snyvi* at the end starts the daemon and the window.
 
 Nothing more to type. From a terminal, the same commands as everywhere:

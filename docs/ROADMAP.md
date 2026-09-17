@@ -1858,7 +1858,7 @@ another terminal. `packaging/windows.iss` is an Inno Setup installer that
 does the same things and asks only whether to go on. It installs for the
 reader alone into `%LOCALAPPDATA%\Programs\snyvi`, so there is no
 administrator prompt. It adds a Start menu entry, puts the folder on the
-user's `PATH`, runs `init-claude`, and opens the window at the end. An
+user's `PATH`, runs `init-claude --auto`, and opens the window at the end. An
 upgrade stops the daemon and the window before replacing them, and the
 uninstall takes snyvi out of Claude Code and off `PATH` but leaves the
 library alone. Building it turned up a bug: `snyvi-app.exe` was built as

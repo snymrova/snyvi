@@ -65,7 +65,7 @@ CloseApplications=force
 RestartApplications=no
 
 [Tasks]
-Name: claude; Description: "Connect Claude Code, if it is installed (snyvi init-claude)"
+Name: claude; Description: "Connect Claude Code, if it is installed, and send it every Markdown file Claude writes (snyvi init-claude --auto)"
 Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Files]
@@ -81,7 +81,10 @@ Name: "{autodesktop}\snyvi"; Filename: "{app}\snyvi-app.exe"; Tasks: desktopicon
 [Run]
 ; Safe to run again, so an upgrade that keeps the box ticked changes nothing.
 ; Without `claude` on PATH it says so and exits, and the install goes on.
-Filename: "{app}\snyvi.exe"; Parameters: "init-claude"; Tasks: claude; \
+; --auto as well: a reader who double-clicked an installer wants the plans to
+; arrive, not a second command to learn that turns arrivals on. Unticking the
+; box is the opt-out, and `snyvi uninstall-claude` takes the hook back out.
+Filename: "{app}\snyvi.exe"; Parameters: "init-claude --auto"; Tasks: claude; \
   Flags: runhidden; StatusMsg: "Connecting Claude Code..."
 Filename: "{app}\snyvi-app.exe"; Description: "Open snyvi"; \
   Flags: nowait postinstall skipifsilent
