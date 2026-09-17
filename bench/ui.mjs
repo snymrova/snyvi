@@ -386,10 +386,12 @@ async function railRows(p, url, md, send) {
   const histBefore = await p.ev("history.length");
   const entry = 12;
   await p.clickOn(`#toc a[data-i="${entry}"]`);
-  await sleep(500);
+  await sleep(150);   // inside the heading's 700 ms flash
+  const lit = await p.ev(`(() => { const a = document.querySelector('#toc a[data-i="${entry}"]'); const el = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1))); return (el?.closest("h1, h2, h3, h4, h5, h6") || el)?.classList.contains("flash") === true; })()`);
+  await sleep(350);
   const landed = await p.ev(`(() => { const a = document.querySelector('#toc a[data-i="${entry}"]'); return { off: window.__ui.headingOffset(a.getAttribute("href").slice(1)), hash: location.hash, hist: history.length }; })()`);
-  rows.push(["a click on an entry", within(landed.off, 20, 40) && landed.hist === histBefore,
-    `heading ${landed.off} px in, ${landed.hist - histBefore} history entries added, hash ${landed.hash.slice(0, 14)}…`]);
+  rows.push(["a click on an entry", within(landed.off, 20, 40) && landed.hist === histBefore && lit,
+    `heading ${landed.off} px in${lit ? ", lit for a moment" : ", never lit"}, ${landed.hist - histBefore} history entries added, hash ${landed.hash.slice(0, 14)}…`]);
   await p.pointerAway();
 
   // Two sections in the history, the way two clicks on the contents leave
@@ -469,9 +471,9 @@ async function narrowRows(p, url) {
   await p.press("Escape");
   const closed = await p.ev(`({ sheet: document.documentElement.dataset.sheet, rail: window.__ui.vis("#rail"), focus: window.__ui.focus() })`);
   dbg("1000 px", { gone, open, closed });
-  rows.push(["at 1000 px, t opens the contents", !gone.rail && gone.button && open.sheet === "rail" && open.rail && open.fixed === "fixed" && open.width < 400 && open.cur.inView && open.focus.inRail && open.scrim && !closed.rail && closed.sheet === undefined && !closed.focus.inRail,
+  rows.push(["at 1000 px, t opens the contents", !gone.rail && gone.button && open.sheet === "rail" && open.rail && open.fixed === "fixed" && open.width === 320 && open.cur.inView && open.focus.inRail && open.scrim && !closed.rail && closed.sheet === undefined && !closed.focus.inRail,
     gone.rail ? "the rail is still beside the document" : !gone.button ? "no button offers the contents"
-      : !open.rail ? "t opened nothing" : open.fixed !== "fixed" || open.width >= 400 ? `the rail came back as a ${open.fixed} pane ${open.width} px wide`
+      : !open.rail ? "t opened nothing" : open.fixed !== "fixed" || open.width !== 320 ? `the rail came back as a ${open.fixed} pane ${open.width} px wide`
         : !open.cur.inView ? `the sheet opened with "${open.cur.text}" out of view` : !open.focus.inRail ? "focus stayed outside the sheet" : !open.scrim ? "nothing behind it to tap"
           : closed.rail ? "Escape did not close it" : closed.focus.inRail ? "focus was left in the closed sheet"
             : `a ${open.width} px sheet on "${open.cur.text}", focus inside, Escape closes it`]);
@@ -915,8 +917,10 @@ async function socketRows(p, url, base, browsed) {
   for (let i = 0; i < 8; i++) await p.goto(loads[i % loads.length]);
   await sleep(600);
   const { streams } = await health();
+  // One is the page that is open; two when the one before it is still in the
+  // back/forward cache with its stream, which the browser may keep a moment.
   rows.push(["eight loads, and the streams left behind", streams <= 2,
-    `the daemon holds ${streams} event stream${streams === 1 ? "" : "s"} after eight page loads`]);
+    `the daemon holds ${streams} event stream${streams === 1 ? "" : "s"} after eight page loads, not eight`]);
   return rows;
 }
 

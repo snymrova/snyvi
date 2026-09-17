@@ -87,8 +87,9 @@ Another paragraph. Then more prose, because most documents are mostly prose, and
 /// Returns whether any row was over budget.
 fn render_rows(f: &Fixtures, factor: f64) -> bool {
     // Budgets in ms on a warm 4-core dev box. The 1 MB Markdown target in docs/BRAINSTORM.md
-    // is 200 ms; comrak with all extensions currently lands at ~265, so the budget holds the
-    // line at the measured number until the parser step is optimised.
+    // was 200 ms; the budget was set at 400 when comrak with all extensions landed at ~265,
+    // and stays there now the sanitizer fast path has it at ~108: it is the line a change
+    // must not cross, not the number (section 14 of that document has the rest).
     let t0 = Instant::now();
     let r = render::Renderer::new();
     let init_ms = t0.elapsed().as_secs_f64() * 1000.0;
