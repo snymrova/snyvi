@@ -89,6 +89,12 @@ jobs:
         # here into a folder that is thrown away, for the same reason as the
         # pictures above: a view that has moved should fail the push. Cutting
         # the film itself is a release-day job, and lives in film/README.md.
+        #
+        # The camera asks Blink for the raster scale it wants rather than
+        # shelling out to scale the file afterwards, so this step needs no
+        # ffmpeg -- which the runner does not have, and which is why the
+        # first version of this step failed the build. The rest of the film's
+        # pipeline does need it, and stays a release-day job.
         run: node film/capture.mjs --out /tmp/snyvi-film
       - name: Smoke test the daemon
         run: |

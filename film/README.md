@@ -124,13 +124,22 @@ a document being read comes back at about three frames a second — measured,
 on these very beats: twelve frames for 4.2 seconds, twenty-seven for 7.9.
 No grade fixes a source with no frames in it.
 
-A still comes back at 2880×1800 instead, and the composition pans it,
-punches into it and cuts between them at the full rate. Each is then kept
+A still comes back as sharp as it is asked for, and the composition pans
+it, punches into it and cuts between them at the full rate. Each is taken
 at the width the film actually magnifies it to — 1800 across for a window
-held at 1144, 2200 for the one held nearly full frame — because the whole
-2880 cost three hundred megabytes of decoded bitmap and six seconds of load
-for pixels nothing ever shows. The earlier film was a recording; this one
-is a cut.
+held at 1144, 2200 for the one held nearly full frame — because the 2880 a
+2x shot gives costs three hundred megabytes of decoded bitmap and six
+seconds of load, for pixels nothing ever shows.
+
+The scale is asked of the browser, not cut down afterwards. The first
+version shot at 2x and had ffmpeg scale the file, which gave the camera a
+dependency the runner that takes these frames on every push does not have —
+so the step failed the build the day it was added. Asking Blink to
+rasterise at 1.25 instead is one CDP call, needs nothing installed, and
+comes out sharper than downsampling a 2x raster, since the glyphs are hinted
+at the size they are drawn.
+
+The earlier film was a recording; this one is a cut.
 
 ## What `check` says
 

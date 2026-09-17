@@ -1,14 +1,14 @@
-/* The film's frames: snyvi itself, photographed at 2x on a seeded library,
+/* The film's frames: snyvi itself, photographed on a seeded library,
  * so every pixel in the film is the current release and not a memory of one.
  *
  *   node film/capture.mjs [--bin target/release/snyvi] [--out film/frames]
  *
  * Stills rather than a screen recording on purpose. A headless Chromium
  * paints only when something changes, so a screencast of a document being
- * read comes back at three frames a second; a still comes back at 2880x1800,
- * which the composition pans, punches into and cuts between at the full
- * rate. Each is kept at the width the film magnifies it to and no wider --
- * see `shot` below for why that matters.
+ * read comes back at three frames a second; a still comes back as sharp as
+ * it is asked for, and the composition pans it, punches into it and cuts
+ * between them at the full rate. Each is taken at the width the film
+ * magnifies it to and no wider -- see `shot` below for why that matters.
  *
  * The daemon, the seed and the two projects are bench/media.mjs's, which
  * takes the README's stills. This is the camera for the film alone, and it
@@ -29,7 +29,7 @@ const BIN_SRC = resolve(flag("--bin") || "./target/release/snyvi");
 const PORT = flag("--port") || "7799";   // 7796 is browser.mjs, 7797 ui.mjs, 7798 media.mjs
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SEED = join(HERE, "..", "bench", "seed");
-const W = 1440, H = 900, DPR = 2;
+const W = 1440, H = 900;
 
 const KEYS = {
   Escape: { key: "Escape", code: "Escape", vk: 27 },
@@ -80,20 +80,26 @@ class Driver {
     await this.ev(`document.querySelector("#main").scrollTo({ top: ${top}, behavior: "instant" })`);
     await sleep(500);
   }
-  /** A still of what the window shows now, taken at 2880x1800 and kept at
-   *  the width the film magnifies it to. A frame the composition punches
-   *  into at 1.5x inside an 1144px window needs about 1800 across; holding
-   *  the full 2880 costs three hundred megabytes of decoded bitmap over the
-   *  film and six seconds of load, for pixels nothing ever shows. */
+  /** A still of what the window shows now, at the width the film magnifies
+   *  it to and no wider. A frame the composition punches into at 1.5x inside
+   *  an 1144px window needs about 1800 across; the full 2880 a 2x shot gives
+   *  would cost three hundred megabytes of decoded bitmap over the film and
+   *  six seconds of load, for pixels nothing ever shows.
+   *
+   *  The scale is asked of the browser rather than cut down afterwards. The
+   *  first version shot at 2x and had ffmpeg scale the file, which cost the
+   *  camera a dependency the daemon does not have -- and the runner that
+   *  takes these frames on every push has no ffmpeg, so the step failed the
+   *  build the day it was added. Blink rasterises at whatever ratio it is
+   *  given; the page's layout is in CSS pixels and does not move. */
   async shot(name, width = 1800) {
+    await this.cdp.send("Emulation.setDeviceMetricsOverride",
+      { width: W, height: H, deviceScaleFactor: width / W, mobile: false }, this.s);
     await this.settled();
     const { data } = await this.cdp.send("Page.captureScreenshot", { format: "png" }, this.s);
     const file = join(OUT, `${name}.png`);
-    writeFileSync(file, Buffer.from(data, "base64"));
-    execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-i", file,
-      "-vf", `scale=${width}:-1:flags=lanczos`, "-pix_fmt", "rgb24", `${file}.tmp.png`]);
-    execFileSync("mv", [`${file}.tmp.png`, file]);
-    const png = readFileSync(file);
+    const png = Buffer.from(data, "base64");
+    writeFileSync(file, png);
     console.log(`  ${name}.png  ${png.readUInt32BE(16)}x${png.readUInt32BE(20)}  ${(png.length / 1024).toFixed(0)} KB`);
   }
 }
@@ -172,7 +178,10 @@ async function main() {
     chromeProc = browser.proc;
     cdp = browser.cdp;
     const { sessionId } = await tab(cdp);
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: DPR, mobile: false }, sessionId);
+    // The viewport in CSS pixels; each shot then asks for the raster scale
+    // it needs. Everything driven here -- hover, clicks, scrolling -- is in
+    // CSS pixels either way.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
     const p = new Driver(cdp, sessionId);
 
     // Everything so far has been read, so the only arrival is the one in the film.
