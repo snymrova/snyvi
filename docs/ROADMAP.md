@@ -1661,6 +1661,65 @@ view the camera points at that has moved fails the push rather than the
 release. The film is left to the release, since it needs ffmpeg and a
 minute.
 
+## After 0.21: the film is a hero
+
+The film was two panes and no words: a terminal set flush over the
+viewer, which read as one program with a terminal in it, for thirty-five
+seconds, ending on a palette with a word typed in. A reader who did not
+already know what the queue was had to infer it from a bar that said
+"1 waiting", and nothing said what the thing was called or where to get
+it.
+
+**A stage.** The two are windows now, on a desktop, apart, each under a
+title bar of its own: *Claude Code — ~/ledger* above, dark, and *snyvi*
+below, light, with the mark. Two cards open the film and one closes it,
+in the order a product film runs: the problem, the name, the take, and
+where to get it. The first card has no mark and says what the trouble
+is -- your agents write all day, and what they write is read as raw text
+in a terminal or dug out of a folder by hand and gone by the next
+session. The second is the mark, the name and the line the README opens
+with. The last has the link, and the line the README's install section
+ends on, since it is the thing a reader of a film about agents wants to
+know: it runs on your machine, one static binary, nothing phones home.
+The bars and the cards are HTML, drawn by the same Chromium in the
+page's own Inter, so nothing is set in a font ffmpeg found; ffmpeg stacks
+each window under its bar, lays both on the desktop, crossfades the cards
+in and out and fades to black. 1488x1036, seventy-six seconds, 3.7 MB.
+
+**A voice.** Eleven lines say what is on the screen as it happens: one
+for each card, and one for what the plan is, what is asked above and where,
+that the call is real, what the reply means, and `n`, `c`, the diagram
+and ⌘K. The voice of the README, not a pitch. They are spoken by a
+text-to-speech model through OpenRouter's speech endpoint, which takes
+the OpenAI shape and answers with the bytes, so it is one `fetch` and no
+dependency. Each line is fetched once and kept under
+`~/.cache/snyvi-media` by the hash of the model, the voice and the words,
+so a re-take costs nothing and a changed word costs one line.
+`SNYVI_TTS_MODEL` and `SNYVI_TTS_VOICE` pick another voice; the default is
+Microsoft's MAI Voice 2, which is what OpenRouter's own example uses.
+Without `OPENROUTER_API_KEY` the film is silent and says so: CI has no
+key and takes only the stills.
+
+The timing runs the other way from what a voice-over usually is. The
+lines are fetched and measured before the first frame, and each beat of
+the take is a cue: it stamps the moment on the clock the screencast's
+frames already carry, and it does not begin until the line before it has
+ended -- so the picture holds for the voice, and the voice is never cut
+by the picture. The cards are held for their lines the same way. The
+take grew from 34 to 47 seconds, all of it beats waiting for a sentence
+to finish; ffmpeg lays each clip at its stamp, moved by where the take
+begins in the film, and mixes them under the picture.
+
+**Music.** An instrumental bed under all of it, from a music model
+through the same endpoint -- asked for as a chat completion with audio
+among its modalities, which answers only as a stream, the mp3 arriving
+in base64 pieces on the deltas -- and kept the same way as a line, so it
+is bought once. Ninety seconds, asked to be calm, steady from the first
+bar and without a melody that competes with a voice. It sits about six
+decibels under the lines, fades in over the first two seconds and out
+over the last three, and is compressed against the voice, so it steps
+back while a line is being said and returns between them.
+
 ## Not yet watched on Windows or macOS
 
 The build, the tests, the daemon and the window are all exercised by CI

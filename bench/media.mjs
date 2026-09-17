@@ -3,19 +3,25 @@
  *
  *   node bench/media.mjs [--out docs/media] [--bin target/release/snyvi] [--keep] [--stills] [--film]
  *
+ * With OPENROUTER_API_KEY set the film is narrated: one line per beat, spoken
+ * by a text-to-speech model through OpenRouter, fetched once and cached under
+ * ~/.cache/snyvi-media. Without it the film is silent, and says so.
+ *
  * A daemon of its own on a port of its own, seeded from bench/seed with the
  * documents an agent would send over an afternoon on one project -- a plan,
  * a review of the PR, the plan again as revised, a summary that arrives while
  * the plan is being read -- and a second project so the sidebar has a shape.
  * Then Chromium, at 1440x900, on each of the views the README shows: the
  * stills at 2x in both themes, and the film at 1x from the page's own
- * screencast, cut to an mp4 by ffmpeg. Nothing here is measured;
+ * screencast, set on a stage between two cards and cut to an mp4 by
+ * ffmpeg. Nothing here is measured;
  * bench/ui.mjs is the probe. This is the camera.
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, copyFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
@@ -293,16 +299,14 @@ function mcpClient(proc) {
 const TERM_H = 250;
 const TERM = `<!doctype html><meta charset="utf-8"><style>
   html, body { margin: 0; background: #16181d; color: #d5d8de; height: 100%; overflow: hidden; }
-  body { font: 15px/1.5 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; padding: 14px 22px; box-sizing: border-box; }
-  .bar { color: #6b7280; font-size: 13px; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
-  .bar i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #3a3f48; }
+  body { font: 15px/1.5 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; padding: 12px 22px; box-sizing: border-box; }
   .l { white-space: pre-wrap; }
   .p { color: #9aa3b2; } .p b { color: #d5d8de; font-weight: 500; }
   .t { color: #e0763e; } .r { color: #9aa3b2; padding-left: 2ch; }
   .a { color: #d5d8de; }
   .cur { display: inline-block; width: 8px; height: 17px; background: #d5d8de; vertical-align: -3px; animation: b 1s steps(1) infinite; }
   @keyframes b { 50% { opacity: 0; } }
-</style><div class="bar"><i></i><i></i><i></i>&nbsp; ~/ledger — claude</div><div id="o"></div>
+</style><div id="o"></div>
 <script>
   const o = document.getElementById("o");
   window.term = {
@@ -311,25 +315,200 @@ const TERM = `<!doctype html><meta charset="utf-8"><style>
   };
 </script>`;
 
-/** Twenty-eight seconds, in two panes. Above, a Claude Code session: the
- *  reader asks for the plan to be revised and sent, and the model's
- *  send_document call is made for real through the MCP server and answered
- *  by it. Below, the viewer: the plan is being read, its revision arrives,
- *  `n` opens it, `c` shows what changed, the diagram is drawn on the way
- *  down, and ⌘K finds a word across the library. Each pane is its own tab's
- *  screencast -- a frame for every paint and the time it was painted, on
- *  one clock -- and ffmpeg stacks the two into one constant-rate film. */
+/* The stage the film is played on: a desktop with two windows on it, each
+ * under a title bar of its own, so the terminal reads as Claude Code and
+ * the viewer as snyvi and neither as a part of the other; a card before
+ * them with the mark and the line the README opens with, and a card after
+ * with where to get it. The bars and the cards are HTML, drawn by the same
+ * Chromium in the page's own Inter, so ffmpeg only stacks and fades. */
+const PAD = 24, GAP = 20, BAR = 34, XFADE = 0.6;
+const VIEW_H = H - TERM_H;
+const STAGE_W = W + 2 * PAD, STAGE_H = PAD + BAR + TERM_H + GAP + BAR + VIEW_H + PAD;
+const DESK = "#0b0d11";
+const MARK = readFileSync(join(HERE, "..", "icons", "icon.svg"), "utf8");
+const INTER = readFileSync(join(HERE, "..", "ui", "fonts", "inter.woff2")).toString("base64");
+const TYPE = `@font-face { font-family: Inter; font-weight: 400 700; src: url(data:font/woff2;base64,${INTER}) format("woff2"); }`;
+const TAGLINE = "A fast, beautiful viewer for the documents your agents produce.";
+
+/** A window's title bar: three dots and a name, in the window's theme. */
+const bar = (title, dark) => `<!doctype html><meta charset="utf-8"><style>${TYPE}
+  body { margin: 0; height: ${BAR}px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+         font: 500 13px Inter, system-ui, sans-serif; background: ${dark ? "#1c2029" : "#f3f1ec"}; color: ${dark ? "#9aa3b2" : "#5c574f"}; }
+  i { width: 12px; height: 12px; border-radius: 50%; background: ${dark ? "#3a3f48" : "#d9d5cc"}; }
+  .t { flex: 1; text-align: center; margin-right: 52px; display: flex; justify-content: center; align-items: center; gap: 7px; }
+  .t svg { width: 15px; height: 15px; }
+</style><i></i><i></i><i></i><span class="t">${title}</span>`;
+
+/** A card: a title, with the mark over it or not, and a line or three under. */
+const card = ({ mark = true, title = "snyvi", lines = [] }) => `<!doctype html><meta charset="utf-8"><style>${TYPE}
+  html, body { margin: 0; height: 100%; background: #15181f; color: rgba(255,255,255,.87); font-family: Inter, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 120px; box-sizing: border-box; text-align: center; }
+  svg { width: 104px; height: 104px; margin-bottom: 10px; }
+  h1 { font-size: 64px; font-weight: 600; letter-spacing: -.025em; margin: 0; line-height: 1; }
+  h1.q { font-size: 52px; letter-spacing: -.02em; line-height: 1.15; max-width: 22ch; margin-bottom: 8px; }
+  p { margin: 0; font-size: 24px; color: #9aa3b2; line-height: 1.45; max-width: 52ch; }
+  .u { font-size: 22px; color: #e0763e; margin-top: 26px; font-weight: 500; }
+  .m { font-size: 17px; color: #6b7280; }
+</style>${mark ? MARK : ""}<h1${mark ? "" : ' class="q"'}>${title}</h1>${lines.join("")}`;
+const PROBLEM = card({ mark: false, title: "Your agents write all day.",
+  lines: [`<p>Plans, reviews, reports — read as raw text in a terminal, or found by hand in a folder, and gone by the next session.</p>`] });
+const INTRO = card({ lines: [`<p>${TAGLINE}</p>`] });
+const OUTRO = card({ lines: [`<p>${TAGLINE}</p>`, `<div class="u">github.com/snymrova/snyvi</div>`,
+  `<div class="m">Runs on your machine · one static binary · Linux, macOS and Windows · nothing phones home · MIT</div>`] });
+
+/* The narration: one line per beat of the film, in the order the beats
+ * come, and one for each card. Each is spoken once through OpenRouter's
+ * speech endpoint, which takes the OpenAI shape and answers with the
+ * bytes, and kept by the hash of what was asked for, so a re-take of the
+ * film with the same words costs nothing and a changed word costs one
+ * line. The name is written the way it is said -- sny as in sky -- since
+ * spelt as it is, the voice said it three ways in one film. */
+const NAME = "snyvee";
+const LINES = {
+  problem: "Your agents write all day: plans, reviews, reports. You read them as raw text in a terminal, or go looking for the file, and by the next session they are gone.",
+  intro: `${NAME}. A fast, beautiful viewer for the documents your agents produce.`,
+  open: `An agent wrote this plan and sent it. It is open in ${NAME}'s own window, filed under its project.`,
+  ask: `Above it, in Claude Code, the reader asks for a revision against the review, sent back to ${NAME}.`,
+  call: `The call is real: send document, through ${NAME}'s MCP server.`,
+  reply: "The reply says the document is waiting, at the top of the queue. It never takes the page away.",
+  next: "N opens it.",
+  diff: "C shows what changed against the version before.",
+  diagram: "Diagrams are drawn in the page's own colours.",
+  find: "And command K finds a word across everything every agent has sent.",
+  outro: `${NAME} runs on your machine: one static binary, for Linux, macOS and Windows. Nothing phones home. ${NAME}, on GitHub.`,
+};
+/* The music: an instrumental bed from a music model through the same
+ * endpoint, asked for once and kept the same way as a line. It is laid
+ * under the whole film, faded in and out, and pushed down while a line is
+ * being said. */
+const MUSIC_MODEL = process.env.SNYVI_MUSIC_MODEL || "google/lyria-3-pro-preview";
+const MUSIC = "Instrumental only, no vocals. A calm, warm, minimal electronic bed for a software product demo: soft piano and pads, gentle pulse, 90 bpm, unobtrusive, no drops, no melody that competes with a voice-over. Steady from the first bar; about ninety seconds.";
+const TTS_MODEL = process.env.SNYVI_TTS_MODEL || "microsoft/mai-voice-2";
+const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "en-US-Harper:MAI-Voice-2";
+
+/** The lines and the music as mp3s, with how long each runs, or null
+ *  without a key. */
+async function narration() {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) { console.log("  no OPENROUTER_API_KEY: the film is silent"); return null; }
+  const cache = join(homedir(), ".cache", "snyvi-media");
+  mkdirSync(cache, { recursive: true });
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${key}` };
+  const seconds = file => parseFloat(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { encoding: "utf8" }));
+  const kept = async (what, key, fetchIt) => {
+    const file = join(cache, `${createHash("sha256").update(JSON.stringify(key)).digest("hex").slice(0, 16)}.mp3`);
+    if (!existsSync(file)) {
+      const res = await fetchIt();
+      if (!res.ok) throw new Error(`${what}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+      writeFileSync(file, await fetchIt.read(res));
+    }
+    return { file, seconds: seconds(file) };
+  };
+  const clips = {};
+  for (const [name, input] of Object.entries(LINES)) {
+    const speak = () => fetch("https://openrouter.ai/api/v1/audio/speech", { method: "POST", headers,
+      body: JSON.stringify({ model: TTS_MODEL, voice: TTS_VOICE, input, response_format: "mp3" }) });
+    speak.read = async res => Buffer.from(await res.arrayBuffer());
+    clips[name] = await kept(`speech for "${name}"`, [TTS_MODEL, TTS_VOICE, input], speak);
+  }
+  // A music model answers only as a stream, the audio in base64 pieces on
+  // the deltas of a chat completion.
+  const play = () => fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers,
+    body: JSON.stringify({ model: MUSIC_MODEL, modalities: ["audio", "text"], audio: { format: "mp3" }, stream: true, messages: [{ role: "user", content: MUSIC }] }) });
+  play.read = async res => {
+    let b64 = "";
+    for (const line of (await res.text()).split("\n")) {
+      if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+      const j = JSON.parse(line.slice(6));
+      if (j.error) throw new Error(`music: ${JSON.stringify(j.error).slice(0, 200)}`);
+      b64 += j.choices?.[0]?.delta?.audio?.data || "";
+    }
+    if (!b64) throw new Error("music: the stream carried no audio");
+    return Buffer.from(b64, "base64");
+  };
+  const music = await kept("music", [MUSIC_MODEL, MUSIC], play);
+  console.log(`  narration: ${Object.keys(clips).length} lines, ${Object.values(clips).reduce((s, c) => s + c.seconds, 0).toFixed(1)} s, ${TTS_MODEL} as ${TTS_VOICE}; music ${music.seconds.toFixed(0)} s, ${MUSIC_MODEL}`);
+  return { clips, music };
+}
+
+/** The voice over a take: `cue(name)` says a line from now, on the clock
+ *  the screencast's frames carry, after the line before it has finished --
+ *  so the picture holds for the voice and never the other way. */
+class Voice {
+  constructor(sound) { this.clips = sound?.clips ?? null; this.music = sound?.music ?? null; this.cues = []; this.until = 0; }
+  /** How long a line runs, or 0 without a voice. */
+  length(name) { return this.clips ? this.clips[name].seconds : 0; }
+  async cue(name) {
+    if (!this.clips) return;
+    const now = Date.now() / 1000;
+    if (this.until > now) await sleep((this.until - now) * 1000 + 250);
+    const at = Date.now() / 1000;
+    this.cues.push({ ...this.clips[name], at });
+    this.until = at + this.clips[name].seconds;
+  }
+  /** A line at a fixed second of the finished film: the cards' lines. */
+  pin(name, t) { if (this.clips) this.cues.push({ ...this.clips[name], t }); }
+  /** Hold until the current line has ended. */
+  async done() { const now = Date.now() / 1000; if (this.until > now) await sleep((this.until - now) * 1000); }
+  /** ffmpeg's inputs and filter for the track: a cue on the take's clock is
+   *  laid against `t0` and moved by `shift`, where the take begins in the
+   *  film; a pinned line is where it says. `first` is the index of the
+   *  first audio input; `total` the film's length, which the track is cut
+   *  to and fades out at. */
+  track({ t0, shift, first, total }) {
+    if (!this.cues.length) return { inputs: [], filter: "", map: ["-map", "[v]"] };
+    const inputs = [...this.cues.flatMap(c => ["-i", c.file]), "-i", this.music.file];
+    const at = c => "t" in c ? c.t : c.at - t0 + shift;
+    const delayed = this.cues.map((c, i) => `[${first + i}:a]adelay=${Math.round(at(c) * 1000)}:all=1[n${i}]`);
+    const end = total.toFixed(3);
+    // The lines, laid out and cut to the film; then the music under them,
+    // quiet, faded in and out, and compressed against the lines so it
+    // steps back while one is being said and returns between them.
+    const filter = `;${delayed.join(";")};${this.cues.map((_, i) => `[n${i}]`).join("")}amix=inputs=${this.cues.length}:normalize=0,`
+      + `aresample=44100,apad,atrim=0:${end},asplit[voice][key]`
+      + `;[${first + this.cues.length}:a]aresample=44100,atrim=0:${end},volume=0.3,afade=t=in:d=2,afade=t=out:st=${(total - 3).toFixed(3)}:d=3[bed]`
+      + `;[bed][key]sidechaincompress=threshold=0.03:ratio=3:attack=60:release=700:level_sc=1[duck]`
+      + `;[voice][duck]amix=inputs=2:normalize=0,afade=t=out:st=${(total - 1).toFixed(3)}:d=1[a]`;
+    return { inputs, filter, map: ["-map", "[v]", "-map", "[a]", "-c:a", "aac", "-b:a", "128k"] };
+  }
+}
+
+/** A minute, less a little: a card, then two windows on a desktop and a
+ *  voice, then a card. Above, Claude Code: the reader asks for the plan to
+ *  be revised and sent, and the model's send_document call is made for
+ *  real through the MCP server and answered by it. Below, snyvi: the plan
+ *  is being read, its revision arrives, `n` opens it, `c` shows what
+ *  changed, the diagram is drawn on the way down, and ⌘K finds a word
+ *  across the library. Each window is its own tab's screencast -- a frame
+ *  for every paint and the time it was painted, on one clock -- and ffmpeg
+ *  sets the two on the stage, under their bars, between the cards. */
 async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
-  const VIEW_H = H - TERM_H;
   const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
   // The terminal, in a browser of its own: a headless Chromium paints only
   // the tab in front, so two tabs in one would give one screencast and a
-  // blank.
-  const second = await launch(join(tmp, "chrome-term"), { windowSize: `${W},${TERM_H}` });
+  // blank. Before it is a terminal it draws the stills the stage is built
+  // from: the two cards and the two title bars.
+  const second = await launch(join(tmp, "chrome-term"), { windowSize: `${STAGE_W},${STAGE_H}` });
   const t = new Driver(second.cdp, (await tab(second.cdp)).sessionId);
-  await second.cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: TERM_H, deviceScaleFactor: 1, mobile: false }, t.s);
   await t.goto("about:blank");
+  const still = async (name, html, w, h) => {
+    await second.cdp.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false }, t.s);
+    await t.ev(`document.open(); document.write(${JSON.stringify(html)}); document.close(); document.fonts.ready.then(() => true)`);
+    await sleep(200);
+    const { data } = await second.cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }, t.s);
+    const file = join(tmp, `${name}.png`);
+    writeFileSync(file, Buffer.from(data, "base64"));
+    return file;
+  };
+  const stills = {
+    problem: await still("problem", PROBLEM, STAGE_W, STAGE_H),
+    intro: await still("intro", INTRO, STAGE_W, STAGE_H),
+    outro: await still("outro", OUTRO, STAGE_W, STAGE_H),
+    termBar: await still("bar-term", bar("Claude Code — ~/ledger", true), W, BAR),
+    viewBar: await still("bar-view", bar(`${MARK.replace(/ width="32" height="32"/, "")}snyvi`, false), W, BAR),
+  };
+  await second.cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: TERM_H, deviceScaleFactor: 1, mobile: false }, t.s);
   await t.ev(`document.open(); document.write(${JSON.stringify(TERM)}); document.close(); !!window.term`);
   const say = (cls, html) => t.ev(`term.add(${JSON.stringify(cls)}, ${JSON.stringify(html)})`);
   const cursor = on => t.ev(`term.cursor(${on})`);
@@ -352,14 +531,20 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await p.settled();
   for (let i = 0; i < 40 && !(await (await fetch(`${base}/api/health`)).json()).window; i++) await sleep(100);
 
+  // The lines are fetched before the first frame, so no network wait is in
+  // the picture.
+  const voice = new Voice(await narration());
   const recV = await p.record(W, VIEW_H);
   const recT = await t.record(W, TERM_H);
   await cursor(true);
-  await sleep(1200);
+  await sleep(600);
+  await voice.cue("open");
+  await sleep(600);
   await p.scroll(320);
   await sleep(400);
 
   await cursor(false);
+  await voice.cue("ask");
   await type("Revise docs/rate-limiting.md against the review of #142, then send it to snyvi.");
   await sleep(700);
   await say("p", "");
@@ -368,6 +553,7 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await sleep(500);
   await say("r", "⎿  Updated docs/rate-limiting.md");
   await sleep(1100);
+  await voice.cue("call");
   await say("t", `⏺ <span class=a>snyvi - send_document</span> (MCP)(path: "docs/rate-limiting.md", workflow: "${workflow}")`);
   // The call itself, the way the model makes it.
   copyFileSync(join(SEED, "plan-v2.md"), planV1);
@@ -375,6 +561,7 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   const reply = res.content?.[0]?.text || JSON.stringify(res);
   await sleep(300);
   await say("r", "⎿  " + esc(reply));
+  await voice.cue("reply");
   await sleep(1400);
   await say("t", "⏺ Revised and sent. The burst limits come down to what the dark week's logs showed, writes cost five tokens, and Redis fails open with an alarm. It is at the top of the queue in snyvi.");
   await sleep(800);
@@ -382,13 +569,16 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await cursor(true);
   await sleep(1400);
 
+  await voice.cue("next");
   await p.press("n");
   await sleep(2200);
+  await voice.cue("diff");
   await p.press("c");
   await p.settled();
   await sleep(1200);
   await p.scroll(520);
   await sleep(1800);
+  await voice.done();
   await p.click('[data-act="back"]');
   await p.settled();
   await sleep(600);
@@ -398,20 +588,24 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
   await p.ev(`document.querySelector(".mmd").scrollIntoView({ block: "center", behavior: "smooth" })`);
   await sleep(1200);
   await p.settled();
+  await voice.cue("diagram");
   await sleep(2400);
+  await voice.cue("find");
   await p.press("k", { meta: true });
   await sleep(500);
   for (const ch of "retry") { await p.type(ch); await sleep(140); }
   await sleep(1800);
   await p.press("Enter");
   await sleep(2200);
+  await voice.done();
   const top = await recT.stop();
   const bottom = await recV.stop();
 
   // Frames to disk, each held until the next was painted; both panes cut
-  // from the same first moment to the same last, so they stay in step.
+  // from the same first moment to the same last, so they stay in step, and
+  // the film runs on past the last frame until the last line has been said.
   const t0 = Math.min(top[0].at, bottom[0].at);
-  const t1 = Math.max(top.at(-1).at, bottom.at(-1).at) + 1.5;
+  const t1 = Math.max(top.at(-1).at, bottom.at(-1).at, voice.until) + 1.5;
   const dir = join(tmp, "frames");
   const list = (frames, name) => {
     const d = join(dir, name);
@@ -428,14 +622,46 @@ async function film(p, cdp, base, workflow, planV1, rpc, tmp) {
     return join(d, "list.txt");
   };
   const a = list(top, "top"), b = list(bottom, "bottom");
-  execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b,
-    "-filter_complex", "[0:v]fps=30[a];[1:v]fps=30[b];[a][b]vstack,format=yuv420p",
+
+  // The cut: the problem, then the name, each a card held for its line and
+  // a breath; the take, faded in over the card's last moments; the outro
+  // card, faded in the same way and held for its line, then out to black
+  // with the sound. Each part begins where the last one's fade begins.
+  const take = t1 - t0;
+  const parts = [
+    { name: "problem", len: Math.max(4, voice.length("problem") + 1.2), still: stills.problem },
+    { name: "intro", len: Math.max(3, voice.length("intro") + 1.2), still: stills.intro },
+    { name: "take", len: take },
+    { name: "outro", len: Math.max(5, voice.length("outro") + 2), still: stills.outro },
+  ];
+  let start = 0;
+  for (const part of parts) { part.at = start; start += part.len - XFADE; }
+  const total = start + XFADE;
+  const begin = name => parts.find(p => p.name === name).at;
+  voice.pin("problem", 0.5);
+  voice.pin("intro", begin("intro") + 0.4);
+  voice.pin("outro", begin("outro") + 0.4);
+  const audio = voice.track({ t0, shift: begin("take"), first: 7, total });
+  const held = (file, seconds) => ["-loop", "1", "-framerate", "30", "-t", seconds.toFixed(3), "-i", file];
+  const graph = [
+    `[0:v]fps=30[t];[1:v]fps=30[b]`,
+    `[2:v][t]vstack[tw];[3:v][b]vstack[bw]`,
+    `color=c=${DESK}:s=${STAGE_W}x${STAGE_H}:r=30:d=${take.toFixed(3)}[desk]`,
+    `[desk][tw]overlay=x=${PAD}:y=${PAD}[d1];[d1][bw]overlay=x=${PAD}:y=${PAD + BAR + TERM_H + GAP},format=yuv420p,settb=AVTB[take]`,
+    `[4:v]format=yuv420p,settb=AVTB[problem];[5:v]format=yuv420p,settb=AVTB[intro];[6:v]format=yuv420p,settb=AVTB[outro]`,
+    ...parts.slice(1).map((part, i) => `[${i ? `m${i}` : "problem"}][${part.name}]xfade=transition=fade:duration=${XFADE}:offset=${part.at.toFixed(3)}[m${i + 1}]`),
+    `[m${parts.length - 1}]fade=t=out:st=${(total - 0.8).toFixed(3)}:d=0.8[v]`,
+  ].join(";") + audio.filter;
+  execFileSync("ffmpeg", ["-y", "-loglevel", "error",
+    "-f", "concat", "-safe", "0", "-i", a, "-f", "concat", "-safe", "0", "-i", b,
+    "-i", stills.termBar, "-i", stills.viewBar, ...parts.filter(p => p.still).flatMap(p => held(p.still, p.len)), ...audio.inputs,
+    "-filter_complex", graph, ...audio.map,
     "-c:v", "libx264", "-crf", "20", "-preset", "slow", "-movflags", "+faststart", join(OUT, "demo.mp4")],
     { stdio: ["ignore", "ignore", "inherit"] });
   // No gif: half a minute of a full page does not go under 7 MB with the
-  // text still readable, and the mp4 is under 2. The README carries the
+  // text still readable, and the mp4 is under 3. The README carries the
   // mp4 the one way GitHub plays one inline, which the release notes say.
-  console.log(`  demo.mp4 (${top.length + bottom.length} frames, ${(t1 - t0).toFixed(1)} s)`);
+  console.log(`  demo.mp4 (${top.length + bottom.length} frames, ${total.toFixed(1)} s${voice.cues.length ? `, ${voice.cues.length} lines spoken` : ", silent"})`);
 
   // Back to a plain tab for the stills: the page latched the window mark
   // for the life of the tab, and the terminal is not needed again.
