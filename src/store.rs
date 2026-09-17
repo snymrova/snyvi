@@ -1070,10 +1070,7 @@ mod tests {
         assert_eq!(s.census().unwrap(), Census::default());
         assert_eq!(s.count().unwrap(), 0);
         assert!(s.get(&a.id).unwrap().is_none());
-        assert!(
-            s.undelete(&c.id).unwrap() == false,
-            "the deleted one went too"
-        );
+        assert!(!s.undelete(&c.id).unwrap(), "the deleted one went too");
         assert!(
             s.search("aaa", 10).unwrap().is_empty(),
             "and the index with it"
