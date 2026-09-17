@@ -2365,6 +2365,50 @@
     else showDoc(a.dataset.id, true);
     if (root.dataset.sheet === "side") closeSheet();
   });
+  /** A link inside a document, which the renderer has already sorted into the
+   *  ones that leave snyvi and the ones that do not.
+   *
+   *  `data-ext` is the web: it carries `target="_blank"`, so a browser gives it
+   *  a tab and the native window hands it to the desktop, and there is nothing
+   *  to do here. What is left is same-origin, and falls in three parts. A
+   *  document or a browsed file is a place in snyvi, so it is navigated to
+   *  without a reload -- which is how a relative link between two files in a
+   *  browsed folder comes to work at all. Anything else same-origin is not a
+   *  page this viewer has: `[notes](./notes.md)` in a sent document resolves
+   *  against `/d/<id>` and used to land on a bare "Not found" with no way back,
+   *  inside a window with no Back button. It says so instead, and offers the
+   *  browser for the reader who meant it. */
+  docEl.addEventListener("click", e => {
+    const a = e.target.closest(".prose a[href]");
+    if (!a || a.dataset.ext !== undefined || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    // A fragment is the document's own; the browser and the anchor handlers
+    // above already do the right thing with it.
+    const href = a.getAttribute("href") || "";
+    if (href.startsWith("#")) return;
+    let u;
+    try { u = new URL(a.href); } catch { return; }
+    // Cross-origin and unmarked, which is a document rendered before the
+    // renderer marked them: the library keeps the HTML it was given at receive
+    // time, so every document already in it predates the mark. Sent away from
+    // the viewer here instead, which is what the mark would have done.
+    if (u.origin !== location.origin) {
+      e.preventDefault();
+      window.open(a.href, "_blank", "noopener");
+      return;
+    }
+    const d = u.pathname.match(/^\/d\/([a-z0-9]+)$/);
+    if (d) { e.preventDefault(); showDoc(d[1], true); return; }
+    const b = u.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
+    if (b) { e.preventDefault(); showBrowse(b[1], decodeURIComponent(b[2] || ""), true); return; }
+    if (u.pathname === "/") { e.preventDefault(); showInbox(true); return; }
+    if (u.pathname === "/connect") { e.preventDefault(); showConnect(true); return; }
+    e.preventDefault();
+    toast("Not a page in snyvi", href, null, {
+      label: "Open anyway",
+      run: () => window.open(a.href, "_blank", "noopener"),
+    });
+  });
+
   document.addEventListener("mouseover", e => {
     const a = e.target.closest("a[data-id]");
     if (a && !state.cache.has(a.dataset.id)) fetchDoc(a.dataset.id).catch(() => {});

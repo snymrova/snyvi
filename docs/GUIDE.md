@@ -657,6 +657,19 @@ a fixed list of schemes. `snyvi://` can usually be added to that list
 (kitty's `url_prefixes`, for one), and the `http://` link is always given
 alongside for a terminal that does not know it.
 
+A link inside a document goes the other way. One to the web opens in a
+browser: a tab beside the viewer, or, from the window, whatever your
+desktop opens links with — the window has no address bar and no Back
+button to come home by, so the web belongs outside it. A small ↗ beside
+the link says so before you follow it. `mailto:` and anything else your
+desktop answers for go out the same way, without a blank tab. A link to
+another document, or to a file in the folder you are browsing, turns the
+page here without leaving — which is what makes a relative link between
+two browsed files work. And a relative link that points at nothing snyvi
+has says so in a line at the corner, offering the browser if that is
+what you meant, rather than replacing what you were reading with "Not
+found".
+
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders

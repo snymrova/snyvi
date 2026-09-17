@@ -352,6 +352,15 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 /* Just clicked: the mark says so itself for a moment, in place of a toast. */
 .prose a.anchor[data-said] { opacity: 1; color: var(--accent); }
 .prose a.anchor[data-said]::before { content: "✓"; }
+/* A link that leaves snyvi says so before it is followed, since following one
+   opens a tab or a browser rather than turning the page. Small, dimmer than
+   the link, and never on a link wrapped around an image -- the mark would
+   land in the middle of the picture. */
+.prose a[data-ext]:not(:has(img))::after {
+  content: "↗"; font-size: .75em; line-height: 1; vertical-align: .35em;
+  margin-left: .12em; opacity: .55; text-decoration: none;
+}
+.prose a[data-ext]:hover::after { opacity: .85; }
 /* Where a jump landed: the heading is lit for a moment, then not. A jump is
    instant -- see jumpTo in app.js for why it cannot be smooth -- and this is
    what tells the eye where it went. */

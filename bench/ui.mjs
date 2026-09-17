@@ -206,6 +206,7 @@ async function main() {
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
     sections.push(["a link into a folder", await browseRows(p, browsed)]);
+    sections.push(["a link out of a document", await docLinkRows(p, base, token, first.doc.id)]);
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
@@ -898,6 +899,111 @@ async function browseRows(p, browsed) {
   const right = /line_300\b/.test(line.text || "");
   rows.push(["and at a line", line.n === 1 && right && line.inView,
     !line.n ? "no line was marked" : line.n !== 1 ? `${line.n} lines marked` : !right ? `the marked line reads "${line.text}"` : !line.inView ? "line 300 is marked but off the screen" : "line 300 marked and on the screen"]);
+  return rows;
+}
+
+/** 1.0.2: a link inside a document, and where following one goes. The viewer
+ *  is a page in a window with no address bar and no Back button of its own --
+ *  Back is the page's own key handler, and a page from somewhere else does not
+ *  have it -- so a click on a link to github.com used to leave the reader
+ *  there with nothing to come home by but the tray, and `[notes](./notes.md)`
+ *  in a sent document resolved against `/d/<id>` and landed on a bare "Not
+ *  found". The renderer sorts the links at receive time and the page acts on
+ *  what it wrote, which is what these rows read.
+ *
+ *  The web is read as an attribute rather than clicked: a click on it is a
+ *  second tab, and what the native window does with one is `stays_home`'s to
+ *  say, under test in src/bin/app.rs. Everything that stays same-origin is
+ *  clicked for real, because a handler the real event never reaches is the
+ *  fault being looked for. */
+async function docLinkRows(p, base, token, otherId) {
+  const rows = [];
+  const body = [
+    "# Links that go somewhere",
+    "",
+    "[the web](https://github.com/snymrova/snyvi)",
+    "",
+    "[mail](mailto:a@b.c)",
+    "",
+    "[a section](#links-that-go-somewhere)",
+    "",
+    "[a file beside it](./notes.md)",
+    "",
+    `[another document](/d/${otherId})`,
+    "",
+  ].join("\n");
+  const r = await fetch(`${base}/api/docs`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content: body, title: "Links that go somewhere", lang: "md" }),
+  });
+  if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
+  const { id } = await r.json();
+  const url = `${base}/d/${id}`;
+  await p.goto(url);
+  await p.pointerAway();
+
+  // What the renderer wrote on each link, and what the stylesheet hangs on it.
+  const read = sel => p.ev(`(() => { const a = document.querySelector(${JSON.stringify(sel)});
+    if (!a) return null;
+    return { target: a.getAttribute("target"), rel: a.getAttribute("rel"),
+             ext: a.dataset.ext !== undefined,
+             mark: getComputedStyle(a, "::after").content }; })()`);
+
+  const web = await read(`.prose a[href^="https://github.com"]`);
+  const webOk = web && web.target === "_blank" && /noopener/.test(web.rel || "") && web.ext && /↗/.test(web.mark || "");
+  rows.push(["the web opens away from the viewer", !!webOk,
+    !web ? "the link is not in the page"
+      : webOk ? "target=_blank, rel=noopener, and the ↗ says so before it is followed"
+      : `target=${JSON.stringify(web.target)} rel=${JSON.stringify(web.rel)} data-ext=${web.ext} mark=${web.mark}`]);
+
+  // A scheme the desktop answers for is outbound, but a browser should not
+  // open a blank tab for it.
+  const mail = await read(`.prose a[href^="mailto:"]`);
+  const mailOk = mail && mail.ext && mail.target === null;
+  rows.push(["and mailto: leaves without a tab", !!mailOk,
+    !mail ? "the link is not in the page"
+      : mailOk ? "marked as leaving, with no target for a browser to act on"
+      : `target=${JSON.stringify(mail.target)} data-ext=${mail.ext}`]);
+
+  // A fragment and a relative path stay here, and are left unmarked: the ↗
+  // would be a promise of a tab that never opens.
+  const frag = await read(`.prose a[href="#links-that-go-somewhere"]`);
+  const rel = await read(`.prose a[href="./notes.md"]`);
+  const quiet = frag && rel && !frag.ext && !rel.ext && frag.target === null && rel.target === null
+    && !/↗/.test(frag.mark || "") && !/↗/.test(rel.mark || "");
+  rows.push(["a section and a relative path stay", !!quiet,
+    !frag || !rel ? "one of the two links is not in the page"
+      : quiet ? "neither is marked, and neither wears the ↗"
+      : `#section: ext=${frag?.ext} mark=${frag?.mark}; ./notes.md: ext=${rel?.ext} mark=${rel?.mark}`]);
+
+  // The regression itself: a relative link in a sent document resolves against
+  // `/d/<id>`, which is not a page this viewer has. It used to land on "Not
+  // found" with no way back. A real click, and the document has to still be here.
+  await p.ev(`document.querySelectorAll("#toasts .toast").forEach(t => t.remove()); window.__stay = 1`);
+  await p.clickOn(`.prose a[href="./notes.md"]`);
+  await sleep(300);
+  const said = await p.ev(`(() => { const t = document.querySelector("#toasts .toast");
+    return { title: t ? t.querySelector(".t").textContent.trim() : null,
+             sub: t ? (t.querySelector(".s")?.textContent.trim() ?? null) : null,
+             act: t ? (t.querySelector("button.act")?.textContent.trim() ?? null) : null,
+             path: location.pathname, stay: window.__stay === 1 }; })()`);
+  const toldOk = said.title === "Not a page in snyvi" && said.sub === "./notes.md" && said.act === "Open anyway"
+    && said.path === `/d/${id}` && said.stay;
+  rows.push(["a path that is not a page says so", toldOk,
+    !said.title ? `nothing was said, and the page is at ${said.path}`
+      : toldOk ? `"${said.title}" — ${said.sub}, with "${said.act}" for the reader who meant it, and the document still open`
+      : `said "${said.title}" / ${JSON.stringify(said.sub)} / ${JSON.stringify(said.act)}; the page is at ${said.path}${said.stay ? "" : " after a reload"}`]);
+
+  // And a link that is a page here is a turn of the page, not a load.
+  await p.ev(`document.querySelectorAll("#toasts .toast").forEach(t => t.remove()); window.__stay = 1`);
+  await p.clickOn(`.prose a[href="/d/${otherId}"]`);
+  await sleep(400);
+  const went = await p.ev(`({ path: location.pathname, stay: window.__stay === 1, title: document.title })`);
+  const wentOk = went.path === `/d/${otherId}` && went.stay;
+  rows.push(["a link to another document turns the page", wentOk,
+    wentOk ? `the viewer shows "${went.title}" without a page load`
+      : `the page is at ${went.path}${went.stay ? "" : ", reloaded to get there"}`]);
   return rows;
 }
 

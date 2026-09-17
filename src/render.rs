@@ -300,6 +300,7 @@ impl Renderer {
         // text is what a screen reader reads, and the client makes a click on
         // the mark copy the section's link.
         let raw = raw.replace("<a inert href=\"#", "<a tabindex=\"-1\" href=\"#");
+        let raw = mark_links(&raw);
         let t_md = t.elapsed();
         let out = if has_raw_html { sanitize(&raw) } else { raw };
         if trace {
@@ -901,6 +902,92 @@ pub fn strip_leading_h1(content: &str, _title: &str) -> Option<String> {
     None
 }
 
+/// The scheme of an absolute URL, if it has one: `[a-zA-Z][a-zA-Z0-9+.-]*`
+/// followed by a colon, before any `/`, `?` or `#`. A relative path with a
+/// colon somewhere in it -- `notes/2024:draft.md` -- is not absolute, which
+/// is the case a plain `find(':')` gets wrong.
+fn scheme_of(u: &str) -> Option<&str> {
+    let end = u.find([':', '/', '?', '#'])?;
+    if end == 0 || u.as_bytes()[end] != b':' {
+        return None;
+    }
+    let s = &u[..end];
+    let mut c = s.chars();
+    if !c.next()?.is_ascii_alphabetic() {
+        return None;
+    }
+    if !c.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
+        return None;
+    }
+    Some(s)
+}
+
+/// Whether a link leaves snyvi, and whether a browser should give it a tab of
+/// its own: `Some(true)` for the web, `Some(false)` for a scheme the desktop
+/// answers for -- `mailto:`, `file:` -- and `None` for a link that stays here,
+/// which is a fragment or anything relative.
+fn leaves_snyvi(url: &str) -> Option<bool> {
+    let u = url.trim();
+    if u.is_empty() || u.starts_with('#') {
+        return None;
+    }
+    // `//host/path` is the page's own scheme and someone else's host.
+    if u.starts_with("//") {
+        return Some(true);
+    }
+    match scheme_of(u) {
+        Some(s) if s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("https") => Some(true),
+        Some(_) => Some(false),
+        None => None,
+    }
+}
+
+/// Stamp every link that leaves snyvi, so following one opens where the web
+/// belongs instead of replacing the viewer.
+///
+/// comrak writes a bare `<a href="…">`, and the viewer is a page in a window
+/// with no address bar and no Back button of its own -- Back is the page's own
+/// key handler, and a page from somewhere else does not have it. A click on a
+/// link to github.com therefore used to leave the reader on github.com with
+/// nothing to come home by but the tray. `target="_blank"` makes that a second
+/// tab in a browser, and the window reads it as a request for a window it does
+/// not grant and hands the URL to the desktop.
+///
+/// A document's own `#section` links and anything relative are left alone:
+/// those stay inside snyvi, and the client resolves them.
+///
+/// A pass over the rendered string rather than over the AST, because comrak's
+/// `Link` node carries a URL and a title and no way to add an attribute -- and
+/// because, like everything else here, it runs once per document at receive
+/// time and never again.
+fn mark_links(html: &str) -> String {
+    const OPEN: &str = "<a href=\"";
+    if !html.contains(OPEN) {
+        return html.to_string();
+    }
+    let mut out = String::with_capacity(html.len() + 128);
+    let mut rest = html;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at + OPEN.len()..];
+        // An unterminated attribute is not something to rewrite around: leave
+        // the rest of the document exactly as it came.
+        let Some(end) = after.find('"') else { break };
+        out.push_str(&rest[..at]);
+        out.push_str("<a ");
+        match leaves_snyvi(&after[..end]) {
+            Some(true) => {
+                out.push_str("target=\"_blank\" rel=\"noopener noreferrer\" data-ext=\"\" ")
+            }
+            Some(false) => out.push_str("data-ext=\"\" "),
+            None => {}
+        }
+        out.push_str("href=\"");
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 fn sanitize(html: &str) -> String {
     let mut b = ammonia::Builder::default();
     b.add_tags(["input"])
@@ -914,6 +1001,11 @@ fn sanitize(html: &str) -> String {
                 "tabindex",
                 "data-footnote-ref",
                 "data-footnote-backref",
+                // What `mark_links` wrote. ammonia allows neither by default,
+                // and a document with raw HTML in it would otherwise be the
+                // one kind whose outbound links still opened in the viewer.
+                "target",
+                "data-ext",
             ],
         )
         .add_tag_attributes("li", ["id", "class"])
@@ -1263,6 +1355,62 @@ mod tests {
         assert!(raw.contains("<details>"), "harmless html kept: {raw}");
         assert!(!raw.contains("<script"), "script removed: {raw}");
         assert!(!raw.contains("onerror"), "event handler removed: {raw}");
+    }
+
+    #[test]
+    fn outbound_links_leave_and_the_rest_stay() {
+        let r = r();
+        // Both paths: without raw HTML the sanitizer is skipped, with it the
+        // sanitizer has to be told to keep what mark_links wrote.
+        for (src, why) in [
+            (
+                "[gh](https://github.com/x) and [up](../notes.md) and [s](#top)",
+                "fast",
+            ),
+            (
+                "<b>raw</b>\n\n[gh](https://github.com/x) and [up](../notes.md) and [s](#top)",
+                "sanitized",
+            ),
+        ] {
+            let h = r.render(Kind::Markdown, None, src);
+            let web = h
+                .split("<a ")
+                .find(|s| s.contains("github.com"))
+                .unwrap_or_default();
+            assert!(web.contains("target=\"_blank\""), "{why}: {h}");
+            assert!(web.contains("noopener"), "{why}: {h}");
+            // A relative link is the client's to resolve, and a fragment is the
+            // document's own: neither is sent to a browser.
+            let rel = h
+                .split("<a ")
+                .find(|s| s.contains("notes.md"))
+                .unwrap_or_default();
+            assert!(!rel.contains("target="), "{why}: {h}");
+            assert!(!rel.contains("data-ext"), "{why}: {h}");
+            let frag = h
+                .split("<a ")
+                .find(|s| s.starts_with("href=\"#top\""))
+                .unwrap_or_default();
+            assert!(!frag.contains("data-ext"), "{why}: {h}");
+        }
+
+        // A scheme the desktop answers for is outbound, but a browser should
+        // not open a blank tab for it.
+        let h = r.render(Kind::Markdown, None, "[mail](mailto:a@b.c)");
+        let a = h.split("<a ").nth(1).unwrap_or_default();
+        assert!(a.contains("data-ext"), "{h}");
+        assert!(!a.contains("target="), "{h}");
+    }
+
+    #[test]
+    fn a_colon_in_a_relative_path_is_not_a_scheme() {
+        assert_eq!(leaves_snyvi("notes/2024:draft.md"), None);
+        assert_eq!(leaves_snyvi("./a.md"), None);
+        assert_eq!(leaves_snyvi("/b/x/y.md"), None);
+        assert_eq!(leaves_snyvi("#sec"), None);
+        assert_eq!(leaves_snyvi("HTTPS://x.dev"), Some(true));
+        assert_eq!(leaves_snyvi("//cdn.example/x"), Some(true));
+        assert_eq!(leaves_snyvi("file:///tmp/x"), Some(false));
     }
 
     #[test]
