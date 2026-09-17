@@ -1852,6 +1852,25 @@ up by a channel. A version in a package manager that someone has to
 remember to change is a number enforced by nothing, and this file has
 named that failure enough times.
 
+**Windows is a `setup.exe`.** The zip was five steps before anything
+opened: pick a folder, unzip, open a terminal there, `install-cli`, open
+another terminal. `packaging/windows.iss` is an Inno Setup installer that
+does the same things and asks only whether to go on. It installs for the
+reader alone into `%LOCALAPPDATA%\Programs\snyvi`, so there is no
+administrator prompt. It adds a Start menu entry, puts the folder on the
+user's `PATH`, runs `init-claude`, and opens the window at the end. An
+upgrade stops the daemon and the window before replacing them, and the
+uninstall takes snyvi out of Claude Code and off `PATH` but leaves the
+library alone. Building it turned up a bug: `snyvi-app.exe` was built as
+a console program, so opening it from anywhere but a terminal would have
+put a console window beside the viewer. The same would happen when it
+started `snyvi.exe`. Both are fixed. CI now reads the subsystem out of the
+PE header and runs the installer silently: install, open the Start menu
+entry's target, check that a daemon and a window came up, uninstall, and
+check that they went. SmartScreen still asks once, because neither the
+installer nor the executables are signed. The zip stays on the release for
+a folder managed by hand.
+
 What is a person's: claiming the crate name with the first `cargo
 publish`, creating `snymrova/homebrew-snyvi`, and setting
 `CARGO_REGISTRY_TOKEN` and `HOMEBREW_TAP_TOKEN` on this repository.
@@ -1862,7 +1881,8 @@ open after the postflight are the check.
 
 The build, the tests, the daemon and the window are all exercised by CI
 on a Windows runner and, since 0.16, on two macOS runners. What no
-runner shows is a desktop in use. On Windows: the toast, the tray's
+runner shows is a desktop in use. On Windows: the installer clicked
+through by hand, the toast, the tray's
 click behaviour, the global shortcut pressed by a hand, and how the
 window looks at the display scalings Windows actually ships with. On
 macOS: Gatekeeper's refusal of the ad-hoc signature and the two ways

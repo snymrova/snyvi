@@ -48,28 +48,52 @@ browser. See [Desktop](#desktop) for what the window costs.
 
 ### Windows
 
-Download `snyvi-<version>-x86_64-pc-windows-msvc.zip` from the same page
-and unzip it into a folder of its own -- `%LOCALAPPDATA%\snyvi` is the
-usual place for a program installed for one user. Then, from a terminal
-in that folder:
+Download `snyvi-<version>-x86_64-pc-windows-msvc-setup.exe` from the same
+page and double-click it. That is the install:
+
+- snyvi goes into `%LOCALAPPDATA%\Programs\snyvi`, for you alone, so there
+  is no administrator prompt;
+- *snyvi* appears in the Start menu (and on the desktop, if you tick it);
+- the folder is added to your `PATH`, so `snyvi` runs in any terminal you
+  open afterwards;
+- `snyvi init-claude` is run for you, if the box is left ticked and Claude
+  Code is installed;
+- *Open snyvi* at the end starts the daemon and the window.
+
+Nothing more to type. From a terminal, the same commands as everywhere:
 
 ```
-.\snyvi install-cli                               # puts this folder on your PATH
-snyvi send README.md                              # in a new terminal: starts the daemon, prints a link
-snyvi init-claude                                 # register with Claude Code
-snyvi app                                         # a window of its own
+snyvi send README.md                              # prints a link
+snyvi init codex                                  # any other agent
+snyvi status                                      # what is running, what is registered
 ```
 
-One download, both executables, nothing to choose. `snyvi.exe` is
-everything — daemon, CLI, MCP server, hook — and `snyvi-app.exe` is the
-native window; keep them in the same folder and `snyvi app` finds it.
+Upgrading is running the newer installer: it stops the daemon and the window
+first, replaces both, and keeps everything else. Uninstalling is *snyvi* in
+Settings → Apps: it stops snyvi, takes it back out of Claude Code and off
+`PATH`, and leaves your documents in `%LOCALAPPDATA%\snyvi`. `snyvi reset`,
+before uninstalling, removes those too.
+
+The installer and the executables are not signed, so the first time the
+installer runs Windows shows a SmartScreen sheet saying it protected your
+PC. *More info*, then *Run anyway*, once.
+
+Both executables are in the one download. `snyvi.exe` is everything —
+daemon, CLI, MCP server, hook — and `snyvi-app.exe` is the native window.
 There is no separate package for the window the way there is on Linux,
 because it uses WebView2, which is part of Windows 10 and 11 rather than
 a library to go and install.
 
-The executables are not signed, so the first time one runs Windows may
-show a SmartScreen sheet saying it protected your PC. *More info*, then
-*Run anyway*, once; it is not asked again for that file.
+**Without the installer.** The release also has
+`snyvi-<version>-x86_64-pc-windows-msvc.zip`, for a folder you manage
+yourself. Unzip it somewhere of its own, keep the two executables together
+(`snyvi app` looks for the window beside itself), and from a terminal in
+that folder:
+
+```
+.\snyvi install-cli                               # puts this folder on your PATH
+snyvi init-claude                                 # in a new terminal
+```
 
 ### macOS
 

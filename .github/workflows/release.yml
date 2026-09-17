@@ -230,12 +230,17 @@ jobs:
           $file = "dist/$name.zip"
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
           [IO.File]::WriteAllText((Join-Path (Resolve-Path "dist") "$name.zip.sha256"), "$hash  $name.zip`n")
+          # The installer, which is what the README gives a Windows reader;
+          # the zip stays for anyone who would rather have a folder.
+          pwsh packaging/windows.ps1 $version
+          if ($LASTEXITCODE -ne 0) { throw "the installer did not build" }
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           files: |
             dist/*.zip
+            dist/*-setup.exe
             dist/*.sha256
 
   macos:

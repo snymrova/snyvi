@@ -68,13 +68,12 @@ snyvi send README.md
 snyvi init-claude
 ```
 
-**Windows** — unzip into a folder of its own, then from a terminal there:
-
-```
-.\snyvi install-cli
-snyvi send README.md
-snyvi init-claude
-```
+**Windows** — download `snyvi-*-setup.exe` from the
+[releases page](https://github.com/snymrova/snyvi/releases/latest) and
+double-click it. No administrator needed. It puts snyvi in the Start menu
+and on your `PATH`, connects Claude Code if you have it, and opens the
+viewer when it finishes. The first run shows a SmartScreen warning because
+the installer isn't signed: *More info*, then *Run anyway*.
 
 **Any other Linux** — `install -m 755 snyvi ~/.local/bin/snyvi`, then the same two commands.
 

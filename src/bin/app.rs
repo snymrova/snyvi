@@ -17,6 +17,12 @@
 //! With a daemon up it is read as that address; without one it is handed to
 //! `snyvi app`, which starts the daemon and comes back here with it.
 
+// A window, not a console program. Without this Windows gives the executable
+// a console of its own, and a double-click on the Start menu entry would open
+// a black terminal beside the viewer. Output handed down still arrives:
+// `snyvi app` passes its own, which is how a terminal and CI read this.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::sync::Once;
 use std::time::Duration;
 
@@ -451,6 +457,16 @@ fn hand_to_snyvi(link: Option<&str>) -> ! {
             use std::os::unix::process::CommandExt;
             let e = cmd.exec();
             eprintln!("snyvi-app: {}: {e}", snyvi.display());
+        }
+        // `snyvi.exe` is a console program, and one started from a window
+        // with no console is given a new one -- a terminal that would sit
+        // beside the viewer for as long as it is open. Nothing it prints here
+        // is for anyone: the window that follows is the answer.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
         #[cfg(not(unix))]
         match cmd.status() {
