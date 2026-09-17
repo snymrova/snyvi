@@ -33,10 +33,8 @@ source code. Everything stays on your machine.
 
 ## Install
 
-**Windows**: download `snyvi-*-setup.exe` from the
-[latest release](https://github.com/snymrova/snyvi/releases/latest) and
-double-click it. That's it: it connects Claude Code (if you have it) and
-opens snyvi.
+**Windows**: download [`snyvi-windows-x64-setup.exe`][win] and double-click
+it. That's it: it connects Claude Code (if you have it) and opens snyvi.
 (Windows warns that the installer isn't signed: *More info* → *Run anyway*.)
 
 **macOS**:
@@ -46,16 +44,31 @@ brew install --cask snymrova/snyvi/snyvi
 snyvi init-claude --auto
 ```
 
-**Debian / Ubuntu**: download `snyvi_*.deb` from the
-[latest release](https://github.com/snymrova/snyvi/releases/latest), then:
+Without Homebrew, download [Apple silicon][mac-arm] or [Intel][mac-x64].
+
+**Debian / Ubuntu**: download [`snyvi-linux-x64.deb`][deb-x64]
+([arm64][deb-arm]), then:
 
 ```
-sudo dpkg -i snyvi_*.deb
+sudo dpkg -i snyvi*.deb
 snyvi init-claude --auto
 ```
 
-Other Linux, a Mac without Homebrew, `cargo install snyvi`, and the native
-window on Linux: see the [install guide](docs/GUIDE.md#install).
+**Any other Linux**: [`snyvi-linux-x64.tar.gz`][tgz-x64]
+([arm64][tgz-arm]) — one static binary, nothing to install.
+
+Every file above is on the [latest release][rel] with a `.sha256` beside it.
+`cargo install snyvi` and the native window on Linux: see the
+[install guide](docs/GUIDE.md#install).
+
+[win]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-windows-x64-setup.exe
+[mac-arm]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-macos-arm64.tar.gz
+[mac-x64]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-macos-x64.tar.gz
+[deb-x64]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-linux-x64.deb
+[deb-arm]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-linux-arm64.deb
+[tgz-x64]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-linux-x64.tar.gz
+[tgz-arm]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-linux-arm64.tar.gz
+[rel]: https://github.com/snymrova/snyvi/releases/latest
 
 ## Use it
 
