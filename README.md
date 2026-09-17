@@ -13,9 +13,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-555?style=flat-square" alt="MIT"></a>
 </p>
 
-<!-- The film: docs/media/demo.mp4. GitHub plays a video inline only from a
-     user-attachments URL, so it is added by dropping the file into a comment
-     box once and pasting the link it gives, on a line of its own, here. -->
+<!-- The film is docs/media/demo.mp4, taken by bench/media.mjs. GitHub plays a
+     video inline only from a user-attachments URL, so after a re-take the file
+     is dropped into a comment box once and the link it gives replaces this one. -->
+
+https://github.com/user-attachments/assets/2c5a9345-0d1c-4b90-b1ac-c3e050f79aa8
 
 <p align="center">
   <picture>
