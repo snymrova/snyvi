@@ -151,6 +151,14 @@ pub struct App {
     /// count falls when that stream ends -- so this is exactly as live as the
     /// window is, with nothing to time out and nothing to leave stale when a
     /// window is quit.
+    ///
+    /// **A count and nothing more.** The mark it is kept by rides the query
+    /// string, so anything that can reach the daemon can inflate it; what that
+    /// buys is a link handed to a window that is not there, and never a
+    /// privilege. Authority is `capabilities` below, which is minted per launch
+    /// and never appears in a URL the server sees. The two signals coexist
+    /// because they answer different questions -- how many are reading, and
+    /// whether this page is one of them -- and only the second is trusted.
     pub windows: AtomicUsize,
     /// How many event streams are open, window or not. One per page, and a
     /// page holds a browser connection for as long as it holds one: a browser
@@ -1069,6 +1077,12 @@ struct EventsQ {
     /// there is one to hand a link to. A string rather than a bool because a
     /// query string is not JSON: `?window=1` is what a page would naturally
     /// send, and it is not a bool to serde.
+    ///
+    /// Forgeable, and deliberately kept anyway: it is a count hint, not a
+    /// credential. `EventSource` cannot set a header, so the capability cannot
+    /// ride this stream and the count has nowhere else to live; what makes that
+    /// safe is that nothing reachable from here grants anything. See
+    /// `App::windows`.
     #[serde(default)]
     window: Option<String>,
     /// Set by the MCP server, with the name its client gave in `initialize`,
@@ -1913,6 +1927,40 @@ mod tests {
         assert!(!hello_allows(&caps, Some(&format!(r#""{cap}""#))));
         assert!(!hello_allows(&caps, Some("")));
         assert!(!hello_allows(&caps, Some("not json at all")));
+    }
+
+    /// `window=1` is forgeable, so the bench path must never read it. The two
+    /// window signals were allowed to coexist on exactly this condition: the
+    /// count answers "how many are reading", the capability answers "may this
+    /// page run a shell", and the second never consults the first. `EventSource`
+    /// cannot set a header, which is why the count still rides a query string;
+    /// this test is what makes that harmless rather than a second way in.
+    #[test]
+    fn the_window_count_is_never_consulted_on_the_bench_path() {
+        let src = include_str!("server.rs");
+        let from = src
+            .find("async fn bench_socket")
+            .expect("the bench socket should be in this file");
+        let to = src[from..]
+            .find("\nfn hello_allows")
+            .expect("hello_allows follows the socket")
+            + from;
+        let path = &src[from..to];
+
+        for forgeable in ["has_window", "windows", "is_window", "EventsQ"] {
+            assert!(
+                !path.contains(forgeable),
+                "the bench path reads `{forgeable}`, which a browser tab can forge"
+            );
+        }
+        // And the gate it does go through takes no app at all, so there is
+        // nothing for a count to reach it through even by accident.
+        assert!(
+            src.contains(
+                "fn hello_allows(caps: &crate::capability::Capabilities, frame: Option<&str>)"
+            ),
+            "the bench gate should see a capability and a frame, and nothing else"
+        );
     }
 
     /// The capability is read off the fragment and presented in a frame. If it
