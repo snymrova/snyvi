@@ -195,19 +195,19 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .brand-mark { width: 14px; height: 14px; border-radius: 4px; background: var(--accent); display: inline-block; transition: background var(--t), box-shadow var(--t); }
 /* Hollow while the page has no daemon to hear: it stopped, or an upgrade replaced it. */
 html[data-link="off"] .brand-mark { background: transparent; box-shadow: inset 0 0 0 2px var(--fg-3); }
-/* How many agents are here now: dim at none, the accent once one is. The
-   mark above says whether the page hears the daemon; this says whether
-   anyone is on the other end of it, and opens the connect page, where each
-   row says which. It sat beside the brand as a bare number a scroll above
-   Inbox's bare number -- two counts and a name for neither -- and is a row
-   that says what it counts. The number keeps its own id and tooltip:
-   bench/ui.mjs reads both. */
-.live-row .n.live { min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--rule); text-align: center; font-weight: 600; transition: background var(--t), color var(--t); }
-.live-row .n.live.on { color: var(--accent); background: var(--accent-bg); }
-.live-row:hover .n.live { color: var(--fg); }
-.live-row:hover .n.live.on { color: var(--accent); }
+/* How many agents hold a stream on the daemon now, and the way to the connect
+   page. It was a row of its own, "Agents live", which spent a line of the
+   sidebar on a number read rarely; it is a pill beside the brand now, the dot
+   saying what the number counts and the tooltip naming who. The id and the
+   tooltip stay: bench/ui.mjs reads both. */
+.side-head .brand { margin-right: auto; }
+.live { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 7px; border-radius: 999px; background: var(--rule); color: var(--fg-3); font-size: 11px; font-weight: 600; line-height: 16px; transition: background var(--t), color var(--t); }
+.live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .6; }
+.live:hover { color: var(--fg); text-decoration: none; }
+.live.on { color: var(--accent); background: var(--accent-bg); }
+.live.on::before { opacity: 1; }
 /* The page cannot hear the daemon; a stale count is worse than none. */
-html[data-link="off"] .live-row { visibility: hidden; }
+html[data-link="off"] .live { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
 .icon.on { color: var(--accent); background: var(--accent-bg); }

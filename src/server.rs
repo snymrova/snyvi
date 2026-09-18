@@ -182,9 +182,8 @@ pub struct App {
     /// sent, and the page could say "last sent 12 minutes ago" of a session
     /// that had been closed for eleven.
     pub online: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
-    /// The capabilities minted for windows this daemon has launched. In memory
-    /// and nowhere else: a capability that outlived the daemon would be a
-    /// secret on disk, which is the one thing it must never be.
+    /// The capabilities minted for windows, kept beside the token so a window
+    /// open across a restart keeps its panes. See `crate::capability`.
     pub capabilities: crate::capability::Capabilities,
     /// The panes that have been woken since this daemon started: their
     /// screens, and their processes while they run. See `crate::pane`.
@@ -262,7 +261,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         windows: AtomicUsize::new(0),
         streams: AtomicUsize::new(0),
         online: std::sync::Mutex::new(Default::default()),
-        capabilities: Default::default(),
+        capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
     });
     // Kept past the router, which takes its own: what the daemon does on the
@@ -1879,8 +1878,10 @@ fn refuse_desk(
 #[derive(Deserialize)]
 struct NewDeskBody {
     /// A browse root's id, and the path of a folder inside it -- the two things
-    /// every directory row in the sidebar already carries.
-    root: String,
+    /// every directory row in the sidebar already carries. None is a desk on
+    /// no folder in particular, which starts in the home directory.
+    #[serde(default)]
+    root: Option<String>,
     #[serde(default)]
     path: String,
     #[serde(default)]
@@ -1937,7 +1938,7 @@ fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
     v
 }
 
-/// A new desk on a folder.
+/// A new desk, on a folder or on none.
 ///
 /// The folder arrives as a root id and a relative path rather than as an
 /// absolute one, so it goes through `resolve` -- the same guard the terminal
@@ -1952,12 +1953,29 @@ async fn create_desk(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let Ok(dir) = app.browse.resolve(&b.root, &b.path) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "no such folder" })),
-        )
-            .into_response();
+    // No folder is the home directory, which the daemon names and the page
+    // does not: nothing from the page reaches the filesystem on this path.
+    let (dir, fallback) = match &b.root {
+        Some(root) => match app.browse.resolve(root, &b.path) {
+            Ok(dir) => (dir, None),
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "no such folder" })),
+                )
+                    .into_response()
+            }
+        },
+        None => match dirs::home_dir() {
+            Some(home) => (home, Some("desk")),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "there is no home directory to start in" })),
+                )
+                    .into_response()
+            }
+        },
     };
     if !dir.is_dir() {
         return (
@@ -1966,7 +1984,12 @@ async fn create_desk(
         )
             .into_response();
     }
-    let name = b.name.as_deref().and_then(clean_name);
+    // A desk on the home directory would otherwise be named after the user.
+    let name = b
+        .name
+        .as_deref()
+        .and_then(clean_name)
+        .or(fallback.map(String::from));
     match app
         .store
         .create_desk(&dir.to_string_lossy(), name.as_deref())

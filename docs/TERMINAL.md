@@ -341,7 +341,8 @@ document can reach.
 
 **2. A leaked token becomes code execution. Answered.** The write token never
 reaches a pane. Panes sit behind a separate secret, the capability. It is
-minted for each window launch, held in memory and never written to disk, sent
+minted for each window launch, kept beside the token in a file only its owner
+can read (so a window outlives a daemon restart), sent
 in a URL fragment and never in a query string, and presented in a header or
 the socket's first frame. Every desk route refuses, in order, the query
 string, a foreign origin and a missing capability, and a test fails if a

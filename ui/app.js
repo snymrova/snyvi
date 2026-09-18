@@ -981,8 +981,6 @@
     liveEl.textContent = String(n);
     liveEl.classList.toggle("on", n > 0);
     liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
-    // The count is a span in its row now; the words answer as the number does.
-    if (liveEl.parentElement) liveEl.parentElement.title = liveEl.title;
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};
@@ -1877,7 +1875,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, go: showDesk, swap: swapDesk, refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -1891,9 +1889,17 @@
     const d = lastDesk != null ? lastDesk : state.desks && state.desks.desks[0] ? state.desks.desks[0].id : null;
     showDesk(d, true);
   }
+  /** A new desk on folder `f`, or with none on no folder: it starts in the
+   *  home directory, which the daemon names. */
   async function newDesk(f) {
     try {
-      const j = await deskApi("/api/desks", { root: f.root, path: f.path });
+      const j = await deskApi("/api/desks", f ? { root: f.root, path: f.path } : {});
+      // A new desk opens on a shell, not on an empty grid: one pane, started.
+      // The view sizes it to the pane the moment it is drawn.
+      try {
+        const p = await deskApi(`/api/desks/${j.desk.id}/panes`, {});
+        await deskApi(`/api/panes/${p.pane.id}/start`, { cmd: "" });
+      } catch (e) { toast("The desk is made, but its shell did not start", String(e)); }
       await loadDesks();
       showDesk(j.desk.id, true);
     } catch (e) { toast("Could not make a desk", String(e)); }
@@ -2173,7 +2179,7 @@
     if (browsing() && "new desk here".startsWith(l || "n")) {
       const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
       out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
-    }
+    } else if (l && "new desk".startsWith(l)) out.push({ newdesk: "home", t: "New desk", s: state.desks.home || "~" });
     for (const d of state.desks.desks) if (!l || d.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: d.id, t: `Desk · ${d.name}`, s: d.root });
     return out;
   }
@@ -2206,7 +2212,7 @@
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  const openPalItem = it => it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk) : it.desk ? showDesk(it.desk, true)
+  const openPalItem = it => it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
     : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
   palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });

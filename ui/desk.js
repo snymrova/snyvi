@@ -214,7 +214,7 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cwd"></span><span class="pn-cmd"></span><span class="pn-state"></span></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-state"></span></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"></form>`;
   const v = {
@@ -313,7 +313,6 @@ const what = v => v.status.title || v.status.cmd || v.pane.cmd || "shell";
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
   $(".pn-slot").textContent = `[${v.pane.slot}]`;
-  $(".pn-cwd").textContent = tilde(v.pane.cwd);
   $(".pn-cmd").textContent = what(v);
   $(".pn-state").textContent = s.blocked ? "! waiting on you" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
   v.el.classList.toggle("blk", !!s.blocked);
@@ -410,7 +409,7 @@ function sync(d) {
 
 function list() {
   const ds = ctx.desks ? ctx.desks.desks : [];
-  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is a folder and up to four panes. Right-click a folder in the sidebar, or press the + beside it, to make one.</p></div>` +
+  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is up to four terminal panes side by side. A new one starts in your home folder; to start one in a folder, right-click the folder under Folders, or press the + beside it.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
     (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "pane")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
 }
 
@@ -491,13 +490,16 @@ async function act(b) {
     return;
   }
   try {
-    if (a === "swap") ctx.swap();
+    if (a === "make") ctx.make();
+    else if (a === "swap") ctx.swap();
     else if (a === "new") {
       const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
       focused = j.pane.id;
       await ctx.refresh();
+      // Asking for a pane is asking for a shell: it starts, and the Start bar
+      // is for a pane that stopped, not one just made.
       const nv = views.get(j.pane.id);
-      if (nv) nv.start.querySelector("input").focus();
+      if (nv) run(nv, "");
     } else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
     else if (a === "start" && v) run(v, v.start.querySelector("input").value);
     else if (a === "all") { for (const x of views.values()) if (!x.status.running) await run(x, x.status.cmd || x.pane.cmd || ""); }
@@ -659,8 +661,9 @@ const CSS = `
 .pn.on { border-color: var(--rule-2); box-shadow: 0 0 0 1px var(--accent-bg); }
 .pn-head { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; font-size: 11.5px; color: var(--fg-3); border-bottom: 1px solid var(--rule); cursor: default; white-space: nowrap; flex: none; }
 .pn-slot { font-family: var(--mono); color: var(--fg-2); }
-.pn-cwd { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
-.pn-cmd { margin-left: auto; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
+.pn-start[hidden] { display: none; }
+.pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
+.pn-state { margin-left: auto; }
 .pn.blk .pn-head { border-bottom: 2px solid #d97706; }
 .pn.blk .pn-state { color: #b45309; font-weight: 600; }
 .pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--mono); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }
@@ -687,5 +690,9 @@ const CSS = `
 .dk-new { color: var(--fg-3); padding: 3px 6px; font-size: 12.5px; }
 .dk-new:hover:not(:disabled) { color: var(--accent); }
 .dk-new:disabled { opacity: .5; cursor: default; }
+.dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.dk-make:hover { background: var(--accent); color: var(--bg); }
+.dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.dk-make:hover { background: var(--accent); color: var(--bg); }
 .dk-cap { margin: 4px 6px; font-size: 11px; color: var(--fg-3); }
 `;
