@@ -303,7 +303,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/compare/{a}/{b}", get(compare))
         .route("/api/events", get(events))
         .route("/api/capability", post(mint_capability))
-        .route("/api/bench", get(bench_socket))
+        .route("/api/desk", get(desk_socket))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -1460,21 +1460,21 @@ async fn mint_capability(State(app): S, headers: HeaderMap) -> Response {
 /// open by whatever opened it.
 const CAPABILITY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// The first frame on a bench socket, and the only one this phase reads.
+/// The first frame on a desk socket, and the only one this phase reads.
 #[derive(Deserialize)]
 struct Hello {
     capability: String,
 }
 
-/// The socket benches will speak over, and today the capability's proof and
+/// The socket desks will speak over, and today the capability's proof and
 /// nothing else.
 ///
-/// Three refusals before a single byte of bench traffic could ever flow: the
+/// Three refusals before a single byte of desk traffic could ever flow: the
 /// capability is not accepted from the query string, the handshake must come
 /// from snyvi's own page, and the socket is inert until a valid capability
 /// arrives. A browser tab gets past none of them, which is the premise the
 /// whole feature rests on.
-async fn bench_socket(
+async fn desk_socket(
     State(app): S,
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
@@ -1501,7 +1501,7 @@ async fn bench_socket(
         )
             .into_response();
     }
-    ws.on_upgrade(move |socket| bench_session(app, socket))
+    ws.on_upgrade(move |socket| desk_session(app, socket))
 }
 
 /// What a first frame means: allowed, or not.
@@ -1516,13 +1516,13 @@ fn hello_allows(caps: &crate::capability::Capabilities, frame: Option<&str>) -> 
         .is_some_and(|h| caps.verify(&h.capability))
 }
 
-/// A bench socket from the upgrade to the close.
+/// A desk socket from the upgrade to the close.
 ///
 /// It proves itself and then does nothing, which is the whole of this phase:
 /// the panes that will speak here are two phases out. What is being built now
 /// is the one thing they cannot be built without -- a socket that a window can
 /// open and a tab cannot.
-async fn bench_session(app: Arc<App>, mut socket: WebSocket) {
+async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
     let first = tokio::time::timeout(CAPABILITY_DEADLINE, socket.recv()).await;
     let frame = match &first {
         Ok(Some(Ok(Message::Text(t)))) => Some(t.as_str()),
@@ -1900,7 +1900,7 @@ mod tests {
     /// shell. Every shape that is not a live capability under the key that
     /// means it has to be a refusal, including the shapes that look close.
     #[test]
-    fn only_a_frame_carrying_a_live_capability_opens_a_bench() {
+    fn only_a_frame_carrying_a_live_capability_opens_a_desk() {
         let caps = Capabilities::default();
         let cap = caps.mint().unwrap();
 
@@ -1929,18 +1929,18 @@ mod tests {
         assert!(!hello_allows(&caps, Some("not json at all")));
     }
 
-    /// `window=1` is forgeable, so the bench path must never read it. The two
+    /// `window=1` is forgeable, so the desk path must never read it. The two
     /// window signals were allowed to coexist on exactly this condition: the
     /// count answers "how many are reading", the capability answers "may this
     /// page run a shell", and the second never consults the first. `EventSource`
     /// cannot set a header, which is why the count still rides a query string;
     /// this test is what makes that harmless rather than a second way in.
     #[test]
-    fn the_window_count_is_never_consulted_on_the_bench_path() {
+    fn the_window_count_is_never_consulted_on_the_desk_path() {
         let src = include_str!("server.rs");
         let from = src
-            .find("async fn bench_socket")
-            .expect("the bench socket should be in this file");
+            .find("async fn desk_socket")
+            .expect("the desk socket should be in this file");
         let to = src[from..]
             .find("\nfn hello_allows")
             .expect("hello_allows follows the socket")
@@ -1950,7 +1950,7 @@ mod tests {
         for forgeable in ["has_window", "windows", "is_window", "EventsQ"] {
             assert!(
                 !path.contains(forgeable),
-                "the bench path reads `{forgeable}`, which a browser tab can forge"
+                "the desk path reads `{forgeable}`, which a browser tab can forge"
             );
         }
         // And the gate it does go through takes no app at all, so there is
@@ -1959,7 +1959,7 @@ mod tests {
             src.contains(
                 "fn hello_allows(caps: &crate::capability::Capabilities, frame: Option<&str>)"
             ),
-            "the bench gate should see a capability and a frame, and nothing else"
+            "the desk gate should see a capability and a frame, and nothing else"
         );
     }
 
@@ -1970,8 +1970,8 @@ mod tests {
     #[test]
     fn the_page_never_puts_the_capability_in_a_url() {
         assert!(
-            APP_JS.contains("/api/bench"),
-            "the bench socket should be opened from here"
+            APP_JS.contains("/api/desk"),
+            "the desk socket should be opened from here"
         );
         for bad in ["cap=${", "capability=${", "?cap=", "&cap=", "?capability="] {
             assert!(
