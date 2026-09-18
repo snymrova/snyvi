@@ -14,8 +14,9 @@
 //! The URL may also be a `snyvi://` link, which is what the desktop hands
 //! this executable when one is clicked anywhere: `snyvi://d/<id>` is the
 //! document at `/d/<id>` on the daemon, and `snyvi://` alone is the viewer.
-//! With a daemon up it is read as that address; without one it is handed to
-//! `snyvi app`, which starts the daemon and comes back here with it.
+//! Such a link is handed to `snyvi app`, which starts the daemon if it is down,
+//! mints the window's capability, and comes back here with an address. Only
+//! where there is no `snyvi` to hand it to is it read as an address here.
 
 // A window, not a console program. Without this Windows gives the executable
 // a console of its own, and a double-click on the Start menu entry would open
@@ -23,6 +24,7 @@
 // `snyvi app` passes its own, which is how a terminal and CI read this.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::path::PathBuf;
 use std::sync::Once;
 use std::time::Duration;
 
@@ -92,13 +94,22 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // A `snyvi://` link needs a daemon to read it from. A window already up
-    // has one, and the single-instance plugin below hands the link to that
-    // window before this process builds anything. Otherwise the daemon may
-    // be down -- this is a click on a link in a terminal or a chat, not a
-    // hand-off from `snyvi app` -- and starting it is `snyvi`'s job.
+    // A `snyvi://` link goes to `snyvi app` whenever there is one to go to.
+    //
+    // It needs a daemon to be read against, and a window opened from it needs a
+    // capability -- and minting one takes the write token, which this binary
+    // cannot read, because it links none of that crate and that is the point of
+    // it being separate. `snyvi app` holds both: it starts the daemon if it is
+    // down, mints, and comes back here with an address. A window already up is
+    // reached before any of this, by the single-instance plugin below, and it
+    // has held its own capability since it opened.
+    //
+    // The hand-off used to happen only when the daemon was down. Doing it
+    // whenever it can costs an exec and buys the window its panes. Falling
+    // through -- no `snyvi` beside this executable -- reads the link here, as
+    // before, and opens a window with no capability and so no panes.
     let parsed = if parsed.scheme() == SCHEME {
-        if !daemon_up() {
+        if snyvi_binary().is_some() || !daemon_up() {
             hand_to_snyvi(Some(&url));
         }
         resolve(&parsed, &base_url(None))
@@ -275,12 +286,12 @@ fn open_in(w: &WebviewWindow, url: tauri::Url) {
 }
 
 /// A `snyvi://` link as the address it stands for on the daemon:
-/// `snyvi://d/<id>` is `<base>/d/<id>`, `snyvi://` alone is the viewer, and
-/// a query rides along. So does a fragment: `snyvi://d/x#L4-L9` is a link to a
+/// `snyvi://d/<id>` is `<base>/d/<id>`, `snyvi://` alone is the viewer, and a
+/// query rides along. So does a fragment: `snyvi://d/x#L4-L9` is a link to a
 /// line range, and dropping the fragment -- which this did -- opened the
 /// document at the top instead. The window's mark is added, since where a link
-/// opens here is a window -- the page keeps the mark for its session and drops
-/// it from the address, so one more copy of it does no harm.
+/// opens here is a window; the page keeps the mark for its session and drops it
+/// from the address, so one more copy of it does no harm.
 fn resolve(link: &tauri::Url, base: &str) -> tauri::Url {
     let mut path = String::new();
     if let Some(host) = link.host_str().filter(|h| !h.is_empty()) {
@@ -529,16 +540,22 @@ fn shortcut_wanted() -> Option<String> {
 /// the link's own if there was one -- so hand over to it. On unix that is an
 /// exec, so the window that follows is this same process as far as whoever
 /// launched it can tell.
-fn hand_to_snyvi(link: Option<&str>) -> ! {
-    let sibling = std::env::current_exe()
+/// The `snyvi` command beside this executable, when there is one. Beside it
+/// rather than on PATH, so an install finds its own copy: the same rule the
+/// daemon uses to find this binary, read the other way round.
+fn snyvi_binary() -> Option<PathBuf> {
+    std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
         .and_then(|p| {
             p.parent()
                 .map(|d| d.join(if cfg!(windows) { "snyvi.exe" } else { "snyvi" }))
         })
-        .filter(|p| p.is_file());
-    if let Some(snyvi) = sibling {
+        .filter(|p| p.is_file())
+}
+
+fn hand_to_snyvi(link: Option<&str>) -> ! {
+    if let Some(snyvi) = snyvi_binary() {
         let mut cmd = std::process::Command::new(&snyvi);
         cmd.arg("app");
         if let Some(l) = link {

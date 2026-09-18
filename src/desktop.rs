@@ -17,6 +17,11 @@ use std::process::{Command, Stdio};
 /// survives the navigations the window then does.
 pub const WINDOW_MARK: &str = "window=1";
 
+/// The key the window's capability travels under, on the fragment of the first
+/// URL the window is given. See `crate::capability` for why it is the fragment
+/// and never the query string.
+pub const CAPABILITY_KEY: &str = "cap";
+
 /// A URL split at its fragment: everything before `#`, and the fragment with
 /// its `#` still on it. A query parameter goes in front of a fragment, so
 /// anything added to a URL here has to know where the fragment starts.
@@ -38,6 +43,18 @@ fn marked(url: &str) -> String {
     let (head, frag) = split_fragment(url);
     let sep = if head.contains('?') { '&' } else { '?' };
     format!("{head}{sep}{WINDOW_MARK}{frag}")
+}
+
+/// A URL carrying the window's capability on its fragment, in front of
+/// whatever fragment the URL already had -- a document opened at a heading or
+/// a line range keeps it, because the page puts back what is left after it
+/// takes the capability off.
+fn with_capability(url: &str, cap: &str) -> String {
+    let (head, frag) = split_fragment(url);
+    match frag.strip_prefix('#').unwrap_or("") {
+        "" => format!("{head}#{CAPABILITY_KEY}={cap}"),
+        rest => format!("{head}#{CAPABILITY_KEY}={cap}&{rest}"),
+    }
 }
 
 /// The scheme of a link that opens in the window rather than a browser:
@@ -129,13 +146,24 @@ pub fn hand_to_window(url: &str) -> bool {
         .is_ok()
 }
 
-pub fn open(url: &str) -> anyhow::Result<()> {
+/// Open the viewer, with the capability this launch was given if it got one.
+///
+/// The capability rides the native window's rung and no other: the rungs below
+/// it are browsers, and a browser is not the window panes are allowed in. A
+/// `None` here is a launch that could not mint one -- no daemon to ask, or one
+/// too old to know how -- and it opens a window that reads exactly as it always
+/// did and has no panes.
+pub fn open(url: &str, capability: Option<&str>) -> anyhow::Result<()> {
     if crate::platform::has_display() {
         if let Some(bin) = window_binary() {
             // The mark rides on the first page only: the page keeps it for
             // the session, and the rungs below it are not windows anything
-            // can raise, so they are opened unmarked.
-            let marked = marked(url);
+            // can raise, so they are opened unmarked. The capability rides
+            // with it, for the same one page and the same reason.
+            let marked = match capability {
+                Some(cap) => with_capability(&marked(url), cap),
+                None => marked(url),
+            };
             // Replace this process: the window is the foreground program from
             // here on, and `snyvi app` should live exactly as long as it does.
             #[cfg(unix)]
@@ -233,6 +261,19 @@ mod tests {
         assert_eq!(
             marked("http://h:1/d/x?v=2#L4-L9"),
             "http://h:1/d/x?v=2&window=1#L4-L9"
+        );
+    }
+
+    #[test]
+    fn the_capability_leads_the_fragment_and_keeps_what_was_there() {
+        let cap = "a".repeat(64);
+        assert_eq!(
+            with_capability("http://h:1/?window=1", &cap),
+            format!("http://h:1/?window=1#cap={cap}")
+        );
+        assert_eq!(
+            with_capability("http://h:1/d/x?window=1#L4-L9", &cap),
+            format!("http://h:1/d/x?window=1#cap={cap}&L4-L9")
         );
     }
 
