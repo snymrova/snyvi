@@ -2518,6 +2518,59 @@
 
   // ---------- live arrivals ----------
 
+  /** The window's capability: 32 bytes the daemon minted for this launch and
+   *  handed over on the first URL's fragment, which is what lets this page open
+   *  a bench socket. A tab has none and never will -- that is the whole of the
+   *  rule that keeps panes out of a browser.
+   *
+   *  The fragment, not the query string: a query string is sent to the server
+   *  and lands in anything that logs a request path, and a fragment is never
+   *  sent at all. It leads the fragment and whatever fragment the URL really
+   *  had follows it, so a document opened at a heading or a line range is put
+   *  back exactly as it was on the way to being stripped.
+   *
+   *  Latched in `sessionStorage` for the same reason the window mark below is:
+   *  the page reloads itself -- `location.reload()` here, `location.replace`
+   *  there -- and anything held only in a variable dies at the first of them. */
+  const capability = (() => {
+    try {
+      const m = /^#cap=([0-9a-f]{64})(?:&(.*))?$/.exec(location.hash);
+      if (m) {
+        sessionStorage.setItem("snyvi.cap", m[1]);
+        // Out of the address bar before anything can read it there, and out of
+        // the history entry, so Back never returns to it and a copied link
+        // never carries it.
+        const rest = m[2] ? "#" + m[2] : "";
+        history.replaceState(history.state, "", location.pathname + location.search + rest);
+      }
+      return sessionStorage.getItem("snyvi.cap") || "";
+    } catch { return ""; }
+  })();
+
+  /** Open the bench socket, which answers only a page that holds the
+   *  capability. Resolves with the socket once the daemon has allowed it, and
+   *  null when there is nothing to present or the daemon refuses -- which is
+   *  what a browser tab gets, and what the caller draws "not here" from.
+   *
+   *  The capability goes in the first frame and not in the URL, so it stays out
+   *  of the request the handshake makes. */
+  async function benchSocket() {
+    if (!capability) return null;
+    const url = location.origin.replace(/^http/, "ws") + "/api/bench";
+    let sock;
+    try { sock = new WebSocket(url); } catch { return null; }
+    return new Promise(resolve => {
+      const give = v => { if (!v && sock.readyState <= 1) sock.close(); resolve(v); };
+      sock.onerror = () => give(null);
+      sock.onclose = () => give(null);
+      sock.onopen = () => sock.send(JSON.stringify({ capability }));
+      sock.onmessage = ev => {
+        let j; try { j = JSON.parse(ev.data); } catch { return give(null); }
+        give(j && j.ok ? sock : null);
+      };
+    });
+  }
+
   /** Whether this page is the native window's, which decides where the daemon
    *  sends a link that is opened from outside it -- `snyvi open`, a terminal, a
    *  click on a notification.

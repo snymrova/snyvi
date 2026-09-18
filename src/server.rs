@@ -1915,6 +1915,24 @@ mod tests {
         assert!(!hello_allows(&caps, Some("not json at all")));
     }
 
+    /// The capability is read off the fragment and presented in a frame. If it
+    /// ever reaches a URL the page builds, it reaches the daemon's request path
+    /// and whatever logs one -- so the page's own source is where that line is
+    /// held.
+    #[test]
+    fn the_page_never_puts_the_capability_in_a_url() {
+        assert!(
+            APP_JS.contains("/api/bench"),
+            "the bench socket should be opened from here"
+        );
+        for bad in ["cap=${", "capability=${", "?cap=", "&cap=", "?capability="] {
+            assert!(
+                !APP_JS.contains(bad),
+                "the capability is in a URL in app.js: {bad}"
+            );
+        }
+    }
+
     /// The dev loop's whole promise is that the file on disk is the one being
     /// served, and its whole safety is that a daemon without `SNYVI_UI_DIR`
     /// cannot be made to read one. Both halves, plus the fallback that keeps a
