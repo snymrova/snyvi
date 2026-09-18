@@ -2,6 +2,7 @@
 //! plus a SQLite index with full-text search.
 
 use crate::config::Paths;
+use crate::desk::{self, Desk, Opened};
 use crate::render::Kind;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -161,6 +162,9 @@ impl Store {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;",
         )?;
         conn.execute_batch(SCHEMA)?;
+        // Desks live in the same database and in tables of their own; see
+        // `crate::desk` for why that separation is the whole of the boundary.
+        conn.execute_batch(desk::SCHEMA)?;
         // Migrations for databases created before these columns existed.
         // Keys used to be case-sensitive, so the same workflow could exist twice.
         // Fold the duplicates into the oldest row; harmless once there are none.
@@ -742,6 +746,48 @@ impl Store {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    // -- Desks.
+    //
+    // Thin, because the SQL is `crate::desk`'s and the lock is this file's.
+    // Every read of the library goes through `live_docs` and none of these
+    // touch it, which is what "a desk is not a document" means in practice.
+
+    pub fn desks(&self) -> Result<Vec<Desk>> {
+        desk::list(&self.conn.lock().unwrap())
+    }
+
+    pub fn desk(&self, id: i64) -> Result<Option<Desk>> {
+        desk::get(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn create_desk(&self, root: &str, name: Option<&str>) -> Result<Desk> {
+        desk::create(&self.conn.lock().unwrap(), root, name, now())
+    }
+
+    pub fn rename_desk(&self, id: i64, name: &str) -> Result<bool> {
+        desk::rename(&self.conn.lock().unwrap(), id, name)
+    }
+
+    pub fn set_desk_layout(&self, id: i64, col: f64, row: f64) -> Result<bool> {
+        desk::layout(&self.conn.lock().unwrap(), id, col, row)
+    }
+
+    pub fn delete_desk(&self, id: i64) -> Result<bool> {
+        desk::delete(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {
+        desk::open_pane(&mut self.conn.lock().unwrap(), desk_id, cwd, cmd, now())
+    }
+
+    pub fn close_pane(&self, id: &str) -> Result<bool> {
+        desk::close_pane(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn panes_open(&self) -> Result<i64> {
+        desk::panes_open(&self.conn.lock().unwrap())
+    }
+
     /// What a reset would take, in the numbers the sentence says and the
     /// reader types back: the documents that can be seen, the projects they
     /// are in, and how many of them are pinned. A document already deleted is
@@ -769,8 +815,15 @@ impl Store {
     pub fn reset(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
-            "DELETE FROM docs_fts; DELETE FROM docs; DELETE FROM workflows; DELETE FROM projects; VACUUM;",
+            "DELETE FROM docs_fts; DELETE FROM docs; DELETE FROM workflows; DELETE FROM projects;",
         )?;
+        // Desks are not documents, and a reset still takes them: what it
+        // promises is a store as `open` makes it on a machine that has never
+        // seen snyvi, and a workspace left standing would make that false. The
+        // census counts documents because documents are what the reader is
+        // asked to type back, not because they are all that goes.
+        desk::clear(&conn)?;
+        conn.execute_batch("VACUUM;")?;
         drop(conn);
         if let Ok(entries) = fs::read_dir(&self.docs_dir) {
             for e in entries.flatten() {
@@ -1081,6 +1134,42 @@ mod tests {
         assert_eq!(s.count().unwrap(), 1);
         assert!(s.previous(&again).unwrap().is_none());
         let _ = b;
+    }
+
+    /// A desk is not a document, which is a sentence about what the library
+    /// reads: the tree, the inbox, the queue, the counts and the search index
+    /// are all documents' and a desk is in none of them. What it does share is
+    /// the ending -- a reset promises a store as `open` makes it on a machine
+    /// that has never seen snyvi, and a workspace left standing would make
+    /// that false.
+    #[test]
+    fn a_desk_is_not_a_document_and_a_reset_still_takes_it() {
+        let (s, _d) = temp_store();
+        s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap();
+        let desk = s.create_desk("/home/p/snyvi", None).unwrap();
+        assert!(matches!(
+            s.open_pane(desk.id, "/home/p/snyvi", "").unwrap(),
+            Opened::Pane(_)
+        ));
+
+        // Nothing that reads the library can see it.
+        assert_eq!(s.count().unwrap(), 1);
+        assert_eq!(s.census().unwrap().documents, 1);
+        assert!(s.search("snyvi", 10).unwrap().is_empty());
+        assert_eq!(s.projects().unwrap().len(), 1, "the desk made no project");
+        assert_eq!(s.inbox(10).unwrap().len(), 1);
+        assert!(s.get(&desk.id.to_string()).unwrap().is_none());
+
+        // And it survives a restart, because that is what a desk is for.
+        assert_eq!(s.desks().unwrap().len(), 1);
+        assert_eq!(s.panes_open().unwrap(), 1);
+
+        s.reset().unwrap();
+        assert!(s.desks().unwrap().is_empty());
+        assert_eq!(s.panes_open().unwrap(), 0);
+        // A store again: the next desk is the first.
+        let again = s.create_desk("/home/p/snyvi", None).unwrap();
+        assert_eq!(again.name, "snyvi");
     }
 
     /// A delete is gone from everywhere that reads the library and still on
