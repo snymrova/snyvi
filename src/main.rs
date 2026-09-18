@@ -1,6 +1,7 @@
 mod agents;
 mod bench;
 mod browse;
+mod capability;
 mod client;
 mod config;
 mod desktop;
@@ -290,11 +291,13 @@ fn main() -> Result<()> {
                 None => config::base_url(),
             };
             // A window that is up takes the link and comes forward; there is
-            // no starting another. Without one, this becomes the window.
+            // no starting another. Without one, this becomes the window --
+            // and a new window is the only thing a capability is minted for,
+            // since the one already up has held its own since it opened.
             if client::window_is_up() && desktop::hand_to_window(&url) {
                 return Ok(());
             }
-            desktop::open(&url)
+            desktop::open(&url, client::mint_capability(&paths).as_deref())
         }
         Cmd::Mcp => mcp::run(paths),
         Cmd::Hook => hook::run(&paths),

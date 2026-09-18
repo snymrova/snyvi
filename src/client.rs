@@ -337,6 +337,38 @@ pub fn hold_presence(name: String) {
         });
 }
 
+/// Mint a capability for a window that is about to open: 32 bytes the daemon
+/// remembers, which the page will present to be allowed panes.
+///
+/// It lives here rather than in the window's own executable because minting
+/// takes the write token, and `snyvi-app` links none of this crate and reads
+/// none of snyvi's files -- which is the point of it being separate. So the
+/// one process that holds both the token and the launch is this one.
+///
+/// `None` is not a failure to handle: no token, no daemon, or a daemon too old
+/// to know the endpoint all mean a window that opens and reads exactly as it
+/// always has, without panes.
+pub fn mint_capability(paths: &Paths) -> Option<String> {
+    let token = config::read_token(paths)?;
+    let mut resp = ureq::post(&format!("{}/api/capability", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .http_status_as_error(false)
+        .build()
+        .send_empty()
+        .ok()?;
+    if resp.status().as_u16() >= 300 {
+        return None;
+    }
+    resp.body_mut()
+        .read_json::<Value>()
+        .ok()?
+        .get("capability")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 /// Whether the daemon has a window's page connected. False when there is no
 /// daemon to ask, or when it is old enough not to answer -- both of which mean
 /// a browser, which is what the caller then does.

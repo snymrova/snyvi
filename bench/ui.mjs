@@ -1121,16 +1121,39 @@ async function linkRows(p, url, base, env, tmp, token, stub, mcpSend) {
   rows.push(["with one, the link is snyvi://d/<id>", linked.app_url === want && both,
     linked.app_url !== want ? `app_url is ${JSON.stringify(linked.app_url)}, not ${want}` : !both ? `the agent is told "${linkedSaid.slice(0, 90)}"` : "the send answers with it, and the agent is told to give it, with the http link beside"]);
 
+  // A window launch is minted a capability, and it rides the fragment: the
+  // query string reaches the daemon's request path and whatever logs one, and
+  // a fragment is never sent to a server at all. So the address is checked in
+  // three parts -- the document, the window mark, and the secret on the
+  // fragment and nowhere else.
+  const launched = url => {
+    const [head, ...frag] = url.split("#");
+    return {
+      head,
+      cap: /^cap=([0-9a-f]{64})$/.exec(frag.join("#"))?.[1],
+      leaked: /[?&]cap=/.test(head),
+    };
+  };
+
   app([want]);
-  const opened = await handed();
+  const opened = launched(await handed());
   const marked = `${base}/d/${linked.id}?window=1`;
-  rows.push(["snyvi app <link>, no window: opens one on it", opened === marked,
-    opened === marked ? "the window was started on the document, marked as a window" : `the window was handed ${JSON.stringify(opened)}`]);
+  const openedOk = opened.head === marked && opened.cap && !opened.leaked;
+  rows.push(["snyvi app <link>, no window: opens one on it", !!openedOk,
+    openedOk ? "the window was started on the document, marked as a window, with a capability on the fragment"
+      : opened.leaked ? "the capability is in the query string, where it would be logged"
+      : opened.head !== marked ? `the window was handed ${JSON.stringify(opened.head)}`
+      : "the window was started with no capability on it"]);
 
   app([`${base}/d/${linked.id}?v=2`]);
-  const query = await handed();
-  rows.push(["and a url with a query keeps it", query === `${base}/d/${linked.id}?v=2&window=1`,
-    query === `${base}/d/${linked.id}?v=2&window=1` ? "the mark joined the query rather than replacing it" : `the window was handed ${JSON.stringify(query)}`]);
+  const query = launched(await handed());
+  const want2 = `${base}/d/${linked.id}?v=2&window=1`;
+  const queryOk = query.head === want2 && query.cap && !query.leaked;
+  rows.push(["and a url with a query keeps it", !!queryOk,
+    queryOk ? "the mark joined the query rather than replacing it, and the capability stayed off it"
+      : query.leaked ? "the capability is in the query string, where it would be logged"
+      : query.head !== want2 ? `the window was handed ${JSON.stringify(query.head)}`
+      : "the window was started with no capability on it"]);
 
   await p.goto(`${base}/?window=1`);
   const up = await until(async () => (await health()).window === true);

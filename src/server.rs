@@ -8,7 +8,10 @@ use crate::render::{self, Renderer};
 use crate::store::{Doc, Store};
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Path, Query, State,
+    },
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -148,6 +151,14 @@ pub struct App {
     /// count falls when that stream ends -- so this is exactly as live as the
     /// window is, with nothing to time out and nothing to leave stale when a
     /// window is quit.
+    ///
+    /// **A count and nothing more.** The mark it is kept by rides the query
+    /// string, so anything that can reach the daemon can inflate it; what that
+    /// buys is a link handed to a window that is not there, and never a
+    /// privilege. Authority is `capabilities` below, which is minted per launch
+    /// and never appears in a URL the server sees. The two signals coexist
+    /// because they answer different questions -- how many are reading, and
+    /// whether this page is one of them -- and only the second is trusted.
     pub windows: AtomicUsize,
     /// How many event streams are open, window or not. One per page, and a
     /// page holds a browser connection for as long as it holds one: a browser
@@ -162,6 +173,10 @@ pub struct App {
     /// sent, and the page could say "last sent 12 minutes ago" of a session
     /// that had been closed for eleven.
     pub online: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+    /// The capabilities minted for windows this daemon has launched. In memory
+    /// and nowhere else: a capability that outlived the daemon would be a
+    /// secret on disk, which is the one thing it must never be.
+    pub capabilities: crate::capability::Capabilities,
 }
 
 impl App {
@@ -233,6 +248,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         windows: AtomicUsize::new(0),
         streams: AtomicUsize::new(0),
         online: std::sync::Mutex::new(Default::default()),
+        capabilities: Default::default(),
     });
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
@@ -286,6 +302,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/docs/{id}/blob", get(doc_blob))
         .route("/api/compare/{a}/{b}", get(compare))
         .route("/api/events", get(events))
+        .route("/api/capability", post(mint_capability))
+        .route("/api/bench", get(bench_socket))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -1059,6 +1077,12 @@ struct EventsQ {
     /// there is one to hand a link to. A string rather than a bool because a
     /// query string is not JSON: `?window=1` is what a page would naturally
     /// send, and it is not a bool to serde.
+    ///
+    /// Forgeable, and deliberately kept anyway: it is a count hint, not a
+    /// credential. `EventSource` cannot set a header, so the capability cannot
+    /// ride this stream and the count has nowhere else to live; what makes that
+    /// safe is that nothing reachable from here grants anything. See
+    /// `App::windows`.
     #[serde(default)]
     window: Option<String>,
     /// Set by the MCP server, with the name its client gave in `initialize`,
@@ -1409,6 +1433,125 @@ fn doc_folder(app: &App, doc: &Doc) -> Option<std::path::PathBuf> {
         .find(|d: &std::path::PathBuf| d.is_dir())
 }
 
+/// Mint a capability for a window that is opening.
+///
+/// The token is required, and this is the only endpoint whose answer is itself
+/// a secret. The caller is `snyvi app`, in the moment between deciding to open a
+/// window and launching one: see `crate::capability` for why the answer is not
+/// the token itself and never reaches disk.
+async fn mint_capability(State(app): S, headers: HeaderMap) -> Response {
+    if !authorized(&app, &headers) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "no token" }))).into_response();
+    }
+    match app.capabilities.mint() {
+        Ok(capability) => Json(json!({ "capability": capability })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// How long a socket has to prove itself. A page that holds the capability
+/// sends it in its first frame, which on a loopback connection is one round
+/// trip; anything still silent after this is not a page of ours, and the
+/// deadline is what keeps a connection that will never speak from being held
+/// open by whatever opened it.
+const CAPABILITY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The first frame on a bench socket, and the only one this phase reads.
+#[derive(Deserialize)]
+struct Hello {
+    capability: String,
+}
+
+/// The socket benches will speak over, and today the capability's proof and
+/// nothing else.
+///
+/// Three refusals before a single byte of bench traffic could ever flow: the
+/// capability is not accepted from the query string, the handshake must come
+/// from snyvi's own page, and the socket is inert until a valid capability
+/// arrives. A browser tab gets past none of them, which is the premise the
+/// whole feature rests on.
+async fn bench_socket(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    // Refused rather than quietly upgraded, so that an attempt to put the
+    // capability where it would be logged fails at the place it is made. A
+    // query string lands in the request path; the fragment it rides on instead
+    // is never sent to a server at all.
+    if q.contains_key(crate::desktop::CAPABILITY_KEY) || q.contains_key("capability") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "the capability is not a query parameter" })),
+        )
+            .into_response();
+    }
+    // The same check the terminal button is behind, for the same reason: a page
+    // on another origin is refused, and a local process with no browser sends
+    // neither header and is refused too.
+    if !from_this_page(&headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not from this page" })),
+        )
+            .into_response();
+    }
+    ws.on_upgrade(move |socket| bench_session(app, socket))
+}
+
+/// What a first frame means: allowed, or not.
+///
+/// Split out from the socket so the rule can be read and tested on its own,
+/// which is worth doing for the one function in this server that decides
+/// whether a thing may run a shell. Anything that is not a well-formed frame
+/// carrying a live capability under the one key that means it is a refusal.
+fn hello_allows(caps: &crate::capability::Capabilities, frame: Option<&str>) -> bool {
+    frame
+        .and_then(|f| serde_json::from_str::<Hello>(f).ok())
+        .is_some_and(|h| caps.verify(&h.capability))
+}
+
+/// A bench socket from the upgrade to the close.
+///
+/// It proves itself and then does nothing, which is the whole of this phase:
+/// the panes that will speak here are two phases out. What is being built now
+/// is the one thing they cannot be built without -- a socket that a window can
+/// open and a tab cannot.
+async fn bench_session(app: Arc<App>, mut socket: WebSocket) {
+    let first = tokio::time::timeout(CAPABILITY_DEADLINE, socket.recv()).await;
+    let frame = match &first {
+        Ok(Some(Ok(Message::Text(t)))) => Some(t.as_str()),
+        // Silence past the deadline, a close, a socket error, or a binary
+        // frame: none of them is a capability, and all of them end the same
+        // way. Only the text frame is read.
+        _ => None,
+    };
+    if !hello_allows(&app.capabilities, frame) {
+        let _ = socket
+            .send(Message::Text(
+                json!({ "error": "no capability" }).to_string().into(),
+            ))
+            .await;
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
+    let _ = socket
+        .send(Message::Text(json!({ "ok": true }).to_string().into()))
+        .await;
+    // Held open, and silent. The page needs to tell "allowed, and waiting" from
+    // "refused", and those are the two answers there are to give yet.
+    while let Some(Ok(msg)) = socket.recv().await {
+        if matches!(msg, Message::Close(_)) {
+            break;
+        }
+    }
+}
+
 /// Did this request come from snyvi's own page?
 ///
 /// The first check of its kind in this server, and the reason section 7 of
@@ -1750,7 +1893,93 @@ fn err(e: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML};
+    use super::{hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML};
+    use crate::capability::Capabilities;
+
+    /// The one decision in this server that stands between a web page and a
+    /// shell. Every shape that is not a live capability under the key that
+    /// means it has to be a refusal, including the shapes that look close.
+    #[test]
+    fn only_a_frame_carrying_a_live_capability_opens_a_bench() {
+        let caps = Capabilities::default();
+        let cap = caps.mint().unwrap();
+
+        assert!(hello_allows(
+            &caps,
+            Some(&format!(r#"{{"capability":"{cap}"}}"#))
+        ));
+
+        // Silence until the deadline, which is what a socket opened by
+        // something with nothing to present does.
+        assert!(!hello_allows(&caps, None));
+        // A capability that was never minted, and the empty one.
+        assert!(!hello_allows(
+            &caps,
+            Some(&format!(r#"{{"capability":"{}"}}"#, "b".repeat(64)))
+        ));
+        assert!(!hello_allows(&caps, Some(r#"{"capability":""}"#)));
+        // The right secret under the wrong key is not a hello, and neither is a
+        // bare string: the frame has to be the shape the protocol says.
+        assert!(!hello_allows(
+            &caps,
+            Some(&format!(r#"{{"token":"{cap}"}}"#))
+        ));
+        assert!(!hello_allows(&caps, Some(&format!(r#""{cap}""#))));
+        assert!(!hello_allows(&caps, Some("")));
+        assert!(!hello_allows(&caps, Some("not json at all")));
+    }
+
+    /// `window=1` is forgeable, so the bench path must never read it. The two
+    /// window signals were allowed to coexist on exactly this condition: the
+    /// count answers "how many are reading", the capability answers "may this
+    /// page run a shell", and the second never consults the first. `EventSource`
+    /// cannot set a header, which is why the count still rides a query string;
+    /// this test is what makes that harmless rather than a second way in.
+    #[test]
+    fn the_window_count_is_never_consulted_on_the_bench_path() {
+        let src = include_str!("server.rs");
+        let from = src
+            .find("async fn bench_socket")
+            .expect("the bench socket should be in this file");
+        let to = src[from..]
+            .find("\nfn hello_allows")
+            .expect("hello_allows follows the socket")
+            + from;
+        let path = &src[from..to];
+
+        for forgeable in ["has_window", "windows", "is_window", "EventsQ"] {
+            assert!(
+                !path.contains(forgeable),
+                "the bench path reads `{forgeable}`, which a browser tab can forge"
+            );
+        }
+        // And the gate it does go through takes no app at all, so there is
+        // nothing for a count to reach it through even by accident.
+        assert!(
+            src.contains(
+                "fn hello_allows(caps: &crate::capability::Capabilities, frame: Option<&str>)"
+            ),
+            "the bench gate should see a capability and a frame, and nothing else"
+        );
+    }
+
+    /// The capability is read off the fragment and presented in a frame. If it
+    /// ever reaches a URL the page builds, it reaches the daemon's request path
+    /// and whatever logs one -- so the page's own source is where that line is
+    /// held.
+    #[test]
+    fn the_page_never_puts_the_capability_in_a_url() {
+        assert!(
+            APP_JS.contains("/api/bench"),
+            "the bench socket should be opened from here"
+        );
+        for bad in ["cap=${", "capability=${", "?cap=", "&cap=", "?capability="] {
+            assert!(
+                !APP_JS.contains(bad),
+                "the capability is in a URL in app.js: {bad}"
+            );
+        }
+    }
 
     /// The dev loop's whole promise is that the file on disk is the one being
     /// served, and its whole safety is that a daemon without `SNYVI_UI_DIR`
