@@ -276,9 +276,11 @@ fn open_in(w: &WebviewWindow, url: tauri::Url) {
 
 /// A `snyvi://` link as the address it stands for on the daemon:
 /// `snyvi://d/<id>` is `<base>/d/<id>`, `snyvi://` alone is the viewer, and
-/// a query rides along. The window's mark is added, since where a link opens
-/// here is a window -- the page keeps the mark for its session and drops it
-/// from the address, so one more copy of it does no harm.
+/// a query rides along. So does a fragment: `snyvi://d/x#L4-L9` is a link to a
+/// line range, and dropping the fragment -- which this did -- opened the
+/// document at the top instead. The window's mark is added, since where a link
+/// opens here is a window -- the page keeps the mark for its session and drops
+/// it from the address, so one more copy of it does no harm.
 fn resolve(link: &tauri::Url, base: &str) -> tauri::Url {
     let mut path = String::new();
     if let Some(host) = link.host_str().filter(|h| !h.is_empty()) {
@@ -289,9 +291,13 @@ fn resolve(link: &tauri::Url, base: &str) -> tauri::Url {
     if path.is_empty() {
         path.push('/');
     }
+    let frag = match link.fragment() {
+        Some(f) => format!("#{f}"),
+        None => String::new(),
+    };
     let url = match link.query() {
-        Some(q) => format!("{base}{path}?{q}&{WINDOW_MARK}"),
-        None => format!("{base}{path}?{WINDOW_MARK}"),
+        Some(q) => format!("{base}{path}?{q}&{WINDOW_MARK}{frag}"),
+        None => format!("{base}{path}?{WINDOW_MARK}{frag}"),
     };
     url.parse()
         .unwrap_or_else(|_| format!("{base}/").parse().expect("base url"))

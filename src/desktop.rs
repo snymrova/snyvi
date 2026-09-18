@@ -17,10 +17,27 @@ use std::process::{Command, Stdio};
 /// survives the navigations the window then does.
 pub const WINDOW_MARK: &str = "window=1";
 
+/// A URL split at its fragment: everything before `#`, and the fragment with
+/// its `#` still on it. A query parameter goes in front of a fragment, so
+/// anything added to a URL here has to know where the fragment starts.
+fn split_fragment(url: &str) -> (&str, &str) {
+    match url.find('#') {
+        Some(i) => (&url[..i], &url[i..]),
+        None => (url, ""),
+    }
+}
+
 /// A URL with the window's mark on it, whether or not it has a query already.
+///
+/// The mark is a query parameter, so it goes before any fragment. Appending it
+/// to the end of the string instead -- which this did -- buries it *inside* the
+/// fragment of a URL that has one: `/d/x#top` became `/d/x#top?window=1`, where
+/// the whole of `top?window=1` is the fragment, the daemon is sent nothing, and
+/// the window it opened is not counted as one.
 fn marked(url: &str) -> String {
-    let sep = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{sep}{WINDOW_MARK}")
+    let (head, frag) = split_fragment(url);
+    let sep = if head.contains('?') { '&' } else { '?' };
+    format!("{head}{sep}{WINDOW_MARK}{frag}")
 }
 
 /// The scheme of a link that opens in the window rather than a browser:
@@ -208,6 +225,15 @@ mod tests {
     fn the_mark_joins_whatever_query_is_there() {
         assert_eq!(marked("http://h:1"), "http://h:1?window=1");
         assert_eq!(marked("http://h:1/d/x?v=2"), "http://h:1/d/x?v=2&window=1");
+    }
+
+    #[test]
+    fn the_mark_goes_in_front_of_a_fragment_rather_than_into_it() {
+        assert_eq!(marked("http://h:1/d/x#top"), "http://h:1/d/x?window=1#top");
+        assert_eq!(
+            marked("http://h:1/d/x?v=2#L4-L9"),
+            "http://h:1/d/x?v=2&window=1#L4-L9"
+        );
     }
 
     #[test]
