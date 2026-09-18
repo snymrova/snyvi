@@ -953,6 +953,8 @@
     liveEl.textContent = String(n);
     liveEl.classList.toggle("on", n > 0);
     liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
+    // The count is a span in its row now; the words answer as the number does.
+    if (liveEl.parentElement) liveEl.parentElement.title = liveEl.title;
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};
