@@ -385,6 +385,18 @@
       }
       titleRoom = roomIn(treeEl.clientWidth);
     }
+    // What the page has open, before it is taken apart. `toggle` is queued
+    // rather than dispatched where the click happens, so a reader can have a
+    // project open in the DOM while `openProjects` has not heard yet -- and a
+    // draw that lands in that gap rebuilds the row from the stale answer,
+    // closed, and the rows the handler then injects go into a <details> that
+    // is no longer in the page. The project stays shut and nothing draws it
+    // again. Asking the DOM first costs one query and closes the gap; a
+    // project the reader closed is removed by the handler, so this only ever
+    // adds what is open on screen right now.
+    for (const d of treeEl.querySelectorAll(".t-proj[open]")) {
+      if (d.dataset.pid) openProjects.add(d.dataset.pid);
+    }
     // Labels only earn their space when both kinds of tree are on screen.
     let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
