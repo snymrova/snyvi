@@ -2508,6 +2508,11 @@
       if (h) setOnline(h.agents);
       catchUp();
     };
+    // The dev loop, and only the dev loop: a daemon started with SNYVI_UI_DIR
+    // serves this file off disk and says so when it changes. A shipped daemon
+    // never sends this, so the listener costs a page nothing but its own line.
+    es.addEventListener("reload", () => location.reload());
+
     // An agent arrived or left: its process opened or ended a stream.
     es.addEventListener("agents", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }

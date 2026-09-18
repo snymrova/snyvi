@@ -27,6 +27,9 @@ const BROWSE_TICK: Duration = Duration::from_millis(250);
 const BROWSE_IDLE: Duration = Duration::from_secs(1);
 /// How often `snyvi watch` looks at its files.
 const CLI_TICK: Duration = Duration::from_millis(400);
+/// How often a live UI's own files are looked at. Faster than browse mode
+/// because a person is waiting on this one with their hand on the keyboard.
+const UI_TICK: Duration = Duration::from_millis(150);
 
 /// What a file looked like at a glance. `None` for a file that is not there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +149,45 @@ pub fn spawn_browse_watcher(app: Arc<App>) {
                 }
             }
             tokio::time::sleep(BROWSE_TICK).await;
+        }
+    });
+}
+
+/// The dev loop's other half: when `SNYVI_UI_DIR` is set, watch those four
+/// files and tell every open page to reload the moment one of them settles.
+///
+/// The page already knows how to do this. It compares the daemon's bundle hash
+/// against its own when its stream reconnects, and reloads when they differ --
+/// that is how a tab survives an upgrade underneath it. A live UI makes that
+/// hash a function of the files on disk, so all this has to do is say when.
+///
+/// `Tracker` supplies the debounce, and needing two identical stamps in a row
+/// is the reason a half-written stylesheet does not reach the window: editors
+/// write in steps, and the step is never the file.
+pub fn spawn_ui_watcher(app: Arc<App>) {
+    if !app.ui.live() {
+        return;
+    }
+    let Some(dir) = std::env::var_os("SNYVI_UI_DIR").map(PathBuf::from) else {
+        return;
+    };
+    tokio::spawn(async move {
+        let files = ["index.html", "app.css", "app.js", "boot.js"];
+        let mut tracker: Tracker<&str> = Tracker::new();
+        loop {
+            // Nobody is reading: there is no one to tell, so do not stat.
+            if app.events.receiver_count() == 0 {
+                tokio::time::sleep(BROWSE_IDLE).await;
+                continue;
+            }
+            let changed = files
+                .iter()
+                .filter(|name| tracker.observe(name, stamp(&dir.join(name))))
+                .count();
+            if changed > 0 {
+                emit(&app, "reload", json!({ "v": app.asset_v() }));
+            }
+            tokio::time::sleep(UI_TICK).await;
         }
     });
 }
