@@ -231,14 +231,21 @@ html[data-link="off"] .live { visibility: hidden; }
 .t-wf { margin: 2px 0 6px 12px; }
 .t-wf > .wf-name { font-size: 11px; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px 4px 20px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
-.t-doc a::before { content: ""; position: absolute; left: 6px; top: 50%; width: 3px; height: 3px; border-radius: 50%; background: var(--rule-2); transform: translateY(-50%); }
+/* A read row carries no mark. Every row used to carry a grey dot, so an
+   arrival was a change of colour and not the appearance of a mark -- and it
+   sat at 12px, two pixels left of its parent's first letter. At 26px it is
+   inside its group, and absence is what says a row was read. */
+.t-doc a::before { content: ""; position: absolute; left: 14px; top: 50%; width: 3px; height: 3px; border-radius: 50%; background: transparent; transform: translateY(-50%); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--accent); }
-.t-doc a.active::before { background: var(--accent); }
-/* A row waiting to be read: the bullet every row has, in the accent and a
-   little larger. It is the same mark in the queue section and in the tree,
-   and it goes when the document is opened from either. */
-.t-doc a.new::before { background: var(--accent); width: 6px; height: 6px; left: 4px; }
+/* A row waiting to be read, and now the only row in the tree with a mark on
+   it at all: the accent, a little larger. It is the same mark in the queue
+   section and in the tree, and it goes when the document is opened from
+   either. */
+.t-doc a.new::before { background: var(--accent); width: 6px; height: 6px; left: 12px; }
+/* The open row is a bar, never a bigger dot than the arrival mark beside
+   it, and it wins over `new`: what is open is being read. */
+.t-doc a.active::before, .t-doc a.active.new::before { background: var(--accent); width: 3px; height: 14px; border-radius: 1px; left: 14px; }
 .t-doc a.new .title { color: var(--fg); font-weight: 550; }
 .t-queue { margin: 0 0 10px; padding: 0 0 6px; border-bottom: 1px solid var(--rule); }
 .t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
