@@ -40,6 +40,9 @@ const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_CSS: &str = include_str!("../ui/app.css");
 const APP_JS: &str = include_str!("../ui/app.js");
 const BOOT_JS: &str = include_str!("../ui/boot.js");
+/// The diagram driver, imported by app.js with the first diagram and never on a
+/// page without one. A module, so it is fetched rather than linked.
+const MMD_JS: &str = include_str!("../ui/mmd.js");
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -67,7 +70,7 @@ const FONTS: &[(&str, &[u8])] = &[
 
 /// Where the UI is read from.
 ///
-/// The shipped daemon serves the four text assets `include_str!` compiled into
+/// The shipped daemon serves the five text assets `include_str!` compiled into
 /// it, which is why a stylesheet change costs a rebuild: the bytes are in the
 /// binary. `SNYVI_UI_DIR` points at a working tree's `ui/` instead, and every
 /// request reads the file off disk. That is the whole dev loop -- a saved
@@ -105,7 +108,7 @@ impl Ui {
             .map_or(Cow::Borrowed(built_in), Cow::Owned)
     }
 
-    /// What the four assets hash to right now. The page carries this as
+    /// What the five assets hash to right now. The page carries this as
     /// `?v=`, `/api/health` reports it, and a page whose copy no longer
     /// matches the daemon's reloads -- so recomputing it per request is what
     /// makes an edit on disk a new bundle, with no restart in it.
@@ -119,6 +122,7 @@ impl Ui {
             ("app.css", APP_CSS),
             ("app.js", APP_JS),
             ("boot.js", BOOT_JS),
+            ("mmd.js", MMD_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -262,6 +266,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/app.css", get(asset_css))
         .route("/assets/app.js", get(asset_js))
         .route("/assets/boot.js", get(asset_boot))
+        .route("/assets/mmd.js", get(asset_mmd))
         .route("/assets/mermaid.js", get(asset_mermaid))
         .route("/files/{id}/{*path}", get(doc_file))
         .route("/assets/fonts/{name}", get(asset_font))
@@ -555,6 +560,17 @@ async fn asset_boot(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "boot.js",
         BOOT_JS,
+    )
+}
+/// The diagram driver. Immutable like the rest for a shipped build, and served
+/// on the same terms as app.js -- it is the same UI, split at the one seam where
+/// most page loads do not need what is on the other side.
+async fn asset_mmd(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "mmd.js",
+        MMD_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -1893,7 +1909,7 @@ fn err(e: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML};
+    use super::{hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML, MMD_JS};
     use crate::capability::Capabilities;
 
     /// The one decision in this server that stands between a web page and a
@@ -1978,6 +1994,44 @@ mod tests {
                 !APP_JS.contains(bad),
                 "the capability is in a URL in app.js: {bad}"
             );
+        }
+    }
+
+    /// The driver is a chunk, and the page's half of that bargain is that it
+    /// asks for the chunk only when a document actually holds a diagram. An
+    /// import that escaped that check would be eager again -- 11.6 KB gzipped
+    /// back on every page load, for a feature most documents do not use, and
+    /// nothing would say so but `bench/bytes.mjs` on the next push.
+    #[test]
+    fn the_page_asks_for_the_diagram_driver_only_when_a_document_holds_one() {
+        assert_eq!(
+            APP_JS.matches("import(`/assets/mmd.js").count(),
+            1,
+            "one import, so there is one place the laziness can be lost"
+        );
+        assert!(
+            APP_JS.contains(r#"if (docEl.querySelector("pre.mermaid")) mmdLoad()"#),
+            "the import should sit behind the check for a diagram in this document"
+        );
+        // The machinery itself must not have found its way back into the page.
+        for gone in [
+            "mermaid.run",
+            "mermaidLib",
+            "mmdRender",
+            "mmdReserve",
+            "mmdDrain",
+            "mmdQueue",
+        ] {
+            assert!(!APP_JS.contains(gone), "`{gone}` is back in app.js");
+        }
+        // And the module is what holds it, behind the four names the page knows.
+        for kept in [
+            "export function prepare(",
+            "export function retheme(",
+            "export function escape(",
+            "export function key(",
+        ] {
+            assert!(MMD_JS.contains(kept), "mmd.js should export `{kept}`");
         }
     }
 
