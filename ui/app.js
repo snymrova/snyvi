@@ -297,7 +297,12 @@
     if (!wfs) return `<li class="t-wait">…</li>`;
     let h = "";
     for (const w of wfs) {
-      h += `<li class="t-wf"><div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div><ul>`;
+      // A group of one is not a group. `receive.rs` titles a session-keyed
+      // workflow with its first document's title, so the header above a lone
+      // row is a truncated copy of it -- 4 of 17 sessions in live data. The
+      // row stands alone instead, which holds however sessions get named.
+      const solo = w.total === 1 && w.docs.length === 1;
+      h += `<li class="t-wf${solo ? " solo" : ""}">${solo ? "" : `<div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div>`}<ul>`;
       for (const d of w.docs) h += docRow(d);
       if (w.total > w.docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - w.docs.length} older</button></li>`;
       h += `</ul></li>`;
