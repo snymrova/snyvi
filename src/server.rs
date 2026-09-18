@@ -1909,7 +1909,7 @@ fn err(e: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML};
+    use super::{hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML, MMD_JS};
     use crate::capability::Capabilities;
 
     /// The one decision in this server that stands between a web page and a
@@ -1994,6 +1994,44 @@ mod tests {
                 !APP_JS.contains(bad),
                 "the capability is in a URL in app.js: {bad}"
             );
+        }
+    }
+
+    /// The driver is a chunk, and the page's half of that bargain is that it
+    /// asks for the chunk only when a document actually holds a diagram. An
+    /// import that escaped that check would be eager again -- 11.6 KB gzipped
+    /// back on every page load, for a feature most documents do not use, and
+    /// nothing would say so but `bench/bytes.mjs` on the next push.
+    #[test]
+    fn the_page_asks_for_the_diagram_driver_only_when_a_document_holds_one() {
+        assert_eq!(
+            APP_JS.matches("import(`/assets/mmd.js").count(),
+            1,
+            "one import, so there is one place the laziness can be lost"
+        );
+        assert!(
+            APP_JS.contains(r#"if (docEl.querySelector("pre.mermaid")) mmdLoad()"#),
+            "the import should sit behind the check for a diagram in this document"
+        );
+        // The machinery itself must not have found its way back into the page.
+        for gone in [
+            "mermaid.run",
+            "mermaidLib",
+            "mmdRender",
+            "mmdReserve",
+            "mmdDrain",
+            "mmdQueue",
+        ] {
+            assert!(!APP_JS.contains(gone), "`{gone}` is back in app.js");
+        }
+        // And the module is what holds it, behind the four names the page knows.
+        for kept in [
+            "export function prepare(",
+            "export function retheme(",
+            "export function escape(",
+            "export function key(",
+        ] {
+            assert!(MMD_JS.contains(kept), "mmd.js should export `{kept}`");
         }
     }
 
