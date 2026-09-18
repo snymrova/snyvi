@@ -9,9 +9,11 @@
 //! which is the fresh install working.
 //!
 //! It is the one thing snyvi does that cannot be undone, where a delete can
-//! be, so the friction is real: the sentence says what goes and what stays,
-//! and the confirmation is the number of documents typed back. Not "yes";
-//! the number means the sentence was read.
+//! be, so the friction is real: the sentence says what goes and what stays --
+//! the documents and the desks both -- and the confirmation is the number of
+//! documents typed back. Not "yes"; the number means the sentence was read.
+//! The daemon then checks both numbers against what it holds, so a document or
+//! a desk that appeared in between stops the reset rather than going unseen.
 
 use crate::config::{self, Paths};
 use crate::store::{Census, Store};
@@ -79,8 +81,13 @@ pub fn run(paths: &Paths, o: Opts) -> Result<()> {
         reset_on_disk(paths)?;
     }
     println!(
-        "Reset. {} gone, and the token; snyvi is as it was installed.",
-        count(census.documents, "document", "documents")
+        "Reset. {}{} gone, and the token; snyvi is as it was installed.",
+        count(census.documents, "document", "documents"),
+        if census.desks > 0 {
+            format!(" and {}", count(census.desks, "desk", "desks"))
+        } else {
+            String::new()
+        }
     );
     if o.agents {
         for a in &registered {
@@ -163,9 +170,14 @@ fn sentence(c: &Census, agents: bool, registered: &[crate::agents::Agent]) -> St
         k => format!("{} and {}", list[..k - 1].join(", "), list[k - 1]),
     };
     format!(
-        "This removes {} in {}, the index, the token and the page's preferences, and {}. Nothing can be undone.",
+        "This removes {} in {}, {}the index, the token and the page's preferences, and {}. Nothing can be undone.",
         count(c.documents, "document", "documents"),
         count(c.projects, "project", "projects"),
+        if c.desks > 0 {
+            format!("{} and their panes, ", count(c.desks, "desk", "desks"))
+        } else {
+            String::new()
+        },
         if registered.is_empty() {
             "no agent is registered".to_string()
         } else if agents {
@@ -188,7 +200,7 @@ fn reset_through_daemon(paths: &Paths, census: &Census) -> Result<()> {
         .timeout_global(Some(Duration::from_secs(30)))
         .http_status_as_error(false)
         .build()
-        .send_json(json!({ "documents": census.documents, "pinned": true }))
+        .send_json(json!({ "documents": census.documents, "desks": census.desks, "pinned": true }))
         .context("asking the daemon to reset")?;
     if resp.status() != 200 {
         let body: serde_json::Value = resp.body_mut().read_json().unwrap_or_default();
@@ -240,28 +252,40 @@ mod tests {
             documents: 214,
             projects: 9,
             pinned: 0,
+            desks: 0,
         };
         let both: Vec<_> = crate::agents::all()
             .into_iter()
             .filter(|a| a.id == "claude" || a.id == "codex")
             .collect();
         let s = sentence(&c, false, &both[..1]);
-        assert!(s.contains("214 documents in 9 projects"), "{s}");
+        assert!(s.contains("214 documents in 9 projects, the index"), "{s}");
+        assert!(!s.contains("desk"), "no desks, so no word about them: {s}");
         assert!(s.contains("leaves Claude Code registered"), "{s}");
         assert!(s.contains("--agents"), "{s}");
         let one = Census {
             documents: 1,
             projects: 1,
             pinned: 1,
+            desks: 1,
         };
         let s = sentence(&one, true, &both);
-        assert!(s.contains("1 document in 1 project"), "{s}");
+        assert!(
+            s.contains("1 document in 1 project, 1 desk and their panes, the index"),
+            "{s}"
+        );
         assert!(
             s.contains("takes snyvi out of Claude Code and Codex CLI"),
             "{s}"
         );
         let s = sentence(&one, true, &[]);
         assert!(s.contains("and no agent is registered"), "{s}");
+        let two = Census { desks: 2, ..c };
+        let s = sentence(&two, false, &[]);
+        assert!(
+            s.contains("9 projects, 2 desks and their panes, the index"),
+            "{s}"
+        );
         assert_eq!(names(&both, "is", "are"), "Claude Code and Codex CLI are");
         assert_eq!(names(&both[..1], "is", "are"), "Claude Code is");
     }

@@ -4,6 +4,7 @@ mod browse;
 mod capability;
 mod client;
 mod config;
+mod desk;
 mod desktop;
 mod hook;
 mod mcp;

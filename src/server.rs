@@ -309,6 +309,12 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/events", get(events))
         .route("/api/capability", post(mint_capability))
         .route("/api/desk", get(desk_socket))
+        .route("/api/desks", get(desks).post(create_desk))
+        .route("/api/desks/{id}/rename", post(rename_desk))
+        .route("/api/desks/{id}/layout", post(desk_layout))
+        .route("/api/desks/{id}/delete", post(delete_desk))
+        .route("/api/desks/{id}/panes", post(open_pane))
+        .route("/api/panes/{id}/delete", post(close_pane))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -964,6 +970,11 @@ struct ResetBody {
     /// Said explicitly, or the pinned documents keep the reset from happening.
     #[serde(default)]
     pinned: bool,
+    /// The number of desks the caller was shown, checked the way the documents
+    /// are. Missing reads as none: a caller that never said there were desks
+    /// never showed the reader any, and is refused if there are.
+    #[serde(default)]
+    desks: i64,
 }
 
 /// Back to a fresh install: every document and version, the index, the token,
@@ -991,6 +1002,16 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
             StatusCode::CONFLICT,
             Json(json!({
                 "error": format!("the library has changed: {} document(s) now, not {}; look again", census.documents, b.documents),
+                "census": census,
+            })),
+        )
+            .into_response();
+    }
+    if b.desks != census.desks {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("the desks have changed: {} now, not {}; look again", census.desks, b.desks),
                 "census": census,
             })),
         )
@@ -1602,6 +1623,278 @@ fn from_this_page(headers: &HeaderMap) -> bool {
         .any(|h| origin == format!("http://{h}:{port}"))
 }
 
+/// Where the capability rides on an HTTP request.
+///
+/// A header, for the reason the socket refuses the query string: a query
+/// parameter lands in the request path and so in anything that logs one. A
+/// header is the one place a page can put a secret on a `fetch` it composes
+/// itself, and `EventSource`'s inability to set one is what kept the window
+/// count on a query string -- a count, which grants nothing.
+const CAPABILITY_HEADER: &str = "x-snyvi-capability";
+
+/// May this request touch a desk? A sentence if not, and nothing if so.
+///
+/// Three refusals, the same three the socket makes, in the same order: not the
+/// query string, not another page, and not without a live capability. A browser
+/// tab gets past none of them, which is the premise the whole feature rests on
+/// -- so this takes the capabilities and the request, and no `App`, leaving
+/// nothing a forgeable signal could reach it through.
+fn desk_refusal(
+    caps: &crate::capability::Capabilities,
+    headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+) -> Option<&'static str> {
+    if q.contains_key(crate::desktop::CAPABILITY_KEY) || q.contains_key("capability") {
+        return Some("the capability is not a query parameter");
+    }
+    if !from_this_page(headers) {
+        return Some("not from this page");
+    }
+    let given = headers
+        .get(CAPABILITY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    (!caps.verify(given)).then_some("no capability")
+}
+
+/// The gate as a handler uses it: the refusal, already a response.
+fn refuse_desk(
+    app: &App,
+    headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+) -> Option<Response> {
+    desk_refusal(&app.capabilities, headers, q)
+        .map(|why| (StatusCode::FORBIDDEN, Json(json!({ "error": why }))).into_response())
+}
+
+#[derive(Deserialize)]
+struct NewDeskBody {
+    /// A browse root's id, and the path of a folder inside it -- the two things
+    /// every directory row in the sidebar already carries.
+    root: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LayoutBody {
+    col: f64,
+    row: f64,
+}
+
+#[derive(Deserialize)]
+struct NewPaneBody {
+    /// What to re-run when the reader asks for it. Nothing here means a shell,
+    /// and nothing here starts anything: Phase 3 spawns, this phase records.
+    #[serde(default)]
+    cmd: Option<String>,
+}
+
+/// Every desk, with its panes, and how much of the global cap is spent.
+async fn desks(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match (app.store.desks(), app.store.panes_open()) {
+        (Ok(desks), Ok(panes)) => Json(json!({
+            "desks": desks,
+            "panes": panes,
+            "cap": crate::desk::EVERYWHERE,
+            "per_desk": crate::desk::PER_DESK,
+        }))
+        .into_response(),
+        (Err(e), _) | (_, Err(e)) => err(e),
+    }
+}
+
+/// A new desk on a folder.
+///
+/// The folder arrives as a root id and a relative path rather than as an
+/// absolute one, so it goes through `resolve` -- the same guard the terminal
+/// button and every byte `browse_file` reads go through, which is what keeps a
+/// path from the page inside the root it names.
+async fn create_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NewDeskBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(dir) = app.browse.resolve(&b.root, &b.path) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "no such folder" })),
+        )
+            .into_response();
+    };
+    if !dir.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "a desk is rooted at a folder" })),
+        )
+            .into_response();
+    }
+    let name = b.name.as_deref().and_then(clean_name);
+    match app
+        .store
+        .create_desk(&dir.to_string_lossy(), name.as_deref())
+    {
+        Ok(desk) => {
+            desks_moved(&app);
+            (StatusCode::CREATED, Json(json!({ "desk": desk }))).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+async fn rename_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Some(name) = clean_name(&b.name) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "a name cannot be empty" })),
+        )
+            .into_response();
+    };
+    match app.store.rename_desk(id, &name) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true, "name": name })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// The two divider fractions, which are the whole of a desk's geometry.
+async fn desk_layout(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<LayoutBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.set_desk_layout(id, b.col, b.row) {
+        // Silent: a drag ends hundreds of times an hour and no other window
+        // needs to be told where this one's divider came to rest.
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn delete_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.delete_desk(id) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A pane on a desk, in the lowest free slot, rooted where the desk is.
+///
+/// The cwd is the desk's own and is not taken from the caller: a desk is
+/// already a folder the reader chose, and a second place for a path to come
+/// from would be a second place to guard.
+async fn open_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NewPaneBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let cmd = b.cmd.unwrap_or_default();
+    match app.store.open_pane(desk.id, &desk.root, cmd.trim()) {
+        Ok(crate::desk::Opened::Pane(pane)) => {
+            desks_moved(&app);
+            (StatusCode::CREATED, Json(json!({ "pane": pane }))).into_response()
+        }
+        // Full, twice, and the two say different things because the reader has
+        // to do something different about them: another desk takes the next
+        // pane, or something has to be closed first.
+        Ok(crate::desk::Opened::DeskFull) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
+        )
+            .into_response(),
+        Ok(crate::desk::Opened::NoRoomLeft) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("{} panes is the whole of it", crate::desk::EVERYWHERE), "full": "everywhere" })),
+        )
+            .into_response(),
+        Ok(crate::desk::Opened::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn close_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.close_pane(&id) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Tell the windows that the list changed.
+///
+/// The whole list, the way `browse` sends its roots: there are at most a
+/// handful of desks and eight panes in the world, so a diff would be machinery
+/// bought for nothing. A tab receives this and can do nothing with it, which is
+/// the same as today -- the names of a person's folders are already in the
+/// sidebar it can see.
+fn desks_moved(app: &App) {
+    if let Ok(desks) = app.store.desks() {
+        emit(app, "desks", json!({ "desks": desks }));
+    }
+}
+
 /// Open the machine's own terminal, in the directory the reader is looking at.
 ///
 /// The only thing this takes from the caller is an id snyvi already holds; the
@@ -1909,8 +2202,9 @@ fn err(e: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML, MMD_JS};
+    use super::{desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML, MMD_JS};
     use crate::capability::Capabilities;
+    use axum::http::{header, HeaderMap, HeaderValue};
 
     /// The one decision in this server that stands between a web page and a
     /// shell. Every shape that is not a live capability under the key that
@@ -1977,6 +2271,120 @@ mod tests {
             ),
             "the desk gate should see a capability and a frame, and nothing else"
         );
+    }
+
+    /// The same three refusals as the socket, on the routes a desk is made
+    /// and named over. The capability rides in a header because that is the
+    /// one place a page can put a secret on a request it composes itself --
+    /// and the query string, where it would be logged, is refused at the place
+    /// the attempt is made rather than quietly ignored.
+    #[test]
+    fn a_desk_route_takes_its_capability_from_a_header_and_nowhere_else() {
+        let caps = Capabilities::default();
+        let cap = caps.mint().unwrap();
+        let none = std::collections::HashMap::new();
+        let ours = |cap: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(
+                header::ORIGIN,
+                HeaderValue::from_str(&crate::config::base_url()).unwrap(),
+            );
+            h.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+            if !cap.is_empty() {
+                h.insert(
+                    super::CAPABILITY_HEADER,
+                    HeaderValue::from_str(cap).unwrap(),
+                );
+            }
+            h
+        };
+
+        assert_eq!(desk_refusal(&caps, &ours(&cap), &none), None);
+
+        // A page of ours, and no capability: a browser tab, which is the case
+        // the whole feature rests on refusing.
+        assert_eq!(desk_refusal(&caps, &ours(""), &none), Some("no capability"));
+        assert_eq!(
+            desk_refusal(&caps, &ours(&"c".repeat(64)), &none),
+            Some("no capability")
+        );
+
+        // The right secret, in the wrong place.
+        let query = std::collections::HashMap::from([("cap".to_string(), cap.clone())]);
+        assert_eq!(
+            desk_refusal(&caps, &ours(&cap), &query),
+            Some("the capability is not a query parameter")
+        );
+        let query = std::collections::HashMap::from([("capability".to_string(), cap.clone())]);
+        assert_eq!(
+            desk_refusal(&caps, &ours(&cap), &query),
+            Some("the capability is not a query parameter")
+        );
+
+        // Another origin, and a local process with no browser at all: neither
+        // is this page, whatever it is holding.
+        let mut elsewhere = ours(&cap);
+        elsewhere.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://evil.example"),
+        );
+        assert_eq!(
+            desk_refusal(&caps, &elsewhere, &none),
+            Some("not from this page")
+        );
+        let mut bare = HeaderMap::new();
+        bare.insert(
+            super::CAPABILITY_HEADER,
+            HeaderValue::from_str(&cap).unwrap(),
+        );
+        assert_eq!(
+            desk_refusal(&caps, &bare, &none),
+            Some("not from this page")
+        );
+    }
+
+    /// A gate helps only if every route is behind it, and a route added later
+    /// is exactly the one that will forget. So the file is read: each desk
+    /// handler must reach the gate before it reaches the store.
+    #[test]
+    fn every_desk_route_is_behind_the_gate() {
+        // A checkout on Windows can have CRLF line endings, and the end of a
+        // handler is found by its newlines.
+        let src = include_str!("server.rs").replace("\r\n", "\n");
+        let src = src.as_str();
+        for handler in [
+            "async fn desks(",
+            "async fn create_desk(",
+            "async fn rename_desk(",
+            "async fn desk_layout(",
+            "async fn delete_desk(",
+            "async fn open_pane(",
+            "async fn close_pane(",
+        ] {
+            let from = src
+                .find(handler)
+                .unwrap_or_else(|| panic!("{handler} is a route in this file"));
+            let body = &src[from..];
+            let end = body.find("\n}\n").expect("a handler ends");
+            let body = &body[..end];
+            let gate = body
+                .find("refuse_desk")
+                .expect("a desk handler goes through the gate");
+            let store = body.find("app.store").unwrap_or(usize::MAX);
+            assert!(gate < store, "{handler} reaches the store before the gate");
+        }
+        // And the routes themselves: every path a desk is reached by is one of
+        // the handlers above.
+        for route in [
+            r#".route("/api/desks", get(desks).post(create_desk))"#,
+            r#".route("/api/desks/{id}/rename", post(rename_desk))"#,
+            r#".route("/api/desks/{id}/layout", post(desk_layout))"#,
+            r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
+            r#".route("/api/desks/{id}/panes", post(open_pane))"#,
+            r#".route("/api/panes/{id}/delete", post(close_pane))"#,
+        ] {
+            assert!(src.contains(route), "the route table should hold {route}");
+        }
     }
 
     /// The capability is read off the fragment and presented in a frame. If it
