@@ -96,6 +96,13 @@ jobs:
         # reaches every control. Counts and positions, so every row holds on
         # any machine. See the 0.11 and 0.12 notes in docs/ROADMAP.md.
         run: node bench/ui.mjs --check
+      - name: What the page weighs
+        # The four assets the page cannot start without, gzipped as the
+        # daemon serves them. The 60 KB budget in docs/BRAINSTORM.md has been
+        # over since before anything measured it; what is enforced here is
+        # the ceiling above it, so the page cannot get quietly heavier while
+        # the debt is being paid down.
+        run: node bench/bytes.mjs --check
       - name: The README's pictures can still be taken
         # bench/media.mjs is the camera the README's pictures come from; a
         # release re-takes them. Taken here into a folder that is thrown
