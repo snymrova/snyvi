@@ -676,7 +676,9 @@ mod tests {
                 cmd: "printf 'pane=%s\\n' \"$SNYVI_SESSION\"; pwd; exit 3",
                 desk: "d",
                 slot: 1,
-                cols: 80,
+                // Wide enough for a macOS temp dir, which is long enough to
+                // wrap at 80 and split the name this looks for across rows.
+                cols: 400,
                 rows: 10,
             },
             &panes,
