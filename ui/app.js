@@ -2520,7 +2520,7 @@
 
   /** The window's capability: 32 bytes the daemon minted for this launch and
    *  handed over on the first URL's fragment, which is what lets this page open
-   *  a bench socket. A tab has none and never will -- that is the whole of the
+   *  a desk socket. A tab has none and never will -- that is the whole of the
    *  rule that keeps panes out of a browser.
    *
    *  The fragment, not the query string: a query string is sent to the server
@@ -2547,16 +2547,16 @@
     } catch { return ""; }
   })();
 
-  /** Open the bench socket, which answers only a page that holds the
+  /** Open the desk socket, which answers only a page that holds the
    *  capability. Resolves with the socket once the daemon has allowed it, and
    *  null when there is nothing to present or the daemon refuses -- which is
    *  what a browser tab gets, and what the caller draws "not here" from.
    *
    *  The capability goes in the first frame and not in the URL, so it stays out
    *  of the request the handshake makes. */
-  async function benchSocket() {
+  async function deskSocket() {
     if (!capability) return null;
-    const url = location.origin.replace(/^http/, "ws") + "/api/bench";
+    const url = location.origin.replace(/^http/, "ws") + "/api/desk";
     let sock;
     try { sock = new WebSocket(url); } catch { return null; }
     return new Promise(resolve => {
