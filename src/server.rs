@@ -2348,7 +2348,10 @@ mod tests {
     /// handler must reach the gate before it reaches the store.
     #[test]
     fn every_desk_route_is_behind_the_gate() {
-        let src = include_str!("server.rs");
+        // A checkout on Windows can have CRLF line endings, and the end of a
+        // handler is found by its newlines.
+        let src = include_str!("server.rs").replace("\r\n", "\n");
+        let src = src.as_str();
         for handler in [
             "async fn desks(",
             "async fn create_desk(",
