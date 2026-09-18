@@ -264,7 +264,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .t-doc.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is */
 .t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
 @keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
-.t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
+.t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
 .t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
    kept out of the way until the row is under the cursor. The name takes the free

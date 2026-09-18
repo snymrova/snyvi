@@ -40,6 +40,51 @@
     if (d < 7 * 86400) return dt.toLocaleDateString(undefined, { weekday: "short" }) + " " + dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
+  /** `rel` in the width a 264px sidebar has. The tree fits one fact at the
+   *  end of a row, and age is worth more than kind: `md` sat on eighteen
+   *  rows of twenty and told a reader nothing that told them apart. */
+  const relShort = ts => {
+    const d = Date.now() / 1000 - ts;
+    if (d < 60) return "now";
+    if (d < 3600) return `${Math.max(1, Math.round(d / 60))}m`;
+    if (d < 86400) return `${Math.round(d / 3600)}h`;
+    if (d < 7 * 86400) return `${Math.round(d / 86400)}d`;
+    return new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+  /* A title's budget is pixels, not characters: "S23 · The Desk — session
+   * plan" and "snyvi launch post" are 29 and 17 characters, 192 and 109
+   * pixels. A canvas measures text without touching layout. */
+  const ctx2d = () => { try { return document.createElement("canvas").getContext("2d"); } catch { return null; } };
+  const fitCtx = ctx2d(), timeCtx = ctx2d();
+  let fitFont = "", titleRoom = 154, recut = false;
+  /* 12px of session indent, 20 + 8 of the row's padding, 6 of gap. */
+  const roomIn = w => Math.max(60, w - 46);
+  // Titles are measured at 550, the weight an unread row is set in
+  // (`.t-doc a.new .title`), so a row does not change length when it is read.
+  const wide = t => fitCtx.measureText(t).width;
+  /** What is left for the title after the row's indent, padding, gap and the
+   *  time at its end -- measured too, because "5m" and "Sep 12" are 24px
+   *  apart, which is two words of a title. */
+  const roomFor = ts => titleRoom - (timeCtx ? timeCtx.measureText(ts).width : 38);
+  /** Cut in the middle, not the end: what tells one agent's document from
+   *  the next is usually the end of its title, and four rows reading
+   *  "Session panes: the…" tell a reader nothing. The head takes the word
+   *  boundary nearest 60% of the budget, the tail as many whole words as the
+   *  rest holds. The whole title stays in the row's `title`. */
+  const mid = (t, px) => {
+    t = String(t);
+    if (!fitCtx || wide(t) <= px) return t;
+    let head = 0;
+    while (head < t.length && wide(t.slice(0, head + 1)) <= px * 0.6) head++;
+    const back = t.lastIndexOf(" ", head);
+    if (back > 0 && head - back < 8) head = back;
+    const out = t.slice(0, head).trimEnd() + "…";
+    let from = t.length;
+    while (from > head && wide(out + t.slice(from - 1)) <= px) from--;
+    const fwd = t.indexOf(" ", from - 1);
+    if (fwd > 0 && fwd - from < 8) from = fwd + 1;
+    return out + t.slice(from).trimStart();
+  };
   const fmt = ts => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const kindTag = k => ({ markdown: "md", code: "code", diff: "diff", text: "txt", image: "img", binary: "bin", table: "csv" }[k] || k);
   const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
@@ -91,8 +136,9 @@
   const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
 
   const docRow = d => {
+    const ago = relShort(d.received_at);
     const cls = [state.doc && state.doc.id === d.id ? "active" : "", waitingRow(d) ? "new" : ""].join(" ").trim();
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(d.title)}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${kindTag(d.kind)}</span></a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span></a></li>`;
   };
 
   // ---------- the queue ----------
@@ -328,6 +374,17 @@
       treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
       return;
     }
+    // Measured rather than assumed, because the gutter resizes the sidebar,
+    // and once per draw rather than once per row.
+    if (fitCtx && treeEl.clientWidth) {
+      const cs = getComputedStyle(treeEl);
+      const f = `550 ${cs.fontSize} ${cs.fontFamily}`;
+      if (f !== fitFont) {
+        fitCtx.font = fitFont = f;
+        if (timeCtx) timeCtx.font = `10px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
+      }
+      titleRoom = roomIn(treeEl.clientWidth);
+    }
     // Labels only earn their space when both kinds of tree are on screen.
     let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
     for (const p of projects) {
@@ -337,10 +394,25 @@
       h += `</ul></details>`;
     }
     treeEl.innerHTML = h;
+    // The scrollbar exists only once the rows do, and takes width from the
+    // column the titles were just cut to -- so a tree that overflows was cut
+    // against a width that stopped being true as it was drawn. Once more.
+    if (fitCtx && treeEl.clientWidth && !recut && roomIn(treeEl.clientWidth) !== titleRoom) {
+      recut = true;
+      try { renderTree(); } finally { recut = false; }
+      return;
+    }
     // A project the reader has open that this tab has never filled: the "…" is
     // on screen, so fetching it now is what turns it into rows.
     for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
   }
+
+  /* The first draw can land before Inter has, and a fallback font measures
+   * narrower -- titles are then cut to a width the real font overflows, and
+   * the row ends in two ellipses. Measure again once it is here. */
+  try {
+    document.fonts.ready.then(() => { fitFont = ""; renderTree(); markActive(); });
+  } catch {}
 
   /** What one project holds, fetched the first time it is expanded and kept
    *  until the library moves under it. */
