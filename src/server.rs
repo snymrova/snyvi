@@ -19,7 +19,9 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::borrow::Cow;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -60,6 +62,67 @@ const FONTS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// Where the UI is read from.
+///
+/// The shipped daemon serves the four text assets `include_str!` compiled into
+/// it, which is why a stylesheet change costs a rebuild: the bytes are in the
+/// binary. `SNYVI_UI_DIR` points at a working tree's `ui/` instead, and every
+/// request reads the file off disk. That is the whole dev loop -- a saved
+/// stylesheet becomes a reload, and with the watcher below, not even that.
+///
+/// Dev only, and it says so: the variable has to be set deliberately, an unset
+/// or unreadable one falls back to the compiled-in copy rather than failing,
+/// and nothing about the response changes except its cache header. The names
+/// are these four constants, never anything a request carries, so there is no
+/// path for a URL to reach a file that is not one of them.
+pub struct Ui {
+    dir: Option<PathBuf>,
+}
+
+impl Ui {
+    fn from_env() -> Ui {
+        let dir = std::env::var_os("SNYVI_UI_DIR")
+            .map(PathBuf::from)
+            .filter(|d| d.join("app.css").is_file());
+        Ui { dir }
+    }
+
+    /// True while assets come off disk.
+    pub fn live(&self) -> bool {
+        self.dir.is_some()
+    }
+
+    /// The named asset: off disk when live, the compiled-in copy otherwise.
+    /// A file that has gone missing mid-edit -- an editor writing by rename --
+    /// falls back rather than serving an empty page.
+    fn text(&self, name: &str, built_in: &'static str) -> Cow<'static, str> {
+        self.dir
+            .as_ref()
+            .and_then(|d| std::fs::read_to_string(d.join(name)).ok())
+            .map_or(Cow::Borrowed(built_in), Cow::Owned)
+    }
+
+    /// What the four assets hash to right now. The page carries this as
+    /// `?v=`, `/api/health` reports it, and a page whose copy no longer
+    /// matches the daemon's reloads -- so recomputing it per request is what
+    /// makes an edit on disk a new bundle, with no restart in it.
+    fn version(&self, built_in: &str) -> String {
+        let Some(_) = self.dir.as_ref() else {
+            return built_in.to_string();
+        };
+        let mut h = blake3::Hasher::new();
+        for (name, fallback) in [
+            ("index.html", INDEX_HTML),
+            ("app.css", APP_CSS),
+            ("app.js", APP_JS),
+            ("boot.js", BOOT_JS),
+        ] {
+            h.update(self.text(name, fallback).as_bytes());
+        }
+        h.finalize().to_hex()[..8].to_string()
+    }
+}
+
 pub struct App {
     pub store: Store,
     pub renderer: Renderer,
@@ -73,8 +136,11 @@ pub struct App {
     /// Fires when `snyvi stop` asks the daemon to exit.
     pub shutdown: broadcast::Sender<()>,
     pub started: Instant,
-    /// Build hash for immutable asset URLs.
-    pub asset_v: String,
+    /// Build hash for immutable asset URLs, for the compiled-in bundle.
+    /// Read through `asset_v()`, which a live UI recomputes per request.
+    built_v: String,
+    /// Normally the compiled-in UI; `SNYVI_UI_DIR` makes it the one on disk.
+    pub ui: Ui,
     /// Last time any open tab reported having focus; drives desktop notifications.
     pub last_focus: std::sync::Mutex<Instant>,
     /// How many native windows are reading. `snyvi app` opens the page with a
@@ -108,6 +174,11 @@ impl App {
     /// opened in a browser beside it.
     pub fn has_window(&self) -> bool {
         self.windows.load(Ordering::Relaxed) > 0
+    }
+    /// The bundle this daemon is serving. Constant for a shipped build, and
+    /// the hash of what is on disk while the UI is live.
+    pub fn asset_v(&self) -> String {
+        self.ui.version(&self.built_v)
     }
 }
 
@@ -156,13 +227,15 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         events: tx,
         shutdown: stop_tx,
         started: Instant::now(),
-        asset_v,
+        built_v: asset_v,
+        ui: Ui::from_env(),
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
         windows: AtomicUsize::new(0),
         streams: AtomicUsize::new(0),
         online: std::sync::Mutex::new(Default::default()),
     });
     crate::watch::spawn_browse_watcher(app.clone());
+    crate::watch::spawn_ui_watcher(app.clone());
 
     let router = Router::new()
         .route("/", get(shell_home))
@@ -301,7 +374,7 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
     // The build hash, for the one asset the client asks for itself rather than
     // through the markup: the Mermaid bundle.
     if let Some(o) = boot.as_object_mut() {
-        o.insert("v".into(), serde_json::Value::String(app.asset_v.clone()));
+        o.insert("v".into(), serde_json::Value::String(app.asset_v()));
         // What is waiting to be read, on every page: the bar above the
         // document and the section at the top of the sidebar draw from it
         // before the first paint, so a reload never loses count.
@@ -314,8 +387,10 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
         // Who is here, for the count beside the brand mark on the first paint.
         o.insert("online".into(), app.online());
     }
-    let page = INDEX_HTML
-        .replace("{{V}}", &app.asset_v)
+    let page = app
+        .ui
+        .text("index.html", INDEX_HTML)
+        .replace("{{V}}", &app.asset_v())
         .replace("{{TITLE}}", &html_escape::encode_text(title))
         .replace("{{INITIAL_HTML}}", initial_html)
         .replace("{{BOOT_JSON}}", &escape_json_for_script(&boot.to_string()));
@@ -427,14 +502,42 @@ fn immutable(content_type: &'static str, body: impl Into<Body>) -> Response {
         .into_response()
 }
 
-async fn asset_css() -> Response {
-    immutable("text/css; charset=utf-8", APP_CSS)
+/// An asset that is immutable for a shipped build -- its URL carries the
+/// build hash, so a year is the right answer -- and uncached while the UI is
+/// live, where the whole point is that the next request sees the edit.
+fn asset(app: &App, content_type: &'static str, name: &str, built_in: &'static str) -> Response {
+    let body = app.ui.text(name, built_in).into_owned();
+    if !app.ui.live() {
+        return immutable(content_type, body);
+    }
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        body,
+    )
+        .into_response()
 }
-async fn asset_js() -> Response {
-    immutable("application/javascript; charset=utf-8", APP_JS)
+
+async fn asset_css(State(app): S) -> Response {
+    asset(&app, "text/css; charset=utf-8", "app.css", APP_CSS)
 }
-async fn asset_boot() -> Response {
-    immutable("application/javascript; charset=utf-8", BOOT_JS)
+async fn asset_js(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "app.js",
+        APP_JS,
+    )
+}
+async fn asset_boot(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "boot.js",
+        BOOT_JS,
+    )
 }
 async fn asset_mermaid() -> Response {
     (
@@ -526,7 +629,7 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         "agents": app.online(),
         // The bundle this daemon serves, so a page that reconnects after an
         // upgrade can tell it is running another one's and reload.
-        "v": app.asset_v,
+        "v": app.asset_v(),
         "languages": app.renderer.languages().len(),
         "uptime_s": app.started.elapsed().as_secs(),
     }))
@@ -1647,7 +1750,39 @@ fn err(e: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_JS, BOOT_JS, INDEX_HTML};
+    use super::{Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML};
+
+    /// The dev loop's whole promise is that the file on disk is the one being
+    /// served, and its whole safety is that a daemon without `SNYVI_UI_DIR`
+    /// cannot be made to read one. Both halves, plus the fallback that keeps a
+    /// page rendering while an editor has the file renamed out from under it.
+    #[test]
+    fn a_live_ui_serves_the_file_on_disk_and_a_shipped_one_cannot() {
+        let dir = std::env::temp_dir().join(format!("snyvi-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let css = dir.join("app.css");
+        std::fs::write(&css, "body { --probe: 1 }").unwrap();
+
+        let live = Ui {
+            dir: Some(dir.clone()),
+        };
+        assert_eq!(live.text("app.css", APP_CSS), "body { --probe: 1 }");
+        assert!(live.live());
+        // A different file on disk is a different bundle, which is what makes
+        // an open page reload without the daemon restarting.
+        let before = live.version("shipped");
+        std::fs::write(&css, "body { --probe: 2 }").unwrap();
+        assert_ne!(live.version("shipped"), before);
+        // Gone mid-edit: the compiled-in copy, not an empty stylesheet.
+        std::fs::remove_file(&css).unwrap();
+        assert_eq!(live.text("app.css", APP_CSS), APP_CSS);
+
+        let shipped = Ui { dir: None };
+        assert!(!shipped.live());
+        assert_eq!(shipped.text("app.css", APP_CSS), APP_CSS);
+        assert_eq!(shipped.version("shipped"), "shipped");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// `$("#btn-wrap").addEventListener` on an element that is not in the page throws on
     /// boot and takes the whole UI with it, so every id the script uses without checking
