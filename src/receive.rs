@@ -29,6 +29,13 @@ pub struct Payload {
     /// say when an agent last sent something.
     #[serde(default)]
     pub sender: Option<String>,
+    /// The pane it was sent from: `SNYVI_SESSION`, which a pane puts in its
+    /// child's environment and the sending client reads out of its own. The
+    /// daemon cannot read it -- it sees its own environment, not the
+    /// sender's -- so it travels here. Sixteen random bytes: a process that
+    /// was not started in the pane cannot name it.
+    #[serde(default)]
+    pub pane: Option<String>,
 }
 
 pub struct Received {
@@ -82,6 +89,18 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         bail!("content is larger than {} MB", MAX_BYTES / 1024 / 1024);
     }
     let origin = p.origin.as_deref().unwrap_or("cli");
+    // Attribution only. Which workflow a document joins is still the
+    // session's, as it always was; the pane says where it was sent from.
+    let from = p
+        .pane
+        .as_deref()
+        .filter(|id| crate::pane::valid_id(id))
+        .and_then(|id| store.pane(id).ok().flatten())
+        .map(|placed| crate::desk::Origin {
+            id: placed.desk_id,
+            name: placed.desk_name,
+            slot: placed.pane.slot,
+        });
 
     // Project: from the sender's cwd, else from the file's location.
     let anchor: PathBuf = p
@@ -182,6 +201,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         branch: branch.as_deref(),
         origin,
         sender: p.sender.as_deref().unwrap_or(""),
+        desk: from.as_ref(),
         source: &body,
         search_body: &text,
         html: &html,

@@ -217,6 +217,16 @@ fn announce_start() {
 
 pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
     ensure_daemon()?;
+    // Inside a snyvi pane, what is sent says so. Every transport -- `send`,
+    // `watch`, the hook, the MCP server -- comes through here, and each one
+    // started in a pane inherited the variable from it.
+    let mut payload = payload.clone();
+    if payload.pane.is_none() {
+        payload.pane = std::env::var("SNYVI_SESSION")
+            .ok()
+            .filter(|v| crate::pane::valid_id(v));
+    }
+    let payload = &payload;
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
             "no token at {}; is the daemon running as this user?",

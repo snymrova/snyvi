@@ -2,7 +2,7 @@
 //! plus a SQLite index with full-text search.
 
 use crate::config::Paths;
-use crate::desk::{self, Desk, Opened};
+use crate::desk::{self, Desk, Opened, Origin, Placed};
 use crate::render::Kind;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -29,6 +29,8 @@ pub struct Doc {
     pub pinned: bool,
     pub origin: String,
     pub content_hash: String,
+    /// The desk and slot it was sent from, when it was sent from a pane.
+    pub desk: Option<Origin>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -98,6 +100,8 @@ pub struct NewDoc<'a> {
     pub origin: &'a str,
     /// The MCP client's name, "" when it came another way.
     pub sender: &'a str,
+    /// The pane it was sent from, if it was.
+    pub desk: Option<&'a Origin>,
     /// The document body as stored. Bytes, not text, so an image or any other
     /// binary keeps exactly what arrived instead of a lossy decode.
     pub source: &'a [u8],
@@ -149,7 +153,7 @@ CREATE INDEX IF NOT EXISTS docs_wf ON docs(workflow_id, received_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(id UNINDEXED, title, body, tokenize='unicode61');
 "#;
 
-const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash";
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 
@@ -191,6 +195,12 @@ impl Store {
             // Who sent it, by the name the MCP client gave in `initialize`,
             // so the connect page can say when an agent last worked.
             "ALTER TABLE docs ADD COLUMN sender TEXT NOT NULL DEFAULT ''",
+            // Which desk and slot it came from, when it came from a pane.
+            // Copied, not joined: a desk that is closed later does not take
+            // the document's provenance with it.
+            "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -254,9 +264,10 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13)",
-            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin, d.sender],
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13, ?14, ?15, ?16)",
+            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin, d.sender,
+                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot)],
         )?;
         tx.execute(
             "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
@@ -280,6 +291,7 @@ impl Store {
             pinned: false,
             origin: d.origin.to_string(),
             content_hash: hash,
+            desk: d.desk.cloned(),
         })
     }
 
@@ -776,6 +788,14 @@ impl Store {
         desk::delete(&self.conn.lock().unwrap(), id)
     }
 
+    pub fn pane(&self, id: &str) -> Result<Option<Placed>> {
+        desk::pane(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn set_pane_cmd(&self, id: &str, cmd: &str) -> Result<bool> {
+        desk::set_cmd(&self.conn.lock().unwrap(), id, cmd)
+    }
+
     pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {
         desk::open_pane(&mut self.conn.lock().unwrap(), desk_id, cwd, cmd, now())
     }
@@ -878,6 +898,14 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
         pinned: r.get::<_, i64>(13)? != 0,
         origin: r.get(14)?,
         content_hash: r.get(15)?,
+        desk: match r.get::<_, i64>(16)? {
+            0 => None,
+            id => Some(Origin {
+                id,
+                name: r.get(17)?,
+                slot: r.get(18)?,
+            }),
+        },
     })
 }
 
@@ -927,6 +955,7 @@ mod tests {
             branch: None,
             origin: "cli",
             sender: "",
+            desk: None,
             source: src.as_bytes(),
             search_body: src,
             html: "<p>x</p>",

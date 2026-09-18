@@ -27,6 +27,8 @@
     previewOn: false,
     previewKey: null,           // what previewOn belongs to, so a toggle survives a re-render
     online: boot.online || {},  // agent name -> how many of it hold a stream on the daemon now
+    desks: null,                // what /api/desks said, for a window; a tab never has any
+    deskId: null,               // the desk on screen, or null for the list of them
   };
 
   // ---------- helpers ----------
@@ -112,7 +114,7 @@
     browseEl.dataset.ids = ids;
     browseEl.innerHTML = !state.browse.length ? "" : `<div class="b-section"><div class="t-label">Folders</div>` + state.browse.map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${esc(r.name)}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${esc(r.name)}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
     }).join("") + `</div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
@@ -370,6 +372,7 @@
     inboxRowEl.innerHTML = `<a class="t-inbox ${state.view === "inbox" ? "active" : ""}" href="/" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></a>`;
     renderQueue();
     renderBrowse();
+    renderDesks();
     if (!projects.length) {
       treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
       return;
@@ -496,7 +499,7 @@
   }
 
   const entryHtml = (rootId, e) => e.dir
-    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${esc(e.name)}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
+    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${esc(e.name)}${plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
     : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}"><span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
 
   /** Fetch one directory level the first time its folder is opened. */
@@ -592,6 +595,14 @@
         await fillWorkflow(wid, pid);
         renderTree(); markActive();
       }
+      return;
+    }
+    const nd = e.target.closest("[data-newdesk]");
+    if (nd) {
+      // Inside a <summary> too: a click on the + is not a click on the folder.
+      e.preventDefault(); e.stopPropagation();
+      const f = folderOf(nd);
+      if (f) newDesk(f);
       return;
     }
     const r = e.target.closest("[data-rename]");
@@ -758,6 +769,7 @@
     let j;
     try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
     if (push) leave();
+    offDesk();
     state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
     markRead(id);
     setPreview(j.preview, j.preview_url, `d:${id}`);
@@ -801,6 +813,7 @@
       let entries = [], root = state.browse.find(r => r.id === rootId);
       try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=`)).json(); } catch {}
       if (push) leave();
+      offDesk();
       state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
       state.browseRoot = root || state.browseRoot; state.browsePath = "";
       setPreview(null, null, `b:${rootId}:`);
@@ -820,6 +833,7 @@
       j = await r.json();
     } catch (e) { toast("Could not open file", String(e)); return; }
     if (push) leave();
+    offDesk();
     state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
     state.browseRoot = j.root; state.browsePath = path;
     setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
@@ -842,6 +856,7 @@
 
   async function showInbox(push = true) {
     if (push) leave();
+    offDesk();
     state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
     let items = boot.inbox;
     if (!items || push) {
@@ -930,6 +945,7 @@
   }
   async function showConnect(push = true) {
     if (push) leave();
+    offDesk();
     state.view = "connect"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
     document.title = "Connect an agent · snyvi";
     if (push) history.pushState({ connect: true }, "", "/connect");
@@ -1542,6 +1558,10 @@
       d.lang ? ["Lang", d.lang] : null,
     ].filter(Boolean);
     metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span title="${esc(v)}">${esc(v)}</span></div>`).join("") +
+      // Sent from a pane: which desk and which slot, and a way back to it.
+      // A link and not adjacency, because a window can have three desks and
+      // `[1]` alone would not say which.
+      (d.desk ? `<div class="row"><b>From</b><span><a href="/desk/${d.desk.id}" data-desk="${d.desk.id}" data-slot="${d.desk.slot}">${esc(d.desk.name)} [${d.desk.slot}] ▸</a></span></div>` : "") +
       `<div class="actions">` +
       (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd>c</kbd></button>`) : "") +
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
@@ -1609,10 +1629,9 @@
    *  The request carries no token because this page has none, and is allowed
    *  through by being same-origin instead; a page on another origin is refused
    *  by the daemon. */
-  async function openTerminal() {
-    const body = state.view === "browse"
+  async function openTerminal(body = state.view === "browse"
       ? { root: state.browseRoot.id, path: state.browsePath || "" }
-      : { doc: state.doc.id };
+      : { doc: state.doc.id }) {
     try {
       const r = await fetch("/api/terminal", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -1652,12 +1671,14 @@
 
   // ---------- navigation ----------
   document.addEventListener("click", e => {
-    const a = e.target.closest("a[data-id], a[data-browse], [data-nav]");
+    const a = e.target.closest("a[data-id], a[data-browse], a[data-desk], [data-nav]");
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
     e.preventDefault();
     if (a.dataset.nav === "inbox") showInbox(true);
     else if (a.dataset.nav === "connect") showConnect(true);
+    else if (a.dataset.nav === "desks") showDesk(null, true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
+    else if (a.dataset.desk !== undefined) showDesk(+a.dataset.desk, true, +a.dataset.slot || 0);
     else showDoc(a.dataset.id, true);
     if (root.dataset.sheet === "side") closeSheet();
   });
@@ -1718,6 +1739,8 @@
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     if (location.pathname === "/connect") return showConnect(false);
+    const k = location.pathname.match(/^\/desk\/(\d+)$/);
+    if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
     showInbox(false);
   });
 
@@ -1796,6 +1819,145 @@
       return sessionStorage.getItem("snyvi.window") === "1";
     } catch { return false; }
   })();
+
+  // ---------- desks ----------
+  /* A desk is a folder and up to four panes, and it exists only in the
+   * window: every way in, and every route behind them, needs the capability,
+   * so a tab is shown the row with a dash and one sentence and nothing else.
+   * The view is ui/desk.js, fetched the first time a desk is opened, so a
+   * reader who never opens one pays for this block and no more. */
+  const deskNav = $("#desk-nav");
+  let desk = null, deskLoading = null, lastDesk = null;
+  const plusDesk = () => capability ? `<button class="b-new" data-newdesk title="New desk here" aria-label="New desk here">+</button>` : "";
+  /** A desk route, with the capability in the one place a page can put a
+   *  secret on a request it composes: a header. */
+  async function deskApi(path, body, type) {
+    const headers = { "content-type": type || "application/json", "x-snyvi-capability": capability };
+    const r = await fetch(path, body === undefined ? { headers } : { method: "POST", headers, body: type ? body : JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  }
+  async function loadDesks() {
+    if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
+    renderDesks();
+    if (desk && state.view === "desk") desk.update(state.desks);
+  }
+  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
+  function renderDesks() {
+    const list = state.desks ? state.desks.desks : [];
+    let blocked = 0;
+    for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
+    const on = state.view === "desk";
+    deskNav.innerHTML = `<a class="t-inbox${on && state.deskId == null ? " active" : ""}" href="/desks" data-nav="desks"><span>Desks</span>` +
+      (blocked ? `<span class="blk" title="${plural(blocked, "pane")} waiting on you">!${blocked}</span>` : "") +
+      `<span class="n"${capability ? "" : ` title="Desks run in the desktop window"`}>${capability ? list.length : "—"}</span></a>` +
+      (list.length ? `<ul class="t-desks">` + list.map(d => {
+        const m = mark3(d.panes);
+        return `<li><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}">${m}</span><span class="title">${esc(d.name)}</span>${d.panes.length ? `<span class="k">${d.panes.length}</span>` : ""}</a></li>`;
+      }).join("") + `</ul>` : "");
+  }
+  /** The desk view. A tab gets the sentence and not the grid: it could never
+   *  start anything, and a grid of dead panes would say it might. */
+  async function showDesk(id, push = true, slot = 0) {
+    if (push) leave();
+    const was = state.view === "desk";
+    state.view = "desk"; state.deskId = id; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    if (id != null) lastDesk = id;
+    root.dataset.view = "desk";
+    if (push) history.pushState({ desk: id }, "", id == null ? "/desks" : `/desk/${id}`);
+    renderTree(); markActive();
+    if (!capability) {
+      document.title = "Desks · snyvi";
+      docEl.innerHTML = `<div class="inbox-head"><h1>Desks</h1><p>Desks run in the snyvi desktop window. This is a browser tab, so it has no capability to start a process. Open the same address in the desktop app.</p></div><p><code>snyvi:/${esc(location.pathname)}</code></p>`;
+      tocEl.innerHTML = metaEl.innerHTML = ""; rail.classList.add("empty");
+      return;
+    }
+    try { desk = await (deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
+    if (state.view !== "desk") return;
+    if (!state.desks) await loadDesks();
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, go: showDesk, swap: swapDesk, refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+  }
+  /** Out of the desk view, to wherever the page is going next. */
+  function offDesk() {
+    if (state.view !== "desk") return;
+    delete root.dataset.view;
+    if (desk) desk.close();
+  }
+  /** `⌃\``: between the desk and what was being read. */
+  function swapDesk() {
+    if (state.view === "desk") { history.length > 1 ? history.back() : showInbox(true); return; }
+    const d = lastDesk != null ? lastDesk : state.desks && state.desks.desks[0] ? state.desks.desks[0].id : null;
+    showDesk(d, true);
+  }
+  async function newDesk(f) {
+    try {
+      const j = await deskApi("/api/desks", { root: f.root, path: f.path });
+      await loadDesks();
+      showDesk(j.desk.id, true);
+    } catch (e) { toast("Could not make a desk", String(e)); }
+  }
+  /** The folder a row in the browse tree is, in the two shapes it is needed:
+   *  the root and path every route takes, and the absolute path a desk is
+   *  compared by. */
+  function folderOf(el) {
+    const d = el.closest(".b-dir > details, .b-root");
+    const r = d && state.browse.find(x => x.id === d.dataset.root);
+    if (!r) return null;
+    const path = d.dataset.path || "";
+    return { root: r.id, path, abs: r.path + (path ? "/" + path : "") };
+  }
+
+  // ---------- the folder menu ----------
+  /* The first context menu in snyvi, on the one row that has a use for it: a
+   * folder. `New desk here` always, `Show desk` for each desk already on it --
+   * two on one folder is a workflow, not a mistake -- and in a tab neither,
+   * rather than both greyed. Right-click cannot be reached from a keyboard,
+   * which this codebase cares about, so the + on the row and the palette are
+   * its peers; and the menu itself is arrow keys and Escape. */
+  const menu = document.createElement("div");
+  menu.id = "ctx"; menu.hidden = true; menu.setAttribute("role", "menu");
+  document.body.append(menu);
+  let menuAt = null;
+  function openMenu(f, x, y) {
+    menuAt = f;
+    const here = state.desks ? state.desks.desks.filter(d => d.root === f.abs) : [];
+    menu.innerHTML = (capability ? `<button role="menuitem" data-m="new">New desk here</button>` +
+      here.map(d => `<button role="menuitem" data-m="show" data-id="${d.id}">Show desk ${esc(d.name)}</button>`).join("") + `<hr>` : "") +
+      `<button role="menuitem" data-m="copy">Copy path</button><button role="menuitem" data-m="term">Open terminal here</button>`;
+    menu.hidden = false;
+    menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 8)) + "px";
+    menu.style.top = Math.max(4, Math.min(y, innerHeight - menu.offsetHeight - 8)) + "px";
+    menu.querySelector("button").focus();
+  }
+  const closeMenu = () => { menu.hidden = true; menuAt = null; };
+  treesEl.addEventListener("contextmenu", e => {
+    const s = e.target.closest(".b-dir > details > summary, .b-root > summary");
+    const f = s && folderOf(s);
+    if (!f) return;
+    e.preventDefault();
+    openMenu(f, e.clientX, e.clientY);
+  });
+  menu.addEventListener("click", e => {
+    const b = e.target.closest("[data-m]"), f = menuAt;
+    if (!b || !f) return;
+    closeMenu();
+    const m = b.dataset.m;
+    if (m === "new") newDesk(f);
+    else if (m === "show") showDesk(+b.dataset.id, true);
+    else if (m === "copy") { navigator.clipboard?.writeText(f.abs); toast("Copied", f.abs); }
+    else openTerminal({ root: f.root, path: f.path });
+  });
+  menu.addEventListener("keydown", e => {
+    const bs = [...menu.querySelectorAll("button")], at = bs.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") bs[(at + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus();
+    else if (e.key === "Escape") closeMenu();
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  });
+  document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target)) closeMenu(); }, true);
+  addEventListener("blur", closeMenu);
 
   /** The daemon's event stream, and the one socket this page holds open for
    *  as long as it lives.
@@ -1948,6 +2110,15 @@
       renderBrowse();
     });
     es.addEventListener("pinned", async () => { await refreshTree(); });
+    // A desk was made, renamed, closed, or a pane opened or closed. The event
+    // is empty on purpose -- it reaches tabs too -- so a window asks again.
+    es.addEventListener("desks", () => loadDesks());
+    // A pane started, stopped, or rang for its reader: the dots, at once.
+    es.addEventListener("panes", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked };
+      renderDesks();
+    });
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -1994,6 +2165,22 @@
   }
   const browsing = () => state.view === "browse" && state.browseRoot;
   function closePalette() { closeDialog(pal); }
+  /** A desk to open, and -- where the reader is in a folder -- a new one
+   *  there: the palette is the keyboard's way to what the folder menu does. */
+  function deskItems(q) {
+    if (!capability || !state.desks) return [];
+    const l = q.trim().toLowerCase(), out = [];
+    if (browsing() && "new desk here".startsWith(l || "n")) {
+      const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+      out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
+    }
+    for (const d of state.desks.desks) if (!l || d.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: d.id, t: `Desk · ${d.name}`, s: d.root });
+    return out;
+  }
+  const palRow = (it, i) => `<li class="${i === 0 ? "sel" : ""}" data-i="${i}">` + (
+    it.t ? `<span class="t">${esc(it.t)}</span><span class="s">${esc(it.s)}</span>`
+      : it.file ? `<span class="t">${esc(it.file.split("/").pop())}</span><span class="s">${esc(it.file)}</span>`
+        : `<span class="t">${esc(it.title)}</span><span class="s">${esc(it.project)} · ${esc(it.workflow_title)} · ${rel(it.received_at)}</span>${it.snippet ? `<span class="snip">${it.snippet}</span>` : ""}`) + `</li>`;
   async function palSearch(q) {
     // A line number is not a search term. `:120` and `L120` jump instead.
     const g = /^\s*[:lL]\s*(\d+)\s*$/.exec(q);
@@ -2002,18 +2189,13 @@
       palList.innerHTML = `<li class="sel" data-i="0"><span class="t">Go to line ${+g[1]}</span><span class="s">${esc(document.title)}</span></li>`;
       return;
     }
+    let items = [];
     if (browsing()) {
-      let hits = [];
-      try { hits = await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json(); } catch {}
-      palItems = hits.map(p => ({ file: p })); palSel = 0;
-      palList.innerHTML = hits.map((p, i) => `<li class="${i === 0 ? "sel" : ""}" data-i="${i}"><span class="t">${esc(p.split("/").pop())}</span><span class="s">${esc(p)}</span></li>`).join("");
-      return;
-    }
-    let items;
-    if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
+      try { items = (await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json()).map(p => ({ file: p })); } catch {}
+    } else if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
     else items = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
-    palItems = items; palSel = 0;
-    palList.innerHTML = items.map((d, i) => `<li class="${i === 0 ? "sel" : ""}" data-i="${i}"><span class="t">${esc(d.title)}</span><span class="s">${esc(d.project)} · ${esc(d.workflow_title)} · ${rel(d.received_at)}</span>${d.snippet ? `<span class="snip">${d.snippet}</span>` : ""}</li>`).join("");
+    palItems = deskItems(q).concat(items); palSel = 0;
+    palList.innerHTML = palItems.map(palRow).join("");
   }
   palIn.addEventListener("input", () => { clearTimeout(palTimer); palTimer = setTimeout(() => palSearch(palIn.value), 60); });
   palIn.addEventListener("keydown", e => {
@@ -2024,7 +2206,8 @@
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  const openPalItem = it => it.line ? gotoLine(it.line) : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
+  const openPalItem = it => it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk) : it.desk ? showDesk(it.desk, true)
+    : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
   palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
   $("#btn-search").addEventListener("click", openPalette);
@@ -2310,7 +2493,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); if (!findBar.hidden) closeFind();
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) closeFind();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop
@@ -2320,6 +2503,13 @@
     if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       if (e.key === "ArrowLeft") history.back(); else history.forward();
+      return;
+    }
+    // Between the desk and the reading view: a key no shell or TUI wants,
+    // so it works from inside a pane as well.
+    if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "`" && capability) {
+      e.preventDefault();
+      swapDesk();
       return;
     }
     // Undo, for as long as the toast offering it is on the screen. The hand
@@ -2391,6 +2581,8 @@
   }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
+  else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();
+  loadDesks();
 })();

@@ -36,6 +36,13 @@ Concrete budgets (targets, not measurements yet):
 | Open an already-received document   | < 30 ms request to first paint |
 | Any interaction                     | < 100 ms, or it is a bug |
 | Library of 10,000 docs              | sidebar and search stay instant |
+| Panes running, across every desk    | ≤ 8                   |
+| Scrollback per pane                 | ≤ 2 MB, counted in bytes |
+
+The two pane lines are the memory row spent on desks. There are 20 MB of
+headroom at 40 MB resident, and 8 panes × 2 MB is a 16 MB ceiling. Four panes
+per desk is not in this table because it bounds nothing: desks are unbounded,
+and the global cap is the line that holds. `docs/DESK.md` has the rest.
 
 What these budgets rule out:
 

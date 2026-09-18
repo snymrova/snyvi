@@ -8,11 +8,13 @@ mod desk;
 mod desktop;
 mod hook;
 mod mcp;
+mod pane;
 mod platform;
 mod project;
 mod receive;
 mod render;
 mod reset;
+mod screen;
 mod server;
 mod session;
 mod setup;
@@ -229,6 +231,7 @@ fn main() -> Result<()> {
                 session: None,
                 origin: Some("cli".into()),
                 sender: None,
+                pane: None,
             };
             let resp = client::send(&paths, &payload)?;
             let url = resp

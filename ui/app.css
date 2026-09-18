@@ -293,6 +293,29 @@ html[data-link="off"] .live-row { visibility: hidden; }
 .t-empty { padding: 24px 12px; color: var(--fg-3); font-size: 13px; line-height: 1.6; }
 .t-empty code { font-family: var(--mono); font-size: 12px; background: var(--rule); padding: 1px 5px; border-radius: 4px; }
 
+/* desks: the row, the flat list under it, the + on a folder, and the folder
+   menu -- the only ways a desk is reached. The desk view itself is styled by
+   ui/desk.js, which is not on the wire until a desk is opened. */
+.t-inbox .blk { color: #b45309; font-size: 11px; font-weight: 600; }
+.t-inbox .blk + .n { margin-left: 6px; }
+.t-desks { list-style: none; margin: -6px 0 8px; padding: 0; }
+.t-desks a { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 12px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; }
+.t-desks a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+.t-desks a.active { background: var(--accent-bg); color: var(--accent); }
+.t-desks .dot { width: 10px; flex: none; text-align: center; font-size: 9px; color: var(--fg-3); }
+.t-desks .dot.on { color: #15803d; }
+.t-desks .dot.blk { color: #b45309; font-size: 11px; font-weight: 700; }
+.t-desks .title { overflow: hidden; text-overflow: ellipsis; }
+.t-desks .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); }
+.b-new { margin-left: auto; color: var(--fg-3); font-size: 13px; line-height: 1; padding: 0 5px; border-radius: 4px; opacity: 0; flex: none; }
+summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
+.b-new:hover { background: var(--rule-2); color: var(--fg); }
+.b-new + .b-close { margin-left: 0; }
+#ctx { position: fixed; z-index: 40; min-width: 200px; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: 13px; }
+#ctx button { display: block; width: 100%; text-align: left; padding: 5px 10px; border-radius: 5px; color: var(--fg-2); }
+#ctx button:hover, #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
+#ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
+
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
 .b-section { margin: 2px 0 8px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }

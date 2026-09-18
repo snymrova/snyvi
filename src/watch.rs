@@ -172,7 +172,14 @@ pub fn spawn_ui_watcher(app: Arc<App>) {
         return;
     };
     tokio::spawn(async move {
-        let files = ["index.html", "app.css", "app.js", "boot.js"];
+        let files = [
+            "index.html",
+            "app.css",
+            "app.js",
+            "boot.js",
+            "mmd.js",
+            "desk.js",
+        ];
         let mut tracker: Tracker<&str> = Tracker::new();
         loop {
             // Nobody is reading: there is no one to tell, so do not stat.

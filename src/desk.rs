@@ -93,6 +93,28 @@ pub struct Pane {
     pub created_at: i64,
 }
 
+/// Where a document came from, when it came from a pane: the desk and the
+/// slot, which is what the reader sees -- `snyvi [1]` -- and what the link in
+/// the document's meta opens. Copied onto the document when it arrives rather
+/// than looked up when it is read, so a document keeps saying where it came
+/// from after the pane or the desk is gone.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Origin {
+    pub id: i64,
+    pub name: String,
+    pub slot: i64,
+}
+
+/// A pane with the desk it is on, for the things that need both: starting it,
+/// which needs the folder and the name, and naming a document it sent.
+#[derive(Clone, Debug)]
+pub struct Placed {
+    pub pane: Pane,
+    pub desk_id: i64,
+    pub desk_name: String,
+    pub root: String,
+}
+
 /// What came of asking for a pane.
 ///
 /// The two refusals are separate because the sentence a reader gets is
@@ -275,6 +297,34 @@ pub fn open_pane(
 /// global cap.
 pub fn close_pane(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn.execute("DELETE FROM panes WHERE id = ?1", params![id])? > 0)
+}
+
+/// One pane and where it is, or nothing if that id is not a pane's.
+pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
+    Ok(conn
+        .query_row(
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, d.id, d.name, d.root
+             FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
+            params![id],
+            |r| {
+                Ok(Placed {
+                    pane: row_to_pane(r, 0)?,
+                    desk_id: r.get(5)?,
+                    desk_name: r.get(6)?,
+                    root: r.get(7)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// What a pane re-runs, as the reader last typed it into `Start`. Kept, so the
+/// field is pre-filled with it after a restart.
+pub fn set_cmd(conn: &Connection, id: &str, cmd: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE panes SET cmd = ?2 WHERE id = ?1",
+        params![id, cmd.trim()],
+    )? > 0)
 }
 
 /// How many panes are open across every desk, which is the number the budget
