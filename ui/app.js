@@ -2159,6 +2159,8 @@
   function resetArm() {
     resetGo.disabled = !resetCensus || resetN.value.trim() !== String(resetCensus.documents) || (resetCensus.pinned > 0 && !resetPin.checked);
   }
+  /** The documents and the desks both, because the daemon checks both. */
+  const resetSentence = c => `This removes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panes, " : ""}the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
   async function openReset() {
     closeDialog(help);
     resetCensus = null; resetN.value = ""; resetErr.hidden = true; resetPin.checked = false; resetPinRow.hidden = true;
@@ -2166,7 +2168,7 @@
     resetArm();
     openDialog(resetDlg, resetN);
     try { resetCensus = await (await fetch("/api/reset")).json(); } catch { resetSay.textContent = "The daemon did not answer."; return; }
-    resetSay.textContent = `This removes ${plural(resetCensus.documents, "document")} in ${plural(resetCensus.projects, "project")}, the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
+    resetSay.textContent = resetSentence(resetCensus);
     if (resetCensus.pinned > 0) {
       $("#reset-pinned-say").textContent = `Also the ${plural(resetCensus.pinned, "pinned document")} — a pin means keep`;
       resetPinRow.hidden = false;
@@ -2198,7 +2200,7 @@
     resetGo.disabled = true; resetGo.textContent = "Resetting…";
     let r;
     try {
-      r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, pinned: resetPin.checked }) });
+      r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, desks: resetCensus.desks || 0, pinned: resetPin.checked }) });
     } catch { resetGo.textContent = "Reset"; resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
     if (r.ok) { afterReset(); return; }
     resetGo.textContent = "Reset";
@@ -2206,7 +2208,7 @@
     resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
     resetErr.hidden = false;
     // The number has moved: say the new sentence and ask for the new number.
-    if (j.census) { resetCensus = j.census; resetN.value = ""; resetSay.textContent = resetSay.textContent.replace(/^This removes [^,]+,/, `This removes ${plural(j.census.documents, "document")} in ${plural(j.census.projects, "project")},`); }
+    if (j.census) { resetCensus = j.census; resetN.value = ""; resetSay.textContent = resetSentence(j.census); }
     resetArm();
   });
 

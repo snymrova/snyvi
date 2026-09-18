@@ -790,19 +790,21 @@ impl Store {
 
     /// What a reset would take, in the numbers the sentence says and the
     /// reader types back: the documents that can be seen, the projects they
-    /// are in, and how many of them are pinned. A document already deleted is
+    /// are in, how many of them are pinned, and the desks that go with them. A document already deleted is
     /// not counted -- the reader has said goodbye to it once -- but it goes
     /// with the rest.
     pub fn census(&self) -> Result<Census> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row(
-            "SELECT COUNT(*), COUNT(DISTINCT project_id), COALESCE(SUM(pinned), 0) FROM live_docs",
+            "SELECT COUNT(*), COUNT(DISTINCT project_id), COALESCE(SUM(pinned), 0),
+                    (SELECT COUNT(*) FROM desks) FROM live_docs",
             [],
             |r| {
                 Ok(Census {
                     documents: r.get(0)?,
                     projects: r.get(1)?,
                     pinned: r.get(2)?,
+                    desks: r.get(3)?,
                 })
             },
         )?)
@@ -819,9 +821,8 @@ impl Store {
         )?;
         // Desks are not documents, and a reset still takes them: what it
         // promises is a store as `open` makes it on a machine that has never
-        // seen snyvi, and a workspace left standing would make that false. The
-        // census counts documents because documents are what the reader is
-        // asked to type back, not because they are all that goes.
+        // seen snyvi. So the census counts them, the sentence names them, and
+        // the daemon checks their number as it checks the documents'.
         desk::clear(&conn)?;
         conn.execute_batch("VACUUM;")?;
         drop(conn);
@@ -840,6 +841,10 @@ pub struct Census {
     pub documents: i64,
     pub projects: i64,
     pub pinned: i64,
+    /// Default, so a census from a daemon that predates desks still reads --
+    /// as none, which is what that daemon has.
+    #[serde(default)]
+    pub desks: i64,
 }
 
 /// A tree row, which is the five columns of a document the sidebar draws and
@@ -1115,7 +1120,8 @@ mod tests {
             Census {
                 documents: 2,
                 projects: 1,
-                pinned: 1
+                pinned: 1,
+                desks: 0,
             }
         );
         assert_eq!(std::fs::read_dir(d.path.join("docs")).unwrap().count(), 6);
@@ -1152,9 +1158,11 @@ mod tests {
             Opened::Pane(_)
         ));
 
-        // Nothing that reads the library can see it.
+        // Nothing that reads the library can see it -- and the reset that
+        // would take it says so.
         assert_eq!(s.count().unwrap(), 1);
         assert_eq!(s.census().unwrap().documents, 1);
+        assert_eq!(s.census().unwrap().desks, 1);
         assert!(s.search("snyvi", 10).unwrap().is_empty());
         assert_eq!(s.projects().unwrap().len(), 1, "the desk made no project");
         assert_eq!(s.inbox(10).unwrap().len(), 1);
@@ -1165,6 +1173,7 @@ mod tests {
         assert_eq!(s.panes_open().unwrap(), 1);
 
         s.reset().unwrap();
+        assert_eq!(s.census().unwrap(), Census::default());
         assert!(s.desks().unwrap().is_empty());
         assert_eq!(s.panes_open().unwrap(), 0);
         // A store again: the next desk is the first.

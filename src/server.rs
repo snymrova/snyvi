@@ -970,6 +970,11 @@ struct ResetBody {
     /// Said explicitly, or the pinned documents keep the reset from happening.
     #[serde(default)]
     pinned: bool,
+    /// The number of desks the caller was shown, checked the way the documents
+    /// are. Missing reads as none: a caller that never said there were desks
+    /// never showed the reader any, and is refused if there are.
+    #[serde(default)]
+    desks: i64,
 }
 
 /// Back to a fresh install: every document and version, the index, the token,
@@ -997,6 +1002,16 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
             StatusCode::CONFLICT,
             Json(json!({
                 "error": format!("the library has changed: {} document(s) now, not {}; look again", census.documents, b.documents),
+                "census": census,
+            })),
+        )
+            .into_response();
+    }
+    if b.desks != census.desks {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("the desks have changed: {} now, not {}; look again", census.desks, b.desks),
                 "census": census,
             })),
         )
