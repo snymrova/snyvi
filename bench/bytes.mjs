@@ -60,13 +60,16 @@ console.log(`${"first paint".padEnd(16)}${String(raw).padStart(10)}${String(tota
 /* Not paid until a diagram is on screen: the library, and since this split the
  * code that drives it. The precedent any new chunk cites. Mermaid ships
  * gzipped, so its file size is already what crosses the wire; mmd.js is
- * measured the way the four above are. */
+ * measured the way the four above are. desk.js is the second chunk, and the
+ * one the measurement below was taken to make the case for: the pane view,
+ * paid when a desk is opened in the window and never in a tab. */
 const deferred = [
-  ["mermaid.min.js.gz", statSync(join(UI, "mermaid.min.js.gz")).size],
-  ["mmd.js", gz("mmd.js")],
+  ["mermaid.min.js.gz", statSync(join(UI, "mermaid.min.js.gz")).size, "the first diagram"],
+  ["mmd.js", gz("mmd.js"), "the first diagram"],
+  ["desk.js", gz("desk.js"), "a desk is opened"],
 ];
-console.log("deferred, and not on the wire until the first diagram:");
-for (const [f, n] of deferred) console.log(`  ${f.padEnd(20)}${kb(n).padStart(12)}`);
+console.log("deferred, and not on the wire until:");
+for (const [f, n, until] of deferred) console.log(`  ${f.padEnd(20)}${kb(n).padStart(12)}   ${until}`);
 console.log("");
 
 /* One test and one reading. The test is the budget, and it is the only line
@@ -77,8 +80,9 @@ const over = total - BUDGET;
 const failed = over > 0;
 console.log(`  ${"first paint against its budget".padEnd(38)}${failed ? " FAIL" : " ok  "} ${
   failed ? `${kb(total)}, ${kb(over)} over ${kb(BUDGET)}` : `${kb(total)} of ${kb(BUDGET)}, ${kb(-over)} spare`}`);
-console.log(`  ${"a panes chunk at first paint".padEnd(38)}      ${
-  total + 15 * KB <= BUDGET ? `15 KB more would still fit under ${kb(BUDGET)}` : `15 KB more is ${kb(total + 15 * KB - BUDGET)} over ${kb(BUDGET)}, so panes load when a desk is opened, as diagrams do`}`);
+const desk = gz("desk.js");
+console.log(`  ${"the desk chunk at first paint".padEnd(38)}      ${
+  total + desk <= BUDGET ? `${kb(desk)} more would still fit under ${kb(BUDGET)}` : `${kb(desk)} more is ${kb(total + desk - BUDGET)} over ${kb(BUDGET)}, which is why it is a chunk`}`);
 console.log("");
 
 if (failed && CHECK) {

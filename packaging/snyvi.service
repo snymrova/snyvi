@@ -7,6 +7,12 @@ Type=simple
 ExecStart=/usr/bin/snyvi serve
 Restart=on-failure
 RestartSec=2
+# A desk's panes are the daemon's children, and theirs are theirs. When the
+# service stops, every one of them stops with it: processes never come back on
+# their own, and a shell left running by a daemon that is gone is exactly that.
+# control-group is systemd's default; it is written down so that nobody makes
+# it `process` later without reading this.
+KillMode=control-group
 
 [Install]
 WantedBy=default.target

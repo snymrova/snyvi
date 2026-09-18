@@ -4,10 +4,13 @@ Written 2026-09-12, after a question about giving the desktop app a
 terminal to run commands from.
 
 **Status.** Section 5 has landed. A button in the document header and the
-browse header opens the *system* terminal in the right directory. The
-embedded terminal of section 3 is declined, and section 3 exists so it does
-not have to be re-argued from scratch the next time it is asked. Section 7
-is where the plan turned out to be wrong, and says how.
+browse header opens the *system* terminal in the right directory.
+
+**The embedded terminal of section 3 was declined here and has since been
+built, as desks** (`docs/DESK.md`). Sections 1 to 8 are kept as they were
+written, because they are why the design came out the shape it did. Section 9
+goes through each argument: three are answered, and two, 4 and 5 below, are
+not. Section 7 is where the first plan turned out to be wrong.
 
 Unlike `DIAGRAMS.md`, nothing here is measured, because nothing here is
 about time. The argument is structural, so section 2 is read out of the
@@ -21,7 +24,7 @@ name, and separating them is most of the work:
 
 | | What it is | Cost | Call |
 |---|---|---|---|
-| A | An embedded emulator: a PTY in the daemon, a terminal in the page | M–L | **no** |
+| A | An embedded emulator: a PTY in the daemon, a terminal in the page | M–L | **no**, later **yes**: section 9 |
 | B | "Run this block" on a fenced shell command | S | **no**, see section 6 |
 | C | "Open a terminal here" — spawn the system terminal, cwd set | XS | **this** |
 | D | "Start the agent here" — C with one program named | XS | later, if asked for |
@@ -318,3 +321,58 @@ document *back* to an agent: "continue this plan". That is the one-way
 rule as well, but it is the rule's actual subject rather than a side door
 into it, and it deserves its own argument rather than a paragraph at the
 end of this one. It is not part of this cut.
+
+## 9. What changed: desks
+
+The decision to build A was the user's, and it overrode this document's
+recommendation. It was not made because the arguments above stopped being
+true. It was made in a form that answers three of them, and it leaves two
+unanswered. Here is each one, in the order section 3 gave them, and then
+section 4's placement problem.
+
+**1. The one-way rule. Answered.** The rule's danger was an executor next to
+content an agent wrote. Desks keep the two apart: *snyvi never makes input
+from content it received.* There is no fan-out and no run-this-block (B is
+still declined), and nothing a document says is ever typed. Bytes reach a
+PTY from a single function, `input()` in `ui/desk.js`, called only from a key
+event or a paste event. The daemon accepts input only for a pane that socket
+is watching. A pane is a shell the reader types into, not a surface a
+document can reach.
+
+**2. A leaked token becomes code execution. Answered.** The write token never
+reaches a pane. Panes sit behind a separate secret, the capability. It is
+minted for each window launch, held in memory and never written to disk, sent
+in a URL fragment and never in a query string, and presented in a header or
+the socket's first frame. Every desk route refuses, in order, the query
+string, a foreign origin and a missing capability, and a test fails if a
+handler reaches the store before the gate. A browser tab gets 403. What this
+section called for (an `Origin` check, a secret distinct from the write
+token, and something per window) is what was built.
+
+**3. The bytes. Answered by measurement.** The terminal lives in the daemon,
+and the page only paints the rows that changed. The spike showed the painter
+does not need an emulator, and the screen model came to 666 lines rather than
+the 2,000–3,000 feared. The page half, `ui/desk.js`, is 11.5 KB gzipped and
+loads when a desk is opened, as the diagram driver does. First paint is
+58.8 KB of the 60 KB budget with the desk entry points included.
+`bench/bytes.mjs` keeps both numbers honest.
+
+**4. Being compared to VS Code, Zed and Warp. Not answered.** Nothing about
+desks changes this. With shells in it, snyvi is measured against programs
+with more people on their terminal than this project has files. The design
+limits the damage (four panes, no split tree, no tabs, no profiles) but does
+not remove it. This is a cost the project has accepted.
+
+**5. "Not an editor" losing its last principle. Not answered.** "Why can't I
+edit this file" now has one less principled answer, since there is a shell a
+click away. The answer left is a choice: snyvi does not edit, and a reader
+who wants to edit has a shell in the right folder. That is a preference, not
+a principle.
+
+**Section 4, the placement. Answered.** The feature is in the daemon, where a
+tab could reach it, but the daemon refuses anything without the capability,
+and only the window has one. The reading page is still byte-identical on web
+and desktop. The window gained no IPC surface: it still only receives a URL,
+now with the capability on the fragment. The two bad placements became one
+placement with a gate.
+

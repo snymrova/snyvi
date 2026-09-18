@@ -177,6 +177,7 @@ fn call_send(
         session: Some(session.to_string()),
         origin: Some("mcp".into()),
         sender: sender.map(str::to_string),
+        pane: None,
     };
     let resp = client::send(paths, &payload)?;
     Ok(Sent {

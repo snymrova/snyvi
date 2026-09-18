@@ -43,6 +43,10 @@ const BOOT_JS: &str = include_str!("../ui/boot.js");
 /// The diagram driver, imported by app.js with the first diagram and never on a
 /// page without one. A module, so it is fetched rather than linked.
 const MMD_JS: &str = include_str!("../ui/mmd.js");
+/// The desk view: the pane grid, the painter, the keys. Loaded when a desk is
+/// opened and not before, like the diagram driver -- a reader who never opens a
+/// desk pays nothing for it.
+const DESK_JS: &str = include_str!("../ui/desk.js");
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -123,6 +127,7 @@ impl Ui {
             ("app.js", APP_JS),
             ("boot.js", BOOT_JS),
             ("mmd.js", MMD_JS),
+            ("desk.js", DESK_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -181,6 +186,9 @@ pub struct App {
     /// and nowhere else: a capability that outlived the daemon would be a
     /// secret on disk, which is the one thing it must never be.
     pub capabilities: crate::capability::Capabilities,
+    /// The panes that have been woken since this daemon started: their
+    /// screens, and their processes while they run. See `crate::pane`.
+    pub panes: Arc<crate::pane::Panes>,
 }
 
 impl App {
@@ -233,10 +241,12 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(INDEX_HTML.as_bytes());
         h.update(APP_CSS.as_bytes());
         h.update(APP_JS.as_bytes());
+        h.update(DESK_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
     };
+    let panes = crate::pane::Panes::new(&paths.data_dir, tx.clone());
     let app = Arc::new(App {
         store,
         renderer,
@@ -253,7 +263,12 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         streams: AtomicUsize::new(0),
         online: std::sync::Mutex::new(Default::default()),
         capabilities: Default::default(),
+        panes,
     });
+    // Kept past the router, which takes its own: what the daemon does on the
+    // way out needs the panes.
+    let leaving = app.clone();
+    let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
 
@@ -315,6 +330,15 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/panes/{id}/delete", post(close_pane))
+        .route("/api/panes/{id}/start", post(start_pane))
+        .route("/api/panes/{id}/stop", post(stop_pane))
+        .route(
+            "/api/panes/{id}/paste",
+            post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
+        )
+        .route("/desks", get(shell_desk_list))
+        .route("/desk/{id}", get(shell_desk))
+        .route("/assets/desk.js", get(asset_desk))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -338,8 +362,17 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
                 _ = term => {},
                 _ = stop_rx.recv() => {},
             }
+            // However it was asked, every open stream is told: a graceful
+            // shutdown waits for each one, and an event stream or a desk
+            // socket never ends of its own accord. `snyvi stop` already sends
+            // this; a signal, which is how systemd and a logout ask, did not.
+            let _ = told.send(());
         })
         .await?;
+    // Every pane's text is written down and every process is hung up on: a
+    // daemon that is going takes its shells with it, and they do not come
+    // back with the next one. What comes back is the text, greyed.
+    leaving.panes.shutdown();
     Ok(())
 }
 
@@ -515,6 +548,24 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
     shell(&app, boot, &doc_html(&doc, &body), &title)
 }
 
+/// A desk, by its address. The page is the same page in a window and a tab --
+/// what differs is that a tab holds no capability, and the desk view says so
+/// in one sentence rather than drawing a grid that could never run anything.
+/// So nothing about a desk is in this answer: the page asks for it with the
+/// capability, or cannot.
+async fn shell_desk(State(app): S, Path(id): Path<i64>) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "desk", "desk": id, "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "Desk · snyvi")
+}
+
+/// Every desk, which is where the sidebar's `Desks` row goes.
+async fn shell_desk_list(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "desk", "desk": null, "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "Desks · snyvi")
+}
+
 // ---------- assets ----------
 
 fn immutable(content_type: &'static str, body: impl Into<Body>) -> Response {
@@ -577,6 +628,15 @@ async fn asset_mmd(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "mmd.js",
         MMD_JS,
+    )
+}
+/// The desk view, on the same terms as the diagram driver.
+async fn asset_desk(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "desk.js",
+        DESK_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -665,6 +725,9 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
         "window": app.has_window(),
         "streams": app.streams.load(Ordering::Relaxed),
+        // How many pane processes are running, so `snyvi bench` and a person
+        // with curl can see what a desk is costing without a window open.
+        "panes": app.panes.running(),
         // Which agents hold a stream right now, by the name each gave.
         "agents": app.online(),
         // The bundle this daemon serves, so a page that reconnects after an
@@ -1036,6 +1099,8 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         Ok(Err(e)) => return err(e),
         Err(e) => return err(anyhow::anyhow!("reset task: {e}")),
     }
+    // The store has let go of every pane; the processes and their text go too.
+    app.panes.clear();
     for root in app.browse.list() {
         app.browse.close(&root.id);
     }
@@ -1497,10 +1562,65 @@ async fn mint_capability(State(app): S, headers: HeaderMap) -> Response {
 /// open by whatever opened it.
 const CAPABILITY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// The first frame on a desk socket, and the only one this phase reads.
+/// The first frame on a desk socket, and the only one read before the
+/// capability is known to be good.
 #[derive(Deserialize)]
 struct Hello {
     capability: String,
+}
+
+/// What a page says on its desk socket once it is allowed. `docs/DESK.md` has
+/// the protocol; the frames going the other way are `crate::screen`'s.
+#[derive(Deserialize)]
+#[serde(tag = "t")]
+enum Said {
+    /// The panes this page is showing, which replaces whatever it showed
+    /// before. Each is sent a status, its old text if it has any, and a
+    /// snapshot, and then its frames.
+    #[serde(rename = "watch")]
+    Watch { panes: Vec<String> },
+    /// Keys or a paste, for one pane this page is watching.
+    #[serde(rename = "in")]
+    In { p: String, d: String },
+    /// The size a pane is drawn at on this page.
+    #[serde(rename = "size")]
+    Size { p: String, c: u16, r: u16 },
+}
+
+/// One pane's frames, from its broadcast to this socket. A page that falls so
+/// far behind that the broadcast drops frames for it is not sent the rest:
+/// it is sent a fresh snapshot, which is always right, instead of a diff
+/// against a screen it no longer holds.
+async fn forward(
+    live: Arc<crate::pane::Live>,
+    first: Vec<String>,
+    mut rx: broadcast::Receiver<Arc<str>>,
+    out: tokio::sync::mpsc::Sender<Arc<str>>,
+) {
+    for f in first {
+        if out.send(f.into()).await.is_err() {
+            return;
+        }
+    }
+    loop {
+        match rx.recv().await {
+            Ok(m) => {
+                if out.send(m).await.is_err() {
+                    return;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                let (first, fresh) = live.attach();
+                rx = fresh;
+                for f in first {
+                    if out.send(f.into()).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
+    }
 }
 
 /// The socket desks will speak over, and today the capability's proof and
@@ -1580,12 +1700,75 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
     let _ = socket
         .send(Message::Text(json!({ "ok": true }).to_string().into()))
         .await;
-    // Held open, and silent. The page needs to tell "allowed, and waiting" from
-    // "refused", and those are the two answers there are to give yet.
-    while let Some(Ok(msg)) = socket.recv().await {
-        if matches!(msg, Message::Close(_)) {
-            break;
+    // Bounded, so a page that cannot keep up makes its forwarders wait, and a
+    // forwarder that waits long enough is resynced rather than buffered.
+    let (out, mut frames) = tokio::sync::mpsc::channel::<Arc<str>>(64);
+    let mut going = app.shutdown.subscribe();
+    let mut watching: std::collections::HashMap<
+        String,
+        (Arc<crate::pane::Live>, tokio::task::JoinHandle<()>),
+    > = Default::default();
+    loop {
+        tokio::select! {
+            // The daemon is going, and the page's reconnect is what tells the
+            // reader: the capability it holds dies with this process.
+            _ = going.recv() => break,
+            f = frames.recv() => {
+                let Some(f) = f else { break };
+                if socket.send(Message::Text(f.to_string().into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                let text = match msg {
+                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(_)) => continue,
+                };
+                let Ok(said) = serde_json::from_str::<Said>(text.as_str()) else { continue };
+                match said {
+                    Said::Watch { panes } => {
+                        let wanted: std::collections::HashSet<String> = panes
+                            .into_iter()
+                            .filter(|id| crate::pane::valid_id(id))
+                            .filter(|id| matches!(app.store.pane(id), Ok(Some(_))))
+                            .take(crate::desk::EVERYWHERE as usize)
+                            .collect();
+                        watching.retain(|id, (_, task)| {
+                            let keep = wanted.contains(id);
+                            if !keep {
+                                task.abort();
+                            }
+                            keep
+                        });
+                        for id in wanted {
+                            if watching.contains_key(&id) {
+                                continue;
+                            }
+                            let live = app.panes.get(&id);
+                            let (first, rx) = live.attach();
+                            let task = tokio::spawn(forward(live.clone(), first, rx, out.clone()));
+                            watching.insert(id, (live, task));
+                        }
+                    }
+                    // Only for a pane this page is watching: a page cannot type
+                    // into a pane it is not showing.
+                    Said::In { p, d } => {
+                        if let Some((live, _)) = watching.get(&p) {
+                            live.input(d.as_bytes(), &app.panes);
+                        }
+                    }
+                    Said::Size { p, c, r } => {
+                        if let Some((live, _)) = watching.get(&p) {
+                            live.resize(c, r);
+                        }
+                    }
+                }
+            }
         }
+    }
+    for (_, (_, task)) in watching {
+        task.abort();
     }
 }
 
@@ -1623,6 +1806,32 @@ fn from_this_page(headers: &HeaderMap) -> bool {
         .any(|h| origin == format!("http://{h}:{port}"))
 }
 
+/// A read from this page, which carries no `Origin`: a browser sets it on
+/// every POST and every cross-origin request, but not on a same-origin GET, so
+/// `from_this_page` alone refuses the desk list the window asks for.
+///
+/// `Host` stands in for it. A page on another origin cannot get here without an
+/// `Origin` -- the capability header makes its request a CORS one -- and a page
+/// that rebinds its own name to 127.0.0.1 sends that name as `Host`. Where
+/// fetch metadata is sent, it has to say `same-origin` as well.
+fn same_origin_read(headers: &HeaderMap) -> bool {
+    if headers.contains_key(header::ORIGIN) {
+        return false;
+    }
+    if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+        if site != "same-origin" {
+            return false;
+        }
+    }
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let port = config::port();
+    ["127.0.0.1", "localhost", "[::1]"]
+        .iter()
+        .any(|h| host == format!("{h}:{port}"))
+}
+
 /// Where the capability rides on an HTTP request.
 ///
 /// A header, for the reason the socket refuses the query string: a query
@@ -1647,7 +1856,7 @@ fn desk_refusal(
     if q.contains_key(crate::desktop::CAPABILITY_KEY) || q.contains_key("capability") {
         return Some("the capability is not a query parameter");
     }
-    if !from_this_page(headers) {
+    if !from_this_page(headers) && !same_origin_read(headers) {
         return Some("not from this page");
     }
     let given = headers
@@ -1703,7 +1912,9 @@ async fn desks(
     }
     match (app.store.desks(), app.store.panes_open()) {
         (Ok(desks), Ok(panes)) => Json(json!({
-            "desks": desks,
+            "desks": with_status(&app, &desks),
+            // So a pane's header can say `~/snyvi` rather than the whole path.
+            "home": dirs::home_dir(),
             "panes": panes,
             "cap": crate::desk::EVERYWHERE,
             "per_desk": crate::desk::PER_DESK,
@@ -1711,6 +1922,19 @@ async fn desks(
         .into_response(),
         (Err(e), _) | (_, Err(e)) => err(e),
     }
+}
+
+/// The desks, each pane carrying what its runtime says about it: running or
+/// not, blocked or not, and the rest of what the rail draws.
+fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
+    let mut v = serde_json::to_value(desks).unwrap_or_default();
+    for d in v.as_array_mut().into_iter().flatten() {
+        for p in d["panes"].as_array_mut().into_iter().flatten() {
+            let id = p["id"].as_str().unwrap_or_default().to_string();
+            p["status"] = serde_json::to_value(app.panes.status(&id)).unwrap_or_default();
+        }
+    }
+    v
 }
 
 /// A new desk on a folder.
@@ -1811,8 +2035,18 @@ async fn delete_desk(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    let panes: Vec<String> = app
+        .store
+        .desk(id)
+        .ok()
+        .flatten()
+        .map(|d| d.panes.into_iter().map(|p| p.id).collect())
+        .unwrap_or_default();
     match app.store.delete_desk(id) {
         Ok(true) => {
+            for p in &panes {
+                app.panes.close(p);
+            }
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
@@ -1874,6 +2108,7 @@ async fn close_pane(
     }
     match app.store.close_pane(&id) {
         Ok(true) => {
+            app.panes.close(&id);
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
@@ -1884,14 +2119,175 @@ async fn close_pane(
 
 /// Tell the windows that the list changed.
 ///
-/// The whole list, the way `browse` sends its roots: there are at most a
-/// handful of desks and eight panes in the world, so a diff would be machinery
-/// bought for nothing. A tab receives this and can do nothing with it, which is
-/// the same as today -- the names of a person's folders are already in the
-/// sidebar it can see.
+/// A nudge and nothing in it. The event stream goes to every page, tabs
+/// included, and a pane's command and its folder are the desk's business, not
+/// a tab's: so a window hearing this asks `/api/desks` again, with its
+/// capability, and a tab hearing it can ask nothing.
 fn desks_moved(app: &App) {
-    if let Ok(desks) = app.store.desks() {
-        emit(app, "desks", json!({ "desks": desks }));
+    emit(app, "desks", json!({}));
+}
+
+#[derive(Deserialize)]
+struct StartBody {
+    /// What to run, as typed into the pane's `Start`. Absent means what the
+    /// pane ran last; empty means the shell.
+    #[serde(default)]
+    cmd: Option<String>,
+    #[serde(default = "default_cols")]
+    cols: u16,
+    #[serde(default = "default_rows")]
+    rows: u16,
+}
+fn default_cols() -> u16 {
+    80
+}
+fn default_rows() -> u16 {
+    24
+}
+
+/// Start a pane's process. The only way one starts: this request, from a
+/// click in a window holding the capability. Nothing on a timer, nothing at
+/// daemon start, and nothing derived from a document -- premise 3.
+async fn start_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<StartBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(placed)) = app.store.pane(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
+    if cmd.trim() != placed.pane.cmd {
+        let _ = app.store.set_pane_cmd(&id, &cmd);
+    }
+    let live = app.panes.get(&id);
+    let start = crate::pane::Start {
+        cwd: &placed.pane.cwd,
+        cmd: &cmd,
+        desk: &placed.desk_name,
+        slot: placed.pane.slot,
+        cols: b.cols,
+        rows: b.rows,
+    };
+    match live.start(start, &app.panes) {
+        Ok(status) => Json(json!({ "status": status })).into_response(),
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Hang up on a pane's process. The pane stays, stopped, with `Start` offered.
+async fn stop_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(_)) = app.store.pane(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    app.panes.get(&id).stop();
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
+/// what it does with everything else: the image is received as a document,
+/// named for the pane it came from, and what goes back to the page is a path
+/// the page then types into the pane as the reader's paste.
+///
+/// A path and not the document's URL: the program on the other end is almost
+/// always an agent, and an agent opens a file with its own tools and has no
+/// reason to be able to fetch from this daemon. The file sits beside the
+/// store, in `pastes/`, named by its content so pasting it twice is one file.
+/// A sandboxed agent may not be allowed to read there; that is the one open
+/// question this leaves, and `docs/DESK.md` says so.
+async fn paste_image(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(placed)) = app.store.pane(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let ext = match headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+    {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                Json(json!({ "error": "an image, as png, jpeg, gif or webp" })),
+            )
+                .into_response()
+        }
+    };
+    if body.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "an empty paste" })),
+        )
+            .into_response();
+    }
+    let dir = app.paths.data_dir.join("pastes");
+    let name = format!("{}.{ext}", &blake3::hash(&body).to_hex()[..16]);
+    let file = dir.join(&name);
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, &body)) {
+        return err(anyhow::anyhow!("keeping the pasted image: {e}"));
+    }
+    let payload = Payload {
+        path: Some(file.to_string_lossy().to_string()),
+        title: Some(format!(
+            "Pasted into {} [{}]",
+            placed.desk_name, placed.pane.slot
+        )),
+        workflow: Some(format!("{} pastes", placed.desk_name)),
+        cwd: Some(placed.root.clone()),
+        origin: Some("paste".into()),
+        pane: Some(id.clone()),
+        ..Default::default()
+    };
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || {
+        receive::receive(&app2.store, &app2.renderer, payload)
+    })
+    .await
+    {
+        Ok(Ok(received)) => {
+            let doc = received.doc;
+            emit(
+                &app,
+                "doc",
+                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "waiting": waiting(&app) }),
+            );
+            Json(json!({ "id": doc.id, "path": file })).into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
     }
 }
 
@@ -2202,7 +2598,9 @@ fn err(e: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, INDEX_HTML, MMD_JS};
+    use super::{
+        desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, DESK_JS, INDEX_HTML, MMD_JS,
+    };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
 
@@ -2341,6 +2739,38 @@ mod tests {
             desk_refusal(&caps, &bare, &none),
             Some("not from this page")
         );
+
+        // The window's own GET: a browser sends no `Origin` on a same-origin
+        // read, so `Host` is what says it is ours. The live window found this;
+        // the desk list was refused and every desk read "No such desk".
+        let read = |host: &str, site: Option<&'static str>| {
+            let mut h = HeaderMap::new();
+            h.insert(header::HOST, HeaderValue::from_str(host).unwrap());
+            if let Some(s) = site {
+                h.insert("sec-fetch-site", HeaderValue::from_static(s));
+            }
+            h.insert(
+                super::CAPABILITY_HEADER,
+                HeaderValue::from_str(&cap).unwrap(),
+            );
+            h
+        };
+        let here = format!("127.0.0.1:{}", crate::config::port());
+        assert_eq!(
+            desk_refusal(&caps, &read(&here, Some("same-origin")), &none),
+            None
+        );
+        assert_eq!(desk_refusal(&caps, &read(&here, None), &none), None);
+        // A name rebound to 127.0.0.1 is still its own name in `Host`.
+        let rebound = format!("evil.example:{}", crate::config::port());
+        assert_eq!(
+            desk_refusal(&caps, &read(&rebound, Some("same-origin")), &none),
+            Some("not from this page")
+        );
+        assert_eq!(
+            desk_refusal(&caps, &read(&here, Some("cross-site")), &none),
+            Some("not from this page")
+        );
     }
 
     /// A gate helps only if every route is behind it, and a route added later
@@ -2360,6 +2790,9 @@ mod tests {
             "async fn delete_desk(",
             "async fn open_pane(",
             "async fn close_pane(",
+            "async fn start_pane(",
+            "async fn stop_pane(",
+            "async fn paste_image(",
         ] {
             let from = src
                 .find(handler)
@@ -2382,6 +2815,10 @@ mod tests {
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
+            r#".route("/api/panes/{id}/start", post(start_pane))"#,
+            r#".route("/api/panes/{id}/stop", post(stop_pane))"#,
+            r#""/api/panes/{id}/paste""#,
+            "post(paste_image)",
         ] {
             assert!(src.contains(route), "the route table should hold {route}");
         }
@@ -2397,11 +2834,38 @@ mod tests {
             APP_JS.contains("/api/desk"),
             "the desk socket should be opened from here"
         );
-        for bad in ["cap=${", "capability=${", "?cap=", "&cap=", "?capability="] {
-            assert!(
-                !APP_JS.contains(bad),
-                "the capability is in a URL in app.js: {bad}"
-            );
+        for (name, src) in [("app.js", APP_JS), ("desk.js", DESK_JS)] {
+            for bad in ["cap=${", "capability=${", "?cap=", "&cap=", "?capability="] {
+                assert!(
+                    !src.contains(bad),
+                    "the capability is in a URL in {name}: {bad}"
+                );
+            }
+        }
+    }
+
+    /// The desk view is the second chunk, and its bargain is the diagram
+    /// driver's: one import, made when a desk is opened -- and only past the
+    /// point where a tab has been given its sentence and sent away, so a page
+    /// with no capability never fetches the code that paints a pane.
+    #[test]
+    fn the_page_asks_for_the_desk_view_only_in_a_window_opening_a_desk() {
+        assert_eq!(APP_JS.matches("import(`/assets/desk.js").count(), 1);
+        let import = APP_JS.find("import(`/assets/desk.js").unwrap();
+        let sentence = APP_JS
+            .find("This is a browser tab, so it has no capability")
+            .expect("a tab is told why there is no desk");
+        let refusal = APP_JS[..sentence]
+            .rfind("if (!capability)")
+            .expect("the sentence is what a page without the capability gets");
+        assert!(refusal < import, "the import sits past the tab's refusal");
+        assert!(sentence < import);
+        for seam in [
+            "export function open(",
+            "export function update(",
+            "export function close(",
+        ] {
+            assert!(DESK_JS.contains(seam), "desk.js should export `{seam}`");
         }
     }
 

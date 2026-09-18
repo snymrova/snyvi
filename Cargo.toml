@@ -47,6 +47,12 @@ similar = "2"
 ignore = "0.4"
 mimalloc = { version = "0.1", default-features = false }
 toml_edit = "0.25.15"
+# A desk's panes: the PTY, the parser that cuts its output into calls, and how
+# wide a character is. The screen those calls draw on is snyvi's own, in
+# src/screen.rs -- vte is a state machine and nothing more.
+portable-pty = "0.9"
+vte = "0.15"
+unicode-width = "0.2"
 
 [profile.release]
 opt-level = 3
