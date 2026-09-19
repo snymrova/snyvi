@@ -70,6 +70,13 @@ const FONTS: &[(&str, &[u8])] = &[
         "source-serif-italic.woff2",
         include_bytes!("../ui/fonts/source-serif-italic.woff2"),
     ),
+    // Nerd Fonts' symbols (MIT, `symbols-nerd.LICENSE`), cut to the private
+    // use area: the icons a prompt draws in a pane. Fetched only when a pane
+    // shows one -- the face's `unicode-range` in ui/desk.js.
+    (
+        "symbols-nerd.woff2",
+        include_bytes!("../ui/fonts/symbols-nerd.woff2"),
+    ),
 ];
 
 /// Where the UI is read from.
