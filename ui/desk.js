@@ -36,6 +36,8 @@ async function socket() {
     s.onclose = () => {
       if (sock !== s) return;
       sock = null;
+      // A new socket is watching nothing: every pane is asked for again.
+      for (const v of views.values()) v.asked = false;
       // The daemon went, or restarted. Try again while a desk is on screen.
       clearTimeout(retry);
       if (deskId != null) retry = setTimeout(() => watch(), 1000);
@@ -49,7 +51,18 @@ const say = m => { if (sock && sock.readyState === 1) sock.send(JSON.stringify(m
 async function watch() {
   const s = await socket();
   if (!s) { refused(); return; }
-  say({ t: "watch", panes: [...views.keys()] });
+  // The daemon sends a snapshot only for a pane this socket was not already
+  // watching, and a view made since -- the desk drawn again after the list of
+  // desks, another desk, a reconnect -- has nothing for a diff to land on.
+  // Those are left out of one watch and put back in the next, so each gets
+  // its snapshot; what it held before is dropped, since the snapshot brings
+  // the scrollback again.
+  const ids = [...views.keys()], fresh = ids.filter(id => !views.get(id).asked);
+  if (fresh.length) {
+    say({ t: "watch", panes: ids.filter(id => views.get(id).asked) });
+    for (const id of fresh) { const v = views.get(id); v.asked = true; v.old.replaceChildren(); v.sb.replaceChildren(); }
+  }
+  say({ t: "watch", panes: ids });
 }
 
 function receive(f) {
@@ -81,6 +94,8 @@ function refused() {
  *  touched. The same steps, in the same order, as the replica in
  *  src/screen.rs's tests -- which is what says this cannot drift. */
 function paint(v, f) {
+  // A diff for a grid this page does not hold yet: its snapshot is behind it.
+  if (!f.sz && !v.rows) return;
   const pinned = v.body.scrollTop + v.body.clientHeight >= v.body.scrollHeight - 4;
   if (f.sz) {
     // Resize-and-clear, on this side as on the daemon's.
@@ -124,33 +139,100 @@ function cursor(v) {
   v.caret.style.width = cellW * ((v.cells[y] && v.cells[y][x] && v.cells[y][x][4]) || 1) + "px";
 }
 
-/** A row of cells as HTML: runs that share an attribute become one span, and
- *  a wide character is a span of its own, two columns wide. */
+/** A row of cells as HTML: runs that share an attribute become one span.
+ *  A character the pane's font does not have is a span of its own, one cell
+ *  wide or two, so that the advance of whatever font draws it cannot push the
+ *  rest of the row off the grid. */
 function rowHtml(row) {
   let out = "", text = "", key = null, at = null;
-  const flush = () => { if (text) out += span(at, text); text = ""; };
+  const flush = () => { if (text) out += span(at, text, false); text = ""; };
   for (const c of row) {
     if (!c) continue;
-    const k = c[4] === 2 ? null : `${c[1]},${c[2]},${c[3]}`;
-    if (k === null || k !== key) { flush(); key = k; at = c; }
+    if (c[4] === 2 || c[0] >= "\u2000") { flush(); key = null; out += span(c, c[0], true); continue; }
+    const k = `${c[1]},${c[2]},${c[3]}`;
+    if (k !== key) { flush(); key = k; at = c; }
     text += c[0];
-    if (k === null) { flush(); key = null; }
   }
   flush();
   return out;
 }
-const runsHtml = runs => runs.map(([t, fg = 0, bg = 0, fl = 0]) =>
-  fl & WIDE ? [...t].map(ch => span([ch, fg, bg, fl & ~WIDE, 2], ch)).join("") : span([t, fg, bg, fl, 1], t)).join("");
+const runsHtml = runs => {
+  const row = [];
+  for (const [t, fg = 0, bg = 0, fl = 0] of runs) for (const ch of t) row.push([ch, fg, bg, fl & ~WIDE, fl & WIDE ? 2 : 1]);
+  return rowHtml(row);
+};
 
-function span(c, text) {
+function span(c, text, own) {
   const [, fg, bg, fl, w] = c;
   const t = ctx.esc(text);
-  if (!fg && !bg && !fl && w === 1) return t;
+  let cls = (fl & 1 ? " b" : "") + (fl & 2 ? " d" : "") + (fl & 4 ? " i" : "") + (fl & 8 ? " u" : "") + (fl & 128 ? " s" : "") + (fl & 64 ? " h" : "");
+  if (own) cls += (w === 2 ? " x w" : " x") + (DRAWN[text] ? ` g g${text.charCodeAt(0).toString(16)}` : /[\ue000-\uf8ff]/.test(text) ? " nf" : "");
+  if (!fg && !bg && !cls) return t;
   let f = color(fg), b = color(bg);
   if (fl & 32) { [f, b] = [b || "var(--pn-bg)", f || "var(--pn-fg)"]; }
-  const cls = (fl & 1 ? " b" : "") + (fl & 2 ? " d" : "") + (fl & 4 ? " i" : "") + (fl & 8 ? " u" : "") + (fl & 128 ? " s" : "") + (fl & 64 ? " h" : "") + (w === 2 ? " w" : "");
   const style = (f ? `color:${f};` : "") + (b ? `background:${b};` : "");
   return `<span${cls ? ` class="${cls.slice(1)}"` : ""}${style ? ` style="${style}"` : ""}>${t}</span>`;
+}
+
+// ---------- drawn characters ----------
+
+/* Box drawing, blocks and powerline separators are drawn, not set in a font:
+ * a font draws them inside its own em box, and a row is taller than that, so
+ * a frame's sides come apart into dashes and a prompt's segments end in a
+ * notch. Drawn to the cell, they meet the next row and the next cell exactly.
+ * Each is a mask the cell's colour shows through, made once the cell has been
+ * measured. Light and heavy lines: which of left, right, up, down, and how
+ * thick. */
+const LINES = {
+  "─": "1100", "━": "2200", "│": "0011", "┃": "0022", "┌": "0101", "┏": "0202", "┐": "1001", "┓": "2002",
+  "└": "0110", "┗": "0220", "┘": "1010", "┛": "2020", "├": "0111", "┣": "0222", "┤": "1011", "┫": "2022",
+  "┬": "1101", "┳": "2202", "┴": "1110", "┻": "2220", "┼": "1111", "╋": "2222",
+  "╴": "1000", "╵": "0010", "╶": "0100", "╷": "0001", "╸": "2000", "╹": "0020", "╺": "0200", "╻": "0002",
+};
+// Blocks, as rectangles on a unit cell: [x, y, w, h, opacity].
+const Q = { a: [0, 0, .5, .5], b: [.5, 0, .5, .5], c: [0, .5, .5, .5], d: [.5, .5, .5, .5] };
+const BLOCKS = {
+  "▀": [[0, 0, 1, .5]], "█": [[0, 0, 1, 1]], "▐": [[.5, 0, .5, 1]], "▔": [[0, 0, 1, .125]], "▕": [[.875, 0, .125, 1]],
+  "░": [[0, 0, 1, 1, .25]], "▒": [[0, 0, 1, 1, .5]], "▓": [[0, 0, 1, 1, .75]],
+  "▖": "c", "▗": "d", "▘": "a", "▙": "acd", "▚": "ad", "▛": "abc", "▜": "abd", "▝": "b", "▞": "bc", "▟": "bcd",
+};
+for (let n = 1; n < 8; n++) {
+  BLOCKS[String.fromCharCode(0x2580 + n)] = [[0, 1 - n / 8, 1, n / 8]];   // ▁ to ▇
+  BLOCKS[String.fromCharCode(0x2590 - n)] = [[0, 0, n / 8, 1]];           // ▏ to ▉
+}
+const DRAWN = {};
+
+function drawn(W, H) {
+  const t = Math.max(1, Math.round(W / 7)), cx = W / 2, cy = H / 2;
+  const svg = (body, box = `${W} ${H}`) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${box}" preserveAspectRatio="none">${body}</svg>`;
+  const rect = (x, y, w, h, o = 1) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"${o < 1 ? ` fill-opacity="${o}"` : ""}/>`;
+  const line = d => `<path d="${d}" fill="none" stroke="#000" stroke-width="${t}"/>`;
+  const fill = d => `<path d="${d}"/>`;
+  for (const [ch, w] of Object.entries(LINES)) {
+    const [l, r, u, d] = [...w].map(Number), m = Math.max(l, r, u, d) * t / 2;
+    DRAWN[ch] = svg((l ? rect(0, cy - l * t / 2, cx + m, l * t) : "") + (r ? rect(cx - m, cy - r * t / 2, W - cx + m, r * t) : "") +
+      (u ? rect(cx - u * t / 2, 0, u * t, cy + m) : "") + (d ? rect(cx - d * t / 2, cy - m, d * t, H - cy + m) : ""));
+  }
+  const r = cx;
+  DRAWN["╭"] = svg(line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 0 ${cx} ${cy + r}V${H}`));
+  DRAWN["╮"] = svg(line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 1 ${cx} ${cy + r}V${H}`));
+  DRAWN["╯"] = svg(line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 0 ${cx} ${cy - r}V0`));
+  DRAWN["╰"] = svg(line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 1 ${cx} ${cy - r}V0`));
+  for (const [ch, b] of Object.entries(BLOCKS)) DRAWN[ch] = svg((typeof b === "string" ? [...b].map(q => Q[q]) : b).map(a => rect(...a)).join(""), "1 1");
+  // Powerline: the separators a prompt's segments are joined with.
+  const P = String.fromCharCode;
+  Object.assign(DRAWN, {
+    [P(0xe0b0)]: svg(fill(`M0 0L${W} ${cy}L0 ${H}Z`)), [P(0xe0b2)]: svg(fill(`M${W} 0L0 ${cy}L${W} ${H}Z`)),
+    [P(0xe0b1)]: svg(line(`M0 0L${W} ${cy}L0 ${H}`)), [P(0xe0b3)]: svg(line(`M${W} 0L0 ${cy}L${W} ${H}`)),
+    [P(0xe0b4)]: svg(fill(`M0 0A${W} ${cy} 0 0 1 0 ${H}Z`)), [P(0xe0b6)]: svg(fill(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}Z`)),
+    [P(0xe0b5)]: svg(line(`M0 0A${W} ${cy} 0 0 1 0 ${H}`)), [P(0xe0b7)]: svg(line(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}`)),
+    [P(0xe0b8)]: svg(fill(`M0 0L${W} ${H}H0Z`)), [P(0xe0ba)]: svg(fill(`M${W} 0V${H}H0Z`)),
+    [P(0xe0bc)]: svg(fill(`M0 0H${W}L0 ${H}Z`)), [P(0xe0be)]: svg(fill(`M0 0H${W}V${H}Z`)),
+    [P(0xe0b9)]: svg(line(`M0 0L${W} ${H}`)), [P(0xe0bf)]: svg(line(`M0 0L${W} ${H}`)),
+    [P(0xe0bb)]: svg(line(`M${W} 0L0 ${H}`)), [P(0xe0bd)]: svg(line(`M${W} 0L0 ${H}`)),
+  });
+  return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("data:image/svg+xml,${encodeURIComponent(s)}")}`).join("\n") +
+    `\n.pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
 }
 
 /** A colour on the wire: 0 the default, 1..256 a palette index plus one,
@@ -218,7 +300,7 @@ function makeView(p) {
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"></form>`;
   const v = {
-    id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0],
+    id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0], asked: false,
     body: el.querySelector(".pn-body"), old: el.querySelector(".pn-old"), sb: el.querySelector(".pn-sb"), scr: el.querySelector(".pn-scr"),
     caret: el.querySelector(".pn-caret"), start: el.querySelector(".pn-start"), size: "",
   };
@@ -583,6 +665,10 @@ export function open(c) {
     document.body.append(probe);
     cellW = probe.getBoundingClientRect().width / 40 || cellW;
     probe.remove();
+    const g = document.createElement("style");
+    g.id = "desk-drawn";
+    g.textContent = drawn(cellW, LINE_PX);
+    document.head.append(g);
   }
   if (deskId !== c.id) { views.clear(); focused = null; }
   deskId = c.id;
@@ -630,7 +716,10 @@ function style() {
 }
 
 const CSS = `
+@font-face { font-family: "snyvi symbols"; font-display: block; unicode-range: U+E000-F8FF;
+  src: local("Symbols Nerd Font Mono"), local("SymbolsNerdFontMono-Regular"), url(/assets/fonts/symbols-nerd.woff2) format("woff2"); }
 :root { --pn-bg: var(--bg-raise); --pn-fg: var(--fg);
+  --pn-font: "JetBrains Mono", "snyvi symbols", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --t0:#1f1d1a; --t1:#b3261e; --t2:#3b6d11; --t3:#a16207; --t4:#1d4ed8; --t5:#7e22ce; --t6:#0e7490; --t7:#8f897f;
   --t8:#5c574f; --t9:#dc2626; --t10:#4d7c0f; --t11:#ca8a04; --t12:#2563eb; --t13:#9333ea; --t14:#0891b2; --t15:#d8d3c9; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --t0:#2a2f3a; --t1:#f87171; --t2:#86c46d; --t3:#e6b450; --t4:#7aa2f7; --t5:#c792ea; --t6:#5ccfe6; --t7:#c8ccd4;
@@ -666,7 +755,7 @@ const CSS = `
 .pn-state { margin-left: auto; }
 .pn.blk .pn-head { border-bottom: 2px solid #d97706; }
 .pn.blk .pn-state { color: #b45309; font-weight: 600; }
-.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--mono); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }
+.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }
 .pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: ${LINE_PX}px; overflow: hidden; }
 .pn-sb > .gap { color: var(--fg-3); font-style: italic; }
 .pn-old { color: var(--fg-3); opacity: .7; }
@@ -677,11 +766,17 @@ const CSS = `
 @keyframes pn-blink { 50% { opacity: .15; } }
 .pn-body .b { font-weight: 650; } .pn-body .d { opacity: .6; } .pn-body .i { font-style: italic; }
 .pn-body .u { text-decoration: underline; } .pn-body .s { text-decoration: line-through; } .pn-body .u.s { text-decoration: underline line-through; }
-.pn-body .h { color: transparent !important; } .pn-body .w { display: inline-block; width: 2ch; }
+.pn-body .h { color: transparent !important; }
+.pn-body span { display: inline-block; height: ${LINE_PX}px; vertical-align: top; }
+/* An icon is drawn a full em wide and a cell is 0.6 of one: set a size down,
+ * centred in its cell, and over its neighbours rather than under them. */
+.pn-body .nf { position: relative; font-size: 10px; }
+.pn-body .g { position: relative; -webkit-text-fill-color: transparent; }
+.pn-body .g::before { content: ""; position: absolute; inset: 0; background: currentColor; -webkit-mask: var(--g) 0 0 / 100% 100% no-repeat; mask: var(--g) 0 0 / 100% 100% no-repeat; }
 .pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: var(--shadow); }
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
-.pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--mono); font-size: 12.5px; }
+.pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: 12.5px; }
 .dk-rail ul { list-style: none; margin: 4px 0; padding: 0; }
 .dk-rail li button { display: flex; gap: 6px; width: 100%; text-align: left; padding: 3px 6px; border-radius: 5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-rail li button.on { background: var(--accent-bg); color: var(--accent); }

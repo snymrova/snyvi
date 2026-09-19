@@ -400,8 +400,8 @@
     for (const d of treeEl.querySelectorAll(".t-proj[open]")) {
       if (d.dataset.pid) openProjects.add(d.dataset.pid);
     }
-    // Labels only earn their space when both kinds of tree are on screen.
-    let h = state.browse.length ? `<div class="t-label">Projects</div>` : "";
+    // No label: the projects hang under Inbox, which is what they are.
+    let h = "";
     for (const p of projects) {
       const open = projOpen(p);
       h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
