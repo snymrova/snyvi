@@ -21,10 +21,23 @@ the questions the design left open.
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 
 **Processes never come back.** A daemon that starts finds every pane stopped,
-with `▶ Start` offered and the last command already filled in. Nothing starts
-a process except a click on Start, which sends `POST /api/panes/{id}/start`.
-A daemon that respawned eight shells across three desks at login would be a
-daemon nobody left running.
+with `▶ Start` offered and the last command already filled in. A daemon that
+respawned eight shells across three desks at login would be a daemon nobody
+left running.
+
+**Asking for a pane is asking for a shell.** A new desk opens with one pane
+and its shell running, and `+ new pane` starts one too: both send
+`POST /api/panes/{id}/start` with an empty command, which is the shell. The
+first build made every new pane wait for a Start click, and a new desk opened
+as a grid of empty boxes with nothing in them to type into. What runs is still
+only ever the reader's shell, or a command the reader typed; the Start bar is
+for a pane that stopped.
+
+**A desk needs no folder.** `POST /api/desks` with no `root` makes a desk in
+the home directory, named `desk` (then `desk 2`, ...), and the Desks page and
+the palette offer it as `New desk`. The home directory is the daemon's to
+name, so no path from the page reaches the filesystem on that route. A folder
+under Folders still gives one on that folder, from its `+` or its menu.
 
 **Two caps, and the global one is the one that matters.** Four panes per desk
 keeps each pane readable. Eight panes in total, with 2 MB of scrollback each,
@@ -47,10 +60,15 @@ shows two panes, and below 700 px it shows one. The others stay one key away.
    `Sec-Fetch-Site`), and a missing or wrong capability. The test
    `every_desk_route_is_behind_the_gate` reads the source and fails if any
    desk handler reaches the store before it reaches the gate.
-2. **The capability is never the write token.** It is never written to disk,
-   and it is stripped from the URL before anything renders.
-   `src/capability.rs` mints 32 bytes for each window launch and keeps them in
-   memory only. The page reads the capability from the URL fragment, keeps it
+2. **The capability is never the write token.** It is stripped from the URL
+   before anything renders, and it never reaches a page as the token would.
+   `src/capability.rs` mints 32 bytes for each window launch and keeps the
+   last sixteen in `capabilities` beside the token, mode 0600, so a window
+   that was open across a daemon restart or an upgrade keeps its panes. They
+   were once held in memory only, and every restart left the open window
+   answering "no capability" until it was reopened. What the capability keeps
+   out is a browser tab, which cannot read a file; a process running as the
+   reader can read the token, and mint with it, already. The page reads the capability from the URL fragment, keeps it
    in `sessionStorage`, and `replaceState`s it out of the address bar. HTTP
    requests carry it in the `x-snyvi-capability` header. The socket carries it
    in its first frame, because a browser `WebSocket` cannot set headers.
