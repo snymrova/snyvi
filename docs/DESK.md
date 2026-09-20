@@ -20,18 +20,28 @@ the questions the design left open.
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 
-**Processes never come back.** A daemon that starts finds every pane stopped,
-with `▶ Start` offered and the last command already filled in. A daemon that
-respawned eight shells across three desks at login would be a daemon nobody
-left running.
+**The daemon never respawns a process; the window does.** A daemon that starts
+finds every pane stopped and leaves them so. A daemon that respawned eight
+shells across three desks at login would be a daemon nobody left running. But
+a pane the reader is *looking at* is a pane they want a shell in, so the page
+starts it: on its first real size, a pane with no process and no exit code
+sends `POST /api/panes/{id}/start` with what it last ran. The old screen stays
+above it, greyed, as scrollback.
+
+The distinction the page draws is the exit code. No exit code means nothing
+ended — the daemon went away underneath a running shell — and there is nothing
+to tell the reader about that. An exit code means the process ended, or the
+reader stopped it, and what to do next is theirs to say: that pane keeps the
+greyed screen and the `▶ Start` bar with the last command filled in. Panes
+behind a tab have no size and start nothing until they are shown, so opening a
+desk costs the shells you can see and no more.
 
 **Asking for a pane is asking for a shell.** A new desk opens with one pane
-and its shell running, and `+ new pane` starts one too: both send
-`POST /api/panes/{id}/start` with an empty command, which is the shell. The
-first build made every new pane wait for a Start click, and a new desk opened
-as a grid of empty boxes with nothing in them to type into. What runs is still
-only ever the reader's shell, or a command the reader typed; the Start bar is
-for a pane that stopped.
+and its shell running, and `+ new pane` starts one too: both send the same
+start with an empty command, which is the shell. The first build made every
+new pane wait for a Start click, and a new desk opened as a grid of empty
+boxes with nothing in them to type into. What runs is still only ever the
+reader's shell, or a command the reader typed.
 
 **A desk needs no folder.** `POST /api/desks` with no `root` makes a desk in
 the home directory, named `desk` (then `desk 2`, ...), and the Desks page and
@@ -157,7 +167,59 @@ that pane focused, and it still names the desk after the desk is closed.
 document joins. A pane id is 16 random bytes, so a process that was not
 started in the pane cannot claim to be it.
 
-## 5. The questions the design left open, answered
+## 5. The prompt
+
+A pane runs the reader's own login shell, so the prompt used to be whatever
+their dotfiles drew: a Powerlevel10k rainbow on one machine, a bare `$` on
+the next, and on both a blue nobody chose -- ANSI 4, out of a theme's default
+config. A desk should look like snyvi wherever it runs, so snyvi brings its
+own prompt (`src/prompt.rs`): the folder in the window's accent, the branch
+and a `*` beside it in a muted tone, and a chevron that turns red when the
+last command failed.
+
+It is a dressing, not a replacement. The shell still starts the reader's way
+and their own rc files are sourced first -- `PATH`, aliases, completions --
+and only then is the prompt set, last, so it wins. zsh is pointed at a
+`ZDOTDIR` of snyvi's whose files source theirs and hand `ZDOTDIR` back, so a
+zsh started *inside* the pane is undressed; bash gets an `--rcfile` that does
+what a login bash would have done first; fish gets `-C`. A shell snyvi has no
+dressing for starts exactly as it did, with its own prompt.
+
+A prompt framework already installed is taken back off rather than raced:
+Powerlevel10k has a teardown of its own, and the others are hooks, removed
+from the arrays they were put in. The hook snyvi adds keeps itself last, so a
+framework that installs on the first prompt still does not get the last word.
+
+The accent travels with the request that starts the pane -- the page sends
+`#rrggbb` as its CSS resolved it -- and is written into the rc files then.
+Only `#rrggbb` is accepted, because it is pasted into a file a shell runs.
+
+A running shell cannot be told a new accent, so it is not asked to be. The
+pane's status carries the colour it was dressed in, and the page paints that
+exact colour as `var(--accent)` rather than as itself, so changing the swatch
+re-tints every prompt already on the screen, scrollback included, without a
+shell drawing anything again. Anything else that sends that exact colour
+re-tints with it, which is the price of the trick.
+
+The chevron is U+F054 from the symbols font snyvi serves, not `❯`: neither
+bundled font has `❯`, and the machine's own fonts may not either.
+
+**Nothing in the prompt runs a process.** The branch is read out of
+`.git/HEAD` by walking up from the folder in the shell's own builtins, the
+way `project::branch` reads it -- a prompt that forks is a prompt that
+stutters in a large repository, and only zsh and fish can draw one late
+(bash's readline cannot repaint), so async would have meant a fast prompt on
+one shell and a slow one on another. What costs -- whether the tree is
+modified -- snyvi works out for itself, off the prompt's path, and shows in
+the pane's header. That is also how a pane running `cmd.exe`, or a shell
+snyvi has no dressing for, still says which branch it is on.
+
+On Windows the shell is whatever `ComSpec` names. PowerShell is dressed with
+`-NoExit -Command` sourcing a generated profile; `cmd.exe` has no rc and no
+scripting in its prompt, but it reads `PROMPT` from the environment and `$E`
+there is an escape, which is all the accent needs.
+
+## 6. The questions the design left open, answered
 
 **Blocked.** A pane is blocked when its program rings for the reader: a BEL,
 or an OSC 9 or OSC 777 notification. The block is cleared by the next input
@@ -197,7 +259,7 @@ Ctrl+Shift+C and Ctrl+Shift+V are copy and paste, as in a Linux terminal.
 Every other key goes to the pane, including the single-letter keys the
 reading view uses.
 
-## 6. Gaps, stated
+## 7. Gaps, stated
 
 - **No reflow on resize.** A line cut short by a narrower pane stays cut.
 - **No combining marks, charset designation or DCS.** The spike saw 0–4

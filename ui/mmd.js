@@ -352,9 +352,9 @@ function mmdTheme() {
      * larger than the rules.
      *
      * The focus label is the paper colour rather than --accent-bg. On paper
-     * the accent is a dark orange and --accent-bg a pale wash of it, which
-     * reads well; in the dark palette the accent is a *light* orange and
-     * --accent-bg is that same orange at 14% alpha, so a label composited
+     * the accent is a deep colour and --accent-bg a pale wash of it, which
+     * reads well; in the dark palette the accent is a lighter one and
+     * --accent-bg is that same colour at 16% alpha, so a label composited
      * onto the fill behind it measured 1.0:1 -- the same colour, twice.
      * --bg is the one token guaranteed to oppose the accent in both
      * palettes, because the accent is chosen to sit on it. */

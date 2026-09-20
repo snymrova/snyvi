@@ -4,8 +4,10 @@
 //! and it is on disk. This is the runtime, and it is not. A pane here is a
 //! `Live`: a screen, the frames sent from it, and, while the reader has asked
 //! for one, a process. Nothing starts a process except `start`, and nothing
-//! calls `start` except a request carrying the window's capability, which is a
-//! click. A daemon that wakes up finds its panes stopped and leaves them so.
+//! calls `start` except a request carrying the window's capability. A daemon
+//! that wakes up finds its panes stopped and leaves them so: it is the window,
+//! showing a pane whose shell went with the last daemon, that asks for another
+//! one -- over the same route a click on `Start` takes.
 //!
 //! One thread per running pane reads the PTY and feeds the screen; one task
 //! per pane turns the screen into frames, at most one a frame, and sends them
@@ -39,6 +41,17 @@ const SLOW_FRAME: Duration = Duration::from_millis(33);
 /// How often a pane that has changed writes its text down, so a daemon that is
 /// killed rather than stopped loses at most this much of it.
 const PERSIST_EVERY: Duration = Duration::from_secs(15);
+/// How often a running pane's folder is asked whether its tree is modified.
+/// This is the half of the prompt that costs a process (`crate::prompt` reads
+/// the branch itself, out of .git/HEAD), which is exactly why it happens here
+/// and not there: nobody waits for it, and a folder that answers slowly is
+/// asked less often rather than making a prompt stutter.
+const GIT_EVERY: Duration = Duration::from_secs(3);
+/// A folder is asked again no sooner than ten times what the last answer cost,
+/// and no later than this. A repository big enough to take a second is worth
+/// a minute of quiet.
+const GIT_BACKOFF: u32 = 10;
+const GIT_AT_MOST: Duration = Duration::from_secs(60);
 
 /// What the rail and the sidebar say about a pane, sent whenever it changes.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -56,6 +69,15 @@ pub struct Status {
     pub cmd: String,
     /// The title the program set, if it set one.
     pub title: String,
+    /// The colour this pane's prompt was dressed in, `#rrggbb`, or empty for a
+    /// shell snyvi does not dress. The page paints that exact colour as the
+    /// accent, so changing the swatch re-tints a prompt already on the screen.
+    pub accent: String,
+    /// The branch the pane's folder is on, and whether its tree is modified.
+    /// Worked out by the daemon rather than by the prompt, so that a pane
+    /// whose shell snyvi cannot dress still says both.
+    pub branch: String,
+    pub dirty: bool,
 }
 
 struct Proc {
@@ -77,6 +99,8 @@ struct Inner {
     /// Bumped by each start, so the threads of a process that has been
     /// replaced do not write into the one that replaced it.
     run: u64,
+    /// The folder the running process was started in, for the git tick.
+    cwd: String,
 }
 
 pub struct Live {
@@ -94,11 +118,17 @@ pub struct Start<'a> {
     pub slot: i64,
     pub cols: u16,
     pub rows: u16,
+    /// The accent the window is wearing, `#rrggbb`, for the prompt snyvi
+    /// dresses the shell in. Empty when the page did not say.
+    pub accent: &'a str,
 }
 
 pub struct Panes {
     live: Mutex<HashMap<String, Arc<Live>>>,
     dir: PathBuf,
+    /// When each folder may be asked about its tree again. Keyed by folder,
+    /// not by pane: two panes in one folder are one question.
+    git: Mutex<HashMap<String, Instant>>,
     /// The daemon's event stream, for the `panes` event the sidebar draws its
     /// dots from. Held here rather than an `App`, so a pane can say it changed
     /// without knowing what a server is.
@@ -110,6 +140,7 @@ impl Panes {
         let panes = Arc::new(Panes {
             live: Mutex::new(HashMap::new()),
             dir: data_dir.join("panes"),
+            git: Mutex::new(HashMap::new()),
             events,
         });
         // A daemon killed rather than stopped keeps what it had up to the
@@ -121,6 +152,15 @@ impl Panes {
                 tick.tick().await;
                 let Some(p) = weak.upgrade() else { return };
                 p.persist_all();
+            }
+        });
+        let weak = Arc::downgrade(&panes);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(GIT_EVERY);
+            loop {
+                tick.tick().await;
+                let Some(p) = weak.upgrade() else { return };
+                p.git_tick().await;
             }
         });
         panes
@@ -147,6 +187,7 @@ impl Panes {
                 old,
                 unsaved: false,
                 run: 0,
+                cwd: String::new(),
             }),
             tx,
             wake: Notify::new(),
@@ -155,6 +196,51 @@ impl Panes {
         drop(live);
         tokio::spawn(frames(Arc::downgrade(&l), Arc::downgrade(self)));
         l
+    }
+
+    /// What each running pane's folder is on, asked of git and told to the
+    /// pages that are watching. One question per folder per tick, and a folder
+    /// that answers slowly is asked less often: see `GIT_BACKOFF`.
+    async fn git_tick(self: &Arc<Self>) {
+        let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
+        let mut by_dir: HashMap<String, Vec<Arc<Live>>> = HashMap::new();
+        for l in live {
+            if let Some(cwd) = l.running_in() {
+                by_dir.entry(cwd).or_default().push(l);
+            }
+        }
+        // A folder nothing runs in any more is not worth remembering.
+        self.git
+            .lock()
+            .unwrap()
+            .retain(|d, _| by_dir.contains_key(d));
+        for (dir, panes) in by_dir {
+            let now = Instant::now();
+            if self
+                .git
+                .lock()
+                .unwrap()
+                .get(&dir)
+                .is_some_and(|due| now < *due)
+            {
+                continue;
+            }
+            let d = dir.clone();
+            let Ok((branch, dirty)) = tokio::task::spawn_blocking(move || {
+                let p = std::path::Path::new(&d);
+                (crate::project::head_of(p), crate::project::modified(p))
+            })
+            .await
+            else {
+                continue;
+            };
+            let cost = now.elapsed();
+            let next = now + (cost * GIT_BACKOFF).clamp(GIT_EVERY, GIT_AT_MOST);
+            self.git.lock().unwrap().insert(dir, next);
+            for l in panes {
+                l.set_git(branch.clone().unwrap_or_default(), dirty.unwrap_or(false));
+            }
+        }
     }
 
     /// Only the panes this daemon has woken, with no disk read for the rest.
@@ -356,8 +442,9 @@ impl Live {
             pixel_height: 0,
         };
         let pair = pty.openpty(size).context("opening a terminal")?;
-        let mut cmd = command(s.cmd);
+        let (mut cmd, born) = command(s.cmd, s.accent);
         cmd.cwd(s.cwd);
+        i.cwd = s.cwd.to_string();
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "snyvi");
@@ -410,6 +497,11 @@ impl Live {
             blocked_since: None,
             cmd: s.cmd.to_string(),
             title: String::new(),
+            accent: born,
+            // Carried across the restart: the folder has not moved, and
+            // blanking it would flicker the header on every start.
+            branch: i.status.branch.clone(),
+            dirty: i.status.dirty,
         };
         i.unsaved = true;
         let status = i.status.clone();
@@ -579,6 +671,32 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
     }
 }
 
+impl Live {
+    /// The folder a running process was started in, or nothing when the pane
+    /// is stopped: a stopped pane has no tree worth asking about.
+    fn running_in(&self) -> Option<String> {
+        let i = self.inner.lock().unwrap();
+        i.status
+            .running
+            .then(|| i.cwd.clone())
+            .filter(|c| !c.is_empty())
+    }
+
+    /// What git said, kept and sent on only when it is news. A header that
+    /// redraws every few seconds for no change is a header that flickers.
+    fn set_git(&self, branch: String, dirty: bool) {
+        let mut i = self.inner.lock().unwrap();
+        if i.status.branch == branch && i.status.dirty == dirty {
+            return;
+        }
+        i.status.branch = branch;
+        i.status.dirty = dirty;
+        let s = i.status.clone();
+        drop(i);
+        let _ = self.tx.send(status_frame(&self.id, &s).into());
+    }
+}
+
 fn status_frame(id: &str, s: &Status) -> String {
     serde_json::json!({ "t": "status", "p": id, "s": s }).to_string()
 }
@@ -587,7 +705,24 @@ fn status_frame(id: &str, s: &Status) -> String {
 /// its `PATH` is the one they know -- a daemon started by systemd has almost
 /// none of its own. A typed command runs inside that same shell, so `claude
 /// --continue` finds `claude` the way the reader's own terminal would.
-fn command(typed: &str) -> CommandBuilder {
+///
+/// A shell with nothing typed is the one the reader will sit and type at, so
+/// it wears snyvi's prompt (see `crate::prompt`). A typed command is not
+/// interactive and has no prompt to dress.
+/// Put a dressing on a command: its arguments, then its environment. Shared
+/// by both arms below so that what CI alone compiles stays as small as it can
+/// be. Never called on a builder made by `new_default_prog`, which panics on
+/// `arg`.
+fn apply(c: &mut CommandBuilder, d: &crate::prompt::Dress) {
+    for a in &d.args {
+        c.arg(a);
+    }
+    for (k, v) in &d.env {
+        c.env(k, v);
+    }
+}
+
+fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
     let typed = typed.trim();
     #[cfg(unix)]
     {
@@ -596,22 +731,49 @@ fn command(typed: &str) -> CommandBuilder {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "/bin/sh".to_string());
         let mut c = CommandBuilder::new(&shell);
-        c.arg("-l");
-        if !typed.is_empty() {
-            c.arg("-c");
-            c.arg(typed);
+        let dress = if typed.is_empty() {
+            crate::prompt::dress(std::path::Path::new(&shell), accent)
+        } else {
+            None
+        };
+        match dress {
+            Some(d) => {
+                apply(&mut c, &d);
+                (c, crate::prompt::effective(accent))
+            }
+            None => {
+                c.arg("-l");
+                if !typed.is_empty() {
+                    c.arg("-c");
+                    c.arg(typed);
+                }
+                (c, String::new())
+            }
         }
-        c
     }
     #[cfg(windows)]
     {
-        if typed.is_empty() {
-            CommandBuilder::new_default_prog()
-        } else {
+        if !typed.is_empty() {
             let mut c = CommandBuilder::new("cmd.exe");
             c.arg("/C");
             c.arg(typed);
-            c
+            return (c, String::new());
+        }
+        // Whatever the reader's COMSPEC names -- cmd.exe as it ships, or a
+        // PowerShell they pointed it at. snyvi does not choose the shell here,
+        // only how it is dressed. Named rather than left as portable-pty's
+        // default program, because a default-prog builder panics on `arg`.
+        let prog = std::env::var("ComSpec")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "cmd.exe".to_string());
+        let mut c = CommandBuilder::new(&prog);
+        match crate::prompt::dress(std::path::Path::new(&prog), accent) {
+            Some(d) => {
+                apply(&mut c, &d);
+                (c, crate::prompt::effective(accent))
+            }
+            None => (c, String::new()),
         }
     }
 }
@@ -680,6 +842,7 @@ mod tests {
                 // wrap at 80 and split the name this looks for across rows.
                 cols: 400,
                 rows: 10,
+                accent: "",
             },
             &panes,
         )

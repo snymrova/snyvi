@@ -12,6 +12,7 @@
     sub: new Map(Object.entries(boot.sub || {})),   // project id -> its workflows, once filled
     view: boot.view || "inbox",
     doc: boot.doc || null,
+    opening: null,              // the id of a document asked for and not here yet
     previous: boot.previous || null,
     folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
     queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
@@ -27,6 +28,7 @@
     previewOn: false,
     previewKey: null,           // what previewOn belongs to, so a toggle survives a re-render
     online: boot.online || {},  // agent name -> how many of it hold a stream on the daemon now
+    notes: boot.notes || [],    // the last few lines agents left, newest first
     desks: null,                // what /api/desks said, for a window; a tab never has any
     deskId: null,               // the desk on screen, or null for the list of them
   };
@@ -60,7 +62,7 @@
   const fitCtx = ctx2d(), timeCtx = ctx2d();
   let fitFont = "", titleRoom = 154, recut = false;
   /* 12px of session indent, 20 + 8 of the row's padding, 6 of gap. */
-  const roomIn = w => Math.max(60, w - 46);
+  const roomIn = w => Math.max(60, w - 60);
   // Titles are measured at 550, the weight an unread row is set in
   // (`.t-doc a.new .title`), so a row does not change length when it is read.
   const wide = t => fitCtx.measureText(t).width;
@@ -87,7 +89,13 @@
     if (fwd > 0 && fwd - from < 8) from = fwd + 1;
     return out + t.slice(from).trimStart();
   };
-  const fmt = ts => new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  // One formatter, made once: `toLocaleString` with options builds a new one
+  // per call, and the sidebar calls this for every row it draws.
+  const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const fmt = ts => dateFmt.format(new Date(ts * 1000));
+  /** After the frame being built now is on screen: the frame callback runs
+   *  before the paint, and the task it queues runs after it. */
+  const afterPaint = fn => requestAnimationFrame(() => setTimeout(fn, 0));
   const kindTag = k => ({ markdown: "md", code: "code", diff: "diff", text: "txt", image: "img", binary: "bin", table: "csv" }[k] || k);
   const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
   const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }, del: k => { try { localStorage.removeItem(k); } catch {} } };
@@ -107,15 +115,51 @@
   const filling = new Set();
   const tried = new Set();
 
-  /** The browse section keeps its own DOM across navigations so expanded folders stay open. */
+  // ---------- sections ----------
+  /* Inbox, Desks and Folders are one kind of thing, so one hand draws their
+   * heads: a chevron that folds the section, an icon, the name and a count.
+   * What each holds hangs under it on one guide line at one indent. A fold is
+   * a class on #trees rather than a redraw, so it survives every render and
+   * costs none; it is remembered per reader. */
+  const folded = new Set((store.get("snyvi.fold") || "").split(",").filter(Boolean));
+  const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
+  applyFolds();
+  function toggleFold(key) {
+    if (!folded.delete(key)) folded.add(key);
+    store.set("snyvi.fold", [...folded].join(","));
+    applyFolds();
+    const open = !folded.has(key);
+    for (const b of treesEl.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", open);
+  }
+  /** Line icons, drawn at 16px on a 24px grid, stroked with the text. */
+  const ICONS = {
+    inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+    project: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/>',
+    desk: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/>',
+    folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/>',
+  };
+  const icon = k => `<svg class="r-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
+  /** A section's head, as a Mac sidebar has them: a quiet label that folds
+   *  what is under it, the same for all three, and nothing else. Whatever
+   *  opens a page is a row. The chevron shows on hover, and stays while the
+   *  section is folded so a folded one says so. */
+  function secHead(key, name, tail = "") {
+    const open = !folded.has(key);
+    return `<div class="s-head" data-sec="${key}"><button type="button" class="s-link" data-fold="${key}" aria-expanded="${open}"><span class="s-nm">${name}</span><span class="s-chev" aria-hidden="true"></span></button>${tail}</div>`;
+  }
+
+  /** The browse section keeps its own DOM across navigations so expanded folders stay open.
+   *  Its body always ends in a quiet "open a folder" row, so reading a folder is
+   *  something the sidebar offers rather than a command a reader has to have heard of. */
   function renderBrowse() {
     const ids = state.browse.map(r => r.id).join(",");
     if (browseEl.dataset.ids === ids) return;
     browseEl.dataset.ids = ids;
-    browseEl.innerHTML = !state.browse.length ? "" : `<div class="b-section"><div class="t-label">Folders</div>` + state.browse.map(r => {
+    const head = secHead("folders", "Folders");
+    browseEl.innerHTML = head + `<div class="b-body s-body">` + state.browse.map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${esc(r.name)}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
-    }).join("") + `</div>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Read a folder as it is on disk"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
 
@@ -123,8 +167,13 @@
   function markActive() {
     for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
     const on = state.view === "inbox" ? inboxRowEl.querySelector(".t-inbox")
+      : state.view === "desk" && state.deskId != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskId}"]`)
       : state.view === "browse" && state.browseRoot ? browseEl.querySelector(`.b-file a[data-browse="${state.browseRoot.id}"][data-path="${CSS.escape(state.browsePath)}"]`)
-        : state.doc ? treeEl.querySelector(`a[data-id="${state.doc.id}"]`) : null;
+        // The one being opened outranks the one being left: a redraw that lands
+        // while a document is on its way must not put the mark back on the row
+        // the reader has already moved off.
+        : state.opening ? treeEl.querySelector(`a[data-id="${state.opening}"]`)
+          : state.doc ? treeEl.querySelector(`a[data-id="${state.doc.id}"]`) : null;
     if (on) { on.classList.add("active"); on.setAttribute("aria-current", "page"); }
   }
 
@@ -138,9 +187,12 @@
   const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
 
   const docRow = d => {
+    noteKnown(d);
     const ago = relShort(d.received_at);
-    const cls = [state.doc && state.doc.id === d.id ? "active" : "", waitingRow(d) ? "new" : ""].join(" ").trim();
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span></a></li>`;
+    // Not "active": markActive puts that on, so the rows a reader moves between
+    // draw the same and a move between two of them costs no redraw.
+    const cls = waitingRow(d) ? "new" : "";
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`;
   };
 
   // ---------- the queue ----------
@@ -175,7 +227,7 @@
       } catch {}
     }, 150);
   }
-  const queueRow = (d, extra = "") => `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span></a></li>`;
+  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
@@ -295,7 +347,7 @@
    *  `n` is the one after; a reader drains the queue with one key. */
   function openNext() {
     const d = state.queue[0];
-    if (!d) { toast("Nothing waiting", "Every document that arrived has been opened."); return; }
+    if (!d) { toast("Nothing waiting", "Every document that arrived has been opened.", null, null, { face: "love" }); return; }
     showDoc(d.id, true);
   }
 
@@ -310,7 +362,7 @@
     renderTree(); markActive();
     if (state.view === "inbox") showInbox(false);
     try { await fetch("/api/queue/clear", { method: "POST" }); } catch {}
-    toast("Marked read", plural(n, "document"));
+    toast("Marked read", plural(n, "document"), null, null, { face: "glad" });
   }
 
   /** Rows leaving the queue, told by the server: this tab's own opens come
@@ -364,17 +416,21 @@
    *  every document in the library on every page open — 13,000 rows and a
    *  718 ms task at 3000 documents — and what is behind a row is now two
    *  numbers until a reader asks for it. */
+  let drawnTree = null;
+  const treeTouched = new MutationObserver(() => { drawnTree = null; });
+  treeTouched.observe(treeEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
   function renderTree() {
     const projects = state.tree;
     const total = projects.reduce((n, p) => n + p.docs, 0);
     // A link, so the keyboard reaches it: a div with a click handler is a row
     // Tab walks straight past.
-    inboxRowEl.innerHTML = `<a class="t-inbox ${state.view === "inbox" ? "active" : ""}" href="/" data-nav="inbox"><span>Inbox</span><span class="n">${total}</span></a>`;
+    inboxRowEl.innerHTML = secHead("inbox", "Inbox") +
+      `<a class="t-inbox s-row" href="/" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
     renderQueue();
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder:<br><code>snyvi browse .</code></div>`;
+      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: <b>+</b> beside Folders, below.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -404,11 +460,20 @@
     let h = "";
     for (const p of projects) {
       const open = projOpen(p);
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}"><span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
-    treeEl.innerHTML = h;
+    // The same rows as last time are left alone. Every open used to throw the
+    // tree away and build it again, and measure it, before the document could
+    // paint. Anything else that touches the rows -- a project toggled, a name
+    // being edited -- clears `drawnTree`, so what is on screen is always what
+    // this string describes when it is skipped.
+    if (h !== drawnTree) {
+      treeEl.innerHTML = h;
+      drawnTree = h;
+      treeTouched.takeRecords();
+    }
     // The scrollbar exists only once the rows do, and takes width from the
     // column the titles were just cut to -- so a tree that overflows was cut
     // against a width that stopped being true as it was drawn. Once more.
@@ -597,12 +662,31 @@
       }
       return;
     }
+    const fold = e.target.closest("[data-fold]");
+    if (fold) { e.preventDefault(); toggleFold(fold.dataset.fold); return; }
+    if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); pickFolder(); return; }
     const nd = e.target.closest("[data-newdesk]");
     if (nd) {
       // Inside a <summary> too: a click on the + is not a click on the folder.
       e.preventDefault(); e.stopPropagation();
-      const f = folderOf(nd);
-      if (f) newDesk(f);
+      // In a folder's row, a desk on that folder; in the Desks head, one on no folder.
+      newDesk(folderOf(nd));
+      return;
+    }
+    const dx = e.target.closest("[data-deldoc]");
+    if (dx) {
+      // Inside the document's link: a click on the ✕ is not a click on the row.
+      e.preventDefault(); e.stopPropagation();
+      const id = dx.dataset.deldoc, proj = dx.closest(".t-proj");
+      const d = state.queue.find(x => x.id === id) || { id, title: dx.closest("a").title.split(" · ")[0], project_id: proj ? +proj.dataset.pid : null };
+      deleteDoc(d);
+      return;
+    }
+    const dd = e.target.closest("[data-dropdesk]");
+    if (dd) {
+      // Inside the desk's link: a click on the ✕ is not a click on the desk.
+      e.preventDefault(); e.stopPropagation();
+      dropDesk(dd);
       return;
     }
     const r = e.target.closest("[data-rename]");
@@ -618,7 +702,7 @@
     const id = b.dataset.close;
     try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
     state.browse = state.browse.filter(r => r.id !== id);
-    if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else renderTree();
+    if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else { renderTree(); markActive(); }
   });
 
   /** Turn a name in the tree into a field, in place. Enter and blur keep what was
@@ -742,10 +826,17 @@
   // ---------- documents ----------
   /** The body was replaced by a navigation: let it arrive. Restarted from the
    *  beginning each time, since the class is already there after the first. */
+  /*  Played through the page's own animation API rather than by taking a
+   *  class off and putting it back, which needs `offsetWidth` read in between:
+   *  that read laid the whole new document out before the click could paint --
+   *  220 ms of a 300 ms open on a long plan. */
+  let swapAnim = null;
+  const still = matchMedia("(prefers-reduced-motion: reduce)");
   function swapIn() {
-    docEl.classList.remove("swap");
-    void docEl.offsetWidth;
-    docEl.classList.add("swap");
+    if (swapAnim) swapAnim.cancel();
+    swapAnim = still.matches ? null : docEl.animate(
+      [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }],
+      { duration: 180, easing: "cubic-bezier(.2,.7,.2,1)" });
   }
 
   function docHtml(doc, body) {
@@ -765,16 +856,86 @@
     return j;
   }
 
+  /** What the sidebar already knows about a document, kept by id so a click can
+   *  draw its head before the document itself is here. Every row that names a
+   *  document records it, which is every path an open comes from except a link
+   *  typed in cold -- and that one has nothing to draw from anyway. */
+  const knownDocs = new Map();
+  function noteKnown(d) {
+    if (d && d.id && !knownDocs.has(d.id)) knownDocs.set(d.id, { title: d.title, kind: d.kind, received_at: d.received_at });
+    return d;
+  }
+
+  /** The click's answer, on screen in the same frame as the click.
+   *
+   *  An open used to put nothing at all on the page until the whole document
+   *  had been fetched and parsed -- 1.5 MB of HTML for a 6,000-line file --
+   *  so the gesture a reader makes most had no answer for as long as that
+   *  took, and a long file read as a frozen window. The head is real: the
+   *  title comes from the row that was clicked, and the document's own head
+   *  replaces it with the same words. Under it are bars where the text will
+   *  be, and they are invisible for the first fifth of a second (`--sk-wait`
+   *  in app.css): an open that lands at once never shows a skeleton at all,
+   *  and one that does not says so before a reader can wonder. */
+  function pending(id, fromHistory) {
+    const k = knownDocs.get(id);
+    docEl.innerHTML =
+      `<header class="doc-head">${k ? `<h1 class="doc-title">${esc(k.title)}</h1>` : `<h1 class="doc-title sk"><span class="sk-bar" style="width:52%"></span></h1>`}` +
+      `<p class="doc-sub sk"><span class="sk-bar" style="width:${k ? "34%" : "44%"}"></span></p></header>` +
+      `<article class="prose sk-body" aria-busy="true">` +
+      SK_WIDTHS.map(w => w ? `<span class="sk-bar" style="width:${w}%"></span>` : `<span class="sk-gap"></span>`).join("") +
+      `</article>`;
+    if (k) document.title = k.title;
+    // The row answers too, rather than waiting for the document to arrive and
+    // `afterRender` to mark it: this is four attribute writes and no redraw.
+    markPending(id);
+    if (!fromHistory) main.scrollTo({ top: 0, behavior: "instant" });
+  }
+  /* Lines of a paragraph, ragged, so the shape says "text is coming" rather
+   * than "a table is coming". The last is short, as a paragraph's last line is. */
+  const SK_WIDTHS = [96, 91, 97, 88, 94, 42, 0, 93, 96, 89, 95, 37];
+  /** The clicked row, marked before anything is fetched. `markActive` reads
+   *  `state.doc`, which is still the document being left, so this one takes an
+   *  id and does the same four writes. */
+  function markPending(id) {
+    for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
+    const on = treeEl.querySelector(`a[data-id="${id}"]`);
+    if (on) { on.classList.add("active"); on.setAttribute("aria-current", "page"); }
+  }
+
+  /** Which open the page is showing. A reader who clicks a second row while the
+   *  first is still coming gets the second: the first's answer, whenever it
+   *  arrives, is dropped rather than painted over what they asked for next. */
+  let opening = 0;
+
   async function showDoc(id, push = true, fromHistory = false) {
-    let j;
-    try { j = await fetchDoc(id); } catch (e) { toast("Could not open document", String(e)); return; }
+    const turn = ++opening;
+    let j = state.cache.get(id), waited = false;
+    if (!j) {
+      // Only an open that has to wait draws a shell; a document already in hand
+      // goes straight up, whole, with no flicker of a skeleton in between.
+      waited = true;
+      if (push) leave();
+      offDesk();
+      state.view = "doc"; state.opening = id; state.comparing = null;
+      pending(id, fromHistory);
+      if (push) { history.pushState({ id }, "", `/d/${id}`); push = false; }
+      try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", String(e)); } return; }
+      if (turn !== opening) return;
+      state.opening = null;
+    }
     if (push) leave();
     offDesk();
     state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
-    markRead(id);
+    // Off the queue once the document is on screen: taking it off redraws the
+    // sidebar, and the reader is waiting for the page, not the row.
+    afterPaint(() => markRead(id));
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
-    swapIn();
+    // The document rising into place is the answer to a click; when a shell
+    // answered that click already, the text simply fills the bars in and a
+    // second fade would be the page saying the same thing twice.
+    if (!waited) swapIn();
     applyPreview();
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
@@ -887,7 +1048,7 @@
   }
 
   function inboxHtml(items, agents) {
-    const row = d => `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`;
+    const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
     if (!items.length) return connectHtml(agents);
     // What is waiting comes first, oldest first, so the landing page answers
     // "what is new" before "what is there".
@@ -1035,8 +1196,12 @@
    *  could happen. The daemon keeps the document until `prune` runs, so the
    *  eight seconds below are a real offer and not a hopeful one. */
   async function deleteCurrent() {
-    if (!state.doc) return;
-    const d = state.doc;
+    if (state.doc) deleteDoc(state.doc);
+  }
+  /** The same, for any document: the one on screen, or a row's ✕ in the
+   *  sidebar, which leaves the reader where they are unless that was it. */
+  async function deleteDoc(d) {
+    const here = !!state.doc && state.doc.id === d.id;
     try {
       const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status}`);
@@ -1045,14 +1210,14 @@
       state.queue = state.queue.filter(x => x.id !== d.id);
       state.waiting = Math.max(0, state.waiting - (waitingRow(d) ? 1 : 0));
       await refreshTree(d.project_id);
-      showInbox(true);
-      offerUndo(d);
+      if (here) showInbox(true);
+      offerUndo(d, here);
     } catch (e) { toast("Could not delete", String(e)); }
   }
 
   /** The other half of a delete: a button in the toast, and ⌘Z for as long as
    *  it is there, which is where a reader's hand goes first. */
-  function offerUndo(d) {
+  function offerUndo(d, open = true) {
     const run = async () => {
       if (undoing !== run) return;
       undoing = null;
@@ -1062,7 +1227,8 @@
         if (!r.ok) throw new Error(`${r.status}`);
         wash([d.id]);
         await refreshTree(d.project_id);
-        showDoc(d.id);
+        // The "restored" event puts the row and its queue place back.
+        if (open) showDoc(d.id);
       } catch (e) { toast("Could not undo", String(e)); }
     };
     undoing = run;
@@ -1070,17 +1236,30 @@
     toast("Deleted", d.title, null, { label: "Undo", run });
   }
 
+  /** What hangs off a new page. The rail and the reader's place are put right
+   *  now; the sidebar, the code blocks' controls and the versions wait for the
+   *  first paint, so a click shows the document before anything else is done
+   *  about it. A page left before its turn came skips the rest. */
+  let rendered = 0;
   function afterRender() {
-    renderTree();
+    const turn = ++rendered;
     markActive();
-    ensureWorkflow(state.doc);
     buildToc();
     renderMeta(false);
-    enhanceCode();
     prepareMermaid();
-    renderHistory();
+    enhanceCode();
     clearFind();
     applyLineHash(true);
+    // Only what is beside the document waits: the sidebar and the versions.
+    // Anything that touches the document itself -- the diagrams' places, the
+    // code blocks' buttons -- is done above, before a landing measures it.
+    afterPaint(() => {
+      if (turn !== rendered) return;
+      renderTree();
+      markActive();
+      ensureWorkflow(state.doc);
+      renderHistory();
+    });
   }
 
   /** The body was swapped under the reader: rebuild what hangs off it, keep the sidebar. */
@@ -1093,6 +1272,176 @@
     if (!findBar.hidden && findIn.value) runFind(findIn.value); else clearFind();
     applyLineHash(false);   // the scroll position is restored by the caller
   }
+
+  // ---------- the note: a line an agent leaves beside the work ----------
+  /** It sits above the theme bar and is nothing at all until an agent says
+   *  something. A new note glows until a reader rests on it; after that it is
+   *  one quiet line. The ones before it wait in a trail a hover away. Seen is
+   *  the daemon's, so a glance in one window puts the glow out in all. */
+  const noteEl = $("#note");
+  let noteLook = 0, notePeek = 0, noteShown = (state.notes[0] || {}).id || 0;
+  /** There is one snyvi on screen, the logo, and the note is its voice: a
+   *  waiting note perks it up, a new one makes it hop, and a reader resting on
+   *  the note gets a smile and a heart. The card itself carries no face. */
+  const markEl = $(".brand-mark");
+  /** Behind the note, when a reader comes over: snyvi large and tilted,
+   *  peeking up from the corner with a feeling. Each note keeps its own --
+   *  glad, a wink, heart eyes -- chosen by its id, so a redraw never
+   *  changes its mind. */
+  const HEART = (x, y) => `<path class="nb-love" transform="translate(${x} ${y}) scale(.8)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/>`;
+  const FEELINGS = [
+    `<path class="nb-line" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="nb-ink" d="M12.6 21.6q3.4 4.6 6.8 0z"/>`,
+    `<ellipse class="nb-ink" cx="11" cy="16.5" rx="2.6" ry="3.3"/><circle class="nb-shine" cx="11.9" cy="15.2" r="1"/><path class="nb-line" d="M18.6 17.6q2.4-2.8 4.8 0M13.5 22.6q3 2.8 6 0"/>`,
+    HEART(11, 16.5) + HEART(21, 16.5) + `<path class="nb-line" d="M13.5 22.6q2.5 2.4 5 0"/>`,
+  ];
+  const noteBg = id => `<svg class="note-bg" viewBox="0 0 32 32" aria-hidden="true">` +
+    `<rect class="nb-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="nb-body" x="1" y="4" width="30" height="27" rx="9"/>` +
+    `<ellipse class="nb-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="nb-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
+    FEELINGS[id % FEELINGS.length] + `</svg>`;
+  /** The byline says whose work it came through: "via claude-code on api". */
+  function noteBy(n) {
+    return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
+  }
+  function renderNote() {
+    const [n, ...trail] = state.notes;
+    // Removed rather than emptied: `html[data-note]` matches an empty value
+    // too, so writing "" left the mark blinking on every page from boot, note
+    // or no note -- a perpetual animation for a state the page was not in.
+    // It blinks while a note waits and stops when the reader rests on it.
+    if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
+    else delete root.dataset.note;
+    if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }
+    noteEl.hidden = false;
+    noteEl.dataset.lit = n.lit && !n.seen ? "1" : "";
+    noteEl.dataset.seen = n.seen ? "1" : "";
+    // A note newer than the one on screen makes snyvi hop; a reload or a redraw does not.
+    const arrived = n.id !== noteShown && !n.seen;
+    if (arrived && markEl) {
+      markEl.classList.remove("hop"); void markEl.offsetWidth; markEl.classList.add("hop");
+      // Whatever snyvi was saying to a reader on the face, the line that just
+      // arrived outranks it: the agent takes the floor, and the hop is the
+      // mark's answer rather than the nod. Asked only of a bubble that is
+      // open, which is also the only time `closeSay` is in scope: the first
+      // render runs before the block below it is reached.
+      if ("say" in root.dataset) closeSay();
+    }
+    noteShown = n.id;
+    const by = noteBy(n);
+    noteEl.innerHTML =
+      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}</ol>` : "") +
+      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : ""}>` +
+      noteBg(n.id) + `<p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
+    // A new note brings snyvi up from behind it for a moment, as a hover does.
+    // A window in the background would play that to nobody, so it waits.
+    if (arrived) { if (document.hidden) peekOwed = true; else peekNote(); }
+  }
+  let peekOwed = false;
+  function peekNote() {
+    peekOwed = false;
+    clearTimeout(notePeek);
+    void noteEl.offsetWidth;   // the new card's resting state first, so the rise transitions
+    noteEl.classList.add("peek");
+    notePeek = setTimeout(() => noteEl.classList.remove("peek"), 4200);
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && peekOwed) peekNote(); });
+  function seeNotes() {
+    if (!state.notes.some(n => !n.seen)) return;
+    state.notes = state.notes.map(n => ({ ...n, seen: true }));
+    renderNote();
+    fetch("/api/notes/seen", { method: "POST" }).catch(() => {});
+  }
+  // Resting on it is reading it; passing over on the way to the theme button is not.
+  // The logo looks down at whoever comes over to the note.
+  const noteNear = on => { if (on) root.dataset.noteNear = "1"; else delete root.dataset.noteNear; };
+  noteEl.addEventListener("mouseenter", () => { noteNear(true); clearTimeout(noteLook); noteLook = setTimeout(seeNotes, 700); });
+  noteEl.addEventListener("mouseleave", () => { noteNear(false); clearTimeout(noteLook); });
+  noteEl.addEventListener("focusin", () => { noteNear(true); seeNotes(); });
+  noteEl.addEventListener("focusout", () => noteNear(false));
+  markEl?.addEventListener("animationend", e => { if (e.animationName === "bm-hop") markEl.classList.remove("hop"); });
+  noteEl.addEventListener("click", e => {
+    seeNotes();
+    const a = e.target.closest("[data-about]");
+    if (a) showDoc(a.dataset.about, true);
+  });
+  noteEl.addEventListener("keydown", e => {
+    const a = e.target.closest(".note-now[data-about]");
+    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDoc(a.dataset.about, true); }
+  });
+  // "3 min ago" stays true without anything arriving.
+  setInterval(() => { if (state.notes.length && !noteEl.matches(":hover")) renderNote(); }, 60000);
+  renderNote();
+
+  // ---------- snyvi answers ----------
+  /** The note above is what an agent said, and its byline says who. This is
+   *  snyvi itself, and the rule that keeps it from being a gimmick is that it
+   *  only ever answers: nothing opens on its own, ever. A reader who comes
+   *  over to the face and rests there gets one short line back. */
+  const brandEl = $(".brand"), sayEl = $("#bm-say");
+  /** What it says, the face it says it with, and how often the line comes up.
+   *  The weights are the whole character. Most of what it says is "hi"; a
+   *  count when there is one worth giving; and "love you" seldom enough that
+   *  it still means something when it lands. A line whose text comes back
+   *  empty is not true right now -- no one is waiting, an agent is connected,
+   *  it is the middle of the afternoon -- and drops out of the draw.
+   *  Every one of them is short on purpose: the line is written where the
+   *  word "snyvi" is, and it has that much room and no more. */
+  const SAYS = [
+    { t: "hi", w: 5 },
+    { t: "hey you", w: 3 },
+    { t: "still here", w: 2 },
+    { t: "hello again", w: 2, f: "glad" },
+    { t: "good to see you", w: 2, f: "glad" },
+    { t: "love you", w: 1, f: "love" },
+    { t: "my favourite", w: 1, f: "love" },
+    { t: () => state.waiting ? `${state.waiting} waiting` : "", w: 4, f: "glad" },
+    { t: () => Object.keys(state.online).length ? "" : "no agents", w: 3 },
+    { t: () => { const h = new Date().getHours(); return h < 5 || h >= 23 ? "late one?" : h < 10 ? "morning" : ""; }, w: 3, f: "wink" },
+  ];
+  /** The last few lines, so the same one does not come up twice running. */
+  let saidLast = [], sayIn = 0, sayOut = 0;
+  function pickSay() {
+    // The page cannot hear the daemon: the eyes are already shut, and this is
+    // where a reader who wonders why finds out.
+    if (root.dataset.link === "off") return { t: "not connected", f: "" };
+    const pool = [];
+    for (const s of SAYS) {
+      const t = typeof s.t === "function" ? s.t() : s.t;
+      if (!t || saidLast.includes(t)) continue;
+      for (let i = 0; i < s.w; i++) pool.push({ t, f: s.f || "" });
+    }
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : { t: "hi", f: "" };
+  }
+  function openSay() {
+    // A note still glowing is an agent waiting to be read. The agent has the
+    // floor until then, and snyvi does not talk over its own messenger.
+    if (root.dataset.note) return;
+    const s = pickSay();
+    saidLast = [s.t, ...saidLast].slice(0, 3);
+    sayEl.textContent = s.t;
+    sayEl.hidden = false;
+    void sayEl.offsetWidth;   // the resting state first, so the rise transitions
+    sayEl.classList.add("on");
+    // An empty face is still a face here: `html[data-say]` matching on the
+    // bare attribute is what stops the waiting blink and nods the head, and
+    // a line said with no expression wants both.
+    root.dataset.say = s.f;
+  }
+  function closeSay() {
+    sayEl.classList.remove("on");
+    delete root.dataset.say;
+    clearTimeout(sayOut);
+    sayOut = setTimeout(() => { if (!sayEl.classList.contains("on")) sayEl.hidden = true; }, 340);
+  }
+  brandEl.addEventListener("pointerenter", e => {
+    // A finger is not a reader leaning over. Nor is crossing the brand on the
+    // way to Search, so it waits for a moment's rest before it says anything.
+    if (e.pointerType === "touch") return;
+    clearTimeout(sayIn);
+    sayIn = setTimeout(openSay, 260);
+  });
+  brandEl.addEventListener("pointerleave", () => { clearTimeout(sayIn); closeSay(); });
+  // Following the brand through to the inbox takes the bubble with it.
+  brandEl.addEventListener("click", () => { clearTimeout(sayIn); closeSay(); });
 
   // ---------- live refresh ----------
   /** Where the reader is, as a block and an offset into it rather than a
@@ -1129,7 +1478,7 @@
     requestAnimationFrame(() => requestAnimationFrame(put));
     // And once the swap-in has finished, when there is one: it translates the
     // body 4 px while it runs, and a put measured during it lands 4 px off.
-    if (docEl.classList.contains("swap")) docEl.addEventListener("animationend", put, { once: true });
+    if (swapAnim && swapAnim.playState === "running") swapAnim.finished.then(put, () => {});
   }
 
   /** A stored document was overwritten (a hook or `snyvi watch` send) or finished
@@ -1249,7 +1598,7 @@
     if (findIdx >= 0) findMarks[findIdx].classList.remove("cur");
     findIdx = (i + findMarks.length) % findMarks.length;
     const m = findMarks[findIdx]; m.classList.add("cur");
-    m.scrollIntoView({ block: "center", behavior: "instant" });
+    bring(() => docEl.querySelector("mark.find.cur"), "center");
     findCount.textContent = `${findIdx + 1} / ${findMarks.length}`;
   }
   function openFind() { findBar.hidden = false; findIn.focus(); findIn.select(); }
@@ -1278,13 +1627,17 @@
    *  because a list that scrolls under a hand about to click is worse than
    *  one that lags a heading. */
   function markCur(links, at) {
-    let cur = null;
-    links.forEach((a, i) => {
-      const on = i === at;
-      a.classList.toggle("cur", on);
-      if (on) { a.setAttribute("aria-current", "location"); cur = a; } else a.removeAttribute("aria-current");
-    });
-    if (cur) keepCurInView(false);
+    // Called on every scrolled frame, and most move nothing: the entries are
+    // only touched when the current one changes. Kept in view either way.
+    if (links.at !== at) {
+      links.at = at;
+      links.forEach((a, i) => {
+        const on = i === at;
+        a.classList.toggle("cur", on);
+        if (on) a.setAttribute("aria-current", "location"); else a.removeAttribute("aria-current");
+      });
+    }
+    if (links[at]) keepCurInView(false);
   }
   /** Scroll the contents so the current entry is in view. `now` skips the
    *  hover exemption and the smooth scroll: a sheet that has just opened has
@@ -1318,6 +1671,13 @@
   let spy = null;
   function buildToc() {
     if (spy) { spy.disconnect(); spy = null; }
+    // The other rail's follower goes here too, and not only where it is built:
+    // a code document leaves one behind, and a prose document with three
+    // headings takes the branch that never calls `buildOutline`. The scroll
+    // and resize listeners then outlive their document -- one more per switch,
+    // each measuring a `<pre>` that is no longer in the page and fighting this
+    // one for where the rail is scrolled.
+    if (outlineSpy) { outlineSpy.disconnect(); outlineSpy = null; }
     tocEl.scrollTop = 0;   // a new document starts at its beginning, and so does its contents
     const reading = state.view === "doc" || state.view === "browse";
     const hs = reading ? [...docEl.querySelectorAll(".prose h1, .prose h2, .prose h3, .prose h4")] : [];
@@ -1360,6 +1720,66 @@
     jumpTo(h);
     if (root.dataset.sheet === "rail") closeSheet();
   });
+
+  /** Bring something in the document into view, in an engine that may decline to.
+   *
+   *  `scrollIntoView` does nothing at all in WebKitGTK -- the engine of the
+   *  Linux window -- when the target sits inside a subtree the browser has
+   *  skipped: a `.prose > *` below the fold, or one of the chunks a long code
+   *  file is cut into. Measured there: an outline entry for line 2531 and an
+   *  agent's `#L2531` both left the document at scroll 0 with the line 52,525
+   *  px away, and a find match 8,879 px down was marked and never reached.
+   *  All three work in Chromium, which scrolls into skipped content happily,
+   *  so none of it showed in `bench/ui.mjs`.
+   *
+   *  So the scroller is moved rather than asked, the way placeAt() already
+   *  corrects itself. One move is not enough in either engine: the blocks
+   *  that come on screen are laid out at their real heights only after the
+   *  frame that reveals them, so the target slides -- the fault jumpTo()
+   *  describes, measured here as five corrections in WebKit and one in
+   *  Chromium -- and further for prose, whose blocks are guessed at 60 px
+   *  each until they are laid out, so a find match eight thousand pixels down
+   *  is chased rather than reached in one move. The chase has to be patient:
+   *  a move reveals blocks that then grow, which pushes the target further
+   *  away, so a pass that loses ground is the normal middle of a jump and not
+   *  a reason to give up -- stopping on it left a find match 308 px below the
+   *  fold. It stops when the target is where it was asked to be, and after
+   *  twenty frames whatever happens, so a target that cannot settle cannot
+   *  spin.
+   */
+  function bring(target, block = "start") {
+    let left = 20;
+    const put = () => {
+      // Resolved every pass, not held: find re-marks the document as the
+      // blocks a jump passes through are laid out, and a chase holding the
+      // node it started with stopped the moment that node was replaced --
+      // 758 px short of a match it had already scrolled 8,439 px towards.
+      const el = typeof target === "function" ? target() : target;
+      if (!el || !el.isConnected) return true;   // the page moved on
+      const box = el.getBoundingClientRect(), port = main.getBoundingClientRect();
+      // The resting place is the stylesheet's: `.ln` and the headings each
+      // declare the room they want above them.
+      const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      const d = block === "center" ? box.top + box.height / 2 - (port.top + main.clientHeight / 2)
+        : block === "nearest" ? (box.top < port.top + margin ? box.top - port.top - margin
+          : box.bottom > port.bottom ? box.bottom - port.bottom : 0)
+          : box.top - port.top - margin;
+      const off = Math.abs(d);
+      if (off < 2) return true;
+      // Instant, not smooth: the pane scrolls smoothly by stylesheet, and a
+      // correction aimed at where the target is now cannot chase an animation.
+      main.scrollTo({ top: main.scrollTop + d, behavior: "instant" });
+      return false;
+    };
+    const step = () => { if (!put() && left-- > 0) requestAnimationFrame(step); };
+    step();
+    /* And again, later. The chase above ends the frame the target is where it
+     * was asked to be, but in WebKit the blocks it travelled through are laid
+     * out for real after that, and what was centred slides: measured, a find
+     * match the chase had just centred sat 758 px low a second afterwards.
+     * Two late looks cost two timers and settle it. */
+    for (const ms of [150, 450]) setTimeout(() => { left = 8; step(); }, ms);
+  }
 
   /** Go to a block of the document. Instant, not smooth, and on purpose: a
    *  smooth scroll aims at where the target is when it starts, and in a long
@@ -1452,7 +1872,8 @@
     try { items = await (await fetch(url)).json(); } catch { return; }
     // A newer document started loading while this was in flight.
     if (token !== outlineToken || !Array.isArray(items) || !items.length) return;
-    const lines = [...docEl.querySelectorAll("pre.code .ln")];
+    const pre = docEl.querySelector("pre.code");
+    const lines = pre ? pre.getElementsByClassName("ln") : [];
     if (!lines.length) return;
     tocEl.innerHTML = `<ul class="outline">` + items.map((o, i) =>
       `<li class="d${o.depth + 1}"><a href="#" data-line="${o.line}" data-i="${i}" title="${esc(o.kind)} · line ${o.line}"><span class="ok ok-${o.kind}"></span>${esc(o.name)}</a></li>`
@@ -1464,17 +1885,42 @@
       if (!el) return;
       // Land the declaration near the top with its body below, the way an editor
       // jumps to a symbol. It also keeps the rail's current marker in agreement.
-      el.scrollIntoView({ block: "start", behavior: "instant" });
+      bring(el, "start");
       flash(el);
     }));
-    // Mark whichever declaration the reader has scrolled past.
+    // Mark whichever declaration the reader has scrolled past. The line at the
+    // top is found by halving rather than by asking every declaration where it
+    // is: 691 of them measured on each scrolled frame was a 170 ms frame.
     outlineSpy = follow(() => {
-      let cur = -1;
-      items.forEach((o, i) => { const el = lines[o.line - 1]; if (el && el.getBoundingClientRect().top < 140) cur = i; });
+      const top = lineAt(pre, 140);
+      let lo = 0, hi = items.length - 1, cur = -1;
+      while (lo <= hi) { const m = (lo + hi) >> 1; if (items[m].line <= top) { cur = m; lo = m + 1; } else hi = m - 1; }
       markCur(links, cur);
     });
   }
   let outlineToken = 0;
+
+  /** The number of the last line whose top is above `y` in the window, or 0.
+   *  Two binary searches: over the chunks the renderer cut a long file into,
+   *  whose boxes are laid out whether or not their lines are, and then over the
+   *  lines of the one chunk that holds `y` -- which is on screen, so asking
+   *  where its lines are lays nothing out. */
+  function lastAbove(list, y) {
+    let lo = 0, hi = list.length - 1, at = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (list[m].getBoundingClientRect().top < y) { at = m; lo = m + 1; } else hi = m - 1;
+    }
+    return at;
+  }
+  function lineAt(pre, y) {
+    const chunks = pre.getElementsByClassName("lc");
+    if (!chunks.length) return lastAbove(pre.getElementsByClassName("ln"), y) + 1;
+    const c = lastAbove(chunks, y);
+    if (c < 0) return 0;
+    const start = +(/ln (\d+)/.exec(chunks[c].getAttribute("style") || "") || [0, 0])[1];
+    return start + lastAbove(chunks[c].getElementsByClassName("ln"), y) + 1;
+  }
   function flash(el) {
     el.classList.add("flash");
     setTimeout(() => el.classList.remove("flash"), 700);
@@ -1506,7 +1952,7 @@
       el.classList.add("at");
       first = first || el;
     }
-    if (first && scroll) first.scrollIntoView({ block: "center", behavior: "instant" });
+    if (first && scroll) bring(first, "center");
   }
 
   function setLines(a, b, scroll) {
@@ -1648,7 +2094,7 @@
       state.doc.pinned = pinned; state.cache.delete(state.doc.id);
       await refreshTree(state.doc.project_id);
       renderMeta(false);
-      toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it");
+      toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it", null, null, { face: pinned ? "glad" : "plain" });
     } catch (e) { toast("Could not pin", String(e)); }
   }
 
@@ -1836,6 +2282,30 @@
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
   }
+  /** The `+` beside Folders: the desktop's own folder dialog, which the daemon
+   *  shows, and the folder the reader chose, opened. The page names no path.
+   *  Only the window can ask -- the same gate the desks are behind -- so a
+   *  tab is told where it can be done instead. */
+  let picking = false;
+  async function pickFolder() {
+    if (!capability) { toast("Folders open from the snyvi window", "Or from a terminal: snyvi browse <folder>"); return; }
+    if (picking) return;
+    picking = true;
+    browseEl.classList.add("picking");
+    try {
+      const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } });
+      if (r.status === 204) return;   // closed without a choice
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast("Could not open a folder", j.error || `HTTP ${r.status}`); return; }
+      if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
+      renderBrowse();
+      // Open in the sidebar as well as on the page; the toggle fills its tree.
+      const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
+      if (d) d.open = true;
+      showBrowse(j.root.id, "", true);
+    } catch (e) { toast("Could not open a folder", String(e)); }
+    finally { picking = false; browseEl.classList.remove("picking"); }
+  }
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
     renderDesks();
@@ -1847,13 +2317,31 @@
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk";
-    deskNav.innerHTML = `<a class="t-inbox${on && state.deskId == null ? " active" : ""}" href="/desks" data-nav="desks"><span>Desks</span>` +
-      (blocked ? `<span class="blk" title="${plural(blocked, "pane")} waiting on you">!${blocked}</span>` : "") +
-      `<span class="n"${capability ? "" : ` title="Desks run in the desktop window"`}>${capability ? list.length : "—"}</span></a>` +
-      (list.length ? `<ul class="t-desks">` + list.map(d => {
+    // Blocked panes stay said on the head, so folding Desks cannot hide them.
+    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "pane")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
+      `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
+        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "") + list.map(d => {
         const m = mark3(d.panes);
-        return `<li><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}">${m}</span><span class="title">${esc(d.name)}</span>${d.panes.length ? `<span class="k">${d.panes.length}</span>` : ""}</a></li>`;
-      }).join("") + `</ul>` : "");
+        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "pane")} waiting on you` : m === "●" ? "Running" : "Idle";
+        return `<li><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">${icon("desk")}<span class="title">${esc(d.name)}</span>${m !== "○" ? `<span class="dot${m === "!" ? " blk" : " on"}" title="${say}">${m === "!" ? "!" : ""}</span>` : ""}${d.panes.length ? `<span class="k">${d.panes.length}</span>` : ""}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
+      }).join("") + `</ul>`;
+  }
+  /** The ✕ on a desk's row. Closing a desk ends its panes' processes, and
+   *  there is no undoing that, so the first click asks and the second closes,
+   *  as Close desk does in the desk's own rail. */
+  async function dropDesk(b) {
+    if (!b.dataset.armed) {
+      b.dataset.armed = "1"; b.textContent = "Close?"; b.title = "Close the desk and its panes: click again";
+      const li = b.closest("li"); li.classList.add("arming");
+      setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "✕"; b.title = "Close desk"; li.classList.remove("arming"); } }, 3000);
+      return;
+    }
+    const id = +b.dataset.dropdesk;
+    try { await deskApi(`/api/desks/${id}/delete`, {}); }
+    catch (err) { toast(`Could not close the desk: ${err.message}`); return; }
+    if (lastDesk === id) lastDesk = null;
+    await loadDesks();
+    if (state.view === "desk" && state.deskId === id) showDesk(null, true);
   }
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
@@ -1994,6 +2482,10 @@
         state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
       }
     } catch {}
+    try {
+      const n = await (await fetch("/api/notes")).json();
+      if (Array.isArray(n.notes)) { state.notes = n.notes; renderNote(); }
+    } catch {}
     await refreshTree();
     if (state.view === "inbox") showInbox(false);
   }
@@ -2003,10 +2495,12 @@
    *  quietly lost its daemon -- one that stopped, or was replaced by an
    *  upgrade -- shows it, and the reason a reader is not left wondering why
    *  nothing arrives. */
-  const mark = $(".brand-mark");
+  /* Why it is hollow used to be a `title` on the mark, which meant hovering
+     snyvi drew a tooltip over the sidebar and an answer in its own line at
+     once, two texts for one gesture. The answer is the line it says. */
   function linked(on) {
-    if (on) { delete root.dataset.link; mark.title = ""; }
-    else { root.dataset.link = "off"; mark.title = "Not connected to snyvi; trying again"; }
+    if (on) delete root.dataset.link;
+    else root.dataset.link = "off";
   }
 
   function connect() {
@@ -2034,6 +2528,11 @@
     es.addEventListener("agents", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       setOnline(j.online);
+    });
+    // An agent left a note, or a reader looked at one somewhere.
+    es.addEventListener("notes", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      if (Array.isArray(j.notes)) { state.notes = j.notes; renderNote(); }
     });
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -2065,7 +2564,12 @@
       state.cache.delete(d.id);
       renderTree(); markActive();
       await refreshTree(d.project_id);
-      if (opens) { await showDoc(d.id, true); toast(d.title, `${d.project} · just now`); }
+      if (opens) {
+        await showDoc(d.id, true);
+        // Nobody pressed anything: this one came in on its own, so it keeps
+        // the corner rather than pointing at whatever was last touched.
+        toast(d.title, `${d.project} · just now`, null, null, { at: null, face: "whoa" });
+      }
       else if (state.view === "inbox") showInbox(false);
     });
     // A document was opened somewhere -- this tab, another, the window -- and
@@ -2139,24 +2643,165 @@
     };
   }
 
-  /** A line at the corner. `onClick` makes the whole toast one; `action`
-   *  ({label, run}) puts a button in it instead, for the one thing a toast
-   *  can offer that a reader must be able to reach deliberately. */
-  function toast(title, sub, onClick, action) {
+  /* ---------- what snyvi says back ----------
+   * A toast at the bottom-right corner is a message posted to an address
+   * nobody is looking at: the click was on a button in the left rail, or on a
+   * mark in the middle of a paragraph, and the eye is still there. The answer
+   * moves to the hand instead. Every one of these is snyvi answering -- the
+   * same face as the logo, wearing the accent -- and it comes up beside the
+   * thing that was just pressed, leaning towards it, with the corner kept for
+   * the few that answer nothing in particular: an arrival, a dropped stream.
+   *
+   * The DOM is what it was -- `#toasts` holding `.toast`, with `.t`, `.s` and
+   * `button.act` inside -- so what reads a toast, bench/ui.mjs included,
+   * still finds it. What changed is where the box is put and who is in it. */
+  /* The six faces, which are the whole of the tone. The box around them is
+   * kept as small as it can be read at -- a head, a line, and a line under it
+   * when there is more to say -- because the face is what is being looked at.
+   * Every one is built from the logo's own geometry: eyes at 11 and 21,
+   * mouth at 23, so the head in an answer is the head in the corner of the
+   * sidebar and reads as the same creature rather than an illustration of
+   * it. What each one does when it lands is in app.css, keyed off data-feel. */
+  const EYE = (x, r = 2.6) => `<ellipse class="mk-ink" cx="${x}" cy="16.5" rx="${r}" ry="${+(r * 1.27).toFixed(2)}"/>`;
+  const SHUT = `<path class="mk-line" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/>`;
+  const UP = (l = 1, r = 1) => `<path class="mk-line" d="${l ? "M8.6 17.8q2.4-3 4.8 0" : ""}${r ? "M18.6 17.8q2.4-3 4.8 0" : ""}"/>`;
+  const HEART_EYE = x => `<path class="mk-love" transform="translate(${x} 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/>`;
+  const SMILE = `<path class="mk-line" d="M13.5 23q2.5 2.2 5 0"/>`;
+  const FACES = {
+    // Open eyes, a small smile: heard you.
+    plain: EYE(11) + EYE(21) + SMILE,
+    // Eyes up, mouth open: the thing you wanted happened.
+    glad: UP() + `<path class="mk-ink" d="M13 22.4q3 4 6 0z"/>`,
+    // One eye up: said with a bit of mischief, for the lights and the like.
+    wink: UP(1, 0) + EYE(21) + SMILE,
+    // Hearts, and they float off. Rare on purpose; it means nothing if not.
+    love: HEART_EYE(11) + HEART_EYE(21) + SMILE +
+      // The heart that floats off is a group with the placement on the path
+      // inside it: a CSS transform on an SVG element replaces the element's
+      // own transform attribute outright, so the animation gets a wrapper of
+      // its own to move rather than eating the placement.
+      `<g class="mk-puff"><path transform="translate(26 8) scale(.5)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g>`,
+    // Eyes wide, mouth a small o: something arrived.
+    whoa: EYE(11, 3.1) + EYE(21, 3.1) + `<ellipse class="mk-ink" cx="16" cy="23.4" rx="1.9" ry="2.2"/>`,
+    // Eyes down, mouth flat: it could not, and it is sorry about it.
+    oops: SHUT + `<path class="mk-line" d="M13.8 23.4h4.4"/>`,
+  };
+  /** snyvi's head at any size, in the accent it is wearing. */
+  const mascotHead = feel => `<svg class="mk" viewBox="0 0 32 32" aria-hidden="true">` +
+    `<rect class="mk-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="mk-body" x="1" y="4" width="30" height="27" rx="9"/>` +
+    (FACES[feel] || FACES.plain) + `</svg>`;
+  /** Nothing said this way is bad news, except the lines that are. They open
+   *  the same handful of ways, and the face should not be smiling at them. */
+  const feelFor = t => /^(could not|no |not |nothing|too late|never|failed)\b/i.test(t) || /\bis gone\b/i.test(t) ? "oops" : "plain";
+
+  /* Where the reader last acted, which is where they are looking. A pointer
+   * press is the honest signal; Enter or Space on something focused is the
+   * keyboard's version of the same. Both go stale quickly, so a reply that
+   * arrives long after a click -- an arrival off the stream, say -- is not
+   * mistaken for an answer to it and posted at a button nobody pressed. */
+  const ACTABLE = "button, a, summary, [role='button'], .ln, .anchor";
+  let actEl = null, actAt = -1e9;
+  const actNote = el => { if (el) { actEl = el; actAt = performance.now(); } };
+  addEventListener("pointerdown", e => actNote(e.target?.closest?.(ACTABLE)), true);
+  addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") actNote(document.activeElement?.closest?.(ACTABLE)); }, true);
+  /** The anchor only counts while it is recent, still in the page, and on
+   *  screen: a button that has scrolled away is no better than the corner. */
+  function liveAct() {
+    if (!actEl || !actEl.isConnected || performance.now() - actAt > 3000) return null;
+    const r = actEl.getBoundingClientRect();
+    return r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth ? actEl : null;
+  }
+
+  const toastsEl = $("#toasts");
+  let toastAt = null;   // what the stack is currently pointing at
+  /** Put the stack beside `el`, on the side with room for it. A control in
+   *  the left rail answers to its right, one in the contents rail to its
+   *  left, and anything in the middle of the page answers just below itself,
+   *  which is the way the eye is already travelling after a click. */
+  function placeToasts(el) {
+    const s = toastsEl.style, box = 330, gap = 12;
+    const r = el && el.isConnected ? el.getBoundingClientRect() : null;
+    // A control that is not on screen -- the sidebar folded away, the button
+    // scrolled past -- is no better an address than the corner. This catches
+    // the ones handed in by name as well: `w` and `z` answer at the rail
+    // where the setting lives, but only while the rail is there to point at.
+    const shown = r && r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+    toastAt = shown ? el : null;
+    if (!shown) { s.cssText = ""; delete toastsEl.dataset.side; return; }
+    const side = r.right + gap + box < innerWidth - 12 && r.left < innerWidth * 0.55 ? "right"
+      : r.left - gap - box > 12 ? "left" : "below";
+    s.right = s.left = "auto"; s.bottom = "auto";
+    if (side === "right") s.left = Math.round(r.right + gap) + "px";
+    else if (side === "left") s.right = Math.round(innerWidth - r.left + gap) + "px";
+    else s.left = Math.round(Math.max(12, Math.min(r.left, innerWidth - box - 12))) + "px";
+    // Level with the thing it answers, or under it; never off the window.
+    const want = side === "below" ? r.bottom + gap : r.top + r.height / 2 - 21;
+    s.top = Math.round(Math.max(12, Math.min(want, innerHeight - 96))) + "px";
+    toastsEl.dataset.side = side;
+  }
+  /* A button in the rail names itself on hover, in the very spot its answer
+   * comes up in. While the answer is up it is the better label of the two. */
+  const saidBy = el => el?.classList?.add("said");
+  // The window moving underneath takes the anchor with it.
+  let replaceFrame = 0;
+  const followAnchor = () => {
+    if (!toastAt || !said) return;
+    cancelAnimationFrame(replaceFrame);
+    replaceFrame = requestAnimationFrame(() => { if (toastAt && said) placeToasts(toastAt); });
+  };
+  addEventListener("resize", followAnchor);
+  addEventListener("scroll", followAnchor, true);
+
+  /* There is one of these at a time. Two of them is a pile of receipts, and
+   * a pile is read as a list -- which is the one thing this is not: it is a
+   * creature answering, and a creature says the next thing instead of the
+   * last one, in the place the next thing was asked. So a new answer takes
+   * the old one's place, wherever that was, and the old one is simply gone.
+   * Clicking the accent eight times running is eight bobs of the same head
+   * in eight colours, which is the setting itself, said. */
+  let said = null;
+  /** Clear whatever is being said now, without ceremony. */
+  function hush() {
+    if (!said) return;
+    clearTimeout(said.timer);
+    said.el.remove();
+    said.anchor?.classList?.remove("said");
+    said = null;
+  }
+
+  /** snyvi's answer, beside whatever was just pressed. `onClick` makes the
+   *  whole thing one; `action` ({label, run}) puts a button in it instead,
+   *  for the one thing an answer can offer that a reader must be able to
+   *  reach deliberately. `opts.at` overrides where it goes -- `null` sends it
+   *  to the corner -- and `opts.face` overrides how it is said. */
+  function toast(title, sub, onClick, action, opts = {}) {
+    const at = "at" in opts ? opts.at : liveAct();
+    hush();
+    placeToasts(at);
+    const anchor = toastAt;
+    saidBy(anchor);
     const el = document.createElement("div");
     el.className = "toast";
-    el.innerHTML = `<span class="dot"></span><span><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
+    el.dataset.feel = opts.face || feelFor(title);
+    el.innerHTML = `<span class="who">${mascotHead(el.dataset.feel)}</span>` +
+      `<span class="say"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
     if (action) {
       const b = document.createElement("button");
       b.type = "button"; b.className = "act"; b.textContent = action.label;
-      b.addEventListener("click", ev => { ev.stopPropagation(); el.remove(); action.run(); });
+      b.addEventListener("click", ev => { ev.stopPropagation(); hush(); action.run(); });
       el.appendChild(b);
     } else {
-      el.addEventListener("click", () => { el.remove(); onClick && onClick(); });
+      el.addEventListener("click", () => { hush(); onClick && onClick(); });
     }
-    $("#toasts").appendChild(el);
+    toastsEl.appendChild(el);
     const life = action ? UNDO_MS : onClick ? 8000 : 3500;
-    setTimeout(() => { el.style.transition = "opacity 160ms"; el.style.opacity = "0"; setTimeout(() => el.remove(), 180); }, life);
+    // It fades where it stands, and only if it is still the one being said.
+    const mine = { el, anchor, timer: 0 };
+    mine.timer = setTimeout(() => {
+      el.classList.add("out");
+      mine.timer = setTimeout(() => { if (said === mine) { hush(); placeToasts(null); } }, 180);
+    }, life);
+    said = mine;
     return el;
   }
 
@@ -2183,6 +2828,12 @@
     for (const d of state.desks.desks) if (!l || d.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: d.id, t: `Desk · ${d.name}`, s: d.root });
     return out;
   }
+  /** The keyboard's way to the `+` beside Folders. */
+  function folderItems(q) {
+    const l = q.trim().toLowerCase();
+    if (!capability || !l || !("open folder".startsWith(l) || "folder".startsWith(l) || "browse".startsWith(l))) return [];
+    return [{ pick: true, t: "Open folder…", s: "The desktop's folder dialog" }];
+  }
   const palRow = (it, i) => `<li class="${i === 0 ? "sel" : ""}" data-i="${i}">` + (
     it.t ? `<span class="t">${esc(it.t)}</span><span class="s">${esc(it.s)}</span>`
       : it.file ? `<span class="t">${esc(it.file.split("/").pop())}</span><span class="s">${esc(it.file)}</span>`
@@ -2200,7 +2851,7 @@
       try { items = (await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json()).map(p => ({ file: p })); } catch {}
     } else if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
     else items = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
-    palItems = deskItems(q).concat(items); palSel = 0;
+    palItems = deskItems(q).concat(folderItems(q), items); palSel = 0;
     palList.innerHTML = palItems.map(palRow).join("");
   }
   palIn.addEventListener("input", () => { clearTimeout(palTimer); palTimer = setTimeout(() => palSearch(palIn.value), 60); });
@@ -2212,23 +2863,41 @@
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  const openPalItem = it => it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
+  const openPalItem = it => it.pick ? pickFolder() : it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
     : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
   palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
   $("#btn-search").addEventListener("click", openPalette);
 
   // ---------- theme / font / panes ----------
+  /* One click always changes what you see: it flips light and dark. Landing
+   * on what the system already shows drops the choice, so the page follows the
+   * system again from there. It was a three-step cycle through "system", and
+   * one of the three clicks drew the same page -- read as a click that missed. */
+  const sysDark = matchMedia("(prefers-color-scheme: dark)");
+  const isDark = () => root.dataset.theme === "dark" || (!root.dataset.theme && sysDark.matches);
+  const SUN = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10" cy="10" r="3.5"/><path d="M10 2.5v1.5M10 16v1.5M2.5 10H4M16 10h1.5M4.7 4.7l1.06 1.06M14.24 14.24l1.06 1.06M4.7 15.3l1.06-1.06M14.24 5.76l1.06-1.06"/></svg>';
+  const MOON = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M16.5 12.2A6.8 6.8 0 0 1 7.8 3.5a6.8 6.8 0 1 0 8.7 8.7z"/></svg>';
+  function paintThemeBtn() {
+    const b = $("#btn-theme"), dark = isDark();
+    // The icon is what a click will switch to.
+    b.innerHTML = dark ? SUN : MOON;
+    b.dataset.label = `${dark ? "Dark" : "Light"}${root.dataset.theme ? "" : " (system)"} · click for ${dark ? "light" : "dark"}`;
+  }
   $("#btn-theme").addEventListener("click", () => {
-    const next = { "": "light", light: "dark", dark: "" }[root.dataset.theme || ""];
+    const want = isDark() ? "light" : "dark";
+    const next = want === (sysDark.matches ? "dark" : "light") ? "" : want;
     next ? (root.dataset.theme = next) : delete root.dataset.theme;
     store.set("snyvi.theme", next);
-    toast("Theme", next || "system");
+    toast("Theme", next ? want : `${want}, as the system`, null, null, { face: "wink", at: $("#btn-theme") });
+    paintThemeBtn();
     if (mmd) mmd.retheme();
   });
+  paintThemeBtn();
   // The same fault by a different route: with no explicit choice stored the page
   // follows the system, and the diagrams on it were drawn before it moved.
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  sysDark.addEventListener("change", () => {
+    paintThemeBtn();
     if (mmd && !root.dataset.theme) mmd.retheme();
   });
   function toggleWide() {
@@ -2246,16 +2915,76 @@
     store.set("snyvi.wrap", on ? "1" : "0");
     $("#btn-wrap").classList.toggle("on", on);
     // On prose there is nothing to wrap, so say what the setting did instead.
-    if (!docEl.querySelector("pre.code")) toast("Line wrap", on ? "on, for code" : "off");
+    if (!docEl.querySelector("pre.code")) toast("Line wrap", on ? "on, for code" : "off", null, null, { at: $("#btn-wrap") });
   }
   $("#btn-wrap").addEventListener("click", toggleWrap);
   $("#btn-wrap").classList.toggle("on", root.dataset.wrap === "1");
 
+  // The reading faces, in the order Aa steps through them. "" is Inter.
+  const FONTS = [["", "Inter"], ["serif", "Source Serif"], ["literata", "Literata"], ["atkinson", "Atkinson Hyperlegible"], ["mono", "JetBrains Mono"]];
+  function paintFontBtn() {
+    const f = FONTS.find(([k]) => k === (root.dataset.font || "")) || FONTS[0];
+    $("#btn-font").dataset.label = `Font: ${f[1]} · click for the next`;
+  }
   $("#btn-font").addEventListener("click", () => {
-    const next = root.dataset.font === "serif" ? "" : "serif";
+    const i = FONTS.findIndex(([k]) => k === (root.dataset.font || ""));
+    const [next, name] = FONTS[(i + 1) % FONTS.length];
     next ? (root.dataset.font = next) : delete root.dataset.font;
     store.set("snyvi.font", next);
+    paintFontBtn();
+    // A code file, a diff or a desk has no prose to set; say where it shows.
+    const prose = root.dataset.view !== "desk" && docEl.querySelector(".prose:not(.kind-code):not(.kind-text):not(.kind-diff)");
+    toast("Font", prose ? name : `${name}, for documents`, null, null, { face: "glad", at: $("#btn-font") });
   });
+  paintFontBtn();
+  /* The accent colours, in the order a click steps through them. "" is
+   * maroon, the default. They were a popover of eight swatches, which is a
+   * menu to read for a setting with no wrong answer: every one of them is
+   * simply a colour, and the only way to know which you want is to see it on
+   * the page. So the button is the setting now -- one click, the next colour,
+   * the whole window in it before the finger is off the mouse -- and the
+   * swatch on the button is where you are. snyvi wears the accent too, so the
+   * face that says which one it is arrives in that colour. */
+  const ACCENTS = [["", "Maroon"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
+  const accBtn = $("#btn-accent");
+  const accName = k => (ACCENTS.find(([a]) => a === k) || ACCENTS[0])[1];
+  function paintAccent() {
+    const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
+    accBtn.dataset.label = `Accent: ${accName(ACCENTS[i][0])} · click for ${accName(ACCENTS[(i + 1) % ACCENTS.length][0])}`;
+  }
+  /* The tab's icon wears the accent too: snyvi's face drawn in the mascot
+   * colours the stylesheet resolved, each normalised through a canvas so a
+   * color-mix() comes out as a plain hex the SVG can hold. */
+  function paintFavicon() {
+    const probe = document.createElement("i"), cs = getComputedStyle(probe);
+    probe.style.cssText = "position:absolute;visibility:hidden";
+    document.body.append(probe);
+    const col = v => { probe.style.color = `var(${v})`; const c = cs.color; if (!fitCtx) return c; fitCtx.fillStyle = "#000"; fitCtx.fillStyle = c; return fitCtx.fillStyle; };
+    const [body, nub, ink] = ["--mascot", "--mascot-nub", "--mascot-ink"].map(col);
+    probe.remove();
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><rect x="14" y="0.5" width="4" height="5" rx="2" fill="${nub}"/><rect x="1" y="4" width="30" height="27" rx="9" fill="${body}"/><ellipse cx="11" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><path d="M13.5 23Q16 25.2 18.5 23" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+    const link = $("#favicon");
+    if (link) link.href = "data:image/svg+xml," + encodeURIComponent(svg);
+  }
+  function setAccent(k) {
+    k ? (root.dataset.accent = k) : delete root.dataset.accent;
+    store.set("snyvi.accent", k);
+    paintAccent();
+    paintFavicon();
+    if (mmd) mmd.retheme();
+  }
+  accBtn.addEventListener("click", () => {
+    const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
+    const [next, name] = ACCENTS[(i + 1) % ACCENTS.length];
+    setAccent(next);
+    // The swatch is the same shape in every colour, so the change is quiet
+    // where the click was. It flicks once, and snyvi says the name beside it.
+    accBtn.classList.remove("flick"); void accBtn.offsetWidth; accBtn.classList.add("flick");
+    toast("Accent", name, null, null, { face: "glad", at: accBtn });
+  });
+  accBtn.addEventListener("animationend", () => accBtn.classList.remove("flick"));
+  paintAccent();
+  paintFavicon();
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
   const appEl = $("#app"), help = $("#help"), aboutDlg = $("#about"), resetDlg = $("#reset");
   const dialogs = [pal, help, aboutDlg, resetDlg];

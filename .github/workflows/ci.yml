@@ -90,6 +90,17 @@ jobs:
         # depends on the clock, plus the one timing that does not either:
         # whether drawing is cut into slices. See docs/DIAGRAMS.md.
         run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
+      - name: Opening a document
+        # The gesture a reader makes most, which none of the benches above
+        # measured: a click on a row, and a document on screen. The clocks
+        # are printed and not enforced here, for the same reason as the row
+        # above; what is enforced is what an open costs to hold and in what
+        # order it happens -- the layout tree of a 6,000-line file against
+        # the same page with containment off, the bytes the daemon serves
+        # per line, the heap either side of twenty opens, and that no row is
+        # rebuilt before the reader sees the page. None of that depends on
+        # the clock. See the top of bench/open.mjs.
+        run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/open.mjs --check
       - name: What the page does
         # Not how fast, what: where the contents' marker is, what a wheel
         # moves, what Back does, what `t` opens at 1000 px, whether Tab
@@ -97,11 +108,12 @@ jobs:
         # any machine. See the 0.11 and 0.12 notes in docs/ROADMAP.md.
         run: node bench/ui.mjs --check
       - name: What the page weighs
-        # The four assets the page cannot start without, gzipped as the
-        # daemon serves them. The 60 KB budget in docs/BRAINSTORM.md has been
-        # over since before anything measured it; what is enforced here is
-        # the ceiling above it, so the page cannot get quietly heavier while
-        # the debt is being paid down.
+        # The four assets the page cannot start without, fetched from a
+        # daemon this starts and gzipped as it serves them -- not read out of
+        # ui/, which stopped being the same bytes when build.rs began taking
+        # the comments out. Two things fail a push: first paint over the
+        # 50 KB budget in docs/BRAINSTORM.md, and an asset that does not
+        # parse as served, which is the strip's own safety net.
         run: node bench/bytes.mjs --check
       - name: The README's pictures can still be taken
         # bench/media.mjs is the camera the README's pictures come from; a

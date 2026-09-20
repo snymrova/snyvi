@@ -291,9 +291,11 @@ and from that count, and `snyvi init` with no agent prints the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes a single MCP tool, `send_document`, which takes a file path
-or inline content and returns a URL. The tool description tells Claude
-when to use it; a line in your global `CLAUDE.md` helps it remember:
+That exposes two MCP tools. `send_document` is the one that matters: it
+takes a file path or inline content and returns a URL. `send_note` is
+the small one, and [Notes](#notes) below says what it is for. The tool
+descriptions tell Claude when to use each; a line in your global
+`CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
 > send it to snyvi with send_document and give me the link.
@@ -460,6 +462,35 @@ documents and the settings live, what Claude Code has of it, the
 license and the repository. *Reset snyvi…* is described under
 [Uninstalling](#uninstalling).
 
+## Appearance
+
+Five buttons sit at the foot of the sidebar -- theme, accent, Aa, width,
+wrap -- and what each one does is kept for next time.
+
+The **theme** button flips light and dark. One click always changes
+what you see: landing on the theme your system already shows drops the
+choice rather than storing it, so the page follows the system again
+from there, and the button's tooltip says which of the two you are in.
+
+**Aa** steps through the reading faces: Inter, Source Serif, Literata,
+Atkinson Hyperlegible, JetBrains Mono. The first three are a matter of
+taste; the last two are not. Atkinson Hyperlegible was drawn by the
+Braille Institute to keep letters that blur into one another apart --
+`1` and `l`, `O` and `0`, `rn` and `m` -- and JetBrains Mono sets prose
+the way it sets code, which some readers prefer for a specification. It
+sets prose only: code is always mono and diffs and tables are left
+alone.
+
+The **swatch** steps through eight accent colours -- maroon, crimson,
+rose, violet, blue, teal, green, graphite -- one per click, the whole
+window repainted as you go. The accent is what links, the
+marker in the contents, a landing wash and snyvi's own mark are drawn
+in, and each has a pair for light and dark rather than one colour dimmed
+for both. The tab's icon is repainted to match, so two snyvi windows
+side by side are told apart at the tab strip.
+
+The **width** and **wrap** buttons are `w` and `z` above.
+
 ## Lines
 
 A code or text document addresses its lines. `#L120` opens it at line 120
@@ -624,6 +655,33 @@ runs while you read, and `prefers-reduced-motion` turns all of it off
 rather than slowing it down. The `#` beside a heading confirms a copy
 on the mark itself, not at the corner of the screen.
 
+## Notes
+
+An arrival is work: a document an agent finished and you asked for.
+Now and then there is a sentence that is not work -- what it noticed on
+the way, what it would do next, what it is unsure of -- and until this
+existed the only way to say it was to make it a document, which put it
+in your library and your unread count as though it were one.
+
+`send_note` is for that sentence, and it is deliberately small. A note
+is at most 280 characters; past that it is a document and
+`send_document` is the tool for it. Notes are kept in memory, the last
+five of them, so a daemon restart forgets them -- a note is about now,
+and one that outlived a restart would be about some other now. They
+never enter the queue, never mark anything unread, and never take the
+page away from what you are reading.
+
+One sits at the foot of the sidebar, under the trail of the few before
+it. A new one lights up and snyvi's own mark beside it hops once; rest
+on the note and it is read, and the mark settles. Only one note lights
+up every ten minutes: an agent that leaves one per edit costs you a
+single glance, and the rest join the trail quietly. A note may name a
+document it is about, and then clicking it opens that document.
+
+It is a channel from the agent to you and nothing comes back: snyvi
+cannot be read by an agent, and a note is not an instruction to
+anything.
+
 ## Where a link opens
 
 With `snyvi app` running, a link opens in that window rather than in a
@@ -682,6 +740,14 @@ snyvi browse            # the current folder
 snyvi browse ~/code/foo
 ```
 
+Or from the window: **Folders** is always in the sidebar, and the `+`
+beside it (or "Open folder…" in ⌘K) shows your desktop's own folder
+dialog — zenity or kdialog on Linux, the Finder's on macOS, Explorer's on
+Windows — and opens what you choose. The dialog is the desktop's, asked
+for by the daemon, so the page never names a path; it sits behind the
+same window-only gate as the desks, and a browser tab is told to use the
+window or `snyvi browse` instead.
+
 It honours `.gitignore` and skips hidden files, so `node_modules` and
 `target` stay out of the way. Files render on first open and are cached
 by modification time, so revisiting one is instant. ⌘K finds a file by
@@ -725,7 +791,12 @@ Documents are never updated. If the agent revises a plan, it sends it
 again; the workflow shows both, and `c` diffs them. Every snapshot of
 the same file, across sessions, is listed under "Versions" in the rail.
 Large code files are shown at once with the first 256 KB highlighted;
-the rest is highlighted in the background and swapped in when ready.
+the rest is highlighted in the background and swapped in when ready. A
+code block over 400 lines is served cut into chunks of 200, so the page
+lays out only the ones near the screen, and its outline for the rail is
+worked out once, on arrival, and kept beside it. A click is answered
+before any of that: the title appears at once, with the shape of the
+text under it, and the document fills it in when it arrives.
 
 Mermaid blocks render as diagrams; the library is embedded and loaded
 only on pages that have one, after the text has painted. Relative

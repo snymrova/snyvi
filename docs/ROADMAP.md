@@ -16,6 +16,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Find in document | `/` opens an in-page find with match highlighting and a count, like a code editor. Browser find works but ignores collapsed sections and looks foreign. | S | **done 0.2** |
 | Images and relative links | A plan that embeds `./docs/arch.png` shows a broken image. Serve files from the source document's directory only, image types only, so nothing else on disk becomes reachable. | S | **done 0.2** |
 | Code outline in the rail | For a code document, list functions, types and headings from the highlighter's scopes so the rail is as useful for code as the TOC is for prose. Worth more now that browse mode shows code all day. | M | **done 0.3** |
+| A click that lands at once | A 6,000-line code file froze the tab for 2.3 s on open, and no bench measured the gesture a reader makes most. A code block over 400 lines is served cut into 200-line chunks so containment can skip what is off screen, its outline is worked out on arrival and kept beside it rather than derived per open, and the sidebar is rebuilt after the first paint instead of before it. `bench/open.mjs` holds all three. And the click is answered before any of it: the title the row already knew, and bars where the text will be, in the same frame as the click. | M | **done 1.2** |
 | Watch a browsed folder | Refresh the open file when it changes on disk, instead of on manual reload. Listed folders follow too. | S | **done 0.4** |
 | Math (KaTeX) | Rare in engineering docs. Same lazy-load pattern as Mermaid once that exists. | S | later |
 | Structured views for JSON, YAML, CSV | CSV and TSV render as a table (**done 0.3**). JSON folding and YAML remain. | M | later |
@@ -58,6 +59,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Desktop notification on arrival | When the window is not focused, a system notification with the title; click to open. `notify-send` on Linux, a PowerShell toast on Windows, osascript on macOS. | S | **done 0.2** |
 | `snyvi watch FILE` | Re-send a file whenever it changes on disk, for editors and agents that have no hooks. Uses the same coalescing as the hook. | S | **done 0.4** |
 | Connect an agent, from the page | `snyvi mcp` is a plain stdio MCP server and already works with every client that speaks MCP, and nothing says so: the only setup path is `init-claude`, and the viewer never mentions an agent at all. The empty library becomes a page with one row per agent -- connected, not set up, or pointing at a binary that is gone, read from the agent's own config file -- with the command or the copyable snippet that fixes it, the line for its instructions file, and when it last sent something. `snyvi init <agent>` writes every agent's file -- two writers, JSON and TOML, cover all eight -- and `uninstall <agent>` takes the entry back out leaving the rest of the file; a file snyvi cannot parse is left alone with the snippet printed. | M | **done 0.18** |
+| A note beside the work | Two entries under "Explicitly not planned" refused a channel from the agent to the reader, and were right about what they feared. `send_note` answers each fear by being small: 280 characters, the last five, in memory only, one lighting up every ten minutes, never in the queue and never unread. It is a line at the foot of the sidebar and snyvi's own mark is its voice. The 1.2 notes say which half of the refusal did not survive. | S | **done 1.2** |
 | An about box | Nothing in the viewer says what it is, which version is running, where its data lives or under what license; a reader who arrived from an agent's link has no way to find out. One panel inside `?`, naming the same version `snyvi --version` prints. | XS | **done 0.18** |
 | Who is here now | The daemon heard of an agent only when one sent, so the connect page could say "sent 12 minutes ago" of a session closed for eleven, and nothing on any page said whether an agent was connected at all. The MCP server holds an event stream on the daemon under its client's name from `initialize` until its process ends, counted the way the window's is; a count beside the brand mark says how many are here, its title which, and the connect page's row says *online*. Nothing times out: the count is the streams. | S | **done 0.19** |
 | Claude Code skill file | A `/snyvi` skill that teaches the model when to send and how to phrase the link, installed by `init-claude`. | XS | later |
@@ -98,6 +100,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 | Size, start-up and memory in the bench | The README's binary size, cold start and resident rows were hand-measured and enforced by nothing, and had drifted. `snyvi bench` starts a daemon of its own and budgets all three, with sends and a page's first byte beside them. | S | **done 0.10** |
 | CI on a 2-core runner profile | Budgets are scaled by a factor today; a fixed small-machine profile would make numbers comparable release to release. | S | later |
 | The page pays for what it uses | The UI budget is < 60 KB gzipped and had been over since before anyone measured it: 63.5 KB at 1.0, found by hand, twice, at two different numbers. `bench/bytes.mjs` made it a row a push can break, with a ceiling above the budget to hold the ratchet while the debt was real. The debt is paid rather than ratcheted: the diagram driver -- 820 lines that queue, cache, theme, zoom and reserve, for a library lazy since 0.2 -- was 11.6 KB gzipped on every page load, and most documents hold no diagram. It is `ui/mmd.js` now, imported when a document with `pre.mermaid` arrives. First paint 67.0 KB to 55.1 KB, inside the budget, and the ceiling is retired because the budget is enforceable again. | S | **done 1.1** |
+| What the browser does not read, it does not fetch | The work above put first paint at 72.7 KB of a 60 KB budget, and deferring every feature that could honestly be deferred came to 7.8 KB -- not enough, for seven features put behind a fetch. What the page was carrying was its own prose: 26 KB of comments and indentation that no browser reads. `build.rs` strips them on the way into the binary (`src/strip.rs`), the source keeps every word and `SNYVI_UI_DIR` still serves it as written, and `bench/bytes.mjs` asks a daemon rather than the folder because the folder is no longer what anyone fetches. First paint 48.9 KB, and the budget is 50. | M | **done 1.2** |
 | Desks: real shells in the window | A desk is a folder and up to four panes, made from a folder's context menu, the + beside a folder, or the palette. The terminal lives in the daemon (PTY, parser, and a screen model of its own), and the page paints row diffs from a chunk that loads when a desk opens. The panes are behind a per-window capability, so a browser tab gets 403. The caps are eight panes and 2 MB of scrollback each. The layout persists and processes do not. `docs/DESK.md`. | L | **built 1.1** |
 | The UI's behaviour in CI | Every fault in 0.11 was found by driving Chromium against a daemon and measuring: where the marker was, what a wheel moved, what Back did. Those probes are `bench/ui.mjs` now, beside the browser bench and on every push, so the rail cannot quietly stop following again. | S | **done 0.12** |
 | Keyboard and screen-reader pass | The palette and the help box trap no focus and return it nowhere; the find count is not announced; hover-only controls (copy, rename, the `#`) have no equivalent under a finger. One pass, with the checks kept in `bench/ui.mjs`. | S | **done 0.12** |
@@ -109,8 +112,7 @@ Status key: **done 0.2**, **next**, **later**, **maybe**, **no**.
 - Reading documents back into the agent. The channel is one-way by design.
 - Hosted multi-user mode, until the local tool has real users asking for it.
 - A command runner inside snyvi: "run this block", fan-out to several panes, or anything else that turns what a document says into input. That is a one-click path from content an agent wrote to a side effect on the reader's machine. Desks are real shells the reader types into, and nothing received is ever typed into them. `docs/TERMINAL.md` section 9 draws the line and `docs/DESK.md` says where it is enforced.
-- Messages from the agent to the reader: a channel beside `send_document` for encouragement, or for something the model has noticed about the person. The tool's contract is "a finished document the reader asked for", and the reader relies on it: every arrival is work. The moment an arrival can be the model speaking, each one has to be read with the question of which it is, which is the interruption 0.14 removed. Something inferred about the reader from their documents and shown back to them reads as surveillance the first time it is slightly wrong, and it has no probe -- there is no test for "the message was welcome". And a free-text line addressed to the reader is the softest target a document can aim an agent at. The warmth belongs to the product's own voice, fixed and authored: the empty state, the about box, the first-run line.
-- A pet in the chrome. A character that lives beside the document needs a place, a state and attention, and every one of those is taken from the page; the document is the hero. The icon is the mascot, and it may appear as a still mark where there is nothing to read. One frame, not a life.
+- Messages from the agent to the reader, and a pet in the chrome. Both were refused here at length, and both were built in 1.2; the entry below says what the refusals feared, what the design does about each fear, and what would make them right again. The half that still stands is written there rather than here.
 
 ## 0.2 (built)
 
@@ -1954,6 +1956,211 @@ and no harness here drives them -- what is checked is the decision they
 hand a URL to, which is `stays_home` and is a unit test. That a browser
 comes forward with the page, and that the window stays where it was, is
 watched by hand.
+
+## 1.2: the click, a line beside the work, and the page's own weight
+
+**What it was.** A 6,000-line Rust file, opened from the sidebar, froze
+the tab for 2.3 s. Every bench in the tree measured a half of that
+gesture and none measured the whole: `snyvi bench` times the renderer
+and the daemon, which is over before the browser has anything;
+`bench/browser.mjs` times a cold page load, which a reader pays once a
+session; `bench/ui.mjs` never looks at a clock. The click -- a row in
+the sidebar, a document on screen -- is what a reader does most, and it
+was the one thing nothing watched.
+
+**A long code block arrives cut up.** `chunk_code` splits a `pre.code`
+over 400 lines into 200-line spans, each carrying the line number it
+starts at, so `content-visibility` can skip the ones off screen and the
+page lays out the two or three that are not. It happens where every
+other per-document cost here happens -- once, at receive time, and at
+browse-cache time so the files already in a folder get it too. The
+layout tree for that Rust file is 13,985 objects against 234,385 with
+containment off, and the open is 439 ms of an 800 ms budget -- of which
+the reader waits 6 ms before the page says anything at all.
+
+**And its outline is worked out once.** The rail's outline for a code
+document was derived on every open, from the highlighter's scopes,
+which is a pass over the whole file to fill a list nobody had asked to
+change. It is computed on arrival and kept in an `.outline` beside the
+document, invalidated when the document is and swept when it is
+evicted; a browsed folder keeps its own in an LRU, because a file on
+disk has no arrival to hang it on.
+
+**The sidebar waits its turn.** The tree, the history and the workflow
+were rebuilt in the same turn that put the document on the screen, so a
+reader waiting for a document waited for a list beside it as well. They
+happen after the first paint now, and `bench/open.mjs` holds the order:
+zero sidebar rows rebuilt before the reader sees the page, and the row
+that was clicked marked at once, in four attribute writes, without
+touching the rest.
+
+**And the click is answered before any of that.** All of the above makes
+the wait shorter and none of it makes the wait visible: `showDoc` put
+nothing on the page until the whole document had been fetched and
+parsed, which for the Rust file is 1.5 MB of HTML, so the gesture had no
+answer at all for as long as that took and a long file read as a frozen
+window. It does not wait to say something now. The title comes from the
+row that was clicked -- the sidebar knew it already, and every list that
+names a document records what it knows -- and under it are bars where
+the text will be. The bars are invisible for their first 200 ms, so an
+open that lands at once shows no skeleton and one that does not says so
+before a reader can wonder whether the click landed; a document already
+in hand skips the shell and goes up whole, as it always did. A second
+click while the first is still coming wins, and the first is dropped
+rather than painted over what the reader asked for next.
+
+**The probe had to move again, in the same way as the last one.** The
+shell is a `.prose` too, and `bench/open.mjs` anchored its clock on the
+first `.prose` under `#doc` -- so the moment it existed the bench began
+timing the answer to the click and calling it the document: 10 ms for a
+file that takes 439. It waits for `.prose:not(.sk-body)` now, and the
+shell is a column of its own beside it, with a budget of one frame. Both
+halves are the truth and neither is the whole of it: `shell` is what the
+reader gets at once, `total` is when they can read.
+
+**Going somewhere, in the engine the window uses.** WebKitGTK refuses
+`scrollIntoView` outright when the target is inside a subtree it has
+skipped -- which, after the change above, is most of a long file. An
+outline entry for line 2531 and an agent's `#L2531` both left the
+document at scroll 0 with the line 52,525 px away, and a find match
+8,879 px down was marked and never reached; all three worked in
+Chromium, which is why none of it had been seen. The page moves the
+scroller itself now and corrects until the target settles.
+`bench/webkit.py` has the rows.
+
+### A note beside the work
+
+Two entries under "Explicitly not planned" refused this, and they were
+right about what they feared. What they were wrong about was that the
+fears had no answer.
+
+*"Every arrival is work."* Still true, because a note is not an
+arrival. It never enters the queue, marks nothing unread, and takes no
+page away; it is a line at the foot of the sidebar, where the reader
+looks when they choose to.
+
+*"Something inferred about the reader reads as surveillance."* Nothing
+is inferred. A note is a sentence an agent chose to write about the
+work it is doing, the way a friend at the next desk would -- not a
+reading of the person.
+
+*"There is no test for 'the message was welcome'."* There is no test,
+so the design makes the question small: 280 characters, the last five
+kept, nothing on disk, and at most one lighting up every ten minutes.
+An agent that sends one per edit costs a single glance, and a restart
+forgets them, because a note is about now.
+
+*"The softest target a document can aim an agent at."* This is the one
+that stays sharp. A note is free text an agent was persuaded to send,
+and a document it read can do the persuading. The mitigations are that
+it is text and only text -- escaped, capped, and carrying nothing but an
+optional document id, which opens a document the reader already has or
+nothing at all -- and that it cannot ask for anything: there is no
+channel back, and nothing a note says
+reaches a desk. The remaining exposure is a sentence the reader did not
+want, which is the cost of the feature and is bounded by its size.
+
+*"The warmth belongs to the product's own voice."* This is the half
+that did not survive, and it is worth naming plainly rather than
+pretending the entry was honoured.
+
+**The mark answers.** snyvi's own icon is the one mascot on screen and
+the note is its voice: a waiting note perks it up, it hops once when
+one arrives, resting on the note gets a smile, and a page with no
+daemon to hear puts it to sleep. "One frame, not a life" was the rule,
+and the rule was nearly broken by an accident: `data-note` was written
+as `""` when there was nothing to say, and an attribute selector
+matches an empty value, so the blink ran on every page from boot for
+the life of the tab. `bench/ui.mjs` has said "nothing runs long" since
+0.14 and it is what caught it. The attribute is removed rather than
+emptied, and the mark blinks while a note waits and stops when the
+reader rests on it.
+
+### The mark, the colours, and two more faces
+
+The three-lines mark was drawn for a tray at 16 px and had never been
+anything else. `packaging/icons.py` draws a face now, in two cuts -- the
+full one above 48 px, a simpler one below, where the detail turned to
+mud -- and the same face is the mascot in the chrome.
+
+Eight accents come with it: maroon, crimson, rose, violet, blue, teal,
+green, graphite, each a pair rather than one colour dimmed for both
+themes, chosen from a swatch in the sidebar's foot and painted into the
+tab's icon so two windows are told apart at the tab strip.
+
+And two reading faces, which are not a matter of taste: Atkinson
+Hyperlegible, drawn by the Braille Institute to hold apart the letters
+that collapse into one another, and Literata. Both are OFL, and the
+licences ship with them -- `ui/fonts/OFL.txt` and the Debian copyright
+file, which declared `Files: *` MIT while the binary had carried
+embedded OFL faces since the first commit.
+
+### A folder, from the desktop's own dialog
+
+`snyvi browse` was the only way to open one, which meant a reader in the
+window had to find a terminal. **Folders** is always in the sidebar now,
+and the `+` beside it asks the daemon to ask the desktop -- zenity,
+kdialog or yad on Linux, the Finder's panel on macOS, Explorer's on
+Windows. The page never names a path and never sees one it did not
+choose; it sits behind the same window-only capability as the desks,
+and a browser tab is told to use the window or the command instead.
+
+### A pane that comes back
+
+A desk survived a daemon restart as a layout and not as a shell: the
+panes came back empty and stayed empty. They ask for themselves now,
+once, and a pane that was mid-start when the daemon went says so rather
+than looking finished.
+
+### The page pays for what it uses, again
+
+1.1 moved the diagram driver out of first paint and bought 12 KB of the
+60 KB budget. 1.1 through 1.1.2 spent all but 1.3 KB of it, and the work
+above put first paint at 72.7 KB -- 12.7 over, with `bench/bytes.mjs`
+red on every push.
+
+Chunking was the obvious answer and it did not reach: measured on true
+spans rather than between section headers, every feature that could
+honestly be deferred -- the connect page, the folder menu, the accent
+picker, reset, the palette, find, about -- came to 7.8 KB of JavaScript.
+Not enough, and it would have put seven features behind a fetch to buy
+less than half the debt.
+
+What the page was actually carrying was its own prose. This codebase
+writes long comments on purpose and a browser reads none of them: 19.2
+KB of `app.js`'s 50.3 and 6.9 KB of `app.css`'s 18.7 were comments and
+indentation, on the wire, on every first paint. So `build.rs` runs each
+asset through `src/strip.rs` on the way into the binary and the daemon
+embeds the result. The source keeps every word, and `SNYVI_UI_DIR`
+still serves it as written, because the dev loop is where a person
+reads it. First paint is 48.9 KB and the budget is 50 -- 45.2 KB when
+this landed, and the shell above it spent most of what was left.
+
+It is a scanner and not a pass of replacements, because `"https://"`
+holds a `//`, a regex may hold a `/*`, and a template literal's own
+newlines and indentation are text the page shows. It removes comments,
+indentation and blank lines and nothing else: no name is shortened and
+no two lines are joined, so automatic semicolon insertion sees the
+program it saw before. A minifier would have taken another 6.9 KB and
+wanted either a Node toolchain inside a Rust build -- which
+`bench/browser.mjs` argues against for the harness and the binary argues
+against harder -- or a dependency tree bigger than the win; the option
+is still there if the budget is ever tight again.
+
+**And the probe had to move with it.** `bench/bytes.mjs` read `ui/` off
+disk, which stopped being the bytes anyone fetches the moment this
+landed. It starts a daemon and asks it now, exactly as a page does, and
+it checks one more thing while it has them: that every asset parses. A
+strip that ate a brace cannot pass quietly.
+
+**One thing the benches were not measuring.** A page with no stored
+theme follows the system, and headless Chrome answers with the
+desktop's -- dark on a developer's box, light on a hosted runner. So the
+legibility pass labelled "light" had been measuring whatever the machine
+preferred, and the theme toggle went dark, light, dark and landed on the
+colours it started in, which reads exactly like a diagram that was never
+redrawn. The harness pins `prefers-color-scheme` to light now. Neither
+row was ever about snyvi, and both had been saying something for months.
 
 ## Not yet watched on Windows or macOS
 

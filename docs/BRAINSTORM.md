@@ -32,7 +32,7 @@ Concrete budgets (targets, not measurements yet):
 | Render a 1 MB Markdown file         | < 200 ms              |
 | Render a 50k-line code file         | scrolls at 60 fps (virtualized) |
 | Binary size                         | < 15 MB single file   |
-| Network on first load (web)         | < 60 KB gzipped UI, all from localhost |
+| Network on first load (web)         | < 50 KB gzipped UI, all from localhost |
 | Open an already-received document   | < 30 ms request to first paint |
 | Any interaction                     | < 100 ms, or it is a bug |
 | Library of 10,000 docs              | sidebar and search stay instant |

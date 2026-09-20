@@ -299,6 +299,12 @@ class Driver {
     await sleep(200);
   }
   async clickOn(selector) { const at = await this.ui("center", selector); await this.click(at.x, at.y); }
+  /** Rest the pointer on something, for what only opens under one. */
+  async hoverOn(selector) {
+    const at = await this.ui("center", selector);
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, this.s);
+    await sleep(200);
+  }
   async dblclick(x, y) {
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s);
     for (const clickCount of [1, 2]) {
@@ -610,6 +616,11 @@ async function keyboardRows(p, url) {
   const helpStill = await p.ui("focus");
   await p.press("Escape");
   const helpBack = await p.ui("focus");
+  // The keys button stands in the column that grows out of the light/dark
+  // switch, which is up only while a pointer rests there; a click at its
+  // coordinates with the pointer parked elsewhere lands on whatever the
+  // closed column is floating over.
+  await p.hoverOn(".foot-set");
   await p.clickOn("#btn-help");
   const byClick = await p.ui("vis", "#help");
   await p.clickOn("#help-close");

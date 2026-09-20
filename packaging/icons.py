@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Draw the snyvi mark at every size and format the platforms ask for.
 
-The mark is the one already in the UI's favicon: a rounded square in the
-accent colour with three lines, the last one short. Its proportions live
-here as fractions of the icon's side, taken from that favicon's 32-unit
-viewBox so the tab, the taskbar and the tray cannot drift apart.
+The mark is snyvi itself, the mascot that leaves notes at the foot of the
+sidebar: a peach tile with a maroon nub on top and a maroon face. Its
+geometry lives here in the 32-unit space the UI draws it in, so the tab,
+the sidebar, the taskbar and the tray cannot drift apart.
 
-Two renderers, because one does not serve both ends of the range:
+Two faces, because one does not serve both ends of the range:
 
-  >= 48px  the mark as specified, drawn 8x and downsampled, round caps
-           and smooth corners.
-  <= 32px  the same rhythm snapped to whole pixels, with a stroke that is
-           deliberately heavier. At 7.5% a 16px icon gets a 1.2px line,
-           which antialiases into grey mush; a 2px line is the smallest
-           one that is still a line.
+  >= 48px  the full face: eyes with their shine, rosy cheeks, the smile.
+           Drawn 8x and downsampled.
+  <= 32px  eyes and smile only, the smile a little heavier. Sparkles and
+           cheeks a pixel across antialias into a smudge.
 
 Run by hand when the mark changes; the output is committed, so nothing in
 the build depends on Python:
@@ -27,75 +25,88 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-ACCENT = (194, 65, 12, 255)  # #c2410c, the UI's --accent
-INK = (255, 255, 255, 255)
+BODY = "#f9a77e"     # the mascot's peach
+INK = "#6b2208"      # its face, a maroon dark enough to read on peach
+NUB = "#c2410c"      # the logo's maroon, the UI's --brand
+CHEEK = "#f5847e"    # #f0607e at half strength over the body, flattened
+SHINE = "#ffffff"
 
-# Fractions of the side, from the favicon's 32-unit viewBox.
-RADIUS = 7 / 32          # corner radius
-STROKE = 2.4 / 32        # line thickness
-ROWS = (10 / 32, 16 / 32, 22 / 32)   # line centres
-X0, X1 = 9 / 32, 23 / 32             # line ends, centre of the round cap
-SHORT_X1 = 18 / 32                   # the third line stops here
-
-CAP = STROKE / 2         # round caps reach half a stroke past the ends
+# The 32-unit geometry: boxes as (x, y, w, h, radius), eyes as centres.
+NUB_BOX = (14, 0.5, 4, 5, 2)
+BODY_BOX = (1, 4, 30, 27, 9)
+EYES = ((11, 16.5), (21, 16.5))
+EYE = (2.6, 3.3)
+SMILE = ((13.5, 23), (16, 25.2), (18.5, 23))   # a quadratic: start, control, end
+FULL = {"smile": 1.8, "shine": ((0.9, -1.3, 1.0), (-0.6, 1.4, 0.45)),
+        "cheeks": ((7.8, 21.5), (24.2, 21.5)), "cheek": (2.2, 1.4)}
+SIMPLE = {"smile": 2.2, "shine": (), "cheeks": (), "cheek": None}
 
 PNG_SIZES = (16, 20, 24, 32, 48, 64, 128, 256, 512)
 # 128 is left out: it is pure overhead as an uncompressed bitmap, and Windows
 # halves the 256 PNG for that slot without visible loss.
 ICO_SIZES = (16, 24, 32, 48, 64, 256)
-SMALL = 32               # at or below this, snap to the pixel grid
+SMALL = 32               # at or below this, the simple face
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "icons"
 
 
-def rounded(size, scale=1):
-    """The accent square, drawn large and downsampled so corners stay smooth."""
-    big = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
-    d = ImageDraw.Draw(big)
-    d.rounded_rectangle(
-        [0, 0, size * scale - 1, size * scale - 1],
-        radius=RADIUS * size * scale,
-        fill=ACCENT,
-    )
-    return big if scale == 1 else big.resize((size, size), Image.LANCZOS)
+def ellipse(d, k, cx, cy, rx, ry, fill):
+    d.ellipse([(cx - rx) * k, (cy - ry) * k, (cx + rx) * k, (cy + ry) * k], fill=fill)
 
 
-def render_large(size):
-    scale = 8
-    img = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    s = size * scale
-    d.rounded_rectangle([0, 0, s - 1, s - 1], radius=RADIUS * s, fill=ACCENT)
-    t = STROKE * s
-    for i, row in enumerate(ROWS):
-        cy = row * s
-        x1 = (SHORT_X1 if i == 2 else X1) * s
-        d.rounded_rectangle(
-            [X0 * s - CAP * s, cy - t / 2, x1 + CAP * s, cy + t / 2],
-            radius=t / 2,
-            fill=INK,
-        )
-    return img.resize((size, size), Image.LANCZOS)
+def box(d, k, x, y, w, h, r, fill):
+    d.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=r * k, fill=fill)
 
 
-def render_small(size):
-    """Whole-pixel geometry: the corners are antialiased, the lines are not."""
-    img = rounded(size, scale=8)
-    d = ImageDraw.Draw(img)
-    # 8.5% rather than 7.5%: see the module docstring.
-    t = max(2, round(size * 0.085))
-    for i, row in enumerate(ROWS):
-        cy = round(row * size)
-        top = cy - t // 2
-        x0 = round((X0 - CAP) * size)
-        x1 = round(((SHORT_X1 if i == 2 else X1) + CAP) * size)
-        d.rectangle([x0, top, x1 - 1, top + t - 1], fill=INK)
-    return img
+def quad(p0, p1, p2, n=24):
+    """Points along a quadratic curve, for the smile PIL has no path for."""
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append(tuple((1 - t) ** 2 * a + 2 * (1 - t) * t * b + t * t * c
+                         for a, b, c in zip(p0, p1, p2)))
+    return pts
 
 
 def render(size):
-    return render_small(size) if size <= SMALL else render_large(size)
+    face = SIMPLE if size <= SMALL else FULL
+    scale = 8
+    k = size * scale / 32
+    img = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    box(d, k, *NUB_BOX, NUB)
+    box(d, k, *BODY_BOX, BODY)
+    for cx, cy in face["cheeks"]:
+        ellipse(d, k, cx, cy, *face["cheek"], CHEEK)
+    for cx, cy in EYES:
+        ellipse(d, k, cx, cy, *EYE, INK)
+        for dx, dy, r in face["shine"]:
+            ellipse(d, k, cx + dx, cy + dy, r, r, SHINE)
+    w = face["smile"] * k
+    pts = [(x * k, y * k) for x, y in quad(*SMILE)]
+    d.line(pts, fill=INK, width=round(w), joint="curve")
+    for x, y in (pts[0], pts[-1]):   # round caps
+        d.ellipse([x - w / 2, y - w / 2, x + w / 2, y + w / 2], fill=INK)
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def svg(face=FULL):
+    """The master, for scalable icon themes and anywhere an SVG is wanted."""
+    def rect(x, y, w, h, r, fill):
+        return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" fill="{fill}"/>'
+    parts = [rect(*NUB_BOX, NUB), rect(*BODY_BOX, BODY)]
+    for cx, cy in face["cheeks"]:
+        parts.append(f'<ellipse cx="{cx}" cy="{cy}" rx="{face["cheek"][0]}" ry="{face["cheek"][1]}" fill="{CHEEK}"/>')
+    for cx, cy in EYES:
+        parts.append(f'<ellipse cx="{cx}" cy="{cy}" rx="{EYE[0]}" ry="{EYE[1]}" fill="{INK}"/>')
+        for dx, dy, r in face["shine"]:
+            parts.append(f'<circle cx="{round(cx + dx, 2)}" cy="{round(cy + dy, 2)}" r="{r}" fill="{SHINE}"/>')
+    (x0, y0), (x1, y1), (x2, y2) = SMILE
+    parts.append(f'<path d="M{x0} {y0}Q{x1} {y1} {x2} {y2}" fill="none" stroke="{INK}" '
+                 f'stroke-width="{face["smile"]}" stroke-linecap="round"/>')
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">'
+            + "".join(parts) + "</svg>\n")
 
 
 def dib(img):
@@ -156,18 +167,6 @@ def write_ico(path, images):
     path.write_bytes(struct.pack("<HHH", 0, 1, n) + entries + blob)
 
 
-def svg():
-    """The master, for scalable icon themes and anywhere an SVG is wanted."""
-    line = ('<path d="M{x0} {y0}H{x1}M{x0} {y1}H{x1}M{x0} {y2}H{x3}" '
-            'stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>')
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">'
-        '<rect width="32" height="32" rx="7" fill="#c2410c"/>'
-        + line.format(x0=9, x1=23, x3=18, y0=10, y1=16, y2=22)
-        + "</svg>\n"
-    )
-
-
 def main():
     OUT.mkdir(exist_ok=True)
     drawn = {}
@@ -182,6 +181,8 @@ def main():
     drawn[32].save(OUT / "tray.png")
     write_ico(OUT / "icon.ico", [drawn[s] for s in ICO_SIZES])
     (OUT / "icon.svg").write_text(svg())
+    # The small face, for the favicon and the sidebar, where the full one smudges.
+    (OUT / "icon-small.svg").write_text(svg(SIMPLE))
     for p in sorted(OUT.iterdir()):
         print(f"{p.name:12} {p.stat().st_size:>7} bytes")
 

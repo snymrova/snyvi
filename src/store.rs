@@ -230,6 +230,18 @@ impl Store {
     fn html_path(&self, id: &str) -> PathBuf {
         self.docs_dir.join(format!("{id}.html"))
     }
+    fn outline_path(&self, id: &str) -> PathBuf {
+        self.docs_dir.join(format!("{id}.outline"))
+    }
+
+    /// The rail's outline of a code document, as JSON, if it has been worked out.
+    pub fn outline(&self, id: &str) -> Option<String> {
+        fs::read_to_string(self.outline_path(id)).ok()
+    }
+
+    pub fn set_outline(&self, id: &str, json: &str) -> Result<()> {
+        Ok(fs::write(self.outline_path(id), json)?)
+    }
 
     pub fn insert(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
@@ -302,6 +314,8 @@ impl Store {
         let hash = blake3::hash(d.source).to_hex().to_string();
         fs::write(self.src_path(id), d.source)?;
         fs::write(self.html_path(id), d.html)?;
+        // The source changed under it, so the outline is worked out again.
+        let _ = fs::remove_file(self.outline_path(id));
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE docs SET title = ?2, kind = ?3, lang = ?4, size = ?5, received_at = ?6, branch = ?7, content_hash = ?8 WHERE id = ?1",
@@ -537,6 +551,7 @@ impl Store {
         for (id, _) in &victims {
             let _ = fs::remove_file(self.src_path(id));
             let _ = fs::remove_file(self.html_path(id));
+            let _ = fs::remove_file(self.outline_path(id));
         }
         Ok(victims)
     }

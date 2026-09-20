@@ -36,8 +36,10 @@ async function socket() {
     s.onclose = () => {
       if (sock !== s) return;
       sock = null;
-      // A new socket is watching nothing: every pane is asked for again.
-      for (const v of views.values()) v.asked = false;
+      // A new socket is watching nothing: every pane is asked for again. And
+      // a daemon that restarted has dropped the processes, so each pane is a
+      // candidate to start itself once more.
+      for (const v of views.values()) { v.asked = false; v.resumed = false; }
       // The daemon went, or restarted. Try again while a desk is on screen.
       clearTimeout(retry);
       if (deskId != null) retry = setTimeout(() => watch(), 1000);
@@ -69,7 +71,7 @@ function receive(f) {
   const v = views.get(f.p);
   if (!v) return;
   if (f.t === "frame") paint(v, f);
-  else if (f.t === "status") { v.status = f.s; header(v); if (v.id === focused) rail(); }
+  else if (f.t === "status") { v.status = f.s; header(v); resume(v); if (v.id === focused) rail(); }
   else if (f.t === "old") {
     // What the last run left, greyed: the scrollback is now the old text, and
     // the new run starts with none of its own.
@@ -96,6 +98,7 @@ function refused() {
 function paint(v, f) {
   // A diff for a grid this page does not hold yet: its snapshot is behind it.
   if (!f.sz && !v.rows) return;
+  born = v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1;
   const pinned = v.body.scrollTop + v.body.clientHeight >= v.body.scrollHeight - 4;
   if (f.sz) {
     // Resize-and-clear, on this side as on the daemon's.
@@ -235,11 +238,23 @@ function drawn(W, H) {
     `\n.pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
 }
 
+/* The colour the pane being painted had its prompt dressed in. snyvi wrote
+ * that colour into the shell's rc when the pane started, so the escape the
+ * prompt sends carries it exactly; painting it as the accent rather than as
+ * the colour it literally is means a new swatch re-tints every prompt already
+ * on the screen, and the scrollback above them, without asking a shell to
+ * draw anything again. Anything else that sends that exact colour re-tints
+ * too, which is a fair trade for a prompt that follows the window. */
+let born = -1;
+
 /** A colour on the wire: 0 the default, 1..256 a palette index plus one,
  *  bit 24 set for truecolor. The first sixteen are the theme's own. */
 function color(n) {
   if (!n) return "";
-  if (n >= 1 << 24) return "#" + (n & 0xffffff).toString(16).padStart(6, "0");
+  if (n >= 1 << 24) {
+    const c = n & 0xffffff;
+    return c === born ? "var(--accent)" : "#" + c.toString(16).padStart(6, "0");
+  }
   const i = n - 1;
   if (i < 16) return `var(--t${i})`;
   if (i < 232) {
@@ -296,11 +311,15 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-state"></span></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"></form>`;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0], asked: false,
+    // A pane with no process and no exit code lost its shell to a daemon that
+    // went away: it will start itself, so it does not flash the Start bar on
+    // the way there. `resumed` is one attempt, per daemon.
+    resumed: false, starting: false, resuming: !(p.status && (p.status.running || p.status.exit != null)),
     body: el.querySelector(".pn-body"), old: el.querySelector(".pn-old"), sb: el.querySelector(".pn-sb"), scr: el.querySelector(".pn-scr"),
     caret: el.querySelector(".pn-caret"), start: el.querySelector(".pn-start"), size: "",
   };
@@ -374,16 +393,57 @@ function fit(v) {
   v.size = size;
   clearTimeout(v.fitT);
   v.fitT = setTimeout(() => say({ t: "size", p: v.id, c, r }), 60);
+  // The first size is also the moment the pane is really on screen, which is
+  // when a pane that lost its shell asks for it back -- at the size it is
+  // drawn at, and not for panes sitting behind a tab.
+  resume(v);
 }
 
-async function run(v, cmd) {
+/** The shell, back, without being asked twice.
+ *
+ *  A pane is runtime, and a daemon that wakes up finds every one of them
+ *  stopped. That is not the reader's doing and there is nothing to tell them
+ *  about it: the pane starts what it ran before, and the old screen stays
+ *  above it, greyed, as scrollback. A process that ended on its own, or that
+ *  the reader stopped, has an exit code -- that one keeps the Start bar,
+ *  because what to do next is a question only the reader can answer. */
+function resume(v) {
+  if (v.resumed || v.starting || !v.size) return;
+  if (v.status.running || v.status.exit != null) {
+    if (v.resuming) { v.resuming = false; header(v); }
+    return;
+  }
+  run(v, v.status.cmd || v.pane.cmd || "", true);
+}
+
+/** The accent this window wears, as CSS resolved it, for the prompt the shell
+ *  is dressed in. The shell bakes it in at birth and cannot be told again --
+ *  the page re-tints instead, in `color`, so a swatch reaches a pane that is
+ *  already running. */
+function accent() {
+  const c = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
+}
+
+async function run(v, cmd, quiet) {
+  if (v.starting) return;
+  v.starting = true;
+  v.resumed = true;
   const [c, r] = v.size ? v.size.split("x").map(Number) : [80, 24];
   try {
-    const j = await ctx.api(`/api/panes/${v.id}/start`, { cmd, cols: c, rows: r });
+    const j = await ctx.api(`/api/panes/${v.id}/start`, { cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
+    if (!quiet) v.body.focus();
+  } catch (e) {
+    // Two windows on one desk both resume it, and the one that loses is told
+    // "already running" -- which is the outcome it wanted. Anything else is
+    // worth saying, even for a start nobody asked for: the folder may be gone.
+    if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start", String(e));
+  } finally {
+    v.starting = false;
+    v.resuming = false;
     header(v);
-    v.body.focus();
-  } catch (e) { ctx.toast("Could not start", String(e)); }
+  }
 }
 
 const tilde = p => {
@@ -396,15 +456,19 @@ function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
   $(".pn-slot").textContent = `[${v.pane.slot}]`;
   $(".pn-cmd").textContent = what(v);
+  // The branch and whether the tree is modified: snyvi's own answer, not the
+  // prompt's, so a pane whose shell it cannot dress says both too.
+  $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";
   $(".pn-state").textContent = s.blocked ? "! waiting on you" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
   v.el.classList.toggle("blk", !!s.blocked);
   v.el.classList.toggle("off", !s.running);
-  // Stopped: the last screen stays, greyed by .off, and Start sits over it
-  // with what was run last already typed.
+  // Ended: the last screen stays, greyed by .off, and Start sits over it with
+  // what was run last already typed. A pane on its way back from a daemon
+  // restart is not ended, and shows nothing.
   const wasHidden = v.start.hidden;
-  v.start.hidden = !!s.running;
-  if (!s.running && wasHidden) v.start.querySelector("input").value = s.cmd || v.pane.cmd || "";
-  v.start.querySelector("input").placeholder = "the shell";
+  v.start.hidden = !!s.running || v.resuming || v.starting;
+  if (!v.start.hidden && wasHidden) v.start.querySelector("input").value = s.cmd || v.pane.cmd || "";
+  v.start.querySelector("input").placeholder = "blank for the shell";
   cursor(v);
 }
 
@@ -579,9 +643,9 @@ async function act(b) {
       focused = j.pane.id;
       await ctx.refresh();
       // Asking for a pane is asking for a shell: it starts, and the Start bar
-      // is for a pane that stopped, not one just made.
+      // is for a pane whose process ended, not one just made.
       const nv = views.get(j.pane.id);
-      if (nv) run(nv, "");
+      if (nv) { await run(nv, ""); nv.body.focus(); }
     } else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
     else if (a === "start" && v) run(v, v.start.querySelector("input").value);
     else if (a === "all") { for (const x of views.values()) if (!x.status.running) await run(x, x.status.cmd || x.pane.cmd || ""); }
@@ -752,7 +816,8 @@ const CSS = `
 .pn-slot { font-family: var(--mono); color: var(--fg-2); }
 .pn-start[hidden] { display: none; }
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
-.pn-state { margin-left: auto; }
+.pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
+.pn-state { margin-left: auto; padding-left: 8px; }
 .pn.blk .pn-head { border-bottom: 2px solid #d97706; }
 .pn.blk .pn-state { color: #b45309; font-weight: 600; }
 .pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }

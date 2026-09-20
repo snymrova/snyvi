@@ -1,8 +1,12 @@
+#[path = "src/strip.rs"]
+mod strip;
+
 fn main() {
     #[cfg(feature = "desktop")]
     tauri_build::build();
 
     build_line();
+    strip_ui();
 
     // tauri-build above gives the window executable its icon. snyvi.exe is a
     // console program and nothing gives it one, so it is attached here -- in
@@ -19,6 +23,33 @@ fn main() {
         if let Err(e) = res.compile() {
             println!("cargo:warning=snyvi.exe has no icon resource: {e}");
         }
+    }
+}
+
+/// The UI the daemon embeds: the files in `ui/` with their comments and
+/// indentation taken out, written beside the build. The source keeps every
+/// word of its prose and `SNYVI_UI_DIR` still serves it as written; what goes
+/// in the binary is what a browser actually reads. `src/strip.rs` says why,
+/// and is where the scanner's tests live.
+fn strip_ui() {
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let dir = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("ui");
+    for (name, lang) in [
+        ("app.js", strip::Lang::Js),
+        ("boot.js", strip::Lang::Js),
+        ("mmd.js", strip::Lang::Js),
+        ("desk.js", strip::Lang::Js),
+        ("app.css", strip::Lang::Css),
+    ] {
+        let from = dir.join(name);
+        println!("cargo:rerun-if-changed={}", from.display());
+        let src =
+            std::fs::read_to_string(&from).unwrap_or_else(|e| panic!("{}: {e}", from.display()));
+        std::fs::write(out.join(name), strip::strip(&src, lang))
+            .unwrap_or_else(|e| panic!("{}: {e}", out.join(name).display()));
     }
 }
 

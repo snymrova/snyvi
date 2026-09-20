@@ -68,6 +68,10 @@ pub struct Watched {
 pub struct Browser {
     roots: RwLock<HashMap<String, Root>>,
     cache: Mutex<Vec<(String, String)>>,
+    /// The rail's outline of a file, under the same key as its HTML. Parsing
+    /// a long file for its declarations is the grammar's whole pass again --
+    /// 1.9 s at 700 KB -- and the file has not changed since the last time.
+    outlines: Mutex<Vec<(String, Vec<render::Outline>)>>,
     index: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Per root, most recent first.
     recent: Mutex<HashMap<String, Vec<Watched>>>,
@@ -78,6 +82,7 @@ impl Browser {
         Browser {
             roots: RwLock::new(HashMap::new()),
             cache: Mutex::new(Vec::new()),
+            outlines: Mutex::new(Vec::new()),
             index: Mutex::new(HashMap::new()),
             recent: Mutex::new(HashMap::new()),
         }
@@ -115,6 +120,10 @@ impl Browser {
         self.index.lock().unwrap().remove(id);
         self.recent.lock().unwrap().remove(id);
         self.cache
+            .lock()
+            .unwrap()
+            .retain(|(k, _)| !k.starts_with(id));
+        self.outlines
             .lock()
             .unwrap()
             .retain(|(k, _)| !k.starts_with(id));
@@ -195,6 +204,50 @@ impl Browser {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         Ok(out)
+    }
+
+    /// The declarations in a file, for the rail: empty for anything that is not
+    /// code. Cached like `file`, by path plus modification time and size.
+    pub fn outline(
+        &self,
+        id: &str,
+        rel: &str,
+        renderer: &Renderer,
+    ) -> Result<Vec<render::Outline>> {
+        let path = self.resolve(id, rel)?;
+        let meta = std::fs::metadata(&path)?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let key = format!("{id}\u{0}{rel}\u{0}{modified}\u{0}{}", meta.len());
+        if let Some(hit) = self
+            .outlines
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| *k == key)
+        {
+            return Ok(hit.1.clone());
+        }
+        let bytes = std::fs::read(&path)?;
+        let items = if render::looks_binary(&bytes) {
+            vec![]
+        } else {
+            let text = String::from_utf8_lossy(&bytes);
+            match renderer.detect(Some(&path.to_string_lossy()), None, &text) {
+                (render::Kind::Code, lang) => renderer.outline(lang.as_deref(), &text),
+                _ => vec![],
+            }
+        };
+        let mut cache = self.outlines.lock().unwrap();
+        if cache.len() >= CACHE_ENTRIES {
+            cache.remove(0);
+        }
+        cache.push((key, items.clone()));
+        Ok(items)
     }
 
     /// Render a file. Cached by path plus modification time, so an edit invalidates it.
@@ -285,7 +338,8 @@ impl Browser {
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let (kind, lang) = renderer.detect(Some(&path.to_string_lossy()), None, &text);
         // A browsed file keeps its own H1; there is no separate title to duplicate.
-        let html = renderer.render(kind, lang.as_deref(), &text);
+        // Cut before it is cached, so a revisit is not cut again.
+        let html = render::chunk_code(&renderer.render(kind, lang.as_deref(), &text)).into_owned();
 
         let mut cache = self.cache.lock().unwrap();
         if cache.len() >= CACHE_ENTRIES {

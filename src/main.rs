@@ -8,9 +8,11 @@ mod desk;
 mod desktop;
 mod hook;
 mod mcp;
+mod note;
 mod pane;
 mod platform;
 mod project;
+mod prompt;
 mod receive;
 mod render;
 mod reset;
@@ -19,6 +21,11 @@ mod server;
 mod session;
 mod setup;
 mod store;
+/// `build.rs` compiles this one for itself -- it is what strips `ui/` on the
+/// way into the binary -- so the daemon never calls it and it is here only to
+/// put the scanner's tests in `cargo test`, where they belong.
+#[cfg(test)]
+mod strip;
 mod watch;
 
 use anyhow::{Context, Result};

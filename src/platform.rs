@@ -213,6 +213,83 @@ pub fn open_terminal(dir: &std::path::Path) -> bool {
     false
 }
 
+/// Ask the desktop for a folder, with its own dialog, and wait for the answer.
+///
+/// `Ok(None)` is the reader closing the dialog; `Err` is a desktop with no
+/// dialog to show. The dialog is the desktop's and not the page's, so the path
+/// comes from the reader's own hand in a trusted window -- nothing a page
+/// sends ever names a directory. Blocking: call it off the async runtime.
+pub fn pick_folder() -> Result<Option<std::path::PathBuf>, String> {
+    let title = "Open a folder in snyvi";
+    #[cfg(target_os = "macos")]
+    let tries: Vec<Vec<String>> = vec![vec![
+        "osascript".into(),
+        "-e".into(),
+        format!("POSIX path of (choose folder with prompt \"{title}\")"),
+    ]];
+    #[cfg(target_os = "windows")]
+    let tries: Vec<Vec<String>> = vec![vec![
+        "powershell".into(),
+        "-NoProfile".into(),
+        "-STA".into(),
+        "-Command".into(),
+        format!(
+            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{}'; $d.ShowNewFolderButton = $false; if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}",
+            ps_quote(title)
+        ),
+    ]];
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let tries: Vec<Vec<String>> = {
+        if !has_display() {
+            return Err("there is no display to show a folder dialog on".into());
+        }
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+        vec![
+            vec![
+                "zenity".into(),
+                "--file-selection".into(),
+                "--directory".into(),
+                format!("--title={title}"),
+            ],
+            vec![
+                "kdialog".into(),
+                "--getexistingdirectory".into(),
+                home,
+                "--title".into(),
+                title.into(),
+            ],
+            vec![
+                "yad".into(),
+                "--file".into(),
+                "--directory".into(),
+                format!("--title={title}"),
+            ],
+        ]
+    };
+    for args in tries {
+        let Some((program, rest)) = args.split_first() else {
+            continue;
+        };
+        let mut cmd = Command::new(program);
+        cmd.args(rest).stdin(Stdio::null()).stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        // Not installed: the next one. Anything else is the dialog's answer.
+        let Ok(out) = cmd.output() else {
+            continue;
+        };
+        let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Every one of them answers a cancel with a non-zero exit and nothing
+        // on stdout, and a choice with the path on a line of its own.
+        return Ok((out.status.success() && !picked.is_empty()).then(|| picked.into()));
+    }
+    Err(if cfg!(target_os = "linux") {
+        "no folder dialog is installed: zenity or kdialog would give one".into()
+    } else {
+        "the desktop's folder dialog could not be started".into()
+    })
+}
+
 /// The terminals to try, in order, with the argument each one takes for a
 /// working directory -- which is not uniform, so the flag travels with the name
 /// rather than being assumed.
