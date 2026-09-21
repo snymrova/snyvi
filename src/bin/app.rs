@@ -30,8 +30,10 @@ use std::time::Duration;
 
 use tauri::{
     image::Image,
+    ipc::CapabilityBuilder,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
+    webview::PageLoadEvent,
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -71,6 +73,45 @@ const DEFAULT_PORT: u16 = 7777;
 /// What the page in this window carries on its first URL, so the daemon
 /// counts it as a window. The same mark `snyvi app` puts there.
 const WINDOW_MARK: &str = "window=1";
+
+/// The window commands the page is allowed, and no others. The frame is the
+/// page's: it drags the window by its own header row (Tauri's own handler
+/// answers a `data-tauri-drag-region` attribute with the first two commands)
+/// and draws the three buttons a title bar had (the next four). The last is
+/// for `FRAME_CHECK` below.
+const PAGE_WINDOW_COMMANDS: [&str; 7] = [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-decorations",
+];
+
+/// Run in the page once it has loaded: a page with a drag region carries the
+/// frame itself, and the window draws none; a page without one gets the
+/// system's frame back, since it cannot be moved by any other means.
+///
+/// The page and this window come from different processes, and the daemon
+/// serving the page can be older than the window showing it -- upgraded on
+/// disk, not yet restarted. Deciding here, from what the page actually is
+/// rather than what it is expected to be, means a window is never left with
+/// no title bar and nothing to drag.
+const FRAME_CHECK: &str = "window.__TAURI_INTERNALS__.invoke('plugin:window|set_decorations', \
+    { value: !document.querySelector('[data-tauri-drag-region]') })";
+
+/// What the window remembers between runs: where it was, how big, whether
+/// maximised. Not whether it had a frame -- that is decided afresh each run,
+/// by `FRAME_CHECK` and the page, and a saved answer would outlive it. A
+/// window that once ran frameless would otherwise come back frameless under
+/// a build whose page cannot draw the buttons, with no bar and no way to
+/// close it.
+const REMEMBERED: tauri_plugin_window_state::StateFlags = tauri_plugin_window_state::StateFlags::from_bits_truncate(
+    tauri_plugin_window_state::StateFlags::all().bits()
+        & !tauri_plugin_window_state::StateFlags::DECORATIONS.bits()
+        & !tauri_plugin_window_state::StateFlags::FULLSCREEN.bits(),
+);
 
 fn main() {
     let url = match std::env::args().nth(1) {
@@ -136,7 +177,7 @@ fn main() {
             }
             reveal(&w);
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(REMEMBERED).build())
         .plugin(tauri_plugin_deep_link::init());
     // Only when a key is wanted: the plugin opens the display's hotkey
     // interface as it loads, and a failure there is fatal to the whole window,
@@ -159,12 +200,47 @@ fn main() {
     };
     let run = builder
         .setup(move |app| {
-            use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+            use tauri_plugin_window_state::{AppHandleExt, WindowExt};
             let at_home = home.clone();
-            let w = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
+            let frame = frame_wanted();
+            // The page may run the window commands above, and only from the
+            // daemon's origin -- the one place the window ever shows, as the
+            // navigation rule says. Granted here, at run time, because that
+            // origin is only known once the window is given its URL; a
+            // capability file would have to guess the port. Before the window
+            // exists, so no page is ever ahead of its permission.
+            let mut cap = CapabilityBuilder::new("page-frame")
+                .local(false)
+                .remote(home.clone())
+                .window("main");
+            for permission in PAGE_WINDOW_COMMANDS {
+                cap = cap.permission(permission);
+            }
+            if let Err(e) = app.add_capability(cap) {
+                eprintln!("snyvi-app: the page cannot drag or close the window ({e})");
+            }
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
                 .title("snyvi")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(480.0, 320.0)
+                // No title bar of the system's: the page's own header row is
+                // the drag region and carries the window buttons, so the app
+                // stops being a web page in a frame. The edges still resize
+                // the window; the runtime does that itself for an undecorated
+                // window. `SNYVI_FRAME=1` keeps the system's frame.
+                .decorations(frame);
+            // On macOS the frame stays and the title bar goes transparent
+            // instead, so the traffic lights are the system's own and sit
+            // over the page's header, where the page leaves room for them.
+            #[cfg(target_os = "macos")]
+            let builder = match frame {
+                true => builder,
+                false => builder
+                    .decorations(true)
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true),
+            };
+            let w = builder
                 // The web belongs in a browser. This window has no address bar
                 // and no Back button -- Back is the page's own key handler, and
                 // a page from somewhere else does not have it -- so a link
@@ -187,10 +263,21 @@ fn main() {
                     hand_to_desktop(url.as_str());
                     tauri::webview::NewWindowResponse::Deny
                 })
+                // Every page, not only the first: the window navigates, and
+                // each page it lands on is asked the same question. Not on
+                // macOS, where the frame is never taken away.
+                .on_page_load(move |w, payload| {
+                    if cfg!(target_os = "macos") || frame {
+                        return;
+                    }
+                    if payload.event() == PageLoadEvent::Finished {
+                        let _ = w.eval(FRAME_CHECK);
+                    }
+                })
                 .icon(Image::from_bytes(WINDOW_ICON)?)?
                 .build()?;
             // Size and position from the last run, saved by the plugin on close.
-            let _ = w.restore_state(StateFlags::all());
+            let _ = w.restore_state(REMEMBERED);
 
             // A tray is an addition, not a precondition. On Linux it is loaded
             // at runtime rather than linked, so a machine without
@@ -242,7 +329,7 @@ fn main() {
                     api.prevent_close();
                     // Written now rather than on exit, because by then the
                     // window has been hidden and has no geometry worth saving.
-                    let _ = handle.save_window_state(StateFlags::all());
+                    let _ = handle.save_window_state(REMEMBERED);
                     let _ = window.hide();
                     said_where_it_went();
                 }
@@ -532,6 +619,17 @@ fn shortcut_wanted() -> Option<String> {
         return None;
     }
     Some(key)
+}
+
+/// Whether the system's own window frame is wanted. `SNYVI_FRAME=1` (or
+/// `yes`, `on`, `true`) says so, for a desktop whose title bars should all
+/// look alike, or a window manager that draws its own; unset is the page's
+/// frame, which is the default.
+fn frame_wanted() -> bool {
+    matches!(
+        std::env::var("SNYVI_FRAME").as_deref().map(str::trim),
+        Ok("1" | "yes" | "on" | "true")
+    )
 }
 
 /// No daemon is known to be up: no URL was given, or a `snyvi://` link was

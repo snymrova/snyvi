@@ -13,6 +13,7 @@
     view: boot.view || "inbox",
     doc: boot.doc || null,
     opening: null,              // the id of a document asked for and not here yet
+    deskBehind: null,           // the desk whose rail stays while a document is read over it
     previous: boot.previous || null,
     folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
     queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
@@ -168,6 +169,9 @@
     for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
     const on = state.view === "inbox" ? inboxRowEl.querySelector(".t-inbox")
       : state.view === "desk" && state.deskId != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskId}"]`)
+      // A document read over a desk is still the desk: the desk keeps the
+      // mark, and the rail marks the document.
+      : state.deskBehind != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskBehind}"]`)
       : state.view === "browse" && state.browseRoot ? browseEl.querySelector(`.b-file a[data-browse="${state.browseRoot.id}"][data-path="${CSS.escape(state.browsePath)}"]`)
         // The one being opened outranks the one being left: a redraw that lands
         // while a document is on its way must not put the mark back on the row
@@ -183,8 +187,10 @@
     `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
 
   /** A project is drawn expanded when the reader left it that way, when the
-   *  document on screen is in it, or when it is the only one there is. */
-  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.doc.project_id === p.id) || state.tree.length === 1;
+   *  document on screen is in it, or when it is the only one there is. Not
+   *  for a document read over a desk: it was opened from the desk's own
+   *  list, and the sidebar has no reason to move. */
+  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.deskBehind == null && state.doc.project_id === p.id) || state.tree.length === 1;
 
   const docRow = d => {
     noteKnown(d);
@@ -392,22 +398,42 @@
    *  cap left something out — what it would take to see the rest. A project
    *  this tab has not fetched yet is a single row saying so, which is the only
    *  state this can be in that is neither empty nor complete. */
+  /* What a project shows before a reader asks for more: up to five documents
+   * a session, and sessions until about eight rows are on screen -- a budget
+   * of rows rather than of sessions, since a session of one is one row and
+   * three of those would hide the busy session under them. The server sends
+   * ten of each, which kept the wire short but drew nine rows under one
+   * session and thirty under a project: a list, not a sidebar. The rest sits
+   * behind "N more", which shows what the page already holds at once and
+   * fetches only past the server's own cap; "less" folds it again. The
+   * session the open document is in is always whole, since `[` and `]` step
+   * through it. */
+  const SHOW_DOCS = 5, SHOW_ROWS = 8;
+  const wholeWf = w => liftedWorkflows.has(w.id) || (state.doc && state.doc.workflow_id === w.id);
   function projectRows(p) {
-    const wfs = state.sub.get(String(p.id));
+    const pid = String(p.id), wfs = state.sub.get(pid);
     if (!wfs) return `<li class="t-wait">…</li>`;
-    let h = "";
+    const allWfs = liftedCaps.has(pid);
+    let h = "", shownWfs = 0, rows = 0;
     for (const w of wfs) {
+      // Past the budget, only the session being read is drawn.
+      if (!allWfs && rows >= SHOW_ROWS && !(state.doc && state.doc.workflow_id === w.id)) continue;
+      shownWfs++;
       // A group of one is not a group. `receive.rs` titles a session-keyed
       // workflow with its first document's title, so the header above a lone
       // row is a truncated copy of it -- 4 of 17 sessions in live data. The
       // row stands alone instead, which holds however sessions get named.
       const solo = w.total === 1 && w.docs.length === 1;
+      const whole = wholeWf(w), docs = whole ? w.docs : w.docs.slice(0, SHOW_DOCS);
       h += `<li class="t-wf${solo ? " solo" : ""}">${solo ? "" : `<div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div>`}<ul>`;
-      for (const d of w.docs) h += docRow(d);
-      if (w.total > w.docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - w.docs.length} older</button></li>`;
+      for (const d of docs) h += docRow(d);
+      rows += docs.length;
+      if (w.total > docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - docs.length} more</button></li>`;
+      else if (liftedWorkflows.has(w.id) && w.total > SHOW_DOCS) h += `<li class="t-more"><button type="button" data-less-docs="${w.id}">less</button></li>`;
       h += `</ul></li>`;
     }
-    if (p.workflows > wfs.length) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - wfs.length} older sessions</button></li>`;
+    if (p.workflows > shownWfs) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - shownWfs} more sessions</button></li>`;
+    else if (allWfs && wfs.length > 1 && liftedCaps.has(pid)) h += `<li class="t-more"><button type="button" data-less-wf="${p.id}">fewer sessions</button></li>`;
     return h;
   }
 
@@ -646,20 +672,27 @@
   treesEl.addEventListener("click", async e => {
     // Past a cap, and the answer to "show me the rest" is the rest: a whole
     // session's documents, or every session in the project.
-    const more = e.target.closest("[data-more-docs], [data-more-wf]");
+    const more = e.target.closest("[data-more-docs], [data-more-wf], [data-less-docs], [data-less-wf]");
     if (more) {
       e.preventDefault(); e.stopPropagation();
       more.disabled = true;
-      if (more.dataset.moreWf != null) {
-        liftedCaps.add(String(more.dataset.moreWf));
-        await fillProject(more.dataset.moreWf, true);
+      const { moreWf, moreDocs, lessWf, lessDocs } = more.dataset;
+      if (lessWf != null) { liftedCaps.delete(String(lessWf)); }
+      else if (lessDocs != null) { liftedWorkflows.delete(Number(lessDocs)); }
+      else if (moreWf != null) {
+        const pid = String(moreWf), p = state.tree.find(x => String(x.id) === pid), wfs = state.sub.get(pid) || [];
+        liftedCaps.add(pid);
+        // What the page holds is shown at once; only past the server's cap
+        // is there anything to fetch.
+        if (p && p.workflows > wfs.length) { await fillProject(pid, true); return; }
       } else {
-        const wid = Number(more.dataset.moreDocs);
+        const wid = Number(moreDocs);
         const pid = [...state.sub.keys()].find(k => state.sub.get(k).some(w => w.id === wid));
+        const w = (state.sub.get(pid) || []).find(x => x.id === wid);
         liftedWorkflows.add(wid);
-        await fillWorkflow(wid, pid);
-        renderTree(); markActive();
+        if (w && w.docs.length < w.total) await fillWorkflow(wid, pid);
       }
+      renderTree(); markActive();
       return;
     }
     const fold = e.target.closest("[data-fold]");
@@ -712,7 +745,7 @@
     const holder = btn.parentElement;
     const label = holder.querySelector(":scope > .nm");
     if (!label || holder.querySelector("input.ren-in")) return;
-    const what = btn.dataset.rename, id = +btn.dataset.id, before = label.textContent;
+    const what = btn.dataset.rename, id = +btn.dataset.id, before = label.textContent, cls = label.className;
     const input = document.createElement("input");
     input.className = "ren-in";
     input.value = before;
@@ -728,21 +761,26 @@
       settled = true;
       const next = input.value.trim();
       const label = document.createElement("span");
-      label.className = "nm";
+      label.className = cls;
       label.textContent = before;
       input.replaceWith(label);
       holder.classList.remove("renaming");
       if (!keep || !next || next === before) return;
       label.textContent = next;   // stands in until the tree comes back
       try {
-        const where = what === "project" ? "projects" : "workflows";
-        const r = await fetch(`/api/${where}/${id}/rename`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: next }),
-        });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        await applyRename(what, id);
+        // A desk is renamed behind the window's capability, as everything
+        // about a desk is; a project or a workflow by anyone reading.
+        if (what === "desk") { await deskApi(`/api/desks/${id}/rename`, { name: next }); await loadDesks(); }
+        else {
+          const where = what === "project" ? "projects" : "workflows";
+          const r = await fetch(`/api/${where}/${id}/rename`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: next }),
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          await applyRename(what, id);
+        }
       } catch (e) {
         label.textContent = before;
         toast("Could not rename", String(e));
@@ -898,6 +936,7 @@
    *  `state.doc`, which is still the document being left, so this one takes an
    *  id and does the same four writes. */
   function markPending(id) {
+    if (state.deskBehind != null) { markActive(); return; }   // the desk keeps its mark
     for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
     const on = treeEl.querySelector(`a[data-id="${id}"]`);
     if (on) { on.classList.add("active"); on.setAttribute("aria-current", "page"); }
@@ -908,7 +947,15 @@
    *  arrives, is dropped rather than painted over what they asked for next. */
   let opening = 0;
 
-  async function showDoc(id, push = true, fromHistory = false) {
+  /** `over`: keep the desk behind the document. True from the desk's own
+   *  list; false from the sidebar, the queue or a search, which leave the
+   *  desk for the library as they always did; left out, a redraw of the
+   *  document already up -- a pin, a preview, the way out of a comparison
+   *  -- stays wherever it is. A redraw never pushes history and a click
+   *  always does, so that is what tells them apart: the same document
+   *  clicked in the sidebar is a move to the library, not a redraw. */
+  async function showDoc(id, push = true, fromHistory = false, over) {
+    if (over === undefined) over = !push && state.deskBehind != null && !!state.doc && state.doc.id === id;
     const turn = ++opening;
     let j = state.cache.get(id), waited = false;
     if (!j) {
@@ -916,16 +963,16 @@
       // goes straight up, whole, with no flicker of a skeleton in between.
       waited = true;
       if (push) leave();
-      offDesk();
+      behindDesk(id, over);
       state.view = "doc"; state.opening = id; state.comparing = null;
       pending(id, fromHistory);
-      if (push) { history.pushState({ id }, "", `/d/${id}`); push = false; }
+      if (push) { history.pushState({ id, over: state.deskBehind }, "", `/d/${id}`); push = false; }
       try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", String(e)); } return; }
       if (turn !== opening) return;
       state.opening = null;
     }
     if (push) leave();
-    offDesk();
+    behindDesk(id, over);
     state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
     // Off the queue once the document is on screen: taking it off redraws the
     // sidebar, and the reader is waiting for the page, not the row.
@@ -939,7 +986,7 @@
     applyPreview();
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
-    if (push) history.pushState({ id }, "", `/d/${id}`);
+    if (push) history.pushState({ id, over: state.deskBehind }, "", `/d/${id}`);
     if (fromHistory && kept("id", id)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
@@ -1257,7 +1304,7 @@
       if (turn !== rendered) return;
       renderTree();
       markActive();
-      ensureWorkflow(state.doc);
+      if (state.deskBehind == null) ensureWorkflow(state.doc);
       renderHistory();
     });
   }
@@ -1678,6 +1725,9 @@
     // each measuring a `<pre>` that is no longer in the page and fighting this
     // one for where the rail is scrolled.
     if (outlineSpy) { outlineSpy.disconnect(); outlineSpy = null; }
+    // Over a desk, the rail is the desk's: its panes and its documents stay,
+    // and the document's own contents are not drawn over them.
+    if (state.deskBehind != null) { rail.classList.remove("empty"); return; }
     tocEl.scrollTop = 0;   // a new document starts at its beginning, and so does its contents
     const reading = state.view === "doc" || state.view === "browse";
     const hs = reading ? [...docEl.querySelectorAll(".prose h1, .prose h2, .prose h3, .prose h4")] : [];
@@ -1993,6 +2043,7 @@
   window.addEventListener("hashchange", () => applyLineHash(true));
 
   function renderMeta(comparing) {
+    if (state.deskBehind != null) return;   // the desk's meta stays, as its rail does
     if (state.view === "browse") { renderBrowseMeta(); return; }
     const d = state.doc;
     if (!d) { metaEl.innerHTML = ""; return; }
@@ -2179,7 +2230,9 @@
     // Back or forward to a hash on the document already on screen -- the `#`
     // beside a heading pushes one -- is a move within it, not a rebuild.
     if (d && state.view === "doc" && state.doc && state.doc.id === d[1] && !state.comparing) return jumpToHash();
-    if (d) return showDoc(d[1], false, true);
+    // Back to a document read over a desk keeps the desk, while the desk is
+    // still here to keep; back to one read in the library leaves it.
+    if (d) return showDoc(d[1], false, true, !!(history.state && history.state.over != null));
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     if (location.pathname === "/connect") return showConnect(false);
@@ -2264,6 +2317,33 @@
     } catch { return false; }
   })();
 
+  // ---------- the window's frame ----------
+  /* The native window has no title bar: the page is the frame. The header
+   * rows carry data-tauri-drag-region, which the window's own script answers
+   * (a drag moves the window, a double-click maximises it), and the three
+   * buttons in #chrome do what the bar's did. Shown only once the window says
+   * the page may: a browser tab has no window to ask, and a window older than
+   * this page refuses and keeps its own bar. Not on macOS, where the traffic
+   * lights stay the system's and the page only leaves them room. */
+  {
+    const tauri = window.__TAURI_INTERNALS__;
+    const win = (cmd) => tauri.invoke("plugin:window|" + cmd);
+    if (tauri) win("is_maximized").then(max => {
+      const mac = /^Mac/.test(navigator.platform);
+      root.dataset.frame = mac ? "mac" : "page";
+      if (mac) return;
+      const el = $("#win"), wb = w => el.querySelector(`[data-win=${w}]`), btn = wb("max");
+      const show = m => { el.dataset.max = m ? "1" : "0"; btn.title = m ? "Restore" : "Maximise"; btn.setAttribute("aria-label", m ? "Restore window" : "Maximise window"); };
+      const refresh = () => win("is_maximized").then(show, () => {});
+      show(max);
+      el.hidden = false;
+      wb("min").addEventListener("click", () => win("minimize"));
+      btn.addEventListener("click", () => win("toggle_maximize").then(refresh));
+      wb("close").addEventListener("click", () => win("close"));
+      window.addEventListener("resize", refresh);
+    }, () => {});
+  }
+
   // ---------- desks ----------
   /* A desk is a folder and up to four panes, and it exists only in the
    * window: every way in, and every route behind them, needs the capability,
@@ -2309,21 +2389,27 @@
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
     renderDesks();
-    if (desk && state.view === "desk") desk.update(state.desks);
+    if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
   const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
   function renderDesks() {
     const list = state.desks ? state.desks.desks : [];
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
-    const on = state.view === "desk";
+    const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "pane")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
       `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
         : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "") + list.map(d => {
-        const m = mark3(d.panes);
+        const m = mark3(d.panes), has = d.panes.length > 0;
         const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "pane")} waiting on you` : m === "●" ? "Running" : "Idle";
-        return `<li><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">${icon("desk")}<span class="title">${esc(d.name)}</span>${m !== "○" ? `<span class="dot${m === "!" ? " blk" : " on"}" title="${say}">${m === "!" ? "!" : ""}</span>` : ""}${d.panes.length ? `<span class="k">${d.panes.length}</span>` : ""}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
+        // The mark and the count are one column at the row's end, drawn
+        // whether or not there is anything to say, so every row's line up.
+        const end = `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`;
+        // One row a desk, as the Inbox has one row a document: what the desk
+        // holds is said by its mark and its count, and shown by opening it.
+        return `<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">` +
+          `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}${end}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
       }).join("") + `</ul>`;
   }
   /** The ✕ on a desk's row. Closing a desk ends its panes' processes, and
@@ -2348,7 +2434,7 @@
   async function showDesk(id, push = true, slot = 0) {
     if (push) leave();
     const was = state.view === "desk";
-    state.view = "desk"; state.deskId = id; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    state.view = "desk"; state.deskId = id; state.deskBehind = null; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
     if (id != null) lastDesk = id;
     root.dataset.view = "desk";
     if (push) history.pushState({ desk: id }, "", id == null ? "/desks" : `/desk/${id}`);
@@ -2363,13 +2449,25 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
-    if (state.view !== "desk") return;
-    delete root.dataset.view;
-    if (desk) desk.close();
+    if (state.view === "desk") { delete root.dataset.view; if (desk) desk.close(); }
+    else if (state.deskBehind != null && desk) desk.close();
+    state.deskBehind = null;
+  }
+  /** A document opened from a desk's own list keeps the desk's rail -- its
+   *  panes, its documents with this one marked -- and only the page changes.
+   *  Any other open leaves the desk for the library: the reader went to the
+   *  sidebar, and the sidebar's document gets the sidebar's rail. A tab,
+   *  which has no desk module, and the desks list, which is no desk, leave
+   *  as before too. */
+  function behindDesk(id, over) {
+    if (!over) { offDesk(); return; }
+    if (state.view === "desk" && state.deskId != null && desk) { state.deskBehind = state.deskId; delete root.dataset.view; }
+    if (state.deskBehind == null) { offDesk(); return; }
+    desk.aside(id);
   }
   /** `⌃\``: between the desk and what was being read. */
   function swapDesk() {
@@ -2377,6 +2475,11 @@
     const d = lastDesk != null ? lastDesk : state.desks && state.desks.desks[0] ? state.desks.desks[0].id : null;
     showDesk(d, true);
   }
+  /** A desk's rail lists what its panes sent, so a document arriving, being
+   *  opened, deleted or pinned is its business too. The desk asks again
+   *  rather than being told: the events reach tabs, and only a window holds
+   *  the capability that answers. */
+  const deskDocs = () => { if (desk && ((state.view === "desk" && state.deskId != null) || state.deskBehind != null)) desk.docs(); };
   /** A new desk on folder `f`, or with none on no folder: it starts in the
    *  home directory, which the daemon names. */
   async function newDesk(f) {
@@ -2548,6 +2651,7 @@
         if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
         else state.cache.delete(d.id);
         await refreshTree(d.project_id);
+        deskDocs();
         return;
       }
       // An arrival joins the queue and the page stays where it is. The one
@@ -2564,6 +2668,7 @@
       state.cache.delete(d.id);
       renderTree(); markActive();
       await refreshTree(d.project_id);
+      deskDocs();
       if (opens) {
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
@@ -2577,6 +2682,7 @@
     es.addEventListener("read", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       if (Array.isArray(j.ids)) dropFromQueue(j.ids, j.waiting);
+      deskDocs();
     });
     // A large code file finished highlighting in the background: swap the body in place.
     es.addEventListener("rendered", ev => {
@@ -2600,6 +2706,7 @@
       state.queue = state.queue.filter(d => d.id !== j.id);
       if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();
+      deskDocs();
       if (state.doc && state.doc.id === j.id) showInbox(true);
     });
     // A delete that was taken back, in every tab and the window: the row is
@@ -2609,6 +2716,7 @@
       if (j.waiting != null) state.waiting = j.waiting;
       if (j.id != null) wash([j.id]);
       await refreshTree(j.doc && j.doc.project_id);
+      deskDocs();
       holdQueue();
       if (state.view === "inbox") showInbox(false);
     });
@@ -2619,7 +2727,7 @@
       state.browse = j.roots || [];
       renderBrowse();
     });
-    es.addEventListener("pinned", async () => { await refreshTree(); });
+    es.addEventListener("pinned", async () => { await refreshTree(); deskDocs(); });
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
@@ -3159,8 +3267,14 @@
   }
   const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
   $("#scrim").addEventListener("click", closeSheet);
-  $("#btn-rail").addEventListener("click", e => toggleSheet("rail", e.currentTarget));
-  $("#btn-side").addEventListener("click", e => toggleSheet("side", e.currentTarget));
+  /** A pane folded away (`t`, `\`) at a width where it is a column, not a
+   *  sheet. Remembered, so the one visible way back is the same button that
+   *  opens the sheet when the window is narrow: it stays on screen while the
+   *  pane is folded, and unfolds it. Without that a rail put away by a stray
+   *  `t` was gone for good as far as the reader could see. */
+  const fold = which => { const off = root.dataset[which] !== "0"; root.dataset[which] = off ? "0" : "1"; store.set(`snyvi.${which}`, off ? "0" : "1"); };
+  $("#btn-rail").addEventListener("click", e => railNarrow.matches ? toggleSheet("rail", e.currentTarget) : fold("rail"));
+  $("#btn-side").addEventListener("click", e => sideNarrow.matches ? toggleSheet("side", e.currentTarget) : fold("side"));
   // The window grew past the width that made it a sheet: it is a pane again.
   const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
   for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
@@ -3271,7 +3385,9 @@
       case "k": if (i > 0) showDoc(ids[i - 1], true); break;
       case "[": if (sib[si + 1]) showDoc(sib[si + 1], true); break;   // sidebar is newest-first, so older is +1
       case "]": if (si > 0) showDoc(sib[si - 1], true); break;
-      case "c": showCompare(); break;
+      // A second `c` leaves the comparison: over a desk, the meta's Back button
+      // is not drawn, and the key that opened it is the natural way out.
+      case "c": if (state.comparing) { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); } else showCompare(); break;
       case "p": togglePin(); break;
       case "s": toggleSplit(); break;
       case "v": togglePreview(); break;
@@ -3285,7 +3401,7 @@
       case "z": toggleWrap(); break;
       case "t":
         if (railNarrow.matches) { if (!rail.classList.contains("empty")) toggleSheet("rail"); }
-        else { const off = root.dataset.rail !== "0"; root.dataset.rail = off ? "0" : "1"; store.set("snyvi.rail", off ? "0" : "1"); }
+        else fold("rail");
         break;
       // The diagram under the cursor, or the last one used: fit it, or fill the
       // screen with it. Both are no-ops on a page with no diagram on it.
@@ -3293,7 +3409,7 @@
       case "f": if (mmd) mmd.key("f"); break;
       case "\\":
         if (sideNarrow.matches) toggleSheet("side");
-        else { const off = root.dataset.side !== "0"; root.dataset.side = off ? "0" : "1"; store.set("snyvi.side", off ? "0" : "1"); }
+        else fold("side");
         break;
       case "o":
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");

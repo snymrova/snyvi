@@ -640,8 +640,18 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
             screen,
             shown,
             status,
+            old,
+            unsaved,
             ..
         } = &mut *i;
+        // `clear` empties everything the reader could scroll back to, and
+        // the last run's text sits above the scrollback: it goes with it,
+        // here and on disk, so a page that attaches later is not sent it
+        // back. The page drops its own copy on the frame that says so.
+        if screen.scrollback_cleared() && !old.is_empty() {
+            old.clear();
+            *unsaved = true;
+        }
         let frame = screen.frame(&l.id, shown);
         gap = match &frame {
             Some(f) if f.len() > HEAVY_FRAME => SLOW_FRAME,

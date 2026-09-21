@@ -12,7 +12,7 @@
 <body>
 <div id="app">
   <aside id="side" tabindex="-1">
-    <div class="side-head">
+    <div class="side-head" data-tauri-drag-region="deep">
       <a class="brand" href="/" data-nav="inbox"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-wink" d="M8.6 17.8q2.4-3 4.8 0"/><g class="bm-love"><path transform="translate(11 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/><path transform="translate(21 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span><span class="bm-say" id="bm-say" hidden aria-hidden="true"></span></a>
       <a class="live" id="live" href="/connect" data-nav="connect" title="No agent is connected" aria-label="Agents connected">0</a>
       <button class="icon" id="btn-search" title="Search  ⌘K" aria-label="Search">
@@ -52,15 +52,24 @@
       <button class="icon" id="btn-side" title="Sidebar  \" aria-label="Show sidebar" aria-controls="side">
         <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
       </button>
-      <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
-        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
-      </button>
+      <div class="chrome-r">
+        <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
+        </button>
+        <!-- The title bar's three buttons, drawn by the page: the native window has no bar of its own. app.js shows them once the window says the page may. -->
+        <div class="win" id="win" hidden>
+          <button class="wb" data-win="min" title="Minimise" aria-label="Minimise window"><svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1.5 6.5h9"/></svg></button>
+          <button class="wb" data-win="max" title="Maximise" aria-label="Maximise window"><svg class="wb-max" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="1.5" width="9" height="9" rx="1.2"/></svg><svg class="wb-restore" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8.5"/><rect x="1.5" y="3.5" width="7" height="7" rx="1"/></svg></button>
+          <button class="wb wb-close" data-win="close" title="Close" aria-label="Close window"><svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
+        </div>
+      </div>
     </div>
     <div id="queue-bar" hidden role="status" aria-live="polite"></div>
     <div id="find" hidden role="search"><input id="find-input" type="text" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span id="find-count" role="status" aria-live="polite"></span><button class="icon" id="find-prev" title="Previous (Shift+Enter)">↑</button><button class="icon" id="find-next" title="Next (Enter)">↓</button><button class="icon" id="find-close" title="Close (Esc)">✕</button></div>
     <div id="doc">{{INITIAL_HTML}}</div>
   </main>
   <aside id="rail" tabindex="-1">
+    <div class="rail-grip" data-tauri-drag-region="deep"></div>
     <nav id="toc" aria-label="Contents"></nav>
     <div id="meta"></div>
     <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Contents width" aria-valuemin="180" aria-valuemax="400" tabindex="0" title="Drag to resize · double-click to reset"></div>
@@ -101,6 +110,15 @@
       <dt>alt ← / →</dt><dd>back / forward</dd>
       <dt>esc</dt><dd>close</dd>
     </dl>
+    <h2>On a desk</h2>
+    <dl>
+      <dt>⌃`</dt><dd>the desk, or the reading view</dd>
+      <dt>⌃⌥1 – ⌃⌥4</dt><dd>focus a pane by its slot</dd>
+      <dt>⌃⌥Z</dt><dd>the focused pane alone, and back</dd>
+      <dt>ctrl shift C / V</dt><dd>copy the selection / paste</dd>
+      <dt>shift + wheel</dt><dd>scroll the pane's scrollback</dd>
+    </dl>
+    <p class="help-note">Every other key goes to the shell in the focused pane.</p>
     <div class="help-foot"><button class="text" id="btn-connect">Connect an agent…</button><button class="text" id="btn-about">About snyvi</button><button class="text" id="btn-reset">Reset snyvi…</button></div>
   </div>
 </div>

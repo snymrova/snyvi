@@ -191,6 +191,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   #chrome #btn-rail { display: inline-flex; }
   #app:has(#rail.empty) #btn-rail { display: none; }
   #find { padding-right: 56px; }
+  :root[data-frame="page"][data-view="desk"] .dk-head { padding-right: 136px; }
+  :root[data-frame="page"] #find { padding-right: 156px; }
   #rail .gutter { display: none; }
 }
 @media (max-width: 760px)  {
@@ -207,6 +209,33 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-sheet] #scrim { display: block; }
 #chrome { position: fixed; top: 10px; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between; padding: 0 10px; pointer-events: none; }
 #chrome .icon { display: none; pointer-events: auto; background: var(--bg-raise); box-shadow: var(--shadow); }
+#chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; pointer-events: none; }
+/* A pane folded away at a width where it is a column: its button stays, as
+   the way back. Not for a rail with nothing in it. */
+:root[data-rail="0"] #chrome #btn-rail, :root[data-side="0"] #chrome #btn-side { display: inline-flex; }
+#app:has(#rail.empty) #btn-rail { display: none; }
+/* ---------- the window's frame ----------
+   In the native window the page is the frame: there is no title bar. The
+   header rows -- the sidebar's brand row, the rail's empty top, a desk's
+   header -- carry data-tauri-drag-region, which the window's own script
+   answers, and these are the bar's three buttons, at the window's top right
+   corner whatever the panes are doing. `data-frame` on the root is set by
+   app.js once the window has said the page may; a browser tab never has it.
+   On macOS the traffic lights stay the system's, over the brand row, and
+   the page only leaves them room. */
+.win { display: flex; gap: 2px; pointer-events: auto; }
+.win[hidden] { display: none; }
+.wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.wb:hover { background: var(--rule); color: var(--fg); }
+.wb-close:hover { background: #c0392b; color: #fff; }
+.win .wb-restore, .win[data-max="1"] .wb-max { display: none; }
+.win[data-max="1"] .wb-restore { display: block; }
+.rail-grip { display: none; }
+:root[data-frame="page"] .rail-grip { display: block; position: absolute; top: 0; left: 0; right: 0; height: 60px; }
+/* Room for the buttons when the rail is not beside the desk header to hold
+   them: a desk with the rail folded, or with nothing in it. */
+:root[data-frame="page"][data-view="desk"][data-rail="0"] .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 100px; }
+:root[data-frame="mac"] .side-head { padding-left: 84px; }
 /* Pin each pane to its named area. Without this a hidden sidebar leaves the grid
    and the document pane slides into the zero-width first column. */
 #side { grid-area: side; }
@@ -496,11 +525,11 @@ html[data-link="off"] .live { visibility: hidden; }
 .s-empty { padding: 5px 8px 5px 18px; font-size: 12px; color: var(--fg-3); }
 
 /* The row. */
-.s-row, .t-proj > summary, .b-root > summary, .t-desks a { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 18px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
-.s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desks a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.s-row.active, .t-desks a.active { background: var(--accent-bg); color: var(--accent); }
+.s-row, .t-proj > summary, .b-root > summary, .t-desk > a { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 18px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
+.s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+.s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--accent); }
 .r-ico { flex: none; color: var(--fg-3); transition: color var(--t); }
-.s-row.active .r-ico, .t-desks a.active .r-ico { color: var(--accent); }
+.s-row.active .r-ico, .t-desk > a.active .r-ico { color: var(--accent); }
 .s-row .title, .t-desks .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .s-row .n { margin-left: auto; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 /* A disclosure chevron in the gutter, for the rows that hold something. */
@@ -555,7 +584,14 @@ html[data-link="off"] .live { visibility: hidden; }
 .t-proj > summary > .nm, .t-wf > .wf-name > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
 .ren { color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; letter-spacing: 0; }
-.t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .ren:focus-visible { opacity: 1; }
+.t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
+/* On a desk's row the ✎ keeps no space at rest, as the ✕ beside it keeps
+   none: the row's end column is what lines up with the rows above and
+   below, and a hidden control's width would push it in. Both come out
+   together on hover, where the end column steps aside for them. */
+.t-desk > a > .ren { width: 0; padding: 0; margin-left: -8px; overflow: hidden; }
+.t-desk > a:hover > .ren, .t-desk > a > .ren:focus-visible { width: auto; padding: 2px 4px; margin-left: auto; }
+.t-desk > a:has(> .ren:focus-visible) :is(.end, .k) { display: none; }
 .ren:hover { background: var(--rule-2); color: var(--fg); }
 /* The field shows the name as stored, not as the summary styles it. */
 .ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px; }
@@ -574,11 +610,15 @@ html[data-link="off"] .live { visibility: hidden; }
 /* desks: the row, the flat list under it, the + on a folder, and the folder
    menu -- the only ways a desk is reached. The desk view itself is styled by
    ui/desk.js, which is not on the wire until a desk is opened. */
-.t-desks .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; margin-left: auto; }
-.t-desks .dot.on { background: #16a34a; }
-.t-desks .dot.blk { width: auto; height: auto; border-radius: 0; color: #b45309; font-size: 11px; font-weight: 700; }
-.t-desks .dot + .k { margin-left: 6px; }
-.t-desks .k { margin-left: auto; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+/* A desk's row ends in one column, drawn on every row: a 10px box for the
+   mark -- a green dot running, an amber ! waiting, nothing idle -- and the
+   count, right-aligned. Both were laid out only when there was something to
+   show, so the dot on one row sat where the count did on the next. */
+.t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
+.t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
+.t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #16a34a; }
+.t-desks .dot.blk { color: #b45309; font-size: 11px; font-weight: 700; line-height: 1; }
+.t-desks .k { min-width: 2ch; text-align: right; font-size: 10px; font-family: var(--mono); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
 /* A row's ✕ -- delete a document, close a desk -- takes the place of what is
    at the row's end on hover. Armed, a desk's says Close? */
 /* Hidden by clipping rather than by `display: none`, which is what it was:
@@ -586,9 +626,20 @@ html[data-link="off"] .live { visibility: hidden; }
    never matched and Tab walked straight past the ✕ on every row. It keeps no
    space at rest -- zero width, and the row's own end still shows through --
    and it is in the focus order, where a keyboard reader can reach it. */
-.row-x { flex: none; margin-left: auto; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: 11px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; }
-:is(.t-doc, .t-desks li) a:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; padding: 2px 4px; overflow: visible; }
-:is(.t-doc, .t-desks li) a:is(:hover, :has(.row-x:focus-visible)) :is(.dot, .k, .pin), .arming :is(.dot, .k) { display: none; }
+/* No auto margin at rest: the row's end column already carries one, and
+   two auto margins in a row split the slack between them, which put the
+   dot and the count halfway along the row and a different halfway on each. */
+.row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: 11px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; }
+/* At rest it is zero wide, but the row's gap still comes before it, and
+   that gap pushed a desk's count 8px in from where its panes' numbers end.
+   The gap is taken back, so every end column reaches the same edge. */
+.t-desk > a > .row-x { margin-left: -8px; }
+.t-doc > a > .row-x { margin-left: -6px; }
+:is(.t-doc, .t-desk) > a:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+/* Beside a ✎ that has come out, the ✕ takes no auto margin of its own: one
+   auto margin, on the ✎, and the two sit together at the row's end. */
+.t-desk > a:is(:hover, :has(> .ren:focus-visible)) > .row-x { margin-left: 0; }
+:is(.t-doc, .t-desk) > a:is(:hover, :has(.row-x:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k) { display: none; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
 .row-x[data-armed] { color: #dc2626; font-weight: 600; }
 .row-x[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
@@ -784,6 +835,7 @@ pre.code .copy:focus-visible { opacity: 1; }
    the way the diagram tools already are. */
 @media (hover: none) {
   .ren, .b-close, pre.code .copy, pre.code::before { opacity: 1; }
+  .t-desk > a > .ren { width: auto; padding: 2px 4px; margin-left: 0; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }
 }
@@ -1171,12 +1223,14 @@ pre.code .ln::before { cursor: pointer; }
 #palette-list .s { font-size: 12px; color: var(--fg-3); }
 #palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
-.help-box { padding: 18px 22px 20px; position: relative; outline: none; }
+.help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 90vh; overflow-y: auto; }
 .help-close { position: absolute; top: 12px; right: 12px; }
 .help-box h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-3); }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 .help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }
 .help-box dd { margin: 0; }
+.help-box dl + h2 { margin-top: 20px; }
+.help-note { margin: 12px 0 0; font-size: 12.5px; color: var(--fg-3); }
 .help-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule); display: flex; justify-content: flex-end; gap: 4px; }
 button.text { font: inherit; font-size: 13px; color: var(--fg-2); background: transparent; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 button.text:hover { color: var(--fg); background: var(--bg-side); }

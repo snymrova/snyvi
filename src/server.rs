@@ -280,7 +280,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let app = Arc::new(App {
         store,
         renderer,
-        browse: Browser::new(),
+        browse: Browser::load(paths.config_dir.join("folders.json")),
         paths: paths.clone(),
         token: std::sync::RwLock::new(token),
         events: tx,
@@ -363,6 +363,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/desks/{id}/layout", post(desk_layout))
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
+        .route("/api/desks/{id}/docs", get(desk_docs))
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
@@ -1150,6 +1151,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         app.browse.close(&root.id);
     }
     let _ = std::fs::remove_file(app.paths.config_dir.join("sessions.json"));
+    let _ = std::fs::remove_file(app.paths.config_dir.join("folders.json"));
     match config::rotate_token(&app.paths) {
         Ok(t) => *app.token.write().unwrap() = t,
         Err(e) => return err(e),
@@ -2096,6 +2098,24 @@ async fn create_desk(
     }
 }
 
+/// The documents the panes on a desk have sent, for the rail's Documents
+/// list. Forty is more than a rail shows without scrolling and fewer than a
+/// long day of a file being watched produces; the library has the rest.
+async fn desk_docs(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.desk_docs(id, 40) {
+        Ok(docs) => Json(json!({ "docs": docs })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 async fn rename_desk(
     State(app): S,
     headers: HeaderMap,
@@ -2961,6 +2981,7 @@ mod tests {
             "async fn rename_desk(",
             "async fn desk_layout(",
             "async fn delete_desk(",
+            "async fn desk_docs(",
             "async fn open_pane(",
             "async fn close_pane(",
             "async fn start_pane(",
@@ -2995,6 +3016,7 @@ mod tests {
             r#".route("/api/desks/{id}/layout", post(desk_layout))"#,
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
+            r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
             r#".route("/api/panes/{id}/start", post(start_pane))"#,
             r#".route("/api/panes/{id}/stop", post(stop_pane))"#,

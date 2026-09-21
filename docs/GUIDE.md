@@ -241,7 +241,7 @@ systemctl --user enable --now snyvi
 snyvi send PLAN.md                 # send a file, print its link
 cat notes.md | snyvi send -t Notes # send stdin
 snyvi watch PLAN.md                # send now, and again on every save
-snyvi browse [dir]                 # read a folder from disk, nothing stored
+snyvi browse [dir]                 # read a folder from disk, nothing imported
 snyvi open                         # open the viewer, in the window if one is up
 snyvi app                          # native window (see Desktop below)
 snyvi init <agent> [--instructions]  # register with claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed
@@ -376,6 +376,17 @@ there is no shortcut, since the interface it needs is X11's; the
 desktop's own keyboard settings do the same job there — bind a key to
 `snyvi app`, which shows the window that is already up rather than
 opening another.
+
+The window has no title bar of the system's. The page is the frame: the
+sidebar's brand row, the rail's top, and a desk's header row drag the
+window and maximise it on a double-click, and the three buttons a bar
+had sit in the top right corner, whatever the panes are doing. The
+edges still resize it. On a Mac the traffic lights are the system's,
+over the brand row. `SNYVI_FRAME=1` keeps the system's frame, for a
+desktop whose title bars should all look alike or a window manager that
+draws its own. And if the window ever shows a page older than itself —
+a daemon upgraded on disk and not yet restarted — the frame comes back
+on its own, since that page has nothing to drag by.
 
 On a Linux desktop with no `libayatana-appindicator3`, there is no tray —
 snyvi says so, and closing the window goes back to meaning close.
@@ -731,9 +742,14 @@ found".
 ## Browsing a folder
 
 `snyvi browse` opens the folder you are in as a file tree and renders
-files as you click them. Nothing is stored, nothing joins the library,
-and nothing appears in the inbox. It is a reader for code and notes you
-already have, not an import.
+files as you click them. Nothing of it is stored, nothing joins the
+library, and nothing appears in the inbox. It is a reader for code and
+notes you already have, not an import.
+
+The folder itself stays open. It is in the sidebar until you close it,
+across restarts and upgrades of the daemon, so the repositories you read
+in are there each morning without being opened again. A folder that has
+gone from disk in the meantime is dropped quietly.
 
 ```
 snyvi browse            # the current folder
@@ -840,6 +856,7 @@ pack after adding a `.sublime-syntax` file there.
 | documents | `~/.local/share/snyvi/docs/<id>.{src,html}` |
 | index     | `~/.local/share/snyvi/snyvi.db` (SQLite, FTS5) |
 | token     | `~/.config/snyvi/token` (required for every write) |
+| folders   | `~/.config/snyvi/folders.json` (the open folders, by path) |
 
 On Windows, `%LOCALAPPDATA%\snyvi` and `%APPDATA%\snyvi\token`.
 

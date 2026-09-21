@@ -25,9 +25,9 @@
 //!    a process writes: 369 KB/s in became 26 KB/s out.
 //!
 //! What is deliberately absent: reflow on resize, combining marks, charset
-//! designation, DCS, mouse reporting, and OSC 52 clipboard writes, which snyvi
-//! declines -- a process in a pane does not get to write the reader's
-//! clipboard. `docs/DESK.md` has the list and why.
+//! designation, DCS, mouse reporting past the wheel, and OSC 52 clipboard
+//! writes, which snyvi declines -- a process in a pane does not get to write
+//! the reader's clipboard. `docs/DESK.md` has the list and why.
 
 use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
@@ -133,6 +133,9 @@ pub struct Shown {
     cols: usize,
     rows: Vec<Row>,
     cursor: (usize, usize, bool),
+    /// The modes as last sent, so a program that only flipped one -- asked for
+    /// the mouse, went to the alternate screen -- still gets a frame out.
+    modes: [u8; 4],
     /// Set by a resize: the next frame tells the page to resize and clear.
     resized: bool,
 }
@@ -143,6 +146,7 @@ impl Shown {
             cols,
             rows: vec![vec![Cell::BLANK; cols]; rows],
             cursor: (0, 0, true),
+            modes: [0; 4],
             resized: true,
         }
     }
@@ -187,6 +191,12 @@ pub struct Screen {
     pub app_cursor: bool,
     /// Mode 2004: a paste is wrapped so the program knows it was not typed.
     pub bracketed_paste: bool,
+    /// Modes 1000, 1002, 1003: the program asked for the mouse. Only the wheel
+    /// is reported -- clicks stay the browser's, for selection -- and it is the
+    /// page that encodes the report, so it is told the encoding too.
+    pub mouse: bool,
+    /// Mode 1006: mouse reports in SGR form, which has no 223-column limit.
+    pub mouse_sgr: bool,
     /// The window title a program set with OSC 0 or 2.
     pub title: String,
     /// A BEL or an OSC 9 / 777 notification since this was last taken: a
@@ -232,6 +242,8 @@ impl Screen {
             cursor_visible: true,
             app_cursor: false,
             bracketed_paste: false,
+            mouse: false,
+            mouse_sgr: false,
             title: String::new(),
             bell: false,
             replies: Vec::new(),
@@ -313,6 +325,14 @@ impl Screen {
     }
 
     // ---------- frames ----------
+
+    /// Whether the program asked for the scrollback to go (`ESC [ 3 J`)
+    /// since the last frame. The frame carries that to the pages; the pane
+    /// asks first, because what an earlier run left above the screen goes
+    /// with it.
+    pub fn scrollback_cleared(&self) -> bool {
+        self.sb_cleared
+    }
 
     /// The rows that changed since `shown`, and whatever scrolled off in
     /// between, as one JSON frame -- or `None` if the page already holds this.
@@ -400,11 +420,13 @@ impl Screen {
             ));
             any = true;
         }
-        out.push_str(&format!(
-            ",\"m\":[{},{}]}}",
-            u8::from(self.app_cursor),
-            u8::from(self.bracketed_paste)
-        ));
+        let modes = self.modes();
+        if modes != shown.modes {
+            shown.modes = modes;
+            any = true;
+        }
+        let [a, b, m, alt] = modes;
+        out.push_str(&format!(",\"m\":[{a},{b},{m},{alt}]}}"));
         any.then_some(out)
     }
 
@@ -441,13 +463,28 @@ impl Screen {
             out.push(']');
         }
         let (x, y, v) = shown.cursor;
+        let [a, b, m, alt] = self.modes();
         out.push_str(&format!(
-            "],\"c\":[{x},{y},{}],\"m\":[{},{}]}}",
-            u8::from(v),
-            u8::from(self.app_cursor),
-            u8::from(self.bracketed_paste)
+            "],\"c\":[{x},{y},{}],\"m\":[{a},{b},{m},{alt}]}}",
+            u8::from(v)
         ));
         out
+    }
+
+    /// The `m` of a frame: DECCKM, bracketed paste, the mouse (0 off, 1 X10
+    /// reports, 2 SGR reports), and whether the alternate screen is up -- what
+    /// the page needs to encode a key, a paste, and a turn of the wheel.
+    fn modes(&self) -> [u8; 4] {
+        [
+            u8::from(self.app_cursor),
+            u8::from(self.bracketed_paste),
+            match (self.mouse, self.mouse_sgr) {
+                (false, _) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+            },
+            u8::from(self.stash.is_some()),
+        ]
     }
 
     /// The scrollback and the screen as plain lines, oldest first, trailing
@@ -836,6 +873,8 @@ impl Screen {
                         self.restore();
                     }
                 }
+                (true, 1000) | (true, 1002) | (true, 1003) => self.mouse = on,
+                (true, 1006) => self.mouse_sgr = on,
                 (true, 2004) => self.bracketed_paste = on,
                 _ => {}
             }
@@ -1330,6 +1369,20 @@ mod tests {
     }
 
     #[test]
+    fn clearing_the_scrollback_is_said_once_and_asked_first() {
+        let (mut s, mut p) = screen(10, 2);
+        let mut shown = Shown::new(10, 2);
+        feed(&mut s, &mut p, "one\r\ntwo\r\nthree");
+        s.frame("p", &mut shown);
+        assert!(!s.scrollback_cleared());
+        feed(&mut s, &mut p, "\x1b[3J");
+        assert!(s.scrollback_cleared(), "up until a frame carries it");
+        let f = s.frame("p", &mut shown).expect("the clear goes out");
+        assert!(f.contains("\"sbclear\":1"));
+        assert!(!s.scrollback_cleared(), "and down once it has");
+    }
+
+    #[test]
     fn text_lands_where_the_cursor_is_and_wraps_late() {
         let (mut s, mut p) = screen(10, 3);
         feed(&mut s, &mut p, "0123456789");
@@ -1418,6 +1471,35 @@ mod tests {
         let (mut s, mut p) = screen(10, 2);
         feed(&mut s, &mut p, "\x1b]52;c;aGVsbG8=\x07");
         assert!(!s.bell);
+    }
+
+    /// A program that asks for the mouse, or goes to the alternate screen,
+    /// draws nothing by doing so -- and the page still has to hear, since it
+    /// is what decides where a turn of the wheel goes.
+    #[test]
+    fn asking_for_the_mouse_is_a_frame_of_its_own() {
+        let (mut s, mut p) = screen(10, 3);
+        let mut shown = Shown::new(10, 3);
+        feed(&mut s, &mut p, "x");
+        s.frame("p", &mut shown).unwrap();
+        assert!(s.frame("p", &mut shown).is_none(), "nothing changed");
+        let modes = |f: String| serde_json::from_str::<Value>(&f).unwrap()["m"].clone();
+        feed(&mut s, &mut p, "\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+        assert_eq!(
+            modes(s.frame("p", &mut shown).unwrap()),
+            serde_json::json!([0, 0, 2, 1])
+        );
+        feed(&mut s, &mut p, "\x1b[?1006l");
+        assert_eq!(
+            modes(s.frame("p", &mut shown).unwrap()),
+            serde_json::json!([0, 0, 1, 1])
+        );
+        feed(&mut s, &mut p, "\x1b[?1000l\x1b[?1049l");
+        assert_eq!(
+            modes(s.frame("p", &mut shown).unwrap()),
+            serde_json::json!([0, 0, 0, 0])
+        );
+        assert!(s.frame("p", &mut shown).is_none());
     }
 
     /// Rule 1, as the spike found it: a resize must clear both sides or the

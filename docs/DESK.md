@@ -26,7 +26,7 @@ shells across three desks at login would be a daemon nobody left running. But
 a pane the reader is *looking at* is a pane they want a shell in, so the page
 starts it: on its first real size, a pane with no process and no exit code
 sends `POST /api/panes/{id}/start` with what it last ran. The old screen stays
-above it, greyed, as scrollback.
+above it, greyed, as scrollback, until the shell clears the scrollback.
 
 The distinction the page draws is the exit code. No exit code means nothing
 ended — the daemon went away underneath a running shell — and there is nothing
@@ -121,12 +121,12 @@ sends frames as the screen changes, at most one per frame:
 | Field of `frame` | Meaning |
 |---|---|
 | `sz: [cols, rows]` | **Resize and clear.** Blank the grid at this size before anything else. |
-| `sbclear` | Empty the scrollback (`ESC [ 3 J`) |
+| `sbclear` | Empty the scrollback (`ESC [ 3 J`), and the greyed text of the run before it: `clear` clears everything |
 | `gap: n` | This many lines scrolled by without being sent |
 | `sb: [line…]` | Lines that left the top of the screen, oldest first; `{"w":1,"r":runs}` marks one that wrapped |
 | `r: [[y, x0, runs]…]` | Row `y` from column `x0`, as runs |
 | `c: [x, y, visible]` | The cursor |
-| `m: [appCursor, bracketedPaste]` | The two modes the page needs to encode keys and pastes |
+| `m: [appCursor, bracketedPaste, mouse, alt]` | The modes the page needs to encode keys, pastes, and the wheel: `mouse` is 0 off, 1 X10 reports, 2 SGR reports; `alt` is the alternate screen |
 
 A run is `[text, fg, bg, flags]`, and trailing defaults are dropped, so plain
 text is `["text"]`. A colour is 0 for the default, 1–256 for a palette index
@@ -161,6 +161,26 @@ every transport goes through, puts it on `Payload.pane`. On arrival the
 daemon copies the desk id, desk name and slot onto the document, so the
 document's meta reads **From snyvi [1] ▸**. It is a link to the desk with
 that pane focused, and it still names the desk after the desk is closed.
+
+The attribution runs the other way too. The desk's rail has a **Documents**
+list under its panes: everything sent from a pane on this desk, newest
+first, each row with the unread mark, the title, the slot it came from and
+its age, from `GET /api/desks/{id}/docs`, behind the same gate as every
+other desk route. A click opens the document as the page, and the rail
+stays the desk's: the panes, and the documents with the open one marked, so
+a document read over a desk never takes the desk out of reach. The rail
+does not move; the marked row shows its two tools without waiting for the
+cursor -- the path to copy, and the way back to the panes -- and is itself
+a toggle, so a second click on it goes back too. A pane's row goes back
+with that pane focused, and `⌃\`` is the key for all of it. Under the cursor a row offers the path the document was sent
+from, to copy -- the thing to hand back to the pane that sent it. The panes
+keep their socket meanwhile; a frame lands on a pane that is simply not in
+the page, so coming back is a redraw and not a reconnect. Any other page --
+the inbox, a folder, another desk -- lets the desk go as before.
+The list is asked for again when the page hears a
+document arrive, get opened, deleted, restored or pinned -- asked for, not
+told, since those events reach tabs too and only the window holds the
+capability that answers. Forty is the cap; the library has the rest.
 
 `SNYVI_SESSION` decides which pane a document is attributed to. The hook's
 `cwd → session` map (`src/session.rs`) still decides which workflow a
@@ -241,9 +261,14 @@ tools and has no reason to be able to fetch from this daemon, so a path is
 what it can use. **Still open:** an agent in a sandbox may not be allowed to
 read that folder.
 
-**Mouse reporting.** Not supported. In a pane, the mouse is for selection,
-and selection is the browser's own, because the screen is DOM text. The wheel
-scrolls the page's scrollback.
+**Mouse reporting.** The wheel only. In a pane, the mouse is for selection,
+and selection is the browser's own, because the screen is DOM text, so clicks
+and drags are never reported. A program that asked for the mouse (modes 1000,
+1002, 1003) gets the wheel as button 64/65 reports, SGR-encoded when it asked
+for that (1006) -- which is how Claude Code, which draws its transcript on the
+alternate screen, scrolls it. A program on the alternate screen that did not
+ask gets arrow keys per notch, as xterm's alternateScroll sends them. Anywhere
+else, and with Shift held, the wheel scrolls the page's scrollback.
 
 **Screen readers.** Each pane body is a labelled region, not a live region.
 A region that repaints sixty times a second would be noise if announced.
@@ -254,7 +279,10 @@ to write to the reader's clipboard. Copy is the reader's: releasing a
 selection copies it, and so does Ctrl+Shift+C.
 
 **Reserved keys.** `⌃\`` swaps between the desk and the reading view.
-`⌃⌥1`–`⌃⌥4` focus a pane by slot. `⌘` combinations go to the platform.
+`⌃⌥1`–`⌃⌥4` focus a pane by slot. `⌃⌥Z` zooms the focused pane to the
+grid's full size and back, tmux's `prefix z`; zoom is the view's, not the
+pane's, so `⌃⌥2` while zoomed shows pane 2 at full size. `⌘` combinations
+go to the platform.
 Ctrl+Shift+C and Ctrl+Shift+V are copy and paste, as in a Linux terminal.
 Every other key goes to the pane, including the single-letter keys the
 reading view uses.

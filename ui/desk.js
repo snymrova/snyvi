@@ -21,6 +21,15 @@ const KEEP_LINES = 6000;       // scrollback rows kept in the page; the daemon k
 let ctx = null;                // what app.js handed `open`
 let sock = null, sockP = null, retry = 0;
 let deskId = null, focused = null, cellW = 7.5;
+/** Zoomed: the focused pane alone, at the grid's full size, and the rest as
+ *  tabs -- tmux's `prefix z`. A state of the view rather than of a pane, so
+ *  focusing another pane while zoomed shows that one at full size, and the
+ *  key that zoomed puts the grid back. */
+let zoomed = false;
+/** The documents this desk's panes have sent, for the rail, and which desk
+ *  they belong to -- so a desk swapped for another never shows the last
+ *  one's list while its own is on the way. */
+let docList = [], docsAt = null;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -107,7 +116,9 @@ function paint(v, f) {
     v.scr.replaceChildren(...v.cells.map(() => document.createElement("div")));
     v.scr.style.height = v.rows * LINE_PX + "px";
   }
-  if (f.sbclear) v.sb.replaceChildren();
+  // `clear` clears everything the reader could scroll to: the run before
+  // this one, greyed above the scrollback, goes with it.
+  if (f.sbclear) { v.sb.replaceChildren(); v.old.replaceChildren(); }
   if (f.gap) v.sb.insertAdjacentHTML("beforeend", `<div class="gap">⋯ ${f.gap.toLocaleString()} lines went by</div>`);
   if (f.sb && f.sb.length) {
     v.sb.insertAdjacentHTML("beforeend", f.sb.map(l => `<div>${runsHtml(l.r || l) || " "}</div>`).join(""));
@@ -305,6 +316,38 @@ function input(v, text) {
 }
 const bracket = (v, t) => (v.mode && v.mode[1] ? `\x1b[200~${t}\x1b[201~` : t);
 
+/** Where a turn of the wheel goes. A program that asked for the mouse gets it
+ *  as a wheel report -- the only mouse report a pane sends, since clicks are
+ *  the browser's, for selection -- which is how Claude Code scrolls its own
+ *  transcript from the alternate screen. One on the alternate screen that did
+ *  not ask gets arrow keys, as xterm's alternateScroll has always sent them.
+ *  Otherwise, and with Shift held, the wheel is the page's: it scrolls the
+ *  scrollback. A notch is three lines, as on every desktop. */
+function wheel(v, e) {
+  const [, , mouse, alt] = v.mode;
+  if (e.shiftKey || !(mouse || alt) || !v.status.running || !v.rows) return;
+  e.preventDefault();
+  const px = e.deltaMode === 1 ? e.deltaY * LINE_PX : e.deltaMode === 2 ? e.deltaY * v.rows * LINE_PX : e.deltaY;
+  // A turn the other way starts over rather than working off the remainder.
+  v.wheelAcc = (v.wheelAcc < 0) === (px < 0) ? v.wheelAcc + px : px;
+  const n = Math.trunc(v.wheelAcc / (3 * LINE_PX));
+  if (!n) return;
+  v.wheelAcc -= n * 3 * LINE_PX;
+  const down = n > 0, k = Math.min(Math.abs(n), 5);
+  let one;
+  if (mouse) {
+    const r = v.scr.getBoundingClientRect();
+    const x = Math.max(0, Math.min(v.cols - 1, Math.floor((e.clientX - r.left) / cellW)));
+    const y = Math.max(0, Math.min(v.rows - 1, Math.floor((e.clientY - r.top) / LINE_PX)));
+    const b = 64 + (down ? 1 : 0);
+    // X10 reports carry a cell as one byte past 32, so they end at column 223.
+    one = mouse === 2 ? `\x1b[<${b};${x + 1};${y + 1}M` : x < 223 && y < 223 ? `\x1b[M${String.fromCharCode(32 + b, 33 + x, 33 + y)}` : "";
+  } else {
+    one = (v.mode[0] ? "\x1bO" : "\x1b[") + (down ? "B" : "A");
+  }
+  if (one) input(v, one.repeat(k));
+}
+
 // ---------- a pane ----------
 
 function makeView(p) {
@@ -315,7 +358,7 @@ function makeView(p) {
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"></form>`;
   const v = {
-    id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0], asked: false,
+    id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
     // A pane with no process and no exit code lost its shell to a daemon that
     // went away: it will start itself, so it does not flash the Start bar on
     // the way there. `resumed` is one attempt, per daemon.
@@ -329,8 +372,9 @@ function makeView(p) {
   body.addEventListener("blur", () => el.classList.remove("on"));
   el.querySelector(".pn-head").addEventListener("click", () => body.focus());
   body.addEventListener("keydown", e => {
-    // The platform's (⌘C, ⌘V, ⌘K), and snyvi's two: the swap and the pane keys.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && /^Digit[1-4]$/.test(e.code))) return;
+    // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
+    // and the zoom.
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && /^(Digit[1-4]|KeyZ)$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
@@ -343,6 +387,7 @@ function makeView(p) {
   // Copy on selection: the scrollback is text in the page, so the browser
   // selects it, and letting go is the copy.
   body.addEventListener("mouseup", () => setTimeout(() => copy(v, false), 0));
+  body.addEventListener("wheel", e => wheel(v, e), { passive: false });
   body.addEventListener("paste", e => { e.preventDefault(); paste(v, e.clipboardData); });
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
@@ -487,8 +532,9 @@ function layout() {
   if (!d || !grid) return;
   const all = d.panes.map(p => views.get(p.id)).filter(Boolean);
   // The focused pane is always shown; the rest in slot order, while there is room.
-  const n = room(), f = all.find(v => v.id === focused);
+  const n = zoomed ? 1 : room(), f = all.find(v => v.id === focused);
   const shown = all.length <= n ? all : [f, ...all.filter(v => v !== f)].filter(Boolean).slice(0, n).sort((a, b) => a.pane.slot - b.pane.slot);
+  if (zoomed && all.length > 1) grid.dataset.zoom = "1"; else delete grid.dataset.zoom;
   const cols = shown.length > 1 ? 2 : 1, rows = shown.length > 2 ? 2 : 1;
   grid.style.gridTemplateColumns = cols === 2 ? `${d.col}fr ${1 - d.col}fr` : "1fr";
   grid.style.gridTemplateRows = rows === 2 ? `${d.row}fr ${1 - d.row}fr` : "1fr";
@@ -514,6 +560,7 @@ function tabs(d, all, shown) {
   const t = ctx.docEl.querySelector(".dk-tabs");
   if (!t) return;
   t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}">[${v.pane.slot}]</button>`).join("") : "";
+  t.title = zoomed && all.length > 1 ? "Zoomed  ⌃⌥Z" : "";
 }
 
 function draw() {
@@ -527,7 +574,7 @@ function draw() {
     return;
   }
   document.title = `${d.name} · desk`;
-  docEl.innerHTML = `<div class="dk"><header class="dk-head"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" title="New pane" aria-label="New pane">+</button>` +
     `<button type="button" class="icon" data-a="swap" title="Reading view  ⌃\`" aria-label="Reading view">▣</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
@@ -599,40 +646,120 @@ function dividers() {
 
 const ago = s => { const d = Math.max(0, Date.now() / 1000 - s); return d < 60 ? `${Math.round(d)}s` : d < 3600 ? `${Math.round(d / 60)}m` : `${Math.floor(d / 3600)}h ${Math.round((d % 3600) / 60)}m`; };
 
+/** A pane as a row names it: the shell's title less the `user@host:` a
+ *  prompt puts before the folder. Every row on a desk carries the same
+ *  prefix, and it is the folder after it that tells them apart. */
+const short = v => { const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t); return m ? tilde(m[1]) : t; };
+
+/** The rail's small controls, drawn as lines the way the sidebar's icons
+ *  are: stop and start on a pane, close on a pane or the desk, a pen on the
+ *  desk's name. */
+const ICO = {
+  stop: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none"/>',
+  play: '<path d="M5 3.5v9l7.5-4.5z" fill="currentColor" stroke="none"/>',
+  x: '<path d="M4 4l8 8M12 4l-8 8"/>',
+  doc: '<path d="M9.5 1.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.5v3h3M6 8h4M6 10.5h4"/>',
+  pen: '<path d="M11.2 2.8a1.5 1.5 0 0 1 2 2L6 12l-3 1 1-3z"/>',
+  back: '<path d="M6.5 3L3 8l3.5 5M3 8h10"/>',
+  copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/>',
+};
+const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
+/** A control that does something there is no undoing asks twice. Its text
+ *  is `data-sure` while armed, and the title says why. */
+const sure = (a, p, title, label, glyph) => `<button type="button" data-a="${a}"${p ? ` data-p="${p}"` : ""} data-sure="Close?" title="${title}" aria-label="${label}">${glyph}</button>`;
+
+/** Whether the reader folded the Documents list, remembered as the
+ *  sidebar remembers its own folds. */
+const DOCS_FOLD = "snyvi.dk.fold-docs";
+const docsFolded = () => { try { return localStorage.getItem(DOCS_FOLD) === "1"; } catch { return false; } };
+function folded(e) {
+  const d = e.target;
+  if (!d.classList || !d.classList.contains("dk-sec")) return;
+  try { localStorage.setItem(DOCS_FOLD, d.open ? "0" : "1"); } catch {}
+}
+
 function rail() {
   const d = current();
   if (!d) return;
   const { esc } = ctx, j = ctx.desks;
   const dot = v => v.status.blocked ? "!" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
-  // The nearer of the two caps is the one worth naming.
-  const here = `${d.panes.length} of ${j.per_desk} here`, total = `${j.panes} of ${j.cap} total`;
-  const cap = j.cap - j.panes < j.per_desk - d.panes.length ? total : here;
-  ctx.tocEl.innerHTML = `<div class="dk-rail"><div class="t-label">Panes</div><ul>` +
-    vs.map(v => `<li><button type="button" data-focus="${v.id}" class="${v.id === focused ? "on" : ""}${v.status.blocked ? " blk" : ""}"><span class="dot">${dot(v)}</span>${v.pane.slot} ${esc(what(v))}</button></li>`).join("") +
-    `</ul><button type="button" class="dk-new" data-a="new"${d.panes.length >= Math.min(j.per_desk, room()) || j.panes >= j.cap ? " disabled" : ""}>+ new pane</button><p class="dk-cap">${cap}</p></div>`;
+  const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} of ${j.cap} everywhere`;
+  // Why there is no new pane, when there is not: the nearer of the two caps,
+  // or the width, is the one worth naming.
+  const why = j.panes >= j.cap ? `Every pane is in use: ${total}` : d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}` : d.panes.length >= room() ? "No room for another at this width" : "";
+  const dl = docsAt === d.id ? docList : [];
+  const stopped = vs.filter(x => !x.status.running).length;
+  // A pane's row: the mark, the slot, the name -- and under the cursor, what
+  // can be done to that pane: stopped or started, and closed. On the row
+  // itself, so a control acts on the pane it sits beside and never on
+  // whichever pane happens to have the focus.
+  const paneRow = v => {
+    const n = v.pane.slot, run = v.status.running;
+    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}">` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}" title="${esc(what(v))}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm">${esc(short(v))}</span></button>` +
+      `<span class="dk-tools">` +
+      (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop pane ${n}">${ico("stop")}</button>`
+        : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start pane ${n}">${ico("play")}</button>`) +
+      sure("close", v.id, "Close pane", `Close pane ${n}`, ico("x")) +
+      `</span></li>`;
+  };
+  ctx.tocEl.innerHTML = `<div class="dk-rail">` +
+    `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panes<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
+    `<ul class="dk-panes">` + vs.map(paneRow).join("") + `</ul>` +
+    `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New pane</button>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped pane again">Start all</button>` : "") + `</div>` +
+    // The documents fold, as a section in the sidebar does: the chevron
+    // shows under the cursor, and stays while the list is folded.
+    `<details class="dk-sec"${docsFolded() ? "" : " open"}><summary class="t-label dk-lab" title="What the panes on this desk have sent">Documents<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
+    // A document's row: the one on the page is marked, the way a pane's row
+    // is while the desk is the page. Under the cursor, the path it was sent
+    // from, to copy -- the thing to hand back to the pane that sent it.
+    (dl.length ? `<ul class="dk-docs">` + dl.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" title="${x.id === reading ? "Click again to go back to the panes" : `${esc(x.title)} · ${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${x.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="slot" title="Sent from pane ${x.slot}">${x.slot}</span>${x.id === reading ? "" : `<span class="k">${ctx.relShort(x.received_at)}</span>`}</a>` +
+      // Its tools: the path to copy, where there is one; and on the row of
+      // the document on the page, the way back to the panes. That row's
+      // tools stay in view rather than wait for the cursor.
+      ((x.source_path || x.id === reading) ? `<span class="dk-tools">` +
+        (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
+        (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panes  ⌃\`" aria-label="Back to the panes">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>`
+      : `<p class="dk-empty">Nothing yet. What an agent in a pane sends lands here.</p>`) +
+    `</details></div>`;
   const v = views.get(focused), s = v ? v.status : null;
   const since = !s ? "" : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
-  const stopped = vs.filter(x => !x.status.running).length;
-  ctx.metaEl.innerHTML = `<div class="row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span></div><div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>` +
-    (v ? `<div class="row"><b>Focused</b><span>[${v.pane.slot}] ${esc(what(v))}</span></div>` + (s.pid ? `<div class="row"><b>Pid</b><span>${s.pid}</span></div>` : "") + `<div class="row"><b>State</b><span>${since}</span></div>` : "") +
-    `<div class="actions">` +
-    (v && s.running ? `<button data-a="stop">Stop</button>` : v ? `<button data-a="start">Start</button>` : "") +
-    (stopped > 1 ? `<button data-a="all">Start all</button>` : "") +
-    (v ? `<button data-a="close" data-sure="Close the pane: click again">Close pane</button>` : "") +
-    `<button data-a="rename">Rename desk</button><button data-a="drop" data-sure="Close the desk and its panes: click again">Close desk</button></div>`;
+  // The desk's own two actions sit on its name, under the cursor: renaming
+  // it and closing it are things done to the desk, and the name is where
+  // the desk is.
+  ctx.metaEl.innerHTML = `<div class="row dk-row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span><span class="dk-tools">` +
+    `<button type="button" data-a="rename" title="Rename desk" aria-label="Rename desk">${ico("pen")}</button>` +
+    sure("drop", "", "Close the desk and its panes", "Close desk", ico("x")) + `</span></div>` +
+    `<div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>` +
+    (v ? `<div class="row"><b>Pane</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "");
   ctx.rail.classList.remove("empty");
+}
+
+/** The documents this desk's panes sent, for the rail. Fetched when the desk
+ *  opens, and again whenever the page hears a document arrive, get opened or
+ *  go; the rail draws whatever it has meanwhile. */
+export async function docs() {
+  const id = deskId;
+  if (id == null || !ctx) return;
+  let j;
+  try { j = await ctx.api(`/api/desks/${id}/docs`); } catch { return; }
+  if (id !== deskId) return;
+  docList = j.docs || []; docsAt = id;
+  if (current()) rail();
 }
 
 // ---------- actions ----------
 
 async function act(b) {
-  const a = b.dataset.a, d = current(), v = views.get(focused);
+  const a = b.dataset.a, d = current(), v = views.get(b.dataset.p || focused);
   // Closing ends a process, and there is no undoing that: the first click
-  // says what the second will do.
+  // says what the second will do, in the control's own place.
   if (b.dataset.sure && !b.dataset.armed) {
-    b.dataset.armed = "1"; const was = b.textContent; b.textContent = b.dataset.sure;
-    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = was; } }, 3000);
+    b.dataset.armed = "1"; const was = b.innerHTML, title = b.title;
+    b.textContent = b.dataset.sure; b.title = "Click again to confirm";
+    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.innerHTML = was; b.title = title; } }, 3000);
     return;
   }
   try {
@@ -652,6 +779,8 @@ async function act(b) {
     else if (a === "close" && v) { await ctx.api(`/api/panes/${v.id}/delete`, {}); await ctx.refresh(); }
     else if (a === "drop") { await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true); }
     else if (a === "rename") renameDesk(d);
+    else if (a === "desk") ctx.go(deskId, true);
+    else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
   } catch (e) { ctx.toast("Could not do that", String(e)); }
 }
 
@@ -682,6 +811,9 @@ function renameDesk(d) {
 function focusPane(id) {
   const v = views.get(id);
   if (!v) return;
+  // While a document is the page, a pane's row is the way back to the desk,
+  // with that pane focused.
+  if (reading != null) { ctx.go(deskId, true, v.pane.slot); return; }
   focused = id;
   layout();
   v.body.focus();
@@ -690,13 +822,28 @@ function focusPane(id) {
 function click(e) {
   const f = e.target.closest("[data-focus]");
   if (f) { focusPane(f.dataset.focus); return; }
+  const r = e.target.closest("a[data-read]");
+  // The row of the document on the page is a toggle: a second click puts
+  // the panes back, the way the first put the document up.
+  if (r) { e.preventDefault(); if (r.dataset.read === reading) ctx.go(deskId, true); else ctx.read(r.dataset.read); return; }
   const b = e.target.closest("[data-a]");
   if (b && !b.disabled) act(b);
 }
 
-/** ⌃⌥1 to ⌃⌥4: a pane by its slot, from anywhere on the desk. */
+/** The focused pane alone, or the grid again. */
+function zoom() {
+  zoomed = !zoomed;
+  layout();
+  const v = views.get(focused);
+  if (v) v.body.focus();
+}
+
+/** ⌃⌥1 to ⌃⌥4: a pane by its slot, from anywhere on the desk. ⌃⌥Z: the
+ *  focused pane alone. */
 function keys(e) {
-  if (!(e.ctrlKey && e.altKey) || !/^Digit[1-4]$/.test(e.code)) return;
+  if (!(e.ctrlKey && e.altKey) || e.metaKey) return;
+  if (e.code === "KeyZ") { if (reading != null) return; e.preventDefault(); e.stopPropagation(); zoom(); return; }
+  if (!/^Digit[1-4]$/.test(e.code)) return;
   const d = current(), p = d && d.panes.find(x => x.slot === +e.code[5]);
   if (!p) return;
   e.preventDefault(); e.stopPropagation();
@@ -707,12 +854,17 @@ const onResize = () => { if (current()) layout(); };
 
 // ---------- the seam ----------
 
+/** The document the desk stepped aside for, or null while the desk is the
+ *  page. */
+let reading = null;
+
 function detach() {
   clearTimeout(retry);
   clearInterval(clock);
   if (!ctx) return;
   ctx.docEl.removeEventListener("click", click);
   ctx.tocEl.removeEventListener("click", click);
+  ctx.tocEl.removeEventListener("toggle", folded, true);
   ctx.metaEl.removeEventListener("click", click);
   document.removeEventListener("keydown", keys, true);
   removeEventListener("resize", onResize);
@@ -734,17 +886,19 @@ export function open(c) {
     g.textContent = drawn(cellW, LINE_PX);
     document.head.append(g);
   }
-  if (deskId !== c.id) { views.clear(); focused = null; }
-  deskId = c.id;
+  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; }
+  deskId = c.id; reading = null;
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
   draw();
   ctx.docEl.addEventListener("click", click);
   ctx.tocEl.addEventListener("click", click);
+  ctx.tocEl.addEventListener("toggle", folded, true);
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
   addEventListener("resize", onResize);
   clock = setInterval(() => { if (current()) rail(); }, 30000);
+  if (d && docsAt !== d.id) docs();
   const v = views.get(focused);
   if (v) setTimeout(() => v.body.focus(), 0);
 }
@@ -753,18 +907,32 @@ export function update(desks) {
   if (!ctx) return;
   ctx.desks = desks;
   const d = current();
+  // Behind a document, the page is not the desk's to draw: the rail is.
+  if (reading != null) { if (d) { sync(d); rail(); } else { ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = ""; } return; }
   if (!d || !ctx.docEl.querySelector(".dk")) { draw(); return; }
   ctx.docEl.querySelector(".dk-name").textContent = d.name;
   sync(d);
   rail();
 }
 
+/** The desk steps aside for a document: the page becomes the document's,
+ *  and the rail stays the desk's, with the document's row marked. The panes
+ *  keep their socket and their scrollback -- a frame lands on a pane that is
+ *  simply not in the page -- so coming back is a redraw, not a reconnect. */
+export function aside(docId) {
+  if (!ctx || deskId == null) return;
+  reading = docId;
+  ctx.docEl.removeEventListener("click", click);
+  if (current()) rail();
+}
+
 export function close() {
   if (!ctx) return;
   say({ t: "watch", panes: [] });
-  deskId = null;
+  deskId = null; reading = null;
   views.clear();
   focused = null;
+  docList = []; docsAt = null;
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
@@ -800,6 +968,9 @@ const CSS = `
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
 .dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: 4px; }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }
+/* Zoomed: the one tab that is on carries a mark, so a full-size pane with
+ * tabs beside it reads as a zoom and not as a window too narrow for two. */
+.dk:has(.dk-grid[data-zoom="1"]) .dk-tabs button.on::after { content: " ⤢"; }
 .dk-head .icon:first-of-type { margin-left: auto; }
 .dk-tabs:not(:empty) + .icon { margin-left: 0; }
 .dk-grid { flex: 1; min-height: 0; display: grid; gap: 6px; position: relative; }
@@ -842,17 +1013,83 @@ const CSS = `
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
 .pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: 12.5px; }
-.dk-rail ul { list-style: none; margin: 4px 0; padding: 0; }
-.dk-rail li button { display: flex; gap: 6px; width: 100%; text-align: left; padding: 3px 6px; border-radius: 5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dk-rail li button.on { background: var(--accent-bg); color: var(--accent); }
-.dk-rail li button.blk .dot { color: #b45309; font-weight: 700; }
-.dk-rail .dot { width: 10px; flex: none; text-align: center; font-size: 9px; }
-.dk-new { color: var(--fg-3); padding: 3px 6px; font-size: 12.5px; }
+/* ---------- the rail ----------
+ * Two lists and a label over each, drawn the way the sidebar draws its own
+ * rows: a mark at the left, the name, and one fact at the right. */
+.dk-lab { display: flex; align-items: baseline; padding-left: 8px; }
+.dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.dk-lab .n i { font-style: normal; opacity: .6; }
+.dk-foot { display: flex; gap: 10px; margin-top: 2px; }
+.dk-foot + .dk-sec { margin-top: 16px; }
+/* #toc styles an outline -- a rule down the left, entries clamped to two
+ * lines -- and these are rows, so both are undone at #toc's own weight. */
+#toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }
+/* A pane's row is the row and its tools: the row focuses the pane, and the
+ * tools -- kept to no width until the row is under the cursor, or one of
+ * them has the keyboard, the way a sidebar row's ✕ is -- act on it. */
+.dk-pane { display: flex; align-items: center; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
+.dk-pane:hover { background: var(--rule); color: var(--fg); }
+.dk-pane.on { background: var(--accent-bg); color: var(--accent); }
+.dk-focus { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; text-align: left; padding: 4px 8px; color: inherit; white-space: nowrap; overflow: hidden; }
+.dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; width: 0; overflow: hidden; }
+.dk-pane:hover .dk-tools, .dk-doc:hover .dk-tools, .dk-row:hover .dk-tools, .dk-tools:has(:focus-visible), .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
+.dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
+.dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
+.dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: #dc2626; }
+.dk-tools button[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
+.dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
+.dk-panes .run .dot { color: #16a34a; }
+.dk-panes .blk .dot { color: #b45309; font-weight: 700; font-size: 11px; }
+/* The documents section folds. Its head is the label, made a summary: the
+ * chevron the sidebar's heads carry, shown under the cursor and while
+ * folded. */
+.dk-sec > summary { list-style: none; cursor: pointer; }
+.dk-sec > summary::-webkit-details-marker { display: none; }
+/* Always shown here, unlike the sidebar's: the rail has one section that
+ * folds and one that does not, and the chevron is what tells them apart. */
+.dk-sec .s-chev { align-self: center; margin-left: 6px; opacity: 1; }
+.dk-sec:not([open]) .s-chev { transform: rotate(-45deg); }
+.dk-sec > summary:hover { color: var(--fg-2); }
+.dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
+.dk-panes .on .slot { color: inherit; opacity: .7; }
+.dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
+.dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: 12px; border-radius: 6px; }
 .dk-new:hover:not(:disabled) { color: var(--accent); }
 .dk-new:disabled { opacity: .5; cursor: default; }
+/* A document row: a page icon at the left, in the accent while the
+ * document waits to be read, then the title, the pane it came from and its
+ * age. */
+#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--fg-2); line-height: 1.5; white-space: nowrap; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
+.dk-docs a svg { flex: none; color: var(--fg-3); transition: color var(--t); }
+.dk-docs a.new svg { color: var(--accent); }
+.dk-docs a.new .title { color: var(--fg); font-weight: 550; }
+/* The row, and not the link, carries the hover and the mark, so the copy
+ * tool beside the link sits on the same ground. */
+.dk-doc { display: flex; align-items: center; border-radius: 6px; transition: background var(--t); }
+.dk-doc:hover { background: var(--rule); }
+#toc .dk-docs li a:hover { color: var(--fg); text-decoration: none; }
+.dk-doc.on { background: var(--accent-bg); }
+#toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .slot, .dk-doc.on a .k { color: var(--accent); }
+.dk-doc.on .dk-tools { width: auto; overflow: visible; padding-right: 3px; }
+/* A document row's tools are drawn as small keys, on their own ground: the
+ * marked row shows them at rest, and two bare glyphs beside a title would
+ * read as part of it. The age steps aside for them on that row. */
+.dk-doc .dk-tools { gap: 3px; }
+.dk-doc .dk-tools button { background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2); }
+.dk-doc.on .dk-tools button { color: var(--accent); opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.dk-doc .dk-tools button:hover { background: var(--accent); color: var(--bg); box-shadow: none; }
+.dk-docs .title { overflow: hidden; text-overflow: ellipsis; }
+.dk-docs .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
+.dk-docs .slot { margin-left: auto; }
+.dk-docs .slot::before { content: "["; } .dk-docs .slot::after { content: "]"; }
+.dk-docs .k { font-family: var(--mono); font-size: 10px; color: var(--fg-3); flex: none; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+#toc .dk-empty { margin: 2px 8px 0; padding: 0; text-indent: 0; font-size: 12px; line-height: 1.5; color: var(--fg-3); }
+/* The desk's name carries its two tools; the row is a little taller than
+ * its neighbours so they have room, and the name stays on their baseline. */
+#meta .dk-row { align-items: center; min-height: 22px; }
+#meta .dk-row .dk-nm { flex: 1; }
+#meta .dk-row .dk-tools { line-height: 1; }
 .dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .dk-make:hover { background: var(--accent); color: var(--bg); }
-.dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
-.dk-make:hover { background: var(--accent); color: var(--bg); }
-.dk-cap { margin: 4px 6px; font-size: 11px; color: var(--fg-3); }
 `;

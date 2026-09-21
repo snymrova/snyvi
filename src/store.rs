@@ -46,6 +46,23 @@ pub struct TreeDoc {
     pub unread: bool,
 }
 
+/// A document as the desk's rail lists it: what a pane on this desk sent,
+/// and which pane. Less than a `Doc`, because the rail draws a row and not a
+/// page, and more than a `TreeDoc`, because the tree never says which desk.
+#[derive(Clone, Debug, Serialize)]
+pub struct DeskDoc {
+    pub id: String,
+    pub title: String,
+    pub kind: Kind,
+    pub received_at: i64,
+    pub unread: bool,
+    pub pinned: bool,
+    pub slot: i64,
+    pub project: String,
+    /// The file it was sent from, when it was one: the rail offers it to copy.
+    pub source_path: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct TreeWorkflow {
     pub id: i64,
@@ -787,6 +804,35 @@ impl Store {
         desk::get(&self.conn.lock().unwrap(), id)
     }
 
+    /// What the panes on a desk have sent, newest first. The desk is named
+    /// on the document when it arrives, so this outlives the pane that sent
+    /// it, and a desk closed and remade under the same id does not inherit
+    /// the old one's -- ids are never reused.
+    pub fn desk_docs(&self, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(
+                "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
+                 FROM live_docs d JOIN projects p ON p.id = d.project_id
+                 WHERE d.desk_id = ?1 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?2",
+            )?
+            .query_map(params![desk_id, limit as i64], |r| {
+                Ok(DeskDoc {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    kind: Kind::parse(&r.get::<_, String>(2)?).unwrap_or(Kind::Text),
+                    received_at: r.get(3)?,
+                    unread: r.get::<_, i64>(4)? != 0,
+                    pinned: r.get::<_, i64>(5)? != 0,
+                    slot: r.get(6)?,
+                    project: r.get(7)?,
+                    source_path: r.get(8)?,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
     pub fn create_desk(&self, root: &str, name: Option<&str>) -> Result<Desk> {
         desk::create(&self.conn.lock().unwrap(), root, name, now())
     }
@@ -1223,6 +1269,37 @@ mod tests {
         // A store again: the next desk is the first.
         let again = s.create_desk("/home/p/snyvi", None).unwrap();
         assert_eq!(again.name, "snyvi");
+    }
+
+    /// The rail's Documents list: what a pane on this desk sent, newest
+    /// first, and nothing another desk sent or the CLI did. A delete takes a
+    /// row off it, and an open clears its mark.
+    #[test]
+    fn a_desk_lists_what_its_panes_sent_newest_first() {
+        let (s, _d) = temp_store();
+        let here = Origin { id: 7, name: "snyvi".into(), slot: 2 };
+        let elsewhere = Origin { id: 8, name: "other".into(), slot: 1 };
+        fn from<'a>(o: &'a Origin, mut d: NewDoc<'a>) -> NewDoc<'a> {
+            d.desk = Some(o);
+            d
+        }
+        s.insert(&new_id("a"), from(&here, new_doc("First", "aaa", "w"))).unwrap();
+        s.insert(&new_id("b"), from(&elsewhere, new_doc("Theirs", "bbb", "w"))).unwrap();
+        s.insert(&new_id("c"), new_doc("From the CLI", "ccc", "w")).unwrap();
+        let last = s.insert(&new_id("d"), from(&here, new_doc("Second", "ddd", "w"))).unwrap();
+
+        let docs = s.desk_docs(7, 40).unwrap();
+        assert_eq!(docs.iter().map(|d| d.title.as_str()).collect::<Vec<_>>(), ["Second", "First"]);
+        assert_eq!(docs[0].slot, 2);
+        assert!(docs[0].unread);
+        assert_eq!(docs[0].project, "p");
+        assert_eq!(s.desk_docs(8, 40).unwrap().len(), 1);
+        assert!(s.desk_docs(9, 40).unwrap().is_empty());
+
+        s.mark_read(&last.id).unwrap();
+        assert!(!s.desk_docs(7, 40).unwrap()[0].unread);
+        s.delete(&last.id).unwrap();
+        assert_eq!(s.desk_docs(7, 40).unwrap().len(), 1);
     }
 
     /// A delete is gone from everywhere that reads the library and still on
