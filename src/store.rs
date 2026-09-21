@@ -1277,19 +1277,38 @@ mod tests {
     #[test]
     fn a_desk_lists_what_its_panes_sent_newest_first() {
         let (s, _d) = temp_store();
-        let here = Origin { id: 7, name: "snyvi".into(), slot: 2 };
-        let elsewhere = Origin { id: 8, name: "other".into(), slot: 1 };
+        let here = Origin {
+            id: 7,
+            name: "snyvi".into(),
+            slot: 2,
+        };
+        let elsewhere = Origin {
+            id: 8,
+            name: "other".into(),
+            slot: 1,
+        };
         fn from<'a>(o: &'a Origin, mut d: NewDoc<'a>) -> NewDoc<'a> {
             d.desk = Some(o);
             d
         }
-        s.insert(&new_id("a"), from(&here, new_doc("First", "aaa", "w"))).unwrap();
-        s.insert(&new_id("b"), from(&elsewhere, new_doc("Theirs", "bbb", "w"))).unwrap();
-        s.insert(&new_id("c"), new_doc("From the CLI", "ccc", "w")).unwrap();
-        let last = s.insert(&new_id("d"), from(&here, new_doc("Second", "ddd", "w"))).unwrap();
+        s.insert(&new_id("a"), from(&here, new_doc("First", "aaa", "w")))
+            .unwrap();
+        s.insert(
+            &new_id("b"),
+            from(&elsewhere, new_doc("Theirs", "bbb", "w")),
+        )
+        .unwrap();
+        s.insert(&new_id("c"), new_doc("From the CLI", "ccc", "w"))
+            .unwrap();
+        let last = s
+            .insert(&new_id("d"), from(&here, new_doc("Second", "ddd", "w")))
+            .unwrap();
 
         let docs = s.desk_docs(7, 40).unwrap();
-        assert_eq!(docs.iter().map(|d| d.title.as_str()).collect::<Vec<_>>(), ["Second", "First"]);
+        assert_eq!(
+            docs.iter().map(|d| d.title.as_str()).collect::<Vec<_>>(),
+            ["Second", "First"]
+        );
         assert_eq!(docs[0].slot, 2);
         assert!(docs[0].unread);
         assert_eq!(docs[0].project, "p");

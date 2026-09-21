@@ -107,11 +107,12 @@ const FRAME_CHECK: &str = "window.__TAURI_INTERNALS__.invoke('plugin:window|set_
 /// window that once ran frameless would otherwise come back frameless under
 /// a build whose page cannot draw the buttons, with no bar and no way to
 /// close it.
-const REMEMBERED: tauri_plugin_window_state::StateFlags = tauri_plugin_window_state::StateFlags::from_bits_truncate(
-    tauri_plugin_window_state::StateFlags::all().bits()
-        & !tauri_plugin_window_state::StateFlags::DECORATIONS.bits()
-        & !tauri_plugin_window_state::StateFlags::FULLSCREEN.bits(),
-);
+const REMEMBERED: tauri_plugin_window_state::StateFlags =
+    tauri_plugin_window_state::StateFlags::from_bits_truncate(
+        tauri_plugin_window_state::StateFlags::all().bits()
+            & !tauri_plugin_window_state::StateFlags::DECORATIONS.bits()
+            & !tauri_plugin_window_state::StateFlags::FULLSCREEN.bits(),
+    );
 
 fn main() {
     let url = match std::env::args().nth(1) {
@@ -177,7 +178,11 @@ fn main() {
             }
             reveal(&w);
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(REMEMBERED).build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(REMEMBERED)
+                .build(),
+        )
         .plugin(tauri_plugin_deep_link::init());
     // Only when a key is wanted: the plugin opens the display's hotkey
     // interface as it loads, and a failure there is fatal to the whole window,
