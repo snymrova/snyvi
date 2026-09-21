@@ -676,6 +676,74 @@ pub fn image_body(src_url: &str, alt: &str) -> String {
     )
 }
 
+/// Lines per chunk of a long code block, and the length a block must pass to
+/// be cut at all.
+const CHUNK_LINES: usize = 200;
+const CHUNK_ABOVE: usize = 400;
+
+/// Cut every long `pre.code` into blocks of `CHUNK_LINES` lines, so the page
+/// lays out only the ones near the screen.
+///
+/// `.prose > *` skips whatever is off screen, but a code file is one block: a
+/// 15,000-line file was 15,000 lines laid out before the first paint, and a
+/// 2.3 s frozen frame on a click. A chunk is `content-visibility: auto`, which
+/// brings style containment with it, and a counter does not cross that line --
+/// so each chunk says where its numbering starts. The line spans themselves are
+/// untouched, so everything that walks `.ln` still sees every line in order.
+///
+/// Done where the HTML is served, not where it is rendered, so the library's
+/// existing documents are cut too. A line is a `\n` inside the code element:
+/// every emitter writes one span per line and escapes the text, so a newline
+/// never appears anywhere else.
+pub fn chunk_code(html: &str) -> std::borrow::Cow<'_, str> {
+    if !html.contains("<pre class=\"code") {
+        return std::borrow::Cow::Borrowed(html);
+    }
+    let mut out = String::new();
+    let mut rest = html;
+    let mut cut = false;
+    while let Some(at) = rest.find("<pre class=\"code") {
+        // The body starts after the `<code ...>` that opens it.
+        let Some(open) = rest[at..].find("<code").map(|i| at + i) else {
+            break;
+        };
+        let Some(body) = rest[open..].find('>').map(|i| open + i + 1) else {
+            break;
+        };
+        let Some(end) = rest[body..].find("</code>").map(|i| body + i) else {
+            break;
+        };
+        let inner = &rest[body..end];
+        let lines = inner.as_bytes().iter().filter(|b| **b == b'\n').count();
+        if lines <= CHUNK_ABOVE || !inner.starts_with("<span class=\"ln") {
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+            continue;
+        }
+        cut = true;
+        out.reserve(inner.len() + lines / CHUNK_LINES * 80);
+        out.push_str(&rest[..body]);
+        for (i, line) in inner.split_inclusive('\n').enumerate() {
+            if i % CHUNK_LINES == 0 {
+                if i > 0 {
+                    out.push_str("</span>");
+                }
+                out.push_str(&format!(
+                    "<span class=\"lc\" style=\"counter-reset:ln {i}\">"
+                ));
+            }
+            out.push_str(line);
+        }
+        out.push_str("</span>");
+        rest = &rest[end..];
+    }
+    if !cut {
+        return std::borrow::Cow::Borrowed(html);
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 fn plain(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 64);
     out.push_str("<pre class=\"code plain\" data-lang=\"Text\"><code>");
@@ -1522,6 +1590,28 @@ mod tests {
             "{html}"
         );
         assert_eq!(html.matches("class=\"l ctx\"").count(), 1);
+    }
+
+    #[test]
+    fn long_code_is_cut_into_chunks_that_keep_their_numbering() {
+        let r = Renderer::new();
+        let src: String = (0..1000).map(|i| format!("let v{i} = {i};\n")).collect();
+        let html = r.render(Kind::Code, Some("rs"), &src);
+        let cut = chunk_code(&html);
+        assert_eq!(cut.matches("<span class=\"lc\"").count(), 5);
+        assert!(cut.contains("<span class=\"lc\" style=\"counter-reset:ln 0\">"));
+        assert!(cut.contains("<span class=\"lc\" style=\"counter-reset:ln 800\">"));
+        assert_eq!(cut.matches("<span class=\"ln\">").count(), 1000);
+        // Every chunk is closed before the code is.
+        assert_eq!(cut.matches("<span").count(), cut.matches("</span>").count());
+        assert!(cut.ends_with("</code></pre>"));
+        // Short blocks, and pages with none, come back as they were.
+        let short = r.render(Kind::Code, Some("rs"), "fn main() {}\n");
+        assert!(matches!(chunk_code(&short), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(
+            chunk_code("<p>hi</p>"),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 
     #[test]

@@ -254,6 +254,36 @@ pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
     Ok(body)
 }
 
+/// Leave a note at the foot of the sidebar.
+pub fn note(paths: &Paths, note: &crate::note::NewNote) -> Result<Value> {
+    ensure_daemon()?;
+    let token = config::read_token(paths).ok_or_else(|| {
+        anyhow!(
+            "no token at {}; is the daemon running as this user?",
+            paths.token_path.display()
+        )
+    })?;
+    let mut resp = ureq::post(&format!("{}/api/notes", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(note)
+        .context("sending to snyvi")?;
+    let status = resp.status().as_u16();
+    let body: Value = resp.body_mut().read_json().unwrap_or(Value::Null);
+    if status >= 300 {
+        bail!(
+            "{}",
+            body.get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error")
+        );
+    }
+    Ok(body)
+}
+
 /// Register a folder with the daemon and return the page that shows it.
 pub fn browse(paths: &Paths, dir: &str) -> Result<String> {
     ensure_daemon()?;

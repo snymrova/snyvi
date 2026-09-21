@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{TITLE}}</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c2410c'/%3E%3Cpath d='M9 10h14M9 16h14M9 22h9' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Crect x='14' y='0.5' width='4' height='5' rx='2' fill='%23c2410c'/%3E%3Crect x='1' y='4' width='30' height='27' rx='9' fill='%23ff7168'/%3E%3Cellipse cx='11' cy='16.5' rx='2.6' ry='3.3' fill='%234e1a05'/%3E%3Cellipse cx='21' cy='16.5' rx='2.6' ry='3.3' fill='%234e1a05'/%3E%3Cpath d='M13.5 23Q16 25.2 18.5 23' fill='none' stroke='%234e1a05' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <script src="/assets/boot.js?v={{V}}"></script>
 <link rel="stylesheet" href="/assets/app.css?v={{V}}">
 </head>
 <body>
 <div id="app">
   <aside id="side" tabindex="-1">
-    <div class="side-head">
-      <a class="brand" href="/" data-nav="inbox"><span class="brand-mark"></span>snyvi</a>
+    <div class="side-head" data-tauri-drag-region="deep">
+      <a class="brand" href="/" data-nav="inbox"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-wink" d="M8.6 17.8q2.4-3 4.8 0"/><g class="bm-love"><path transform="translate(11 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/><path transform="translate(21 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span><span class="bm-say" id="bm-say" hidden aria-hidden="true"></span></a>
       <a class="live" id="live" href="/connect" data-nav="connect" title="No agent is connected" aria-label="Agents connected">0</a>
       <button class="icon" id="btn-search" title="Search  ⌘K" aria-label="Search">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -26,19 +26,24 @@
       <nav id="desk-nav" aria-label="Desks"></nav>
       <nav id="browse-nav" aria-label="Folders"></nav>
     </div>
+    <section id="note" hidden aria-label="A note from snyvi" aria-live="polite"></section>
     <div class="side-foot">
-      <button class="icon" id="btn-theme" title="Theme (system → light → dark)" aria-label="Theme">
-        <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
-      </button>
-      <button class="icon" id="btn-font" title="Sans / serif body" aria-label="Font"><span class="aa">Aa</span></button>
-      <button class="icon" id="btn-wide" title="Maximise width  w" aria-label="Width">
-        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 6L3 10l4 4M13 6l4 4-4 4M10 4v12"/></svg>
-      </button>
-      <button class="icon" id="btn-wrap" title="Wrap long lines  z" aria-label="Wrap">
-        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14M3 10h10a2.5 2.5 0 0 1 0 5H8M10 13l-2 2 2 2M3 15h2"/></svg>
-      </button>
-      <span class="spacer"></span>
-      <button class="hint" id="btn-help" aria-label="Keyboard shortcuts">? for keys</button>
+      <div class="foot-set">
+        <div class="foot-rail" id="foot-rail">
+          <button class="icon keep" id="btn-theme" data-label="Theme" aria-label="Theme">
+            <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
+          </button>
+          <button class="icon" id="btn-accent" data-label="Accent colour" aria-label="Accent colour"><span class="sw"></span></button>
+          <button class="icon" id="btn-font" data-label="Reading font" aria-label="Font"><span class="aa">Aa</span></button>
+          <button class="icon" id="btn-wide" data-label="Maximise width · w" aria-label="Width">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 6L3 10l4 4M13 6l4 4-4 4M10 4v12"/></svg>
+          </button>
+          <button class="icon" id="btn-wrap" data-label="Wrap long lines · z" aria-label="Wrap">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14M3 10h10a2.5 2.5 0 0 1 0 5H8M10 13l-2 2 2 2M3 15h2"/></svg>
+          </button>
+          <button class="icon" id="btn-help" data-label="Keyboard shortcuts · ?" aria-label="Keyboard shortcuts"><span class="qm">?</span></button>
+        </div>
+      </div>
     </div>
     <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="440" tabindex="0" title="Drag to resize · double-click to reset"></div>
   </aside>
@@ -47,15 +52,18 @@
       <button class="icon" id="btn-side" title="Sidebar  \" aria-label="Show sidebar" aria-controls="side">
         <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
       </button>
-      <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
-        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
-      </button>
+      <div class="chrome-r">
+        <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
+        </button>
+      </div>
     </div>
     <div id="queue-bar" hidden role="status" aria-live="polite"></div>
     <div id="find" hidden role="search"><input id="find-input" type="text" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span id="find-count" role="status" aria-live="polite"></span><button class="icon" id="find-prev" title="Previous (Shift+Enter)">↑</button><button class="icon" id="find-next" title="Next (Enter)">↓</button><button class="icon" id="find-close" title="Close (Esc)">✕</button></div>
     <div id="doc">{{INITIAL_HTML}}</div>
   </main>
   <aside id="rail" tabindex="-1">
+    <div class="rail-grip" data-tauri-drag-region="deep"></div>
     <nav id="toc" aria-label="Contents"></nav>
     <div id="meta"></div>
     <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Contents width" aria-valuemin="180" aria-valuemax="400" tabindex="0" title="Drag to resize · double-click to reset"></div>

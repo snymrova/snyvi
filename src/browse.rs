@@ -1,11 +1,17 @@
-//! Browse mode: read a folder straight from disk. Nothing is stored, nothing
-//! reaches the library or the inbox. Files render on demand and are cached in
-//! memory keyed by their modification time, so revisiting one is instant and
-//! editing it on disk shows the new content.
+//! Browse mode: read a folder straight from disk. Nothing of the folder is
+//! stored, nothing reaches the library or the inbox. Files render on demand and
+//! are cached in memory keyed by their modification time, so revisiting one is
+//! instant and editing it on disk shows the new content.
+//!
+//! What is kept is the list of folders themselves, in `folders.json` beside the
+//! token: a reader who opened three repositories finds the same three in the
+//! sidebar after the daemon restarts, an upgrade included. Closing one from the
+//! sidebar is what takes it out; a folder that is gone from disk when the
+//! daemon comes up is dropped then.
 
 use crate::render::{self, Renderer};
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, RwLock};
@@ -22,7 +28,7 @@ const FIND_TTL: Duration = Duration::from_secs(20);
 /// recently rendered or listed, which is what a reader has on screen.
 const WATCH_CAP: usize = 32;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Root {
     pub id: String,
     pub name: String,
@@ -68,9 +74,15 @@ pub struct Watched {
 pub struct Browser {
     roots: RwLock<HashMap<String, Root>>,
     cache: Mutex<Vec<(String, String)>>,
+    /// The rail's outline of a file, under the same key as its HTML. Parsing
+    /// a long file for its declarations is the grammar's whole pass again --
+    /// 1.9 s at 700 KB -- and the file has not changed since the last time.
+    outlines: Mutex<Vec<(String, Vec<render::Outline>)>>,
     index: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Per root, most recent first.
     recent: Mutex<HashMap<String, Vec<Watched>>>,
+    /// Where the list of open folders is kept between runs. None in tests.
+    file: Option<PathBuf>,
 }
 
 impl Browser {
@@ -78,8 +90,64 @@ impl Browser {
         Browser {
             roots: RwLock::new(HashMap::new()),
             cache: Mutex::new(Vec::new()),
+            outlines: Mutex::new(Vec::new()),
             index: Mutex::new(HashMap::new()),
             recent: Mutex::new(HashMap::new()),
+            file: None,
+        }
+    }
+
+    /// A browser that remembers its folders in `file`, starting with whatever
+    /// a previous run left there.
+    ///
+    /// Each remembered path is opened again the way a fresh one is, so a folder
+    /// renamed or removed since is not a dead row in the sidebar: it is left
+    /// out, and the file is rewritten without it. The original `opened_at` is
+    /// kept so the sidebar's order does not shuffle on every restart.
+    pub fn load(file: PathBuf) -> Browser {
+        let mut b = Browser::new();
+        let remembered: Vec<Root> = std::fs::read_to_string(&file)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        b.file = Some(file);
+        let remembered_n = remembered.len();
+        let mut roots = HashMap::new();
+        for r in remembered {
+            let path = match Path::new(&r.path).canonicalize() {
+                Ok(p) if p.is_dir() => p,
+                _ => continue,
+            };
+            let key = path.to_string_lossy().to_string();
+            let id = blake3::hash(key.as_bytes()).to_hex()[..8].to_string();
+            roots.entry(id.clone()).or_insert(Root {
+                id,
+                name: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| key.clone()),
+                path: key,
+                opened_at: r.opened_at,
+            });
+        }
+        let dropped = roots.len() < remembered_n;
+        *b.roots.write().unwrap() = roots;
+        if dropped {
+            b.save();
+        }
+        b
+    }
+
+    /// Write the open folders down, if this browser keeps them anywhere.
+    /// Best effort: a folder that cannot be remembered is still open.
+    fn save(&self) {
+        let Some(file) = &self.file else { return };
+        let roots = self.list();
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(json) = serde_json::to_string(&roots) {
+            let _ = std::fs::write(file, json);
         }
     }
 
@@ -108,6 +176,7 @@ impl Browser {
             .write()
             .unwrap()
             .insert(root.id.clone(), root.clone());
+        self.save();
         Ok(root)
     }
 
@@ -118,7 +187,15 @@ impl Browser {
             .lock()
             .unwrap()
             .retain(|(k, _)| !k.starts_with(id));
-        self.roots.write().unwrap().remove(id).is_some()
+        self.outlines
+            .lock()
+            .unwrap()
+            .retain(|(k, _)| !k.starts_with(id));
+        let gone = self.roots.write().unwrap().remove(id).is_some();
+        if gone {
+            self.save();
+        }
+        gone
     }
 
     pub fn list(&self) -> Vec<Root> {
@@ -195,6 +272,50 @@ impl Browser {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         Ok(out)
+    }
+
+    /// The declarations in a file, for the rail: empty for anything that is not
+    /// code. Cached like `file`, by path plus modification time and size.
+    pub fn outline(
+        &self,
+        id: &str,
+        rel: &str,
+        renderer: &Renderer,
+    ) -> Result<Vec<render::Outline>> {
+        let path = self.resolve(id, rel)?;
+        let meta = std::fs::metadata(&path)?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let key = format!("{id}\u{0}{rel}\u{0}{modified}\u{0}{}", meta.len());
+        if let Some(hit) = self
+            .outlines
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| *k == key)
+        {
+            return Ok(hit.1.clone());
+        }
+        let bytes = std::fs::read(&path)?;
+        let items = if render::looks_binary(&bytes) {
+            vec![]
+        } else {
+            let text = String::from_utf8_lossy(&bytes);
+            match renderer.detect(Some(&path.to_string_lossy()), None, &text) {
+                (render::Kind::Code, lang) => renderer.outline(lang.as_deref(), &text),
+                _ => vec![],
+            }
+        };
+        let mut cache = self.outlines.lock().unwrap();
+        if cache.len() >= CACHE_ENTRIES {
+            cache.remove(0);
+        }
+        cache.push((key, items.clone()));
+        Ok(items)
     }
 
     /// Render a file. Cached by path plus modification time, so an edit invalidates it.
@@ -285,7 +406,8 @@ impl Browser {
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let (kind, lang) = renderer.detect(Some(&path.to_string_lossy()), None, &text);
         // A browsed file keeps its own H1; there is no separate title to duplicate.
-        let html = renderer.render(kind, lang.as_deref(), &text);
+        // Cut before it is cached, so a revisit is not cut again.
+        let html = render::chunk_code(&renderer.render(kind, lang.as_deref(), &text)).into_owned();
 
         let mut cache = self.cache.lock().unwrap();
         if cache.len() >= CACHE_ENTRIES {
@@ -441,6 +563,47 @@ mod tests {
         // No null byte in the header, so only the extension marks it as a PDF.
         std::fs::write(d.path.join("paper.pdf"), b"%PDF-1.4\n1 0 obj\n").unwrap();
         (Browser::new(), d)
+    }
+
+    #[test]
+    fn remembers_open_folders_across_a_restart() {
+        let (_, d) = fixture();
+        let file = d.path.join("folders.json");
+        let gone = d.path.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+
+        // A first daemon opens two folders and stops.
+        let first = Browser::load(file.clone());
+        let src = first.open(&d.path.join("src")).unwrap();
+        let g = first.open(&gone).unwrap();
+        assert!(file.exists(), "opening a folder writes it down");
+        drop(first);
+
+        // One of them is removed from disk in the meantime.
+        std::fs::remove_dir(&gone).unwrap();
+
+        // The next daemon has the one that is still there, under the same id,
+        // and has already forgotten the other.
+        let second = Browser::load(file.clone());
+        let ids: Vec<String> = second.list().into_iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![src.id.clone()], "kept: {ids:?}");
+        assert_eq!(second.get(&src.id).unwrap().opened_at, src.opened_at);
+        assert!(second.get(&g.id).is_none());
+        let on_disk: Vec<Root> =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(on_disk.len(), 1, "the missing folder is written out too");
+
+        // Closing is what forgets a folder on purpose.
+        assert!(second.close(&src.id));
+        let on_disk: Vec<Root> =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(on_disk.is_empty());
+        assert!(Browser::load(file).list().is_empty());
+
+        // A browser with nowhere to write remembers nothing and writes nothing.
+        let plain = Browser::new();
+        plain.open(&d.path.join("src")).unwrap();
+        assert!(!d.path.join("src").join("folders.json").exists());
     }
 
     #[test]

@@ -490,8 +490,11 @@ export async function setTheme(want) {
     }).join("|");
   const before = signature();
   const btn = document.querySelector("#btn-theme");
-  for (let i = 0; i < 4 && document.documentElement.dataset.theme !== want; i++) btn.click();
-  if (document.documentElement.dataset.theme !== want) return { ok: false, why: `the theme never became ${want}` };
+  // The theme drawn, not the one stored: a click that lands on the system's
+  // own theme stores none and follows the system.
+  const shown = () => document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  for (let i = 0; i < 4 && shown() !== want; i++) btn.click();
+  if (shown() !== want) return { ok: false, why: `the theme never became ${want}` };
   const drew = await until(() => signature() !== before && !document.querySelector('.mmd[data-state="queued"], .mmd[data-state="rendering"]'));
   return { ok: drew, before, after: signature(),
     why: drew ? `every drawn diagram was redrawn in ${want}`

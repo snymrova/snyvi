@@ -1,4 +1,4 @@
-/* Runs before first paint: apply the saved theme, font and pane state so nothing flashes. */
+/* Runs before first paint: apply the saved theme, accent, font and pane state so nothing flashes. */
 try {
   /* After a reset, nothing saved is read: the page that reset dropped the
      keys, but was still running as it left and may have written one back. */
@@ -8,6 +8,8 @@ try {
   }
   var d = document.documentElement, t = localStorage.getItem("snyvi.theme");
   if (t) d.dataset.theme = t;
+  var ac = localStorage.getItem("snyvi.accent");
+  if (ac) d.dataset.accent = ac;
   var f = localStorage.getItem("snyvi.font");
   if (f) d.dataset.font = f;
   if (localStorage.getItem("snyvi.side") === "0") d.dataset.side = "0";

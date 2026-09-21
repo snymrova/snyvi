@@ -236,6 +236,7 @@ fn reset_on_disk(paths: &Paths) -> Result<()> {
     }
     gone(&paths.token_path)?;
     gone(&paths.config_dir.join("sessions.json"))?;
+    gone(&paths.config_dir.join("folders.json"))?;
     for dir in [&paths.data_dir, &paths.config_dir] {
         let _ = std::fs::remove_dir(dir); // only if empty, which is the point
     }

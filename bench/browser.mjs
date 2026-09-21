@@ -91,6 +91,17 @@ async function main() {
     // change that is only fast on a fast machine still shows up.
     const throttle = Number(process.env.SNYVI_BENCH_CPU || 1);
     if (throttle > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle }, sessionId);
+    /* And pin the palette, for the same reason and a sharper one. A page with
+     * no stored theme follows the system, and this browser's answer is the
+     * desktop's: dark on this machine, light on a hosted runner. That made two
+     * rows mean different things in different places -- the legibility pass
+     * labelled "light" measured whatever the machine preferred, and the toggle
+     * below went dark, light, dark on a dark box and so landed on the colours
+     * it started in, which reads as a diagram that was never redrawn. Neither
+     * is about snyvi. Light is the start, so "light" is light everywhere and
+     * the toggle has somewhere to go. */
+    await cdp.send("Emulation.setEmulatedMedia",
+      { features: [{ name: "prefers-color-scheme", value: "light" }] }, sessionId);
 
     const loaded = pageLoad(cdp, sessionId, "the document");
     await cdp.send("Page.navigate", { url }, sessionId);

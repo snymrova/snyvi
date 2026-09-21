@@ -37,16 +37,19 @@ pub const BUILD_SHA: &str = env!("SNYVI_GIT_SHA");
 pub const BUILD_TARGET: &str = env!("SNYVI_TARGET");
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
-const APP_CSS: &str = include_str!("../ui/app.css");
-const APP_JS: &str = include_str!("../ui/app.js");
-const BOOT_JS: &str = include_str!("../ui/boot.js");
+const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
+const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
+const BOOT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/boot.js"));
 /// The diagram driver, imported by app.js with the first diagram and never on a
 /// page without one. A module, so it is fetched rather than linked.
-const MMD_JS: &str = include_str!("../ui/mmd.js");
+const MMD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/mmd.js"));
 /// The desk view: the pane grid, the painter, the keys. Loaded when a desk is
 /// opened and not before, like the diagram driver -- a reader who never opens a
 /// desk pays nothing for it.
-const DESK_JS: &str = include_str!("../ui/desk.js");
+const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
+/// The window's frame -- the bar's three buttons and what drags -- fetched
+/// only inside the native window, since a tab has no window to frame.
+const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -70,6 +73,24 @@ const FONTS: &[(&str, &[u8])] = &[
         "source-serif-italic.woff2",
         include_bytes!("../ui/fonts/source-serif-italic.woff2"),
     ),
+    // Literata and Atkinson Hyperlegible Next (both OFL), latin cuts: two
+    // more reading faces for the Aa button. Fetched only when chosen.
+    (
+        "literata.woff2",
+        include_bytes!("../ui/fonts/literata.woff2"),
+    ),
+    (
+        "literata-italic.woff2",
+        include_bytes!("../ui/fonts/literata-italic.woff2"),
+    ),
+    (
+        "atkinson.woff2",
+        include_bytes!("../ui/fonts/atkinson.woff2"),
+    ),
+    (
+        "atkinson-italic.woff2",
+        include_bytes!("../ui/fonts/atkinson-italic.woff2"),
+    ),
     // Nerd Fonts' symbols (MIT, `symbols-nerd.LICENSE`), cut to the private
     // use area: the icons a prompt draws in a pane. Fetched only when a pane
     // shows one -- the face's `unicode-range` in ui/desk.js.
@@ -83,9 +104,13 @@ const FONTS: &[(&str, &[u8])] = &[
 ///
 /// The shipped daemon serves the five text assets `include_str!` compiled into
 /// it, which is why a stylesheet change costs a rebuild: the bytes are in the
-/// binary. `SNYVI_UI_DIR` points at a working tree's `ui/` instead, and every
-/// request reads the file off disk. That is the whole dev loop -- a saved
-/// stylesheet becomes a reload, and with the watcher below, not even that.
+/// binary. They are the files in `ui/` with their comments and indentation
+/// taken out -- `build.rs` runs each through `crate::strip` on the way in, so
+/// the wire carries what a browser reads and the source keeps its prose.
+/// `SNYVI_UI_DIR` points at a working tree's `ui/` instead, and every request
+/// reads the file off disk, as written, comments and all: the dev loop is
+/// where a person reads them. That is the whole dev loop -- a saved stylesheet
+/// becomes a reload, and with the watcher below, not even that.
 ///
 /// Dev only, and it says so: the variable has to be set deliberately, an unset
 /// or unreadable one falls back to the compiled-in copy rather than failing,
@@ -135,6 +160,7 @@ impl Ui {
             ("boot.js", BOOT_JS),
             ("mmd.js", MMD_JS),
             ("desk.js", DESK_JS),
+            ("frame.js", FRAME_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -195,6 +221,8 @@ pub struct App {
     /// The panes that have been woken since this daemon started: their
     /// screens, and their processes while they run. See `crate::pane`.
     pub panes: Arc<crate::pane::Panes>,
+    /// The last few lines agents left beside the work. See `crate::note`.
+    pub notes: crate::note::Notes,
 }
 
 impl App {
@@ -248,6 +276,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(APP_CSS.as_bytes());
         h.update(APP_JS.as_bytes());
         h.update(DESK_JS.as_bytes());
+        h.update(FRAME_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -256,7 +285,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let app = Arc::new(App {
         store,
         renderer,
-        browse: Browser::new(),
+        browse: Browser::load(paths.config_dir.join("folders.json")),
         paths: paths.clone(),
         token: std::sync::RwLock::new(token),
         events: tx,
@@ -270,6 +299,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
+        notes: Default::default(),
     });
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
@@ -312,11 +342,14 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/workflows/{id}/rename", post(rename_workflow))
         .route("/api/docs/{id}/split", get(doc_split))
         .route("/api/docs/{id}/outline", get(doc_outline))
+        .route("/api/notes", get(notes).post(receive_note))
+        .route("/api/notes/seen", post(see_notes))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/terminal", post(terminal))
         .route("/api/browse", get(browse_list).post(browse_open))
+        .route("/api/browse/pick", post(browse_pick))
         .route("/api/browse/{id}/close", post(browse_close))
         .route("/api/browse/{id}/tree", get(browse_tree))
         .route("/api/browse/{id}/file", get(browse_file))
@@ -335,6 +368,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/desks/{id}/layout", post(desk_layout))
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
+        .route("/api/desks/{id}/docs", get(desk_docs))
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
@@ -345,6 +379,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
         .route("/assets/desk.js", get(asset_desk))
+        .route("/assets/frame.js", get(asset_frame))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -454,6 +489,8 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
         o.insert("waiting".into(), json!(waiting(app)));
         // Who is here, for the count beside the brand mark on the first paint.
         o.insert("online".into(), app.online());
+        // The note showing at the foot of the sidebar, and the trail under it.
+        o.insert("notes".into(), json!(app.notes.list()));
     }
     let page = app
         .ui
@@ -507,7 +544,7 @@ fn doc_html(doc: &Doc, body: &str) -> String {
         e(&doc.title),
         sub,
         doc.kind.as_str(),
-        body
+        render::chunk_code(body)
     )
 }
 
@@ -643,6 +680,15 @@ async fn asset_desk(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "desk.js",
         DESK_JS,
+    )
+}
+/// The window's frame, on the same terms: a tab never asks for it.
+async fn asset_frame(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "frame.js",
+        FRAME_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -944,16 +990,25 @@ async fn doc_outline(State(app): S, Path(id): Path<String>) -> Response {
     if doc.kind != crate::render::Kind::Code {
         return Json(Vec::<crate::render::Outline>::new()).into_response();
     }
-    let Ok(src) = app.store.source(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
+    if let Some(json) = app.store.outline(&id) {
+        return ([(header::CONTENT_TYPE, "application/json")], json).into_response();
+    }
     let app2 = app.clone();
-    match tokio::task::spawn_blocking(move || app2.renderer.outline(doc.lang.as_deref(), &src))
-        .await
-    {
-        Ok(items) => Json(items).into_response(),
+    match tokio::task::spawn_blocking(move || outline_of(&app2, &id, doc.lang.as_deref())).await {
+        Ok(Some(json)) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(anyhow::anyhow!(e)),
     }
+}
+
+/// A stored code document's outline, worked out and kept beside its HTML. A
+/// document does not change, so this runs once: on arrival, in the background,
+/// or on the first open of one that came before outlines were kept.
+fn outline_of(app: &App, id: &str, lang: Option<&str>) -> Option<String> {
+    let src = app.store.source(id).ok()?;
+    let json = serde_json::to_string(&app.renderer.outline(lang, &src)).ok()?;
+    let _ = app.store.set_outline(id, &json);
+    Some(json)
 }
 
 async fn history(State(app): S, Path(id): Path<String>) -> Response {
@@ -1111,6 +1166,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         app.browse.close(&root.id);
     }
     let _ = std::fs::remove_file(app.paths.config_dir.join("sessions.json"));
+    let _ = std::fs::remove_file(app.paths.config_dir.join("folders.json"));
     match config::rotate_token(&app.paths) {
         Ok(t) => *app.token.write().unwrap() = t,
         Err(e) => return err(e),
@@ -1451,6 +1507,11 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             if received.needs_full_highlight {
                 spawn_full_highlight(app.clone(), doc.id.clone(), doc.lang.clone());
             }
+            // The rail's outline, ready before the reader opens it.
+            if doc.kind == crate::render::Kind::Code {
+                let (app2, id, lang) = (app.clone(), doc.id.clone(), doc.lang.clone());
+                tokio::task::spawn_blocking(move || outline_of(&app2, &id, lang.as_deref()));
+            }
             let status = if received.existing {
                 StatusCode::OK
             } else {
@@ -1482,6 +1543,49 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             .into_response(),
         Err(e) => err(anyhow::anyhow!(e)),
     }
+}
+
+/// A note from an agent: kept, and shown to every page at once. Never a
+/// desktop notification -- a note that could be missed costs nothing.
+async fn receive_note(
+    State(app): S,
+    headers: HeaderMap,
+    Json(n): Json<crate::note::NewNote>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
+    }
+    match app.notes.add(n, crate::store::now()) {
+        Ok(note) => {
+            emit(&app, "notes", json!({ "notes": app.notes.list() }));
+            (
+                StatusCode::CREATED,
+                Json(json!({ "note": note, "window": app.has_window() })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn notes(State(app): S) -> Json<serde_json::Value> {
+    Json(json!({ "notes": app.notes.list() }))
+}
+
+/// A reader looked: the glow goes out in every page.
+async fn see_notes(State(app): S) -> Json<serde_json::Value> {
+    if app.notes.see() {
+        emit(&app, "notes", json!({ "notes": app.notes.list() }));
+    }
+    Json(json!({ "ok": true }))
 }
 
 /// Large code files are stored partly plain for an instant first view; finish the
@@ -2009,6 +2113,24 @@ async fn create_desk(
     }
 }
 
+/// The documents the panes on a desk have sent, for the rail's Documents
+/// list. Forty is more than a rail shows without scrolling and fewer than a
+/// long day of a file being watched produces; the library has the rest.
+async fn desk_docs(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.desk_docs(id, 40) {
+        Ok(docs) => Json(json!({ "docs": docs })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 async fn rename_desk(
     State(app): S,
     headers: HeaderMap,
@@ -2167,6 +2289,10 @@ struct StartBody {
     cols: u16,
     #[serde(default = "default_rows")]
     rows: u16,
+    /// The accent the window wears, `#rrggbb`, as its CSS resolved it. The
+    /// pane's prompt is drawn in it; absent means snyvi's own.
+    #[serde(default)]
+    accent: String,
 }
 fn default_cols() -> u16 {
     80
@@ -2203,6 +2329,7 @@ async fn start_pane(
         slot: placed.pane.slot,
         cols: b.cols,
         rows: b.rows,
+        accent: &b.accent,
     };
     match live.start(start, &app.panes) {
         Ok(status) => Json(json!({ "status": status })).into_response(),
@@ -2411,6 +2538,68 @@ async fn browse_open(State(app): S, headers: HeaderMap, Json(b): Json<OpenBody>)
     }
 }
 
+/// The sidebar's `+` beside Folders: the desktop's own folder dialog, and the
+/// folder it answers with opened for browsing.
+///
+/// Behind the same gate as the desks, because it is the same kind of act: a
+/// page reaching the filesystem. The page names nothing -- it asks, and the
+/// path comes from the reader's hand in a dialog the desktop draws. A browser
+/// tab is refused before a dialog is shown, and one dialog is open at a time,
+/// so a page cannot stack them on the reader's screen.
+async fn browse_pick(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    static PICKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if PICKING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "a folder dialog is already open" })),
+        )
+            .into_response();
+    }
+    // Cleared by dropping, not by the line after the await: a reader who closes
+    // the window while the dialog is up drops this handler's future where it
+    // waits, and a flag cleared below that line would stay true for the life of
+    // the daemon -- one abandoned dialog and the `+` never works again.
+    struct Done;
+    impl Drop for Done {
+        fn drop(&mut self) {
+            PICKING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _done = Done;
+    let picked = tokio::task::spawn_blocking(crate::platform::pick_folder).await;
+    match picked {
+        Ok(Ok(Some(dir))) => match app.browse.open(&dir) {
+            Ok(root) => {
+                let url = format!("{}/b/{}", config::base_url(), root.id);
+                emit(&app, "browse", json!({ "roots": app.browse.list() }));
+                (
+                    StatusCode::CREATED,
+                    Json(json!({ "root": root, "url": url })),
+                )
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        // Closed without a choice: nothing to say, and nothing opened.
+        Ok(Ok(None)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(why)) => {
+            (StatusCode::NOT_IMPLEMENTED, Json(json!({ "error": why }))).into_response()
+        }
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
 async fn browse_list(State(app): S) -> Response {
     Json(app.browse.list()).into_response()
 }
@@ -2519,22 +2708,10 @@ async fn browse_outline(State(app): S, Path(id): Path<String>, Query(q): Query<P
     let Ok(path) = app.browse.resolve(&id, &rel) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    drop(path);
     let app2 = app.clone();
-    let res = tokio::task::spawn_blocking(move || {
-        let bytes = std::fs::read(&path).ok()?;
-        if crate::render::looks_binary(&bytes) {
-            return None;
-        }
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let (kind, lang) = app2
-            .renderer
-            .detect(Some(&path.to_string_lossy()), None, &text);
-        if kind != crate::render::Kind::Code {
-            return None;
-        }
-        Some(app2.renderer.outline(lang.as_deref(), &text))
-    })
-    .await;
+    let res =
+        tokio::task::spawn_blocking(move || app2.browse.outline(&id, &rel, &app2.renderer)).await;
     match res {
         Ok(items) => Json(items.unwrap_or_default()).into_response(),
         Err(e) => err(anyhow::anyhow!(e)),
@@ -2815,9 +2992,11 @@ mod tests {
         for handler in [
             "async fn desks(",
             "async fn create_desk(",
+            "async fn browse_pick(",
             "async fn rename_desk(",
             "async fn desk_layout(",
             "async fn delete_desk(",
+            "async fn desk_docs(",
             "async fn open_pane(",
             "async fn close_pane(",
             "async fn start_pane(",
@@ -2836,14 +3015,23 @@ mod tests {
             let store = body.find("app.store").unwrap_or(usize::MAX);
             assert!(gate < store, "{handler} reaches the store before the gate");
         }
+        // The folder dialog is a page reaching the filesystem, the same as a
+        // desk: no dialog is shown to a page that has not passed the gate.
+        let pick = &src[src.find("async fn browse_pick(").unwrap()..];
+        assert!(
+            pick.find("refuse_desk").unwrap() < pick.find("pick_folder").unwrap(),
+            "browse_pick shows a dialog before the gate"
+        );
         // And the routes themselves: every path a desk is reached by is one of
         // the handlers above.
         for route in [
             r#".route("/api/desks", get(desks).post(create_desk))"#,
+            r#".route("/api/browse/pick", post(browse_pick))"#,
             r#".route("/api/desks/{id}/rename", post(rename_desk))"#,
             r#".route("/api/desks/{id}/layout", post(desk_layout))"#,
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
+            r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
             r#".route("/api/panes/{id}/start", post(start_pane))"#,
             r#".route("/api/panes/{id}/stop", post(stop_pane))"#,

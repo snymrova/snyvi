@@ -61,6 +61,7 @@ function prelude() {
     },
     center(s) {
       const el = q(s);
+      if (!el) throw new Error(`nothing on the page matches ${s}`);
       el.scrollIntoView({ block: "nearest", behavior: "instant" });
       const r = el.getBoundingClientRect();
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
@@ -299,6 +300,12 @@ class Driver {
     await sleep(200);
   }
   async clickOn(selector) { const at = await this.ui("center", selector); await this.click(at.x, at.y); }
+  /** Rest the pointer on something, for what only opens under one. */
+  async hoverOn(selector) {
+    const at = await this.ui("center", selector);
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, this.s);
+    await sleep(200);
+  }
   async dblclick(x, y) {
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s);
     for (const clickCount of [1, 2]) {
@@ -610,6 +617,11 @@ async function keyboardRows(p, url) {
   const helpStill = await p.ui("focus");
   await p.press("Escape");
   const helpBack = await p.ui("focus");
+  // The keys button stands in the column that grows out of the light/dark
+  // switch, which is up only while a pointer rests there; a click at its
+  // coordinates with the pointer parked elsewhere lands on whatever the
+  // closed column is floating over.
+  await p.hoverOn(".foot-set");
   await p.clickOn("#btn-help");
   const byClick = await p.ui("vis", "#help");
   await p.clickOn("#help-close");
@@ -1320,9 +1332,10 @@ async function connectRows(p, url, home, env) {
   rows.push(["a row turns as its file does", stale && fixShown && connected && kept,
     !stale ? `Cursor stayed "${await stateOf("cursor")}" after its file named a path that is gone` : !fixShown ? "the fix is not the init command" : !connected ? "init cursor ran and the row did not turn" : !kept ? "the other server in the file was lost" : `needs fixing — "${says}" — then connected, the other entry kept`]);
 
-  await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
-  const copied = await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy').textContent === "Copied"`, 10);
-  rows.push(["Copy says it copied", copied, copied ? "the button reads Copied for a moment" : "the button did not change"]);
+  const copyThere = await p.ui("vis", '.agent[data-agent="codex"] .agent-fix .copy');
+  if (copyThere) await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
+  const copied = copyThere && await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy')?.textContent === "Copied"`, 10);
+  rows.push(["Copy says it copied", copied, copied ? "the button reads Copied for a moment" : !copyThere ? `no Copy button in codex's fix line, on ${await p.ev("location.pathname")}` : "the button did not change"]);
 
   await p.press("ArrowLeft", { alt: true });
   const back = await until(`location.pathname !== "/connect" && !!document.querySelector(".prose")`);

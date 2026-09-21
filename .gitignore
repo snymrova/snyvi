@@ -18,3 +18,6 @@
 # The film is set in the page's own two faces; capture.mjs copies them out
 # of ui/fonts so the film cannot drift from the product it is about.
 /film/fonts
+
+# Python bytecode from bench/webkit.py
+__pycache__/
