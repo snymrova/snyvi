@@ -1223,7 +1223,10 @@ pre.code .ln::before { cursor: pointer; }
 #palette-list .s { font-size: 12px; color: var(--fg-3); }
 #palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
-.help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 90vh; overflow-y: auto; }
+/* The overlay places the box 12vh down, so the cap leaves that and a little
+   below it: a box that outgrew the window would put its foot -- About,
+   Connect, Reset -- past the bottom edge, where no click can reach it. */
+.help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 84vh; overflow-y: auto; }
 .help-close { position: absolute; top: 12px; right: 12px; }
 .help-box h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-3); }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }

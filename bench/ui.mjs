@@ -61,6 +61,7 @@ function prelude() {
     },
     center(s) {
       const el = q(s);
+      if (!el) throw new Error(`nothing on the page matches ${s}`);
       el.scrollIntoView({ block: "nearest", behavior: "instant" });
       const r = el.getBoundingClientRect();
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
@@ -1331,9 +1332,10 @@ async function connectRows(p, url, home, env) {
   rows.push(["a row turns as its file does", stale && fixShown && connected && kept,
     !stale ? `Cursor stayed "${await stateOf("cursor")}" after its file named a path that is gone` : !fixShown ? "the fix is not the init command" : !connected ? "init cursor ran and the row did not turn" : !kept ? "the other server in the file was lost" : `needs fixing — "${says}" — then connected, the other entry kept`]);
 
-  await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
-  const copied = await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy').textContent === "Copied"`, 10);
-  rows.push(["Copy says it copied", copied, copied ? "the button reads Copied for a moment" : "the button did not change"]);
+  const copyThere = await p.ui("vis", '.agent[data-agent="codex"] .agent-fix .copy');
+  if (copyThere) await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
+  const copied = copyThere && await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy')?.textContent === "Copied"`, 10);
+  rows.push(["Copy says it copied", copied, copied ? "the button reads Copied for a moment" : !copyThere ? `no Copy button in codex's fix line, on ${await p.ev("location.pathname")}` : "the button did not change"]);
 
   await p.press("ArrowLeft", { alt: true });
   const back = await until(`location.pathname !== "/connect" && !!document.querySelector(".prose")`);
