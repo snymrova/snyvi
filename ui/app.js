@@ -2318,31 +2318,12 @@
   })();
 
   // ---------- the window's frame ----------
-  /* The native window has no title bar: the page is the frame. The header
-   * rows carry data-tauri-drag-region, which the window's own script answers
-   * (a drag moves the window, a double-click maximises it), and the three
-   * buttons in #chrome do what the bar's did. Shown only once the window says
-   * the page may: a browser tab has no window to ask, and a window older than
-   * this page refuses and keeps its own bar. Not on macOS, where the traffic
-   * lights stay the system's and the page only leaves them room. */
-  {
-    const tauri = window.__TAURI_INTERNALS__;
-    const win = (cmd) => tauri.invoke("plugin:window|" + cmd);
-    if (tauri) win("is_maximized").then(max => {
-      const mac = /^Mac/.test(navigator.platform);
-      root.dataset.frame = mac ? "mac" : "page";
-      if (mac) return;
-      const el = $("#win"), wb = w => el.querySelector(`[data-win=${w}]`), btn = wb("max");
-      const show = m => { el.dataset.max = m ? "1" : "0"; btn.title = m ? "Restore" : "Maximise"; btn.setAttribute("aria-label", m ? "Restore window" : "Maximise window"); };
-      const refresh = () => win("is_maximized").then(show, () => {});
-      show(max);
-      el.hidden = false;
-      wb("min").addEventListener("click", () => win("minimize"));
-      btn.addEventListener("click", () => win("toggle_maximize").then(refresh));
-      wb("close").addEventListener("click", () => win("close"));
-      window.addEventListener("resize", refresh);
-    }, () => {});
-  }
+  /* In the native window the page is the frame: no title bar, the header rows
+   * drag, and the page draws the bar's three buttons. That is ui/frame.js,
+   * fetched only where there is a window to ask, so a tab never carries it.
+   * The chunk asks the window whether the page may -- an older window refuses
+   * and keeps its own bar -- and draws nothing until it says yes. */
+  if (window.__TAURI_INTERNALS__) import(`/assets/frame.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => m.frame(root, $), () => {});
 
   // ---------- desks ----------
   /* A desk is a folder and up to four panes, and it exists only in the

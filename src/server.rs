@@ -47,6 +47,9 @@ const MMD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/mmd.js"));
 /// opened and not before, like the diagram driver -- a reader who never opens a
 /// desk pays nothing for it.
 const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
+/// The window's frame -- the bar's three buttons and what drags -- fetched
+/// only inside the native window, since a tab has no window to frame.
+const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -157,6 +160,7 @@ impl Ui {
             ("boot.js", BOOT_JS),
             ("mmd.js", MMD_JS),
             ("desk.js", DESK_JS),
+            ("frame.js", FRAME_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -272,6 +276,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(APP_CSS.as_bytes());
         h.update(APP_JS.as_bytes());
         h.update(DESK_JS.as_bytes());
+        h.update(FRAME_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -374,6 +379,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
         .route("/assets/desk.js", get(asset_desk))
+        .route("/assets/frame.js", get(asset_frame))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -674,6 +680,15 @@ async fn asset_desk(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "desk.js",
         DESK_JS,
+    )
+}
+/// The window's frame, on the same terms: a tab never asks for it.
+async fn asset_frame(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "frame.js",
+        FRAME_JS,
     )
 }
 async fn asset_mermaid() -> Response {

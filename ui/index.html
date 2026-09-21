@@ -56,12 +56,6 @@
         <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
           <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
         </button>
-        <!-- The title bar's three buttons, drawn by the page: the native window has no bar of its own. app.js shows them once the window says the page may. -->
-        <div class="win" id="win" hidden>
-          <button class="wb" data-win="min" title="Minimise" aria-label="Minimise window"><svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1.5 6.5h9"/></svg></button>
-          <button class="wb" data-win="max" title="Maximise" aria-label="Maximise window"><svg class="wb-max" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="1.5" width="9" height="9" rx="1.2"/></svg><svg class="wb-restore" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8.5"/><rect x="1.5" y="3.5" width="7" height="7" rx="1"/></svg></button>
-          <button class="wb wb-close" data-win="close" title="Close" aria-label="Close window"><svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
-        </div>
       </div>
     </div>
     <div id="queue-bar" hidden role="status" aria-live="polite"></div>
@@ -110,15 +104,6 @@
       <dt>alt ← / →</dt><dd>back / forward</dd>
       <dt>esc</dt><dd>close</dd>
     </dl>
-    <h2>On a desk</h2>
-    <dl>
-      <dt>⌃`</dt><dd>the desk, or the reading view</dd>
-      <dt>⌃⌥1 – ⌃⌥4</dt><dd>focus a pane by its slot</dd>
-      <dt>⌃⌥Z</dt><dd>the focused pane alone, and back</dd>
-      <dt>ctrl shift C / V</dt><dd>copy the selection / paste</dd>
-      <dt>shift + wheel</dt><dd>scroll the pane's scrollback</dd>
-    </dl>
-    <p class="help-note">Every other key goes to the shell in the focused pane.</p>
     <div class="help-foot"><button class="text" id="btn-connect">Connect an agent…</button><button class="text" id="btn-about">About snyvi</button><button class="text" id="btn-reset">Reset snyvi…</button></div>
   </div>
 </div>

@@ -191,8 +191,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   #chrome #btn-rail { display: inline-flex; }
   #app:has(#rail.empty) #btn-rail { display: none; }
   #find { padding-right: 56px; }
-  :root[data-frame="page"][data-view="desk"] .dk-head { padding-right: 136px; }
-  :root[data-frame="page"] #find { padding-right: 156px; }
   #rail .gutter { display: none; }
 }
 @media (max-width: 760px)  {
@@ -215,27 +213,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-rail="0"] #chrome #btn-rail, :root[data-side="0"] #chrome #btn-side { display: inline-flex; }
 #app:has(#rail.empty) #btn-rail { display: none; }
 /* ---------- the window's frame ----------
-   In the native window the page is the frame: there is no title bar. The
-   header rows -- the sidebar's brand row, the rail's empty top, a desk's
-   header -- carry data-tauri-drag-region, which the window's own script
-   answers, and these are the bar's three buttons, at the window's top right
-   corner whatever the panes are doing. `data-frame` on the root is set by
-   app.js once the window has said the page may; a browser tab never has it.
-   On macOS the traffic lights stay the system's, over the brand row, and
-   the page only leaves them room. */
-.win { display: flex; gap: 2px; pointer-events: auto; }
-.win[hidden] { display: none; }
-.wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
-.wb:hover { background: var(--rule); color: var(--fg); }
-.wb-close:hover { background: #c0392b; color: #fff; }
-.win .wb-restore, .win[data-max="1"] .wb-max { display: none; }
-.win[data-max="1"] .wb-restore { display: block; }
+   In the native window the page is the frame, and ui/frame.js draws the
+   bar's three buttons and carries their rules: a tab never has a frame to
+   draw. Only the grip's rest state is here, so the rail's top is nothing
+   until that chunk says it is somewhere to drag. */
 .rail-grip { display: none; }
-:root[data-frame="page"] .rail-grip { display: block; position: absolute; top: 0; left: 0; right: 0; height: 60px; }
-/* Room for the buttons when the rail is not beside the desk header to hold
-   them: a desk with the rail folded, or with nothing in it. */
-:root[data-frame="page"][data-view="desk"][data-rail="0"] .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 100px; }
-:root[data-frame="mac"] .side-head { padding-left: 84px; }
 /* Pin each pane to its named area. Without this a hidden sidebar leaves the grid
    and the document pane slides into the zero-width first column. */
 #side { grid-area: side; }
@@ -1232,8 +1214,6 @@ pre.code .ln::before { cursor: pointer; }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 .help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }
 .help-box dd { margin: 0; }
-.help-box dl + h2 { margin-top: 20px; }
-.help-note { margin: 12px 0 0; font-size: 12.5px; color: var(--fg-3); }
 .help-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule); display: flex; justify-content: flex-end; gap: 4px; }
 button.text { font: inherit; font-size: 13px; color: var(--fg-2); background: transparent; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 button.text:hover { color: var(--fg); background: var(--bg-side); }
