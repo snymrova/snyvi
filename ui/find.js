@@ -30,6 +30,11 @@ export function open(deps) {
   $("#find").hidden = false;
   const input = $("#find-input");
   input.focus(); input.select();
+  // The caret lands before this chunk does, on purpose -- so a reader who types
+  // `/well` in one movement has "well" in the box before the listener above
+  // exists to hear it, and used to get a bar that sat there marking nothing
+  // until they touched another key. What is already typed is already a query.
+  if (input.value) run(input.value);
 }
 
 function wire() {
