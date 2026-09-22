@@ -982,6 +982,34 @@ impl Store {
         desk::panes_open(&self.conn.lock().unwrap())
     }
 
+    /// A desk's own list. Thin, for the reason the desk calls above are: the
+    /// SQL is `crate::desk`'s and the lock is this file's.
+    pub fn desk_notes(&self, desk_id: i64) -> Result<Vec<desk::DeskNote>> {
+        desk::notes(&self.conn.lock().unwrap(), desk_id)
+    }
+
+    pub fn add_desk_note(&self, desk_id: i64, text: &str) -> Result<Option<desk::DeskNote>> {
+        desk::add_note(&mut self.conn.lock().unwrap(), desk_id, text, now())
+    }
+
+    pub fn set_desk_note(
+        &self,
+        desk_id: i64,
+        id: i64,
+        text: Option<&str>,
+        done: Option<bool>,
+    ) -> Result<bool> {
+        desk::set_note(&self.conn.lock().unwrap(), desk_id, id, text, done, now())
+    }
+
+    pub fn remove_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
+        desk::remove_note(&self.conn.lock().unwrap(), desk_id, id, now())
+    }
+
+    pub fn restore_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
+        desk::restore_note(&self.conn.lock().unwrap(), desk_id, id)
+    }
+
     /// What a reset would take, in the numbers the sentence says and the
     /// reader types back: the documents that can be seen, the projects they
     /// are in, how many of them are pinned, and the desks that go with them. A document already deleted is

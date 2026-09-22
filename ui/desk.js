@@ -34,6 +34,22 @@ let docList = [], docsAt = null;
  *  the rest opens the whole list, for this desk, until it is left. */
 const DOCS_SHOWN = 8;
 let docsAll = false;
+/** The reader's own list for this desk, and which desk it belongs to. Not
+ *  `crate::note`'s kind: those are an agent's sentences and the daemon forgets
+ *  them. These are written here, ticked here, and kept in the database. */
+let noteList = [], notesAt = null, notesGet = null;
+/** The field that is open on the list, while one is: a new line at the end, or
+ *  a line being rewritten in place. Held here rather than in the DOM because
+ *  the rail is redrawn whole -- by a pane's status, by the clock every 30s --
+ *  and a field that lived only in the page would be swept away mid-word. */
+let noteField = null, noteDraft = "", noteCaret = 0;
+/** True only while the rail's HTML is being replaced. An element losing the
+ *  focus that way is not a reader clicking away from it, and must not be read
+ *  as one: without this, every redraw committed whatever was half-typed. */
+let drawing = false;
+/** How long the offer to put a line back stands, matching the page's own undo. */
+const BACK_MS = 8000;
+let backTimer = 0;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -688,6 +704,7 @@ const ICO = {
   pen: '<path d="M11.2 2.8a1.5 1.5 0 0 1 2 2L6 12l-3 1 1-3z"/>',
   back: '<path d="M6.5 3L3 8l3.5 5M3 8h10"/>',
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/>',
+  tick: '<path d="M3.5 8.5l3 3 6-7"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
 /** The head's plus: drawn on the grid the page's own icon buttons use
@@ -701,14 +718,15 @@ const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" s
  *  is `data-sure` while armed, and the title says why. */
 const sure = (a, p, title, label, glyph) => `<button type="button" data-a="${a}"${p ? ` data-p="${p}"` : ""} data-sure="Close?" title="${title}" aria-label="${label}">${glyph}</button>`;
 
-/** Whether the reader folded the Documents list, remembered as the
- *  sidebar remembers its own folds. */
-const DOCS_FOLD = "snyvi.dk.fold-docs";
-const docsFolded = () => { try { return localStorage.getItem(DOCS_FOLD) === "1"; } catch { return false; } };
+/** Whether the reader folded one of the rail's sections, remembered as the
+ *  sidebar remembers its own folds -- and per section, so folding the list
+ *  away does not take the documents with it. `docs` keeps the key it had. */
+const FOLD = sec => `snyvi.dk.fold-${sec}`;
+const secFolded = sec => { try { return localStorage.getItem(FOLD(sec)) === "1"; } catch { return false; } };
 function folded(e) {
   const d = e.target;
-  if (!d.classList || !d.classList.contains("dk-sec")) return;
-  try { localStorage.setItem(DOCS_FOLD, d.open ? "0" : "1"); } catch {}
+  if (!d.classList || !d.classList.contains("dk-sec") || !d.dataset.sec) return;
+  try { localStorage.setItem(FOLD(d.dataset.sec), d.open ? "0" : "1"); } catch {}
 }
 
 function rail() {
@@ -739,6 +757,10 @@ function rail() {
       sure("close", v.id, "Close pane", `Close pane ${n}`, ico("x")) +
       `</span></li>`;
   };
+  // Replacing the rail takes the focus off whatever had it. A field open on
+  // the list has to know that is what happened, and not a reader clicking
+  // away, so the replacement says so while it is under way.
+  drawing = true;
   ctx.tocEl.innerHTML = `<div class="dk-rail">` +
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panes<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + `</ul>` +
@@ -746,7 +768,7 @@ function rail() {
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped pane again">Start all</button>` : "") + `</div>` +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded.
-    `<details class="dk-sec"${docsFolded() ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panes on this desk have sent, newest first">From the panes<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
+    `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panes on this desk have sent, newest first">From the panes<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. Under the cursor, the path it was sent
     // from, to copy -- the thing to hand back to the pane that sent it.
@@ -760,7 +782,9 @@ function rail() {
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
       : `<p class="dk-empty">Nothing yet. What an agent in a pane sends lands here.</p>`) +
-    `</details></div>`;
+    `</details>` + noteSec(d) + `</div>`;
+  drawing = false;
+  noteFocus();
   const v = views.get(focused), s = v ? v.status : null;
   const since = !s ? "" : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
   // The desk's own two actions sit on its name, under the cursor: renaming
@@ -772,6 +796,121 @@ function rail() {
     `<div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>` +
     (v ? `<div class="row"><b>Pane</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "");
   ctx.rail.classList.remove("empty");
+}
+
+/* ---------- the list ----------
+ *
+ * A desk's third section, under the documents: what this desk owes the reader,
+ * in their own words. A checklist rather than prose -- one line, a circle to
+ * tick, and the done half sinking to the bottom -- because the thing a rail is
+ * good for is the short list you glance at while the work is in front of you.
+ *
+ * Every action here is optimistic and then confirmed: the circle fills under
+ * the finger and the daemon is told afterwards, because a list that waits for
+ * a round trip before it ticks feels broken even on loopback. The daemon's
+ * answer is then read back, since it owns the order -- done lines sit in the
+ * order they were ticked, and this page does not try to guess that.
+ */
+
+/** The section, drawn from whatever this page holds. */
+function noteSec(d) {
+  const { esc } = ctx;
+  const mine = notesAt === d.id ? noteList : [];
+  // Asked for once per desk, from the draw that first needs it: the list is
+  // small and it is not worth a round trip on every arrival the way the
+  // documents are.
+  if (notesAt !== d.id) getNotes(d.id);
+  const left = mine.filter(x => !x.done && !x.gone).length;
+  const rows = mine.map(x => noteRow(x, esc)).join("");
+  return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
+    `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left}</span>` : ""}</summary>` +
+    (rows ? `<ul class="dk-list">${rows}</ul>`
+      : noteField ? "" : `<p class="dk-empty">Nothing on the list. What this desk owes you goes here.</p>`) +
+    (noteField && noteField.kind === "new"
+      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="What has to happen" aria-label="A new note on this desk" spellcheck="false"></div>`
+      : `<button type="button" class="dk-new" data-a="note-new">+ New note</button>`) +
+    `</details>`;
+}
+
+/** One line. A line being rewritten is a field in the row's own place, so the
+ *  text does not move under the cursor as it becomes editable; a line just
+ *  taken off keeps its place too, holding the offer to put it back where the
+ *  ✕ was rather than in a corner of the window. */
+function noteRow(x, esc) {
+  if (x.gone) {
+    return `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span>` +
+      `<button type="button" class="dk-undo" data-a="note-back" data-n="${x.id}">Undo</button></li>`;
+  }
+  if (noteField && noteField.kind === "edit" && noteField.id === x.id) {
+    return `<li class="dk-note${x.done ? " done" : ""}"><span class="dk-tick ghost" aria-hidden="true"></span>` +
+      `<input class="dk-note-in" aria-label="This note" spellcheck="false"></li>`;
+  }
+  return `<li class="dk-note${x.done ? " done" : ""}">` +
+    `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
+    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" title="Click to rewrite">${esc(x.text)}</button>` +
+    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" title="Take it off the list · nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></li>`;
+}
+
+/** Leaving a desk leaves its list with it: another desk's notes are another
+ *  desk's, and a field left open on this one must not reopen on that one. */
+function forgetNotes() {
+  clearTimeout(backTimer);
+  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0;
+}
+
+/** This desk's list. Asked for once, unless a write says to look again. */
+async function getNotes(id, again) {
+  if (id == null || !ctx) return;
+  if (!again && (notesAt === id || notesGet === id)) return;
+  notesGet = id;
+  let j;
+  try { j = await ctx.api(`/api/desks/${id}/notes`); } catch { notesGet = null; return; }
+  notesGet = null;
+  // The desk was swapped while this was in flight: its list is not this one's.
+  if (id !== deskId) return;
+  noteList = j.notes || []; notesAt = id;
+  if (current()) rail();
+}
+
+/** Put the open field back after a redraw, with what was typed into it and the
+ *  caret where the reader left it. */
+function noteFocus() {
+  const inp = ctx.tocEl.querySelector(".dk-note-in");
+  if (!inp) return;
+  inp.value = noteDraft;
+  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; });
+  // Where the caret was, not the end of the line: the rail redraws on the
+  // clock every 30 seconds, and a caret that jumped to the end each time
+  // would make a long note impossible to correct in the middle.
+  for (const e of ["keyup", "click"]) inp.addEventListener(e, () => { noteCaret = inp.selectionStart; });
+  inp.addEventListener("keydown", e => {
+    // The desk gives every other key to the shell in the focused panel.
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); saveNote(true); }
+    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; rail(); }
+  });
+  inp.addEventListener("blur", () => { if (!drawing) saveNote(false); });
+  inp.focus();
+  const at = Math.min(noteCaret, inp.value.length);
+  inp.setSelectionRange(at, at);
+}
+
+/** Keep what is in the field. `again` is Enter, which on a new line opens the
+ *  next one: a list is written in a run, not one visit per line. An emptied
+ *  line is taken off rather than kept blank, which is what the daemon does
+ *  with an empty rewrite. */
+async function saveNote(again) {
+  const f = noteField, text = noteDraft.trim(), d = current();
+  if (!f || !d) return;
+  noteField = again && f.kind === "new" ? { kind: "new" } : null;
+  noteDraft = ""; noteCaret = 0;
+  rail();
+  if (f.kind === "new" && !text) return;
+  try {
+    if (f.kind === "new") await ctx.api(`/api/desks/${d.id}/notes`, { text });
+    else await ctx.api(`/api/desks/${d.id}/notes/${f.id}`, { text });
+    await getNotes(d.id, true);
+  } catch (e) { ctx.toast("Could not keep that note", String(e)); }
 }
 
 /** The documents this desk's panes sent, for the rail. Fetched when the desk
@@ -819,6 +958,47 @@ async function act(b) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
+    // The list. Each of these draws first and tells the daemon after: on a
+    // list, the thing that has to feel instant is the tick.
+    else if (a === "note-new") { noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; rail(); }
+    else if (a === "note-edit") {
+      const x = noteList.find(y => y.id === +b.dataset.n);
+      if (x) { noteField = { kind: "edit", id: x.id }; noteDraft = x.text; noteCaret = x.text.length; rail(); }
+    } else if (a === "note-tick") {
+      const x = noteList.find(y => y.id === +b.dataset.n);
+      if (x) {
+        x.done = !x.done;
+        rail();
+        await ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done });
+        // The daemon owns the order -- a line just ticked goes to the end of
+        // the done half -- so the list is read back rather than guessed at.
+        await getNotes(d.id, true);
+      }
+    } else if (a === "note-x") {
+      const x = noteList.find(y => y.id === +b.dataset.n);
+      if (x) {
+        // Only the newest offer stands: two rows both saying Undo cannot both
+        // mean the last thing that happened.
+        clearTimeout(backTimer);
+        noteList = noteList.filter(y => y === x || !y.gone);
+        x.gone = true;
+        backTimer = setTimeout(() => {
+          noteList = noteList.filter(y => !y.gone);
+          if (current()) rail();
+        }, BACK_MS);
+        rail();
+        await ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {});
+      }
+    } else if (a === "note-back") {
+      const x = noteList.find(y => y.id === +b.dataset.n);
+      clearTimeout(backTimer);
+      if (x) {
+        delete x.gone;
+        rail();
+        await ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {});
+        await getNotes(d.id, true);
+      }
+    }
   } catch (e) { ctx.toast("Could not do that", String(e)); }
 }
 
@@ -924,7 +1104,7 @@ export function open(c) {
     g.textContent = drawn(cellW, LINE_PX);
     document.head.append(g);
   }
-  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; }
+  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; forgetNotes(); }
   deskId = c.id; reading = null;
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
@@ -971,6 +1151,7 @@ export function close() {
   views.clear();
   focused = null;
   docList = []; docsAt = null; docsAll = false;
+  forgetNotes();
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
@@ -1066,7 +1247,7 @@ const CSS = `
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
 .pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: 12.5px; }
 /* ---------- the rail ----------
- * Two lists and a label over each, drawn the way the sidebar draws its own
+ * Three lists and a label over each, drawn the way the sidebar draws its own
  * rows: a mark at the left, the name, and one fact at the right. */
 .dk-lab { display: flex; align-items: baseline; padding-left: 8px; }
 .dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
@@ -1084,7 +1265,7 @@ const CSS = `
 .dk-pane.on { background: var(--accent-bg); color: var(--accent); }
 .dk-focus { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; text-align: left; padding: 4px 8px; color: inherit; white-space: nowrap; overflow: hidden; }
 .dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; width: 0; overflow: hidden; }
-.dk-pane:hover .dk-tools, .dk-doc:hover .dk-tools, .dk-row:hover .dk-tools, .dk-tools:has(:focus-visible), .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
+.dk-pane:hover .dk-tools, .dk-doc:hover .dk-tools, .dk-note:hover .dk-tools, .dk-row:hover .dk-tools, .dk-tools:has(:focus-visible), .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
@@ -1147,4 +1328,44 @@ const CSS = `
 #meta .dk-row .dk-tools { line-height: 1; }
 .dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .dk-make:hover { background: var(--accent); color: var(--bg); }
+/* ---------- the list ----------
+ * A checklist, drawn on the same row grid as the panels and the documents
+ * above it, so the three read as one rail and not as three widgets. The
+ * circle is the one control that is always visible: it is the whole point of
+ * the row, and a tick that had to be hunted for under a hover would not be
+ * worth having. Everything else -- rewriting, taking it off -- waits for the
+ * cursor, as every other row in this app does.
+ *
+ * A line wraps rather than being cut. A pane's title is a name and a name that
+ * does not fit can be shortened; a note is a sentence, and half of it is not a
+ * smaller version of it. */
+.dk-sec + .dk-notes { margin-top: 16px; }
+.dk-note { display: flex; align-items: flex-start; gap: 6px; border-radius: 6px; transition: background var(--t); }
+.dk-note:hover { background: var(--rule); }
+.dk-note > .nm { flex: 1; min-width: 0; text-align: left; padding: 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere; }
+.dk-note:hover > .nm { color: var(--fg); }
+/* Done: said twice, because a strike alone is hard to see at 12px in a dim
+   rail and a dim row alone reads as disabled rather than as finished. */
+.dk-note.done > .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-3); }
+/* The circle. A button rather than a checkbox input so it draws the same on
+   every platform, with the role and the state a checkbox would have carried. */
+.dk-tick { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin: 5px 0 0 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
+.dk-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.dk-tick[aria-checked="true"] { background: var(--accent); box-shadow: none; color: var(--bg); }
+.dk-tick svg { width: 11px; height: 11px; }
+/* The field's own circle: the row keeps its shape while it is being written,
+   so the text does not step left and back again as the field opens and shuts. */
+.dk-tick.ghost { box-shadow: inset 0 0 0 1.5px var(--rule-2); }
+.dk-note .dk-tools { align-self: flex-start; margin-top: 3px; }
+.dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
+.dk-note-in:focus { outline: none; }
+.dk-note-in::placeholder { color: var(--fg-3); }
+/* A line just taken off, holding its own place in the list: the offer to put
+   it back is where the ✕ was, which is where the eye already is. Nothing was
+   deleted, so the row says the mildest true thing and says it quietly. */
+.dk-note.gone { color: var(--fg-3); font-size: 12px; padding: 4px 8px; animation: dk-fade 140ms ease-out; }
+.dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
+.dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
+.dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+@keyframes dk-fade { from { opacity: 0; } to { opacity: 1; } }
 `;

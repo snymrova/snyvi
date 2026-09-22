@@ -395,6 +395,16 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/desks/{id}/docs", get(desk_docs))
+        .route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))
+        .route("/api/desks/{id}/notes/{note}", post(set_desk_note))
+        .route(
+            "/api/desks/{id}/notes/{note}/remove",
+            post(remove_desk_note),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/restore",
+            post(restore_desk_note),
+        )
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
@@ -1439,6 +1449,23 @@ struct RenameBody {
     name: String,
 }
 
+/// One line for a desk's list. Bounded and trimmed by `desk::add_note`, not
+/// here: the cap belongs beside the list it is a cap on.
+#[derive(Deserialize)]
+struct NoteTextBody {
+    text: String,
+}
+
+/// What changed about a line. Either half may be absent, so ticking a row off
+/// does not have to send its text back with it.
+#[derive(Debug, Default, Deserialize)]
+struct NoteEditBody {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    done: Option<bool>,
+}
+
 /// A label the sidebar has to draw on one line, so it is trimmed of the whitespace
 /// an accidental paste brings and cut to a length that cannot push the tree around.
 fn clean_name(raw: &str) -> Option<String> {
@@ -2195,6 +2222,109 @@ async fn desk_docs(
     }
     match app.store.desk_docs(id, 40) {
         Ok(docs) => Json(json!({ "docs": docs })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A desk's own list, which is the reader's and not an agent's: `/api/notes`
+/// is the other kind, and the two never meet. Behind the same gate as the rest
+/// of a desk, so what someone wrote on theirs is as unreachable from a tab as
+/// their panes are.
+///
+/// None of the four writes below tells the other windows. A list is typed into
+/// one window at a time, a keystroke is not an event worth waking every page
+/// for, and the rail asks again whenever its desk is drawn -- the same trade
+/// `desk_layout` makes for a divider being dragged.
+async fn desk_notes(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.desk_notes(id) {
+        Ok(notes) => Json(json!({ "notes": notes })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn add_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NoteTextBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.add_desk_note(id, &b.text) {
+        // One refusal for three states -- no such desk, an empty line, a full
+        // list -- because the page has just been told the count and can say
+        // which it is; the daemon repeating it would be two sources for one
+        // sentence.
+        Ok(Some(note)) => (StatusCode::CREATED, Json(json!({ "note": note }))).into_response(),
+        Ok(None) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("a desk keeps {} notes", crate::desk::NOTES_PER_DESK) })),
+        )
+            .into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Rewrite a line, tick it off, or both. An emptied line is taken off the list
+/// rather than kept as a blank row, which is what `desk::set_note` does with it.
+async fn set_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NoteEditBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.set_desk_note(id, note, b.text.as_deref(), b.done) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Take a line off the list. The row is kept and `restore` puts it back: this
+/// path deletes nothing, which is why it does not ask twice the way closing a
+/// desk does.
+async fn remove_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.remove_desk_note(id, note) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn restore_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.restore_desk_note(id, note) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }
@@ -3066,6 +3196,11 @@ mod tests {
             "async fn desk_layout(",
             "async fn delete_desk(",
             "async fn desk_docs(",
+            "async fn desk_notes(",
+            "async fn add_desk_note(",
+            "async fn set_desk_note(",
+            "async fn remove_desk_note(",
+            "async fn restore_desk_note(",
             "async fn open_pane(",
             "async fn close_pane(",
             "async fn start_pane(",
@@ -3101,6 +3236,10 @@ mod tests {
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
             r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
+            r#".route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}", post(set_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}/remove", post(remove_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
             r#".route("/api/panes/{id}/start", post(start_pane))"#,
             r#".route("/api/panes/{id}/stop", post(stop_pane))"#,
