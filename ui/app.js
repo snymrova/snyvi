@@ -1322,7 +1322,7 @@
     renderMeta(false);
     prepareMermaid();
     enhanceCode();
-    clearFind();
+    find?.clear();
     applyLineHash(true);
     // Only what is beside the document waits: the sidebar and the versions.
     // Anything that touches the document itself -- the diagrams' places, the
@@ -1343,7 +1343,7 @@
     enhanceCode();
     prepareMermaid();
     renderHistory();
-    if (!findBar.hidden && findIn.value) runFind(findIn.value); else clearFind();
+    find?.refresh();
     applyLineHash(false);   // the scroll position is restored by the caller
   }
 
@@ -1632,60 +1632,19 @@
     metaEl.appendChild(box);
   }
 
-  // ---------- find in document ----------
-  const findBar = $("#find"), findIn = $("#find-input"), findCount = $("#find-count");
-  let findMarks = [], findIdx = -1;
-  /* An HTML <mark> inside an <svg> lays out at 0x0, so wrapping a diagram's label
-   * in one does not highlight it -- it erases it, and counts a match the reader
-   * cannot be shown. Diagram text is skipped until there is a way to point at
-   * it, which needs the zoom in phase 3 of docs/DIAGRAMS.md. The placeholder
-   * label is chrome rather than document text, and would otherwise make every
-   * search for "diagram" find one per diagram. */
-  const FIND_SKIP = "script,style,.copy,svg,.mmd-note";
-  function clearFind() {
-    for (const m of findMarks) { const p = m.parentNode; if (!p) continue; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); }
-    findMarks = []; findIdx = -1; findCount.textContent = "";
+  // ---------- find in document: a chunk, fetched when `/` asks for it ----------
+  /* Searching inside a document is asked for, not done on the way to showing
+   * one, so the bar and the marks are ui/find.js. The page keeps `#find`,
+   * because whether the bar is up is a question it answers before deciding to
+   * fetch anything; everything past that is `find?.`, which before the first
+   * `/` is a no-op and means exactly what it says -- there is nothing marked. */
+  const findBar = $("#find");
+  let find = null, findLoading = null;
+  async function openFind() {
+    try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { findLoading = null; toast("Could not open find", String(e)); return; }
+    find.open({ $, docEl, bring });
   }
-  function runFind(q) {
-    clearFind();
-    if (!q) return;
-    const needle = q.toLowerCase();
-    const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest(FIND_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
-    const texts = []; let n; while ((n = walker.nextNode())) texts.push(n);
-    for (const t of texts) {
-      let text = t.nodeValue, lower = text.toLowerCase(), pos = lower.indexOf(needle);
-      if (pos < 0) continue;
-      const frag = document.createDocumentFragment(); let last = 0;
-      while (pos >= 0 && findMarks.length < 2000) {
-        frag.appendChild(document.createTextNode(text.slice(last, pos)));
-        const m = document.createElement("mark"); m.className = "find"; m.textContent = text.slice(pos, pos + q.length);
-        frag.appendChild(m); findMarks.push(m);
-        last = pos + q.length; pos = lower.indexOf(needle, last);
-      }
-      frag.appendChild(document.createTextNode(text.slice(last)));
-      t.parentNode.replaceChild(frag, t);
-    }
-    if (findMarks.length) gotoFind(0); else findCount.textContent = "No matches";
-  }
-  function gotoFind(i) {
-    if (!findMarks.length) return;
-    if (findIdx >= 0) findMarks[findIdx].classList.remove("cur");
-    findIdx = (i + findMarks.length) % findMarks.length;
-    const m = findMarks[findIdx]; m.classList.add("cur");
-    bring(() => docEl.querySelector("mark.find.cur"), "center");
-    findCount.textContent = `${findIdx + 1} / ${findMarks.length}`;
-  }
-  function openFind() { findBar.hidden = false; findIn.focus(); findIn.select(); }
-  function closeFind() { findBar.hidden = true; clearFind(); findIn.value = ""; }
-  let findTimer = null;
-  findIn.addEventListener("input", () => { clearTimeout(findTimer); findTimer = setTimeout(() => runFind(findIn.value), 80); });
-  findIn.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); gotoFind(findIdx + (e.shiftKey ? -1 : 1)); }
-    if (e.key === "Escape") { e.preventDefault(); closeFind(); }
-  });
-  $("#find-next").addEventListener("click", () => gotoFind(findIdx + 1));
-  $("#find-prev").addEventListener("click", () => gotoFind(findIdx - 1));
-  $("#find-close").addEventListener("click", closeFind);
 
   // ---------- focus beacon for desktop notifications ----------
   const beacon = () => { if (document.hasFocus() && document.visibilityState === "visible") fetch("/api/focus", { method: "POST", keepalive: true }).catch(() => {}); };
@@ -3161,112 +3120,21 @@
     game.open($("#side"), { back: gameBtn, onClose: () => gameBtn.classList.remove("on") });
   });
 
-  // ---------- about: what this is, from the daemon ----------
-  /* Every number here is read from the daemon when the panel opens, not
-   * baked into this bundle, so the version it names is the one answering
-   * and the one `snyvi --version` prints. */
-  const aboutFacts = $("#about-facts");
-  async function openAbout() {
-    closeDialog(help);
-    aboutFacts.replaceChildren();
-    openDialog(aboutDlg, aboutDlg.firstElementChild);
-    let a;
-    try { a = await (await fetch("/api/about")).json(); } catch { $("#about-say").textContent = "The daemon did not answer."; return; }
-    $("#about-say").textContent = `${a.description}.`;
-    const fact = (k, v, cls) => {
-      if (v == null || v === "") return;
-      const dt = document.createElement("dt"); dt.textContent = k;
-      const dd = document.createElement("dd"); if (cls) dd.className = cls;
-      if (v instanceof Node) dd.append(v); else dd.textContent = v;
-      aboutFacts.append(dt, dd);
-    };
-    const ver = document.createDocumentFragment();
-    ver.append(a.version);
-    const build = [a.commit, a.target].filter(Boolean).join(", ");
-    if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
-    fact("Version", ver);
-    fact("Binary", a.binary, "path");
-    fact("Documents", a.data_dir, "path");
-    fact("Settings", a.config_dir, "path");
-    fact("Agents", a.agents, "pre");
-    fact("License", a.license);
-    if (a.repository) {
-      const link = document.createElement("a"); link.href = a.repository; link.target = "_blank"; link.rel = "noopener";
-      link.textContent = a.repository.replace(/^https?:\/\//, "");
-      fact("Source", link);
-    }
+  // ---------- about and reset: a chunk, fetched when one is asked for ----------
+  /* Neither panel is on the way to reading a document: one says which build
+   * is answering, the other empties the library. Both go to the daemon the
+   * moment they open anyway, so the module that fills them rides with that
+   * press instead of being carried by every first paint. ui/about.js. */
+  let panelLoading = null;
+  async function panel(which) {
+    let m;
+    try { m = await (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
+    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural });
   }
-  $("#btn-about").addEventListener("click", openAbout);
+  $("#btn-about").addEventListener("click", () => panel("about"));
+  $("#btn-reset").addEventListener("click", () => panel("reset"));
   $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
-  $("#about-close").addEventListener("click", () => closeDialog(aboutDlg));
-  aboutDlg.addEventListener("click", e => { if (e.target === aboutDlg) closeDialog(aboutDlg); });
-
-  // ---------- reset: the one thing that cannot be undone ----------
-  /* A delete has Undo; this has a number. The dialog says what goes and what
-   * stays, and the button stays dead until the number of documents is typed
-   * back -- the number, not "yes", because the number means the sentence was
-   * read. The daemon is sent that number and refuses if it is no longer
-   * true, so a document that arrived while the dialog was open is not reset
-   * unseen. Every open tab hears the event and comes back to the empty
-   * library with its preferences dropped; the agents stay registered. */
-  const resetSay = $("#reset-say"), resetN = $("#reset-n"), resetGo = $("#reset-go"), resetErr = $("#reset-err");
-  const resetPinRow = $("#reset-pinned-row"), resetPin = $("#reset-pinned");
-  let resetCensus = null;
-  function resetArm() {
-    resetGo.disabled = !resetCensus || resetN.value.trim() !== String(resetCensus.documents) || (resetCensus.pinned > 0 && !resetPin.checked);
-  }
-  /** The documents and the desks both, because the daemon checks both. */
-  const resetSentence = c => `This removes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panes, " : ""}the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
-  async function openReset() {
-    closeDialog(help);
-    resetCensus = null; resetN.value = ""; resetErr.hidden = true; resetPin.checked = false; resetPinRow.hidden = true;
-    resetSay.textContent = "Reading what there is…";
-    resetArm();
-    openDialog(resetDlg, resetN);
-    try { resetCensus = await (await fetch("/api/reset")).json(); } catch { resetSay.textContent = "The daemon did not answer."; return; }
-    resetSay.textContent = resetSentence(resetCensus);
-    if (resetCensus.pinned > 0) {
-      $("#reset-pinned-say").textContent = `Also the ${plural(resetCensus.pinned, "pinned document")} — a pin means keep`;
-      resetPinRow.hidden = false;
-    }
-    resetArm();
-  }
-  /** What every tab does when the library is gone: forget what it kept for
-   *  the reader, and start over where a newcomer does. The window keeps its
-   *  mark -- it is a fact about the window, not a preference. */
-  /** Drop the preferences and start over. The drop is done again by boot.js
-   *  on the page that lands, because this page is still running until the
-   *  navigation commits, and a task it already queued -- the toggle event a
-   *  rendered `<details open>` fires, which writes `snyvi.open` -- can run
-   *  after the drop here. Seen once in CI: one key back in storage. */
-  function afterReset() {
-    try { sessionStorage.setItem("snyvi.reset", "1"); } catch {}
-    try { Object.keys(localStorage).filter(k => k.startsWith("snyvi.")).forEach(k => localStorage.removeItem(k)); } catch {}
-    location.replace("/");
-  }
-  $("#btn-reset").addEventListener("click", openReset);
-  $("#reset-close").addEventListener("click", () => closeDialog(resetDlg));
-  $("#reset-cancel").addEventListener("click", () => closeDialog(resetDlg));
-  resetDlg.addEventListener("click", e => { if (e.target === resetDlg) closeDialog(resetDlg); });
-  resetN.addEventListener("input", resetArm);
-  resetPin.addEventListener("change", resetArm);
-  resetDlg.firstElementChild.addEventListener("submit", async e => {
-    e.preventDefault();
-    if (resetGo.disabled) return;
-    resetGo.disabled = true; resetGo.textContent = "Resetting…";
-    let r;
-    try {
-      r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, desks: resetCensus.desks || 0, pinned: resetPin.checked }) });
-    } catch { resetGo.textContent = "Reset"; resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
-    if (r.ok) { afterReset(); return; }
-    resetGo.textContent = "Reset";
-    let j = {}; try { j = await r.json(); } catch {}
-    resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
-    resetErr.hidden = false;
-    // The number has moved: say the new sentence and ask for the new number.
-    if (j.census) { resetCensus = j.census; resetN.value = ""; resetSay.textContent = resetSentence(j.census); }
-    resetArm();
-  });
 
   // ---------- the panes on a narrow window ----------
   /* Past the widths in app.css the rail and then the sidebar stop fitting
@@ -3377,7 +3245,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) closeFind();
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) find?.close();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

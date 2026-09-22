@@ -54,6 +54,15 @@ const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
 /// rocket is pressed and never before: a reader who never presses it pays
 /// nothing for it.
 const GAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/game.js"));
+/// The about panel and the reset dialog, fetched when one of them is opened:
+/// neither is on the way to reading a document, and both ask the daemon
+/// something the moment they open, so the module rides with that request.
+const ABOUT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/about.js"));
+/// Find in the document -- the bar `/` opens and the marks it lays down --
+/// fetched the first time it is asked for. A reader who never searches inside
+/// a document never fetches it, and the page's calls into it are no-ops until
+/// it is there, because until then nothing is marked.
+const FIND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/find.js"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -166,6 +175,8 @@ impl Ui {
             ("desk.js", DESK_JS),
             ("frame.js", FRAME_JS),
             ("game.js", GAME_JS),
+            ("about.js", ABOUT_JS),
+            ("find.js", FIND_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -387,6 +398,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/desk.js", get(asset_desk))
         .route("/assets/frame.js", get(asset_frame))
         .route("/assets/game.js", get(asset_game))
+        .route("/assets/about.js", get(asset_about))
+        .route("/assets/find.js", get(asset_find))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -705,6 +718,25 @@ async fn asset_game(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "game.js",
         GAME_JS,
+    )
+}
+/// The about panel and the reset dialog, on the same terms: nothing asks for
+/// them but the two buttons that open them.
+async fn asset_about(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "about.js",
+        ABOUT_JS,
+    )
+}
+/// Find, on the same terms: the bar is not up until someone puts it up.
+async fn asset_find(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "find.js",
+        FIND_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -2822,8 +2854,8 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, DESK_JS, GAME_JS, INDEX_HTML,
-        MMD_JS,
+        desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, GAME_JS,
+        INDEX_HTML, MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -3121,6 +3153,33 @@ mod tests {
             "export function isOpen(",
         ] {
             assert!(GAME_JS.contains(seam), "game.js should export `{seam}`");
+        }
+    }
+
+    /// The fifth chunk, and the one the budget was over by: the about panel
+    /// and the reset dialog. Two buttons, one import, and a page that opens
+    /// neither never fetches either. `bench/bytes.mjs` is what noticed they
+    /// were being carried by every first paint.
+    #[test]
+    fn the_page_asks_for_the_panels_only_when_one_is_opened() {
+        assert_eq!(APP_JS.matches("import(`/assets/about.js").count(), 1);
+        let import = APP_JS.find("import(`/assets/about.js").unwrap();
+        for button in [r##"$("#btn-about")"##, r##"$("#btn-reset")"##] {
+            let press = APP_JS
+                .find(button)
+                .unwrap_or_else(|| panic!("{button} is a button a panel is behind"));
+            assert!(import < press, "the press reaches the import, not the other way");
+        }
+        assert!(
+            ABOUT_JS.contains("export function open("),
+            "about.js should export `open`"
+        );
+        // The panels themselves must not have stayed behind in the page.
+        for gone in ["/api/about", "#about-facts", "#reset-go"] {
+            assert!(
+                !APP_JS.contains(gone),
+                "`{gone}` belongs to the chunk now, not to app.js"
+            );
         }
     }
 
