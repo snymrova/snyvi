@@ -14,17 +14,25 @@
  * and `\` still folds the sidebar (which pauses the run, since there is
  * nothing to see it by). WASD are keys the page reads too (`w` is the
  * width, `s` the split), and taking them is the one liberty the cover
- * allows itself: whoever put it up is flying, not reading. The pointer does
- * nothing but give the sky focus when it is pressed: a mouse wandering over
- * the column, or resting on it, must not move the ship or fire. There is no
+ * allows itself: whoever put it up is flying, not reading. A mouse does
+ * nothing but give the sky focus when it is pressed: one wandering over
+ * the column, or resting on it, must not move the ship or fire. A finger is
+ * another matter -- on a screen with no keys the finger flies it: the ship
+ * goes where the finger is, a little above it so a thumb does not hide what
+ * it steers, and fires for as long as the finger is down. There is no
  * pause key; the run pauses when the window loses focus, and a press
  * carries it on. A dialog over the page makes the sidebar inert, and the
  * run pauses for that too rather than reading keys meant for a palette.
+ * The cover does the same to what it covers: the trees and the head and
+ * the foot under it are inert while it is up, so Tab from the sky does not
+ * walk into links nobody can see. The gutter stays live; a column with a
+ * game in it can still be made wider.
  *
  * The frame loop runs only while something moves: a run in play, or the
  * last sparks of one settling. Ready, paused and over are each a single
  * frame, and then nothing -- no timer, no draw -- until a key. A cover left
- * up over a blurred window costs the page nothing.
+ * up over a blurred window costs the page nothing. A still sky is repainted
+ * for a theme or accent change, since its colours are the page's.
  *
  * The rocks get faster and more frequent as the run goes on: every twenty
  * seconds is a level, and each level trims the gap between rocks and adds to
@@ -81,12 +89,17 @@ class Game {
     this.el.className = "game";
     this.el.setAttribute("role", "region");
     this.el.setAttribute("aria-label", "Asteroids");
+    // A screen that cannot hover has no keys worth naming.
+    this.byTouch = matchMedia("(hover: none)").matches;
     this.el.innerHTML =
       `<div class="game-head"><span class="game-title">Asteroids</span><span class="game-score">0</span>` +
       `<button class="icon game-close" type="button" aria-label="Close (Esc)" title="Close (Esc)">✕</button></div>` +
-      `<canvas class="game-sky" tabindex="0" aria-label="The sky. Arrows steer, space fires."></canvas>` +
-      `<div class="game-foot"><span class="game-hint">arrows steer · space fires · esc leaves</span><span class="game-best"></span></div>`;
+      `<canvas class="game-sky" tabindex="0" aria-label="${this.byTouch ? "The sky. Drag to steer, hold to fire." : "The sky. Arrows steer, space fires, esc leaves."}"></canvas>` +
+      `<div class="game-foot"><span class="game-hint">${this.byTouch ? "" : "esc leaves"}</span><span class="game-best"></span></div>`;
     host.appendChild(this.el);
+    // What the cover covers is out of reach while it is up.
+    this.covered = [...host.children].filter(n => n !== this.el && !n.classList.contains("gutter"));
+    for (const n of this.covered) n.inert = true;
     this.canvas = this.el.querySelector(".game-sky");
     this.scoreEl = this.el.querySelector(".game-score");
     this.bestEl = this.el.querySelector(".game-best");
@@ -96,6 +109,8 @@ class Game {
 
     this.w = 0; this.h = 0; this.dpr = 1;
     this.held = new Set();
+    this.finger = null;
+    this.away = false;
     this.glass = null;
     this.palette = null;
     this.paletteAt = -1e9;
@@ -103,6 +118,8 @@ class Game {
     this.onKey = this.onKey.bind(this);
     this.onKeyUp = this.onKeyUp.bind(this);
     this.onBlur = this.onBlur.bind(this);
+    this.onPointer = this.onPointer.bind(this);
+    this.retheme = this.retheme.bind(this);
     this.frame = this.frame.bind(this);
     this.reset("ready");
 
@@ -110,10 +127,14 @@ class Game {
     document.addEventListener("keyup", this.onKeyUp, true);
     addEventListener("blur", this.onBlur);
     document.addEventListener("visibilitychange", this.onBlur);
-    // A press on the sky gives it the keys back, and that is all a pointer
-    // does here.
-    this.canvas.addEventListener("pointerdown", () => this.canvas.focus({ preventScroll: true }));
+    for (const t of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) this.canvas.addEventListener(t, this.onPointer);
     this.el.querySelector(".game-close").addEventListener("click", () => this.end());
+    // The colours are read off the page; when the page's change, a sky
+    // drawn once and left would keep the old ones.
+    this.mo = new MutationObserver(this.retheme);
+    this.mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
+    this.sysDark = matchMedia("(prefers-color-scheme: dark)");
+    this.sysDark.addEventListener("change", this.retheme);
 
     // The sky is the size the sidebar gives it, at the screen's density. A
     // folded sidebar reports nothing, and nothing is a pause: there is no one
@@ -127,7 +148,7 @@ class Game {
   fit() {
     const r = this.canvas.getBoundingClientRect();
     const w = Math.round(r.width), h = Math.round(r.height);
-    if (!w || !h) { this.pause(); return; }
+    if (!w || !h) { this.away = true; this.pause(); return; }
     this.dpr = Math.min(devicePixelRatio || 1, 2);
     if (w !== this.w || h !== this.h) {
       this.w = w; this.h = h;
@@ -135,9 +156,34 @@ class Game {
       this.canvas.height = Math.round(h * this.dpr);
       this.ship.x = Math.min(Math.max(this.ship.x, 22), w - 22);
       this.ship.y = Math.min(Math.max(this.ship.y, this.ceiling()), h - 40);
-      this.stars = Array.from({ length: Math.round(w * h / 2600) }, () => ({ x: rnd(0, w), y: rnd(0, h), s: rnd(0.6, 1.6), p: rnd(0, 6.3) }));
+      this.restar();
       this.paint();
     }
+    // The sidebar was folded away and is back: the sky takes the keys again,
+    // unless the reader has gone to type somewhere in the meantime.
+    if (this.away) {
+      this.away = false;
+      const a = document.activeElement;
+      if (!a || a === document.body || a === this.host) this.canvas.focus({ preventScroll: true });
+    }
+  }
+
+  /** The stars for a sky this size. A sky that has changed size keeps the
+   *  stars it had where they were, so a drag on the gutter does not shuffle
+   *  the heavens; the ones now off the edge go, and the count is topped up
+   *  to the new area. */
+  restar() {
+    const w = this.w, h = this.h, want = Math.round(w * h / 2600);
+    keep(this.stars, s => s.x < w && s.y < h);
+    if (this.stars.length > want) this.stars.length = want;
+    while (this.stars.length < want) this.stars.push({ x: rnd(0, w), y: rnd(0, h), s: rnd(0.6, 1.6), p: rnd(0, 6.3) });
+  }
+
+  /** The page's colours changed under a still sky: read them again and
+   *  paint it once. A running loop reads them itself. */
+  retheme() {
+    this.paletteAt = -1e9;
+    if (!this.raf) this.paint();
   }
 
   // ---------- the loop, and when it runs ----------
@@ -148,7 +194,7 @@ class Game {
     this.state = state;
     if (state === "play") this.wake(); else this.paint();
   }
-  pause() { if (this.state === "play") { this.held.clear(); this.setState("paused"); } }
+  pause() { if (this.state === "play") { this.held.clear(); this.finger = null; this.setState("paused"); } }
   /** Start the loop if it is not running. */
   wake() {
     if (this.raf) return;
@@ -166,7 +212,7 @@ class Game {
    *  the first launch, "play" straight away. */
   reset(state) {
     this.t = 0; this.level = 1; this.levelAt = 0;
-    this.score = 0; this.ships = SHIPS;
+    this.score = 0; this.ships = SHIPS; this.bestWas = this.best;
     this.ship = { x: this.w / 2 || 132, y: (this.h || 600) - 40, vx: 0, vy: 0, safe: 0, flame: 0 };
     this.bullets = []; this.rocks = []; this.bits = [];
     this.spawnIn = 0.8; this.fireIn = 0;
@@ -205,6 +251,22 @@ class Game {
   }
   onBlur() {
     if (document.visibilityState === "hidden" || !document.hasFocus()) this.pause();
+  }
+  /** A press gives the sky focus, whatever pressed. A finger (or a pen) also
+   *  flies: while it is down the ship makes for it and fires, and lifting it
+   *  stops both. A mouse gets nothing more than the focus. */
+  onPointer(e) {
+    if (e.type === "pointerdown") this.canvas.focus({ preventScroll: true });
+    if (e.pointerType === "mouse") return;
+    if (e.type === "pointerup" || e.type === "pointercancel") { this.finger = null; return; }
+    if (e.type === "pointermove" && !this.finger) return;
+    const r = this.canvas.getBoundingClientRect();
+    this.finger = { x: e.clientX - r.left, y: e.clientY - r.top - 56 };
+    if (e.type === "pointerdown") {
+      e.preventDefault();
+      try { this.canvas.setPointerCapture(e.pointerId); } catch {}
+      if (this.state !== "play") this.launch();
+    }
   }
   launch() {
     if (this.state === "over" || this.state === "ready") this.reset("play");
@@ -246,6 +308,11 @@ class Game {
     if (this.held.has("R")) want += 1;
     if (this.held.has("U")) climb -= 1;
     if (this.held.has("D")) climb += 1;
+    if (!want && !climb && this.finger) {
+      const dx = this.finger.x - s.x, dy = this.finger.y - s.y;
+      want = Math.abs(dx) < 3 ? 0 : Math.max(-1, Math.min(1, dx / 40));
+      climb = Math.abs(dy) < 3 ? 0 : Math.max(-1, Math.min(1, dy / 40));
+    }
     s.vx += (want * SHIP_SPEED - s.vx) * Math.min(1, dt * 12);
     s.vy += (climb * SHIP_CLIMB - s.vy) * Math.min(1, dt * 10);
     s.x = Math.min(Math.max(s.x + s.vx * dt, 22), this.w - 22);
@@ -253,7 +320,7 @@ class Game {
     s.safe = Math.max(0, s.safe - dt);
     s.flame = Math.max(0, s.flame - dt);
     this.fireIn -= dt;
-    if (this.held.has("F")) this.fire();
+    if (this.held.has("F") || this.finger) this.fire();
 
     for (const b of this.bullets) b.y -= BULLET_SPEED * dt;
     keep(this.bullets, b => b.y > -10);
@@ -316,6 +383,7 @@ class Game {
     const t = TIERS[r.tier];
     this.score += t.pts;
     this.paintScore();
+    this.bank();
     this.burst(r.x, r.y, r.tier * 3 + 2, 60 + r.tier * 20);
     if (t.next) for (let i = 0; i < 2; i++) {
       this.addRock(r.x, r.y, t.next, r.vx + rnd(-60, 60) * (i ? 1 : -1), Math.abs(r.vy) * rnd(0.9, 1.3) + 20);
@@ -327,10 +395,16 @@ class Game {
     this.burst(this.ship.x, this.ship.y, 14, 140, "ship");
     this.ship.safe = 2.2;
     this.held.delete("F");
-    if (this.ships <= 0) {
-      this.setState("over");
-      if (this.score > this.best) { this.best = this.score; store.set(KEY_BEST, String(this.best)); this.paintBest(); }
-    }
+    if (this.ships <= 0) this.setState("over");
+  }
+
+  /** The best is kept as it is beaten, not at the end: a window closed
+   *  mid-run, or a page reloaded under it, keeps the score it reached. */
+  bank() {
+    if (this.score <= this.best) return;
+    this.best = this.score;
+    store.set(KEY_BEST, String(this.best));
+    this.paintBest();
   }
 
   burst(x, y, n, speed, kind) {
@@ -401,9 +475,10 @@ class Game {
     c.fillText(`L${this.level}`, w - 10, 8);
 
     // A word in the middle when there is one to say.
-    if (this.state === "ready") this.say(p, "Press space to fly", "arrows steer");
-    else if (this.state === "paused") this.say(p, "Paused", "space carries on");
-    else if (this.state === "over") this.say(p, `Out of ships · ${fmt(this.score)}`, this.score >= this.best && this.score ? "a new best · space to fly again" : "space to fly again");
+    const go = this.byTouch ? "touch" : "space";
+    if (this.state === "ready") this.say(p, this.byTouch ? "Touch the sky to fly" : "Press space to fly", this.byTouch ? "drag to steer, hold to fire" : "arrows steer, space fires");
+    else if (this.state === "paused") this.say(p, "Paused", `${go} carries on`);
+    else if (this.state === "over") this.say(p, `Out of ships · ${fmt(this.score)}`, this.score > this.bestWas ? `a new best · ${go} to fly again` : `${go} to fly again`);
     else if (this.t - this.levelAt < 1.6 && this.level > 1) {
       c.globalAlpha = Math.min(1, (1.6 - (this.t - this.levelAt)) * 2);
       this.say(p, `Level ${this.level}`);
@@ -555,7 +630,9 @@ class Game {
     document.removeEventListener("keyup", this.onKeyUp, true);
     removeEventListener("blur", this.onBlur);
     document.removeEventListener("visibilitychange", this.onBlur);
-    if (this.score > this.best) { this.best = this.score; store.set(KEY_BEST, String(this.best)); }
+    this.mo.disconnect();
+    this.sysDark.removeEventListener("change", this.retheme);
+    for (const n of this.covered) n.inert = false;
     // A canvas keeps its bitmap until it is collected, which may be a while;
     // a zero-sized one keeps nothing, so the sky is emptied before it goes.
     this.canvas.width = this.canvas.height = 0;

@@ -517,6 +517,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .game-sky { flex: 1; min-height: 0; width: 100%; display: block; outline: none; touch-action: none; }
 .game-sky:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .game-foot { justify-content: space-between; padding: 4px 16px 12px; font-size: 11px; }
+.game-hint, .game-best { white-space: nowrap; }
 .game-best { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 #trees { overflow-y: auto; padding: 0 8px 8px; font-size: 13px; flex: 1; min-height: 0; }
