@@ -15,6 +15,8 @@
     opening: null,              // the id of a document asked for and not here yet
     deskBehind: null,           // the desk whose rail stays while a document is read over it
     previous: boot.previous || null,
+    versions: [],               // ids of every snapshot of the open document, newest first
+
     folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
     queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
     waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
@@ -835,10 +837,19 @@
    *  than out of the model, now that the model holds only what a reader has
    *  expanded: "next document" is the next one they can see. */
   const order = () => [...treeEl.querySelectorAll("a[data-id]")].map(a => a.dataset.id);
-  /** Every document in the workflow on screen, for `[` and `]`. Exact whatever
-   *  the caps are: the workflow a reader is in is the one held whole. */
+  /** What `[` and `]` step through: the versions of the document on screen,
+   *  newest first -- the same list the rail's Versions box shows, held whole
+   *  whatever the sidebar's caps are.
+   *
+   *  The sidebar holds one row per document now, so a workflow's rows are
+   *  other documents rather than other snapshots of this one; the keys that
+   *  say "the one before this" have to ask the file, not the workflow. A
+   *  document with no file behind it has no versions, and falls back to the
+   *  workflow it arrived in, which is what these keys have always walked. */
   const siblings = () => {
     if (!state.doc) return [];
+    const v = state.versions || [];
+    if (v.length > 1 && v.includes(state.doc.id)) return v;
     for (const w of state.sub.get(String(state.doc.project_id)) || []) {
       if (w.id === state.doc.workflow_id) return w.docs.map(d => d.id);
     }
@@ -1233,7 +1244,7 @@
   async function showCompare(aId, bId) {
     const cur = state.doc;
     const a = aId || state.previous, b = bId || (cur && cur.id);
-    if (!cur || !a) { toast("No previous version", "This is the first document in its workflow."); return; }
+    if (!cur || !a) { toast("No previous version", "Nothing has been sent for this one before."); return; }
     let j;
     try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
     state.comparing = { a, b };
@@ -1624,9 +1635,11 @@
   // ---------- history (every snapshot of the same file) ----------
   async function renderHistory() {
     const old = $("#history"); if (old) old.remove();
+    state.versions = [];
     if (!state.doc || !state.doc.source_path) return;
     let h; try { h = await (await fetch(`/api/docs/${state.doc.id}/history`)).json(); } catch { return; }
     if (!h || h.length < 2) return;
+    state.versions = h.map(d => d.id);
     const box = document.createElement("div"); box.id = "history";
     box.innerHTML = `<h4>Versions · ${h.length}</h4>` + h.map(d => `<a href="/d/${d.id}" data-id="${d.id}" class="${d.id === state.doc.id ? "cur" : ""}" title="${esc(d.workflow_title)}">${fmt(d.received_at)}${d.pinned ? " ●" : ""}</a>`).join("");
     metaEl.appendChild(box);
@@ -2634,6 +2647,10 @@
       // state exists to be filled, and a reader there has nothing to lose.
       // An inbox with a queue on it is the queue, and the arrival is a row.
       const opens = state.view === "inbox" && !state.waiting;
+      // The document on screen has just been sent again. The page stays where
+      // it is -- a reader mid-paragraph did not ask to be moved -- and the
+      // arrival is offered instead of taken.
+      const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
       // Held in order only while everything waiting is held: past that the
       // arrival is the newest, and belongs after rows this page never had.
       if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
@@ -2649,6 +2666,14 @@
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
         toast(d.title, `${d.project} · just now`, null, null, { at: null, face: "whoa" });
+      }
+      else if (superseded) {
+        // The rail picks it up either way, so the offer is free to fade: a
+        // reader who misses the button finds the new version at the top of
+        // Versions, and `]` steps to it.
+        renderHistory();
+        toast("A newer version arrived", d.title, null,
+          { label: "Read it", run: () => showDoc(d.id, true) }, { at: null, face: "whoa" });
       }
       else if (state.view === "inbox") showInbox(false);
     });

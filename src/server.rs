@@ -1549,7 +1549,7 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             emit(
                 &app,
                 "doc",
-                json!({ "doc": doc, "url": url, "existing": received.existing, "waiting": waiting(&app) }),
+                json!({ "doc": doc, "url": url, "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
             );
             if !received.existing {
                 notify_desktop(&app, &doc);
@@ -2485,7 +2485,7 @@ async fn paste_image(
             emit(
                 &app,
                 "doc",
-                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "waiting": waiting(&app) }),
+                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
             );
             Json(json!({ "id": doc.id, "path": file })).into_response()
         }

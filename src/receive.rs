@@ -45,6 +45,11 @@ pub struct Received {
     pub needs_full_highlight: bool,
     /// True when an existing document was returned or overwritten instead of a new one.
     pub existing: bool,
+    /// The document this one is a new version of: the id that was the newest
+    /// snapshot of this file until now. Set only when a row was inserted, so it
+    /// names a document that is still in the library and is no longer the one
+    /// its lists show. A reader with that id open is reading a version.
+    pub supersedes: Option<String>,
 }
 
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -126,6 +131,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
                 doc: existing.clone(),
                 needs_full_highlight: false,
                 existing: true,
+                supersedes: None,
             });
         }
     }
@@ -213,13 +219,17 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
             doc,
             needs_full_highlight,
             existing: true,
+            supersedes: None,
         });
     }
+    // What this one is a version of, before it becomes the newest itself.
+    let supersedes = latest_same_path.as_ref().map(|prev| prev.id.clone());
     let doc = store.insert(&id, new_doc)?;
     Ok(Received {
         doc,
         needs_full_highlight,
         existing: false,
+        supersedes,
     })
 }
 
@@ -313,12 +323,27 @@ mod tests {
         );
         assert_ne!(explicit.doc.id, first.doc.id);
         assert_eq!(s.count().unwrap(), 2);
+        // ...and it says what it is a new version of, so a reader sitting on
+        // the old one is offered the new rather than moved to it.
+        assert_eq!(explicit.supersedes.as_deref(), Some(first.doc.id.as_str()));
+        assert!(
+            again.supersedes.is_none(),
+            "the same bytes supersede nothing"
+        );
+        assert!(
+            edited.supersedes.is_none(),
+            "nor does an overwrite in place"
+        );
 
         // `snyvi watch` is automatic too: its saves overwrite, and it overwrites the
         // hook's snapshot as readily as its own.
         std::fs::write(&file, "# Notes\n\nv4").unwrap();
         let watched = receive(&s, &r, mk("watch")).unwrap();
         assert!(!watched.existing, "a watch send after an mcp send is new");
+        assert_eq!(
+            watched.supersedes.as_deref(),
+            Some(explicit.doc.id.as_str())
+        );
         std::fs::write(&file, "# Notes\n\nv5").unwrap();
         let again = receive(&s, &r, mk("watch")).unwrap();
         assert!(again.existing);
