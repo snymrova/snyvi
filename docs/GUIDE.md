@@ -492,7 +492,7 @@ the way it sets code, which some readers prefer for a specification. It
 sets prose only: code is always mono and diffs and tables are left
 alone.
 
-The **swatch** steps through eight accent colours -- maroon, crimson,
+The **swatch** steps through eight accent colours -- passion, crimson,
 rose, violet, blue, teal, green, graphite -- one per click, the whole
 window repainted as you go. The accent is what links, the
 marker in the contents, a landing wash and snyvi's own mark are drawn
@@ -601,13 +601,16 @@ document. Clicking an entry jumps to the heading without adding to the
 browser's history, so Back still means the previous document. The `#`
 beside a heading copies a link to that section, the way a line number
 copies a link to a line, and the contents write the same links. `t`
-hides the rail and stays hidden until you bring it back.
+hides the rail, and so does the button in its top corner; the sidebar
+has the same button at the end of its brand row, and `\`. A pane put
+away stays away until you bring it back, with the same button, which
+moves to the edge of the page where the pane was.
 
 On a window under 1100 px wide the rail no longer fits beside the
 document, and under 760 px neither does the sidebar. Each becomes a
 sheet over the document instead: `t` and `\` open it, so do the two
-buttons at the top of the page that appear at those widths, and Escape
-or a tap outside closes it. The contents open on the section you are
+buttons at the top of the page, and Escape, a tap outside, or the
+button on the sheet closes it. The contents open on the section you are
 in, and a tap on an entry goes there and puts the sheet away. Widen the
 window and the panes are panes again, as you left them.
 
@@ -623,8 +626,10 @@ a Tab stop too, and the arrow keys move it. The width is kept.
 A document that arrives while you are reading never takes the page
 away. It joins a queue: a row at the top of the sidebar under
 "Waiting", a mark on its row in the tree, and a bar above the document
-that counts -- "3 waiting" and the title of the oldest. `n` opens the
-oldest and takes it off, so the next `n` is the one after; a reader
+that counts -- "3 waiting" and the title of the oldest, with snyvi's own
+face at the front of it, holding what came: wide-eyed for a moment when
+one more arrives, glad when one is read, and smiling in between. `n`
+opens the oldest and takes it off, so the next `n` is the one after; a reader
 drains the queue with one key, in the order things came. Opening a
 document any other way -- the sidebar, the inbox, an agent's link --
 takes it off the same way, since read is read wherever you got to it.
@@ -660,7 +665,8 @@ is lit for a moment, the way a heading is where a link landed -- the
 same wash, so there is one sign to learn; a row you have read or
 deleted closes where it was before the list moves up, and one an undo
 put back is lit again. The bar over the document rises when it appears
-and stays put after that: a count that changes settles in, in place.
+and stays put after that: a count that changes settles in, in place,
+and the face on the bar reacts once and is still again.
 Every motion on the page is under 200 ms except that wash, none of it
 runs while you read, and `prefers-reduced-motion` turns all of it off
 rather than slowing it down. The `#` beside a heading confirms a copy

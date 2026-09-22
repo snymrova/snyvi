@@ -30,6 +30,10 @@ let zoomed = false;
  *  they belong to -- so a desk swapped for another never shows the last
  *  one's list while its own is on the way. */
 let docList = [], docsAt = null;
+/** The rail shows the latest few of those and names the rest; a click on
+ *  the rest opens the whole list, for this desk, until it is left. */
+const DOCS_SHOWN = 8;
+let docsAll = false;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -527,6 +531,17 @@ function current() {
  *  700px, one below. Four panes at phone width are four unreadable panes. */
 const room = () => (innerWidth > 1100 ? 4 : innerWidth > 700 ? 2 : 1);
 
+/** Why there is no new pane, when there is not: the nearer of the two caps,
+ *  or the width, is the one worth naming. Empty while one can be made. Both
+ *  places that offer a pane -- the + in the head and the row in the rail --
+ *  ask this, so they never disagree. */
+function noNew(d) {
+  const j = ctx.desks;
+  return j.panes >= j.cap ? `Every pane is in use: ${j.panes} of ${j.cap} everywhere`
+    : d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}`
+    : d.panes.length >= room() ? "No room for another at this width" : "";
+}
+
 function layout() {
   const d = current(), grid = ctx.docEl.querySelector(".dk-grid");
   if (!d || !grid) return;
@@ -561,6 +576,18 @@ function tabs(d, all, shown) {
   if (!t) return;
   t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}">[${v.pane.slot}]</button>`).join("") : "";
   t.title = zoomed && all.length > 1 ? "Zoomed  ⌃⌥Z" : "";
+  // The + goes quiet when there is no pane to add, and says why under the
+  // cursor. At the desk's own cap the count sits beside it -- 4/4 -- which
+  // is what ties the greyed + to the panes on the desk.
+  const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d), j = ctx.desks;
+  if (plus) {
+    plus.disabled = !!why;
+    plus.title = why ? `New pane · ${why}` : "New pane";
+    let n = plus.previousElementSibling?.classList.contains("dk-cap") ? plus.previousElementSibling : null;
+    const full = d.panes.length >= j.per_desk;
+    if (full && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
+    if (n) { if (full) { n.textContent = `${d.panes.length}/${j.per_desk}`; n.title = why; } else n.remove(); }
+  }
 }
 
 function draw() {
@@ -575,8 +602,7 @@ function draw() {
   }
   document.title = `${d.name} · desk`;
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon" data-a="new" title="New pane" aria-label="New pane">+</button>` +
-    `<button type="button" class="icon" data-a="swap" title="Reading view  ⌃\`" aria-label="Reading view">▣</button></header>` +
+    `<button type="button" class="icon" data-a="new" title="New pane" aria-label="New pane">${head("plus")}</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
@@ -664,6 +690,13 @@ const ICO = {
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
+/** The head's plus: drawn on the grid the page's own icon buttons use
+ *  (#btn-side, #btn-rail), so it sits on the same centre as a pane's
+ *  outline and not on a text baseline. */
+const HEAD = {
+  plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+};
+const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
 /** A control that does something there is no undoing asks twice. Its text
  *  is `data-sure` while armed, and the title says why. */
 const sure = (a, p, title, label, glyph) => `<button type="button" data-a="${a}"${p ? ` data-p="${p}"` : ""} data-sure="Close?" title="${title}" aria-label="${label}">${glyph}</button>`;
@@ -685,10 +718,12 @@ function rail() {
   const dot = v => v.status.blocked ? "!" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
   const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} of ${j.cap} everywhere`;
-  // Why there is no new pane, when there is not: the nearer of the two caps,
-  // or the width, is the one worth naming.
-  const why = j.panes >= j.cap ? `Every pane is in use: ${total}` : d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}` : d.panes.length >= room() ? "No room for another at this width" : "";
+  const why = noNew(d);
   const dl = docsAt === d.id ? docList : [];
+  // The latest few, and always the one on the page: a document being read
+  // is never the one the rail hides. The count names what is not shown.
+  const shown = docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading);
+  const rest = dl.length - shown.length;
   const stopped = vs.filter(x => !x.status.running).length;
   // A pane's row: the mark, the slot, the name -- and under the cursor, what
   // can be done to that pane: stopped or started, and closed. On the row
@@ -711,17 +746,19 @@ function rail() {
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped pane again">Start all</button>` : "") + `</div>` +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded.
-    `<details class="dk-sec"${docsFolded() ? "" : " open"}><summary class="t-label dk-lab" title="What the panes on this desk have sent">Documents<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
+    `<details class="dk-sec"${docsFolded() ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panes on this desk have sent, newest first">From the panes<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. Under the cursor, the path it was sent
     // from, to copy -- the thing to hand back to the pane that sent it.
-    (dl.length ? `<ul class="dk-docs">` + dl.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" title="${x.id === reading ? "Click again to go back to the panes" : `${esc(x.title)} · ${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${x.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="slot" title="Sent from pane ${x.slot}">${x.slot}</span>${x.id === reading ? "" : `<span class="k">${ctx.relShort(x.received_at)}</span>`}</a>` +
+    (dl.length ? `<ul class="dk-docs">` + shown.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" title="${x.id === reading ? "Click again to go back to the panes" : `${esc(x.title)} · ${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${x.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="slot" title="Sent from pane ${x.slot}">${x.slot}</span>${x.id === reading ? "" : `<span class="k">${ctx.relShort(x.received_at)}</span>`}</a>` +
       // Its tools: the path to copy, where there is one; and on the row of
       // the document on the page, the way back to the panes. That row's
       // tools stay in view rather than wait for the cursor.
       ((x.source_path || x.id === reading) ? `<span class="dk-tools">` +
         (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
-        (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panes  ⌃\`" aria-label="Back to the panes">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>`
+        (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panes  ⌃\`" aria-label="Back to the panes">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
+      // The rest, named rather than listed: one row that opens them here.
+      (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
       : `<p class="dk-empty">Nothing yet. What an agent in a pane sends lands here.</p>`) +
     `</details></div>`;
   const v = views.get(focused), s = v ? v.status : null;
@@ -781,6 +818,7 @@ async function act(b) {
     else if (a === "rename") renameDesk(d);
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
+    else if (a === "more") { docsAll = true; rail(); }
   } catch (e) { ctx.toast("Could not do that", String(e)); }
 }
 
@@ -886,7 +924,7 @@ export function open(c) {
     g.textContent = drawn(cellW, LINE_PX);
     document.head.append(g);
   }
-  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; }
+  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; }
   deskId = c.id; reading = null;
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
@@ -932,7 +970,7 @@ export function close() {
   deskId = null; reading = null;
   views.clear();
   focused = null;
-  docList = []; docsAt = null;
+  docList = []; docsAt = null; docsAll = false;
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
@@ -959,10 +997,18 @@ const CSS = `
 :root[data-theme="dark"] { --t0:#2a2f3a; --t1:#f87171; --t2:#86c46d; --t3:#e6b450; --t4:#7aa2f7; --t5:#c792ea; --t6:#5ccfe6; --t7:#c8ccd4;
   --t8:#5c6370; --t9:#ff8b8b; --t10:#a6e3a1; --t11:#f9e2af; --t12:#89b4fa; --t13:#f5c2e7; --t14:#94e2d5; --t15:#ffffff; }
 :root[data-view="desk"] #main { overflow: hidden; }
-:root[data-view="desk"] #doc { max-width: none; height: 100%; padding: 12px 16px 16px; display: flex; flex-direction: column; }
+:root[data-view="desk"] #doc { max-width: none; height: 100%; padding: 14px 16px 16px; display: flex; flex-direction: column; }
 :root[data-view="desk"] #doc:has(.inbox-head) { display: block; padding: 56px 48px; max-width: calc(var(--measure) + 96px); overflow-y: auto; }
 .dk { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .dk-head { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; }
+/* The page's bar lays its buttons over this row (app.css, #chrome): the one
+ * that brings the sidebar back at the left, the rail's at the right, each
+ * there only while its pane is folded, or a sheet. The head makes room for
+ * whichever is showing; the window adds its own three (frame.js). */
+:root[data-side="0"] .dk-head { padding-left: 30px; }
+:root[data-rail="0"] .dk-head, #app:has(#rail.empty) .dk-head { padding-right: 30px; }
+@media (max-width: 1100px) { .dk-head { padding-right: 30px; } }
+@media (max-width: 760px) { .dk-head { padding-left: 30px; } }
 .dk-name { font-weight: 600; }
 .dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
@@ -972,7 +1018,13 @@ const CSS = `
  * tabs beside it reads as a zoom and not as a window too narrow for two. */
 .dk:has(.dk-grid[data-zoom="1"]) .dk-tabs button.on::after { content: " ⤢"; }
 .dk-head .icon:first-of-type { margin-left: auto; }
-.dk-tabs:not(:empty) + .icon { margin-left: 0; }
+.dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
+/* At the cap: the + at rest, and the count beside it in the tab strip's
+ * hand, so 4/4 and the quiet + read as one thing. */
+.dk-head .icon:disabled { opacity: .4; cursor: default; }
+.dk-head .icon:disabled:hover { background: none; color: var(--fg-3); }
+.dk-cap { font-family: var(--mono); font-size: 11px; color: var(--fg-3); margin-left: auto; padding: 2px 0 2px 5px; font-variant-numeric: tabular-nums; }
+.dk-tabs:not(:empty) + .dk-cap { margin-left: 0; }
 .dk-grid { flex: 1; min-height: 0; display: grid; gap: 6px; position: relative; }
 .dk-none { color: var(--fg-3); padding: 24px; }
 .dk-none button { color: var(--accent); }
@@ -1057,6 +1109,9 @@ const CSS = `
 .dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: 12px; border-radius: 6px; }
 .dk-new:hover:not(:disabled) { color: var(--accent); }
 .dk-new:disabled { opacity: .5; cursor: default; }
+/* The rest of the documents, as one row under the latest: the count is the
+ * number the rail is not showing, so it changes as they arrive. */
+.dk-more { margin-top: 2px; font-variant-numeric: tabular-nums; }
 /* A document row: a page icon at the left, in the accent while the
  * document waits to be read, then the title, the pane it came from and its
  * age. */

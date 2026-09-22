@@ -2,7 +2,7 @@
 """Draw the snyvi mark at every size and format the platforms ask for.
 
 The mark is snyvi itself, the mascot that leaves notes at the foot of the
-sidebar: a peach tile with a maroon nub on top and a maroon face. Its
+sidebar: a red tile with a deeper red nub on top and a dark red face. Its
 geometry lives here in the 32-unit space the UI draws it in, so the tab,
 the sidebar, the taskbar and the tray cannot drift apart.
 
@@ -25,10 +25,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-BODY = "#f9a77e"     # the mascot's peach
-INK = "#6b2208"      # its face, a maroon dark enough to read on peach
-NUB = "#c2410c"      # the logo's maroon, the UI's --brand
-CHEEK = "#f5847e"    # #f0607e at half strength over the body, flattened
+BODY = "#d9203b"     # the mascot's red, the UI's --mascot
+INK = "#33050d"      # its face, a red dark enough to read on the body
+NUB = "#8c0f26"      # the logo's deep red, the UI's --brand
+CHEEK = "#ff7b8f"    # a pink blush, lighter than the body so it still shows
 SHINE = "#ffffff"
 
 # The 32-unit geometry: boxes as (x, y, w, h, radius), eyes as centres.

@@ -290,6 +290,7 @@
   /** The section at the top of the sidebar and the bar above the document,
    *  both from the same rows. The bar is not drawn on the inbox, which lists
    *  the queue itself. */
+  let qbWas = 0, qbSettle = 0;   // the bar's count last drawn, and the face's way back to plain
   function renderQueue() {
     queueIds = new Set(state.queue.map(d => d.id));
     // What has finished moving is dropped here, at the render, and not only
@@ -311,16 +312,21 @@
     lastQueue = state.queue.slice(0, QUEUE_ROWS);
     const bar = n > 0 && !!head && state.view !== "inbox";
     queueBar.hidden = !bar;
-    if (!bar) { queueBar.innerHTML = ""; return; }
+    if (!bar) { queueBar.innerHTML = ""; qbWas = 0; return; }
     // The bar rises when it appears and stays put after: a count that changes
     // ticks in place. It used to be rebuilt on every render, which re-ran the
     // rise for one more arrival, and twelve arrivals rose twelve times.
     const count = `${n} waiting`, next = `<b>${esc(head.title)}</b> · ${esc(head.project)}`;
     const qb = queueBar.querySelector(".qb");
+    // The bar is snyvi holding what came for the reader, so it is snyvi's
+    // face at the front of it: the same head that answers a click, at the
+    // top of the page. It arrives wide-eyed and settles into a smile.
     if (!qb) {
-      queueBar.innerHTML = `<div class="qb"><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
+      queueBar.innerHTML = `<div class="qb"><span class="qb-who"></span><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
         `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+      qbFeel("whoa");
+      qbWas = n;
       return;
     }
     const num = qb.querySelector(".qb-n"), nx = qb.querySelector(".qb-next");
@@ -332,7 +338,26 @@
       const fresh = num.cloneNode(true);
       fresh.classList.add("tick");
       num.replaceWith(fresh);
+      // One more is a surprise; one fewer is a read, and it is glad of it.
+      qbFeel(n > qbWas ? "whoa" : "glad");
     }
+    qbWas = n;
+  }
+  /** The face on the bar: `feel` for the moment, then plain -- the face at
+   *  rest holding the count is a smile, not a stare. The moment is a fresh
+   *  node, so the same feeling twice running lands twice. */
+  function qbFeel(feel) {
+    const who = queueBar.querySelector(".qb-who");
+    if (!who) return;
+    clearTimeout(qbSettle);
+    const fresh = who.cloneNode(false);
+    fresh.dataset.feel = feel;
+    fresh.innerHTML = mascotHead(feel);
+    who.replaceWith(fresh);
+    qbSettle = setTimeout(() => {
+      const w = queueBar.querySelector(".qb-who");
+      if (w) { delete w.dataset.feel; w.innerHTML = mascotHead("plain"); }
+    }, 2400);
   }
 
   /** The reader opened a document: off the queue here at once, and on the
@@ -1003,6 +1028,8 @@
   }
   let leaveTimer = 0;
   main.addEventListener("scroll", () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(leave, 400); }, { passive: true });
+  // The head's foot is ruled only while there is text under it (app.css, #chrome).
+  main.addEventListener("scroll", () => main.classList.toggle("scrolled", main.scrollTop > 0), { passive: true });
 
   /** Whether the entry history landed on is the page asked for, with a place
    *  in it. Only a move through history asks: a re-render of the same page --
@@ -2941,8 +2968,13 @@
     } else if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
     else items = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
     palItems = deskItems(q).concat(folderItems(q), items); palSel = 0;
-    palList.innerHTML = palItems.map(palRow).join("");
+    palList.innerHTML = palItems.length ? palItems.map(palRow).join("") : palNone(q);
   }
+  /** Nothing matched: said, so an empty list is not a search still running.
+   *  Not a row -- there is nothing to pick -- so the arrows and Enter pass
+   *  it by. The face is sorry and still: it is redrawn on every keystroke
+   *  that finds nothing, and a head that shook on each would be nagging. */
+  const palNone = q => `<div class="pal-none">${mascotHead("oops")}<span>${q.trim() ? `Nothing for <b>${esc(q.trim())}</b>` : "Nothing here yet"}</span></div>`;
   palIn.addEventListener("input", () => { clearTimeout(palTimer); palTimer = setTimeout(() => palSearch(palIn.value), 60); });
   palIn.addEventListener("keydown", e => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -3027,14 +3059,14 @@
   });
   paintFontBtn();
   /* The accent colours, in the order a click steps through them. "" is
-   * maroon, the default. They were a popover of eight swatches, which is a
+   * passion, the default: the red the mark itself wears. They were a popover of eight swatches, which is a
    * menu to read for a setting with no wrong answer: every one of them is
    * simply a colour, and the only way to know which you want is to see it on
    * the page. So the button is the setting now -- one click, the next colour,
    * the whole window in it before the finger is off the mouse -- and the
    * swatch on the button is where you are. snyvi wears the accent too, so the
    * face that says which one it is arrives in that colour. */
-  const ACCENTS = [["", "Maroon"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
+  const ACCENTS = [["", "Passion"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
   const accBtn = $("#btn-accent");
   const accName = k => (ACCENTS.find(([a]) => a === k) || ACCENTS[0])[1];
   function paintAccent() {
@@ -3111,6 +3143,8 @@
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
   $("#help-close").addEventListener("click", () => closeDialog(help));
   $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+  // The chip that says ⌘ says it on a Mac; everywhere else the key is ctrl.
+  if (!/Mac/.test(navigator.platform)) help.querySelectorAll("kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
 
   // ---------- about: what this is, from the daemon ----------
   /* Every number here is read from the daemon when the panel opens, not
@@ -3248,14 +3282,19 @@
   }
   const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
   $("#scrim").addEventListener("click", closeSheet);
-  /** A pane folded away (`t`, `\`) at a width where it is a column, not a
-   *  sheet. Remembered, so the one visible way back is the same button that
-   *  opens the sheet when the window is narrow: it stays on screen while the
-   *  pane is folded, and unfolds it. Without that a rail put away by a stray
-   *  `t` was gone for good as far as the reader could see. */
+  /** A pane folded away (`t`, `\`, or the button at its top) at a width
+   *  where it is a column, not a sheet. Remembered, so the one visible way
+   *  back is the same button that opens the sheet when the window is
+   *  narrow: it stays on screen while the pane is folded, and unfolds it.
+   *  Without that a rail put away by a stray `t` was gone for good as far
+   *  as the reader could see. */
   const fold = which => { const off = root.dataset[which] !== "0"; root.dataset[which] = off ? "0" : "1"; store.set(`snyvi.${which}`, off ? "0" : "1"); };
   $("#btn-rail").addEventListener("click", e => railNarrow.matches ? toggleSheet("rail", e.currentTarget) : fold("rail"));
   $("#btn-side").addEventListener("click", e => sideNarrow.matches ? toggleSheet("side", e.currentTarget) : fold("side"));
+  // The button on the pane itself: puts it away, or, when the pane is a
+  // sheet, closes the sheet and gives focus back to what opened it.
+  $("#btn-rail-hide").addEventListener("click", () => railNarrow.matches ? closeSheet() : fold("rail"));
+  $("#btn-side-hide").addEventListener("click", () => sideNarrow.matches ? closeSheet() : fold("side"));
   // The window grew past the width that made it a sheet: it is a pane again.
   const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
   for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });

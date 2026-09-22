@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{TITLE}}</title>
-<link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Crect x='14' y='0.5' width='4' height='5' rx='2' fill='%23c2410c'/%3E%3Crect x='1' y='4' width='30' height='27' rx='9' fill='%23ff7168'/%3E%3Cellipse cx='11' cy='16.5' rx='2.6' ry='3.3' fill='%234e1a05'/%3E%3Cellipse cx='21' cy='16.5' rx='2.6' ry='3.3' fill='%234e1a05'/%3E%3Cpath d='M13.5 23Q16 25.2 18.5 23' fill='none' stroke='%234e1a05' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32'%3E%3Crect x='14' y='0.5' width='4' height='5' rx='2' fill='%238c0f26'/%3E%3Crect x='1' y='4' width='30' height='27' rx='9' fill='%23d9203b'/%3E%3Cellipse cx='11' cy='16.5' rx='2.6' ry='3.3' fill='%2333050d'/%3E%3Cellipse cx='21' cy='16.5' rx='2.6' ry='3.3' fill='%2333050d'/%3E%3Cpath d='M13.5 23Q16 25.2 18.5 23' fill='none' stroke='%2333050d' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <script src="/assets/boot.js?v={{V}}"></script>
 <link rel="stylesheet" href="/assets/app.css?v={{V}}">
 </head>
@@ -17,6 +17,9 @@
       <a class="live" id="live" href="/connect" data-nav="connect" title="No agent is connected" aria-label="Agents connected">0</a>
       <button class="icon" id="btn-search" title="Search  ⌘K" aria-label="Search">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon" id="btn-side-hide" title="Hide sidebar  \" aria-label="Hide sidebar" aria-controls="side">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M8 4v12"/><path class="pane" d="M4.5 4H8v12H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="currentColor" stroke="none"/></svg>
       </button>
     </div>
     <div id="trees">
@@ -48,13 +51,13 @@
     <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="440" tabindex="0" title="Drag to resize · double-click to reset"></div>
   </aside>
   <main id="main">
-    <div id="chrome">
+    <div id="chrome" data-tauri-drag-region="deep">
       <button class="icon" id="btn-side" title="Sidebar  \" aria-label="Show sidebar" aria-controls="side">
-        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M8 4v12"/></svg>
       </button>
       <div class="chrome-r">
         <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
-          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01"/></svg>
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M12 4v12"/></svg>
         </button>
       </div>
     </div>
@@ -64,6 +67,9 @@
   </main>
   <aside id="rail" tabindex="-1">
     <div class="rail-grip" data-tauri-drag-region="deep"></div>
+    <button class="icon" id="btn-rail-hide" title="Hide contents  t" aria-label="Hide contents" aria-controls="rail">
+      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M12 4v12"/><path class="pane" d="M12 4h3.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H12z" fill="currentColor" stroke="none"/></svg>
+    </button>
     <nav id="toc" aria-label="Contents"></nav>
     <div id="meta"></div>
     <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Contents width" aria-valuemin="180" aria-valuemax="400" tabindex="0" title="Drag to resize · double-click to reset"></div>
@@ -78,33 +84,66 @@
   </div>
 </div>
 <div id="help" hidden>
-  <div class="help-box" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabindex="-1">
-    <button class="icon help-close" id="help-close" title="Close (Esc)" aria-label="Close">✕</button>
-    <h2>Keys</h2>
-    <dl>
-      <dt>⌘K</dt><dd>search</dd>
-      <dt>j / k</dt><dd>next / previous document</dd>
-      <dt>[ / ]</dt><dd>older / newer version in this workflow</dd>
-      <dt>c</dt><dd>compare with previous version</dd>
-      <dt>s</dt><dd>split / inline diff view</dd>
-      <dt>v</dt><dd>preview page / source</dd>
-      <dt>/</dt><dd>find in document</dd>
-      <dt>n</dt><dd>open the next document waiting</dd>
-      <dt>Del</dt><dd>delete document (⌘/ctrl Z undoes it)</dd>
-      <dt>p</dt><dd>pin (kept by prune)</dd>
-      <dt>i</dt><dd>inbox</dd>
-      <dt>w</dt><dd>maximise width</dd>
-      <dt>z</dt><dd>wrap long lines</dd>
-      <dt>f</dt><dd>fullscreen the diagram</dd>
-      <dt>0</dt><dd>fit the diagram (⌘/ctrl + scroll zooms, drag pans)</dd>
-      <dt>t</dt><dd>toggle contents</dd>
-      <dt>\</dt><dd>toggle sidebar</dd>
-      <dt>o</dt><dd>open source</dd>
-      <dt>⌘K :120</dt><dd>go to line 120</dd>
-      <dt>alt ← / →</dt><dd>back / forward</dd>
-      <dt>esc</dt><dd>close</dd>
-    </dl>
-    <div class="help-foot"><button class="text" id="btn-connect">Connect an agent…</button><button class="text" id="btn-about">About snyvi</button><button class="text" id="btn-reset">Reset snyvi…</button></div>
+  <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1">
+    <div class="help-head">
+      <h2 id="help-title">Keyboard shortcuts</h2>
+      <button class="icon help-close" id="help-close" title="Close (Esc)" aria-label="Close">✕</button>
+    </div>
+    <div class="help-body">
+    <div class="help-col">
+      <section>
+        <h3>Everywhere</h3>
+        <div class="hk"><span>Search</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>K</kbd></span></div>
+        <div class="hk"><span>These shortcuts</span><span class="keys"><kbd>?</kbd></span></div>
+        <div class="hk"><span>Close</span><span class="keys"><kbd>esc</kbd></span></div>
+      </section>
+      <section>
+        <h3>Move</h3>
+        <div class="hk"><span>Next / previous document</span><span class="keys"><kbd>j</kbd><i>/</i><kbd>k</kbd></span></div>
+        <div class="hk"><span>Older / newer version</span><span class="keys"><kbd>[</kbd><i>/</i><kbd>]</kbd></span></div>
+        <div class="hk"><span>The next document waiting</span><span class="keys"><kbd>n</kbd></span></div>
+        <div class="hk"><span>Inbox</span><span class="keys"><kbd>i</kbd></span></div>
+        <div class="hk"><span>Back / forward</span><span class="keys"><kbd>alt</kbd><kbd>←</kbd><i>/</i><kbd>→</kbd></span></div>
+        <div class="hk"><span>Go to a line</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>K</kbd><code>:120</code></span></div>
+      </section>
+      <section>
+        <h3>Read</h3>
+        <div class="hk"><span>Find in document</span><span class="keys"><kbd>/</kbd></span></div>
+        <div class="hk"><span>Compare with previous version</span><span class="keys"><kbd>c</kbd></span></div>
+        <div class="hk"><span>Split / inline diff</span><span class="keys"><kbd>s</kbd></span></div>
+        <div class="hk"><span>Preview / source</span><span class="keys"><kbd>v</kbd></span></div>
+        <div class="hk"><span>Maximise width</span><span class="keys"><kbd>w</kbd></span></div>
+        <div class="hk"><span>Wrap long lines</span><span class="keys"><kbd>z</kbd></span></div>
+        <div class="hk"><span>Open source</span><span class="keys"><kbd>o</kbd></span></div>
+      </section>
+    </div>
+    <div class="help-col" id="help-col-2">
+      <section>
+        <h3>Diagram</h3>
+        <div class="hk"><span>Fullscreen</span><span class="keys"><kbd>f</kbd></span></div>
+        <div class="hk"><span>Fit to window</span><span class="keys"><kbd>0</kbd></span></div>
+        <div class="hk"><span>Zoom</span><span class="keys"><kbd data-mod>⌘</kbd><i>+</i>scroll</span></div>
+        <div class="hk"><span>Pan</span><span class="keys">drag</span></div>
+      </section>
+      <section>
+        <h3>Layout</h3>
+        <div class="hk"><span>Contents</span><span class="keys"><kbd>t</kbd></span></div>
+        <div class="hk"><span>Sidebar</span><span class="keys"><kbd>\</kbd></span></div>
+      </section>
+      <section>
+        <h3>Keep</h3>
+        <div class="hk"><span>Pin <em>kept by prune</em></span><span class="keys"><kbd>p</kbd></span></div>
+        <div class="hk"><span>Delete</span><span class="keys"><kbd>del</kbd></span></div>
+        <div class="hk"><span>Undo a delete</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>Z</kbd></span></div>
+      </section>
+    </div>
+    </div>
+    <div class="help-foot">
+      <button class="text" id="btn-connect">Connect an agent…</button>
+      <button class="text" id="btn-about">About snyvi</button>
+      <span class="help-gap"></span>
+      <button class="text" id="btn-reset">Reset snyvi…</button>
+    </div>
   </div>
 </div>
 <div id="about" hidden>

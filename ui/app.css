@@ -28,15 +28,15 @@
   /* The accent, picked with the swatch in the sidebar's foot. Each choice is
      a pair: -l sits on paper, -d on the dark palette. Every warm touch in the
      chrome derives from it -- washes, syntax keywords, snyvi's own face. */
-  --accent-l: #c2410c;
-  --accent-d: #d9531e;
+  --accent-l: #8c0f26;
+  --accent-d: #f04a63;
   --accent: var(--accent-l);
   --accent-bg: color-mix(in srgb, var(--accent) 10%, var(--bg));
   --brand: var(--accent-l);   /* the logo's colour, the same in both themes */
-  /* snyvi's face: a pastel neon of the accent for the body, picked per
-     accent (mixing maroon with white reads as peach), the brand itself on the
+  /* snyvi's face: a bright tone of the accent for the body, picked per
+     accent (the default is a red that means it), the brand itself on the
      nub, and a deep shade of it for the eyes and mouth. */
-  --mascot: #ff7168;
+  --mascot: #d9203b;
   --mascot-nub: var(--brand);
   --mascot-ink: color-mix(in srgb, var(--brand) 40%, #000);
   --code-bg: #f3f1ec;
@@ -59,6 +59,7 @@
 
   --side-w: 264px;
   --rail-w: 232px;
+  --head-h: 52px;   /* the document's head: the brand row's height, so the panes' tops agree */
   --measure: 70ch;
   --radius: 6px;
   --t: 140ms cubic-bezier(.2,.7,.2,1);
@@ -120,7 +121,7 @@
   --s-tag: var(--accent);
   --s-attr: #c4b5fd;
 }
-/* The other accents. Maroon is the default, set on :root above. */
+/* The other accents. Passion, the red the mark wears, is the default, set on :root above. */
 :root[data-accent="crimson"] { --accent-l: #b91c1c; --accent-d: #f87171; --mascot: #ff5c8a; }
 :root[data-accent="rose"]    { --accent-l: #be185d; --accent-d: #f472b6; --mascot: #ff7ad9; }
 :root[data-accent="violet"]  { --accent-l: #7c3aed; --accent-d: #a78bfa; --mascot: #c69cff; }
@@ -186,32 +187,54 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    lands on. The two buttons in #chrome exist for the same widths. */
 @media (max-width: 1100px) {
   #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0 !important; }
-  #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: 20; box-shadow: var(--shadow); padding: 20px 0 20px 16px; }
+  #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: 20; box-shadow: var(--shadow); padding: 44px 0 20px 16px; }
+  #btn-rail-hide { top: 10px; left: 12px; }
   :root[data-sheet="rail"] #rail { display: flex; animation: sheet-r 160ms cubic-bezier(.2,.7,.2,1); }
-  #chrome #btn-rail { display: inline-flex; }
+  #chrome #btn-rail { display: inline-grid; }
   #app:has(#rail.empty) #btn-rail { display: none; }
-  #find { padding-right: 56px; }
   #rail .gutter { display: none; }
 }
 @media (max-width: 760px)  {
   #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
   #side { display: none; position: fixed; inset: 0 auto 0 0; width: min(88vw, var(--side-w)); z-index: 20; box-shadow: var(--shadow); }
   :root[data-sheet="side"] #side { display: flex; animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
-  #chrome #btn-side { display: inline-flex; }
-  #find { padding-left: 56px; }
+  #chrome #btn-side { display: inline-grid; }
   #side .gutter { display: none; }
 }
 @keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
 @keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 #scrim { position: fixed; inset: 0; z-index: 15; background: rgba(20, 16, 10, .28); display: none; }
 :root[data-sheet] #scrim { display: block; }
-#chrome { position: fixed; top: 10px; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between; padding: 0 10px; pointer-events: none; }
-#chrome .icon { display: none; pointer-events: auto; background: var(--bg-raise); box-shadow: var(--shadow); }
-#chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; pointer-events: none; }
+/* ---------- the document's head ----------
+   A bar across the top of the document pane, the brand row's height, that
+   the text scrolls under: the buttons that bring a folded pane back sit in
+   it, and in the window it is the strip that drags (frame.js keeps the
+   window's own three buttons at the corner, and leaves them room here).
+   Sticky, in the page's own colour, so at rest it is the top margin and no
+   more; once the reader has scrolled, a rule at its foot is the edge the
+   text disappears under, instead of a button floating over a line. */
+#chrome { position: sticky; top: 0; z-index: 10; box-sizing: border-box; height: var(--head-h); display: flex; align-items: start; gap: 8px; padding: 14px 10px 10px; background: var(--bg); box-shadow: 0 1px 0 transparent; transition: box-shadow var(--t); }
+#main.scrolled #chrome { box-shadow: 0 1px 0 var(--rule); }
+#chrome .icon { display: none; }
+#chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; }
+/* A desk draws its own head, with the desk's name in it, and the pane does
+   not scroll: there the bar is only its buttons, laid over the desk's
+   header, which makes room for them (desk.js, .dk-head). */
+:root[data-view="desk"] #main { position: relative; }
+:root[data-view="desk"] #chrome { position: absolute; top: 0; left: 0; right: 0; height: auto; background: none; box-shadow: none; pointer-events: none; }
+:root[data-view="desk"] #chrome .icon { pointer-events: auto; }
 /* A pane folded away at a width where it is a column: its button stays, as
    the way back. Not for a rail with nothing in it. */
-:root[data-rail="0"] #chrome #btn-rail, :root[data-side="0"] #chrome #btn-side { display: inline-flex; }
+:root[data-rail="0"] #chrome #btn-rail, :root[data-side="0"] #chrome #btn-side { display: inline-grid; }
 #app:has(#rail.empty) #btn-rail { display: none; }
+/* Each pane carries the way to put it away, at its top edge: the sidebar's
+   at the end of the brand row, the rail's in the corner over the grip. The
+   same glyph as the button in #chrome that brings the pane back, with the
+   pane's third filled while it is here and outlined once it is gone, so
+   the two read as one control that flips. */
+#btn-side-hide { margin-left: 2px; }
+#btn-rail-hide { position: absolute; top: 14px; left: 8px; z-index: 1; }
+.icon .pane { fill: var(--accent); }
 /* ---------- the window's frame ----------
    In the native window the page is the frame, and ui/frame.js draws the
    bar's three buttons and carries their rules: a tab never has a frame to
@@ -660,17 +683,16 @@ summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 /* One scroll region: the frame fills what is left of the pane, so the page itself
    does not also scroll behind it. */
 #main:has(article.preview) { overflow: hidden; }
-#doc:has(article.preview) { display: flex; flex-direction: column; height: 100%; padding-top: 32px; padding-bottom: 24px; }
+#doc:has(article.preview) { display: flex; flex-direction: column; height: calc(100% - var(--head-h)); padding-top: 8px; padding-bottom: 24px; }
 #doc:has(article.preview) .doc-head { margin-bottom: 20px; flex: none; }
 article.preview { margin: 0; padding: 0; flex: 1 1 auto; min-height: 360px; }
 article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: var(--radius); background: #fff; display: block; }
-@media (max-width: 760px) { #doc:has(article.preview) { padding-top: 20px; } }
 
 .browse-image, .doc-image { text-align: center; margin: 1.5em 0; }
 .browse-image img, .doc-image img { border-radius: var(--radius); max-width: 100%; height: auto; }
 
 /* ---------- document ---------- */
-#doc { --doc-pad: 48px; max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 56px var(--doc-pad) 120px; }
+#doc { --doc-pad: 48px; max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 8px var(--doc-pad) 120px; }
 /* A new document arrives rather than snaps: one short rise on a navigation.
    Not on a refresh in place -- a file being watched is saved every few seconds,
    and a body that blinked on each save would be worse than one that moved. */
@@ -718,7 +740,7 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
    it is a stop only when it really scrolls. */
 .prose > :first-child { margin-top: 0; }
 .prose p { margin: 0 0 1.2em; text-wrap: pretty; }
-.prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--head, var(--sans)); font-weight: 650; line-height: 1.25; letter-spacing: -.015em; text-wrap: balance; margin: 2.2em 0 .6em; position: relative; scroll-margin-top: 28px; }
+.prose h1, .prose h2, .prose h3, .prose h4 { font-family: var(--head, var(--sans)); font-weight: 650; line-height: 1.25; letter-spacing: -.015em; text-wrap: balance; margin: 2.2em 0 .6em; position: relative; scroll-margin-top: calc(var(--head-h) + 12px); }
 .prose h1 { font-size: 1.9em; }
 .prose h2 { font-size: 1.5em; margin-top: 2.4em; }
 .prose h3 { font-size: 1.2em; }
@@ -728,7 +750,7 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
    scroll -- which it repeats on its own schedule while a page loads -- aims at
    it, not at the heading. The same margin as the heading, so the two agree
    rather than fight over where the section starts. */
-.prose a.anchor { position: absolute; left: -1.2em; top: 0; color: var(--fg-3); opacity: 0; font-weight: 400; scroll-margin-top: 28px; }
+.prose a.anchor { position: absolute; left: -1.2em; top: 0; color: var(--fg-3); opacity: 0; font-weight: 400; scroll-margin-top: calc(var(--head-h) + 12px); }
 .prose a.anchor::before { content: "#"; }
 .prose h1:hover a.anchor, .prose h2:hover a.anchor, .prose h3:hover a.anchor, .prose h4:hover a.anchor { opacity: .7; }
 .prose a.anchor:hover, .prose a.anchor:focus-visible { opacity: 1; text-decoration: none; }
@@ -847,12 +869,20 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    it reads as part of the page and not the chrome. Sticky like the find bar,
    so a reader deep in a long page still sees the count. */
 #queue-bar[hidden] { display: none; }
-#queue-bar { position: sticky; top: 0; z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; box-sizing: border-box; font-size: 13px; }
+#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; box-sizing: border-box; font-size: 13px; }
 /* Its height is nothing, so a bar that appears mid-read lays over the page's
    top margin rather than pushing the text down under the reader; the find
    bar makes room for it instead. */
 #queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
-#queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 5px 5px 12px; animation: rise 160ms cubic-bezier(.2,.7,.2,1); }
+/* On a desk the head is the desk's own row, and the bar lays over its
+   middle, between the name and the buttons, as it did before the head. */
+:root[data-view="desk"] #queue-bar { top: 0; }
+#queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 5px 5px 9px; animation: rise 160ms cubic-bezier(.2,.7,.2,1); }
+/* snyvi at the front of the bar, holding what came: the toast's head, the
+   size of the count's line, leaning in to the text it is holding up. Its
+   feeling comes and goes with the count (app.js, `qbFeel`); at rest the
+   head is still, and reads as the one that answers a click. */
+#queue-bar .qb-who { width: 21px; height: 21px; flex: none; display: block; margin-right: -2px; transform: rotate(-6deg); }
 #queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* The count changed under a bar that stayed: the new number settles in. */
 #queue-bar .qb-n.tick { animation: tick 180ms cubic-bezier(.2,.7,.2,1); }
@@ -864,7 +894,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 #queue-bar kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
 #queue-bar .icon { width: 26px; height: 26px; }
 #find[hidden] { display: none; }
-#find { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }
+#find { position: sticky; top: var(--head-h); z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }
 #find > * { background: var(--bg-raise); }
 #find-input { flex: 1; font: inherit; font-size: 14px; padding: 7px 12px; border: 1px solid var(--rule-2); border-radius: 6px; color: inherit; outline: none; box-shadow: var(--shadow); }
 #find-input:focus { border-color: var(--accent); }
@@ -1086,7 +1116,7 @@ pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 #toc .outline .ok-impl { background: var(--s-keyword); transform: rotate(45deg); }
 #toc .outline .ok-mod { background: var(--s-string); }
 #toc .outline li a { font-family: var(--mono); font-size: 11.5px; }
-pre.code .ln { scroll-margin-top: 76px; }
+pre.code .ln { scroll-margin-top: calc(var(--head-h) + 76px); }
 pre.code .ln.flash { background: var(--accent-bg); }
 /* A line the URL points at (#L12, #L12-L20) stays marked while it is being read;
    clicking the number in the gutter is what writes that URL. */
@@ -1161,26 +1191,28 @@ pre.code .ln::before { cursor: pointer; }
    accent moves -- so the answer to a change of accent arrives wearing it.
    It leans towards the thing it is answering, and how it lands is the whole
    difference between a receipt and an answer: glad hops, a wink nods, whoa
-   arrives all at once, sorry shakes its head, and love lets a heart go. */
+   arrives all at once, sorry shakes its head, and love lets a heart go.
+   The head (`.mk`) and its feelings (`[data-feel]`) are not the toast's
+   alone: the queue bar wears the same one, so the rules are the head's. */
 .toast .who { width: 23px; height: 23px; flex: none; display: block; }
-.toast .who .mk { display: block; width: 100%; height: 100%; overflow: visible; transform-origin: 50% 100%; }
+.mk { display: block; width: 100%; height: 100%; overflow: visible; transform-origin: 50% 100%; }
 #toasts[data-side="right"] .toast .who { transform: rotate(-7deg); }
 #toasts[data-side="left"] .toast .who { transform: rotate(7deg); }
-.toast .mk-body { fill: var(--mascot); }
-.toast .mk-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; }
-.toast .mk-ink { fill: var(--mascot-ink); }
-.toast .mk-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
-.toast .mk-love, .toast .mk-puff { fill: #f0607e; }
+.mk-body { fill: var(--mascot); }
+.mk-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; }
+.mk-ink { fill: var(--mascot-ink); }
+.mk-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
+.mk-love, .mk-puff { fill: #f0607e; }
 
-.toast[data-feel="plain"] .mk, .toast[data-feel="wink"] .mk { animation: mk-nod .52s cubic-bezier(.3,1.6,.5,1) 1; }
-.toast[data-feel="glad"] .mk, .toast[data-feel="love"] .mk { animation: mk-hop .62s cubic-bezier(.3,1.7,.5,1) 1; }
-.toast[data-feel="whoa"] .mk { animation: mk-pop .5s cubic-bezier(.2,1.8,.4,1) 1; }
-.toast[data-feel="oops"] .mk { animation: mk-shake .46s ease-in-out 1; }
+[data-feel="plain"] .mk, [data-feel="wink"] .mk { animation: mk-nod .52s cubic-bezier(.3,1.6,.5,1) 1; }
+[data-feel="glad"] .mk, [data-feel="love"] .mk { animation: mk-hop .62s cubic-bezier(.3,1.7,.5,1) 1; }
+[data-feel="whoa"] .mk { animation: mk-pop .5s cubic-bezier(.2,1.8,.4,1) 1; }
+[data-feel="oops"] .mk { animation: mk-shake .46s ease-in-out 1; }
 /* The antenna is the part with no face on it, so it carries the rest of the
    feeling: it swings behind a hop and droops when the answer is a no. */
-.toast[data-feel="glad"] .mk-nub, .toast[data-feel="love"] .mk-nub { animation: mk-swing .62s cubic-bezier(.3,1.5,.5,1) 1; }
-.toast[data-feel="oops"] .mk-nub { transform: translateY(1.4px) rotate(-14deg); }
-.toast .mk-puff { transform-box: view-box; transform-origin: 26px 8px; animation: mk-puff 1.5s cubic-bezier(.3,.7,.4,1) .18s 1 both; }
+[data-feel="glad"] .mk-nub, [data-feel="love"] .mk-nub { animation: mk-swing .62s cubic-bezier(.3,1.5,.5,1) 1; }
+[data-feel="oops"] .mk-nub { transform: translateY(1.4px) rotate(-14deg); }
+.mk-puff { transform-box: view-box; transform-origin: 26px 8px; animation: mk-puff 1.5s cubic-bezier(.3,.7,.4,1) .18s 1 both; }
 @keyframes mk-nod { 0%, 100% { transform: none; } 45% { transform: translateY(-1.6px) scale(1.03, .98); } }
 @keyframes mk-hop { 0% { transform: none; } 32% { transform: translateY(-4px) scale(1.06, .94); } 62% { transform: translateY(0) scale(.95, 1.05); } 82% { transform: translateY(-1px); } 100% { transform: none; } }
 @keyframes mk-pop { 0% { transform: scale(.62); } 55% { transform: scale(1.12); } 100% { transform: none; } }
@@ -1189,7 +1221,7 @@ pre.code .ln::before { cursor: pointer; }
 @keyframes mk-puff { from { opacity: 0; transform: translate(0, 2px) scale(.4); } 35% { opacity: 1; } to { opacity: 0; transform: translate(3px, -11px) scale(1); } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .toast, .toast .mk, .toast .mk-nub, .toast .mk-puff { animation: none; }
+  .toast, .mk, .mk-nub, .mk-puff { animation: none; }
 }
 
 /* ---------- palette / help ---------- */
@@ -1205,6 +1237,10 @@ pre.code .ln::before { cursor: pointer; }
 #palette-list .s { font-size: 12px; color: var(--fg-3); }
 #palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
+/* A search with nothing in it: snyvi says so, in the list's own row shape. */
+.pal-none { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 13px; color: var(--fg-3); }
+.pal-none .mk { width: 22px; height: 22px; flex: none; }
+.pal-none b { font-weight: 550; color: var(--fg-2); }
 /* The overlay places the box 12vh down, so the cap leaves that and a little
    below it: a box that outgrew the window would put its foot -- About,
    Connect, Reset -- past the bottom edge, where no click can reach it. */
@@ -1214,7 +1250,35 @@ pre.code .ln::before { cursor: pointer; }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 .help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }
 .help-box dd { margin: 0; }
-.help-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule); display: flex; justify-content: flex-end; gap: 4px; }
+.help-foot { display: flex; align-items: center; gap: 4px; }
+.help-gap { flex: 1; }
+
+/* The shortcuts card. A title row and the foot stay put; only the middle
+   scrolls, and on a normal screen it never has to. Each row is the meta
+   panel's own shape -- what it does, then the key, small and flat -- so
+   there is no key column to line up; the keys sit on the right edge. */
+#help .help-box { width: min(700px, 92vw); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; }
+.help-head { flex: none; display: flex; align-items: center; padding: 14px 14px 12px 24px; }
+.help-head h2 { margin: 0; flex: 1; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg); }
+#help .help-close { position: static; }
+.help-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; padding: 4px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
+.help-col { display: flex; flex-direction: column; gap: 18px; align-content: start; }
+.help-col h3 { margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: .01em; color: var(--fg-3); }
+.hk { display: flex; align-items: center; gap: 12px; min-height: 30px; padding: 1px 0; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--fg); }
+.hk:first-of-type { border-top: 0; }
+.hk > span:first-child { flex: 1; min-width: 0; line-height: 1.3; }
+.hk em { font-style: normal; font-size: 12px; color: var(--fg-3); }
+.hk .keys { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--fg-3); }
+.hk .keys i { font-style: normal; font-size: 11px; padding: 0 1px; }
+.hk .keys code { font-family: var(--mono); font-size: 11px; color: var(--fg-2); background: var(--rule); padding: 0 5px; border-radius: 4px; line-height: 18px; }
+#help kbd { display: inline-block; box-sizing: border-box; min-width: 20px; padding: 0 5px; font-family: var(--mono); font-size: 11px; line-height: 18px; text-align: center; color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: 4px; white-space: nowrap; }
+.help-col .help-note { margin: 8px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg-3); }
+#help .help-foot { flex: none; margin: 0; padding: 10px 14px 10px 16px; border-top: 1px solid var(--rule); background: var(--bg-side); }
+#help .help-foot button.text:hover { background: var(--rule); }
+@media (max-width: 600px) {
+  .help-body { grid-template-columns: 1fr; }
+  #help-col-2 { margin-top: 18px; }
+}
 button.text { font: inherit; font-size: 13px; color: var(--fg-2); background: transparent; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 button.text:hover { color: var(--fg); background: var(--bg-side); }
 button.text:focus-visible, button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1245,7 +1309,7 @@ button.danger:disabled { opacity: .4; cursor: default; }
 
 /* ---------- print ---------- */
 @media print {
-  #side, #rail, #toasts, #palette, #help, #about, #reset, #queue-bar, pre.code .copy { display: none !important; }
+  #side, #rail, #chrome, #toasts, #palette, #help, #about, #reset, #queue-bar, pre.code .copy { display: none !important; }
   #app { display: block; }
   #doc { max-width: none; padding: 0; }
   .prose { font-size: 11.5pt; }
