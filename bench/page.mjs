@@ -91,10 +91,24 @@ export async function onDemand(id) {
 export async function find(needle) {
   const drawn = [...document.querySelectorAll('.mmd[data-state="done"] svg')]
     .map(s => s.textContent).join(" ");
+  // `/` is how a reader opens the bar, and since the searching became a chunk
+  // it is also what fetches it: the bar and its input are in the page from the
+  // first paint, so poking the input directly types into something that is not
+  // listening yet, and every search comes back empty.
+  const until = async test => { for (let i = 0; i < 200; i++) { if (test()) return true; await new Promise(r => setTimeout(r, 25)); } return false; };
+  const bar = document.querySelector("#find");
+  if (bar.hidden) document.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true }));
+  await until(() => !bar.hidden && document.activeElement === document.querySelector("#find-input"));
   const input = document.querySelector("#find-input");
+  // Blanked so the wait below is for *this* search: the bar stays open between
+  // the two the bench runs, and the count from the last one is still standing.
+  document.querySelector("#find-count").textContent = "";
   input.value = needle;
   input.dispatchEvent(new Event("input", { bubbles: true }));
-  await new Promise(r => setTimeout(r, 300));
+  // The search is debounced by 80 ms and the chunk may still be in flight; the
+  // wait is for the counter to say something, not for a fixed stretch of time.
+  await until(() => (document.querySelector("#find-count").textContent || "").trim() !== "");
+  await new Promise(r => setTimeout(r, 50));
   const marks = [...document.querySelectorAll("#doc mark.find")];
   return {
     labelIsInADiagram: drawn.includes(needle),
