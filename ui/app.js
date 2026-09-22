@@ -1641,8 +1641,16 @@
   const findBar = $("#find");
   let find = null, findLoading = null;
   async function openFind() {
+    // The bar and its input are in the page already; only the searching is a
+    // chunk. So the caret lands first and the module follows. Waiting for the
+    // fetch before focusing leaves the keys the reader is already typing in
+    // the page's own shortcuts, where `p` pins the document and `Delete`
+    // deletes it -- a query is not a command, and must never arrive as one.
+    findBar.hidden = false;
+    const input = $("#find-input");
+    input.focus(); input.select();
     try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { findLoading = null; toast("Could not open find", String(e)); return; }
+    catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", String(e)); return; }
     find.open({ $, docEl, bring });
   }
 
@@ -3245,7 +3253,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) find?.close();
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop
