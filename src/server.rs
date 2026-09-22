@@ -157,7 +157,7 @@ impl Ui {
             .map_or(Cow::Borrowed(built_in), Cow::Owned)
     }
 
-    /// What the five assets hash to right now. The page carries this as
+    /// What the UI assets hash to right now. The page carries this as
     /// `?v=`, `/api/health` reports it, and a page whose copy no longer
     /// matches the daemon's reloads -- so recomputing it per request is what
     /// makes an edit on disk a new bundle, with no restart in it.
@@ -294,6 +294,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(DESK_JS.as_bytes());
         h.update(FRAME_JS.as_bytes());
         h.update(GAME_JS.as_bytes());
+        h.update(ABOUT_JS.as_bytes());
+        h.update(FIND_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -2854,8 +2856,8 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, GAME_JS,
-        INDEX_HTML, MMD_JS,
+        desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, FIND_JS,
+        FRAME_JS, GAME_JS, INDEX_HTML, MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -3168,7 +3170,10 @@ mod tests {
             let press = APP_JS
                 .find(button)
                 .unwrap_or_else(|| panic!("{button} is a button a panel is behind"));
-            assert!(import < press, "the press reaches the import, not the other way");
+            assert!(
+                import < press,
+                "the press reaches the import, not the other way"
+            );
         }
         assert!(
             ABOUT_JS.contains("export function open("),
@@ -3256,19 +3261,62 @@ mod tests {
     /// `$("#btn-wrap").addEventListener` on an element that is not in the page throws on
     /// boot and takes the whole UI with it, so every id the script uses without checking
     /// first must exist in the markup. A guarded `const x = $("#id"); if (x)` is fine.
+    ///
+    /// Every chunk and not only `app.js`: the panels, the find bar and the game
+    /// were moved out of the first paint, and an id one of them reaches for is
+    /// no longer caught at boot -- it throws when the chunk loads, which is
+    /// later, and in front of someone.
     #[test]
     fn every_id_the_script_uses_unguarded_is_in_the_page() {
         let mut missing = Vec::new();
-        for (i, _) in APP_JS.match_indices("$(\"#") {
-            let rest = &APP_JS[i + 4..];
-            let end = rest.find('"').expect("unterminated selector");
-            let id = &rest[..end];
-            let used_at_once = rest[end..].starts_with("\").");
-            if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
-                missing.push(id);
+        for (file, src) in [
+            ("app.js", APP_JS),
+            ("desk.js", DESK_JS),
+            ("frame.js", FRAME_JS),
+            ("game.js", GAME_JS),
+            ("about.js", ABOUT_JS),
+            ("find.js", FIND_JS),
+        ] {
+            for (i, _) in src.match_indices("$(\"#") {
+                let rest = &src[i + 4..];
+                let end = rest.find('"').expect("unterminated selector");
+                let id = &rest[..end];
+                let used_at_once = rest[end..].starts_with("\").");
+                if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
+                    missing.push(format!("{file}: {id}"));
+                }
             }
         }
         assert!(missing.is_empty(), "not in index.html: {missing:?}");
+    }
+
+    /// The page asks for every chunk as `/assets/x.js?v=`, and they are served
+    /// immutable for a year -- so a chunk left out of the hash that makes `?v=`
+    /// is a chunk a browser keeps across the change that was meant to replace
+    /// it. `Ui::version` lists them for a live directory; this is the hash that
+    /// ships, and `about.js` and `find.js` were once added to the first and not
+    /// the second. Held together here so the next chunk cannot be half-added.
+    #[test]
+    fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
+        let src = include_str!("server.rs");
+        let from = src.find("let asset_v = {").expect("the startup hash");
+        let to = from + src[from..].find("\n    };").expect("the end of it");
+        let block = &src[from..to];
+        for chunk in [
+            "INDEX_HTML",
+            "APP_CSS",
+            "APP_JS",
+            "DESK_JS",
+            "FRAME_JS",
+            "GAME_JS",
+            "ABOUT_JS",
+            "FIND_JS",
+        ] {
+            assert!(
+                block.contains(chunk),
+                "{chunk} is served immutable under ?v= but is not in the hash that makes it"
+            );
+        }
     }
 
     /// A name is drawn on one line in the tree, and it arrives from a field a paste can
