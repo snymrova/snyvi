@@ -50,6 +50,24 @@ const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
 /// The window's frame -- the bar's three buttons and what drags -- fetched
 /// only inside the native window, since a tab has no window to frame.
 const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
+/// The game behind the rocket at the foot of the sidebar, fetched when the
+/// rocket is pressed and never before: a reader who never presses it pays
+/// nothing for it.
+const GAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/game.js"));
+/// The about panel and the reset dialog, fetched when one of them is opened:
+/// neither is on the way to reading a document, and both ask the daemon
+/// something the moment they open, so the module rides with that request.
+const ABOUT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/about.js"));
+/// Find in the document -- the bar `/` opens and the marks it lays down --
+/// fetched the first time it is asked for. A reader who never searches inside
+/// a document never fetches it, and the page's calls into it are no-ops until
+/// it is there, because until then nothing is marked.
+const FIND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/find.js"));
+/// What a folder and a desk can be asked to do -- the right-click menu, making
+/// a desk, closing one, opening a folder -- fetched on the first such click. A
+/// reader who only reads never fetches it; the sidebar draws its desks without
+/// it, because drawing them is in `app.js` and only doing something is here.
+const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -144,7 +162,7 @@ impl Ui {
             .map_or(Cow::Borrowed(built_in), Cow::Owned)
     }
 
-    /// What the five assets hash to right now. The page carries this as
+    /// What the UI assets hash to right now. The page carries this as
     /// `?v=`, `/api/health` reports it, and a page whose copy no longer
     /// matches the daemon's reloads -- so recomputing it per request is what
     /// makes an edit on disk a new bundle, with no restart in it.
@@ -161,6 +179,10 @@ impl Ui {
             ("mmd.js", MMD_JS),
             ("desk.js", DESK_JS),
             ("frame.js", FRAME_JS),
+            ("game.js", GAME_JS),
+            ("about.js", ABOUT_JS),
+            ("find.js", FIND_JS),
+            ("menu.js", MENU_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -277,6 +299,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(APP_JS.as_bytes());
         h.update(DESK_JS.as_bytes());
         h.update(FRAME_JS.as_bytes());
+        h.update(GAME_JS.as_bytes());
+        h.update(ABOUT_JS.as_bytes());
+        h.update(FIND_JS.as_bytes());
+        h.update(MENU_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -369,6 +395,16 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/desks/{id}/docs", get(desk_docs))
+        .route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))
+        .route("/api/desks/{id}/notes/{note}", post(set_desk_note))
+        .route(
+            "/api/desks/{id}/notes/{note}/remove",
+            post(remove_desk_note),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/restore",
+            post(restore_desk_note),
+        )
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
@@ -380,6 +416,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/desk/{id}", get(shell_desk))
         .route("/assets/desk.js", get(asset_desk))
         .route("/assets/frame.js", get(asset_frame))
+        .route("/assets/game.js", get(asset_game))
+        .route("/assets/about.js", get(asset_about))
+        .route("/assets/find.js", get(asset_find))
+        .route("/assets/menu.js", get(asset_menu))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -689,6 +729,44 @@ async fn asset_frame(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "frame.js",
         FRAME_JS,
+    )
+}
+/// The game, on the same terms: nothing asks for it but the rocket.
+async fn asset_game(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "game.js",
+        GAME_JS,
+    )
+}
+/// The about panel and the reset dialog, on the same terms: nothing asks for
+/// them but the two buttons that open them.
+async fn asset_about(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "about.js",
+        ABOUT_JS,
+    )
+}
+/// Find, on the same terms: the bar is not up until someone puts it up.
+async fn asset_find(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "find.js",
+        FIND_JS,
+    )
+}
+/// The folder menu and the desk actions, on the same terms: nothing here has
+/// happened until someone has clicked something.
+async fn asset_menu(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "menu.js",
+        MENU_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -1371,6 +1449,23 @@ struct RenameBody {
     name: String,
 }
 
+/// One line for a desk's list. Bounded and trimmed by `desk::add_note`, not
+/// here: the cap belongs beside the list it is a cap on.
+#[derive(Deserialize)]
+struct NoteTextBody {
+    text: String,
+}
+
+/// What changed about a line. Either half may be absent, so ticking a row off
+/// does not have to send its text back with it.
+#[derive(Debug, Default, Deserialize)]
+struct NoteEditBody {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    done: Option<bool>,
+}
+
 /// A label the sidebar has to draw on one line, so it is trimmed of the whitespace
 /// an accidental paste brings and cut to a length that cannot push the tree around.
 fn clean_name(raw: &str) -> Option<String> {
@@ -1499,7 +1594,7 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
             emit(
                 &app,
                 "doc",
-                json!({ "doc": doc, "url": url, "existing": received.existing, "waiting": waiting(&app) }),
+                json!({ "doc": doc, "url": url, "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
             );
             if !received.existing {
                 notify_desktop(&app, &doc);
@@ -2131,6 +2226,109 @@ async fn desk_docs(
     }
 }
 
+/// A desk's own list, which is the reader's and not an agent's: `/api/notes`
+/// is the other kind, and the two never meet. Behind the same gate as the rest
+/// of a desk, so what someone wrote on theirs is as unreachable from a tab as
+/// their panes are.
+///
+/// None of the four writes below tells the other windows. A list is typed into
+/// one window at a time, a keystroke is not an event worth waking every page
+/// for, and the rail asks again whenever its desk is drawn -- the same trade
+/// `desk_layout` makes for a divider being dragged.
+async fn desk_notes(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.desk_notes(id) {
+        Ok(notes) => Json(json!({ "notes": notes })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn add_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NoteTextBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.add_desk_note(id, &b.text) {
+        // One refusal for three states -- no such desk, an empty line, a full
+        // list -- because the page has just been told the count and can say
+        // which it is; the daemon repeating it would be two sources for one
+        // sentence.
+        Ok(Some(note)) => (StatusCode::CREATED, Json(json!({ "note": note }))).into_response(),
+        Ok(None) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("a desk keeps {} notes", crate::desk::NOTES_PER_DESK) })),
+        )
+            .into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Rewrite a line, tick it off, or both. An emptied line is taken off the list
+/// rather than kept as a blank row, which is what `desk::set_note` does with it.
+async fn set_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NoteEditBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.set_desk_note(id, note, b.text.as_deref(), b.done) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Take a line off the list. The row is kept and `restore` puts it back: this
+/// path deletes nothing, which is why it does not ask twice the way closing a
+/// desk does.
+async fn remove_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.remove_desk_note(id, note) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn restore_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.restore_desk_note(id, note) {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 async fn rename_desk(
     State(app): S,
     headers: HeaderMap,
@@ -2241,7 +2439,7 @@ async fn open_pane(
             .into_response(),
         Ok(crate::desk::Opened::NoRoomLeft) => (
             StatusCode::CONFLICT,
-            Json(json!({ "error": format!("{} panes is the whole of it", crate::desk::EVERYWHERE), "full": "everywhere" })),
+            Json(json!({ "error": format!("{} panels is the whole of it", crate::desk::EVERYWHERE), "full": "everywhere" })),
         )
             .into_response(),
         Ok(crate::desk::Opened::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
@@ -2435,7 +2633,7 @@ async fn paste_image(
             emit(
                 &app,
                 "doc",
-                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "waiting": waiting(&app) }),
+                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
             );
             Json(json!({ "id": doc.id, "path": file })).into_response()
         }
@@ -2806,7 +3004,8 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, DESK_JS, INDEX_HTML, MMD_JS,
+        desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, FIND_JS,
+        FRAME_JS, GAME_JS, INDEX_HTML, MENU_JS, MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -2997,6 +3196,11 @@ mod tests {
             "async fn desk_layout(",
             "async fn delete_desk(",
             "async fn desk_docs(",
+            "async fn desk_notes(",
+            "async fn add_desk_note(",
+            "async fn set_desk_note(",
+            "async fn remove_desk_note(",
+            "async fn restore_desk_note(",
             "async fn open_pane(",
             "async fn close_pane(",
             "async fn start_pane(",
@@ -3032,6 +3236,10 @@ mod tests {
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
             r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
+            r#".route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}", post(set_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}/remove", post(remove_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
             r#".route("/api/panes/{id}/start", post(start_pane))"#,
             r#".route("/api/panes/{id}/stop", post(stop_pane))"#,
@@ -3084,6 +3292,56 @@ mod tests {
             "export function close(",
         ] {
             assert!(DESK_JS.contains(seam), "desk.js should export `{seam}`");
+        }
+    }
+
+    /// The game is the fourth chunk, and the smallest bargain of them: one
+    /// import, in the rocket's click handler and nowhere else, so a page
+    /// whose rocket is never pressed never fetches a game.
+    #[test]
+    fn the_page_asks_for_the_game_only_when_the_rocket_is_pressed() {
+        assert_eq!(APP_JS.matches("import(`/assets/game.js").count(), 1);
+        let import = APP_JS.find("import(`/assets/game.js").unwrap();
+        let press = APP_JS
+            .find(r##"$("#btn-game")"##)
+            .expect("the rocket is the button the game is behind");
+        assert!(press < import, "the import sits inside the rocket's press");
+        for seam in [
+            "export function open(",
+            "export function close(",
+            "export function isOpen(",
+        ] {
+            assert!(GAME_JS.contains(seam), "game.js should export `{seam}`");
+        }
+    }
+
+    /// The fifth chunk, and the one the budget was over by: the about panel
+    /// and the reset dialog. Two buttons, one import, and a page that opens
+    /// neither never fetches either. `bench/bytes.mjs` is what noticed they
+    /// were being carried by every first paint.
+    #[test]
+    fn the_page_asks_for_the_panels_only_when_one_is_opened() {
+        assert_eq!(APP_JS.matches("import(`/assets/about.js").count(), 1);
+        let import = APP_JS.find("import(`/assets/about.js").unwrap();
+        for button in [r##"$("#btn-about")"##, r##"$("#btn-reset")"##] {
+            let press = APP_JS
+                .find(button)
+                .unwrap_or_else(|| panic!("{button} is a button a panel is behind"));
+            assert!(
+                import < press,
+                "the press reaches the import, not the other way"
+            );
+        }
+        assert!(
+            ABOUT_JS.contains("export function open("),
+            "about.js should export `open`"
+        );
+        // The panels themselves must not have stayed behind in the page.
+        for gone in ["/api/about", "#about-facts", "#reset-go"] {
+            assert!(
+                !APP_JS.contains(gone),
+                "`{gone}` belongs to the chunk now, not to app.js"
+            );
         }
     }
 
@@ -3160,19 +3418,64 @@ mod tests {
     /// `$("#btn-wrap").addEventListener` on an element that is not in the page throws on
     /// boot and takes the whole UI with it, so every id the script uses without checking
     /// first must exist in the markup. A guarded `const x = $("#id"); if (x)` is fine.
+    ///
+    /// Every chunk and not only `app.js`: the panels, the find bar and the game
+    /// were moved out of the first paint, and an id one of them reaches for is
+    /// no longer caught at boot -- it throws when the chunk loads, which is
+    /// later, and in front of someone.
     #[test]
     fn every_id_the_script_uses_unguarded_is_in_the_page() {
         let mut missing = Vec::new();
-        for (i, _) in APP_JS.match_indices("$(\"#") {
-            let rest = &APP_JS[i + 4..];
-            let end = rest.find('"').expect("unterminated selector");
-            let id = &rest[..end];
-            let used_at_once = rest[end..].starts_with("\").");
-            if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
-                missing.push(id);
+        for (file, src) in [
+            ("app.js", APP_JS),
+            ("desk.js", DESK_JS),
+            ("frame.js", FRAME_JS),
+            ("game.js", GAME_JS),
+            ("about.js", ABOUT_JS),
+            ("find.js", FIND_JS),
+            ("menu.js", MENU_JS),
+        ] {
+            for (i, _) in src.match_indices("$(\"#") {
+                let rest = &src[i + 4..];
+                let end = rest.find('"').expect("unterminated selector");
+                let id = &rest[..end];
+                let used_at_once = rest[end..].starts_with("\").");
+                if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
+                    missing.push(format!("{file}: {id}"));
+                }
             }
         }
         assert!(missing.is_empty(), "not in index.html: {missing:?}");
+    }
+
+    /// The page asks for every chunk as `/assets/x.js?v=`, and they are served
+    /// immutable for a year -- so a chunk left out of the hash that makes `?v=`
+    /// is a chunk a browser keeps across the change that was meant to replace
+    /// it. `Ui::version` lists them for a live directory; this is the hash that
+    /// ships, and `about.js` and `find.js` were once added to the first and not
+    /// the second. Held together here so the next chunk cannot be half-added.
+    #[test]
+    fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
+        let src = include_str!("server.rs");
+        let from = src.find("let asset_v = {").expect("the startup hash");
+        let to = from + src[from..].find("\n    };").expect("the end of it");
+        let block = &src[from..to];
+        for chunk in [
+            "INDEX_HTML",
+            "APP_CSS",
+            "APP_JS",
+            "DESK_JS",
+            "FRAME_JS",
+            "GAME_JS",
+            "ABOUT_JS",
+            "FIND_JS",
+            "MENU_JS",
+        ] {
+            assert!(
+                block.contains(chunk),
+                "{chunk} is served immutable under ?v= but is not in the hash that makes it"
+            );
+        }
     }
 
     /// A name is drawn on one line in the tree, and it arrives from a field a paste can

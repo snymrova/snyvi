@@ -5,10 +5,11 @@
  * header -- carry data-tauri-drag-region, which the window's own script
  * answers (a drag moves the window, a double-click maximises it), and this
  * draws the bar's three buttons at the window's top right corner, whatever
- * the panes are doing, and does what the bar's did. Shown only once the
- * window says the page may: a window older than this page refuses, and keeps
- * its own bar. Not on macOS, where the traffic lights stay the system's, over
- * the brand row, and the page only leaves them room.
+ * the panes are doing, and does what the bar's did; the document's head
+ * (#chrome) drags too, and leaves them the corner. Shown only once the
+ * window says the page may: a window older than this page refuses, and
+ * keeps its own bar. Not on macOS, where the traffic lights stay the
+ * system's, over the brand row, and the page only leaves them room.
  *
  * Fetched by app.js only where there is a window to ask -- a browser tab
  * never carries it. The same seam as desk.js, and bench/bytes.mjs prices it
@@ -17,7 +18,7 @@
  */
 
 const CSS = `
-.win { display: flex; gap: 2px; pointer-events: auto; }
+.win { position: fixed; top: 14px; right: 10px; z-index: 10; display: flex; gap: 2px; }
 .win[hidden] { display: none; }
 .wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .wb:hover { background: var(--rule); color: var(--fg); }
@@ -25,15 +26,15 @@ const CSS = `
 .win .wb-restore, .win[data-max="1"] .wb-max { display: none; }
 .win[data-max="1"] .wb-restore { display: block; }
 :root[data-frame="page"] .rail-grip { display: block; position: absolute; top: 0; left: 0; right: 0; height: 60px; }
-/* Room for the buttons when the rail is not beside the desk header to hold
-   them: a desk with the rail folded, or with nothing in it. */
-:root[data-frame="page"][data-view="desk"][data-rail="0"] .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 100px; }
+/* Room for the buttons where the rail is not there to hold them: in the
+   document's head, and in a desk's header, when the rail is folded, has
+   nothing in it, or is a sheet -- the desk's already leaves the rail
+   button 30px, and the three want 102px more. */
+:root[data-frame="page"] #chrome { padding-right: 112px; }
+:root[data-frame="page"][data-view="desk"][data-rail="0"] .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 132px; }
 :root[data-frame="mac"] .side-head { padding-left: 84px; }
-.help-box dl + h2 { margin-top: 20px; }
-.help-note { margin: 12px 0 0; font-size: 12.5px; color: var(--fg-3); }
 @media (max-width: 1100px) {
-  :root[data-frame="page"][data-view="desk"] .dk-head { padding-right: 136px; }
-  :root[data-frame="page"] #find { padding-right: 156px; }
+  :root[data-frame="page"][data-view="desk"] .dk-head { padding-right: 132px; }
 }
 `;
 
@@ -45,15 +46,15 @@ const BUTTONS =
 
 /* The desk's keys, in the help box. A desk exists only in the window, so
  * the keys for one are the window's to tell of, in the box the `?` opens
- * everywhere -- ahead of the foot, which stays the box's own. */
+ * everywhere -- at the end of the second column. */
 const HELP =
-  `<h2>On a desk</h2><dl>` +
-  `<dt>⌃\`</dt><dd>the desk, or the reading view</dd>` +
-  `<dt>⌃⌥1 – ⌃⌥4</dt><dd>focus a pane by its slot</dd>` +
-  `<dt>⌃⌥Z</dt><dd>the focused pane alone, and back</dd>` +
-  `<dt>ctrl shift C / V</dt><dd>copy the selection / paste</dd>` +
-  `<dt>shift + wheel</dt><dd>scroll the pane's scrollback</dd>` +
-  `</dl><p class="help-note">Every other key goes to the shell in the focused pane.</p>`;
+  `<section><h3>On a desk</h3>` +
+  `<div class="hk"><span>Desk / reading view</span><span class="keys"><kbd>ctrl</kbd><kbd>\`</kbd></span></div>` +
+  `<div class="hk"><span>Focus a panel by slot</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>1</kbd><i>–</i><kbd>4</kbd></span></div>` +
+  `<div class="hk"><span>The focused panel alone</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>Z</kbd></span></div>` +
+  `<div class="hk"><span>Copy / paste</span><span class="keys"><kbd>ctrl</kbd><kbd>shift</kbd><kbd>C</kbd><i>/</i><kbd>V</kbd></span></div>` +
+  `<div class="hk"><span>Scroll the scrollback</span><span class="keys"><kbd>shift</kbd><i>+</i>wheel</span></div>` +
+  `<p class="help-note">Every other key goes to the shell in the focused panel.</p></section>`;
 
 /** `root` is the document element, `$` the page's querySelector. Asks the
  *  window first, and draws nothing until it answers yes. */
@@ -66,14 +67,14 @@ export function frame(root, $) {
     s.id = "frame-css";
     s.textContent = CSS;
     document.head.append(s);
-    $("#help .help-foot").insertAdjacentHTML("beforebegin", HELP);
+    $("#help-col-2").insertAdjacentHTML("beforeend", HELP);
     const mac = /^Mac/.test(navigator.platform);
     root.dataset.frame = mac ? "mac" : "page";
     if (mac) return;
     const el = document.createElement("div");
     el.className = "win"; el.id = "win";
     el.innerHTML = BUTTONS;
-    $("#chrome .chrome-r").append(el);
+    document.body.append(el);
     const wb = w => el.querySelector(`[data-win=${w}]`), btn = wb("max");
     const show = m => { el.dataset.max = m ? "1" : "0"; btn.title = m ? "Restore" : "Maximise"; btn.setAttribute("aria-label", m ? "Restore window" : "Maximise window"); };
     const refresh = () => win("is_maximized").then(show, () => {});

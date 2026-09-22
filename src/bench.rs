@@ -16,7 +16,11 @@
 //! speed is not snyvi's to promise, as `bench/browser.mjs` uses it: the one
 //! row that is mostly the operating system's -- creating a process, which a
 //! hosted Windows runner does in 400 ms and a dev box in 10 -- is then
-//! printed and not enforced, and every other row still is.
+//! printed and not enforced, and every other row still is. It scales the
+//! ceilings the bench waits under as well as the budgets it prints: those
+//! are not measurements but the line past which an exchange is a hang, and
+//! a line that does not move with the machine is a red build on the slowest
+//! one. See `Daemon::patience`.
 
 use crate::render;
 use anyhow::{anyhow, bail, Context, Result};
@@ -30,9 +34,18 @@ use std::time::{Duration, Instant};
 const MB: f64 = 1e6;
 
 pub fn run(check: bool) -> Result<()> {
+    // A multiplier, and only ever a sane one. It now scales the ceilings the
+    // bench waits under as well as the budgets it prints, and
+    // `Duration::from_secs_f64` panics on a negative, an infinity or a NaN --
+    // all three of which parse cleanly out of the environment. A factor under
+    // 1.0 is refused for the same reason from the other end: zero would turn
+    // every ceiling into an instant timeout and every budget into an OVER.
+    // Anything outside the range falls back to 1.0, which is the strict end,
+    // so a typo tightens the bench rather than loosening it.
     let factor: f64 = std::env::var("SNYVI_BENCH_FACTOR")
         .ok()
-        .and_then(|f| f.parse().ok())
+        .and_then(|f| f.parse::<f64>().ok())
+        .filter(|f| f.is_finite() && (1.0..=10.0).contains(f))
         .unwrap_or(1.0);
     let shared = std::env::var_os("SNYVI_BENCH_SHARED").is_some();
     let fixtures = Fixtures::new();
@@ -194,7 +207,7 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
         if let Some(d) = daemon.take() {
             stop(d);
         }
-        let (d, ms) = Daemon::start(&exe, &dir, port)?;
+        let (d, ms) = Daemon::start(&exe, &dir, port, factor)?;
         start = start.min(ms);
         daemon = Some(d);
     }
@@ -255,8 +268,25 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
         std::fs::write(&big_md, &f.md_1m)?;
         std::fs::write(&big_rs, &f.code_100k)?;
         let events = daemon.events()?;
-        daemon.send(&big_md)?;
-        daemon.send(&big_rs)?;
+        // Timed, not only awaited. These two were the only sends in this file
+        // with no clock on them, which left the transport ceiling as the one
+        // thing that would notice them getting slower -- and a ceiling that
+        // scales with the machine is a poor detector, because it is meant to
+        // catch a hang and not a regression. A row catches the regression.
+        let (_, md_ms) = daemon.send(&big_md)?;
+        let (_, rs_ms) = daemon.send(&big_rs)?;
+        // Roomy on purpose. This one swings with the machine more than any
+        // other row -- half a second on a quiet box and over a second and a
+        // half on a busy one -- and a row that goes red on a loaded runner is
+        // the thing this file was just fixed for. It is here to catch a
+        // regression of the kind a ceiling would have slept through, not to
+        // hold the daemon to a tenth of a second.
+        rows.time("send 1 MB markdown, round trip", md_ms, 2000.0, factor);
+        // The code file is the slowest exchange the daemon has: it is stored
+        // partly plain, and 100k lines of it is 1.8 s on a dev box where the
+        // megabyte of markdown is half a second. The budget is that, with the
+        // same room to move the other rows are given.
+        rows.time("send 100k lines of code, round trip", rs_ms, 3500.0, factor);
         rows.memory(
             "daemon resident, after 1 MB and 100k lines, settled",
             daemon.settled_mb(Some((events, "rendered")))?,
@@ -342,12 +372,25 @@ struct Daemon {
     child: Child,
     port: u16,
     token: String,
+    /// How long one exchange with this daemon may take before the bench
+    /// calls it a hang rather than slow.
+    ///
+    /// Not a budget: the budgets are the rows, and they are what a
+    /// regression fails. This is only the line past which the bench stops
+    /// waiting, so that a daemon that never answers ends the run instead of
+    /// holding a runner for six hours. It scales with the factor for the
+    /// same reason the clocks do -- the hosted Windows runner creates a
+    /// process in 405 ms where a dev box takes 11 -- and it did not, which
+    /// is how a fixed 30 s ceiling took main's build down on the one send
+    /// in this file that no row holds a clock to: `timeout: global`, no row
+    /// over budget, and nothing in the log to say which document it was.
+    patience: Duration,
 }
 
 impl Daemon {
     /// Start a daemon on its own port and directory, and time it to the first
     /// health answer: the moment a `snyvi send` or `snyvi app` can proceed.
-    fn start(exe: &Path, dir: &Path, port: u16) -> Result<(Daemon, f64)> {
+    fn start(exe: &Path, dir: &Path, port: u16, factor: f64) -> Result<(Daemon, f64)> {
         let t0 = Instant::now();
         let child = Command::new(exe)
             .arg("serve")
@@ -359,23 +402,31 @@ impl Daemon {
             .stderr(Stdio::null())
             .spawn()
             .context("starting a daemon for the bench")?;
+        let patience = Duration::from_secs_f64(30.0 * factor);
         let mut daemon = Daemon {
             child,
             port,
             token: String::new(),
+            patience,
         };
         // Asked every two milliseconds: a daemon answers in about 25, and the
-        // number being measured is the daemon's, not the poll's.
-        let deadline = t0 + Duration::from_secs(10);
+        // number being measured is the daemon's, not the poll's. Which is why
+        // the poll's own ceiling scales too: a 400 ms cut-off on a machine
+        // that answers in 405 measures the cut-off and not the daemon.
+        let poll = Duration::from_secs_f64(0.4 * factor);
+        let deadline = t0 + Duration::from_secs_f64(10.0 * factor);
         let ms = loop {
-            if daemon.health().is_some() {
+            if daemon.health(poll).is_some() {
                 break t0.elapsed().as_secs_f64() * 1000.0;
             }
             if let Some(status) = daemon.child.try_wait()? {
                 bail!("the bench's daemon exited before answering ({status})");
             }
             if Instant::now() > deadline {
-                bail!("the bench's daemon did not answer on port {port} within ten seconds");
+                bail!(
+                    "the bench's daemon did not answer on port {port} within {:.0} s",
+                    (deadline - t0).as_secs_f64()
+                );
             }
             std::thread::sleep(Duration::from_millis(2));
         };
@@ -389,10 +440,10 @@ impl Daemon {
         format!("http://127.0.0.1:{}{path}", self.port)
     }
 
-    fn health(&self) -> Option<Value> {
+    fn health(&self, within: Duration) -> Option<Value> {
         ureq::get(&self.url("/api/health"))
             .config()
-            .timeout_global(Some(Duration::from_millis(400)))
+            .timeout_global(Some(within))
             .build()
             .call()
             .ok()?
@@ -413,11 +464,24 @@ impl Daemon {
         let mut resp = ureq::post(&self.url("/api/docs"))
             .header("Authorization", &format!("Bearer {}", self.token))
             .config()
-            .timeout_global(Some(Duration::from_secs(30)))
+            .timeout_global(Some(self.patience))
             .http_status_as_error(false)
             .build()
             .send_json(&payload)
-            .context("sending a bench document")?;
+            .with_context(|| {
+                // Only a wait that reached the ceiling is a wait worth naming:
+                // a refused connection comes back in four milliseconds, and
+                // "gave up after 0 s" reads as though the daemon answered.
+                if t.elapsed() >= self.patience {
+                    format!(
+                        "sending {} to the bench's daemon, which gave up after {:.0} s",
+                        path.display(),
+                        t.elapsed().as_secs_f64()
+                    )
+                } else {
+                    format!("sending {} to the bench's daemon", path.display())
+                }
+            })?;
         let status = resp.status().as_u16();
         let body: Value = resp.body_mut().read_json().unwrap_or(Value::Null);
         let ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -438,7 +502,10 @@ impl Daemon {
         let t = Instant::now();
         let resp = ureq::get(&self.url(path))
             .config()
-            .timeout_global(Some(Duration::from_secs(10)))
+            // A third of the patience, which is the 10 s this waited before
+            // the factor existed: a GET that is only a fetch has no send's
+            // work behind it, and scaling is all this change is meant to do.
+            .timeout_global(Some(self.patience / 3))
             .build()
             .call()
             .with_context(|| format!("fetching {path} from the bench's daemon"))?;
@@ -455,8 +522,10 @@ impl Daemon {
         let resp = ureq::get(&self.url("/api/events"))
             .config()
             // The whole stream, not one read: this is how long the bench will
-            // wait for the daemon to finish a highlight before giving up.
-            .timeout_global(Some(Duration::from_secs(120)))
+            // wait for the daemon to finish a highlight before giving up. Four
+            // exchanges' worth, because it outlasts the two largest sends and
+            // the work they leave running behind them.
+            .timeout_global(Some(self.patience * 4))
             .build()
             .call()
             .context("opening the bench daemon's event stream")?;

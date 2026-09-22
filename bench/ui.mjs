@@ -66,11 +66,22 @@ function prelude() {
       const r = el.getBoundingClientRect();
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
     },
-    /** How far a heading's top is from the top of the document pane. */
+    /** How far a heading's top is from the top of the *reading area*, which is
+     *  the bottom of the document's sticky head and not the top of the pane:
+     *  `#chrome` sits inside `#main` at `top: 0`, opaque and 52 px tall, so a
+     *  heading level with the pane's top is a heading behind it. Every anchor
+     *  in app.css clears it by `calc(var(--head-h) + 12px)`, and this is what
+     *  that 12 px is measured as. Falls back to the pane where there is no
+     *  head to speak of. */
     headingOffset(id) {
       const el = document.getElementById(id);
       const h = el && (el.closest("h1,h2,h3,h4") || el);
-      return h ? Math.round(h.getBoundingClientRect().top - q("#main").getBoundingClientRect().top) : null;
+      if (!h) return null;
+      const head = q("#chrome");
+      const from = head && head.getClientRects().length
+        ? head.getBoundingClientRect().bottom
+        : q("#main").getBoundingClientRect().top;
+      return Math.round(h.getBoundingClientRect().top - from);
     },
     /** The contents' current entry, and whether it is inside the rail's box. */
     cur() {
@@ -398,7 +409,7 @@ async function railRows(p, url, md, send) {
   const lit = await p.ev(`(() => { const a = document.querySelector('#toc a[data-i="${entry}"]'); const el = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1))); return (el?.closest("h1, h2, h3, h4, h5, h6") || el)?.classList.contains("flash") === true; })()`);
   await sleep(350);
   const landed = await p.ev(`(() => { const a = document.querySelector('#toc a[data-i="${entry}"]'); return { off: window.__ui.headingOffset(a.getAttribute("href").slice(1)), hash: location.hash, hist: history.length }; })()`);
-  rows.push(["a click on an entry", within(landed.off, 20, 40) && landed.hist === histBefore && lit,
+  rows.push(["a click on an entry", within(landed.off, 4, 28) && landed.hist === histBefore && lit,
     `heading ${landed.off} px in${lit ? ", lit for a moment" : ", never lit"}, ${landed.hist - histBefore} history entries added, hash ${landed.hash.slice(0, 14)}…`]);
   await p.pointerAway();
 
@@ -411,7 +422,7 @@ async function railRows(p, url, md, send) {
     history.back();`);
   await sleep(800);
   const back = await p.ev(`({ off: window.__ui.headingOffset(location.hash.slice(1)), hash: location.hash.slice(1), kept: document.querySelector("#doc article")?.dataset.sentinel === "kept" })`);
-  rows.push(["Back to a section", back.hash === there && within(back.off, 20, 40) && back.kept,
+  rows.push(["Back to a section", back.hash === there && within(back.off, 4, 28) && back.kept,
     !back.kept ? "rebuilt the document" : back.hash !== there ? `went to "${back.hash.slice(0, 18)}…"` : `moved to "${back.hash.slice(0, 18)}…", ${back.off} px in, without a rebuild`]);
 
   await p.ui("scrollMain", 12000); await sleep(700);
@@ -447,7 +458,7 @@ async function railRows(p, url, md, send) {
   const deep = toc.hrefs[30];
   await p.goto(`${url}#${deep}`);
   const onLoad = await p.ev(`({ off: window.__ui.headingOffset(${JSON.stringify(deep)}), cur: window.__ui.cur() })`);
-  rows.push(["a link to a section, on load", within(onLoad.off, 20, 40) && onLoad.cur.inView,
+  rows.push(["a link to a section, on load", within(onLoad.off, 4, 28) && onLoad.cur.inView,
     `heading ${onLoad.off} px in, marker "${onLoad.cur.text}" ${onLoad.cur.inView ? "in the rail" : "off the rail"}`]);
 
   const anchorTarget = toc.hrefs[8];
@@ -500,7 +511,7 @@ async function narrowRows(p, url) {
   await sleep(400);
   const viaEntry = await p.ev(`({ sheet: document.documentElement.dataset.sheet, off: window.__ui.headingOffset(document.querySelector('#toc a[data-i="6"]').getAttribute("href").slice(1)) })`);
   await p.pointerAway();
-  rows.push(["an entry in the sheet", viaEntry.sheet === undefined && within(viaEntry.off, 20, 40),
+  rows.push(["an entry in the sheet", viaEntry.sheet === undefined && within(viaEntry.off, 4, 28),
     viaEntry.sheet ? "the sheet stayed open over the section it went to" : `jumps to the section (${viaEntry.off} px in) and closes`]);
 
   await p.width(700);
@@ -898,7 +909,7 @@ async function browseRows(p, browsed) {
   await sleep(400);
   const at = await p.ui("headingOffset", id);
   const scrolled = await p.ev(`Math.round(document.querySelector("#main").scrollTop)`);
-  rows.push(["a browsed file opens at a section", within(at, 0, 40) && scrolled > 100,
+  rows.push(["a browsed file opens at a section", within(at, 0, 28) && scrolled > 100,
     at === null ? "the heading is not in the page" : `the heading is ${at} px in, ${scrolled} px down the file`]);
 
   await p.goto(`${browsed}/code.rs#L300`);

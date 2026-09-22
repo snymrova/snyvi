@@ -173,6 +173,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(id UNINDEXED, title, body
 const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
+/// The same join over `head_docs`: what every list of documents reads, so one
+/// file sent seven times is one row. Reaching a version that is not the head is
+/// deliberate -- `history`, `previous` and `get` go through `DOC_FROM`.
+const HEAD_FROM: &str =
+    "FROM head_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 
 impl Store {
     pub fn open(paths: &Paths) -> Result<Store> {
@@ -223,6 +228,15 @@ impl Store {
         }
         // After the columns are there on every database, old or new.
         //
+        // `head_docs` is the second of the two, and the one every *list* reads:
+        // a file sent seven times is seven rows in `docs` and one row in here,
+        // the newest. The other six are not hidden -- they are the Versions
+        // panel, `[` and `]`, and the comparison -- but a list of documents is
+        // a list of documents, and the sidebar used to show the same script
+        // seven times because the row and the send were the same thing. A
+        // document with no file behind it has no lineage to be the head of, so
+        // it is always its own.
+        //
         // Every read of the library goes through this view, so a document that
         // has been deleted is gone from the tree, the inbox, search, the queue,
         // history and the counts by construction -- rather than by a condition
@@ -232,8 +246,15 @@ impl Store {
         // is in it on the run that adds the column.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS docs_unread ON docs(unread, received_at);
+             CREATE INDEX IF NOT EXISTS docs_path ON docs(project_id, source_path, received_at);
              DROP VIEW IF EXISTS live_docs;
-             CREATE VIEW live_docs AS SELECT rowid AS rowid, * FROM docs WHERE deleted_at = 0;",
+             CREATE VIEW live_docs AS SELECT rowid AS rowid, * FROM docs WHERE deleted_at = 0;
+             DROP VIEW IF EXISTS head_docs;
+             CREATE VIEW head_docs AS SELECT * FROM live_docs d
+               WHERE d.source_path IS NULL
+                  OR d.rowid = (SELECT d2.rowid FROM live_docs d2
+                                WHERE d2.project_id = d.project_id AND d2.source_path = d.source_path
+                                ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1);",
         )?;
         Ok(Store {
             conn: Mutex::new(conn),
@@ -302,6 +323,17 @@ impl Store {
             "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
             params![id, d.title, d.search_body],
         )?;
+        // A newer version of a file takes the older one's place on the queue
+        // rather than queueing beside it. The older row is in no list any more
+        // (see `head_docs`), and a count of rows nobody can reach is a badge
+        // that never comes down -- seven sends of one script used to read as
+        // seven things waiting.
+        if let Some(sp) = d.source_path {
+            tx.execute(
+                "UPDATE docs SET unread = 0 WHERE project_id = ?1 AND source_path = ?2 AND id != ?3 AND unread = 1",
+                params![project_id, sp, id],
+            )?;
+        }
         tx.commit()?;
         Ok(Doc {
             id,
@@ -375,13 +407,37 @@ impl Store {
         Ok(fs::read(self.src_path(id))?)
     }
 
-    /// The document received just before this one in the same workflow.
+    /// The version before this one: the same file's previous snapshot, or, for
+    /// a document with no file behind it, whatever arrived just before it in
+    /// the same workflow.
+    ///
+    /// What "Compare with previous" compares against, which is why it follows
+    /// the file. A workflow holds one row per document now, so the row before
+    /// this one in it is usually a different document altogether -- and a
+    /// reader pressing `c` on the seventh send of a script means the sixth.
+    /// The first send of a file has nothing to compare with, and says so
+    /// rather than reaching for the nearest unrelated thing.
     pub fn previous(&self, doc: &Doc) -> Result<Option<Doc>> {
         let conn = self.conn.lock().unwrap();
+        // Ties are broken on rowid because received_at counts whole seconds,
+        // and a file sent twice inside one is exactly what this is for.
+        let earlier = "AND d.id != ?3 \
+             AND (d.received_at < ?2 OR (d.received_at = ?2 AND d.rowid < (SELECT rowid FROM docs WHERE id = ?3))) \
+             ORDER BY d.received_at DESC, d.rowid DESC LIMIT 1";
+        if let Some(path) = &doc.source_path {
+            return conn
+                .query_row(
+                    &format!(
+                        "SELECT {DOC_COLS} {DOC_FROM} WHERE d.project_id = ?1 AND d.source_path = ?4 {earlier}"
+                    ),
+                    params![doc.project_id, doc.received_at, doc.id, path],
+                    row_to_doc,
+                )
+                .optional()
+                .map_err(Into::into);
+        }
         conn.query_row(
-            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.workflow_id = ?1 AND d.id != ?3 \
-                 AND (d.received_at < ?2 OR (d.received_at = ?2 AND d.rowid < (SELECT rowid FROM docs WHERE id = ?3))) \
-                 ORDER BY d.received_at DESC, d.rowid DESC LIMIT 1"),
+            &format!("SELECT {DOC_COLS} {DOC_FROM} WHERE d.workflow_id = ?1 {earlier}"),
             params![doc.workflow_id, doc.received_at, doc.id],
             row_to_doc,
         )
@@ -408,23 +464,68 @@ impl Store {
     /// confirmation used to make the other way round: a dialog before every
     /// delete, and no way back after one. The row keeps its workflow, its
     /// project and its place in the queue, so putting it back is one column.
+    ///
+    /// The document, not the row: one row per document in the sidebar means one
+    /// ✕ per document, so a file that was sent seven times goes with its seven
+    /// versions. Removing only the newest would put the sixth in its place, and
+    /// a delete that leaves a nearly identical row behind reads as one that did
+    /// not happen. Undo puts the same seven back.
     pub fn delete(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let n = conn.execute(
-            "UPDATE docs SET deleted_at = ?2 WHERE id = ?1 AND deleted_at = 0",
-            params![id, now()],
-        )?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let at = now();
+        let found: Option<(i64, Option<String>)> = tx
+            .query_row(
+                "SELECT project_id, source_path FROM docs WHERE id = ?1 AND deleted_at = 0",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((project_id, source_path)) = found else {
+            return Ok(false);
+        };
+        let n = match source_path {
+            Some(sp) => tx.execute(
+                "UPDATE docs SET deleted_at = ?3 WHERE project_id = ?1 AND source_path = ?2 AND deleted_at = 0",
+                params![project_id, sp, at],
+            )?,
+            None => tx.execute(
+                "UPDATE docs SET deleted_at = ?2 WHERE id = ?1 AND deleted_at = 0",
+                params![id, at],
+            )?,
+        };
+        tx.commit()?;
         Ok(n > 0)
     }
 
     /// Put back a document that was deleted. False when there is nothing to put
     /// back, which is what an Undo pressed twice, or after a prune, is.
     pub fn undelete(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let n = conn.execute(
-            "UPDATE docs SET deleted_at = 0 WHERE id = ?1 AND deleted_at != 0",
-            params![id],
-        )?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let found: Option<(i64, Option<String>, i64)> = tx
+            .query_row(
+                "SELECT project_id, source_path, deleted_at FROM docs WHERE id = ?1 AND deleted_at != 0",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((project_id, source_path, at)) = found else {
+            return Ok(false);
+        };
+        // Exactly the versions that went with it, matched on the instant they
+        // went: a version deleted on its own, earlier, stays deleted.
+        let n = match source_path {
+            Some(sp) => tx.execute(
+                "UPDATE docs SET deleted_at = 0 WHERE project_id = ?1 AND source_path = ?2 AND deleted_at = ?3",
+                params![project_id, sp, at],
+            )?,
+            None => tx.execute(
+                "UPDATE docs SET deleted_at = 0 WHERE id = ?1 AND deleted_at != 0",
+                params![id],
+            )?,
+        };
+        tx.commit()?;
         Ok(n > 0)
     }
 
@@ -453,7 +554,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(&format!(
-                "SELECT {DOC_COLS} {DOC_FROM} WHERE d.unread = 1 ORDER BY d.received_at, d.rowid LIMIT ?1"
+                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at, d.rowid LIMIT ?1"
             ))?
             .query_map(params![limit as i64], row_to_doc)?
             .collect::<std::result::Result<_, _>>()?;
@@ -465,7 +566,7 @@ impl Store {
     pub fn waiting(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         Ok(
-            conn.query_row("SELECT COUNT(*) FROM live_docs WHERE unread = 1", [], |r| {
+            conn.query_row("SELECT COUNT(*) FROM head_docs WHERE unread = 1", [], |r| {
                 r.get(0)
             })?,
         )
@@ -486,7 +587,7 @@ impl Store {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let ids: Vec<String> = tx
-            .prepare("SELECT id FROM live_docs WHERE unread = 1")?
+            .prepare("SELECT id FROM head_docs WHERE unread = 1")?
             .query_map([], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
         tx.execute("UPDATE docs SET unread = 0 WHERE unread = 1", [])?;
@@ -588,7 +689,7 @@ impl Store {
         let rows = conn
             .prepare(
                 "SELECT p.id, p.name, p.root, COUNT(d.id), COUNT(DISTINCT d.workflow_id)
-                 FROM projects p JOIN live_docs d ON d.project_id = p.id
+                 FROM projects p JOIN head_docs d ON d.project_id = p.id
                  GROUP BY p.id ORDER BY MAX(d.received_at) DESC, p.id DESC",
             )?
             .query_map([], |r| {
@@ -625,7 +726,7 @@ impl Store {
         let mut wfs: Vec<TreeWorkflow> = conn
             .prepare(
                 "SELECT w.id, w.key, w.title, COUNT(d.id)
-                 FROM workflows w JOIN live_docs d ON d.workflow_id = w.id
+                 FROM workflows w JOIN head_docs d ON d.workflow_id = w.id
                  WHERE w.project_id = ?1
                  GROUP BY w.id ORDER BY MAX(d.received_at) DESC, w.id DESC LIMIT ?2",
             )?
@@ -640,7 +741,7 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         let mut doc_stmt = conn.prepare(
-            "SELECT id, title, kind, received_at, pinned, unread FROM live_docs
+            "SELECT id, title, kind, received_at, pinned, unread FROM head_docs
              WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
         for w in &mut wfs {
@@ -678,7 +779,7 @@ impl Store {
         };
         w.docs = conn
             .prepare(
-                "SELECT id, title, kind, received_at, pinned, unread FROM live_docs
+                "SELECT id, title, kind, received_at, pinned, unread FROM head_docs
                  WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
             )?
             .query_map(params![workflow_id], row_to_tree_doc)?
@@ -692,7 +793,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(&format!(
-                "SELECT {DOC_COLS} {DOC_FROM} ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
+                "SELECT {DOC_COLS} {HEAD_FROM} ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
             ))?
             .query_map(params![limit as i64], row_to_doc)?
             .collect::<std::result::Result<_, _>>()?;
@@ -808,13 +909,25 @@ impl Store {
     /// on the document when it arrives, so this outlives the pane that sent
     /// it, and a desk closed and remade under the same id does not inherit
     /// the old one's -- ids are never reused.
+    ///
+    /// One entry per file, like every other list: an agent rewriting a script
+    /// in a pane sends it seven times and the rail shows the seventh. The head
+    /// is this desk's own newest rather than the library's, because what a
+    /// desk shows is what its panes sent -- a later version sent from the CLI
+    /// does not belong to it, and must not take a row here away.
     pub fn desk_docs(&self, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(
                 "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
                  FROM live_docs d JOIN projects p ON p.id = d.project_id
-                 WHERE d.desk_id = ?1 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?2",
+                 WHERE d.desk_id = ?1
+                   AND (d.source_path IS NULL
+                        OR d.rowid = (SELECT d2.rowid FROM live_docs d2
+                                      WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
+                                        AND d2.source_path = d.source_path
+                                      ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1))
+                 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?2",
             )?
             .query_map(params![desk_id, limit as i64], |r| {
                 Ok(DeskDoc {
@@ -867,6 +980,34 @@ impl Store {
 
     pub fn panes_open(&self) -> Result<i64> {
         desk::panes_open(&self.conn.lock().unwrap())
+    }
+
+    /// A desk's own list. Thin, for the reason the desk calls above are: the
+    /// SQL is `crate::desk`'s and the lock is this file's.
+    pub fn desk_notes(&self, desk_id: i64) -> Result<Vec<desk::DeskNote>> {
+        desk::notes(&self.conn.lock().unwrap(), desk_id)
+    }
+
+    pub fn add_desk_note(&self, desk_id: i64, text: &str) -> Result<Option<desk::DeskNote>> {
+        desk::add_note(&mut self.conn.lock().unwrap(), desk_id, text, now())
+    }
+
+    pub fn set_desk_note(
+        &self,
+        desk_id: i64,
+        id: i64,
+        text: Option<&str>,
+        done: Option<bool>,
+    ) -> Result<bool> {
+        desk::set_note(&self.conn.lock().unwrap(), desk_id, id, text, done, now())
+    }
+
+    pub fn remove_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
+        desk::remove_note(&self.conn.lock().unwrap(), desk_id, id, now())
+    }
+
+    pub fn restore_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
+        desk::restore_note(&self.conn.lock().unwrap(), desk_id, id)
     }
 
     /// What a reset would take, in the numbers the sentence says and the
@@ -1003,7 +1144,17 @@ mod tests {
         (Store::open(&paths).unwrap(), dir)
     }
 
+    /// A document of its own, which is what most of these tests mean when they
+    /// set up two: the file behind it is its identity now, and a second send of
+    /// the same file is a version rather than a row. The body doubles as the
+    /// path because it is the thing that differs between them here; tests that
+    /// mean versions say so with `version_of`.
     fn new_doc<'a>(title: &'a str, src: &'a str, wf: &'a str) -> NewDoc<'a> {
+        version_of(src, title, src, wf)
+    }
+
+    /// The same file, sent again: a version of the document at `path`.
+    fn version_of<'a>(path: &'a str, title: &'a str, src: &'a str, wf: &'a str) -> NewDoc<'a> {
         NewDoc {
             project_root: "/p",
             project_name: "p",
@@ -1012,7 +1163,7 @@ mod tests {
             title,
             kind: Kind::Markdown,
             lang: None,
-            source_path: Some("/p/PLAN.md"),
+            source_path: Some(path),
             branch: None,
             origin: "cli",
             sender: "",
@@ -1027,13 +1178,16 @@ mod tests {
     fn insert_get_previous_search() {
         let (s, _d) = temp_store();
         let a = s
-            .insert(&new_id("a"), new_doc("Plan", "# Plan\n\nalpha bravo", "w"))
+            .insert(
+                &new_id("a"),
+                version_of("/p/PLAN.md", "Plan", "# Plan\n\nalpha bravo", "w"),
+            )
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let b = s
             .insert(
                 &new_id("b"),
-                new_doc("Plan", "# Plan\n\nalpha charlie", "w"),
+                version_of("/p/PLAN.md", "Plan", "# Plan\n\nalpha charlie", "w"),
             )
             .unwrap();
         assert_ne!(a.id, b.id);
@@ -1051,9 +1205,12 @@ mod tests {
             s.latest_for_path("/p", "/p/PLAN.md").unwrap().unwrap().id,
             b.id
         );
+        // Two sends of one plan are one document with two versions: the lists
+        // count what a reader can see, and history counts what was sent.
         let p = &s.projects().unwrap()[0];
-        assert_eq!((p.docs, p.workflows), (2, 1));
-        assert_eq!(s.project_tree(p.id, 10, 10).unwrap()[0].docs.len(), 2);
+        assert_eq!((p.docs, p.workflows), (1, 1));
+        assert_eq!(s.project_tree(p.id, 10, 10).unwrap()[0].docs.len(), 1);
+        assert_eq!(s.history(p.id, "/p/PLAN.md").unwrap().len(), 2);
     }
 
     #[test]
@@ -1138,27 +1295,40 @@ mod tests {
             vec!["C", "B", "A"],
             "newest first even within a second"
         );
-        assert_eq!(s.previous(&c).unwrap().unwrap().id, b.id);
-        assert_eq!(s.previous(&b).unwrap().unwrap().id, a.id);
-        assert!(s.previous(&a).unwrap().is_none());
         assert_eq!(
             s.project_tree(c.project_id, 10, 10).unwrap()[0].docs[0].title,
             "C"
         );
-        let hist: Vec<String> = s
-            .history(a.project_id, "/p/PLAN.md")
-            .unwrap()
-            .into_iter()
-            .map(|d| d.title)
-            .collect();
-        assert_eq!(hist, vec!["C", "B", "A"]);
-        assert_eq!(
-            s.latest_for_path("/p", "/p/PLAN.md")
-                .unwrap()
-                .unwrap()
-                .title,
-            "C"
+        // Three files, so three documents, each the whole history of its own
+        // and none of them the version before another.
+        assert_eq!(s.history(a.project_id, "first").unwrap().len(), 1);
+        assert!(
+            s.previous(&b).unwrap().is_none() && s.previous(&c).unwrap().is_none(),
+            "a different file is not a version of the one before it"
         );
+
+        // A fourth send, of A's file, inside the same second: the tie `previous`
+        // cannot break on received_at it breaks on rowid, which is the whole
+        // point of the second these four share.
+        let a2 = s
+            .insert(&new_id("a2"), version_of("first", "A2", "first again", "w"))
+            .unwrap();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE docs SET received_at = ?1", params![t])
+            .unwrap();
+        let a2 = Doc {
+            received_at: t,
+            ..a2
+        };
+        assert_eq!(s.previous(&a2).unwrap().unwrap().id, a.id);
+        assert!(
+            s.previous(&a).unwrap().is_none(),
+            "the first send of a file"
+        );
+        let order: Vec<String> = s.inbox(9).unwrap().into_iter().map(|d| d.title).collect();
+        assert_eq!(order, vec!["A2", "C", "B"], "and A is behind A2 now");
     }
 
     #[test]
@@ -1319,10 +1489,130 @@ mod tests {
         assert!(!s.desk_docs(7, 40).unwrap()[0].unread);
         s.delete(&last.id).unwrap();
         assert_eq!(s.desk_docs(7, 40).unwrap().len(), 1);
+
+        // The same file again is the same row, not another: a pane rewriting
+        // what it sent leaves the desk holding one of it.
+        let again = s
+            .insert(
+                &new_id("e"),
+                from(&here, version_of("aaa", "First, again", "eee", "w")),
+            )
+            .unwrap();
+        assert_eq!(
+            s.desk_docs(7, 40)
+                .unwrap()
+                .iter()
+                .map(|d| d.title.as_str())
+                .collect::<Vec<_>>(),
+            ["First, again"]
+        );
+        // ...and a version of it sent from anywhere else leaves that row alone,
+        // because what a desk shows is what its own panes sent.
+        s.insert(
+            &new_id("f"),
+            version_of("aaa", "First, elsewhere", "fff", "w"),
+        )
+        .unwrap();
+        let listed = s.desk_docs(7, 40).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, again.id);
     }
 
     /// A delete is gone from everywhere that reads the library and still on
     /// disk, so Undo is one column -- and `prune` is what makes it final.
+    #[test]
+    fn a_file_sent_again_is_one_row_with_its_versions_behind_it() {
+        let (s, _d) = temp_store();
+        let first = s
+            .insert(&new_id("1"), version_of("/p/S.md", "Script", "one", "w"))
+            .unwrap();
+        let second = s
+            .insert(&new_id("2"), version_of("/p/S.md", "Script v2", "two", "w"))
+            .unwrap();
+        let third = s
+            .insert(
+                &new_id("3"),
+                version_of("/p/S.md", "Script v3", "three", "w"),
+            )
+            .unwrap();
+        let other = s
+            .insert(&new_id("o"), new_doc("Notes", "elsewhere", "w"))
+            .unwrap();
+
+        // Every list shows the newest send and the other document. This is the
+        // pile the sidebar used to be: one script, sent three times, three rows.
+        let titles = |v: Vec<Doc>| v.into_iter().map(|d| d.title).collect::<Vec<_>>();
+        assert_eq!(titles(s.inbox(10).unwrap()), vec!["Notes", "Script v3"]);
+        let wfs = s.project_tree(first.project_id, 0, 0).unwrap();
+        assert_eq!(titles(s.queue(10).unwrap()), vec!["Script v3", "Notes"]);
+        assert_eq!(
+            wfs[0]
+                .docs
+                .iter()
+                .map(|d| d.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Notes", "Script v3"]
+        );
+        assert_eq!(wfs[0].total, 2, "and it says two, not four");
+        assert_eq!(s.projects().unwrap()[0].docs, 2);
+
+        // Nothing was thrown away: the versions are where a reader goes for them.
+        let hist = s.history(first.project_id, "/p/S.md").unwrap();
+        assert_eq!(titles(hist), vec!["Script v3", "Script v2", "Script"]);
+        assert_eq!(s.get(&first.id).unwrap().unwrap().title, "Script");
+        assert_eq!(
+            s.latest_for_path("/p", "/p/S.md").unwrap().unwrap().id,
+            third.id
+        );
+
+        // And two things are waiting, not four: a version that replaced an
+        // unread one took its place on the queue rather than queueing beside
+        // it, so the badge counts rows a reader can actually reach.
+        assert_eq!(s.waiting().unwrap(), 2);
+        assert!(!s.mark_read(&second.id).unwrap(), "already off the queue");
+        assert!(s.mark_read(&third.id).unwrap());
+        assert_eq!(s.waiting().unwrap(), 1);
+        let _ = other;
+    }
+
+    #[test]
+    fn removing_a_document_takes_its_versions_and_undo_brings_them_back() {
+        let (s, _d) = temp_store();
+        let first = s
+            .insert(&new_id("1"), version_of("/p/S.md", "Script", "one", "w"))
+            .unwrap();
+        let newest = s
+            .insert(&new_id("2"), version_of("/p/S.md", "Script v2", "two", "w"))
+            .unwrap();
+        let keep = s
+            .insert(&new_id("k"), new_doc("Notes", "elsewhere", "w"))
+            .unwrap();
+
+        // One ✕ on one row removes one document, versions and all -- otherwise
+        // the version behind it takes its place and the delete reads as undone.
+        assert!(s.delete(&newest.id).unwrap());
+        assert!(s.get(&first.id).unwrap().is_none());
+        assert_eq!(s.inbox(10).unwrap().len(), 1);
+        assert!(s.history(first.project_id, "/p/S.md").unwrap().is_empty());
+        assert_eq!(s.get(&keep.id).unwrap().unwrap().title, "Notes");
+
+        assert!(s.undelete(&newest.id).unwrap());
+        assert_eq!(
+            s.history(first.project_id, "/p/S.md").unwrap().len(),
+            2,
+            "both versions came back, not just the one that was clicked"
+        );
+        assert_eq!(s.inbox(10).unwrap().len(), 2);
+
+        // Reading an old version and pressing Delete removes the same thing: the
+        // document it is a version of. Which snapshot is on screen is not a
+        // different document to delete.
+        assert!(s.delete(&first.id).unwrap());
+        assert!(s.history(first.project_id, "/p/S.md").unwrap().is_empty());
+        assert!(s.undelete(&first.id).unwrap());
+        assert_eq!(s.history(first.project_id, "/p/S.md").unwrap().len(), 2);
+    }
+
     #[test]
     fn a_delete_can_be_taken_back_until_prune() {
         let (s, _d) = temp_store();

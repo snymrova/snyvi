@@ -34,6 +34,15 @@ pub const PER_DESK: i64 = 4;
 /// memory budget is written against.
 pub const EVERYWHERE: i64 = 8;
 
+/// A line on a desk's list, not a paragraph. Past this it is a document and
+/// `send_document` is for it -- the same line `crate::note` draws, for the same
+/// reason: a list whose rows wrap three times is a list no one reads.
+pub const NOTE_CHARS: usize = 200;
+
+/// How many notes one desk keeps, open and done together. A list is a working
+/// set; a thousand rows is an archive, and snyvi has one of those already.
+pub const NOTES_PER_DESK: i64 = 200;
+
 /// A divider never goes so far that the pane beside it is a sliver. The
 /// fraction is of the axis it splits, so these are the two ends of the drag.
 const MIN_FRACTION: f64 = 0.15;
@@ -58,6 +67,15 @@ CREATE TABLE IF NOT EXISTS panes (
   UNIQUE(desk_id, slot)
 );
 CREATE INDEX IF NOT EXISTS panes_desk ON panes(desk_id, slot);
+CREATE TABLE IF NOT EXISTS desk_notes (
+  id INTEGER PRIMARY KEY,
+  desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  done_at INTEGER NOT NULL DEFAULT 0,
+  removed_at INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
 
 /// A desk as the sidebar lists it and the view draws it: a name, the folder it
@@ -74,6 +92,21 @@ pub struct Desk {
     pub row: f64,
     pub created_at: i64,
     pub panes: Vec<Pane>,
+}
+
+/// A line the reader wrote on a desk's own list.
+///
+/// Not a `crate::note`, which is a sentence an agent leaves and the daemon
+/// forgets when it restarts. This one is the reader's: it is theirs to write,
+/// tick and put away, it belongs to a desk rather than to a sender, and it is
+/// in the database because a list that did not survive a restart would be a
+/// list no one trusted enough to write on.
+#[derive(Clone, Debug, Serialize)]
+pub struct DeskNote {
+    pub id: i64,
+    pub text: String,
+    pub done: bool,
+    pub created_at: i64,
 }
 
 /// A pane, which in this phase is a workspace row and no process.
@@ -336,8 +369,152 @@ pub fn panes_open(conn: &Connection) -> Result<i64> {
 /// Every desk and every pane, gone. Called by a reset, which says the store is
 /// what a machine that has never seen snyvi would have.
 pub fn clear(conn: &Connection) -> Result<()> {
-    conn.execute_batch("DELETE FROM panes; DELETE FROM desks;")?;
+    conn.execute_batch("DELETE FROM desk_notes; DELETE FROM panes; DELETE FROM desks;")?;
     Ok(())
+}
+
+/// A desk's list: what is open first, in the order it was written, then what
+/// is done, in the order it was ticked off. Removed rows are not here.
+///
+/// Written order rather than newest-first, because a list is read from the top
+/// down and a row that jumped to the top each time one was added would move
+/// the row under the reader's cursor on every keystroke they finished.
+pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, text, done_at, created_at FROM desk_notes
+         WHERE desk_id = ?1 AND removed_at = 0
+         ORDER BY CASE WHEN done_at = 0 THEN 0 ELSE 1 END, done_at, id",
+    )?;
+    let notes: Vec<DeskNote> = stmt
+        .query_map(params![desk_id], row_to_note)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(notes)
+}
+
+/// Add a line to a desk's list. `None` when there is no such desk, or when the
+/// desk is already holding as many as it keeps.
+///
+/// The count and the insert share a transaction for the reason the pane caps
+/// do: two windows typing at once must not each see 199 and both write the
+/// 200th.
+pub fn add_note(
+    conn: &mut Connection,
+    desk_id: i64,
+    text: &str,
+    now: i64,
+) -> Result<Option<DeskNote>> {
+    let text = clip(text);
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let tx = conn.transaction()?;
+    let exists: bool = tx
+        .query_row(
+            "SELECT 1 FROM desks WHERE id = ?1",
+            params![desk_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Ok(None);
+    }
+    let held: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM desk_notes WHERE desk_id = ?1 AND removed_at = 0",
+        params![desk_id],
+        |r| r.get(0),
+    )?;
+    if held >= NOTES_PER_DESK {
+        return Ok(None);
+    }
+    tx.execute(
+        "INSERT INTO desk_notes(desk_id, text, created_at) VALUES(?1, ?2, ?3)",
+        params![desk_id, text, now],
+    )?;
+    let id = tx.last_insert_rowid();
+    tx.commit()?;
+    Ok(Some(DeskNote {
+        id,
+        text,
+        done: false,
+        created_at: now,
+    }))
+}
+
+/// Rewrite a line, tick it, or untick it. Either half may be left alone, so
+/// ticking a row off does not have to send the text back with it.
+///
+/// The desk is in the `WHERE` rather than trusted from the path: a note id
+/// from the page reaches only the desk the page asked about.
+pub fn set_note(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    text: Option<&str>,
+    done: Option<bool>,
+    now: i64,
+) -> Result<bool> {
+    if let Some(text) = text {
+        let text = clip(text);
+        // An emptied line is not a line; it is put away, the way the ✕ does,
+        // so the row goes rather than sitting there blank.
+        if text.is_empty() {
+            return remove_note(conn, desk_id, id, now);
+        }
+        if conn.execute(
+            "UPDATE desk_notes SET text = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+            params![desk_id, id, text],
+        )? == 0
+        {
+            return Ok(false);
+        }
+    }
+    let Some(done) = done else {
+        return Ok(text.is_some());
+    };
+    // `done_at` carries the order the done half is listed in, so ticking a row
+    // twice moves it to the end of that half rather than leaving it where the
+    // first tick put it.
+    Ok(conn.execute(
+        "UPDATE desk_notes SET done_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        params![desk_id, id, if done { now } else { 0 }],
+    )? > 0)
+}
+
+/// Take a line off the list. The row stays: snyvi does not delete what someone
+/// wrote, and `restore_note` is the other half of the toast's Undo.
+pub fn remove_note(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desk_notes SET removed_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        params![desk_id, id, now],
+    )? > 0)
+}
+
+/// Put a removed line back where it was.
+pub fn restore_note(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desk_notes SET removed_at = 0 WHERE desk_id = ?1 AND id = ?2",
+        params![desk_id, id],
+    )? > 0)
+}
+
+/// One line, trimmed and bounded. Cut on a character and not a byte: a list
+/// written in any other language than English must not come back invalid.
+fn clip(text: &str) -> String {
+    let text = text.trim();
+    match text.char_indices().nth(NOTE_CHARS) {
+        Some((at, _)) => text[..at].trim_end().to_string(),
+        None => text.to_string(),
+    }
+}
+
+fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
+    Ok(DeskNote {
+        id: r.get(0)?,
+        text: r.get(1)?,
+        done: r.get::<_, i64>(2)? != 0,
+        created_at: r.get(3)?,
+    })
 }
 
 /// The folder's own name, which is what the reader right-clicked and so what
@@ -417,6 +594,133 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn
+    }
+
+    /// The list is read from the top down, so it is written that way: what is
+    /// open in the order it was written, what is done in the order it was
+    /// ticked, and the done half at the bottom.
+    #[test]
+    fn a_list_reads_open_first_then_done_in_the_order_it_was_ticked() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        for (i, text) in ["first", "second", "third"].iter().enumerate() {
+            add_note(&mut conn, d, text, i as i64).unwrap().unwrap();
+        }
+        let ids: Vec<i64> = notes(&conn, d).unwrap().iter().map(|n| n.id).collect();
+        // The first written is ticked last, so it is last in the done half --
+        // the tick's order, not the writing's.
+        set_note(&conn, d, ids[1], None, Some(true), 10).unwrap();
+        set_note(&conn, d, ids[0], None, Some(true), 20).unwrap();
+        let after = notes(&conn, d).unwrap();
+        assert_eq!(
+            after
+                .iter()
+                .map(|n| (n.text.as_str(), n.done))
+                .collect::<Vec<_>>(),
+            [("third", false), ("second", true), ("first", true)]
+        );
+        // Unticking puts it back among the open, in the order it was written.
+        set_note(&conn, d, ids[0], None, Some(false), 30).unwrap();
+        assert_eq!(notes(&conn, d).unwrap()[0].text, "first");
+    }
+
+    /// Taking a line off the list is not deleting it: the row stays, so Undo
+    /// has something to put back. Nothing on this path destroys what someone
+    /// wrote.
+    #[test]
+    fn a_line_taken_off_is_kept_and_can_come_back() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        let n = add_note(&mut conn, d, "wire up the route", 0)
+            .unwrap()
+            .unwrap();
+        assert!(remove_note(&conn, d, n.id, 1).unwrap());
+        assert!(notes(&conn, d).unwrap().is_empty());
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM desk_notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 1, "the row is kept, not deleted");
+        assert!(restore_note(&conn, d, n.id).unwrap());
+        assert_eq!(notes(&conn, d).unwrap()[0].text, "wire up the route");
+        // Twice is not an error the second time, and not a second row either.
+        assert!(remove_note(&conn, d, n.id, 2).unwrap());
+        assert!(!remove_note(&conn, d, n.id, 3).unwrap());
+    }
+
+    /// A note id from the page reaches only the desk the page asked about.
+    /// Without the desk in the `WHERE`, one window could rewrite another
+    /// desk's list by guessing an integer.
+    #[test]
+    fn a_note_is_reachable_only_through_its_own_desk() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let yours = create(&conn, "/yours", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "mine", 0).unwrap().unwrap();
+        assert!(!set_note(&conn, yours, n.id, Some("yours"), None, 1).unwrap());
+        assert!(!remove_note(&conn, yours, n.id, 1).unwrap());
+        assert_eq!(notes(&conn, mine).unwrap()[0].text, "mine");
+        assert!(notes(&conn, yours).unwrap().is_empty());
+    }
+
+    /// An emptied line is not a blank row: rewriting a note to nothing takes
+    /// it off the list, which is what a reader who selected all and pressed
+    /// delete meant. It is still recoverable, as any other removal is.
+    #[test]
+    fn a_line_rewritten_to_nothing_comes_off_the_list() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        let n = add_note(&mut conn, d, "something", 0).unwrap().unwrap();
+        assert!(set_note(&conn, d, n.id, Some("   "), None, 1).unwrap());
+        assert!(notes(&conn, d).unwrap().is_empty());
+        assert!(restore_note(&conn, d, n.id).unwrap());
+        assert_eq!(notes(&conn, d).unwrap()[0].text, "something");
+    }
+
+    /// The cap is a cap, an empty line is not a line, and a desk that is not
+    /// a desk takes nothing. All three are the one `None`.
+    #[test]
+    fn a_list_is_bounded_and_takes_no_empty_line() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        assert!(add_note(&mut conn, d, "   ", 0).unwrap().is_none());
+        assert!(add_note(&mut conn, d + 99, "nowhere", 0).unwrap().is_none());
+        for i in 0..NOTES_PER_DESK {
+            assert!(add_note(&mut conn, d, &format!("line {i}"), i)
+                .unwrap()
+                .is_some());
+        }
+        assert!(add_note(&mut conn, d, "one too many", 0).unwrap().is_none());
+        // A line taken off makes room again: the cap is on the list, not on
+        // everything the desk has ever held.
+        let first = notes(&conn, d).unwrap()[0].id;
+        remove_note(&conn, d, first, 1).unwrap();
+        assert!(add_note(&mut conn, d, "room now", 0).unwrap().is_some());
+    }
+
+    /// Cut on a character, not a byte: a list written in any other language
+    /// than English must not come back invalid.
+    #[test]
+    fn a_long_line_is_cut_where_a_character_ends() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        let long = "日".repeat(NOTE_CHARS + 50);
+        let n = add_note(&mut conn, d, &long, 0).unwrap().unwrap();
+        assert_eq!(n.text.chars().count(), NOTE_CHARS);
+        assert_eq!(notes(&conn, d).unwrap()[0].text, n.text);
+    }
+
+    /// A desk's list goes when the desk does, the way its panes do -- and by
+    /// the same cascade, so a list can never outlive the desk it is about.
+    #[test]
+    fn closing_a_desk_takes_its_list_with_it() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        add_note(&mut conn, d, "goes with it", 0).unwrap().unwrap();
+        assert!(delete(&conn, d).unwrap());
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM desk_notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 
     fn pane(conn: &mut Connection, desk: i64) -> Opened {

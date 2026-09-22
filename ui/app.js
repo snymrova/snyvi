@@ -15,6 +15,8 @@
     opening: null,              // the id of a document asked for and not here yet
     deskBehind: null,           // the desk whose rail stays while a document is read over it
     previous: boot.previous || null,
+    versions: [],               // ids of every snapshot of the open document, newest first
+
     folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
     queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
     waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
@@ -105,7 +107,15 @@
   let queueIds = new Set(state.queue.map(d => d.id));
 
   // ---------- tree ----------
-  const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
+  /* Three of the tree's sets are the reader's rather than the library's --
+   * which projects are open, which sections are folded, which projects have
+   * been taken out of the list -- and each is a comma-separated line in this
+   * reader's own storage. One pair of functions for all three: the dance is
+   * easy to write slightly differently the fourth time, and a set that round
+   * trips differently from its neighbours loses whatever was in it. */
+  const saved = k => new Set((store.get(k) || "").split(",").filter(Boolean));
+  const save = (k, set) => store.set(k, [...set].join(","));
+  const openProjects = saved("snyvi.open");
   /** Caps a reader has lifted, by project and by workflow, so a refetch does not
    *  put the rest back out of reach while they are still reading it. */
   const liftedCaps = new Set();
@@ -122,12 +132,26 @@
    * What each holds hangs under it on one guide line at one indent. A fold is
    * a class on #trees rather than a redraw, so it survives every render and
    * costs none; it is remembered per reader. */
-  const folded = new Set((store.get("snyvi.fold") || "").split(",").filter(Boolean));
+  const folded = saved("snyvi.fold");
+  /* A project the reader has taken out of the sidebar. Nothing is deleted --
+   * snyvi deletes nothing on this path -- so the project keeps every document
+   * it has, in All documents, in search and at its own URL; what changes is
+   * that it stops taking a row here. It comes back the moment anything lands
+   * in it, and the row under the tree brings them all back by hand. Per
+   * reader, as the folds are: it is a view, not a fact about the library. */
+  const away = saved("snyvi.away");
+  const saveAway = () => save("snyvi.away", away);
+  /** The one just put away, while the offer to undo it is still standing. It
+   *  keeps the row's place in the tree so the offer is where the click was --
+   *  a toast in the far corner asks the eye to leave the sidebar to find out
+   *  what the sidebar just did. Cleared by the timer, by the undo, or by the
+   *  next one put away, which is the moment the offer stops being about it. */
+  let awayJust = null, awayTimer = 0;
   const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
   function toggleFold(key) {
     if (!folded.delete(key)) folded.add(key);
-    store.set("snyvi.fold", [...folded].join(","));
+    save("snyvi.fold", folded);
     applyFolds();
     const open = !folded.has(key);
     for (const b of treesEl.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", open);
@@ -185,6 +209,14 @@
    *  each carries the means to correct it, shown when the row is under the cursor. */
   const renameBtn = (what, id) =>
     `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
+
+  /** The ✕ on a project's row: the same glyph a folder's row carries, meaning
+   *  the same thing -- this list stops showing it. Nothing on disk or in the
+   *  library changes, so unlike the ✕ on a document this one does not ask
+   *  twice; the ghost row it leaves behind holds the Undo, and the row under
+   *  the tree is the way back after that. */
+  const awayBtn = p =>
+    `<button type="button" class="row-x" data-away="${p.id}" title="Remove from the sidebar · the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">✕</button>`;
 
   /** A project is drawn expanded when the reader left it that way, when the
    *  document on screen is in it, or when it is the only one there is. Not
@@ -290,6 +322,7 @@
   /** The section at the top of the sidebar and the bar above the document,
    *  both from the same rows. The bar is not drawn on the inbox, which lists
    *  the queue itself. */
+  let qbWas = 0, qbSettle = 0;   // the bar's count last drawn, and the face's way back to plain
   function renderQueue() {
     queueIds = new Set(state.queue.map(d => d.id));
     // What has finished moving is dropped here, at the render, and not only
@@ -311,16 +344,21 @@
     lastQueue = state.queue.slice(0, QUEUE_ROWS);
     const bar = n > 0 && !!head && state.view !== "inbox";
     queueBar.hidden = !bar;
-    if (!bar) { queueBar.innerHTML = ""; return; }
+    if (!bar) { queueBar.innerHTML = ""; qbWas = 0; return; }
     // The bar rises when it appears and stays put after: a count that changes
     // ticks in place. It used to be rebuilt on every render, which re-ran the
     // rise for one more arrival, and twelve arrivals rose twelve times.
     const count = `${n} waiting`, next = `<b>${esc(head.title)}</b> · ${esc(head.project)}`;
     const qb = queueBar.querySelector(".qb");
+    // The bar is snyvi holding what came for the reader, so it is snyvi's
+    // face at the front of it: the same head that answers a click, at the
+    // top of the page. It arrives wide-eyed and settles into a smile.
     if (!qb) {
-      queueBar.innerHTML = `<div class="qb"><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
+      queueBar.innerHTML = `<div class="qb"><span class="qb-who"></span><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
         `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+      qbFeel("whoa");
+      qbWas = n;
       return;
     }
     const num = qb.querySelector(".qb-n"), nx = qb.querySelector(".qb-next");
@@ -332,7 +370,26 @@
       const fresh = num.cloneNode(true);
       fresh.classList.add("tick");
       num.replaceWith(fresh);
+      // One more is a surprise; one fewer is a read, and it is glad of it.
+      qbFeel(n > qbWas ? "whoa" : "glad");
     }
+    qbWas = n;
+  }
+  /** The face on the bar: `feel` for the moment, then plain -- the face at
+   *  rest holding the count is a smile, not a stare. The moment is a fresh
+   *  node, so the same feeling twice running lands twice. */
+  function qbFeel(feel) {
+    const who = queueBar.querySelector(".qb-who");
+    if (!who) return;
+    clearTimeout(qbSettle);
+    const fresh = who.cloneNode(false);
+    fresh.dataset.feel = feel;
+    fresh.innerHTML = mascotHead(feel);
+    who.replaceWith(fresh);
+    qbSettle = setTimeout(() => {
+      const w = queueBar.querySelector(".qb-who");
+      if (w) { delete w.dataset.feel; w.innerHTML = mascotHead("plain"); }
+    }, 2400);
   }
 
   /** The reader opened a document: off the queue here at once, and on the
@@ -456,7 +513,7 @@
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: <b>+</b> beside Folders, below.</div>`;
+      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: the row under <b>Folders</b>, below.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -484,12 +541,27 @@
     }
     // No label: the projects hang under Inbox, which is what they are.
     let h = "";
+    let put = 0;
     for (const p of projects) {
+      if (away.has(String(p.id))) {
+        // In its own place, at its own height, so nothing below it moves while
+        // the offer stands and nothing moves again when it is taken.
+        if (awayJust === String(p.id)) {
+          h += `<div class="t-back"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
+          continue;
+        }
+        put++;
+        continue;
+      }
       const open = projOpen(p);
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
+    // Counted from the tree rather than from the set, so a project that is
+    // gone for some other reason is not offered back. While this row is here
+    // nothing is stranded: whatever was put away is one click from returning.
+    if (put) h += `<button type="button" class="t-away" data-back="">${plural(put, "project")} removed · Show</button>`;
     // The same rows as last time are left alone. Every open used to throw the
     // tree away and build it again, and measure it, before the document could
     // paint. Anything else that touches the rows -- a project toggled, a name
@@ -639,7 +711,7 @@
     if (!d.classList || !d.classList.contains("t-proj")) return;
     const pid = d.dataset.pid;
     d.open ? openProjects.add(pid) : openProjects.delete(pid);
-    store.set("snyvi.open", [...openProjects].join(","));
+    save("snyvi.open", openProjects);
     // Opening draws what this tab already holds and fetches what it does not;
     // closing takes the rows back out of the page, which is the bound.
     //
@@ -697,13 +769,13 @@
     }
     const fold = e.target.closest("[data-fold]");
     if (fold) { e.preventDefault(); toggleFold(fold.dataset.fold); return; }
-    if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); pickFolder(); return; }
+    if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); act("pick"); return; }
     const nd = e.target.closest("[data-newdesk]");
     if (nd) {
       // Inside a <summary> too: a click on the + is not a click on the folder.
       e.preventDefault(); e.stopPropagation();
       // In a folder's row, a desk on that folder; in the Desks head, one on no folder.
-      newDesk(folderOf(nd));
+      act("make", folderOf(nd));
       return;
     }
     const dx = e.target.closest("[data-deldoc]");
@@ -719,7 +791,20 @@
     if (dd) {
       // Inside the desk's link: a click on the ✕ is not a click on the desk.
       e.preventDefault(); e.stopPropagation();
-      dropDesk(dd);
+      act("drop", dd);
+      return;
+    }
+    const ax = e.target.closest("[data-away]");
+    if (ax) {
+      // Inside a <summary>, the default action is toggling the project open.
+      e.preventDefault(); e.stopPropagation();
+      putAway(ax.dataset.away);
+      return;
+    }
+    const bk = e.target.closest("[data-back]");
+    if (bk) {
+      e.preventDefault(); e.stopPropagation();
+      bringBack(bk.dataset.back);
       return;
     }
     const r = e.target.closest("[data-rename]");
@@ -810,10 +895,19 @@
    *  than out of the model, now that the model holds only what a reader has
    *  expanded: "next document" is the next one they can see. */
   const order = () => [...treeEl.querySelectorAll("a[data-id]")].map(a => a.dataset.id);
-  /** Every document in the workflow on screen, for `[` and `]`. Exact whatever
-   *  the caps are: the workflow a reader is in is the one held whole. */
+  /** What `[` and `]` step through: the versions of the document on screen,
+   *  newest first -- the same list the rail's Versions box shows, held whole
+   *  whatever the sidebar's caps are.
+   *
+   *  The sidebar holds one row per document now, so a workflow's rows are
+   *  other documents rather than other snapshots of this one; the keys that
+   *  say "the one before this" have to ask the file, not the workflow. A
+   *  document with no file behind it has no versions, and falls back to the
+   *  workflow it arrived in, which is what these keys have always walked. */
   const siblings = () => {
     if (!state.doc) return [];
+    const v = state.versions || [];
+    if (v.length > 1 && v.includes(state.doc.id)) return v;
     for (const w of state.sub.get(String(state.doc.project_id)) || []) {
       if (w.id === state.doc.workflow_id) return w.docs.map(d => d.id);
     }
@@ -1003,6 +1097,8 @@
   }
   let leaveTimer = 0;
   main.addEventListener("scroll", () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(leave, 400); }, { passive: true });
+  // The head's foot is ruled only while there is text under it (app.css, #chrome).
+  main.addEventListener("scroll", () => main.classList.toggle("scrolled", main.scrollTop > 0), { passive: true });
 
   /** Whether the entry history landed on is the page asked for, with a place
    *  in it. Only a move through history asks: a re-render of the same page --
@@ -1206,7 +1302,7 @@
   async function showCompare(aId, bId) {
     const cur = state.doc;
     const a = aId || state.previous, b = bId || (cur && cur.id);
-    if (!cur || !a) { toast("No previous version", "This is the first document in its workflow."); return; }
+    if (!cur || !a) { toast("No previous version", "Nothing has been sent for this one before."); return; }
     let j;
     try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
     state.comparing = { a, b };
@@ -1262,6 +1358,36 @@
     } catch (e) { toast("Could not delete", String(e)); }
   }
 
+  /** Take a project out of the sidebar. Nothing is asked for and nothing is
+   *  sent: the library is not touched, so there is nothing to fail and nothing
+   *  to undo on the daemon's side. Whatever is on the page stays on it -- a
+   *  document whose project was just put away is still a document. */
+  function putAway(id) {
+    const key = String(id);
+    away.add(key); saveAway();
+    openProjects.delete(key);
+    // Only the newest offer stands: two rows both saying Undo cannot both mean
+    // the last thing that happened.
+    clearTimeout(awayTimer);
+    awayJust = key;
+    awayTimer = setTimeout(() => {
+      if (awayJust !== key) return;
+      awayJust = null;
+      renderTree(); markActive();
+    }, UNDO_MS);
+    renderTree(); markActive();
+  }
+
+  /** Put a project back in the sidebar: one by id, or every one of them when
+   *  the row under the tree is the one clicked. */
+  function bringBack(id) {
+    clearTimeout(awayTimer);
+    awayJust = null;
+    if (id) away.delete(String(id)); else away.clear();
+    saveAway();
+    renderTree(); markActive();
+  }
+
   /** The other half of a delete: a button in the toast, and ⌘Z for as long as
    *  it is there, which is where a reader's hand goes first. */
   function offerUndo(d, open = true) {
@@ -1295,7 +1421,7 @@
     renderMeta(false);
     prepareMermaid();
     enhanceCode();
-    clearFind();
+    find?.clear();
     applyLineHash(true);
     // Only what is beside the document waits: the sidebar and the versions.
     // Anything that touches the document itself -- the diagrams' places, the
@@ -1316,7 +1442,7 @@
     enhanceCode();
     prepareMermaid();
     renderHistory();
-    if (!findBar.hidden && findIn.value) runFind(findIn.value); else clearFind();
+    find?.refresh();
     applyLineHash(false);   // the scroll position is restored by the caller
   }
 
@@ -1597,68 +1723,37 @@
   // ---------- history (every snapshot of the same file) ----------
   async function renderHistory() {
     const old = $("#history"); if (old) old.remove();
+    state.versions = [];
     if (!state.doc || !state.doc.source_path) return;
     let h; try { h = await (await fetch(`/api/docs/${state.doc.id}/history`)).json(); } catch { return; }
     if (!h || h.length < 2) return;
+    state.versions = h.map(d => d.id);
     const box = document.createElement("div"); box.id = "history";
     box.innerHTML = `<h4>Versions · ${h.length}</h4>` + h.map(d => `<a href="/d/${d.id}" data-id="${d.id}" class="${d.id === state.doc.id ? "cur" : ""}" title="${esc(d.workflow_title)}">${fmt(d.received_at)}${d.pinned ? " ●" : ""}</a>`).join("");
     metaEl.appendChild(box);
   }
 
-  // ---------- find in document ----------
-  const findBar = $("#find"), findIn = $("#find-input"), findCount = $("#find-count");
-  let findMarks = [], findIdx = -1;
-  /* An HTML <mark> inside an <svg> lays out at 0x0, so wrapping a diagram's label
-   * in one does not highlight it -- it erases it, and counts a match the reader
-   * cannot be shown. Diagram text is skipped until there is a way to point at
-   * it, which needs the zoom in phase 3 of docs/DIAGRAMS.md. The placeholder
-   * label is chrome rather than document text, and would otherwise make every
-   * search for "diagram" find one per diagram. */
-  const FIND_SKIP = "script,style,.copy,svg,.mmd-note";
-  function clearFind() {
-    for (const m of findMarks) { const p = m.parentNode; if (!p) continue; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); }
-    findMarks = []; findIdx = -1; findCount.textContent = "";
+  // ---------- find in document: a chunk, fetched when `/` asks for it ----------
+  /* Searching inside a document is asked for, not done on the way to showing
+   * one, so the bar and the marks are ui/find.js. The page keeps `#find`,
+   * because whether the bar is up is a question it answers before deciding to
+   * fetch anything; everything past that is `find?.`, which before the first
+   * `/` is a no-op and means exactly what it says -- there is nothing marked. */
+  const findBar = $("#find");
+  let find = null, findLoading = null;
+  async function openFind() {
+    // The bar and its input are in the page already; only the searching is a
+    // chunk. So the caret lands first and the module follows. Waiting for the
+    // fetch before focusing leaves the keys the reader is already typing in
+    // the page's own shortcuts, where `p` pins the document and `Delete`
+    // deletes it -- a query is not a command, and must never arrive as one.
+    findBar.hidden = false;
+    const input = $("#find-input");
+    input.focus(); input.select();
+    try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", String(e)); return; }
+    find.open({ $, docEl, bring });
   }
-  function runFind(q) {
-    clearFind();
-    if (!q) return;
-    const needle = q.toLowerCase();
-    const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest(FIND_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
-    const texts = []; let n; while ((n = walker.nextNode())) texts.push(n);
-    for (const t of texts) {
-      let text = t.nodeValue, lower = text.toLowerCase(), pos = lower.indexOf(needle);
-      if (pos < 0) continue;
-      const frag = document.createDocumentFragment(); let last = 0;
-      while (pos >= 0 && findMarks.length < 2000) {
-        frag.appendChild(document.createTextNode(text.slice(last, pos)));
-        const m = document.createElement("mark"); m.className = "find"; m.textContent = text.slice(pos, pos + q.length);
-        frag.appendChild(m); findMarks.push(m);
-        last = pos + q.length; pos = lower.indexOf(needle, last);
-      }
-      frag.appendChild(document.createTextNode(text.slice(last)));
-      t.parentNode.replaceChild(frag, t);
-    }
-    if (findMarks.length) gotoFind(0); else findCount.textContent = "No matches";
-  }
-  function gotoFind(i) {
-    if (!findMarks.length) return;
-    if (findIdx >= 0) findMarks[findIdx].classList.remove("cur");
-    findIdx = (i + findMarks.length) % findMarks.length;
-    const m = findMarks[findIdx]; m.classList.add("cur");
-    bring(() => docEl.querySelector("mark.find.cur"), "center");
-    findCount.textContent = `${findIdx + 1} / ${findMarks.length}`;
-  }
-  function openFind() { findBar.hidden = false; findIn.focus(); findIn.select(); }
-  function closeFind() { findBar.hidden = true; clearFind(); findIn.value = ""; }
-  let findTimer = null;
-  findIn.addEventListener("input", () => { clearTimeout(findTimer); findTimer = setTimeout(() => runFind(findIn.value), 80); });
-  findIn.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); gotoFind(findIdx + (e.shiftKey ? -1 : 1)); }
-    if (e.key === "Escape") { e.preventDefault(); closeFind(); }
-  });
-  $("#find-next").addEventListener("click", () => gotoFind(findIdx + 1));
-  $("#find-prev").addEventListener("click", () => gotoFind(findIdx - 1));
-  $("#find-close").addEventListener("click", closeFind);
 
   // ---------- focus beacon for desktop notifications ----------
   const beacon = () => { if (document.hasFocus() && document.visibilityState === "visible") fetch("/api/focus", { method: "POST", keepalive: true }).catch(() => {}); };
@@ -2333,7 +2428,7 @@
    * reader who never opens one pays for this block and no more. */
   const deskNav = $("#desk-nav");
   let desk = null, deskLoading = null, lastDesk = null;
-  const plusDesk = () => capability ? `<button class="b-new" data-newdesk title="New desk here" aria-label="New desk here">+</button>` : "";
+  const plusDesk = () => capability ? `<button class="b-new" data-newdesk title="New desk here" aria-label="New desk here">${icon("desk")}</button>` : "";
   /** A desk route, with the capability in the one place a page can put a
    *  secret on a request it composes: a header. */
   async function deskApi(path, body, type) {
@@ -2343,30 +2438,36 @@
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
   }
-  /** The `+` beside Folders: the desktop's own folder dialog, which the daemon
-   *  shows, and the folder the reader chose, opened. The page names no path.
-   *  Only the window can ask -- the same gate the desks are behind -- so a
-   *  tab is told where it can be done instead. */
-  let picking = false;
-  async function pickFolder() {
-    if (!capability) { toast("Folders open from the snyvi window", "Or from a terminal: snyvi browse <folder>"); return; }
-    if (picking) return;
-    picking = true;
-    browseEl.classList.add("picking");
-    try {
-      const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } });
-      if (r.status === 204) return;   // closed without a choice
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { toast("Could not open a folder", j.error || `HTTP ${r.status}`); return; }
-      if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
-      renderBrowse();
-      // Open in the sidebar as well as on the page; the toggle fills its tree.
-      const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
-      if (d) d.open = true;
-      showBrowse(j.root.id, "", true);
-    } catch (e) { toast("Could not open a folder", String(e)); }
-    finally { picking = false; browseEl.classList.remove("picking"); }
+  /* Everything a folder or a desk can be *asked* to do waits for a pointer --
+   * a right-click, the desk glyph on a row, the row that opens a folder, the
+   * ✕ on a desk -- so it is ui/menu.js, fetched on the first such click and
+   * never by a reader who only reads. What draws the desks is not in it:
+   * `renderDesks` below runs at first paint and stays here.
+   *
+   * One context object, made once and handed over on every call, so the chunk
+   * never keeps a second copy of what this page already knows. The functions
+   * are wrappers rather than references because several of them are declared
+   * further down this file. */
+  let acts = null, actsLoading = null;
+  const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
+  const actsCtx = {
+    state, esc, toast, browseEl,
+    get capability() { return capability; },
+    api: (path, body, type) => deskApi(path, body, type),
+    load: () => loadDesks(),
+    show: (id, push, slot) => showDesk(id, push, slot),
+    browse: (root, path, push) => showBrowse(root, path, push),
+    drawBrowse: () => renderBrowse(),
+    terminal: body => openTerminal(body),
+    forget: id => { if (lastDesk === id) lastDesk = null; },
+  };
+  /** Wait for the chunk, then do the thing that was clicked. A failure is the
+   *  reader's to see: they pressed something and nothing happened otherwise. */
+  async function act(what, ...args) {
+    try { const m = await useActs(); return m[what](actsCtx, ...args); }
+    catch (e) { actsLoading = null; toast("Could not do that", String(e)); }
   }
+
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
     renderDesks();
@@ -2379,11 +2480,11 @@
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "pane")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
+    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
       `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
         : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "") + list.map(d => {
         const m = mark3(d.panes), has = d.panes.length > 0;
-        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "pane")} waiting on you` : m === "●" ? "Running" : "Idle";
+        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
         // The mark and the count are one column at the row's end, drawn
         // whether or not there is anything to say, so every row's line up.
         const end = `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`;
@@ -2392,23 +2493,6 @@
         return `<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">` +
           `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}${end}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
       }).join("") + `</ul>`;
-  }
-  /** The ✕ on a desk's row. Closing a desk ends its panes' processes, and
-   *  there is no undoing that, so the first click asks and the second closes,
-   *  as Close desk does in the desk's own rail. */
-  async function dropDesk(b) {
-    if (!b.dataset.armed) {
-      b.dataset.armed = "1"; b.textContent = "Close?"; b.title = "Close the desk and its panes: click again";
-      const li = b.closest("li"); li.classList.add("arming");
-      setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "✕"; b.title = "Close desk"; li.classList.remove("arming"); } }, 3000);
-      return;
-    }
-    const id = +b.dataset.dropdesk;
-    try { await deskApi(`/api/desks/${id}/delete`, {}); }
-    catch (err) { toast(`Could not close the desk: ${err.message}`); return; }
-    if (lastDesk === id) lastDesk = null;
-    await loadDesks();
-    if (state.view === "desk" && state.deskId === id) showDesk(null, true);
   }
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
@@ -2461,21 +2545,6 @@
    *  rather than being told: the events reach tabs, and only a window holds
    *  the capability that answers. */
   const deskDocs = () => { if (desk && ((state.view === "desk" && state.deskId != null) || state.deskBehind != null)) desk.docs(); };
-  /** A new desk on folder `f`, or with none on no folder: it starts in the
-   *  home directory, which the daemon names. */
-  async function newDesk(f) {
-    try {
-      const j = await deskApi("/api/desks", f ? { root: f.root, path: f.path } : {});
-      // A new desk opens on a shell, not on an empty grid: one pane, started.
-      // The view sizes it to the pane the moment it is drawn.
-      try {
-        const p = await deskApi(`/api/desks/${j.desk.id}/panes`, {});
-        await deskApi(`/api/panes/${p.pane.id}/start`, { cmd: "" });
-      } catch (e) { toast("The desk is made, but its shell did not start", String(e)); }
-      await loadDesks();
-      showDesk(j.desk.id, true);
-    } catch (e) { toast("Could not make a desk", String(e)); }
-  }
   /** The folder a row in the browse tree is, in the two shapes it is needed:
    *  the root and path every route takes, and the absolute path a desk is
    *  compared by. */
@@ -2487,55 +2556,16 @@
     return { root: r.id, path, abs: r.path + (path ? "/" + path : "") };
   }
 
-  // ---------- the folder menu ----------
-  /* The first context menu in snyvi, on the one row that has a use for it: a
-   * folder. `New desk here` always, `Show desk` for each desk already on it --
-   * two on one folder is a workflow, not a mistake -- and in a tab neither,
-   * rather than both greyed. Right-click cannot be reached from a keyboard,
-   * which this codebase cares about, so the + on the row and the palette are
-   * its peers; and the menu itself is arrow keys and Escape. */
-  const menu = document.createElement("div");
-  menu.id = "ctx"; menu.hidden = true; menu.setAttribute("role", "menu");
-  document.body.append(menu);
-  let menuAt = null;
-  function openMenu(f, x, y) {
-    menuAt = f;
-    const here = state.desks ? state.desks.desks.filter(d => d.root === f.abs) : [];
-    menu.innerHTML = (capability ? `<button role="menuitem" data-m="new">New desk here</button>` +
-      here.map(d => `<button role="menuitem" data-m="show" data-id="${d.id}">Show desk ${esc(d.name)}</button>`).join("") + `<hr>` : "") +
-      `<button role="menuitem" data-m="copy">Copy path</button><button role="menuitem" data-m="term">Open terminal here</button>`;
-    menu.hidden = false;
-    menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 8)) + "px";
-    menu.style.top = Math.max(4, Math.min(y, innerHeight - menu.offsetHeight - 8)) + "px";
-    menu.querySelector("button").focus();
-  }
-  const closeMenu = () => { menu.hidden = true; menuAt = null; };
+  /* The one part of the folder menu that cannot be deferred: a page has to be
+   * listening for the right-click before it can know one is coming. What the
+   * menu is and does is in the chunk. */
   treesEl.addEventListener("contextmenu", e => {
     const s = e.target.closest(".b-dir > details > summary, .b-root > summary");
     const f = s && folderOf(s);
     if (!f) return;
     e.preventDefault();
-    openMenu(f, e.clientX, e.clientY);
+    act("open", f, e.clientX, e.clientY);
   });
-  menu.addEventListener("click", e => {
-    const b = e.target.closest("[data-m]"), f = menuAt;
-    if (!b || !f) return;
-    closeMenu();
-    const m = b.dataset.m;
-    if (m === "new") newDesk(f);
-    else if (m === "show") showDesk(+b.dataset.id, true);
-    else if (m === "copy") { navigator.clipboard?.writeText(f.abs); toast("Copied", f.abs); }
-    else openTerminal({ root: f.root, path: f.path });
-  });
-  menu.addEventListener("keydown", e => {
-    const bs = [...menu.querySelectorAll("button")], at = bs.indexOf(document.activeElement);
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") bs[(at + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus();
-    else if (e.key === "Escape") closeMenu();
-    else return;
-    e.preventDefault(); e.stopPropagation();
-  });
-  document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target)) closeMenu(); }, true);
-  addEventListener("blur", closeMenu);
 
   /** The daemon's event stream, and the one socket this page holds open for
    *  as long as it lives.
@@ -2621,6 +2651,10 @@
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
+      // A project that was put away and has just been written to is not put
+      // away any more: the sidebar never holds back something waiting to be
+      // read. Taking it out of the set is enough -- the refresh below draws it.
+      if (d && away.delete(String(d.project_id))) saveAway();
       // One project moved, so one project's rows are what is refetched. This
       // used to pull the whole library back down and rebuild the sidebar on
       // every arrival -- a file saved every few seconds paid it every few
@@ -2640,6 +2674,10 @@
       // state exists to be filled, and a reader there has nothing to lose.
       // An inbox with a queue on it is the queue, and the arrival is a row.
       const opens = state.view === "inbox" && !state.waiting;
+      // The document on screen has just been sent again. The page stays where
+      // it is -- a reader mid-paragraph did not ask to be moved -- and the
+      // arrival is offered instead of taken.
+      const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
       // Held in order only while everything waiting is held: past that the
       // arrival is the newest, and belongs after rows this page never had.
       if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
@@ -2655,6 +2693,14 @@
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
         toast(d.title, `${d.project} · just now`, null, null, { at: null, face: "whoa" });
+      }
+      else if (superseded) {
+        // The rail picks it up either way, so the offer is free to fade: a
+        // reader who misses the button finds the new version at the top of
+        // Versions, and `]` steps to it.
+        renderHistory();
+        toast("A newer version arrived", d.title, null,
+          { label: "Read it", run: () => showDoc(d.id, true) }, { at: null, face: "whoa" });
       }
       else if (state.view === "inbox") showInbox(false);
     });
@@ -2941,8 +2987,13 @@
     } else if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
     else items = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
     palItems = deskItems(q).concat(folderItems(q), items); palSel = 0;
-    palList.innerHTML = palItems.map(palRow).join("");
+    palList.innerHTML = palItems.length ? palItems.map(palRow).join("") : palNone(q);
   }
+  /** Nothing matched: said, so an empty list is not a search still running.
+   *  Not a row -- there is nothing to pick -- so the arrows and Enter pass
+   *  it by. The face is sorry and still: it is redrawn on every keystroke
+   *  that finds nothing, and a head that shook on each would be nagging. */
+  const palNone = q => `<div class="pal-none">${mascotHead("oops")}<span>${q.trim() ? `Nothing for <b>${esc(q.trim())}</b>` : "Nothing here yet"}</span></div>`;
   palIn.addEventListener("input", () => { clearTimeout(palTimer); palTimer = setTimeout(() => palSearch(palIn.value), 60); });
   palIn.addEventListener("keydown", e => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -2952,7 +3003,7 @@
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  const openPalItem = it => it.pick ? pickFolder() : it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
+  const openPalItem = it => it.pick ? act("pick") : it.line ? gotoLine(it.line) : it.newdesk ? act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
     : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
   palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
@@ -3027,14 +3078,14 @@
   });
   paintFontBtn();
   /* The accent colours, in the order a click steps through them. "" is
-   * maroon, the default. They were a popover of eight swatches, which is a
+   * passion, the default: the red the mark itself wears. They were a popover of eight swatches, which is a
    * menu to read for a setting with no wrong answer: every one of them is
    * simply a colour, and the only way to know which you want is to see it on
    * the page. So the button is the setting now -- one click, the next colour,
    * the whole window in it before the finger is off the mouse -- and the
    * swatch on the button is where you are. snyvi wears the accent too, so the
    * face that says which one it is arrives in that colour. */
-  const ACCENTS = [["", "Maroon"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
+  const ACCENTS = [["", "Passion"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
   const accBtn = $("#btn-accent");
   const accName = k => (ACCENTS.find(([a]) => a === k) || ACCENTS[0])[1];
   function paintAccent() {
@@ -3111,113 +3162,39 @@
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
   $("#help-close").addEventListener("click", () => closeDialog(help));
   $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
+  // The chip that says ⌘ says it on a Mac; everywhere else the key is ctrl.
+  if (!/Mac/.test(navigator.platform)) help.querySelectorAll("kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
 
-  // ---------- about: what this is, from the daemon ----------
-  /* Every number here is read from the daemon when the panel opens, not
-   * baked into this bundle, so the version it names is the one answering
-   * and the one `snyvi --version` prints. */
-  const aboutFacts = $("#about-facts");
-  async function openAbout() {
-    closeDialog(help);
-    aboutFacts.replaceChildren();
-    openDialog(aboutDlg, aboutDlg.firstElementChild);
-    let a;
-    try { a = await (await fetch("/api/about")).json(); } catch { $("#about-say").textContent = "The daemon did not answer."; return; }
-    $("#about-say").textContent = `${a.description}.`;
-    const fact = (k, v, cls) => {
-      if (v == null || v === "") return;
-      const dt = document.createElement("dt"); dt.textContent = k;
-      const dd = document.createElement("dd"); if (cls) dd.className = cls;
-      if (v instanceof Node) dd.append(v); else dd.textContent = v;
-      aboutFacts.append(dt, dd);
-    };
-    const ver = document.createDocumentFragment();
-    ver.append(a.version);
-    const build = [a.commit, a.target].filter(Boolean).join(", ");
-    if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
-    fact("Version", ver);
-    fact("Binary", a.binary, "path");
-    fact("Documents", a.data_dir, "path");
-    fact("Settings", a.config_dir, "path");
-    fact("Agents", a.agents, "pre");
-    fact("License", a.license);
-    if (a.repository) {
-      const link = document.createElement("a"); link.href = a.repository; link.target = "_blank"; link.rel = "noopener";
-      link.textContent = a.repository.replace(/^https?:\/\//, "");
-      fact("Source", link);
-    }
-  }
-  $("#btn-about").addEventListener("click", openAbout);
-  $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
-  $("#about-close").addEventListener("click", () => closeDialog(aboutDlg));
-  aboutDlg.addEventListener("click", e => { if (e.target === aboutDlg) closeDialog(aboutDlg); });
-
-  // ---------- reset: the one thing that cannot be undone ----------
-  /* A delete has Undo; this has a number. The dialog says what goes and what
-   * stays, and the button stays dead until the number of documents is typed
-   * back -- the number, not "yes", because the number means the sentence was
-   * read. The daemon is sent that number and refuses if it is no longer
-   * true, so a document that arrived while the dialog was open is not reset
-   * unseen. Every open tab hears the event and comes back to the empty
-   * library with its preferences dropped; the agents stay registered. */
-  const resetSay = $("#reset-say"), resetN = $("#reset-n"), resetGo = $("#reset-go"), resetErr = $("#reset-err");
-  const resetPinRow = $("#reset-pinned-row"), resetPin = $("#reset-pinned");
-  let resetCensus = null;
-  function resetArm() {
-    resetGo.disabled = !resetCensus || resetN.value.trim() !== String(resetCensus.documents) || (resetCensus.pinned > 0 && !resetPin.checked);
-  }
-  /** The documents and the desks both, because the daemon checks both. */
-  const resetSentence = c => `This removes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panes, " : ""}the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
-  async function openReset() {
-    closeDialog(help);
-    resetCensus = null; resetN.value = ""; resetErr.hidden = true; resetPin.checked = false; resetPinRow.hidden = true;
-    resetSay.textContent = "Reading what there is…";
-    resetArm();
-    openDialog(resetDlg, resetN);
-    try { resetCensus = await (await fetch("/api/reset")).json(); } catch { resetSay.textContent = "The daemon did not answer."; return; }
-    resetSay.textContent = resetSentence(resetCensus);
-    if (resetCensus.pinned > 0) {
-      $("#reset-pinned-say").textContent = `Also the ${plural(resetCensus.pinned, "pinned document")} — a pin means keep`;
-      resetPinRow.hidden = false;
-    }
-    resetArm();
-  }
-  /** What every tab does when the library is gone: forget what it kept for
-   *  the reader, and start over where a newcomer does. The window keeps its
-   *  mark -- it is a fact about the window, not a preference. */
-  /** Drop the preferences and start over. The drop is done again by boot.js
-   *  on the page that lands, because this page is still running until the
-   *  navigation commits, and a task it already queued -- the toggle event a
-   *  rendered `<details open>` fires, which writes `snyvi.open` -- can run
-   *  after the drop here. Seen once in CI: one key back in storage. */
-  function afterReset() {
-    try { sessionStorage.setItem("snyvi.reset", "1"); } catch {}
-    try { Object.keys(localStorage).filter(k => k.startsWith("snyvi.")).forEach(k => localStorage.removeItem(k)); } catch {}
-    location.replace("/");
-  }
-  $("#btn-reset").addEventListener("click", openReset);
-  $("#reset-close").addEventListener("click", () => closeDialog(resetDlg));
-  $("#reset-cancel").addEventListener("click", () => closeDialog(resetDlg));
-  resetDlg.addEventListener("click", e => { if (e.target === resetDlg) closeDialog(resetDlg); });
-  resetN.addEventListener("input", resetArm);
-  resetPin.addEventListener("change", resetArm);
-  resetDlg.firstElementChild.addEventListener("submit", async e => {
-    e.preventDefault();
-    if (resetGo.disabled) return;
-    resetGo.disabled = true; resetGo.textContent = "Resetting…";
-    let r;
-    try {
-      r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, desks: resetCensus.desks || 0, pinned: resetPin.checked }) });
-    } catch { resetGo.textContent = "Reset"; resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
-    if (r.ok) { afterReset(); return; }
-    resetGo.textContent = "Reset";
-    let j = {}; try { j = await r.json(); } catch {}
-    resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
-    resetErr.hidden = false;
-    // The number has moved: say the new sentence and ask for the new number.
-    if (j.census) { resetCensus = j.census; resetN.value = ""; resetSay.textContent = resetSentence(j.census); }
-    resetArm();
+  // ---------- the rocket: a game, over the sidebar and nowhere else ----------
+  /* A chunk on the desk view's terms: fetched on the first press and never on
+   * a page that does not press it. It covers the sidebar column and leaves
+   * the page beside it alone, so nothing that arrives while it is up is in
+   * its way, and it takes the cover down when the rocket is pressed again. */
+  let game = null, gameLoading = null;
+  const gameBtn = $("#btn-game");
+  gameBtn.addEventListener("click", async () => {
+    if (game?.isOpen()) { game.close(); return; }
+    try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { gameLoading = null; toast("Could not start the game", String(e)); return; }
+    gameBtn.classList.add("on");
+    game.open($("#side"), { back: gameBtn, onClose: () => gameBtn.classList.remove("on") });
   });
+
+  // ---------- about and reset: a chunk, fetched when one is asked for ----------
+  /* Neither panel is on the way to reading a document: one says which build
+   * is answering, the other empties the library. Both go to the daemon the
+   * moment they open anyway, so the module that fills them rides with that
+   * press instead of being carried by every first paint. ui/about.js. */
+  let panelLoading = null;
+  async function panel(which) {
+    let m;
+    try { m = await (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
+    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural });
+  }
+  $("#btn-about").addEventListener("click", () => panel("about"));
+  $("#btn-reset").addEventListener("click", () => panel("reset"));
+  $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
 
   // ---------- the panes on a narrow window ----------
   /* Past the widths in app.css the rail and then the sidebar stop fitting
@@ -3248,14 +3225,19 @@
   }
   const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
   $("#scrim").addEventListener("click", closeSheet);
-  /** A pane folded away (`t`, `\`) at a width where it is a column, not a
-   *  sheet. Remembered, so the one visible way back is the same button that
-   *  opens the sheet when the window is narrow: it stays on screen while the
-   *  pane is folded, and unfolds it. Without that a rail put away by a stray
-   *  `t` was gone for good as far as the reader could see. */
+  /** A pane folded away (`t`, `\`, or the button at its top) at a width
+   *  where it is a column, not a sheet. Remembered, so the one visible way
+   *  back is the same button that opens the sheet when the window is
+   *  narrow: it stays on screen while the pane is folded, and unfolds it.
+   *  Without that a rail put away by a stray `t` was gone for good as far
+   *  as the reader could see. */
   const fold = which => { const off = root.dataset[which] !== "0"; root.dataset[which] = off ? "0" : "1"; store.set(`snyvi.${which}`, off ? "0" : "1"); };
   $("#btn-rail").addEventListener("click", e => railNarrow.matches ? toggleSheet("rail", e.currentTarget) : fold("rail"));
   $("#btn-side").addEventListener("click", e => sideNarrow.matches ? toggleSheet("side", e.currentTarget) : fold("side"));
+  // The button on the pane itself: puts it away, or, when the pane is a
+  // sheet, closes the sheet and gives focus back to what opened it.
+  $("#btn-rail-hide").addEventListener("click", () => railNarrow.matches ? closeSheet() : fold("rail"));
+  $("#btn-side-hide").addEventListener("click", () => sideNarrow.matches ? closeSheet() : fold("side"));
   // The window grew past the width that made it a sheet: it is a pane again.
   const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
   for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
@@ -3323,7 +3305,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) closeFind();
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

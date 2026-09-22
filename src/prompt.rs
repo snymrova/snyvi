@@ -37,8 +37,8 @@ use std::path::Path;
 const MARK: char = '\u{f054}';
 
 /// The accent to fall back on when the window did not say which it wears:
-/// snyvi's own, the dark-theme maroon, since a pane is dark either way.
-const FALLBACK: &str = "#d9531e";
+/// snyvi's own, the dark-theme red, since a pane is dark either way.
+const FALLBACK: &str = "#f04a63";
 
 /// What starting a dressed shell needs: arguments after the shell's own, and
 /// the environment that points it at the rc snyvi wrote.
