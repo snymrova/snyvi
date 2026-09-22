@@ -234,7 +234,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    the two read as one control that flips. */
 #btn-side-hide { margin-left: 2px; }
 #btn-rail-hide { position: absolute; top: 14px; left: 8px; z-index: 1; }
-.icon .pane { fill: var(--accent); }
+.icon .pane { fill: var(--fg-2); }
+.icon:hover .pane { fill: var(--fg); }
 /* ---------- the window's frame ----------
    In the native window the page is the frame, and ui/frame.js draws the
    bar's three buttons and carries their rules: a tab never has a frame to
@@ -514,8 +515,12 @@ html[data-link="off"] .live { visibility: hidden; }
 .game-head { padding: 12px 10px 4px 16px; font-size: 12px; }
 .game-title { margin-right: auto; font-weight: 600; color: var(--fg-2); letter-spacing: -.005em; }
 .game-score { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--fg); margin-right: 2px; }
-.game-sky { flex: 1; min-height: 0; width: 100%; display: block; outline: none; touch-action: none; }
-.game-sky:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.game-sky { flex: 1; min-height: 0; width: 100%; display: block; touch-action: none; }
+/* An outline drawn inwards, not an inset shadow: the canvas paints its own
+   bitmap over the element's shadow every frame, so the ring was there and
+   then covered. The sky is the game's only focusable control and it takes
+   every flight key, so this is the one ring that has to show. */
+.game-sky:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .game-foot { justify-content: space-between; padding: 4px 16px 12px; font-size: 11px; }
 .game-hint, .game-best { white-space: nowrap; }
 .game-best { font-family: var(--mono); font-variant-numeric: tabular-nums; }
