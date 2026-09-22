@@ -2480,11 +2480,11 @@
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "pane")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
+    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
       `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
         : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "") + list.map(d => {
         const m = mark3(d.panes), has = d.panes.length > 0;
-        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "pane")} waiting on you` : m === "●" ? "Running" : "Idle";
+        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
         // The mark and the count are one column at the row's end, drawn
         // whether or not there is anything to say, so every row's line up.
         const end = `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`;

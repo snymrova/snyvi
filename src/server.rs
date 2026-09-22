@@ -2439,7 +2439,7 @@ async fn open_pane(
             .into_response(),
         Ok(crate::desk::Opened::NoRoomLeft) => (
             StatusCode::CONFLICT,
-            Json(json!({ "error": format!("{} panes is the whole of it", crate::desk::EVERYWHERE), "full": "everywhere" })),
+            Json(json!({ "error": format!("{} panels is the whole of it", crate::desk::EVERYWHERE), "full": "everywhere" })),
         )
             .into_response(),
         Ok(crate::desk::Opened::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),

@@ -50,11 +50,11 @@ const BUTTONS =
 const HELP =
   `<section><h3>On a desk</h3>` +
   `<div class="hk"><span>Desk / reading view</span><span class="keys"><kbd>ctrl</kbd><kbd>\`</kbd></span></div>` +
-  `<div class="hk"><span>Focus a pane by slot</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>1</kbd><i>–</i><kbd>4</kbd></span></div>` +
-  `<div class="hk"><span>The focused pane alone</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>Z</kbd></span></div>` +
+  `<div class="hk"><span>Focus a panel by slot</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>1</kbd><i>–</i><kbd>4</kbd></span></div>` +
+  `<div class="hk"><span>The focused panel alone</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>Z</kbd></span></div>` +
   `<div class="hk"><span>Copy / paste</span><span class="keys"><kbd>ctrl</kbd><kbd>shift</kbd><kbd>C</kbd><i>/</i><kbd>V</kbd></span></div>` +
   `<div class="hk"><span>Scroll the scrollback</span><span class="keys"><kbd>shift</kbd><i>+</i>wheel</span></div>` +
-  `<p class="help-note">Every other key goes to the shell in the focused pane.</p></section>`;
+  `<p class="help-note">Every other key goes to the shell in the focused panel.</p></section>`;
 
 /** `root` is the document element, `$` the page's querySelector. Asks the
  *  window first, and draws nothing until it answers yes. */

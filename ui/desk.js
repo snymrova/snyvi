@@ -115,7 +115,7 @@ function receive(f) {
 function refused() {
   ctx.docEl.querySelector(".dk-grid")?.replaceChildren(Object.assign(document.createElement("p"), {
     className: "dk-none",
-    textContent: "This window's capability is from a daemon that has since restarted, so it cannot reach the panes. Close the window and open it again with `snyvi app`.",
+    textContent: "This window's capability is from a daemon that has since restarted, so it cannot reach the panels. Close the window and open it again with `snyvi app`.",
   }));
 }
 
@@ -553,7 +553,7 @@ const room = () => (innerWidth > 1100 ? 4 : innerWidth > 700 ? 2 : 1);
  *  ask this, so they never disagree. */
 function noNew(d) {
   const j = ctx.desks;
-  return j.panes >= j.cap ? `Every pane is in use: ${j.panes} of ${j.cap} everywhere`
+  return j.panes >= j.cap ? `Every panel is in use: ${j.panes} of ${j.cap} everywhere`
     : d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}`
     : d.panes.length >= room() ? "No room for another at this width" : "";
 }
@@ -583,7 +583,7 @@ function layout() {
     grid.replaceChildren(...want);
     if (had && had.isConnected) had.focus({ preventScroll: true });
   }
-  if (!all.length) grid.innerHTML = `<p class="dk-none">No panes on this desk. <button type="button" data-a="new">New pane</button></p>`;
+  if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
 }
 
@@ -598,7 +598,7 @@ function tabs(d, all, shown) {
   const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d), j = ctx.desks;
   if (plus) {
     plus.disabled = !!why;
-    plus.title = why ? `New pane · ${why}` : "New pane";
+    plus.title = why ? `New panel · ${why}` : "New panel";
     let n = plus.previousElementSibling?.classList.contains("dk-cap") ? plus.previousElementSibling : null;
     const full = d.panes.length >= j.per_desk;
     if (full && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
@@ -618,7 +618,7 @@ function draw() {
   }
   document.title = `${d.name} · desk`;
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon" data-a="new" title="New pane" aria-label="New pane">${head("plus")}</button></header>` +
+    `<button type="button" class="icon" data-a="new" title="New panel" aria-label="New panel">${head("plus")}</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
@@ -644,8 +644,8 @@ function sync(d) {
 
 function list() {
   const ds = ctx.desks ? ctx.desks.desks : [];
-  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is up to four terminal panes side by side. A new one starts in your home folder; to start one in a folder, right-click the folder under Folders, or press the + beside it.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
-    (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "pane")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
+  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is up to four terminal panels side by side. A new one starts in your home folder; to start one in a folder, right-click the folder under Folders, or press the desk button beside it.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
+    (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "panel")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
 }
 
 // ---------- the dividers ----------
@@ -752,9 +752,9 @@ function rail() {
     return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}">` +
       `<button type="button" class="dk-focus" data-focus="${v.id}" title="${esc(what(v))}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm">${esc(short(v))}</span></button>` +
       `<span class="dk-tools">` +
-      (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop pane ${n}">${ico("stop")}</button>`
-        : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start pane ${n}">${ico("play")}</button>`) +
-      sure("close", v.id, "Close pane", `Close pane ${n}`, ico("x")) +
+      (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
+        : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
+      sure("close", v.id, "Close panel", `Close panel ${n}`, ico("x")) +
       `</span></li>`;
   };
   // Replacing the rail takes the focus off whatever had it. A field open on
@@ -762,26 +762,26 @@ function rail() {
   // away, so the replacement says so while it is under way.
   drawing = true;
   ctx.tocEl.innerHTML = `<div class="dk-rail">` +
-    `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panes<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
+    `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New pane</button>` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped pane again">Start all</button>` : "") + `</div>` +
+    `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded.
-    `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panes on this desk have sent, newest first">From the panes<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
+    `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">From the panels<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. Under the cursor, the path it was sent
     // from, to copy -- the thing to hand back to the pane that sent it.
-    (dl.length ? `<ul class="dk-docs">` + shown.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" title="${x.id === reading ? "Click again to go back to the panes" : `${esc(x.title)} · ${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${x.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="slot" title="Sent from pane ${x.slot}">${x.slot}</span>${x.id === reading ? "" : `<span class="k">${ctx.relShort(x.received_at)}</span>`}</a>` +
+    (dl.length ? `<ul class="dk-docs">` + shown.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" title="${x.id === reading ? "Click again to go back to the panels" : `${esc(x.title)} · ${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${x.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="slot" title="Sent from panel ${x.slot}">${x.slot}</span>${x.id === reading ? "" : `<span class="k">${ctx.relShort(x.received_at)}</span>`}</a>` +
       // Its tools: the path to copy, where there is one; and on the row of
       // the document on the page, the way back to the panes. That row's
       // tools stay in view rather than wait for the cursor.
       ((x.source_path || x.id === reading) ? `<span class="dk-tools">` +
         (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
-        (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panes  ⌃\`" aria-label="Back to the panes">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
+        (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
-      : `<p class="dk-empty">Nothing yet. What an agent in a pane sends lands here.</p>`) +
+      : `<p class="dk-empty">Nothing yet. What an agent in a panel sends lands here.</p>`) +
     `</details>` + noteSec(d) + `</div>`;
   drawing = false;
   noteFocus();
@@ -792,9 +792,9 @@ function rail() {
   // the desk is.
   ctx.metaEl.innerHTML = `<div class="row dk-row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span><span class="dk-tools">` +
     `<button type="button" data-a="rename" title="Rename desk" aria-label="Rename desk">${ico("pen")}</button>` +
-    sure("drop", "", "Close the desk and its panes", "Close desk", ico("x")) + `</span></div>` +
+    sure("drop", "", "Close the desk and its panels", "Close desk", ico("x")) + `</span></div>` +
     `<div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>` +
-    (v ? `<div class="row"><b>Pane</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "");
+    (v ? `<div class="row"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "");
   ctx.rail.classList.remove("empty");
 }
 
