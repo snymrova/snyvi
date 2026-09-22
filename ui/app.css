@@ -551,7 +551,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .s-empty { padding: 5px 8px 5px 18px; font-size: 12px; color: var(--fg-3); }
 
 /* The row. */
-.s-row, .t-proj > summary, .b-root > summary, .t-desk > a { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 18px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
+.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 18px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
 .s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--accent); }
 .r-ico { flex: none; color: var(--fg-3); transition: color var(--t); }
@@ -607,7 +607,7 @@ html[data-link="off"] .live { visibility: hidden; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
    kept out of the way until the row is under the cursor. The name takes the free
    space so the badge and the control sit at the edge. */
-.t-proj > summary > .nm, .t-wf > .wf-name > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-proj > summary > .nm, .t-wf > .wf-name > .nm, .t-back > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
 .ren { color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; letter-spacing: 0; }
 .t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
@@ -661,12 +661,25 @@ html[data-link="off"] .live { visibility: hidden; }
    The gap is taken back, so every end column reaches the same edge. */
 .t-desk > a > .row-x { margin-left: -8px; }
 .t-doc > a > .row-x { margin-left: -6px; }
-:is(.t-doc, .t-desk) > a:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+:is(.t-doc, .t-desk) > a:hover .row-x, .t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
 /* Beside a ✎ that has come out, the ✕ takes no auto margin of its own: one
    auto margin, on the ✎, and the two sit together at the row's end. */
 .t-desk > a:is(:hover, :has(> .ren:focus-visible)) > .row-x { margin-left: 0; }
 :is(.t-doc, .t-desk) > a:is(:hover, :has(.row-x:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k) { display: none; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
+/* The way back, under the tree while anything is out of it: quiet, because it
+   is a state of the list rather than something to do, and always there, so
+   nothing a reader put away can be lost by forgetting it was put away. */
+.t-away { display: block; width: 100%; text-align: left; padding: 4px 8px 4px 18px; margin-top: 2px; font-size: 11px; color: var(--fg-3); border-radius: 6px; }
+.t-away:hover { background: var(--rule); color: var(--fg-2); }
+/* The offer to undo, standing in the row's own place and on the row's own
+   grid: what the sidebar just did is said in the sidebar, where the click was,
+   so the eye does not have to cross the window to a corner to find out. It is
+   the row's ghost -- dimmed, no icon, no chevron -- and it holds the list
+   still while it stands, so taking the offer moves nothing. */
+.t-back { color: var(--fg-3); font-size: 12px; }
+.t-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
+.t-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .row-x[data-armed] { color: #dc2626; font-weight: 600; }
 .row-x[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
 .b-new { margin-left: auto; color: var(--fg-3); font-size: 13px; line-height: 1; padding: 0 5px; border-radius: 4px; opacity: 0; flex: none; }
@@ -860,7 +873,7 @@ pre.code .copy:focus-visible { opacity: 1; }
    the way the diagram tools already are. */
 @media (hover: none) {
   .ren, .b-close, pre.code .copy, pre.code::before { opacity: 1; }
-  .t-desk > a > .ren { width: auto; padding: 2px 4px; margin-left: 0; }
+  .t-desk > a > .ren, .t-proj > summary > .row-x { width: auto; padding: 2px 4px; margin-left: 0; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }
 }

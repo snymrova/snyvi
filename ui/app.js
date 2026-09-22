@@ -107,7 +107,15 @@
   let queueIds = new Set(state.queue.map(d => d.id));
 
   // ---------- tree ----------
-  const openProjects = new Set((store.get("snyvi.open") || "").split(",").filter(Boolean));
+  /* Three of the tree's sets are the reader's rather than the library's --
+   * which projects are open, which sections are folded, which projects have
+   * been taken out of the list -- and each is a comma-separated line in this
+   * reader's own storage. One pair of functions for all three: the dance is
+   * easy to write slightly differently the fourth time, and a set that round
+   * trips differently from its neighbours loses whatever was in it. */
+  const saved = k => new Set((store.get(k) || "").split(",").filter(Boolean));
+  const save = (k, set) => store.set(k, [...set].join(","));
+  const openProjects = saved("snyvi.open");
   /** Caps a reader has lifted, by project and by workflow, so a refetch does not
    *  put the rest back out of reach while they are still reading it. */
   const liftedCaps = new Set();
@@ -124,12 +132,26 @@
    * What each holds hangs under it on one guide line at one indent. A fold is
    * a class on #trees rather than a redraw, so it survives every render and
    * costs none; it is remembered per reader. */
-  const folded = new Set((store.get("snyvi.fold") || "").split(",").filter(Boolean));
+  const folded = saved("snyvi.fold");
+  /* A project the reader has taken out of the sidebar. Nothing is deleted --
+   * snyvi deletes nothing on this path -- so the project keeps every document
+   * it has, in All documents, in search and at its own URL; what changes is
+   * that it stops taking a row here. It comes back the moment anything lands
+   * in it, and the row under the tree brings them all back by hand. Per
+   * reader, as the folds are: it is a view, not a fact about the library. */
+  const away = saved("snyvi.away");
+  const saveAway = () => save("snyvi.away", away);
+  /** The one just put away, while the offer to undo it is still standing. It
+   *  keeps the row's place in the tree so the offer is where the click was --
+   *  a toast in the far corner asks the eye to leave the sidebar to find out
+   *  what the sidebar just did. Cleared by the timer, by the undo, or by the
+   *  next one put away, which is the moment the offer stops being about it. */
+  let awayJust = null, awayTimer = 0;
   const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
   function toggleFold(key) {
     if (!folded.delete(key)) folded.add(key);
-    store.set("snyvi.fold", [...folded].join(","));
+    save("snyvi.fold", folded);
     applyFolds();
     const open = !folded.has(key);
     for (const b of treesEl.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", open);
@@ -187,6 +209,14 @@
    *  each carries the means to correct it, shown when the row is under the cursor. */
   const renameBtn = (what, id) =>
     `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
+
+  /** The ✕ on a project's row: the same glyph a folder's row carries, meaning
+   *  the same thing -- this list stops showing it. Nothing on disk or in the
+   *  library changes, so unlike the ✕ on a document this one does not ask
+   *  twice; the ghost row it leaves behind holds the Undo, and the row under
+   *  the tree is the way back after that. */
+  const awayBtn = p =>
+    `<button type="button" class="row-x" data-away="${p.id}" title="Remove from the sidebar · the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">✕</button>`;
 
   /** A project is drawn expanded when the reader left it that way, when the
    *  document on screen is in it, or when it is the only one there is. Not
@@ -511,12 +541,27 @@
     }
     // No label: the projects hang under Inbox, which is what they are.
     let h = "";
+    let put = 0;
     for (const p of projects) {
+      if (away.has(String(p.id))) {
+        // In its own place, at its own height, so nothing below it moves while
+        // the offer stands and nothing moves again when it is taken.
+        if (awayJust === String(p.id)) {
+          h += `<div class="t-back"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
+          continue;
+        }
+        put++;
+        continue;
+      }
       const open = projOpen(p);
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
+    // Counted from the tree rather than from the set, so a project that is
+    // gone for some other reason is not offered back. While this row is here
+    // nothing is stranded: whatever was put away is one click from returning.
+    if (put) h += `<button type="button" class="t-away" data-back="">${plural(put, "project")} removed · Show</button>`;
     // The same rows as last time are left alone. Every open used to throw the
     // tree away and build it again, and measure it, before the document could
     // paint. Anything else that touches the rows -- a project toggled, a name
@@ -666,7 +711,7 @@
     if (!d.classList || !d.classList.contains("t-proj")) return;
     const pid = d.dataset.pid;
     d.open ? openProjects.add(pid) : openProjects.delete(pid);
-    store.set("snyvi.open", [...openProjects].join(","));
+    save("snyvi.open", openProjects);
     // Opening draws what this tab already holds and fetches what it does not;
     // closing takes the rows back out of the page, which is the bound.
     //
@@ -747,6 +792,19 @@
       // Inside the desk's link: a click on the ✕ is not a click on the desk.
       e.preventDefault(); e.stopPropagation();
       dropDesk(dd);
+      return;
+    }
+    const ax = e.target.closest("[data-away]");
+    if (ax) {
+      // Inside a <summary>, the default action is toggling the project open.
+      e.preventDefault(); e.stopPropagation();
+      putAway(ax.dataset.away);
+      return;
+    }
+    const bk = e.target.closest("[data-back]");
+    if (bk) {
+      e.preventDefault(); e.stopPropagation();
+      bringBack(bk.dataset.back);
       return;
     }
     const r = e.target.closest("[data-rename]");
@@ -1298,6 +1356,36 @@
       if (here) showInbox(true);
       offerUndo(d, here);
     } catch (e) { toast("Could not delete", String(e)); }
+  }
+
+  /** Take a project out of the sidebar. Nothing is asked for and nothing is
+   *  sent: the library is not touched, so there is nothing to fail and nothing
+   *  to undo on the daemon's side. Whatever is on the page stays on it -- a
+   *  document whose project was just put away is still a document. */
+  function putAway(id) {
+    const key = String(id);
+    away.add(key); saveAway();
+    openProjects.delete(key);
+    // Only the newest offer stands: two rows both saying Undo cannot both mean
+    // the last thing that happened.
+    clearTimeout(awayTimer);
+    awayJust = key;
+    awayTimer = setTimeout(() => {
+      if (awayJust !== key) return;
+      awayJust = null;
+      renderTree(); markActive();
+    }, UNDO_MS);
+    renderTree(); markActive();
+  }
+
+  /** Put a project back in the sidebar: one by id, or every one of them when
+   *  the row under the tree is the one clicked. */
+  function bringBack(id) {
+    clearTimeout(awayTimer);
+    awayJust = null;
+    if (id) away.delete(String(id)); else away.clear();
+    saveAway();
+    renderTree(); markActive();
   }
 
   /** The other half of a delete: a button in the toast, and ⌘Z for as long as
@@ -2628,6 +2716,10 @@
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       const d = j.doc;
+      // A project that was put away and has just been written to is not put
+      // away any more: the sidebar never holds back something waiting to be
+      // read. Taking it out of the set is enough -- the refresh below draws it.
+      if (d && away.delete(String(d.project_id))) saveAway();
       // One project moved, so one project's rows are what is refetched. This
       // used to pull the whole library back down and rebuild the sidebar on
       // every arrival -- a file saved every few seconds paid it every few
