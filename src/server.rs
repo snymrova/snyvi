@@ -50,6 +50,10 @@ const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
 /// The window's frame -- the bar's three buttons and what drags -- fetched
 /// only inside the native window, since a tab has no window to frame.
 const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
+/// The game behind the rocket at the foot of the sidebar, fetched when the
+/// rocket is pressed and never before: a reader who never presses it pays
+/// nothing for it.
+const GAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/game.js"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -161,6 +165,7 @@ impl Ui {
             ("mmd.js", MMD_JS),
             ("desk.js", DESK_JS),
             ("frame.js", FRAME_JS),
+            ("game.js", GAME_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -277,6 +282,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(APP_JS.as_bytes());
         h.update(DESK_JS.as_bytes());
         h.update(FRAME_JS.as_bytes());
+        h.update(GAME_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -380,6 +386,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/desk/{id}", get(shell_desk))
         .route("/assets/desk.js", get(asset_desk))
         .route("/assets/frame.js", get(asset_frame))
+        .route("/assets/game.js", get(asset_game))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -689,6 +696,15 @@ async fn asset_frame(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "frame.js",
         FRAME_JS,
+    )
+}
+/// The game, on the same terms: nothing asks for it but the rocket.
+async fn asset_game(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "game.js",
+        GAME_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -2806,7 +2822,8 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, DESK_JS, INDEX_HTML, MMD_JS,
+        desk_refusal, hello_allows, Ui, APP_CSS, APP_JS, BOOT_JS, DESK_JS, GAME_JS, INDEX_HTML,
+        MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -3084,6 +3101,26 @@ mod tests {
             "export function close(",
         ] {
             assert!(DESK_JS.contains(seam), "desk.js should export `{seam}`");
+        }
+    }
+
+    /// The game is the fourth chunk, and the smallest bargain of them: one
+    /// import, in the rocket's click handler and nowhere else, so a page
+    /// whose rocket is never pressed never fetches a game.
+    #[test]
+    fn the_page_asks_for_the_game_only_when_the_rocket_is_pressed() {
+        assert_eq!(APP_JS.matches("import(`/assets/game.js").count(), 1);
+        let import = APP_JS.find("import(`/assets/game.js").unwrap();
+        let press = APP_JS
+            .find(r##"$("#btn-game")"##)
+            .expect("the rocket is the button the game is behind");
+        assert!(press < import, "the import sits inside the rocket's press");
+        for seam in [
+            "export function open(",
+            "export function close(",
+            "export function isOpen(",
+        ] {
+            assert!(GAME_JS.contains(seam), "game.js should export `{seam}`");
         }
     }
 

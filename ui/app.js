@@ -3146,6 +3146,21 @@
   // The chip that says ⌘ says it on a Mac; everywhere else the key is ctrl.
   if (!/Mac/.test(navigator.platform)) help.querySelectorAll("kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
 
+  // ---------- the rocket: a game, over the sidebar and nowhere else ----------
+  /* A chunk on the desk view's terms: fetched on the first press and never on
+   * a page that does not press it. It covers the sidebar column and leaves
+   * the page beside it alone, so nothing that arrives while it is up is in
+   * its way, and it takes the cover down when the rocket is pressed again. */
+  let game = null, gameLoading = null;
+  const gameBtn = $("#btn-game");
+  gameBtn.addEventListener("click", async () => {
+    if (game?.isOpen()) { game.close(); return; }
+    try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { gameLoading = null; toast("Could not start the game", String(e)); return; }
+    gameBtn.classList.add("on");
+    game.open($("#side"), { back: gameBtn, onClose: () => gameBtn.classList.remove("on") });
+  });
+
   // ---------- about: what this is, from the daemon ----------
   /* Every number here is read from the daemon when the panel opens, not
    * baked into this bundle, so the version it names is the one answering

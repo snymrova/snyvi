@@ -376,6 +376,7 @@ mod tests {
             include_str!("../ui/app.js"),
             include_str!("../ui/mmd.js"),
             include_str!("../ui/desk.js"),
+            include_str!("../ui/game.js"),
         ] {
             let once = js(src);
             assert_eq!(js(&once), once);
@@ -400,6 +401,7 @@ mod tests {
             include_str!("../ui/desk.js"),
             include_str!("../ui/mmd.js"),
             include_str!("../ui/boot.js"),
+            include_str!("../ui/game.js"),
         ] {
             let out = strip(src, Lang::Js);
             // Deletion and nothing else: every character of the output is in

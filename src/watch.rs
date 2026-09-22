@@ -179,6 +179,8 @@ pub fn spawn_ui_watcher(app: Arc<App>) {
             "boot.js",
             "mmd.js",
             "desk.js",
+            "frame.js",
+            "game.js",
         ];
         let mut tracker: Tracker<&str> = Tracker::new();
         loop {

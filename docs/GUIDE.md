@@ -502,6 +502,14 @@ side by side are told apart at the tab strip.
 
 The **width** and **wrap** buttons are `w` and `z` above.
 
+The **rocket**, at the top of that column, is a game: snyvi in a helmet,
+in a small ship, and rocks coming down. It covers the sidebar and only
+the sidebar, so a document arriving while you play opens beside it as
+usual. The arrows or WASD steer -- forward as far as the top third of
+the sky, which is the rocks' own -- space fires, and `esc` leaves;
+the rocks come faster every twenty seconds, and your best is kept with
+the other settings. Nothing about it loads until the rocket is pressed.
+
 ## Lines
 
 A code or text document addresses its lines. `#L120` opens it at line 120
