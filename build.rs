@@ -43,6 +43,7 @@ fn strip_ui() {
         ("mmd.js", strip::Lang::Js),
         ("desk.js", strip::Lang::Js),
         ("frame.js", strip::Lang::Js),
+        ("game.js", strip::Lang::Js),
         ("app.css", strip::Lang::Css),
     ] {
         let from = dir.join(name);
