@@ -4,7 +4,7 @@
 
 <h1 align="center">snyvi</h1>
 
-<p align="center">A fast, beautiful viewer for the documents your agents produce.</p>
+<p align="center">A fast, beautiful viewer for the documents your agents produce, with real shells beside them.</p>
 
 <p align="center">
   <a href="https://github.com/snymrova/snyvi/releases/latest"><img src="https://img.shields.io/github/v/release/snymrova/snyvi?style=flat-square&color=c8420f&label=release" alt="latest release"></a>
@@ -29,7 +29,10 @@ https://github.com/user-attachments/assets/21f7e4b9-f2e6-441a-975c-c876504ed583
 
 Ask Claude Code (or any agent) for a plan, and it opens in snyvi:
 rendered, searchable, and filed under its project. Markdown, diagrams and
-source code. Everything stays on your machine.
+source code. Read a folder as it is on disk, and — in the desktop window —
+open a **desk** on it: up to four real shell panes, rooted at that folder, so
+the terminal you would have answered the plan in is in the window that holds
+the plan. Everything stays on your machine.
 
 ## Install
 
@@ -93,7 +96,16 @@ snyvi status           # what is running and what is connected
 ```
 
 In the viewer: `⌘K` / `Ctrl+K` searches everything, `n` opens the next new
-document, `c` shows what changed since the last version, `?` lists every key.
+document, `c` shows what changed since the last version, `/` searches inside
+the one you are reading, `?` lists every key.
+
+**Desks.** Open a folder, then its `+` — or right-click it, or ask the palette
+for *New desk here* — and the folder becomes a desk: a named workspace of up
+to four shell panes in the same window as the documents. Eight panes in total,
+2 MB of scrollback each. The layout survives a restart and the processes do
+not. Desks need the desktop window, because a browser tab cannot be allowed to
+start a process on your machine; a tab says so where the desks would be.
+[How it works](docs/DESK.md).
 
 ## Update and remove
 
@@ -105,6 +117,7 @@ installed it. Your documents are kept until you run `snyvi reset`.
 ## More
 
 - [Guide](docs/GUIDE.md): every platform, command, agent and key.
+- [Desks](docs/DESK.md): the model, the caps, and what a browser tab is kept out of.
 - [Roadmap](docs/ROADMAP.md): what shipped, and why.
 - Fast: a send takes about 13 ms, and `snyvi bench --check` holds every number
   to a budget on every push ([numbers](docs/GUIDE.md#measured-so-far)).
