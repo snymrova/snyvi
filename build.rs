@@ -46,6 +46,7 @@ fn strip_ui() {
         ("game.js", strip::Lang::Js),
         ("about.js", strip::Lang::Js),
         ("find.js", strip::Lang::Js),
+        ("menu.js", strip::Lang::Js),
         ("app.css", strip::Lang::Css),
     ] {
         let from = dir.join(name);

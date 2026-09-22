@@ -682,7 +682,10 @@ html[data-link="off"] .live { visibility: hidden; }
 .t-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .row-x[data-armed] { color: #dc2626; font-weight: 600; }
 .row-x[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
-.b-new { margin-left: auto; color: var(--fg-3); font-size: 13px; line-height: 1; padding: 0 5px; border-radius: 4px; opacity: 0; flex: none; }
+.b-new { margin-left: auto; display: inline-flex; align-items: center; color: var(--fg-3); line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; }
+/* The glyph is the one the Desks section uses, so what the button makes is
+   named by its shape rather than by a plus that could mean any addition. */
+.b-new .r-ico { color: inherit; }
 summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
@@ -872,7 +875,7 @@ pre.code .copy:focus-visible { opacity: 1; }
 /* No pointer to hover with: everything that waits for one is simply there,
    the way the diagram tools already are. */
 @media (hover: none) {
-  .ren, .b-close, pre.code .copy, pre.code::before { opacity: 1; }
+  .ren, .b-close, .b-new, pre.code .copy, pre.code::before { opacity: 1; }
   .t-desk > a > .ren, .t-proj > summary > .row-x { width: auto; padding: 2px 4px; margin-left: 0; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }

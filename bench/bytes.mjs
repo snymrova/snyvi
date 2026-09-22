@@ -66,7 +66,7 @@ const FIRST = [["index.html", "/"], ["boot.js", "/assets/boot.js"], ["app.css", 
  * measured the way the four above are. desk.js is the second chunk, and the
  * one the measurement below was taken to make the case for: the pane view,
  * paid when a desk is opened in the window and never in a tab. */
-const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about or reset is opened"], ["find.js", "/assets/find.js", "`/` searches a document"]];
+const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about or reset is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"]];
 
 const kb = n => (n / KB).toFixed(1) + " KB";
 

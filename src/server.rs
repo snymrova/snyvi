@@ -63,6 +63,11 @@ const ABOUT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/about.js"));
 /// a document never fetches it, and the page's calls into it are no-ops until
 /// it is there, because until then nothing is marked.
 const FIND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/find.js"));
+/// What a folder and a desk can be asked to do -- the right-click menu, making
+/// a desk, closing one, opening a folder -- fetched on the first such click. A
+/// reader who only reads never fetches it; the sidebar draws its desks without
+/// it, because drawing them is in `app.js` and only doing something is here.
+const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -177,6 +182,7 @@ impl Ui {
             ("game.js", GAME_JS),
             ("about.js", ABOUT_JS),
             ("find.js", FIND_JS),
+            ("menu.js", MENU_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -296,6 +302,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(GAME_JS.as_bytes());
         h.update(ABOUT_JS.as_bytes());
         h.update(FIND_JS.as_bytes());
+        h.update(MENU_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -402,6 +409,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/game.js", get(asset_game))
         .route("/assets/about.js", get(asset_about))
         .route("/assets/find.js", get(asset_find))
+        .route("/assets/menu.js", get(asset_menu))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -739,6 +747,16 @@ async fn asset_find(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "find.js",
         FIND_JS,
+    )
+}
+/// The folder menu and the desk actions, on the same terms: nothing here has
+/// happened until someone has clicked something.
+async fn asset_menu(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "menu.js",
+        MENU_JS,
     )
 }
 async fn asset_mermaid() -> Response {
@@ -2857,7 +2875,7 @@ fn err(e: anyhow::Error) -> Response {
 mod tests {
     use super::{
         desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, FIND_JS,
-        FRAME_JS, GAME_JS, INDEX_HTML, MMD_JS,
+        FRAME_JS, GAME_JS, INDEX_HTML, MENU_JS, MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -3276,6 +3294,7 @@ mod tests {
             ("game.js", GAME_JS),
             ("about.js", ABOUT_JS),
             ("find.js", FIND_JS),
+            ("menu.js", MENU_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
@@ -3311,6 +3330,7 @@ mod tests {
             "GAME_JS",
             "ABOUT_JS",
             "FIND_JS",
+            "MENU_JS",
         ] {
             assert!(
                 block.contains(chunk),

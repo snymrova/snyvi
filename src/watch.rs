@@ -183,6 +183,7 @@ pub fn spawn_ui_watcher(app: Arc<App>) {
             "game.js",
             "about.js",
             "find.js",
+            "menu.js",
         ];
         let mut tracker: Tracker<&str> = Tracker::new();
         loop {

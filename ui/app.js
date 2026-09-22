@@ -513,7 +513,7 @@
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: <b>+</b> beside Folders, below.</div>`;
+      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: the row under <b>Folders</b>, below.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -769,13 +769,13 @@
     }
     const fold = e.target.closest("[data-fold]");
     if (fold) { e.preventDefault(); toggleFold(fold.dataset.fold); return; }
-    if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); pickFolder(); return; }
+    if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); act("pick"); return; }
     const nd = e.target.closest("[data-newdesk]");
     if (nd) {
       // Inside a <summary> too: a click on the + is not a click on the folder.
       e.preventDefault(); e.stopPropagation();
       // In a folder's row, a desk on that folder; in the Desks head, one on no folder.
-      newDesk(folderOf(nd));
+      act("make", folderOf(nd));
       return;
     }
     const dx = e.target.closest("[data-deldoc]");
@@ -791,7 +791,7 @@
     if (dd) {
       // Inside the desk's link: a click on the ✕ is not a click on the desk.
       e.preventDefault(); e.stopPropagation();
-      dropDesk(dd);
+      act("drop", dd);
       return;
     }
     const ax = e.target.closest("[data-away]");
@@ -2428,7 +2428,7 @@
    * reader who never opens one pays for this block and no more. */
   const deskNav = $("#desk-nav");
   let desk = null, deskLoading = null, lastDesk = null;
-  const plusDesk = () => capability ? `<button class="b-new" data-newdesk title="New desk here" aria-label="New desk here">+</button>` : "";
+  const plusDesk = () => capability ? `<button class="b-new" data-newdesk title="New desk here" aria-label="New desk here">${icon("desk")}</button>` : "";
   /** A desk route, with the capability in the one place a page can put a
    *  secret on a request it composes: a header. */
   async function deskApi(path, body, type) {
@@ -2438,30 +2438,36 @@
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
   }
-  /** The `+` beside Folders: the desktop's own folder dialog, which the daemon
-   *  shows, and the folder the reader chose, opened. The page names no path.
-   *  Only the window can ask -- the same gate the desks are behind -- so a
-   *  tab is told where it can be done instead. */
-  let picking = false;
-  async function pickFolder() {
-    if (!capability) { toast("Folders open from the snyvi window", "Or from a terminal: snyvi browse <folder>"); return; }
-    if (picking) return;
-    picking = true;
-    browseEl.classList.add("picking");
-    try {
-      const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } });
-      if (r.status === 204) return;   // closed without a choice
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { toast("Could not open a folder", j.error || `HTTP ${r.status}`); return; }
-      if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
-      renderBrowse();
-      // Open in the sidebar as well as on the page; the toggle fills its tree.
-      const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
-      if (d) d.open = true;
-      showBrowse(j.root.id, "", true);
-    } catch (e) { toast("Could not open a folder", String(e)); }
-    finally { picking = false; browseEl.classList.remove("picking"); }
+  /* Everything a folder or a desk can be *asked* to do waits for a pointer --
+   * a right-click, the desk glyph on a row, the row that opens a folder, the
+   * ✕ on a desk -- so it is ui/menu.js, fetched on the first such click and
+   * never by a reader who only reads. What draws the desks is not in it:
+   * `renderDesks` below runs at first paint and stays here.
+   *
+   * One context object, made once and handed over on every call, so the chunk
+   * never keeps a second copy of what this page already knows. The functions
+   * are wrappers rather than references because several of them are declared
+   * further down this file. */
+  let acts = null, actsLoading = null;
+  const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
+  const actsCtx = {
+    state, esc, toast, browseEl,
+    get capability() { return capability; },
+    api: (path, body, type) => deskApi(path, body, type),
+    load: () => loadDesks(),
+    show: (id, push, slot) => showDesk(id, push, slot),
+    browse: (root, path, push) => showBrowse(root, path, push),
+    drawBrowse: () => renderBrowse(),
+    terminal: body => openTerminal(body),
+    forget: id => { if (lastDesk === id) lastDesk = null; },
+  };
+  /** Wait for the chunk, then do the thing that was clicked. A failure is the
+   *  reader's to see: they pressed something and nothing happened otherwise. */
+  async function act(what, ...args) {
+    try { const m = await useActs(); return m[what](actsCtx, ...args); }
+    catch (e) { actsLoading = null; toast("Could not do that", String(e)); }
   }
+
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
     renderDesks();
@@ -2487,23 +2493,6 @@
         return `<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">` +
           `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}${end}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
       }).join("") + `</ul>`;
-  }
-  /** The ✕ on a desk's row. Closing a desk ends its panes' processes, and
-   *  there is no undoing that, so the first click asks and the second closes,
-   *  as Close desk does in the desk's own rail. */
-  async function dropDesk(b) {
-    if (!b.dataset.armed) {
-      b.dataset.armed = "1"; b.textContent = "Close?"; b.title = "Close the desk and its panes: click again";
-      const li = b.closest("li"); li.classList.add("arming");
-      setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "✕"; b.title = "Close desk"; li.classList.remove("arming"); } }, 3000);
-      return;
-    }
-    const id = +b.dataset.dropdesk;
-    try { await deskApi(`/api/desks/${id}/delete`, {}); }
-    catch (err) { toast(`Could not close the desk: ${err.message}`); return; }
-    if (lastDesk === id) lastDesk = null;
-    await loadDesks();
-    if (state.view === "desk" && state.deskId === id) showDesk(null, true);
   }
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
@@ -2556,21 +2545,6 @@
    *  rather than being told: the events reach tabs, and only a window holds
    *  the capability that answers. */
   const deskDocs = () => { if (desk && ((state.view === "desk" && state.deskId != null) || state.deskBehind != null)) desk.docs(); };
-  /** A new desk on folder `f`, or with none on no folder: it starts in the
-   *  home directory, which the daemon names. */
-  async function newDesk(f) {
-    try {
-      const j = await deskApi("/api/desks", f ? { root: f.root, path: f.path } : {});
-      // A new desk opens on a shell, not on an empty grid: one pane, started.
-      // The view sizes it to the pane the moment it is drawn.
-      try {
-        const p = await deskApi(`/api/desks/${j.desk.id}/panes`, {});
-        await deskApi(`/api/panes/${p.pane.id}/start`, { cmd: "" });
-      } catch (e) { toast("The desk is made, but its shell did not start", String(e)); }
-      await loadDesks();
-      showDesk(j.desk.id, true);
-    } catch (e) { toast("Could not make a desk", String(e)); }
-  }
   /** The folder a row in the browse tree is, in the two shapes it is needed:
    *  the root and path every route takes, and the absolute path a desk is
    *  compared by. */
@@ -2582,55 +2556,16 @@
     return { root: r.id, path, abs: r.path + (path ? "/" + path : "") };
   }
 
-  // ---------- the folder menu ----------
-  /* The first context menu in snyvi, on the one row that has a use for it: a
-   * folder. `New desk here` always, `Show desk` for each desk already on it --
-   * two on one folder is a workflow, not a mistake -- and in a tab neither,
-   * rather than both greyed. Right-click cannot be reached from a keyboard,
-   * which this codebase cares about, so the + on the row and the palette are
-   * its peers; and the menu itself is arrow keys and Escape. */
-  const menu = document.createElement("div");
-  menu.id = "ctx"; menu.hidden = true; menu.setAttribute("role", "menu");
-  document.body.append(menu);
-  let menuAt = null;
-  function openMenu(f, x, y) {
-    menuAt = f;
-    const here = state.desks ? state.desks.desks.filter(d => d.root === f.abs) : [];
-    menu.innerHTML = (capability ? `<button role="menuitem" data-m="new">New desk here</button>` +
-      here.map(d => `<button role="menuitem" data-m="show" data-id="${d.id}">Show desk ${esc(d.name)}</button>`).join("") + `<hr>` : "") +
-      `<button role="menuitem" data-m="copy">Copy path</button><button role="menuitem" data-m="term">Open terminal here</button>`;
-    menu.hidden = false;
-    menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 8)) + "px";
-    menu.style.top = Math.max(4, Math.min(y, innerHeight - menu.offsetHeight - 8)) + "px";
-    menu.querySelector("button").focus();
-  }
-  const closeMenu = () => { menu.hidden = true; menuAt = null; };
+  /* The one part of the folder menu that cannot be deferred: a page has to be
+   * listening for the right-click before it can know one is coming. What the
+   * menu is and does is in the chunk. */
   treesEl.addEventListener("contextmenu", e => {
     const s = e.target.closest(".b-dir > details > summary, .b-root > summary");
     const f = s && folderOf(s);
     if (!f) return;
     e.preventDefault();
-    openMenu(f, e.clientX, e.clientY);
+    act("open", f, e.clientX, e.clientY);
   });
-  menu.addEventListener("click", e => {
-    const b = e.target.closest("[data-m]"), f = menuAt;
-    if (!b || !f) return;
-    closeMenu();
-    const m = b.dataset.m;
-    if (m === "new") newDesk(f);
-    else if (m === "show") showDesk(+b.dataset.id, true);
-    else if (m === "copy") { navigator.clipboard?.writeText(f.abs); toast("Copied", f.abs); }
-    else openTerminal({ root: f.root, path: f.path });
-  });
-  menu.addEventListener("keydown", e => {
-    const bs = [...menu.querySelectorAll("button")], at = bs.indexOf(document.activeElement);
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") bs[(at + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus();
-    else if (e.key === "Escape") closeMenu();
-    else return;
-    e.preventDefault(); e.stopPropagation();
-  });
-  document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target)) closeMenu(); }, true);
-  addEventListener("blur", closeMenu);
 
   /** The daemon's event stream, and the one socket this page holds open for
    *  as long as it lives.
@@ -3068,7 +3003,7 @@
       palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
   });
-  const openPalItem = it => it.pick ? pickFolder() : it.line ? gotoLine(it.line) : it.newdesk ? newDesk(it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
+  const openPalItem = it => it.pick ? act("pick") : it.line ? gotoLine(it.line) : it.newdesk ? act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
     : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
   palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
   pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
@@ -3370,7 +3305,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closeMenu(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop
