@@ -226,6 +226,13 @@ class Game {
   onKey(e) {
     // A dialog over the page has made the sidebar inert; the keys are its.
     if (this.el.closest("[inert]")) { this.pause(); return; }
+    // The cover is over the sidebar, not over the page. A reader with the
+    // caret in the document is still scrolling it with the arrows and the
+    // space bar, `w` and `s` are still the page's, and Escape still belongs
+    // to whatever sheet is actually open -- so the flight keys are the
+    // game's only while the game is what the focus is on. Folded away, the
+    // sky is 0x0 and paused, and none of them are its either.
+    if (this.away || !this.el.contains(document.activeElement)) return;
     const tag = e.target.tagName;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || e.target.isContentEditable) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.end(); return; }
