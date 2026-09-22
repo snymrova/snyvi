@@ -8,16 +8,23 @@
  * the run goes on. Nothing here moves while the cover is down, and the cover
  * is only ever up because someone pressed the rocket.
  *
- * Keys are taken only while the cover is up, and only the ones the ship
- * uses -- the arrows or WASD, and space -- and everything else passes
- * through, so `?` still opens the shortcuts and `\` still folds the sidebar
- * (which pauses the run, since there is nothing to see it by). WASD are
- * keys the page reads too (`w` is the width, `s` the split), and taking them
- * is the one liberty the cover allows itself: whoever put it up is flying,
- * not reading. There is no pause key; the run pauses when the window loses
- * focus, and a press carries it on. A dialog
- * over the page makes the sidebar inert, and the run pauses for that too
- * rather than reading keys meant for a palette.
+ * The keys fly it, and only the keys. Keys are taken only while the cover
+ * is up, and only the ones the ship uses -- the arrows or WASD, and space
+ * -- and everything else passes through, so `?` still opens the shortcuts
+ * and `\` still folds the sidebar (which pauses the run, since there is
+ * nothing to see it by). WASD are keys the page reads too (`w` is the
+ * width, `s` the split), and taking them is the one liberty the cover
+ * allows itself: whoever put it up is flying, not reading. The pointer does
+ * nothing but give the sky focus when it is pressed: a mouse wandering over
+ * the column, or resting on it, must not move the ship or fire. There is no
+ * pause key; the run pauses when the window loses focus, and a press
+ * carries it on. A dialog over the page makes the sidebar inert, and the
+ * run pauses for that too rather than reading keys meant for a palette.
+ *
+ * The frame loop runs only while something moves: a run in play, or the
+ * last sparks of one settling. Ready, paused and over are each a single
+ * frame, and then nothing -- no timer, no draw -- until a key. A cover left
+ * up over a blurred window costs the page nothing.
  *
  * The rocks get faster and more frequent as the run goes on: every twenty
  * seconds is a level, and each level trims the gap between rocks and adds to
@@ -89,23 +96,23 @@ class Game {
 
     this.w = 0; this.h = 0; this.dpr = 1;
     this.held = new Set();
-    this.pointerX = null; this.pointerY = null;
+    this.glass = null;
     this.palette = null;
     this.paletteAt = -1e9;
-    this.reset("ready");
-
+    this.raf = 0;
     this.onKey = this.onKey.bind(this);
     this.onKeyUp = this.onKeyUp.bind(this);
     this.onBlur = this.onBlur.bind(this);
-    this.onPointer = this.onPointer.bind(this);
     this.frame = this.frame.bind(this);
+    this.reset("ready");
+
     document.addEventListener("keydown", this.onKey, true);
     document.addEventListener("keyup", this.onKeyUp, true);
     addEventListener("blur", this.onBlur);
     document.addEventListener("visibilitychange", this.onBlur);
-    this.canvas.addEventListener("pointermove", this.onPointer);
-    this.canvas.addEventListener("pointerdown", this.onPointer);
-    this.canvas.addEventListener("pointerleave", () => { this.pointerX = this.pointerY = null; });
+    // A press on the sky gives it the keys back, and that is all a pointer
+    // does here.
+    this.canvas.addEventListener("pointerdown", () => this.canvas.focus({ preventScroll: true }));
     this.el.querySelector(".game-close").addEventListener("click", () => this.end());
 
     // The sky is the size the sidebar gives it, at the screen's density. A
@@ -115,14 +122,12 @@ class Game {
     this.ro.observe(this.canvas);
     this.fit();
     this.canvas.focus({ preventScroll: true });
-    this.last = performance.now();
-    this.raf = requestAnimationFrame(this.frame);
   }
 
   fit() {
     const r = this.canvas.getBoundingClientRect();
     const w = Math.round(r.width), h = Math.round(r.height);
-    if (!w || !h) { if (this.state === "play") this.state = "paused"; return; }
+    if (!w || !h) { this.pause(); return; }
     this.dpr = Math.min(devicePixelRatio || 1, 2);
     if (w !== this.w || h !== this.h) {
       this.w = w; this.h = h;
@@ -131,13 +136,35 @@ class Game {
       this.ship.x = Math.min(Math.max(this.ship.x, 22), w - 22);
       this.ship.y = Math.min(Math.max(this.ship.y, this.ceiling()), h - 40);
       this.stars = Array.from({ length: Math.round(w * h / 2600) }, () => ({ x: rnd(0, w), y: rnd(0, h), s: rnd(0.6, 1.6), p: rnd(0, 6.3) }));
+      this.paint();
     }
   }
+
+  // ---------- the loop, and when it runs ----------
+  /** Change state. Play wakes the loop; anything else lets it wind down
+   *  and paints the one frame that state needs. */
+  setState(state) {
+    if (this.state === state) return;
+    this.state = state;
+    if (state === "play") this.wake(); else this.paint();
+  }
+  pause() { if (this.state === "play") { this.held.clear(); this.setState("paused"); } }
+  /** Start the loop if it is not running. */
+  wake() {
+    if (this.raf) return;
+    this.last = performance.now();
+    this.raf = requestAnimationFrame(this.frame);
+  }
+  /** One frame, when the loop is idle; the loop itself is the frame
+   *  otherwise. */
+  paint() { this.wake(); }
+  /** Whether the next frame is worth having: a run in play, or sparks
+   *  still flying from the last thing that broke. */
+  moving() { return this.state === "play" || this.bits.length > 0; }
 
   /** A fresh sky and a fresh ship. `state` is what to wait in: "ready" before
    *  the first launch, "play" straight away. */
   reset(state) {
-    this.state = state;
     this.t = 0; this.level = 1; this.levelAt = 0;
     this.score = 0; this.ships = SHIPS;
     this.ship = { x: this.w / 2 || 132, y: (this.h || 600) - 40, vx: 0, vy: 0, safe: 0, flame: 0 };
@@ -145,12 +172,14 @@ class Game {
     this.spawnIn = 0.8; this.fireIn = 0;
     this.stars ||= [];
     this.paintScore();
+    this.state = null;
+    this.setState(state);
   }
 
   // ---------- input ----------
   onKey(e) {
     // A dialog over the page has made the sidebar inert; the keys are its.
-    if (this.el.closest("[inert]")) { this.held.clear(); if (this.state === "play") this.state = "paused"; return; }
+    if (this.el.closest("[inert]")) { this.pause(); return; }
     const tag = e.target.tagName;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || e.target.isContentEditable) return;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.end(); return; }
@@ -164,7 +193,7 @@ class Game {
     else return;
     e.preventDefault();
     e.stopPropagation();
-    if (this.state === "paused") this.state = "play";
+    if (this.state === "paused") this.setState("play");
   }
   onKeyUp(e) {
     const k = e.key;
@@ -175,37 +204,32 @@ class Game {
     else if (KEYS_FIRE.has(k)) this.held.delete("F");
   }
   onBlur() {
-    if (document.visibilityState === "hidden" || !document.hasFocus()) {
-      this.held.clear();
-      if (this.state === "play") this.state = "paused";
-    }
-  }
-  /** A pointer is the other way to steer: the ship goes to where it is, and a
-   *  press fires -- or launches, if there is nothing to fire at yet. */
-  onPointer(e) {
-    const r = this.canvas.getBoundingClientRect();
-    this.pointerX = e.clientX - r.left;
-    this.pointerY = e.clientY - r.top;
-    if (e.type === "pointerdown") {
-      this.canvas.focus({ preventScroll: true });
-      if (this.state === "play") this.fire();
-      else if (this.state === "paused") this.state = "play";
-      else this.launch();
-    }
+    if (document.visibilityState === "hidden" || !document.hasFocus()) this.pause();
   }
   launch() {
     if (this.state === "over" || this.state === "ready") this.reset("play");
-    else this.state = "play";
+    else this.setState("play");
   }
 
   // ---------- the run ----------
   frame(now) {
-    this.raf = requestAnimationFrame(this.frame);
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
-    if (!this.w) return;
-    if (this.state === "play") this.step(dt);
-    this.draw(now);
+    if (this.w) {
+      if (this.state === "play") this.step(dt);
+      else this.settle(dt);
+      this.draw(now);
+    }
+    // The next frame is asked for last, and only if there is one to draw:
+    // a still sky is drawn once and then the page hears nothing from here.
+    this.raf = this.moving() ? requestAnimationFrame(this.frame) : 0;
+  }
+
+  /** Sparks after the run has stopped: they fly out and fade, and then the
+   *  loop has nothing left to do. */
+  settle(dt) {
+    for (const p of this.bits) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
+    keep(this.bits, p => p.life > 0);
   }
 
   step(dt) {
@@ -213,20 +237,15 @@ class Game {
     const level = 1 + Math.floor(this.t / LEVEL_EVERY);
     if (level !== this.level) { this.level = level; this.levelAt = this.t; }
 
-    // The ship: keys push it, a pointer pulls it, and it eases either way so
-    // it never snaps. Forward is up the sky, as far as the ceiling, and back
-    // is the foot of it; there is no reversing out of the sky's bottom edge.
+    // The ship: the keys push it, and it eases so it never snaps. Forward is
+    // up the sky, as far as the ceiling, and back is the foot of it; there
+    // is no reversing out of the sky's bottom edge.
     const s = this.ship;
     let want = 0, climb = 0;
     if (this.held.has("L")) want -= 1;
     if (this.held.has("R")) want += 1;
     if (this.held.has("U")) climb -= 1;
     if (this.held.has("D")) climb += 1;
-    if (!want && !climb && this.pointerX != null) {
-      const dx = this.pointerX - s.x, dy = this.pointerY - s.y;
-      want = Math.abs(dx) < 3 ? 0 : Math.max(-1, Math.min(1, dx / 40));
-      climb = Math.abs(dy) < 3 ? 0 : Math.max(-1, Math.min(1, dy / 40));
-    }
     s.vx += (want * SHIP_SPEED - s.vx) * Math.min(1, dt * 12);
     s.vy += (climb * SHIP_CLIMB - s.vy) * Math.min(1, dt * 10);
     s.x = Math.min(Math.max(s.x + s.vx * dt, 22), this.w - 22);
@@ -237,7 +256,7 @@ class Game {
     if (this.held.has("F")) this.fire();
 
     for (const b of this.bullets) b.y -= BULLET_SPEED * dt;
-    this.bullets = this.bullets.filter(b => b.y > -10);
+    keep(this.bullets, b => b.y > -10);
 
     // Rocks: fewer seconds between them and more speed in them per level.
     this.spawnIn -= dt;
@@ -250,7 +269,7 @@ class Game {
       r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.spin * dt;
       if (r.x < -r.r) r.x = this.w + r.r; else if (r.x > this.w + r.r) r.x = -r.r;
     }
-    this.rocks = this.rocks.filter(r => r.y < this.h + r.r + 4);
+    keep(this.rocks, r => r.y < this.h + r.r + 4);
 
     // A bullet in a rock breaks it; the ship in a rock costs a ship.
     for (const b of this.bullets) {
@@ -260,8 +279,8 @@ class Game {
         if (dx * dx + dy * dy < r.r * r.r) { r.dead = true; b.dead = true; this.breakRock(r); break; }
       }
     }
-    this.bullets = this.bullets.filter(b => !b.dead);
-    this.rocks = this.rocks.filter(r => !r.dead);
+    keep(this.bullets, b => !b.dead);
+    keep(this.rocks, r => !r.dead);
     if (s.safe <= 0) {
       for (const r of this.rocks) {
         const dx = r.x - s.x, dy = r.y - s.y, hit = r.r + 12;
@@ -269,8 +288,7 @@ class Game {
       }
     }
 
-    for (const p of this.bits) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
-    this.bits = this.bits.filter(p => p.life > 0);
+    this.settle(dt);
   }
 
   /** How far forward the ship may fly: the top third is the rocks' own, so a
@@ -310,7 +328,7 @@ class Game {
     this.ship.safe = 2.2;
     this.held.delete("F");
     if (this.ships <= 0) {
-      this.state = "over";
+      this.setState("over");
       if (this.score > this.best) { this.best = this.score; store.set(KEY_BEST, String(this.best)); this.paintBest(); }
     }
   }
@@ -334,9 +352,15 @@ class Game {
     const cs = getComputedStyle(this.host);
     const v = n => cs.getPropertyValue(n).trim();
     this.paletteAt = now;
+    const accent = v("--accent");
+    let glow = this.palette?.glow;
+    if (!glow || this.palette.accent !== accent) {
+      glow = this.ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      glow.addColorStop(0, accent); glow.addColorStop(1, "transparent");
+    }
     return this.palette = {
       bg: v("--bg-side"), fg: v("--fg"), fg2: v("--fg-2"), fg3: v("--fg-3"), rule: v("--rule"), rule2: v("--rule-2"),
-      raise: v("--bg-raise"), accent: v("--accent"),
+      raise: v("--bg-raise"), accent, glow,
       mascot: v("--mascot"), nub: v("--mascot-nub"), ink: v("--mascot-ink"),
     };
   }
@@ -377,20 +401,22 @@ class Game {
     c.fillText(`L${this.level}`, w - 10, 8);
 
     // A word in the middle when there is one to say.
-    const say = (a, b) => {
-      c.textAlign = "center"; c.textBaseline = "middle";
-      c.fillStyle = p.fg; c.font = "600 14px system-ui, sans-serif";
-      c.fillText(a, w / 2, h / 2 - 10);
-      if (b) { c.fillStyle = p.fg3; c.font = "500 11px system-ui, sans-serif"; c.fillText(b, w / 2, h / 2 + 10); }
-    };
-    if (this.state === "ready") say("Press space to fly", "or tap the sky");
-    else if (this.state === "paused") say("Paused", "space carries on");
-    else if (this.state === "over") say(`Out of ships · ${fmt(this.score)}`, this.score >= this.best && this.score ? "a new best · space to fly again" : "space to fly again");
+    if (this.state === "ready") this.say(p, "Press space to fly", "arrows steer");
+    else if (this.state === "paused") this.say(p, "Paused", "space carries on");
+    else if (this.state === "over") this.say(p, `Out of ships · ${fmt(this.score)}`, this.score >= this.best && this.score ? "a new best · space to fly again" : "space to fly again");
     else if (this.t - this.levelAt < 1.6 && this.level > 1) {
       c.globalAlpha = Math.min(1, (1.6 - (this.t - this.levelAt)) * 2);
-      say(`Level ${this.level}`);
+      this.say(p, `Level ${this.level}`);
       c.globalAlpha = 1;
     }
+  }
+
+  say(p, a, b) {
+    const c = this.ctx, w = this.w, h = this.h;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillStyle = p.fg; c.font = "600 14px system-ui, sans-serif";
+    c.fillText(a, w / 2, h / 2 - 10);
+    if (b) { c.fillStyle = p.fg3; c.font = "500 11px system-ui, sans-serif"; c.fillText(b, w / 2, h / 2 + 10); }
   }
 
   drawRock(r, p) {
@@ -427,12 +453,14 @@ class Game {
 
     // The flame: longer for a burst of thrust or for pressing forward, and a
     // little uneasy at every length. Outer in the accent, a paler core, and
-    // a soft glow under both.
+    // a soft glow under both. The glow is one unit gradient, kept with the
+    // palette and scaled to the flame, rather than a new one every frame.
     const thrust = (s.flame > 0 ? 1 : 0) + Math.max(0, -s.vy / SHIP_CLIMB);
     const f = 9 + thrust * 7 + Math.sin(now / 38) * 1.6;
-    const glow = c.createRadialGradient(0, 22, 0, 0, 22, f + 8);
-    glow.addColorStop(0, p.accent); glow.addColorStop(1, "transparent");
-    c.globalAlpha = 0.28; c.fillStyle = glow; c.fillRect(-f - 8, 14, 2 * f + 16, f + 16); c.globalAlpha = 1;
+    const R = f + 8;
+    c.save(); c.translate(0, 22); c.scale(R, R);
+    c.globalAlpha = 0.28; c.fillStyle = p.glow; c.fillRect(-1, -8 / R, 2, 1 + 8 / R);
+    c.restore(); c.globalAlpha = 1;
     c.fillStyle = p.accent;
     c.beginPath(); c.moveTo(-5.5, 21); c.quadraticCurveTo(0, 21 + f * 1.4, 5.5, 21); c.closePath(); c.fill();
     c.fillStyle = p.raise; c.globalAlpha = 0.85;
@@ -495,9 +523,12 @@ class Game {
     c.beginPath(); c.moveTo(13.5, 23); c.quadraticCurveTo(16, 25.2, 18.5, 23); c.stroke();
     c.restore();
     // Glass over the face: a faint tint, a rim, and a highlight up and left.
-    const glass = c.createRadialGradient(-3, hy - 4, 1, 0, hy, hr);
-    glass.addColorStop(0, "rgba(255,255,255,.28)"); glass.addColorStop(0.6, "rgba(255,255,255,.04)"); glass.addColorStop(1, "rgba(0,0,0,.10)");
-    c.beginPath(); c.arc(0, hy, hr, 0, Math.PI * 2); c.fillStyle = glass; c.fill();
+    // The tint never changes, so it is made once.
+    if (!this.glass) {
+      const g = this.glass = c.createRadialGradient(-3, hy - 4, 1, 0, hy, hr);
+      g.addColorStop(0, "rgba(255,255,255,.28)"); g.addColorStop(0.6, "rgba(255,255,255,.04)"); g.addColorStop(1, "rgba(0,0,0,.10)");
+    }
+    c.beginPath(); c.arc(0, hy, hr, 0, Math.PI * 2); c.fillStyle = this.glass; c.fill();
     c.strokeStyle = p.fg2; c.lineWidth = 1.4; c.stroke();
     c.beginPath(); c.arc(0, hy, hr - 2.8, -2.55, -1.45);
     c.strokeStyle = p.raise; c.lineWidth = 1.8; c.globalAlpha = 0.95; c.stroke();
@@ -517,18 +548,32 @@ class Game {
   end() {
     if (run !== this) return;
     run = null;
-    cancelAnimationFrame(this.raf);
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
     this.ro.disconnect();
     document.removeEventListener("keydown", this.onKey, true);
     document.removeEventListener("keyup", this.onKeyUp, true);
     removeEventListener("blur", this.onBlur);
     document.removeEventListener("visibilitychange", this.onBlur);
     if (this.score > this.best) { this.best = this.score; store.set(KEY_BEST, String(this.best)); }
+    // A canvas keeps its bitmap until it is collected, which may be a while;
+    // a zero-sized one keeps nothing, so the sky is emptied before it goes.
+    this.canvas.width = this.canvas.height = 0;
     this.el.remove();
+    this.rocks.length = this.bullets.length = this.bits.length = this.stars.length = 0;
+    this.palette = this.glass = this.ctx = null;
     this.opts.onClose?.();
     const back = this.opts.back;
     if (back?.isConnected) back.focus({ preventScroll: true });
   }
+}
+
+/** Drop what `pred` rejects, in place: the arrays here are churned every
+ *  frame, and a fresh one per pass is garbage for the collector to chase. */
+function keep(arr, pred) {
+  let j = 0;
+  for (let i = 0; i < arr.length; i++) if (pred(arr[i])) arr[j++] = arr[i];
+  arr.length = j;
 }
 
 function roundRect(c, x, y, w, h, r) {
