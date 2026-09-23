@@ -247,6 +247,18 @@ to that pane. Silence is not a signal, because every idle shell would read as
 blocked. The page shows a count beside `Desks`, a `!` on the desk and one
 amber rule under the pane. There is no modal, and focus is not moved.
 
+**What an agent is doing.** Claude Code says more than a bell can. Its
+hooks run `snyvi hook`, and inside a pane that command knows the pane by
+`SNYVI_SESSION`. So a prompt or a tool call marks the pane *working*, a
+permission prompt marks it *needs you*, and the end of a turn marks it
+*done*. The pane's header says so, the rail marks it with `●`, `!` or `✓`,
+and the rail's footer says how long ago. *Needs you* counts as blocked, so
+the `!` and the count beside `Desks` show it too. The state is held in
+memory, like the rest of a pane's status, and it goes with the process. The
+hook posts it with the token, never starts a daemon, and waits at most half
+a second, so Claude is never slowed down. Outside a pane the hook does
+nothing new. Any other program still has only the bell.
+
 **Scrollback at the 2 MB cap mid-line.** Whole lines are dropped from the
 front. Nothing is cut in the middle, because a half line misrepresents what
 was on screen. One line larger than the whole cap is truncated to half the

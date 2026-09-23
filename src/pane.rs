@@ -78,7 +78,16 @@ pub struct Status {
     /// whose shell snyvi cannot dress still says both.
     pub branch: String,
     pub dirty: bool,
+    /// What the agent in this pane is doing, when the agent says so: Claude
+    /// Code's hooks report `working`, `needs_you` or `done` (see `Agent`).
+    /// Empty for everything else, which keeps `blocked` as its only signal.
+    pub agent: &'static str,
+    pub agent_since: Option<i64>,
 }
+
+/// The states an agent reports through its hooks. `needs_you` is Claude's
+/// precise version of `blocked`: a permission prompt, not a bell.
+pub const AGENT_STATES: [&str; 3] = ["working", "needs_you", "done"];
 
 struct Proc {
     master: Box<dyn MasterPty + Send>,
@@ -253,6 +262,44 @@ impl Panes {
             .unwrap_or_default()
     }
 
+    /// An agent in a running pane says what it is doing. Only a pane this
+    /// daemon already has running is told: an id that is not one is refused,
+    /// and nothing is woken or created for it. `state` is one of
+    /// `AGENT_STATES`, or empty for an agent that has gone.
+    pub fn set_agent(&self, id: &str, state: &str) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let state = AGENT_STATES
+            .into_iter()
+            .find(|s| *s == state)
+            .unwrap_or("");
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return false;
+        }
+        if i.status.agent == state {
+            return true;
+        }
+        // `needs_you` is also `blocked`, so everything that already shows a
+        // pane waiting on its reader -- the sidebar's `!`, its count -- shows
+        // this one too. Leaving it takes back only what it set.
+        if state == "needs_you" && !i.status.blocked {
+            i.status.blocked = true;
+            i.status.blocked_since = Some(crate::store::now());
+        } else if i.status.agent == "needs_you" && state != "needs_you" {
+            i.status.blocked = false;
+            i.status.blocked_since = None;
+        }
+        i.status.agent = state;
+        i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        self.changed(&l.id, &s);
+        true
+    }
+
     /// How many processes are running across every pane.
     pub fn running(&self) -> usize {
         self.live
@@ -339,7 +386,7 @@ impl Panes {
     fn changed(&self, id: &str, status: &Status) {
         let _ = self.events.send(format!(
             "panes\n{}",
-            serde_json::json!({ "id": id, "running": status.running, "blocked": status.blocked })
+            serde_json::json!({ "id": id, "running": status.running, "blocked": status.blocked, "agent": status.agent })
         ));
     }
 }
@@ -502,6 +549,8 @@ impl Live {
             // blanking it would flicker the header on every start.
             branch: i.status.branch.clone(),
             dirty: i.status.dirty,
+            agent: "",
+            agent_since: None,
         };
         i.unsaved = true;
         let status = i.status.clone();
@@ -557,6 +606,8 @@ impl Live {
             i.status.exit = Some(code);
             i.status.blocked = false;
             i.status.blocked_since = None;
+            i.status.agent = "";
+            i.status.agent_since = None;
             i.unsaved = false;
             (i.status.clone(), keep_text(&i.old, i.screen.text()))
         };
@@ -883,5 +934,53 @@ mod tests {
         let text =
             std::fs::read_to_string(dir.path.join("panes").join(format!("{id}.txt"))).unwrap();
         assert!(text.contains(&format!("pane={id}")));
+    }
+
+    /// The agent's word reaches only a pane that is running, is sent once per
+    /// change, and goes with the process.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-agent");
+        let (events, mut ev) = broadcast::channel(64);
+        let panes = Panes::new(&dir.path, events);
+        let id = "ffeeddccbbaa99887766554433221100";
+        assert!(!panes.set_agent(id, "working"), "a pane nobody opened");
+        let live = panes.get(id);
+        assert!(!panes.set_agent(id, "working"), "a stopped pane");
+        let (_, mut rx) = live.attach();
+        let cwd = dir.path.to_string_lossy().to_string();
+        live.start(
+            Start { cwd: &cwd, cmd: "read x", desk: "d", slot: 1, cols: 80, rows: 10, accent: "" },
+            &panes,
+        )
+        .unwrap();
+        assert!(panes.set_agent(id, "needs_you"));
+        assert!(panes.status(id).blocked, "needs_you is blocked, for the sidebar");
+        assert!(panes.set_agent(id, "needs_you"));
+        assert!(panes.set_agent(id, "nonsense"), "an unknown word clears it");
+        let st = panes.status(id);
+        assert_eq!(st.agent, "");
+        assert!(!st.blocked, "leaving needs_you unblocks");
+        assert!(panes.set_agent(id, "done"));
+        let mut said = Vec::new();
+        while let Ok(Ok(m)) = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+            let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+            if v["t"] == "status" && v["s"]["running"] == true {
+                said.push(v["s"]["agent"].as_str().unwrap().to_string());
+            }
+        }
+        assert_eq!(said, ["", "needs_you", "", "done"], "one frame per change");
+        let mut dots = Vec::new();
+        while let Ok(m) = ev.try_recv() {
+            dots.push(m);
+        }
+        assert!(dots.iter().any(|d| d.contains("\"agent\":\"needs_you\"")), "{dots:?}");
+        live.stop();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while panes.status(id).running && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(panes.status(id).agent, "", "the agent goes with its process");
     }
 }

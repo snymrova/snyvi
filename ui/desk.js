@@ -100,7 +100,13 @@ function receive(f) {
   const v = views.get(f.p);
   if (!v) return;
   if (f.t === "frame") paint(v, f);
-  else if (f.t === "status") { v.status = f.s; header(v); resume(v); if (v.id === focused) rail(); }
+  else if (f.t === "status") {
+    // The rail marks every pane, so a change to any pane's mark redraws it:
+    // a panel that needs its reader says so wherever the focus is.
+    const mark = x => `${x.running}${x.blocked}${x.agent}`, was = mark(v.status);
+    v.status = f.s; header(v); resume(v);
+    if (v.id === focused || mark(f.s) !== was) rail();
+  }
   else if (f.t === "old") {
     // What the last run left, greyed: the scrollback is now the old text, and
     // the new run starts with none of its own.
@@ -524,8 +530,11 @@ function header(v) {
   // The branch and whether the tree is modified: snyvi's own answer, not the
   // prompt's, so a pane whose shell it cannot dress says both too.
   $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";
-  $(".pn-state").textContent = s.blocked ? "! waiting on you" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
+  // An agent that reports through its hooks (Claude Code) says what it is
+  // doing; anything else is only running, ringing, or ended.
+  $(".pn-state").textContent = s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
   v.el.classList.toggle("blk", !!s.blocked);
+  v.el.classList.toggle("done", s.agent === "done");
   v.el.classList.toggle("off", !s.running);
   // Ended: the last screen stays, greyed by .off, and Start sits over it with
   // what was run last already typed. A pane on its way back from a daemon
@@ -733,7 +742,7 @@ function rail() {
   const d = current();
   if (!d) return;
   const { esc } = ctx, j = ctx.desks;
-  const dot = v => v.status.blocked ? "!" : v.status.running ? "●" : "○";
+  const dot = v => v.status.blocked ? "!" : v.status.agent === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
   const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} of ${j.cap} everywhere`;
   const why = noNew(d);
@@ -786,7 +795,7 @@ function rail() {
   drawing = false;
   noteFocus();
   const v = views.get(focused), s = v ? v.status : null;
-  const since = !s ? "" : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
+  const since = !s ? "" : s.agent && s.agent_since ? `${s.agent.replace("_", " ")} ${ago(s.agent_since)}` : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
   // The desk's own two actions sit on its name, under the cursor: renaming
   // it and closing it are things done to the desk, and the name is where
   // the desk is.
@@ -1223,7 +1232,10 @@ const CSS = `
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
 .pn.blk .pn-head { border-bottom: 2px solid #d97706; }
-.pn.blk .pn-state { color: #b45309; font-weight: 600; }
+.pn.blk .pn-state { color: #b45309; font-weight: 600; animation: pn-need .8s ease-out; }
+.pn.done .pn-state { color: var(--accent); }
+@keyframes pn-need { 0%, 60% { background: rgba(217,119,6,.18); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .pn.blk .pn-state { animation: none; } }
 .pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }
 .pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: ${LINE_PX}px; overflow: hidden; }
 .pn-sb > .gap { color: var(--fg-3); font-style: italic; }

@@ -414,6 +414,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
+        .route("/api/panes/{id}/agent", post(pane_agent))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -431,6 +432,16 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
 
     let addr = format!("127.0.0.1:{}", config::port());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    // An install from an older snyvi gets the hooks that tell a panel what
+    // Claude is doing, without the reader running `init-claude` again. Only
+    // where our hook already is and names this binary, and only once this
+    // daemon holds the port: one that is about to exit writes nothing. See
+    // `hook::top_up`.
+    tokio::task::spawn_blocking(|| {
+        if let Ok(true) = crate::hook::top_up() {
+            eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");
+        }
+    });
     eprintln!("snyvi {VERSION} listening on http://{addr}");
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
@@ -2573,6 +2584,41 @@ async fn stop_pane(
     Json(json!({ "ok": true })).into_response()
 }
 
+#[derive(Deserialize)]
+struct AgentBody {
+    state: String,
+}
+
+/// What the agent in a pane is doing, told by its hook (`snyvi hook`, run by
+/// Claude Code inside the pane, which knows the pane by `SNYVI_SESSION`).
+///
+/// This is the one pane route behind the token rather than the window's
+/// capability: the hook is a process like `snyvi send`, and it holds the token
+/// and never the capability. What it can do with it is small on purpose. It
+/// sets one word on a pane that is already running, and that word is shown
+/// and nothing more. It never starts, stops, or types into anything, never
+/// reaches the store, and an id that is not a running pane is a 404.
+async fn pane_agent(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<AgentBody>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id)
+        || !(b.state.is_empty() || crate::pane::AGENT_STATES.contains(&b.state.as_str()))
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if app.panes.set_agent(&id, &b.state) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
 /// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
 /// what it does with everything else: the image is received as a document,
 /// named for the pane it came from, and what goes back to the page is a path
@@ -3265,6 +3311,13 @@ mod tests {
         ] {
             assert!(src.contains(route), "the route table should hold {route}");
         }
+        // The one pane route outside the gate, on purpose: the agent's hook
+        // holds the token, not the capability. It answers to the token first,
+        // and it never reaches the store -- it sets a word on a running pane.
+        let agent = &src[src.find("async fn pane_agent(").unwrap()..];
+        let agent = &agent[..agent.find("\n}\n").unwrap()];
+        assert!(agent.find("authorized(").unwrap() < agent.find("app.panes").unwrap());
+        assert!(!agent.contains("app.store"), "pane_agent reaches the store");
     }
 
     /// The capability is read off the fragment and presented in a frame. If it
