@@ -288,7 +288,17 @@ class Driver {
     await loaded;
     await sleep(400);
   }
-  async press(k, { ctrl = false, alt = false } = {}) {
+  /** A single letter only acts once ⌃B has woken the keys, so a probe that
+   *  presses one wakes them first, the way a reader does -- unless they are
+   *  awake already (a second ⌃B would put them back to sleep), or the focus is
+   *  somewhere the letter is typed rather than obeyed: a field, where ⌃B does
+   *  nothing, or a panel, where it belongs to the program. `raw` skips this,
+   *  for the rows about the gate itself. */
+  async press(k, { ctrl = false, alt = false, raw = false } = {}) {
+    if (!raw && !ctrl && !alt && (k.length === 1 || k === "Delete")) {
+      const asleep = await this.ev(`(() => { const t = document.activeElement; return !document.body.classList.contains("keys") && !(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable || t.closest(".pn-body"))); })()`);
+      if (asleep) await this.press("b", { ctrl: true });
+    }
     const spec = KEYS[k] || { key: k, code: `Key${k.toUpperCase()}`, vk: k.toUpperCase().charCodeAt(0), text: k };
     const modifiers = (spec.shift ? 8 : 0) | (ctrl ? 2 : 0) | (alt ? 1 : 0);
     const down = { type: spec.text && !ctrl && !alt ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
@@ -445,6 +455,39 @@ async function railRows(p, url, md, send) {
   const afterJ = await p.ev(`({ toc: document.querySelector("#toc").scrollTop, title: document.title })`);
   rows.push(["the contents after j", afterJ.title !== titleBefore && afterJ.toc === 0,
     afterJ.title === titleBefore ? "j opened nothing" : `next document open, contents at ${afterJ.toc}`]);
+
+  // The key mode. The letters sleep until ⌃B, stay awake while they are used,
+  // and go back to sleep on Esc, a click, or ten quiet seconds. The page is
+  // on the older document here, so `k` has somewhere to go and `j` does not.
+  const keyState = () => p.ev(`({ on: document.body.classList.contains("keys"), title: document.title, pill: document.querySelector("#keymode")?.className ?? null, says: document.querySelector("#keymode")?.textContent ?? null })`);
+  await p.press("Escape");
+  const asleepAt = await keyState();
+  await p.press("k", { raw: true }); await sleep(300);
+  const asleep = await keyState();
+  rows.push(["a letter asleep does nothing, and says why", !asleep.on && asleep.title === asleepAt.title && /show/.test(asleep.pill) && asleep.says === "⌃B for keys",
+    asleep.title !== asleepAt.title ? "k moved without ⌃B" : `pill "${asleep.says}" (${asleep.pill})`]);
+  await p.press("b", { ctrl: true }); await sleep(200);
+  const woke = await keyState();
+  await p.press("k", { raw: true }); await sleep(500);
+  const moved = await keyState();
+  await p.press("j", { raw: true }); await sleep(500);
+  const movedBack = await keyState();
+  rows.push(["⌃B wakes the letters, and they stay awake", woke.on && /on/.test(woke.pill) && woke.says === "Keys on · esc" && moved.title !== woke.title && movedBack.title === woke.title && movedBack.on,
+    !woke.on ? "⌃B did nothing" : moved.title === woke.title ? "k after ⌃B did nothing" : movedBack.title !== woke.title ? "the second letter did not act" : `pill "${woke.says}", k then j, still awake`]);
+  await p.press("Escape");
+  const escaped = await keyState();
+  await p.press("b", { ctrl: true }); await sleep(200);
+  await p.clickOn("#doc article p"); await sleep(200);
+  const clicked = await keyState();
+  rows.push(["Esc and a click put them to sleep", !escaped.on && !/show/.test(escaped.pill) && !clicked.on,
+    escaped.on ? "Esc left them awake" : clicked.on ? "a click left them awake" : "asleep after each"]);
+  await p.press("b", { ctrl: true });
+  await sleep(10_600);
+  const quiet = await keyState();
+  await p.press("k", { raw: true }); await sleep(400);
+  const quietK = await keyState();
+  rows.push(["ten quiet seconds put them to sleep", !quiet.on && quietK.title === quiet.title,
+    quiet.on ? "still awake after 10.6 s" : quietK.title !== quiet.title ? "asleep, but k still moved" : "asleep, and k did nothing"]);
 
   await p.press("t");
   const hidden = await p.ui("vis", "#rail");

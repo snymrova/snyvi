@@ -217,6 +217,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main.scrolled #chrome { box-shadow: 0 1px 0 var(--rule); }
 #chrome .icon { display: none; }
 #chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; }
+/* A document read over a desk: its name as the bar's heading, at the left,
+   and the ✕ that puts the panels back at the right, beside the rail it was
+   opened from -- the way out where the click in was. Both in the bar the
+   text scrolls under, so the page gives up no room for them. The name
+   rises in once the page scrolls (#main.scrolled); at the top the page's
+   own <h1> is right under it, and it would say the title twice. */
+#chrome .over { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 28px; padding-left: 6px; }
+#chrome .over[hidden] { display: none; }
+#chrome .over-t { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .24s cubic-bezier(.2,.7,.2,1); }
+#main.scrolled #chrome .over-t { opacity: 1; transform: none; }
+#chrome .over-x { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+#chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
    header, which makes room for them (desk.js, .dk-head). */
@@ -531,7 +543,8 @@ html[data-link="off"] .live { visibility: hidden; }
    what is under it -- the same for Inbox, Desks and Folders -- with its
    chevron shown on hover, or while folded, and its + on the right. Whatever
    opens a page is a row under it, and every row is one shape: 28px tall, a
-   gutter for a disclosure chevron, a 16px icon, the name at 42px. */
+   16px icon at the section label's edge, the name at 32px, and -- on a row
+   that folds -- the heads' chevron right after the name. */
 .s-head { display: flex; align-items: center; height: 26px; margin-top: 18px; padding-right: 2px; }
 #inbox-row .s-head { margin-top: 4px; }
 /* A folded section is only its head, so the next head sits close under it. */
@@ -548,42 +561,39 @@ html[data-link="off"] .live { visibility: hidden; }
 .s-blk { flex: none; margin-right: 4px; color: #b45309; font-size: 11px; font-weight: 700; }
 #trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
-.s-empty { padding: 5px 8px 5px 18px; font-size: 12px; color: var(--fg-3); }
+.s-empty { padding: 5px 8px 5px 8px; font-size: 12px; color: var(--fg-3); }
 
 /* The row. */
-.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 18px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
+.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
 .s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--accent); }
 .r-ico { flex: none; color: var(--fg-3); transition: color var(--t); }
 .s-row.active .r-ico, .t-desk > a.active .r-ico { color: var(--accent); }
 .s-row .title, .t-desks .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .s-row .n { margin-left: auto; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-/* A disclosure chevron in the gutter, for the rows that hold something. */
-.t-proj > summary::before, .b-root > summary::before { content: ""; position: absolute; left: 6px; top: 50%; width: 4px; height: 4px; margin-top: -3px; border: solid var(--fg-3); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform var(--t); }
-.t-proj[open] > summary::before, .b-root[open] > summary::before { transform: translateY(-1px) rotate(45deg); }
+/* A row that holds something folds it with the section heads' chevron,
+   right after its name: shown on hover and on focus, and kept while the row
+   is folded, pointing at the name, so a folded row says so at rest. */
+summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
+summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
+details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-proj > summary::-webkit-details-marker { display: none; }
-/* The ladder, which is most of why the tree read as one stripe: 8px, 20px,
-   32px, twelve a level, as .b-tree next door already compounds. It was six
-   -- and the font grew with depth, so the deepest rows were the largest and
-   the least indented at once. */
-.t-wf { margin: 2px 0 6px 22px; }
+/* The ladder: each level's icons hang under its parent's name, 32px in,
+   as .b-tree next door compounds it. It was once six a level -- and the
+   font grew with depth, so the deepest rows were the largest and the least
+   indented at once. */
+.t-wf { margin: 2px 0 6px 24px; }
 .t-wf > .wf-name { font-size: 11px; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px 4px 20px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
-/* A read row carries no mark. Every row used to carry a grey dot, so an
-   arrival was a change of colour and not the appearance of a mark -- and it
-   sat at 12px, two pixels left of its parent's first letter. At 26px it is
-   inside its group, and absence is what says a row was read. */
-.t-doc a::before { content: ""; position: absolute; left: 14px; top: 50%; width: 3px; height: 3px; border-radius: 50%; background: transparent; transform: translateY(-50%); }
+.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--accent); }
-/* A row waiting to be read, and now the only row in the tree with a mark on
-   it at all: the accent, a little larger. It is the same mark in the queue
-   section and in the tree, and it goes when the document is opened from
-   either. */
-.t-doc a.new::before { background: var(--accent); width: 6px; height: 6px; left: 12px; }
-/* The open row is a bar, never a bigger dot than the arrival mark beside
-   it, and it wins over `new`: what is open is being read. */
-.t-doc a.active::before, .t-doc a.active.new::before { background: var(--accent); width: 3px; height: 14px; border-radius: 1px; left: 14px; }
+/* No mark in front of a row: its icon is the mark. A read row's glyph is
+   quiet, and centred on the line rather than sat on its baseline; a row
+   waiting to be read has it in the accent, with its title in ink -- the
+   same in the queue and in the tree, gone once the document is opened from
+   either -- and the open row is lit whole. */
+:is(.t-doc a, .b-file a) > .r-ico { align-self: center; opacity: .75; }
+:is(.t-doc a.new, .t-doc a.active, .b-file a.active) > .r-ico { color: var(--accent); opacity: 1; }
 .t-doc a.new .title { color: var(--fg); font-weight: 550; }
 .t-queue { margin: 0 0 6px; }
 .t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
@@ -607,7 +617,11 @@ html[data-link="off"] .live { visibility: hidden; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
    kept out of the way until the row is under the cursor. The name takes the free
    space so the badge and the control sit at the edge. */
-.t-proj > summary > .nm, .t-wf > .wf-name > .nm, .t-back > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-wf > .wf-name > .nm, .t-back > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A project's name and a folder's give way to their chevron, so they size
+   to themselves, and the first control after it takes the free space. */
+:is(.t-proj, .b-root) > summary > .nm, .b-dir > details > summary > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-proj > summary > .ren { margin-left: auto; }
 .t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
 .ren { color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; letter-spacing: 0; }
 .t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
@@ -662,6 +676,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .t-desk > a > .row-x { margin-left: -8px; }
 .t-doc > a > .row-x { margin-left: -6px; }
 :is(.t-doc, .t-desk) > a:hover .row-x, .t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+.t-proj > summary > .row-x.row-x { margin-left: 0; }   /* the ✎ before it already took the free space */
 /* Beside a ✎ that has come out, the ✕ takes no auto margin of its own: one
    auto margin, on the ✎, and the two sit together at the row's end. */
 .t-desk > a:is(:hover, :has(> .ren:focus-visible)) > .row-x { margin-left: 0; }
@@ -697,21 +712,19 @@ summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
 .b-root > summary::-webkit-details-marker { display: none; }
-.b-root > summary > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .b-root > summary:hover { background: var(--rule); color: var(--fg); }
 .b-close { margin-left: auto; color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; }
 .b-root > summary:hover .b-close { opacity: 1; }
 .b-close:hover { background: var(--rule-2); color: var(--fg); }
 .b-close:focus-visible { opacity: 1; }
-.b-tree, .b-tree ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
-.b-root > .b-tree { padding-left: 22px; }
+/* Each level hangs its icons under its parent's name. */
+.b-tree { list-style: none; margin: 0; padding: 0 0 0 20px; }
+.b-root > .b-tree { padding-left: 24px; }   /* under a 16px glyph and its 8px gap; deeper, a 14px one and 6 */
 .b-tree .b-empty { padding: 3px 10px; color: var(--fg-3); font-size: 12px; font-style: italic; }
-.b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); display: flex; align-items: center; gap: 5px; }
+.b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .b-dir > details > summary::-webkit-details-marker { display: none; }
-.b-dir > details > summary::before { content: ""; width: 0; height: 0; border: 3.5px solid transparent; border-left: 4.5px solid var(--fg-3); transition: transform var(--t); flex: none; }
-.b-dir > details[open] > summary::before { transform: rotate(90deg); }
 .b-dir > details > summary:hover { background: var(--rule); color: var(--fg); }
-.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px 3px 14px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
+.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
 .b-file a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .b-file a.active { background: var(--accent-bg); color: var(--accent); }
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
