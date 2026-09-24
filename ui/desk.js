@@ -50,6 +50,18 @@ let drawing = false;
 /** How long the offer to put a line back stands, matching the page's own undo. */
 const BACK_MS = 8000;
 let backTimer = 0;
+/** Points: passages the reader picked out of a document read over this desk,
+ *  gathered for the panel that sent it -- pane id -> [{ text, from }] -- until
+ *  the reader puts them in that panel's input. Held in the page and nowhere
+ *  else: they are a draft of what the reader is about to say, and a draft
+ *  that outlived the desk would turn up in a conversation it was not for. */
+let points = new Map();
+/** The floating control by a selection, while there is one; the word said
+ *  under a panel's points, in that row's place; and their timers. */
+let pickEl = null, pointSaid = null, saidTimer = 0, pointTimer = 0;
+/** How long after a key in a panel its points wait to go in: text arriving
+ *  mid-word would be spliced into whatever the reader was typing. */
+const TYPED_MS = 2000;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -334,7 +346,9 @@ export function keyBytes(e, appCursor) {
 }
 
 /** Keys and pastes from the reader, and nothing else: this is the only place
- *  bytes for a pane are made, and every caller is a key or a paste event. */
+ *  bytes for a pane are made, and every caller is a key, a paste, or the
+ *  reader's own click putting their points in (`put`) -- a paste by another
+ *  hand, and never anything snyvi received. */
 function input(v, text) {
   if (!v.status.running || !text) return;
   say({ t: "in", p: v.id, d: text });
@@ -408,6 +422,7 @@ function makeView(p) {
     const b = keyBytes(e, v.mode[0]);
     if (b == null) return;
     e.preventDefault(); e.stopPropagation();
+    v.typed = Date.now();
     input(v, b);
   });
   // Copy on selection: the scrollback is text in the page, so the browser
@@ -438,6 +453,7 @@ function copy(v, always) {
  *  and its path is what is typed. */
 async function paste(v, data) {
   if (!data || !v.status.running) return;
+  v.typed = Date.now();
   const img = [...data.items].find(i => i.kind === "file" && /^image\/(png|jpeg|gif|webp)$/.test(i.type));
   if (img) {
     const blob = img.getAsFile();
@@ -775,6 +791,7 @@ function rail() {
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
+    pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded.
     `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">From the panels<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
@@ -935,6 +952,124 @@ export async function docs() {
   if (current()) rail();
 }
 
+/* ---------- points ----------
+ *
+ * Reading what an agent sent, the reader selects a passage and keeps it as a
+ * point for the panel that sent it. The points gather under that panel in the
+ * rail, and one click puts them all in its input -- quoted, under the name of
+ * the document they came from -- and goes to the panel, where the reader
+ * writes what they want done about them and presses Enter themselves.
+ *
+ * Nothing is ever sent for them: the text goes in as a bracketed paste, which
+ * a program that asked for one holds in its input rather than running, and
+ * there is no Enter at the end. A program that did not ask for pasted text --
+ * a bare shell would run each line -- is not typed into at all. And the text
+ * waits while the agent is working, or while the reader is typing in that
+ * panel, so it never lands in the middle of either.
+ */
+
+/** The panel a document read over the desk came from: the one in the slot it
+ *  was sent from, or the focused one when that slot has been closed since. */
+function sender() {
+  const d = current();
+  if (!d || reading == null) return null;
+  const x = docList.find(y => String(y.id) === String(reading));
+  const p = x && d.panes.find(q => q.slot === x.slot);
+  return views.get(p ? p.id : focused) || (d.panes[0] && views.get(d.panes[0].id)) || null;
+}
+
+function hidePick() { if (pickEl) { pickEl.remove(); pickEl = null; } }
+
+/** A selection in the document: offer to keep it, beside where it ends. */
+function picked(e) {
+  if (e && e.target.closest && e.target.closest(".dk-pick")) return;
+  hidePick();
+  const sel = getSelection();
+  if (reading == null || !sel || sel.isCollapsed || !sel.rangeCount) return;
+  if (!ctx.docEl.contains(sel.anchorNode) || !ctx.docEl.contains(sel.focusNode)) return;
+  const text = sel.toString().replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const v = sender();
+  if (!text || !v) return;
+  const rs = sel.getRangeAt(0).getClientRects(), r = rs.length ? rs[rs.length - 1] : sel.getRangeAt(0).getBoundingClientRect();
+  const b = Object.assign(document.createElement("button"), { type: "button", className: "dk-pick", textContent: `+ Point for panel ${v.pane.slot}` });
+  b.title = "Keep this passage, to put in that panel's input with the rest";
+  // Pressing the control must not take the selection it is about away.
+  b.addEventListener("mousedown", ev => ev.preventDefault());
+  b.addEventListener("click", () => {
+    const x = docList.find(y => String(y.id) === String(reading));
+    const ps = points.get(v.id) || [];
+    ps.push({ text, from: x ? x.source_path || x.title : "" });
+    points.set(v.id, ps);
+    getSelection().removeAllRanges();
+    // Said where the click was, then gone: the rail has the point now.
+    b.textContent = `✓ Kept for panel ${v.pane.slot}`; b.disabled = true;
+    setTimeout(() => { if (pickEl === b) hidePick(); }, 900);
+    rail();
+  });
+  document.body.append(b);
+  const w = b.offsetWidth;
+  b.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.right - w / 2))}px`;
+  b.style.top = `${r.bottom + 34 > innerHeight ? r.top - 32 : r.bottom + 6}px`;
+  pickEl = b;
+}
+const pickKey = e => { if (e.key === "Escape") hidePick(); else if (e.shiftKey || e.key === "Shift") picked(e); };
+const pickUp = e => setTimeout(() => picked(e), 0);
+
+/** Under the panes: each panel's points, and the one control that puts them
+ *  in. Drawn only while there are some, or a word to say about them. */
+function pointSec(vs) {
+  const { esc } = ctx;
+  const has = vs.filter(v => (points.get(v.id) || []).length || (pointSaid && pointSaid.p === v.id));
+  if (!has.length) return "";
+  return `<div class="dk-points"><div class="t-label dk-lab" title="Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.">Points</div>` +
+    has.map(v => {
+      const ps = points.get(v.id) || [], live = ps.filter(x => !x.gone).length;
+      return `<ul class="dk-list">` + ps.map((x, i) => x.gone
+        ? `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
+        : `<li class="dk-note dk-point"><span class="nm" title="${esc(x.from)}">${esc(x.text)}</span>` +
+          `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" title="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
+        (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" title="Type ${live === 1 ? "it" : "them"} into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
+        (pointSaid && pointSaid.p === v.id ? `<p class="dk-empty dk-said" role="status">${esc(pointSaid.text)}</p>` : "");
+    }).join("") + `</div>`;
+}
+
+/** A word under a panel's points, in their place, for a few seconds. */
+function sayPoint(p, text) {
+  clearTimeout(saidTimer);
+  pointSaid = { p, text };
+  saidTimer = setTimeout(() => { pointSaid = null; if (current()) rail(); }, 5000);
+  rail();
+}
+
+/** Quote a panel's points into its input, and go to it. */
+function put(v) {
+  const ps = (points.get(v.id) || []).filter(x => !x.gone), n = v.pane.slot;
+  if (!ps.length) return;
+  const why = !v.status.running ? `Panel ${n} is not running.`
+    : !v.mode[1] ? `The program in panel ${n} does not take pasted text, so nothing is typed into it.`
+    : v.status.agent === "working" ? `Panel ${n} is working. Put them in when it is done.`
+    : Date.now() - (v.typed || 0) < TYPED_MS ? `You are typing in panel ${n}.` : "";
+  if (why) { sayPoint(v.id, why); return; }
+  // Under the name of the document each came from, once per run of points
+  // from the same one, and a blank line to write under.
+  let from = null;
+  const text = ps.map(x => {
+    const head = x.from !== from && x.from ? `From ${x.from}:\n` : "";
+    from = x.from;
+    return head + x.text.split("\n").map(l => `> ${l}`.trimEnd()).join("\n");
+  }).join("\n\n") + "\n\n";
+  input(v, bracket(v, text.replace(/\r?\n/g, "\r")));
+  points.delete(v.id);
+  clearTimeout(pointTimer);
+  if (reading != null) ctx.go(deskId, true, n); else { rail(); focusPane(v.id); }
+}
+
+function forgetPoints() {
+  hidePick();
+  clearTimeout(saidTimer); clearTimeout(pointTimer);
+  points = new Map(); pointSaid = null;
+}
+
 // ---------- actions ----------
 
 async function act(b) {
@@ -967,6 +1102,24 @@ async function act(b) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
+    else if (a === "put" && v) put(v);
+    else if (a === "point-x" || a === "point-back") {
+      const ps = points.get(b.dataset.p) || [], x = ps[+b.dataset.n];
+      if (x) {
+        // As a note does: the row holds the offer to bring it back, and only
+        // the newest offer stands.
+        clearTimeout(pointTimer);
+        for (const [id, list] of points) points.set(id, list.filter(y => y === x || !y.gone));
+        if (a === "point-x") {
+          x.gone = true;
+          pointTimer = setTimeout(() => {
+            for (const [id, list] of points) { const k = list.filter(y => !y.gone); if (k.length) points.set(id, k); else points.delete(id); }
+            if (current()) rail();
+          }, BACK_MS);
+        } else delete x.gone;
+        rail();
+      }
+    }
     // The list. Each of these draws first and tells the daemon after: on a
     // list, the thing that has to feel instant is the tick.
     else if (a === "note-new") { noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; rail(); }
@@ -1094,7 +1247,11 @@ function detach() {
   ctx.tocEl.removeEventListener("toggle", folded, true);
   ctx.metaEl.removeEventListener("click", click);
   document.removeEventListener("keydown", keys, true);
+  document.removeEventListener("mouseup", pickUp);
+  document.removeEventListener("keyup", pickKey);
+  removeEventListener("scroll", hidePick, true);
   removeEventListener("resize", onResize);
+  hidePick();
 }
 
 export function open(c) {
@@ -1113,7 +1270,7 @@ export function open(c) {
     g.textContent = drawn(cellW, LINE_PX);
     document.head.append(g);
   }
-  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; forgetNotes(); }
+  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints(); }
   deskId = c.id; reading = null;
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
@@ -1123,6 +1280,11 @@ export function open(c) {
   ctx.tocEl.addEventListener("toggle", folded, true);
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
+  // A passage selected in a document read over the desk can be kept as a
+  // point for the panel that sent it (`picked`).
+  document.addEventListener("mouseup", pickUp);
+  document.addEventListener("keyup", pickKey);
+  addEventListener("scroll", hidePick, true);
   addEventListener("resize", onResize);
   clock = setInterval(() => { if (current()) rail(); }, 30000);
   if (d && docsAt !== d.id) docs();
@@ -1149,6 +1311,7 @@ export function update(desks) {
 export function aside(docId) {
   if (!ctx || deskId == null) return;
   reading = docId;
+  hidePick();
   ctx.docEl.removeEventListener("click", click);
   if (current()) rail();
 }
@@ -1160,7 +1323,7 @@ export function close() {
   views.clear();
   focused = null;
   docList = []; docsAt = null; docsAll = false;
-  forgetNotes();
+  forgetNotes(); forgetPoints();
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
@@ -1379,5 +1542,17 @@ const CSS = `
 .dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
 .dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* ---------- points ----------
+ * The control by a selection: small, on the page's raised ground, where the
+ * selection ends. And the kept points under the panels, on the list's own
+ * row grid, a few lines each: a passage is quoted whole when it goes in, and
+ * the rail only has to say which one it is. */
+.dk-pick { position: fixed; z-index: 30; padding: 4px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; color: var(--accent); background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2), 0 4px 14px rgb(0 0 0 / .18); animation: dk-fade 120ms ease-out; }
+.dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.dk-pick:disabled { cursor: default; }
+.dk-points { margin-top: 16px; }
+.dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.dk-put { color: var(--accent); }
+#toc .dk-said { margin-top: 4px; color: var(--fg-2); }
 @keyframes dk-fade { from { opacity: 0; } to { opacity: 1; } }
 `;
