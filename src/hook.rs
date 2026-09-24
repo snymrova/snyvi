@@ -409,13 +409,17 @@ mod tests {
         assert_eq!(agent_state(&ev("SessionEnd")), Some(""));
         assert_eq!(agent_state(&ev("SessionStart")), None);
         assert_eq!(
-            agent_state(&json!({ "hook_event_name": "Notification", "notification_type": "permission_prompt",
-                "message": "Claude needs your permission to use Bash" })),
+            agent_state(
+                &json!({ "hook_event_name": "Notification", "notification_type": "permission_prompt",
+                "message": "Claude needs your permission to use Bash" })
+            ),
             Some("needs_you")
         );
         // The idle reminder after a turn is not the reader being needed.
         assert_eq!(
-            agent_state(&json!({ "hook_event_name": "Notification", "notification_type": "idle_prompt" })),
+            agent_state(
+                &json!({ "hook_event_name": "Notification", "notification_type": "idle_prompt" })
+            ),
             None
         );
         assert_eq!(
@@ -425,7 +429,13 @@ mod tests {
         );
     }
 
-    const ALL: [&str; 5] = ["SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
+    const ALL: [&str; 5] = [
+        "SessionStart",
+        "UserPromptSubmit",
+        "Notification",
+        "Stop",
+        "SessionEnd",
+    ];
 
     #[test]
     fn install_is_idempotent_and_follows_the_binary() {
@@ -468,7 +478,10 @@ mod tests {
         );
         assert!(installed(&s).iter().all(|(_, c)| c == "snyvi hook"));
         assert_eq!(installed(&s).last().unwrap().0, "PostToolUse");
-        assert_eq!(s["hooks"]["PostToolUse"][1]["hooks"][0]["command"], "snyvi hook");
+        assert_eq!(
+            s["hooks"]["PostToolUse"][1]["hooks"][0]["command"],
+            "snyvi hook"
+        );
         assert_eq!(
             s["hooks"]["PostToolUse"][0]["hooks"][0]["command"],
             "other --x"
@@ -485,7 +498,11 @@ mod tests {
                 "hooks": [{ "type": "command", "command": "/usr/bin/snyvi hook" }] }] } });
         let have = installed(&old);
         assert_eq!(have.len(), 2);
-        assert!(install_into(&mut old, "/usr/bin/snyvi hook", true).unwrap().0);
+        assert!(
+            install_into(&mut old, "/usr/bin/snyvi hook", true)
+                .unwrap()
+                .0
+        );
         assert_eq!(installed(&old).len(), 6);
         assert_eq!(old["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
         assert_eq!(old["hooks"]["PostToolUse"][1]["matcher"], "*");

@@ -270,10 +270,7 @@ impl Panes {
         let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
             return false;
         };
-        let state = AGENT_STATES
-            .into_iter()
-            .find(|s| *s == state)
-            .unwrap_or("");
+        let state = AGENT_STATES.into_iter().find(|s| *s == state).unwrap_or("");
         let mut i = l.inner.lock().unwrap();
         if !i.status.running {
             return false;
@@ -951,12 +948,23 @@ mod tests {
         let (_, mut rx) = live.attach();
         let cwd = dir.path.to_string_lossy().to_string();
         live.start(
-            Start { cwd: &cwd, cmd: "read x", desk: "d", slot: 1, cols: 80, rows: 10, accent: "" },
+            Start {
+                cwd: &cwd,
+                cmd: "read x",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+            },
             &panes,
         )
         .unwrap();
         assert!(panes.set_agent(id, "needs_you"));
-        assert!(panes.status(id).blocked, "needs_you is blocked, for the sidebar");
+        assert!(
+            panes.status(id).blocked,
+            "needs_you is blocked, for the sidebar"
+        );
         assert!(panes.set_agent(id, "needs_you"));
         assert!(panes.set_agent(id, "nonsense"), "an unknown word clears it");
         let st = panes.status(id);
@@ -975,12 +983,19 @@ mod tests {
         while let Ok(m) = ev.try_recv() {
             dots.push(m);
         }
-        assert!(dots.iter().any(|d| d.contains("\"agent\":\"needs_you\"")), "{dots:?}");
+        assert!(
+            dots.iter().any(|d| d.contains("\"agent\":\"needs_you\"")),
+            "{dots:?}"
+        );
         live.stop();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while panes.status(id).running && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert_eq!(panes.status(id).agent, "", "the agent goes with its process");
+        assert_eq!(
+            panes.status(id).agent,
+            "",
+            "the agent goes with its process"
+        );
     }
 }

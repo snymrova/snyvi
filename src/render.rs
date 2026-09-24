@@ -78,6 +78,9 @@ pub enum Kind {
     Binary,
     /// Delimited text, laid out as a table.
     Table,
+    /// Played from its bytes, which are streamed a range at a time.
+    Video,
+    Audio,
 }
 
 impl Kind {
@@ -90,6 +93,8 @@ impl Kind {
             Kind::Image => "image",
             Kind::Binary => "binary",
             Kind::Table => "table",
+            Kind::Video => "video",
+            Kind::Audio => "audio",
         }
     }
     pub fn parse(s: &str) -> Option<Kind> {
@@ -101,6 +106,8 @@ impl Kind {
             "image" => Some(Kind::Image),
             "binary" => Some(Kind::Binary),
             "table" => Some(Kind::Table),
+            "video" => Some(Kind::Video),
+            "audio" => Some(Kind::Audio),
             _ => None,
         }
     }
@@ -211,7 +218,11 @@ impl Renderer {
                 }
                 "csv" | "tsv" => (Kind::Table, Some(ext.clone())),
                 e if is_image_ext(e) => (Kind::Image, Some(ext.clone())),
-                _ => (Kind::Code, Some(ext)),
+                e => match media_kind(e) {
+                    Some("video") => (Kind::Video, Some(ext)),
+                    Some(_) => (Kind::Audio, Some(ext)),
+                    None => (Kind::Code, Some(ext)),
+                },
             };
         }
         if looks_like_diff(content) {
@@ -240,7 +251,7 @@ impl Renderer {
             Kind::Text => plain(source),
             Kind::Table => table(source, lang),
             // Both are built from bytes, by whoever holds them; there is no text to render.
-            Kind::Image | Kind::Binary => placeholder(source),
+            Kind::Image | Kind::Binary | Kind::Video | Kind::Audio => placeholder(source),
         }
     }
 
@@ -623,6 +634,49 @@ pub const IMAGE_EXTS: &[&str] = &[
 
 pub fn is_image_ext(ext: &str) -> bool {
     IMAGE_EXTS.contains(&ext)
+}
+
+/// What a browser can play: video, then audio. `.ogg` is usually audio, and an
+/// `<audio>` element plays it; `.ogv` is the video one.
+pub const MEDIA_EXTS: &[(&str, &str)] = &[
+    ("mp4", "video"),
+    ("webm", "video"),
+    ("mov", "video"),
+    ("m4v", "video"),
+    ("ogv", "video"),
+    ("mp3", "audio"),
+    ("wav", "audio"),
+    ("m4a", "audio"),
+    ("ogg", "audio"),
+    ("oga", "audio"),
+    ("flac", "audio"),
+    ("opus", "audio"),
+    ("aac", "audio"),
+];
+
+/// "video" or "audio" for an extension a player can take, else None.
+pub fn media_kind(ext: &str) -> Option<&'static str> {
+    MEDIA_EXTS.iter().find(|(e, _)| *e == ext).map(|(_, k)| *k)
+}
+
+/// The player for a media document or file, pointed at wherever its bytes are
+/// served. `preload="metadata"` asks for the first range only, so opening one
+/// fetches its duration and first frame and nothing more until play is pressed.
+///
+/// Styled inline rather than in app.css: app.css is first paint, which is at
+/// its budget, and a player is only ever inside a document body.
+pub fn media_body(src_url: &str, ext: &str) -> String {
+    let src = html_escape::encode_double_quoted_attribute(src_url);
+    match media_kind(ext) {
+        Some("video") => format!(
+            "<p class=\"doc-image doc-media\"><video controls preload=\"metadata\" src=\"{src}\" \
+             style=\"max-width:100%;max-height:70vh;border-radius:var(--radius)\"></video></p>"
+        ),
+        _ => format!(
+            "<p class=\"doc-image doc-media\"><audio controls preload=\"metadata\" src=\"{src}\" \
+             style=\"width:100%\"></audio></p>"
+        ),
+    }
 }
 
 /// The lowercased extension of a path, or "" when it has none.

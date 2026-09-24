@@ -1040,13 +1040,10 @@ async fn doc_raw(State(app): S, Path(id): Path<String>) -> Response {
 }
 
 /// A stored document's bytes, as they arrived. This is how an image document's
-/// `<img>` gets its picture; the content type comes from the source file's name so
-/// the browser knows what it is.
-async fn doc_blob(State(app): S, Path(id): Path<String>) -> Response {
+/// `<img>` gets its picture and a video's player its frames; the content type
+/// comes from the source file's name so the browser knows what it is.
+async fn doc_blob(State(app): S, Path(id): Path<String>, req: HeaderMap) -> Response {
     let Ok(Some(doc)) = app.store.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(bytes) = app.store.source_bytes(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mime = doc
@@ -1070,7 +1067,7 @@ async fn doc_blob(State(app): S, Path(id): Path<String>) -> Response {
             .map(render::ext_of)
             .unwrap_or_default(),
     );
-    (headers, bytes).into_response()
+    serve_file(&app.store.src_path(&id), headers, &req).await
 }
 
 #[derive(Deserialize)]
@@ -2907,15 +2904,24 @@ async fn browse_file(State(app): S, Path(id): Path<String>, Query(q): Query<Path
     }
 }
 
-async fn browse_raw(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
-    serve_browsed(&app, &id, q.path.as_deref().unwrap_or("")).await
+async fn browse_raw(
+    State(app): S,
+    Path(id): Path<String>,
+    Query(q): Query<PathQ>,
+    req: HeaderMap,
+) -> Response {
+    serve_browsed(&app, &id, q.path.as_deref().unwrap_or(""), &req).await
 }
 
 /// The same bytes under a path-shaped URL. A framed page is loaded from here so that
 /// its own relative stylesheets, scripts and images resolve against the file's
 /// directory instead of against `/api/browse/<id>/`.
-async fn browse_raw_path(State(app): S, Path((id, rel)): Path<(String, String)>) -> Response {
-    serve_browsed(&app, &id, &rel).await
+async fn browse_raw_path(
+    State(app): S,
+    Path((id, rel)): Path<(String, String)>,
+    req: HeaderMap,
+) -> Response {
+    serve_browsed(&app, &id, &rel, &req).await
 }
 
 /// Headers that make a file safe to frame.
@@ -2940,11 +2946,8 @@ fn protect(headers: &mut HeaderMap, ext: &str) {
     );
 }
 
-async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str) -> Response {
+async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str, req: &HeaderMap) -> Response {
     let Ok(path) = app.browse.resolve(id, rel) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(bytes) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mime = mime_guess::from_path(&path)
@@ -2959,7 +2962,119 @@ async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str) -> Response {
     set(header::CONTENT_TYPE, &mime);
     set(header::CACHE_CONTROL, "private, max-age=60");
     protect(&mut headers, &render::ext_of(&path.to_string_lossy()));
-    (headers, bytes).into_response()
+    serve_file(&path, headers, req).await
+}
+
+/// A file off disk, whole or the one range asked for, streamed.
+///
+/// A player seeks by asking for `bytes=N-`, over and over, and a gigabyte
+/// video must not become a gigabyte in the daemon: the body is read a buffer
+/// at a time as the connection takes it, so what the daemon holds per open
+/// player is one buffer whatever the file weighs. `headers` are the
+/// caller's (type, cache, policy); length and range are added here.
+async fn serve_file(path: &std::path::Path, mut headers: HeaderMap, req: &HeaderMap) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(len) = file.metadata().await.map(|m| m.len()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    let asked = req.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let (status, start, count) = match asked.map(|v| parse_range(v, len)) {
+        None | Some(Span::Whole) => (StatusCode::OK, 0, len),
+        Some(Span::Part(a, b)) => {
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes {a}-{b}/{len}")) {
+                headers.insert(header::CONTENT_RANGE, v);
+            }
+            (StatusCode::PARTIAL_CONTENT, a, b - a + 1)
+        }
+        Some(Span::Unsatisfiable) => {
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes */{len}")) {
+                headers.insert(header::CONTENT_RANGE, v);
+            }
+            return (StatusCode::RANGE_NOT_SATISFIABLE, headers).into_response();
+        }
+    };
+    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(count));
+    let body = Body::from_stream(Chunks {
+        file: file.take(count),
+        buf: vec![0; 128 * 1024].into_boxed_slice(),
+    });
+    (status, headers, body).into_response()
+}
+
+/// What a `Range` header asks of a file `len` bytes long.
+#[derive(Debug, PartialEq)]
+enum Span {
+    /// No usable range: several at once, another unit, or nonsense. The
+    /// header is ignored and the whole file sent, as HTTP allows.
+    Whole,
+    /// First and last byte, inclusive, both inside the file.
+    Part(u64, u64),
+    /// Starts past the end.
+    Unsatisfiable,
+}
+
+fn parse_range(v: &str, len: u64) -> Span {
+    let Some(spec) = v.trim().strip_prefix("bytes=") else {
+        return Span::Whole;
+    };
+    if spec.contains(',') {
+        return Span::Whole;
+    }
+    let Some((a, b)) = spec.trim().split_once('-') else {
+        return Span::Whole;
+    };
+    let (a, b) = (a.trim(), b.trim());
+    let num = |s: &str| s.parse::<u64>().ok();
+    match (a.is_empty(), b.is_empty()) {
+        // `-500`: the last 500 bytes.
+        (true, false) => match num(b) {
+            Some(0) => Span::Unsatisfiable,
+            Some(n) if len > 0 => Span::Part(len.saturating_sub(n), len - 1),
+            Some(_) => Span::Unsatisfiable,
+            None => Span::Whole,
+        },
+        (false, _) => match (num(a), if b.is_empty() { Some(u64::MAX) } else { num(b) }) {
+            (Some(a), Some(b)) if a > b => Span::Whole,
+            (Some(a), Some(_)) if a >= len => Span::Unsatisfiable,
+            (Some(a), Some(b)) => Span::Part(a, b.min(len - 1)),
+            _ => Span::Whole,
+        },
+        (true, true) => Span::Whole,
+    }
+}
+
+/// A file read as a stream of chunks, one buffer at a time, for a body.
+struct Chunks {
+    file: tokio::io::Take<tokio::fs::File>,
+    buf: Box<[u8]>,
+}
+
+impl tokio_stream::Stream for Chunks {
+    type Item = std::io::Result<axum::body::Bytes>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+        let this = &mut *self;
+        let mut rb = tokio::io::ReadBuf::new(&mut this.buf);
+        match tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut this.file), cx, &mut rb) {
+            Poll::Ready(Ok(())) if rb.filled().is_empty() => Poll::Ready(None),
+            Poll::Ready(Ok(())) => {
+                Poll::Ready(Some(Ok(axum::body::Bytes::copy_from_slice(rb.filled()))))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 /// Declarations in a browsed file. Parsing is repeated rather than cached: it is
@@ -3067,11 +3182,44 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, FIND_JS,
-        FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
+        desk_refusal, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
+        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
+
+    /// What a player sends when it seeks, and what it must get back.
+    #[test]
+    fn ranges_are_read_the_way_players_send_them() {
+        assert_eq!(parse_range("bytes=0-", 1000), Span::Part(0, 999));
+        assert_eq!(parse_range("bytes=100-199", 1000), Span::Part(100, 199));
+        assert_eq!(
+            parse_range("bytes=900-5000", 1000),
+            Span::Part(900, 999),
+            "clamped to the end"
+        );
+        assert_eq!(
+            parse_range("bytes=-500", 1000),
+            Span::Part(500, 999),
+            "a suffix"
+        );
+        assert_eq!(parse_range("bytes=-5000", 1000), Span::Part(0, 999));
+        assert_eq!(parse_range("bytes=1000-", 1000), Span::Unsatisfiable);
+        assert_eq!(
+            parse_range("bytes=0-", 0),
+            Span::Unsatisfiable,
+            "an empty file"
+        );
+        assert_eq!(parse_range("bytes=-0", 1000), Span::Unsatisfiable);
+        assert_eq!(
+            parse_range("bytes=0-1,5-9", 1000),
+            Span::Whole,
+            "several fall back to all"
+        );
+        assert_eq!(parse_range("items=0-1", 1000), Span::Whole);
+        assert_eq!(parse_range("bytes=9-3", 1000), Span::Whole);
+        assert_eq!(parse_range("bytes=x-", 1000), Span::Whole);
+    }
 
     /// The one decision in this server that stands between a web page and a
     /// shell. Every shape that is not a live capability under the key that
