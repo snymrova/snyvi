@@ -2,15 +2,26 @@
 
 Everything the [README](../README.md) shows, at the length it takes to say
 how it works: the install on each desktop, updating and uninstalling,
-every command, connecting each agent, the window, the keys, and what each
-part of the page does and why. The numbers at the end are the ones
-`snyvi bench` reads.
+every command, connecting each agent, the window, the desks, the keys, and
+what each part of the page does and why. The numbers at the end are the
+ones `snyvi bench` reads.
+
+snyvi is for the person with more passion projects than hours in the day,
+building several of them at once with coding agents. It keeps each project
+in order: a [desk](DESK.md) per project — its folder, and up to four real
+panels rooted at it, each running an agent or a shell — and everything those
+agents write, kept where you can read it.
 
 You ask Claude Code for a plan. It writes one. With snyvi, Claude sends
 the document and replies with a link; by the time you read the reply, the
-document is already open in the viewer, rendered, and filed under the
-project. Markdown and every kind of source file. One direction only:
-agents send, snyvi shows.
+document is already open in the viewer, rendered, filed under the project,
+and listed on the desk beside the panel that wrote it. Markdown and every
+kind of source file. Each desk keeps its own notes, and each is exactly as
+you left it when you come back.
+
+One direction only: agents send, snyvi shows. The rule is about the channel,
+not the window: snyvi cannot be read back by an agent, and nothing a
+document says is ever typed into a panel.
 
 ## Install
 

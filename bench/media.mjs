@@ -11,6 +11,13 @@
  * in both themes. Nothing here is measured; bench/ui.mjs is the probe. This
  * is the camera.
  *
+ * One picture is not free. The desk shows two real Claude Code sessions, so
+ * taking it spends a turn from each on the machine taking the pictures, and
+ * it needs Claude Code logged in -- the credentials are copied into a config
+ * directory under `tmp` and deleted with it, and nothing is written to the
+ * real one. Without them the panes run a shell instead and the script says so,
+ * so a re-shoot still works on a machine that has no agent on it.
+ *
  * The film is not taken here. It is cut from its own frames by its own
  * camera and its own composition, in film/ -- see film/README.md.
  */
@@ -32,6 +39,37 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SEED = join(HERE, "seed");
 const W = 1440, H = 900;
 
+/** What the two panes in the desk picture are working on, left then right.
+ *  These are real Claude Code sessions in the seeded checkout, not a mock-up:
+ *  the picture is two agents doing the plan the library is full of, so change
+ *  a line here and the picture changes, and nothing else does.
+ *
+ *  Two prompts each, and the picture is of the second. `start` launches the
+ *  session and is left to answer in full; `then` is typed into the session it
+ *  left running and photographed while it is still working. The first turn is
+ *  there to fill the pane: Claude Code opens with a banner naming its version,
+ *  its model and the plan the account is on, and nothing scrolls that off but
+ *  a screenful of work. So the picture is a session already underway, which is
+ *  what a desk looks like by the time anyone glances at one.
+ *
+ *  They run against a copy in a temporary directory that is deleted with
+ *  everything else. Without Claude Code logged in the panes run SHELL instead,
+ *  so the script still takes a picture on a machine that has no agent on it. */
+const PANES = [
+  {
+    start: 'claude "Read docs/rate-limiting.md and gateway/limit.rs, then say which part of the plan the code already implements"',
+    then: "Now add the per-organisation bucket the plan asks for",
+  },
+  {
+    start: 'claude "Read gateway/limit.rs and say what it does today"',
+    then: "Now review it against docs/rate-limiting.md and list what the plan asks for that is not there yet",
+  },
+];
+const SHELL = [
+  "git --no-pager log --oneline -3",
+  "grep -rn RetryAfter gateway/",
+];
+
 const KEYS = {
   Escape: { key: "Escape", code: "Escape", vk: 27 },
   Enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
@@ -46,14 +84,14 @@ class Driver {
     await loaded;
     await sleep(600);
   }
-  async press(k, { meta = false } = {}) {
+  async press(k, { meta = false, wait = 120 } = {}) {
     const spec = KEYS[k] || { key: k, code: `Key${k.toUpperCase()}`, vk: k.toUpperCase().charCodeAt(0), text: k };
     const modifiers = meta ? 4 : 0;
     const down = { type: spec.text && !meta ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
     if (down.type === "keyDown") down.text = spec.text;
     await this.cdp.send("Input.dispatchKeyEvent", down, this.s);
     await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers }, this.s);
-    await sleep(120);
+    await sleep(wait);
   }
   async type(text) { await this.cdp.send("Input.insertText", { text }, this.s); await sleep(300); }
   async move(x, y) { await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s); await sleep(100); }
@@ -73,6 +111,52 @@ class Driver {
       if (!busy) break;
       await sleep(50);
     }
+    await sleep(300);
+  }
+  /** Wait until `n` panes are running. A pane starts its shell on its first
+   *  real size, so this is the page getting there, not the daemon. */
+  async panes(n) {
+    for (let i = 0; i < 120; i++) {
+      if ((await this.ev(`document.querySelectorAll('.pn-body').length`)) >= n
+        && (await this.ev(`!document.querySelector('.pn-start:not([hidden])')`))) break;
+      await sleep(100);
+    }
+    await sleep(700);
+  }
+  /** How long after the prompts go in the panes are photographed.
+   *
+   *  Mid-turn is the picture. A pane shows the tail of its transcript, so a
+   *  session that has answered shows the answer -- a page of prose, which at
+   *  the width the README draws this is a grey wall -- where a session still
+   *  working shows the tool calls it is making under a spinner, which says
+   *  "an agent is at work here" at a glance and in any language.
+   *
+   *  Late in the turn rather than early, because a pane is about forty lines
+   *  tall and Claude Code opens with a banner naming the version, the model
+   *  and the plan the account is on. Under a screenful of output that banner
+   *  is still there; past one it has scrolled off and what is left is the work.
+   *  So the prompts above are the kind that make a dozen tool calls, and this
+   *  is long enough for them to pile up and short enough that the turn has not
+   *  answered. It is a wait and not a signal because nothing a pane paints
+   *  tells a turn in progress from a turn just done.
+   *
+   *  `SNYVI_MEDIA_WORK_MS` moves it, for re-timing without an edit. */
+  async working(ms = Number(process.env.SNYVI_MEDIA_WORK_MS) || 11000) { await sleep(ms); }
+  /** How long the opening turn is given to answer before the second is asked.
+   *  Long enough for the slower of the two, since what it is buying is a pane
+   *  with a screenful in it. `SNYVI_MEDIA_SETTLE_MS` moves it. */
+  async settling(ms = Number(process.env.SNYVI_MEDIA_SETTLE_MS) || 55000) { await sleep(ms); }
+  /** Type a command into pane `i` and run it. Key by key, because a pane reads
+   *  `keydown` and sends the bytes on: inserted text never reaches a PTY.
+   *
+   *  Briskly, at `wait` ms a character: a hundred-character prompt typed at
+   *  reading speed is a quarter of a minute in which the pane already started
+   *  is getting on with its turn, and the picture wants both of them at the
+   *  same point in one. */
+  async shell(i, cmd, wait = 12) {
+    await this.ev(`document.querySelectorAll(".pn-body")[${i}].focus()`);
+    for (const ch of cmd) await this.press(ch, { wait });
+    await this.press("Enter");
     await sleep(300);
   }
   async shot(name) {
@@ -96,16 +180,44 @@ async function main() {
   // -- and no temporary path is in the pictures.
   // SNYVI_NOTIFY=0 so the seeded arrivals do not throw desktop toasts at
   // whoever is taking the pictures.
-  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, SNYVI_NOTIFY: "0", PATH: `${bin}:${process.env.PATH ?? ""}` };
+  // The panes run Claude Code, which needs to be logged in to do anything. It
+  // is given a config directory of its own under `tmp`, holding a copy of the
+  // credentials and nothing else, so the sessions in the picture touch none of
+  // the real one's history and go with the rest of `tmp` at the end. No
+  // credentials, no agent: the panes fall back to SHELL and say so.
+  const claudeCfg = join(tmp, "claude");
+  const creds = join(process.env.HOME ?? "", ".claude", ".credentials.json");
+  const agentReady = (() => {
+    try {
+      mkdirSync(claudeCfg, { recursive: true, mode: 0o700 });
+      copyFileSync(creds, join(claudeCfg, ".credentials.json"));
+      return true;
+    } catch { return false; }
+  })();
+  // A pane inherits the daemon's environment, and the daemon inherits whoever
+  // ran the camera. Run it from inside an agent and that agent's variables
+  // reach the sessions in the picture, which then say so across the bottom of
+  // the pane. Nothing named for an agent or a model provider is passed on.
+  const clean = Object.fromEntries(Object.entries(process.env)
+    .filter(([k]) => !/^(CLAUDE|CLAUDECODE|ANTHROPIC|AWS_BEARER_TOKEN|GOOGLE_|VERTEX|BEDROCK)/.test(k)));
+  const env = { ...clean, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, SNYVI_NOTIFY: "0", CLAUDE_CONFIG_DIR: claudeCfg, PATH: `${bin}:${process.env.PATH ?? ""}` };
   const base = `http://127.0.0.1:${PORT}`;
   let chromeProc = null, agent = null, cdp = null;
   try {
-    // Two projects, each a git checkout as far as snyvi can tell, so the
-    // sidebar shows a branch beside each.
+    // Two projects, each a real git checkout, so the sidebar shows a branch
+    // beside each -- and so a pane opened on one can run `git` and mean it.
+    // Identity and config on the command line, and the two config files sent
+    // nowhere, so whoever is taking the pictures does not sign these.
+    const GIT = ["-c", "user.name=ledger-core", "-c", "user.email=core@ledger.test", "-c", "commit.gpgsign=false"];
+    const gitEnv = { ...env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+    const git = (dir, ...a) => execFileSync("git", [...GIT, "-C", dir, ...a], { env: gitEnv, stdio: "ignore" });
+    // Under the seeded home, not under `tmp`: a desk shows its root and a
+    // dressed prompt says where it is, and `~/code/ledger` is a path a reader
+    // recognises where `/tmp/snyvi-media-nDlOLz/ledger` is a tell.
     const repo = (name, branch) => {
-      const dir = join(tmp, name);
-      mkdirSync(join(dir, ".git"), { recursive: true });
-      writeFileSync(join(dir, ".git", "HEAD"), `ref: refs/heads/${branch}\n`);
+      const dir = join(home, "code", name);
+      mkdirSync(dir, { recursive: true });
+      execFileSync("git", [...GIT, "init", "-q", "-b", branch, dir], { env: gitEnv, stdio: "ignore" });
       return dir;
     };
     const ledger = repo("ledger", "rate-limits");
@@ -144,6 +256,28 @@ async function main() {
     copyFileSync(join(SEED, "limit.rs"), limit);
     const source = await send(limit, { cwd: ledger, workflow: "Gateway refactor", sender: "codex" });
 
+    // A history for a pane to stand in: the work the plan is the plan for.
+    writeFileSync(join(ledger, "README.md"), "# ledger\n\nThe public API, and the gateway in front of it.\n");
+    for (const [msg, file] of [
+      ["Gateway: forward /v1/* to the API", "README.md"],
+      ["limit: token buckets per key and per organisation", join("gateway", "limit.rs")],
+      ["docs: rate limiting, as accepted", join("docs", "rate-limiting.md")],
+    ]) {
+      git(ledger, "add", "--", file);
+      git(ledger, "commit", "-qm", msg);
+    }
+
+    // What Claude Code would otherwise stop and ask on its way into a folder
+    // it has never seen: the onboarding, and whether this checkout is trusted.
+    // Written into the copy's own config, so neither answer is given on behalf
+    // of the real one, and both go when `tmp` does.
+    if (agentReady) {
+      writeFileSync(join(claudeCfg, ".claude.json"), JSON.stringify({
+        hasCompletedOnboarding: true,
+        projects: { [ledger]: { hasTrustDialogAccepted: true, allowedTools: [], history: [] } },
+      }));
+    }
+
     // Three agents registered in this home, one of them here right now: a
     // real `snyvi mcp` under Claude Code's name, held open until the end, so
     // the count beside the mark reads 1 and the connect page says online.
@@ -170,6 +304,38 @@ async function main() {
     // is the one that arrives in them.
     const inbox = await (await fetch(`${base}/api/inbox?limit=50`)).json();
     for (const d of inbox) await p.goto(`${base}/d/${d.id}`);
+
+    // The desk the pictures show: a folder opened under Folders, and a desk on
+    // it. Panes are behind the window's capability -- a browser tab has none,
+    // and that is the whole of the rule that keeps processes out of one -- so
+    // the camera mints one over the token, the way a window launch does, and
+    // hands it to the page on the URL fragment exactly as `snyvi app` would.
+    const post = async (path, body) => {
+      const r = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(body ?? {}),
+      });
+      if (!r.ok) throw new Error(`${path}: ${r.status} ${await r.text()}`);
+      return r.json();
+    };
+    const rootId = (await post("/api/browse", { path: ledger })).root.id;
+    const cap = (await post("/api/capability")).capability;
+    await p.goto(`${base}/?window=1#cap=${cap}`);
+    // Made from the page, not from here: the daemon answers this route only for
+    // a request that came from a page of its own and carries the capability.
+    const deskId = await p.ev(`(async () => {
+      const h = { "content-type": "application/json", "x-snyvi-capability": sessionStorage.getItem("snyvi.cap") };
+      const made = await fetch("/api/desks", { method: "POST", headers: h, body: ${JSON.stringify(JSON.stringify({ root: rootId, name: "ledger" }))} });
+      const desk = (await made.json()).desk;
+      // A desk is created empty and the page opens the first pane; the camera
+      // asks for one per command so the picture is not at the mercy of that.
+      for (let i = 0; i < ${PANES.length}; i++) {
+        const r = await fetch("/api/desks/" + desk.id + "/panes", { method: "POST", headers: h, body: "{}" });
+        if (!r.ok) throw new Error("pane " + i + ": " + r.status + " " + await r.text());
+      }
+      return desk.id;
+    })()`);
 
     console.log(`media: ${OUT}`);
     const latest = (await (await fetch(`${base}/api/inbox?limit=50`)).json()).find(d => d.source_path === planV1);
@@ -226,13 +392,44 @@ async function main() {
       await p.theme(theme);
       await p.shot(`connect-${theme}`);
     }
+
+    // The desk, once rather than once per theme: two real Claude Code sessions
+    // in the checkout the plan is about, in the same window as the documents
+    // they are sending into. The sessions are started once and photographed in
+    // both themes back to back, so the pair differs in nothing but the theme --
+    // and so the picture costs one turn from each agent, not two.
+    {
+      await p.goto(`${base}/desk/${deskId}`);
+      await p.panes(PANES.length);
+      if (agentReady) {
+        // Both sessions opened together and both asked again together, so the
+        // pair is at the same point in the picture: start them one after the
+        // other and one pane is a page deep while the other is still reading.
+        for (const [i, { start }] of PANES.entries()) await p.shell(i, start);
+        await p.settling();
+        for (const [i, { then }] of PANES.entries()) await p.shell(i, then);
+        await p.working();
+      } else {
+        console.log("  (no Claude Code credentials; the panes run a shell)");
+        for (const [i, cmd] of SHELL.entries()) await p.shell(i, cmd);
+      }
+      await p.move(1, 1);
+      for (const theme of ["light", "dark"]) {
+        await p.theme(theme);
+        await p.shot(`desk-${theme}`);
+      }
+    }
   } finally {
     agent?.stdin.end();
     cdp?.close();
     if (!KEEP) {
       killTree(chromeProc);
       try { execFileSync(join(tmp, "bin", "snyvi"), ["stop"], { env, stdio: "ignore" }); } catch {}
-      rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      // The panes' shells sit in the folder about to be removed, and they go
+      // when the daemon that owns their PTYs does -- but not in the same
+      // instant, and a directory a process is still in will not rmdir.
+      await sleep(1500);
+      rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
     } else {
       console.log(`--keep: daemon on ${base}, data in ${tmp}`);
     }

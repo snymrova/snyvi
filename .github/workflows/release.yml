@@ -178,6 +178,14 @@ jobs:
           # matrix job's artifact is not possible here; check the field instead.
           dpkg-deb -f "$deb" Depends | grep -q "snyvi (= $version)"
           (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
+          # A name that does not carry the version, so the README can link it
+          # at /releases/latest/download/ the way it links everything else.
+          # Without this the window -- the half of snyvi that desks need -- was
+          # the one download a reader could not be given a straight link to,
+          # and the README sent them to the release page to find it by eye.
+          arch=$([ "${{ matrix.deb_arch }}" = amd64 ] && echo x64 || echo arm64)
+          cp "$deb" "dist/snyvi-app-linux-$arch.deb"
+          (cd dist && sha256sum "snyvi-app-linux-$arch.deb" > "snyvi-app-linux-$arch.deb.sha256")
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}

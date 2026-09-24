@@ -19,5 +19,10 @@
 # of ui/fonts so the film cannot drift from the product it is about.
 /film/fonts
 
+# The python film/xdo.py needs. There is no xdotool on the machines this is
+# shot on, so keys reach the window through python-xlib, which is not a system
+# package anywhere; `film/README.md` says how to make this, and it is a minute.
+/film/.venv
+
 # Python bytecode from bench/webkit.py
 __pycache__/

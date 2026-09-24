@@ -31,23 +31,31 @@ const ONLY = flag("--only");
 // film/README.md, "Saying the name".
 const NAME = "snigh-vee";
 export const LINES = {
-  hook:    "Your agents write all day. Plans. Reviews. Reports. And you read them... as raw text, in a terminal.",
-  reveal:  `Meet ${NAME}. A fast, beautiful viewer for everything your agents produce.`,
-  ask:     "Ask Claude Code for a plan. It writes one. And sends it. One real MCP call: send document.",
-  arrive:  "By the time you read the reply, it's already open. Rendered. Filed under the project.",
-  queue:   "A new document never steals the page. It waits at the top. N opens it.",
-  diff:    "C shows exactly what changed since the last version.",
-  diagram: "Diagrams draw themselves, in the page's own colours.",
-  search:  "Command K searches everything every agent has ever sent. Code included.",
-  source:  "Source files, highlighted, with an outline. Ten thousand lines of Rust, in a hundred and forty-three milliseconds.",
-  numbers: "One static binary. Twelve megabytes. Cold start in eleven milliseconds. And nothing phones home.",
-  agents:  "Claude Code, Codex, Cursor, Gemini, Zed. Any agent that speaks MCP. One command each.",
-  outro:   `Agents send. ${NAME} shows. Get it on GitHub.`,
+  // The problem: more passion projects than hours, and the work scatters.
+  passion:  "You have more passion projects than hours in the day. And now, with coding agents, you can finally build them all, at the same time.",
+  scatter:  "But the work scatters. Plans get lost in terminal scrollback. What's left to do lives in your head. And every project pulls you away from the last.",
+  // The answer.
+  answer:   `${NAME} keeps it all in order. A desktop app with one desk for each project, and everything your agents write, kept where you can read it.`,
+  // How, one part of the problem a line.
+  desks:    "Each project gets a desk. Its folder, and up to four agents side by side, each in its own panel.",
+  docs:     "When an agent writes a plan or a review, it doesn't scroll away. It lands on the desk, marked with the panel that wrote it, and opens as a clean page.",
+  library:  "Every document files itself by project, in one inbox. Every revision is kept, and C shows exactly what changed.",
+  notes:    "Each desk keeps its own notes, so what's left to do stays with the project, not in your head.",
+  switch:   "Move between projects, and each desk is exactly as you left it. Command K finds anything, across all of them.",
+  agents:   "Bring any agent. Claude Code, Codex, Cursor, Gemini, or anything that speaks MCP.",
+  private:  "One small app, on your own machine. It starts in eleven milliseconds, and nothing ever leaves your computer.",
+  // What it adds up to.
+  summary:  `All your passion projects, in one calm place. ${NAME}. Free and open source, on GitHub.`,
+  rocket:   "One more thing. While your agents work... there's a rocket. You're welcome.",
 };
 
 const TTS_MODEL = process.env.SNYVI_TTS_MODEL || "minimax/speech-2.8-hd";
-const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "English_expressive_narrator";
-const TTS_STYLE = process.env.SNYVI_TTS_STYLE || "Energetic, confident product-launch narrator. Punchy and fast-paced, warm, with a smile. Land each short sentence.";
+const TTS_VOICE = process.env.SNYVI_TTS_VOICE || "English_ManWithDeepVoice";
+const TTS_STYLE = process.env.SNYVI_TTS_STYLE || "Courteous, warm and quietly authoritative, like a trusted senior engineer who builds things for the love of it, talking to someone who does the same. Unhurried, gentle, never salesy or commanding. Soft consonants, a slight smile. Empathetic on the problem, quietly confident on the answer.";
+/* The tag after the lockup is a joke, and read like the film's is not one. */
+const STYLE_FOR = {
+  rocket: "The same courteous voice, now gently amused, letting the listener in on a small secret. A real pause before 'there's a rocket', and 'You're welcome' said kindly and underplayed.",
+};
 /* Every line that says the name is listened back to, because this has been
  * wrong twice and both times silently: a spelling read correctly in one
  * sentence was read another way three sentences later, in the same take. A
@@ -57,7 +65,7 @@ const HEAR_MODEL = process.env.SNYVI_HEAR_MODEL || "google/gemini-3.8-flash";
 const SAID = "SKY";   // what the first syllable of the name must rhyme with
 
 const MUSIC_MODEL = process.env.SNYVI_MUSIC_MODEL || "google/lyria-3-pro-preview";
-const MUSIC = process.env.SNYVI_MUSIC || "Instrumental only, absolutely no vocals. An upbeat, driving, modern electronic track for a software product launch video: crisp punchy drums at 118 bpm, a warm analog synth bass pulse, bright plucked arpeggios, rising energy with a clear lift about a third of the way in, confident and optimistic, polished and cinematic. Starts on the beat from the first second, steady throughout, no long intro, no drops to silence. About ninety seconds.";
+const MUSIC = process.env.SNYVI_MUSIC || "Instrumental only, absolutely no vocals. An upbeat, driving, modern electronic track for a software product launch video: crisp punchy drums at 118 bpm, a warm analog synth bass pulse, bright plucked arpeggios, rising energy with a clear lift about a third of the way in, confident and optimistic, polished and cinematic. Starts on the beat from the first second, steady throughout, no long intro, no drops to silence. About one hundred seconds, ending on a clean final hit.";
 
 async function main() {
   const key = process.env.OPENROUTER_API_KEY;
@@ -82,11 +90,12 @@ async function main() {
   const lines = {};
   for (const [name, input] of Object.entries(LINES)) {
     if (ONLY && ONLY !== name && ONLY !== "lines") continue;
+    const style = STYLE_FOR[name] ?? TTS_STYLE;
     const body = { model: TTS_MODEL, voice: TTS_VOICE, input, response_format: "mp3" };
-    if (TTS_STYLE) body.instructions = TTS_STYLE;
+    if (style) body.instructions = style;
     const speak = () => fetch("https://openrouter.ai/api/v1/audio/speech", { method: "POST", headers, body: JSON.stringify(body) });
     speak.read = async res => Buffer.from(await res.arrayBuffer());
-    const file = await kept(`"${name}"`, ["tts", TTS_MODEL, TTS_VOICE, TTS_STYLE, input], speak);
+    const file = await kept(`"${name}"`, ["tts", TTS_MODEL, TTS_VOICE, style, input], speak);
     // Trimmed of the silence a model leaves at either end, so a line's
     // length is the words' length and the cut lands on them.
     const out = join(OUT, `${name}.mp3`);
