@@ -97,7 +97,12 @@ export async function find(needle) {
   // listening yet, and every search comes back empty.
   const until = async test => { for (let i = 0; i < 200; i++) { if (test()) return true; await new Promise(r => setTimeout(r, 25)); } return false; };
   const bar = document.querySelector("#find");
-  if (bar.hidden) document.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true }));
+  // Letter keys sleep until ⌃B, and a second ⌃B would put them back to
+  // sleep, so it is pressed only while they are asleep.
+  if (bar.hidden) {
+    if (!document.body.classList.contains("keys")) document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true }));
+  }
   await until(() => !bar.hidden && document.activeElement === document.querySelector("#find-input"));
   const input = document.querySelector("#find-input");
   // Blanked so the wait below is for *this* search: the bar stays open between
@@ -283,6 +288,10 @@ export async function readable(id) {
   const bounded = r.height <= innerHeight;
   // Back to the whole thing first, so the gestures below start where they can
   // be seen to have done something.
+  // Awake first: letter keys sleep until ⌃B. The drag below sleeps them
+  // again, as a click does, so the second `0` wakes them too.
+  const wake = () => { if (!document.body.classList.contains("keys")) document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, bubbles: true })); };
+  wake();
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
   await new Promise(res => setTimeout(res, 50));
   const fitted = fig.dataset.zoom === "fit";
@@ -302,6 +311,7 @@ export async function readable(id) {
   const panned = box() !== before;
 
   // And back to the whole diagram, from the keyboard.
+  wake();
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
   await new Promise(res => setTimeout(res, 50));
   const refits = fig.dataset.zoom === "fit" && box() === fit;

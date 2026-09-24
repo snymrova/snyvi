@@ -45,10 +45,13 @@ class Driver {
     await loaded;
     await sleep(600);
   }
-  async press(k, { meta = false } = {}) {
+  async press(k, { meta = false, ctrl = false } = {}) {
+    // A single letter only acts once ⌃B has woken the keys, as it does for a
+    // reader; a second ⌃B would put them back to sleep.
+    if (!meta && !ctrl && k.length === 1 && !(await this.ev(`document.body.classList.contains("keys")`))) await this.press("b", { ctrl: true });
     const spec = KEYS[k] || { key: k, code: `Key${k.toUpperCase()}`, vk: k.toUpperCase().charCodeAt(0), text: k };
-    const modifiers = meta ? 4 : 0;
-    const down = { type: spec.text && !meta ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
+    const modifiers = (meta ? 4 : 0) | (ctrl ? 2 : 0);
+    const down = { type: spec.text && !meta && !ctrl ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
     if (down.type === "keyDown") down.text = spec.text;
     await this.cdp.send("Input.dispatchKeyEvent", down, this.s);
     await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers }, this.s);
