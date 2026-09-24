@@ -22,7 +22,7 @@
      palette) are the film's own frames: film/shoot.mjs, live Claude Code in
      every panel. The rest are bench/media.mjs. -->
 
-https://github.com/user-attachments/assets/21f7e4b9-f2e6-441a-975c-c876504ed583
+https://github.com/user-attachments/assets/fb6ee0de-a5ce-437c-b2a3-d354081ca727
 
 <p align="center">
   <picture>
