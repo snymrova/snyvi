@@ -109,7 +109,7 @@ enum Cmd {
     },
     /// Run the MCP server on stdio (for Claude Code).
     Mcp,
-    /// Claude Code PostToolUse hook: send Markdown files Claude writes (reads hook JSON on stdin).
+    /// Claude Code hook (reads hook JSON on stdin): sends Markdown files Claude writes, and tells a desk panel what Claude in it is doing.
     Hook,
     /// Register snyvi with an agent: claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed. Safe to run again.
     Init {

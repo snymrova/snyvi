@@ -379,6 +379,7 @@ mod tests {
             include_str!("../ui/game.js"),
             include_str!("../ui/about.js"),
             include_str!("../ui/find.js"),
+            include_str!("../ui/keys.js"),
             include_str!("../ui/menu.js"),
         ] {
             let once = js(src);
@@ -407,6 +408,7 @@ mod tests {
             include_str!("../ui/game.js"),
             include_str!("../ui/about.js"),
             include_str!("../ui/find.js"),
+            include_str!("../ui/keys.js"),
             include_str!("../ui/menu.js"),
         ] {
             let out = strip(src, Lang::Js);

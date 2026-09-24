@@ -2,7 +2,7 @@
 
 use crate::project;
 use crate::render::{self, Kind, Renderer, HIGHLIGHT_CAP};
-use crate::store::{Doc, NewDoc, Store};
+use crate::store::{Doc, NewDoc, Staged, Store};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -53,6 +53,9 @@ pub struct Received {
 }
 
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
+/// Video and audio sent by path. They are copied and served a range at a
+/// time, never held, so the cap is about the disk rather than memory.
+pub const MAX_MEDIA_BYTES: u64 = 1024 * 1024 * 1024;
 /// Automatic sends of the same file within this window overwrite the latest snapshot.
 const COALESCE_SECS: i64 = 180;
 
@@ -66,27 +69,36 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     // `body` is what gets stored; `text` is the decoded view of it, empty when there
     // is no text to decode. Reading a file as UTF-8 unconditionally is how a PNG used
     // to become a document full of mojibake.
+    //
+    // A video or a song is `staged` instead: copied into the store as it is
+    // hashed, with `body` left empty.
+    let mut staged: Option<Staged> = None;
     let (body, text, path) = match (&p.content, &p.path) {
         (Some(c), _) => (c.clone().into_bytes(), c.clone(), p.path.clone()),
         (None, Some(path)) => {
             let path = absolutize(path, p.cwd.as_deref());
-            let bytes =
-                std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-            if bytes.len() > MAX_BYTES {
-                bail!("file is larger than {} MB", MAX_BYTES / 1024 / 1024);
-            }
             let sp = path.to_string_lossy().to_string();
-            let ext = render::ext_of(&sp);
-            // Images, PDFs and anything that will not decode are kept as bytes.
-            let opaque = render::is_image_ext(&ext)
-                || render::preview_kind(&ext) == Some("pdf")
-                || render::looks_binary(&bytes);
-            let text = if opaque {
-                String::new()
+            if render::media_kind(&render::ext_of(&sp)).is_some() {
+                staged = Some(store.stage(&path, MAX_MEDIA_BYTES)?);
+                (Vec::new(), String::new(), Some(sp))
             } else {
-                String::from_utf8_lossy(&bytes).into_owned()
-            };
-            (bytes, text, Some(sp))
+                let bytes =
+                    std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+                if bytes.len() > MAX_BYTES {
+                    bail!("file is larger than {} MB", MAX_BYTES / 1024 / 1024);
+                }
+                let ext = render::ext_of(&sp);
+                // Images, PDFs and anything that will not decode are kept as bytes.
+                let opaque = render::is_image_ext(&ext)
+                    || render::preview_kind(&ext) == Some("pdf")
+                    || render::looks_binary(&bytes);
+                let text = if opaque {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&bytes).into_owned()
+                };
+                (bytes, text, Some(sp))
+            }
         }
         (None, None) => bail!("send_document needs either `path` or `content`"),
     };
@@ -120,7 +132,10 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     // Same file, same bytes as the latest snapshot: hand back that document rather
     // than storing a duplicate (an explicit send after a hook send, or vice versa).
-    let hash = blake3::hash(&body).to_hex().to_string();
+    let hash = match &staged {
+        Some(st) => st.hash.clone(),
+        None => blake3::hash(&body).to_hex().to_string(),
+    };
     let latest_same_path = match &path {
         Some(sp) => store.latest_for_path(&root, sp)?,
         None => None,
@@ -138,6 +153,16 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     // An image is known by its extension; anything else undecodable is just binary.
     let (kind, lang) = match renderer.detect(path.as_deref(), p.lang.as_deref(), &text) {
+        // Played only from a copy that was streamed in, whatever language it
+        // was labelled. Inline text that names a video file is still text.
+        _ if staged.is_some() => {
+            let ext = render::ext_of(path.as_deref().unwrap_or_default());
+            match render::media_kind(&ext) {
+                Some("video") => (Kind::Video, Some(ext)),
+                _ => (Kind::Audio, Some(ext)),
+            }
+        }
+        (Kind::Video | Kind::Audio, _) => (Kind::Text, None),
         (_, lang) if !text.is_empty() && render::looks_binary(&body) => (Kind::Binary, lang),
         (Kind::Image, lang) => (Kind::Image, lang),
         _ if text.is_empty() && !body.is_empty() => (Kind::Binary, None),
@@ -185,6 +210,10 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let html = match kind {
         // The bytes are the document; serve them back rather than rendering them.
         Kind::Image => render::image_body(&format!("/api/docs/{id}/blob"), &title),
+        Kind::Video | Kind::Audio => render::media_body(
+            &format!("/api/docs/{id}/blob"),
+            &render::ext_of(path.as_deref().unwrap_or_default()),
+        ),
         Kind::Binary => render::placeholder(&render::describe_bytes(&title, body.len() as u64)),
         _ => renderer.render_with_base(
             kind,
@@ -209,6 +238,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         sender: p.sender.as_deref().unwrap_or(""),
         desk: from.as_ref(),
         source: &body,
+        staged: staged.as_ref(),
         search_body: &text,
         html: &html,
     };
@@ -376,7 +406,7 @@ mod tests {
         .unwrap();
         assert_eq!(got.doc.kind, Kind::Image);
         assert_eq!(
-            s.source_bytes(&got.doc.id).unwrap(),
+            std::fs::read(s.src_path(&got.doc.id)).unwrap(),
             png,
             "the stored bytes are the file, not a lossy decode"
         );
@@ -407,6 +437,76 @@ mod tests {
             !html.contains("PK"),
             "the bytes never reach the page: {html}"
         );
+    }
+
+    /// A video sent by path is copied in by streaming, not read whole, and
+    /// shows as a player. Sending the same bytes again leaves no stray copy.
+    #[test]
+    fn media_is_staged_into_the_store_and_played() {
+        let (s, r, d) = setup();
+        let cwd = d.path.to_string_lossy().to_string();
+        let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let clip = d.path.join("clip.mp4");
+        std::fs::write(&clip, &bytes).unwrap();
+        let send = |p: &std::path::Path| Payload {
+            path: Some(p.to_string_lossy().to_string()),
+            cwd: Some(cwd.clone()),
+            lang: Some("rust".into()),
+            ..Default::default()
+        };
+        let got = receive(&s, &r, send(&clip)).unwrap();
+        assert_eq!(
+            got.doc.kind,
+            Kind::Video,
+            "a language hint does not unmake a video"
+        );
+        assert_eq!(got.doc.size, bytes.len() as i64);
+        assert_eq!(
+            got.doc.content_hash,
+            blake3::hash(&bytes).to_hex().to_string()
+        );
+        assert_eq!(std::fs::read(s.src_path(&got.doc.id)).unwrap(), bytes);
+        let html = s.html(&got.doc.id).unwrap();
+        assert!(
+            html.contains("<video") && html.contains(&format!("/api/docs/{}/blob", got.doc.id)),
+            "{html}"
+        );
+
+        let again = receive(&s, &r, send(&clip)).unwrap();
+        assert!(again.existing);
+        let stray = std::fs::read_dir(d.path.join("docs"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".stage-"))
+            .count();
+        assert_eq!(stray, 0, "an unused copy is removed");
+
+        let song = d.path.join("take.ogg");
+        std::fs::write(&song, b"OggS\x00\x02").unwrap();
+        let got = receive(&s, &r, send(&song)).unwrap();
+        assert_eq!(got.doc.kind, Kind::Audio);
+        assert!(s.html(&got.doc.id).unwrap().contains("<audio"));
+
+        // Past the cap it is refused by name, and nothing is left behind.
+        let err = s.stage(&clip, 1000).unwrap_err().to_string();
+        assert!(
+            err.contains("clip.mp4") && err.contains("snyvi browse"),
+            "{err}"
+        );
+
+        // Text that only names a video file is still text.
+        let got = receive(
+            &s,
+            &r,
+            Payload {
+                content: Some("notes about the cut".into()),
+                path: Some(clip.to_string_lossy().to_string()),
+                cwd: Some(cwd.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(got.doc.kind, Kind::Text);
     }
 
     #[test]

@@ -160,10 +160,10 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
     if rewritten {
         println!("Hooks in {file} now run this binary ({command}).");
     }
+    println!("Hooks in {file}: SessionStart (documents from one session share a workflow), and the prompt, tool, permission and end-of-turn events (a desk panel running Claude says whether it is working, needs you, or is done).");
     if events.contains(&"PostToolUse") {
-        println!("Hooks in {file}: SessionStart, PostToolUse (every Markdown file Claude writes is sent).");
+        println!("  And PostToolUse on Write and Edit: every Markdown file Claude writes is sent.");
     } else {
-        println!("Hook in {file}: SessionStart (documents from one session share a workflow).");
         println!("  `snyvi init-claude --auto` adds a PostToolUse hook that sends every Markdown file Claude writes.");
     }
     if !on_path {

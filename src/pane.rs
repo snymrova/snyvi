@@ -78,7 +78,16 @@ pub struct Status {
     /// whose shell snyvi cannot dress still says both.
     pub branch: String,
     pub dirty: bool,
+    /// What the agent in this pane is doing, when the agent says so: Claude
+    /// Code's hooks report `working`, `needs_you` or `done` (see `Agent`).
+    /// Empty for everything else, which keeps `blocked` as its only signal.
+    pub agent: &'static str,
+    pub agent_since: Option<i64>,
 }
+
+/// The states an agent reports through its hooks. `needs_you` is Claude's
+/// precise version of `blocked`: a permission prompt, not a bell.
+pub const AGENT_STATES: [&str; 3] = ["working", "needs_you", "done"];
 
 struct Proc {
     master: Box<dyn MasterPty + Send>,
@@ -133,6 +142,9 @@ pub struct Panes {
     /// dots from. Held here rather than an `App`, so a pane can say it changed
     /// without knowing what a server is.
     events: broadcast::Sender<String>,
+    /// What each pane last said on that stream: `(running, blocked, agent)`.
+    /// Forgotten with the pane.
+    told: Mutex<HashMap<String, (bool, bool, &'static str)>>,
 }
 
 impl Panes {
@@ -142,6 +154,7 @@ impl Panes {
             dir: data_dir.join("panes"),
             git: Mutex::new(HashMap::new()),
             events,
+            told: Mutex::new(HashMap::new()),
         });
         // A daemon killed rather than stopped keeps what it had up to the
         // last of these.
@@ -253,6 +266,50 @@ impl Panes {
             .unwrap_or_default()
     }
 
+    /// An agent in a running pane says what it is doing. Only a pane this
+    /// daemon already has running is told: an id that is not one is refused,
+    /// and nothing is woken or created for it. `state` is one of
+    /// `AGENT_STATES`, or empty for an agent that has gone.
+    pub fn set_agent(&self, id: &str, state: &str) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let state = AGENT_STATES.into_iter().find(|s| *s == state).unwrap_or("");
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return false;
+        }
+        if i.status.agent == state {
+            return true;
+        }
+        // `needs_you` is also `blocked`, so everything that already shows a
+        // pane waiting on its reader -- the sidebar's `!`, its count -- shows
+        // this one too. Leaving it takes back only what it set.
+        if state == "needs_you" && !i.status.blocked {
+            i.status.blocked = true;
+            i.status.blocked_since = Some(crate::store::now());
+        } else if i.status.agent == "needs_you" && state != "needs_you" {
+            i.status.blocked = false;
+            i.status.blocked_since = None;
+        }
+        i.status.agent = state;
+        i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        self.changed(&l.id, &s);
+        true
+    }
+
+    /// Whether this pane has a process right now. Nothing is woken to answer.
+    pub fn is_running(&self, id: &str) -> bool {
+        self.live
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|l| l.inner.lock().unwrap().status.running)
+    }
+
     /// How many processes are running across every pane.
     pub fn running(&self) -> usize {
         self.live
@@ -271,12 +328,14 @@ impl Panes {
         if let Some(l) = l {
             l.stop();
         }
+        self.told.lock().unwrap().remove(id);
         let _ = std::fs::remove_file(self.text_path(id));
     }
 
     /// Every pane: stopped, forgotten, and its text gone. A reset.
     pub fn clear(&self) {
         let all: Vec<Arc<Live>> = self.live.lock().unwrap().drain().map(|(_, l)| l).collect();
+        self.told.lock().unwrap().clear();
         for l in all {
             l.stop();
         }
@@ -337,9 +396,16 @@ impl Panes {
     /// browser tab reads too, so what was typed and the title a program set
     /// stay behind the capability, on the desk socket.
     fn changed(&self, id: &str, status: &Status) {
+        // An exact repeat of the last word is dropped: every page redraws on
+        // this, and a redraw that changes nothing still takes the row out from
+        // under the pointer.
+        let now = (status.running, status.blocked, status.agent);
+        if self.told.lock().unwrap().insert(id.to_string(), now) == Some(now) {
+            return;
+        }
         let _ = self.events.send(format!(
             "panes\n{}",
-            serde_json::json!({ "id": id, "running": status.running, "blocked": status.blocked })
+            serde_json::json!({ "id": id, "running": status.running, "blocked": status.blocked, "agent": status.agent })
         ));
     }
 }
@@ -502,6 +568,8 @@ impl Live {
             // blanking it would flicker the header on every start.
             branch: i.status.branch.clone(),
             dirty: i.status.dirty,
+            agent: "",
+            agent_since: None,
         };
         i.unsaved = true;
         let status = i.status.clone();
@@ -557,6 +625,8 @@ impl Live {
             i.status.exit = Some(code);
             i.status.blocked = false;
             i.status.blocked_since = None;
+            i.status.agent = "";
+            i.status.agent_since = None;
             i.unsaved = false;
             (i.status.clone(), keep_text(&i.old, i.screen.text()))
         };
@@ -661,21 +731,30 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
             let _ = l.tx.send(f.into());
         }
         last = Instant::now();
+        // Two audiences. The pane's header shows its title, so a new title
+        // goes down the desk socket; the sidebar's dot does not, so only a
+        // bell goes on to the page-wide stream. An agent animates its title
+        // about once a second while it works, and every one of those used to
+        // redraw the sidebar under the reader's pointer.
         let mut said = None;
+        let mut rang = false;
         if std::mem::take(&mut screen.bell) && status.running && !status.blocked {
             status.blocked = true;
             status.blocked_since = Some(crate::store::now());
-            said = Some(status.clone());
+            rang = true;
         }
-        if screen.title != status.title {
+        let retitled = screen.title != status.title;
+        if retitled {
             status.title = screen.title.clone();
+        }
+        if rang || retitled {
             said = Some(status.clone());
         }
         if let Some(s) = &said {
             let _ = l.tx.send(status_frame(&l.id, s).into());
         }
         drop(i);
-        if let (Some(s), Some(p)) = (said, panes.upgrade()) {
+        if let (true, Some(s), Some(p)) = (rang, said, panes.upgrade()) {
             p.changed(&l.id, &s);
         }
     }
@@ -883,5 +962,129 @@ mod tests {
         let text =
             std::fs::read_to_string(dir.path.join("panes").join(format!("{id}.txt"))).unwrap();
         assert!(text.contains(&format!("pane={id}")));
+    }
+
+    /// The agent's word reaches only a pane that is running, is sent once per
+    /// change, and goes with the process.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-agent");
+        let (events, mut ev) = broadcast::channel(64);
+        let panes = Panes::new(&dir.path, events);
+        let id = "ffeeddccbbaa99887766554433221100";
+        assert!(!panes.set_agent(id, "working"), "a pane nobody opened");
+        let live = panes.get(id);
+        assert!(!panes.set_agent(id, "working"), "a stopped pane");
+        let (_, mut rx) = live.attach();
+        let cwd = dir.path.to_string_lossy().to_string();
+        live.start(
+            Start {
+                cwd: &cwd,
+                cmd: "read x",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+            },
+            &panes,
+        )
+        .unwrap();
+        assert!(panes.set_agent(id, "needs_you"));
+        assert!(
+            panes.status(id).blocked,
+            "needs_you is blocked, for the sidebar"
+        );
+        assert!(panes.set_agent(id, "needs_you"));
+        assert!(panes.set_agent(id, "nonsense"), "an unknown word clears it");
+        let st = panes.status(id);
+        assert_eq!(st.agent, "");
+        assert!(!st.blocked, "leaving needs_you unblocks");
+        assert!(panes.set_agent(id, "done"));
+        let mut said = Vec::new();
+        while let Ok(Ok(m)) = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+            let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+            if v["t"] == "status" && v["s"]["running"] == true {
+                said.push(v["s"]["agent"].as_str().unwrap().to_string());
+            }
+        }
+        assert_eq!(said, ["", "needs_you", "", "done"], "one frame per change");
+        let mut dots = Vec::new();
+        while let Ok(m) = ev.try_recv() {
+            dots.push(m);
+        }
+        assert!(
+            dots.iter().any(|d| d.contains("\"agent\":\"needs_you\"")),
+            "{dots:?}"
+        );
+        live.stop();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while panes.status(id).running && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            panes.status(id).agent,
+            "",
+            "the agent goes with its process"
+        );
+    }
+
+    /// A title is the pane header's business and goes down the desk socket;
+    /// the page-wide stream hears only what the sidebar draws, once per
+    /// change. An agent retitles its pane about once a second while it works.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_new_title_reaches_the_desk_and_not_the_sidebar() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-title");
+        let (events, mut ev) = broadcast::channel(64);
+        let panes = Panes::new(&dir.path, events);
+        let id = "00112233445566778899aabbccddeeff";
+        let live = panes.get(id);
+        let (_, mut rx) = live.attach();
+        let cwd = dir.path.to_string_lossy().to_string();
+        live.start(
+            Start {
+                cwd: &cwd,
+                cmd: "for t in a b c d e; do printf '\\033]0;%s\\007' $t; sleep 0.05; done; printf '\\a'; read x",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+            },
+            &panes,
+        )
+        .unwrap();
+        let mut titles = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !panes.status(id).blocked && tokio::time::Instant::now() < deadline {
+            while let Ok(m) = rx.try_recv() {
+                let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+                if v["t"] == "status" {
+                    titles.push(v["s"]["title"].as_str().unwrap_or("").to_string());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(panes.status(id).blocked, "the bell rang");
+        assert!(
+            titles.iter().any(|t| t == "c"),
+            "the header hears titles: {titles:?}"
+        );
+        // A repeat of what was said is not said again.
+        let s = panes.status(id);
+        panes.changed(id, &s);
+        let mut dots = Vec::new();
+        while let Ok(m) = ev.try_recv() {
+            dots.push(m);
+        }
+        assert_eq!(
+            dots.len(),
+            2,
+            "the start and the bell, nothing per title: {dots:?}"
+        );
+        assert!(dots[1].contains("\"blocked\":true"), "{dots:?}");
+        live.stop();
     }
 }

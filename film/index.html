@@ -6,455 +6,364 @@
     <title>snyvi — the film</title>
     <script src="vendor/gsap.min.js"></script>
     <style>
-      /* The two faces snyvi renders documents with: the machine's fixed
-         pitch and the document's optical serif. Inter is here for the
-         wordmark alone, because that is how the product draws its name. */
-      @font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 200 900; src: url(fonts/source-serif.woff2) format("woff2"); }
-      @font-face { font-family: "Source Serif 4"; font-style: italic; font-weight: 200 900; src: url(fonts/source-serif-italic.woff2) format("woff2"); }
+      /* One family carries the film: Archivo, a grotesque drawn for print and
+         screen alike, with a width axis. Titles run it slightly expanded and
+         semibold, which gives them a firm, engineered voice; sentences run it
+         at normal width. The product's own faces keep their own jobs -- Inter
+         for the wordmark only, because that is how snyvi draws its name, and
+         JetBrains Mono only for what really is typed: keys and a command. */
+      @font-face { font-family: "Archivo"; font-style: normal; font-weight: 100 900; font-stretch: 62% 125%; src: url(fonts/archivo.woff2) format("woff2"); }
       @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400 800; src: url(fonts/jetbrains-mono.woff2) format("woff2"); }
       @font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; src: url(fonts/inter.woff2) format("woff2"); }
 
       :root {
-        --ground: #0a0c11;
-        --panel: #141821;
-        --rule: #272d3a;
-        --ink: #ece9e3;
-        --mute: #8b93a3;
-        --flame: #e0763e;
-        --ember: #c2410c;
-        --bone: #f3f1ec;
-        --serif: "Source Serif 4", serif;
+        --ground: #0b0d12;
+        --raise: #151922;
+        --rule: #262c38;
+        --ink: #eeece8;
+        --soft: #b3b9c5;      /* descriptions: 9.6:1 on the ground */
+        --mute: #7f8696;
+        --flame: #f04a63;     /* snyvi's accent, Passion, as the product shows it on dark */
+        --bone: #faf9f6;
+        --sans: "Archivo", system-ui, sans-serif;
         --mono: "JetBrains Mono", ui-monospace, monospace;
       }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { background: var(--ground); color: var(--ink); }
+      body { background: var(--ground); color: var(--ink); font-family: var(--sans); }
       #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--ground); }
 
-      .scene { position: absolute; inset: 0; overflow: hidden; background: var(--ground); }
-      .inner { position: absolute; inset: 0; opacity: 0; will-change: transform, opacity, filter; }
-      #s-hook .inner { opacity: 1; }
-      .pad { position: absolute; inset: 0; padding: 84px 96px; display: flex; }
+      /* A scene paints nothing of its own: the ground is the root's. When each
+         scene carried an opaque ground, the incoming one blanked the outgoing
+         one the moment it started, and every change of picture dipped to dark
+         and back -- a flicker on every cut. */
+      .scene { position: absolute; inset: 0; overflow: hidden; }
+      .inner { position: absolute; inset: 0; opacity: 0; will-change: transform, opacity; }
+      .pad { position: absolute; inset: 0; padding: 96px 112px; display: flex; }
 
-      /* ---- the film's furniture ---------------------------------------- */
+      /* ---- the type roles ------------------------------------------------- */
 
-      .eyebrow { display: flex; align-items: center; gap: 16px; font: 500 21px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--mute); }
-      .eyebrow i { display: block; width: 11px; height: 11px; border-radius: 2px; background: var(--flame); flex: none; }
-      .eyebrow u { display: block; height: 1px; width: 150px; background: var(--rule); text-decoration: none; transform-origin: left center; }
+      /* title: what the scene is. lead: what it does, in one sentence. */
+      .title { font: 600 92px/1.02 var(--sans); font-stretch: 112%; letter-spacing: -.028em; color: var(--ink); text-wrap: balance; }
+      .lead { font: 400 34px/1.38 var(--sans); letter-spacing: -.005em; color: var(--soft); max-width: 17em; text-wrap: pretty; }
+      .lead b { font-weight: 500; color: var(--ink); }
+      kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 1.7em; height: 1.45em; padding: 0 .35em;
+            margin: 0 .08em; transform: translateY(-.06em); font: 500 .78em/1 var(--mono); color: var(--ink);
+            background: var(--raise); border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 8px; }
+      .cmd { display: inline-flex; align-items: center; gap: 14px; background: var(--raise); border: 1px solid var(--rule); border-radius: 10px;
+             padding: 16px 22px; font: 500 27px/1 var(--mono); color: var(--ink); opacity: 0; }
+      .cmd span { color: var(--mute); }
 
-      .stmt { font-family: var(--serif); font-variation-settings: "opsz" 60; font-weight: 900; letter-spacing: -.032em; line-height: .98; color: var(--ink); }
-      .aside { font-family: var(--serif); font-variation-settings: "opsz" 36; font-style: italic; font-weight: 300; color: var(--mute); letter-spacing: -.01em; }
-      .mono { font-family: var(--mono); }
+      .lock { display: flex; align-items: center; gap: 22px; }
+      .lock svg { display: block; }
+      .lock b { font-family: Inter, system-ui, sans-serif; font-weight: 600; letter-spacing: -.045em; color: var(--ink); }
 
-      .key { display: inline-flex; align-items: center; justify-content: center; min-width: 78px; height: 78px; padding: 0 20px;
-             font: 700 34px/1 var(--mono); color: var(--flame); background: #171c26; border: 1px solid var(--rule);
-             border-bottom: 4px solid #323a4a; border-radius: 12px; }
-
-      /* A product window: the bone page under a bar of its own. */
-      .win { position: relative; border-radius: 16px; overflow: hidden; background: var(--bone);
-             box-shadow: 0 60px 120px -30px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.07); }
-      .win-bar { height: 44px; background: #e9e6df; display: flex; align-items: center; gap: 9px; padding: 0 16px; position: relative; }
-      .win-bar b { display: block; width: 12px; height: 12px; border-radius: 50%; background: #cfcabf; }
-      .win-bar span { position: absolute; left: 0; right: 0; text-align: center; font: 500 17px/1 var(--mono); color: #6b6459; letter-spacing: .02em; }
+      /* A product window. The frames are photographs of the real window, which
+         brings its own header and controls in the pixels. 1280 is where the
+         shutter is, so nothing is drawn wider than that, and nothing inside it
+         is ever scaled past 1:1 -- what moves is the window. */
+      .win { position: relative; border-radius: 14px; overflow: hidden; background: #16181d; max-width: 1280px;
+             box-shadow: 0 40px 90px -30px rgba(0,0,0,.9), 0 0 0 1px rgba(255,255,255,.11); }
       .win-body { position: relative; overflow: hidden; }
       .win-body img { display: block; width: 100%; will-change: transform; }
       .win-body img.over { position: absolute; inset: 0; opacity: 0; }
+      /* The camera: what moves inside the window when the line points at part
+         of it. Never past 1.15, which is where a 1280 shot shown at 1098
+         would start to be magnified beyond its own pixels. */
+      .cam { position: relative; transform-origin: 0 0; will-change: transform; }
 
-      .glow { position: absolute; border-radius: 50%; pointer-events: none;
-              background: radial-gradient(circle, rgba(224,118,62,.34) 0%, rgba(224,118,62,.11) 42%, rgba(224,118,62,0) 70%); }
-      .grain { position: absolute; inset: 0; opacity: .5; pointer-events: none;
-               background-image: radial-gradient(rgba(255,255,255,.035) 1px, rgba(0,0,0,0) 1px); background-size: 3px 3px; }
-      .vig { position: absolute; inset: 0; pointer-events: none;
-             background: radial-gradient(120% 90% at 50% 45%, rgba(10,12,17,0) 38%, rgba(10,12,17,.86) 100%); }
+      /* snyvi, the mascot, peeking over the bottom edge and reacting to the
+         film, with the faces the app gives it (ui/app.js, FACES): plain,
+         whoa when something arrives, oops, glad, wink, love. */
+      #buddy { position: absolute; left: 112px; bottom: -40px; width: 150px; height: 150px; z-index: 5; pointer-events: none; }
+      #buddy .rise, #buddy .bob { width: 100%; height: 100%; }
+      #buddy svg { display: block; width: 100%; height: 100%; overflow: visible; }
 
-      /* ---- 1 · hook ----------------------------------------------------- */
+      /* A ring over the part of the frame the line is about, placed in
+         fractions of the 1280x860 shot so it holds at any shown width. */
+      .ring { position: absolute; border: 3px solid var(--flame); border-radius: 8px; opacity: 0; pointer-events: none; }
 
-      #s-hook .wall { position: absolute; left: -60px; right: -60px; top: -200px; height: 2400px; display: flex; gap: 70px; }
-      #s-hook .wall pre { flex: 1; font: 400 20px/1.62 var(--mono); color: #2f3747; white-space: pre-wrap; word-break: break-word; }
-      /* The words are read against the wall they are about, so the wall is
-         put out behind them rather than left to compete. */
-      #s-hook .scrim { position: absolute; left: -200px; bottom: -200px; width: 1750px; height: 1100px; pointer-events: none;
-             background: radial-gradient(52% 52% at 40% 62%, rgba(10,12,17,.96) 0%, rgba(10,12,17,.82) 46%, rgba(10,12,17,0) 100%); }
-      #s-hook .stack { position: absolute; left: 96px; bottom: 300px; }
-      #s-hook .stack div { font-size: 136px; }
-      #s-hook .kicker { position: absolute; left: 96px; top: 96px; }
-      #s-hook .tail { position: absolute; left: 96px; bottom: 150px; font-size: 48px; max-width: 1180px; opacity: 0; }
+      /* ---- the feature scenes: words left, the window right ---------------- */
 
-      /* ---- 2 · reveal --------------------------------------------------- */
+      .feat .pad { align-items: center; gap: 72px; }
+      .feat .col { width: 540px; flex: none; display: flex; flex-direction: column; gap: 30px; align-items: flex-start; }
+      .feat .win { flex: none; width: 1098px; }
 
-      #s-reveal .pad { flex-direction: column; align-items: center; justify-content: center; gap: 34px; }
-      #s-reveal .lock { display: flex; align-items: center; gap: 38px; }
-      #s-reveal .lock svg { width: 148px; height: 148px; display: block; }
-      #s-reveal .lock b { font: 600 142px/1 Inter, system-ui, sans-serif; letter-spacing: -.045em; color: var(--ink); display: flex; }
-      #s-reveal .lock b span { display: block; }
-      #s-reveal .tag { font-size: 52px; text-align: center; max-width: 1180px; line-height: 1.25; }
-      #s-reveal .brow { font: 500 21px/1 var(--mono); letter-spacing: .34em; text-transform: uppercase; color: var(--mute); }
+      /* ---- the problem ------------------------------------------------------- */
 
-      /* ---- 3 · ask ------------------------------------------------------ */
+      /* A statement on the left, and plain rows on the right: the projects, then
+         where their work goes. The same rows carry "private, and fast" later. */
+      .split .pad { align-items: center; gap: 120px; }
+      .split .title { width: 760px; flex: none; }
+      .rows { flex: 1; display: flex; flex-direction: column; }
+      .rows .row { display: grid; grid-template-columns: 300px 1fr; align-items: baseline; gap: 32px; padding: 34px 0; border-top: 1px solid var(--rule); opacity: 0; }
+      .rows .row:last-child { border-bottom: 1px solid var(--rule); }
+      .rows dt { font: 600 50px/1 var(--sans); font-stretch: 112%; letter-spacing: -.025em; color: var(--ink); font-variant-numeric: tabular-nums; }
+      .rows dd { font: 400 30px/1.35 var(--sans); color: var(--soft); }
 
-      #s-ask .pad { align-items: center; gap: 70px; }
-      #s-ask .col { width: 560px; flex: none; display: flex; flex-direction: column; gap: 30px; }
-      #s-ask .col .stmt { font-size: 88px; }
-      #s-ask .col p { font: 400 25px/1.6 var(--mono); color: var(--mute); }
-      /* A height of its own, so the box does not grow under the session as
-         each line lands and shift everything beside it. */
-      #s-ask .term { flex: 1; align-self: center; height: 540px; background: #13161c; border: 1px solid var(--rule); border-radius: 16px;
-                     overflow: hidden; box-shadow: 0 50px 100px -30px rgba(0,0,0,.8); display: flex; flex-direction: column; }
-      #s-ask .term-bar { height: 46px; background: #1b2029; display: flex; align-items: center; gap: 9px; padding: 0 16px; position: relative; flex: none; }
-      #s-ask .term-bar b { display: block; width: 12px; height: 12px; border-radius: 50%; background: #39404e; }
-      #s-ask .term-bar span { position: absolute; left: 0; right: 0; text-align: center; font: 500 17px/1 var(--mono); color: #868da0; }
-      #s-ask .term-body { padding: 30px 34px 38px; font: 400 21px/1.68 var(--mono); color: #cfd4dd; }
-      #s-ask .term-body .l { white-space: pre-wrap; opacity: 0; }
-      #s-ask .term-body .p { color: #8b93a3; }
-      #s-ask .term-body .p em { color: #e7eaef; font-style: normal; }
-      #s-ask .term-body .t { color: var(--flame); }
-      #s-ask .term-body .t em { color: #e7eaef; font-style: normal; }
-      #s-ask .term-body .r { color: #8b93a3; padding-left: 2.2ch; }
-      #s-ask .term-body .gap { height: 20px; }
-      #s-ask .cur { display: inline-block; width: 10px; height: 21px; background: #cfd4dd; vertical-align: -4px; }
-      #s-ask .mark { position: relative; }
-      #s-ask .mark u { display: block; position: absolute; left: -2px; right: -2px; bottom: -5px; height: 3px; background: var(--flame); transform: scaleX(0); transform-origin: left center; }
+      #s-passion .inner { opacity: 1; }
+      #s-passion .title { font-size: 100px; }
+      #s-passion dt { display: flex; align-items: center; gap: 22px; }
+      #s-passion dt i { width: 14px; height: 14px; border-radius: 50%; background: var(--flame); flex: none; }
+      #s-scatter dd { color: var(--ink); }
 
-      /* ---- 4 · arrive --------------------------------------------------- */
+      /* ---- the answer -------------------------------------------------------- */
 
-      #s-arrive .pad { flex-direction: column; align-items: center; justify-content: flex-start; padding: 56px 96px 42px; gap: 30px; }
-      #s-arrive .win { width: 1400px; }
-      #s-arrive .cap { font: 400 22px/1 var(--mono); color: var(--mute); letter-spacing: .04em; display: flex; gap: 18px; align-items: center; }
-      #s-arrive .cap i { display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--flame); }
+      #s-answer .lock svg { width: 92px; height: 92px; }
+      #s-answer .lock b { font-size: 112px; }
+      #s-answer .lead { font-size: 36px; color: var(--ink); max-width: 14em; }
+      #s-answer .lock, #s-answer .lead { opacity: 0; }
 
-      /* ---- 5-9 · the split features ------------------------------------- */
+      /* ---- what it adds up to --------------------------------------------------- */
 
-      .feat .pad { align-items: center; gap: 64px; }
-      .feat .col { width: 520px; flex: none; display: flex; flex-direction: column; gap: 28px; align-items: flex-start; }
-      .feat .col .stmt { font-size: 78px; }
-      .feat .col p { font: 400 23px/1.6 var(--mono); color: var(--mute); }
-      .feat .win { flex: 1; }
-      /* The window is 1144 wide beside a 520 column; a 1800x1125 frame at
-         that width is 715 tall, so the body is cut to it and no bone shows
-         under the picture. */
-      .feat .win-body { height: 715px; }
+      #s-summary .pad { flex-direction: column; align-items: center; justify-content: center; gap: 0; text-align: center; }
+      #s-summary .lock svg { width: 72px; height: 72px; }
+      #s-summary .lock b { font-size: 76px; }
+      #s-summary .title { margin-top: 56px; }
+      #s-summary .title span { display: block; }
+      #s-summary .lead { margin-top: 40px; max-width: none; }
+      #s-summary .url { margin-top: 18px; font: 500 34px/1 var(--sans); color: var(--flame); letter-spacing: -.005em; }
 
-      #s-source .chip { display: flex; align-items: baseline; gap: 14px; font-family: var(--mono); }
-      #s-source .chip b { font: 700 62px/1 var(--mono); color: var(--flame); font-variant-numeric: tabular-nums; }
-      #s-source .chip span { font: 400 23px/1 var(--mono); color: var(--mute); }
+      /* ---- one more thing -------------------------------------------------------- */
 
-      /* ---- 10 · numbers -------------------------------------------------- */
-
-      #s-numbers .pad { flex-direction: column; justify-content: center; gap: 46px; }
-      #s-numbers .head { display: flex; flex-direction: column; gap: 26px; }
-      #s-numbers .head .stmt { font-size: 84px; }
-      #s-numbers .grid { display: flex; gap: 28px; flex: none; height: 330px; align-items: stretch; }
-      #s-numbers .stat { flex: 1; background: var(--panel); border: 1px solid var(--rule); border-radius: 18px; padding: 30px 30px 28px;
-                         display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
-      #s-numbers .stat::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--rule); }
-      #s-numbers .stat .v { display: flex; align-items: baseline; gap: 10px; }
-      #s-numbers .stat .v b { font: 700 96px/1 var(--mono); color: var(--flame); font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
-      #s-numbers .stat .v span { font: 500 34px/1 var(--mono); color: var(--flame); }
-      #s-numbers .stat .l { font: 500 21px/1.4 var(--mono); color: var(--ink); letter-spacing: .02em; }
-      #s-numbers .stat .b { height: 6px; background: #1f2530; border-radius: 3px; overflow: hidden; margin: 22px 0 14px; }
-      #s-numbers .stat .b i { display: block; height: 100%; width: 100%; background: var(--flame); border-radius: 3px; transform-origin: left center; transform: scaleX(0); }
-      #s-numbers .stat .budget { font: 400 19px/1 var(--mono); color: var(--mute); }
-      #s-numbers .foot { font: 400 23px/1 var(--mono); color: var(--mute); display: flex; align-items: center; gap: 16px; }
-      #s-numbers .foot code { color: var(--ink); }
-
-      /* ---- 11 · agents --------------------------------------------------- */
-
-      #s-agents .pad { align-items: center; gap: 80px; }
-      #s-agents .col { width: 760px; flex: none; display: flex; flex-direction: column; gap: 34px; align-items: flex-start; }
-      #s-agents .col .stmt { font-size: 86px; }
-      #s-agents .cmd { display: flex; align-items: center; gap: 16px; background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 20px 26px; }
-      #s-agents .cmd i { color: var(--flame); font: 700 30px/1 var(--mono); }
-      #s-agents .cmd code { font: 500 30px/1 var(--mono); color: var(--ink); }
-      #s-agents .list { flex: 1; display: flex; flex-direction: column; gap: 3px; }
-      #s-agents .row { display: flex; align-items: center; gap: 20px; padding: 15px 4px; border-bottom: 1px solid #1a1f29; }
-      #s-agents .row i { display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--flame); flex: none; }
-      #s-agents .row b { font: 500 32px/1 var(--mono); color: var(--ink); letter-spacing: -.01em; }
-      #s-agents .row span { margin-left: auto; font: 400 20px/1 var(--mono); color: var(--mute); }
-
-      /* ---- 12 · outro ---------------------------------------------------- */
-
-      #s-outro .pad { flex-direction: column; align-items: center; justify-content: center; gap: 30px; }
-      #s-outro .lock { display: flex; align-items: center; gap: 24px; }
-      #s-outro .lock svg { width: 86px; height: 86px; display: block; }
-      #s-outro .lock b { font: 600 82px/1 Inter, system-ui, sans-serif; letter-spacing: -.045em; }
-      #s-outro .stmt { font-size: 96px; text-align: center; margin-top: 10px; }
-      #s-outro .url { font: 600 40px/1 var(--mono); color: var(--flame); letter-spacing: -.01em; margin-top: 14px; }
-      #s-outro .badges { font: 400 23px/1 var(--mono); color: var(--mute); letter-spacing: .04em; }
-
-      /* ---- transitions --------------------------------------------------- */
-
-      #leak { position: absolute; inset: -20%; opacity: 0; pointer-events: none; z-index: 50;
-              background: radial-gradient(60% 60% at 42% 52%, rgba(255,232,214,.95) 0%, rgba(224,118,62,.55) 38%, rgba(224,118,62,0) 72%); }
+      #s-rocket .pad { flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 48px 112px; }
+      #s-rocket .top { width: 1280px; display: flex; align-items: baseline; justify-content: space-between; }
+      #s-rocket .top .title { font-size: 54px; }
+      #s-rocket .top .lead { opacity: 0; }
+      #s-rocket .win { width: 1280px; }
+      #s-rocket .win-body img.f { position: absolute; inset: 0; opacity: 0; }
+      #s-rocket .black { position: absolute; inset: 0; background: #000; opacity: 0; display: flex; align-items: center; justify-content: center; }
+      #s-rocket .black span { font: 500 28px/1 var(--sans); color: #6d7384; }
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="94.3">
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="109">
 
-      <!-- 1 · the trouble -->
-      <section id="s-hook" class="scene clip" data-start="0" data-duration="9.8" data-track-index="0">
-        <div class="inner">
-          <!-- The wall is texture, not copy: the raw source of the very
-               document snyvi renders later, dimmed until it is unreadable,
-               because being unreadable is the point the scene is making. The
-               words over it carry the contrast. Marked so the layout and
-               contrast audits read it as the decoration it is. -->
-          <div class="wall" data-layout-ignore>
-            <pre id="wall-a" data-layout-ignore></pre><pre id="wall-b" data-layout-ignore></pre><pre id="wall-c" data-layout-ignore></pre>
-          </div>
-          <div class="vig"></div>
-          <div class="scrim"></div>
-          <div class="grain"></div>
-          <div class="pad"></div>
-          <div class="kicker eyebrow"><i></i>Your agents write all day<u></u></div>
-          <!-- Each word is struck from 46px below its place, so for the
-               400 ms of its entrance its box is inside the one above. -->
-          <div class="stack" data-layout-allow-overlap>
-            <div class="stmt" id="hk-1" data-layout-allow-overlap>Plans.</div>
-            <div class="stmt" id="hk-2" data-layout-allow-overlap>Reviews.</div>
-            <div class="stmt" id="hk-3" data-layout-allow-overlap>Reports.</div>
-          </div>
-          <div class="tail aside" id="hk-tail">…and you read them as raw text, in a terminal.</div>
-        </div>
-      </section>
+      <!-- Four parts, in the order they play: the problem (passion, scatter),
+           the answer, how it answers each part of the problem (desks through
+           private), and what that adds up to (summary). Then a tag. Every
+           data-start and data-duration here is overwritten from film/beats.js
+           at load, and film/mix.mjs checks the two agree. -->
 
-      <!-- 2 · the name -->
-      <section id="s-reveal" class="scene clip" data-start="9.2" data-duration="7.95" data-track-index="0">
+      <!-- The problem. Frame 0 is the poster, so the statement is up already;
+           the projects arrive with the voice. -->
+      <section id="s-passion" class="scene clip split" data-start="0" data-duration="10.05" data-track-index="0">
         <div class="inner">
-          <div class="glow" id="rv-glow" style="width: 1500px; height: 1500px; left: 210px; top: -210px;"></div>
-          <div class="grain"></div>
           <div class="pad">
-            <div class="brow" id="rv-brow">A viewer for what your agents write</div>
-            <div class="lock">
-              <svg id="rv-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <rect width="32" height="32" rx="7" fill="#c2410c" />
-                <path d="M9 10H23M9 16H23M9 22H18" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
-              </svg>
-              <b id="rv-name"><span>s</span><span>n</span><span>y</span><span>v</span><span>i</span></b>
-            </div>
-            <div class="tag aside" id="rv-tag">A fast, beautiful viewer for everything your agents produce.</div>
+            <h2 class="title">More passion projects than hours in the day.</h2>
+            <dl class="rows">
+              <div class="row" id="passion-a"><dt><i></i>ledger</dt><dd>Rate limiting, four agents on it.</dd></div>
+              <div class="row" id="passion-b"><dt><i></i>gateway</dt><dd>One door for ingest, two agents.</dd></div>
+              <div class="row" id="passion-c"><dt><i></i>atlas</dt><dd>A statements spike, one agent.</dd></div>
+              <div class="row" id="passion-d"><dt><i></i>website</dt><dd>The pricing rewrite, waiting on you.</dd></div>
+            </dl>
           </div>
         </div>
       </section>
 
-      <!-- 3 · the ask -->
-      <section id="s-ask" class="scene clip" data-start="16.7" data-duration="10.7" data-track-index="0">
+      <section id="s-scatter" class="scene clip split" data-start="9.6" data-duration="11.2" data-track-index="0">
         <div class="inner">
-          <div class="grain"></div>
+          <div class="pad">
+            <h2 class="title" id="scatter-title">And the work scatters.</h2>
+            <dl class="rows">
+              <div class="row" id="scatter-a"><dt>Plans</dt><dd>Lost in terminal scrollback.</dd></div>
+              <div class="row" id="scatter-b"><dt>To-dos</dt><dd>Kept in your head.</dd></div>
+              <div class="row" id="scatter-c"><dt>Focus</dt><dd>Gone every time you switch.</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <!-- The answer: the product introducing itself, with the desk. -->
+      <section id="s-answer" class="scene clip feat" data-start="20.2" data-duration="11.3" data-track-index="0">
+        <div class="inner">
           <div class="pad">
             <div class="col">
-              <div class="eyebrow" id="ak-brow"><i></i>01 — the ask<u></u></div>
-              <div class="stmt" id="ak-stmt">Ask for a plan.</div>
-              <p id="ak-sub">It writes one.<br />Then it sends it.</p>
+              <div class="lock" id="answer-lock"><svg id="answer-head" viewBox="0 0 32 32" aria-hidden="true"></svg><b>snyvi</b></div>
+              <p class="lead" id="answer-lead">A desktop app with one desk for each project, and everything your agents write, kept where you can read it.</p>
             </div>
-            <div class="term" id="ak-term">
-              <div class="term-bar"><b></b><b></b><b></b><span>Claude Code — ~/ledger</span></div>
-              <div class="term-body">
-                <div class="l p" id="ak-l1"><em>&gt;</em> <span id="ak-type"></span><span class="cur" id="ak-cur"></span></div>
-                <div class="gap"></div>
-                <div class="l t" id="ak-l2">⏺ <em>Update</em>(docs/rate-limiting.md)</div>
-                <div class="l r" id="ak-l3">⎿  Updated docs/rate-limiting.md</div>
-                <div class="gap"></div>
-                <div class="l t" id="ak-l4">⏺ <em class="mark" id="ak-mark">snyvi · send_document<u id="ak-ul"></u></em> (MCP)(path: "docs/rate-limiting.md", workflow: "Rate limiting")</div>
-                <div class="l r" id="ak-l5">⎿  Waiting in snyvi: "Rate limiting the public API". It is in the snyvi window, at the top of the queue; tell the user it is there rather than giving them a link.</div>
+            <div class="win" id="answer-win">
+              <div class="win-body"><img src="frames/desk.png" alt="" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- How: one part of the problem a scene. -->
+      <section id="s-desks" class="scene clip feat" data-start="31" data-duration="8.1" data-track-index="0">
+        <div class="inner">
+          <div class="pad">
+            <div class="col">
+              <h2 class="title" id="desks-title">A desk for each project</h2>
+              <p class="lead" id="desks-lead">Its folder, and up to four agents side by side, each in its own panel.</p>
+            </div>
+            <div class="win" id="desks-win">
+              <div class="win-body"><div class="cam" id="desks-cam"><img id="desks-img" src="frames/desk.png" alt="" />
+                <div class="ring" id="desks-r1" style="left: 21.2%; top: 1.6%; width: 13.2%; height: 3.0%;"></div>
+                <div class="ring" id="desks-r2" style="left: 82.2%; top: 9.2%; width: 16.6%; height: 17.4%;"></div></div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- 4 · it is already open -->
-      <section id="s-arrive" class="scene clip" data-start="26.9" data-duration="8" data-track-index="0">
+      <section id="s-docs" class="scene clip feat" data-start="38.6" data-duration="10.3" data-track-index="0">
         <div class="inner">
-          <div class="glow" id="ar-glow" style="width: 1800px; height: 1300px; left: 60px; top: 260px;"></div>
-          <div class="pad">
-            <div class="win" id="ar-win">
-              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
-              <div class="win-body" style="height: 875px"><img id="ar-img" src="frames/plan.png" alt="" /></div>
-            </div>
-            <div class="cap" id="ar-cap"><i></i>docs/rate-limiting.md · ledger · rate-limits · rendered and filed on arrival</div>
-          </div>
-          <div class="grain"></div>
-        </div>
-      </section>
-
-      <!-- 5 · the queue -->
-      <section id="s-queue" class="scene clip feat" data-start="34.5" data-duration="7.1" data-track-index="0">
-        <div class="inner">
-          <div class="grain"></div>
           <div class="pad">
             <div class="col">
-              <div class="eyebrow" id="qu-brow"><i></i>02 — arrivals<u></u></div>
-              <div class="stmt" id="qu-stmt">It never steals the page.</div>
-              <p id="qu-sub">A new document waits at the top.</p>
-              <div class="key" id="qu-key">N</div>
+              <h2 class="title" id="docs-title">Nothing scrolls away</h2>
+              <p class="lead" id="docs-lead">Plans and reviews land on the desk, marked with the panel that wrote them, and open as clean pages.</p>
             </div>
-            <div class="win" id="qu-win">
-              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
-              <div class="win-body">
-                <img id="qu-a" src="frames/arrival.png" alt="" />
-                <img id="qu-b" class="over" src="frames/opened.png" alt="" />
+            <div class="win" id="docs-win">
+              <div class="win-body"><div class="cam" id="docs-cam"><img id="docs-img" src="frames/desk.png" alt="" />
+                <img id="docs-b" class="over" src="frames/desk-sent.png" alt="" />
+                <img id="docs-c" class="over" src="frames/desk-over.png" alt="" />
+                <div class="ring" id="docs-r" style="left: 82.5%; top: 31.9%; width: 16.0%; height: 2.9%;"></div></div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- 6 · versions -->
-      <section id="s-diff" class="scene clip feat" data-start="41.2" data-duration="5.3" data-track-index="0">
+      <section id="s-library" class="scene clip feat" data-start="48.4" data-duration="9.9" data-track-index="0">
         <div class="inner">
-          <div class="grain"></div>
           <div class="pad">
             <div class="col">
-              <div class="eyebrow" id="df-brow"><i></i>03 — versions<u></u></div>
-              <div class="stmt" id="df-stmt">What changed.</div>
-              <p id="df-sub">Sends of one file are versions.</p>
-              <div class="key" id="df-key">C</div>
+              <h2 class="title" id="library-title">Filed, and kept</h2>
+              <p class="lead" id="library-lead">Every document filed by project in one inbox, every revision kept. <kbd id="library-key">C</kbd> shows what changed.</p>
             </div>
-            <div class="win" id="df-win">
-              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
-              <div class="win-body"><img id="df-img" src="frames/diff.png" alt="" /></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 7 · diagrams -->
-      <section id="s-diagram" class="scene clip feat" data-start="46.1" data-duration="5.4" data-track-index="0">
-        <div class="inner">
-          <div class="grain"></div>
-          <div class="pad">
-            <div class="col">
-              <div class="eyebrow" id="dg-brow"><i></i>04 — diagrams<u></u></div>
-              <div class="stmt" id="dg-stmt">Drawn in the page.</div>
-              <p id="dg-sub">Mermaid, in the document's own colours.</p>
-            </div>
-            <div class="win" id="dg-win">
-              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
-              <div class="win-body"><img id="dg-img" src="frames/diagram.png" alt="" /></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 8 · search -->
-      <section id="s-search" class="scene clip feat" data-start="51.1" data-duration="6.5" data-track-index="0">
-        <div class="inner">
-          <div class="grain"></div>
-          <div class="pad">
-            <div class="col">
-              <div class="eyebrow" id="se-brow"><i></i>05 — search<u></u></div>
-              <div class="stmt" id="se-stmt">Across everything.</div>
-              <p id="se-sub">Every document every agent has sent.</p>
-              <div class="key" id="se-key">⌘K</div>
-            </div>
-            <div class="win" id="se-win">
-              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
-              <div class="win-body"><img id="se-img" src="frames/search.png" alt="" /></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 9 · source -->
-      <section id="s-source" class="scene clip feat" data-start="57.2" data-duration="10.1" data-track-index="0">
-        <div class="inner">
-          <div class="grain"></div>
-          <div class="pad">
-            <div class="col">
-              <div class="eyebrow" id="sr-brow"><i></i>06 — source<u></u></div>
-              <div class="stmt" id="sr-stmt">Source files, with an outline.</div>
-              <div class="chip" id="sr-chip"><b id="sr-num">0</b><span>ms to highlight 10,000 lines of Rust</span></div>
-            </div>
-            <div class="win" id="sr-win">
-              <div class="win-bar"><b></b><b></b><b></b><span>snyvi</span></div>
-              <div class="win-body">
-                <img id="sr-a" src="frames/source.png" alt="" />
-                <img id="sr-b" class="over" src="frames/source-body.png" alt="" />
+            <div class="win" id="library-win">
+              <div class="win-body"><div class="cam" id="library-cam"><img id="library-img" src="frames/inbox-filed.png" alt="" />
+                <img id="library-b" class="over" src="frames/desk-diff.png" alt="" />
+                <div class="ring" id="library-r" style="left: 0.6%; top: 13.0%; width: 19.4%; height: 15.9%;"></div></div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- 10 · measured -->
-      <section id="s-numbers" class="scene clip" data-start="66.8" data-duration="10.3" data-track-index="0">
+      <section id="s-notes" class="scene clip feat" data-start="57.8" data-duration="7.7" data-track-index="0">
         <div class="inner">
-          <div class="glow" id="nm-glow" style="width: 1400px; height: 1000px; left: 900px; top: 380px;"></div>
-          <div class="grain"></div>
-          <div class="pad">
-            <div class="head">
-              <div class="eyebrow" id="nm-brow"><i></i>07 — measured<u></u></div>
-              <div class="stmt" id="nm-stmt">Small enough to forget it is running.</div>
-            </div>
-            <div class="grid">
-              <div class="stat" data-to="12.4" data-dp="1">
-                <div class="v"><b>0</b><span>MB</span></div>
-                <div><div class="b"><i style="--w: .83"></i></div><div class="l">The whole binary</div><div class="budget">budget 15 MB</div></div>
-              </div>
-              <div class="stat" data-to="11" data-dp="0">
-                <div class="v"><b>0</b><span>ms</span></div>
-                <div><div class="b"><i style="--w: .11"></i></div><div class="l">Cold start, to first health</div><div class="budget">budget 100 ms</div></div>
-              </div>
-              <div class="stat" data-to="12" data-dp="0">
-                <div class="v"><b>0</b><span>ms</span></div>
-                <div><div class="b"><i style="--w: .12"></i></div><div class="l">A send, there and back</div><div class="budget">budget 100 ms</div></div>
-              </div>
-              <div class="stat" data-to="40" data-dp="0">
-                <div class="v"><b>0</b><span>MB</span></div>
-                <div><div class="b"><i style="--w: .67"></i></div><div class="l">Resident, three documents in</div><div class="budget">budget 60 MB</div></div>
-              </div>
-            </div>
-            <div class="foot" id="nm-foot"><code>snyvi bench --check</code> fails the build when a number goes over its budget · <code>127.0.0.1</code> only · nothing phones home</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 11 · the agents -->
-      <section id="s-agents" class="scene clip" data-start="76.7" data-duration="10.9" data-track-index="0">
-        <div class="inner">
-          <div class="grain"></div>
           <div class="pad">
             <div class="col">
-              <div class="eyebrow" id="ag-brow"><i></i>08 — agents<u></u></div>
-              <div class="stmt" id="ag-stmt">Any agent that speaks MCP.</div>
-              <div class="cmd" id="ag-cmd"><i>$</i><code>snyvi init claude</code></div>
+              <h2 class="title" id="notes-title">Out of your head</h2>
+              <p class="lead" id="notes-lead">Each desk keeps its own notes, so what is left to do stays with the project.</p>
             </div>
-            <div class="list" id="ag-list">
-              <div class="row"><i></i><b>Claude Code</b><span>~/.claude.json</span></div>
-              <div class="row"><i></i><b>Codex CLI</b><span>~/.codex/config.toml</span></div>
-              <div class="row"><i></i><b>Cursor</b><span>~/.cursor/mcp.json</span></div>
-              <div class="row"><i></i><b>Gemini CLI</b><span>~/.gemini/settings.json</span></div>
-              <div class="row"><i></i><b>Zed</b><span>~/.config/zed/settings.json</span></div>
-              <div class="row"><i></i><b>Claude Desktop</b><span>claude_desktop_config.json</span></div>
-              <div class="row"><i></i><b>Windsurf</b><span>~/.codeium/windsurf</span></div>
-              <div class="row"><i></i><b>VS Code</b><span>~/.config/Code/User</span></div>
+            <div class="win" id="notes-win">
+              <div class="win-body"><div class="cam" id="notes-cam"><img id="notes-img" src="frames/desk-notes.png" alt="" />
+                <div class="ring" id="notes-r" style="left: 82.3%; top: 43.0%; width: 16.3%; height: 18.2%;"></div></div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- 12 · the end -->
-      <section id="s-outro" class="scene clip" data-start="86.8" data-duration="7.5" data-track-index="0">
+      <section id="s-switch" class="scene clip feat" data-start="65" data-duration="10.1" data-track-index="0">
         <div class="inner">
-          <div class="glow" id="ot-glow" style="width: 1600px; height: 1200px; left: 160px; top: -60px;"></div>
-          <div class="grain"></div>
           <div class="pad">
-            <div class="lock" id="ot-lock">
-              <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <rect width="32" height="32" rx="7" fill="#c2410c" />
-                <path d="M9 10H23M9 16H23M9 22H18" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
-              </svg>
-              <b>snyvi</b>
+            <div class="col">
+              <h2 class="title" id="switch-title">Just as you left it</h2>
+              <p class="lead" id="switch-lead">Every desk keeps its place. <kbd id="switch-key">⌘K</kbd> finds anything, across all of them.</p>
             </div>
-            <div class="stmt" id="ot-stmt">Agents send. snyvi shows.</div>
-            <div class="url" id="ot-url">github.com/snymrova/snyvi</div>
-            <div class="badges" id="ot-badges">Linux · macOS · Windows — one static binary · nothing phones home · MIT</div>
+            <div class="win" id="switch-win">
+              <div class="win-body"><div class="cam" id="switch-cam"><img id="switch-img" src="frames/desk-two.png" alt="" />
+                <img id="switch-b" class="over" src="frames/desk-search.png" alt="" /></div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <div id="leak"></div>
+      <section id="s-agents" class="scene clip feat" data-start="74.6" data-duration="8.3" data-track-index="0">
+        <div class="inner">
+          <div class="pad">
+            <div class="col">
+              <h2 class="title" id="agents-title">Any agent</h2>
+              <p class="lead" id="agents-lead">Claude Code, Codex, Cursor, Gemini, and anything else that speaks MCP.</p>
+              <div class="cmd" id="agents-cmd"><span>$</span>snyvi init claude</div>
+            </div>
+            <div class="win" id="agents-win">
+              <div class="win-body"><div class="cam" id="agents-cam"><img id="agents-img" src="frames/connect-dark.png" alt="" /></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <audio id="track" src="audio/mix.mp3" data-start="0" data-duration="94.3" data-track-index="1" data-volume="1"></audio>
+      <!-- Private and fast: a statement, and three plain facts. -->
+      <section id="s-private" class="scene clip split" data-start="82.4" data-duration="9" data-track-index="0">
+        <div class="inner">
+          <div class="pad">
+            <h2 class="title" id="private-title">Private, and fast.</h2>
+            <dl class="rows">
+              <div class="row" id="private-a"><dt>One app</dt><dd>A single binary, on Linux, macOS or Windows.</dd></div>
+              <div class="row" id="private-b"><dt><span id="private-ms">11</span> ms</dt><dd>From a cold start to ready.</dd></div>
+              <div class="row" id="private-c"><dt>Local only</dt><dd>Nothing leaves your computer.</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <!-- What it adds up to. -->
+      <section id="s-summary" class="scene clip" data-start="91" data-duration="9.44" data-track-index="0">
+        <div class="inner">
+          <div class="pad">
+            <div class="lock" id="summary-lock"><svg id="summary-head" viewBox="0 0 32 32" aria-hidden="true"></svg><b>snyvi</b></div>
+            <h2 class="title"><span id="summary-s1">All your passion projects.</span><span id="summary-s2">One calm place.</span></h2>
+            <p class="lead" id="summary-free">Free and open source, under the MIT licence.</p>
+            <p class="url" id="summary-url">github.com/snymrova/snyvi</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- One more thing: the rocket, over the desk, while the terminals work.
+           Twenty-four stills from film/shoot.mjs, played as a flip-book. -->
+      <section id="s-rocket" class="scene clip" data-start="100.4" data-duration="8.6" data-track-index="0">
+        <div class="inner">
+          <div class="pad">
+            <div class="top">
+              <h2 class="title" id="rk-title">One more thing.</h2>
+              <p class="lead" id="rk-quip">You’re welcome.</p>
+            </div>
+            <div class="win" id="rk-win">
+              <div class="win-body"><img id="rk-desk" src="frames/desk-notes.png" alt="" />
+                <img class="f" id="rk-01" src="frames/rocket/r01.png" alt="" />
+                <img class="f" id="rk-02" src="frames/rocket/r02.png" alt="" />
+                <img class="f" id="rk-03" src="frames/rocket/r03.png" alt="" />
+                <img class="f" id="rk-04" src="frames/rocket/r04.png" alt="" />
+                <img class="f" id="rk-05" src="frames/rocket/r05.png" alt="" />
+                <img class="f" id="rk-06" src="frames/rocket/r06.png" alt="" />
+                <img class="f" id="rk-07" src="frames/rocket/r07.png" alt="" />
+                <img class="f" id="rk-08" src="frames/rocket/r08.png" alt="" />
+                <img class="f" id="rk-09" src="frames/rocket/r09.png" alt="" />
+                <img class="f" id="rk-10" src="frames/rocket/r10.png" alt="" />
+                <img class="f" id="rk-11" src="frames/rocket/r11.png" alt="" />
+                <img class="f" id="rk-12" src="frames/rocket/r12.png" alt="" />
+                <img class="f" id="rk-13" src="frames/rocket/r13.png" alt="" />
+                <img class="f" id="rk-14" src="frames/rocket/r14.png" alt="" />
+                <img class="f" id="rk-15" src="frames/rocket/r15.png" alt="" />
+                <img class="f" id="rk-16" src="frames/rocket/r16.png" alt="" />
+                <img class="f" id="rk-17" src="frames/rocket/r17.png" alt="" />
+                <img class="f" id="rk-18" src="frames/rocket/r18.png" alt="" />
+                <img class="f" id="rk-19" src="frames/rocket/r19.png" alt="" />
+                <img class="f" id="rk-20" src="frames/rocket/r20.png" alt="" />
+                <img class="f" id="rk-21" src="frames/rocket/r21.png" alt="" />
+                <img class="f" id="rk-22" src="frames/rocket/r22.png" alt="" />
+                <img class="f" id="rk-23" src="frames/rocket/r23.png" alt="" />
+                <img class="f" id="rk-24" src="frames/rocket/r24.png" alt="" />
+              </div>
+            </div>
+          </div>
+          <div class="black" id="rk-black"><span>github.com/snymrova/snyvi</span></div>
+        </div>
+      </section>
+
+      <!-- snyvi, peeking over the bottom edge. Gone for the tag, where it is in
+           the rocket. -->
+      <div id="buddy" class="clip" data-start="0" data-duration="100.4" data-track-index="2">
+        <div class="rise"><div class="bob"><svg id="buddy-head" viewBox="0 0 32 32" aria-hidden="true"></svg></div></div>
+      </div>
+
+      <audio id="track" src="audio/mix.mp3" data-start="0" data-duration="109" data-track-index="1" data-volume="1"></audio>
     </div>
 
     <script src="beats.js"></script>
@@ -464,13 +373,8 @@
       const el = id => document.getElementById(id);
 
       /* Every scene's window comes from the clock, so the seconds are written
-       * once. A scene is up for its own length plus the cut into the next
-       * one, which is how both are on screen while they hand over. The
-       * attributes in the markup are the same numbers, kept there for `lint`
-       * to read without running anything; these are what the runtime uses.
-       * The one number that cannot be set from here is the root's
-       * data-duration, which is read before any script runs -- it has to be
-       * FILM.total by hand. */
+       * once. The root's data-duration is read before any script runs -- it
+       * has to be FILM.total by hand, and film/mix.mjs checks that it is. */
       for (const b of FILM.beats) {
         const scene = el("s-" + b.name);
         scene.dataset.start = b.at;
@@ -478,209 +382,212 @@
       }
       el("track").dataset.duration = FILM.total;
 
+      /* snyvi's head, drawn the way the app draws it (icons/icon.svg for the
+       * body, ui/app.js FACES for the moods), with every face in it at once
+       * and all but one hidden, so a change of mood is a set on the timeline
+       * and seeks like everything else. */
+      const INK = "#33050d";
+      const EYE = (x, r = 2.6) => `<ellipse cx="${x}" cy="16.5" rx="${r}" ry="${(r * 1.27).toFixed(2)}" fill="${INK}"/>`
+        + `<circle cx="${x + 0.9}" cy="15.2" r="1" fill="#fff"/><circle cx="${x - 0.6}" cy="17.9" r=".45" fill="#fff"/>`;
+      const LINE = d => `<path d="${d}" fill="none" stroke="${INK}" stroke-width="2" stroke-linecap="round"/>`;
+      const HEART = (x, y, k) => `<path transform="translate(${x} ${y}) scale(${k})" fill="#f0607e" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/>`;
+      const SMILE = LINE("M13.5 23Q16 25.2 18.5 23");
+      const FACES = {
+        plain: `<g class="eyes">${EYE(11) + EYE(21)}</g>` + SMILE,
+        whoa: EYE(11, 3.1) + EYE(21, 3.1) + `<ellipse cx="16" cy="23.4" rx="1.9" ry="2.2" fill="${INK}"/>`,
+        oops: LINE("M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0") + LINE("M13.8 23.4h4.4"),
+        glad: LINE("M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0") + `<path d="M13 22.4q3 4 6 0z" fill="${INK}"/>`,
+        wink: LINE("M8.6 17.8q2.4-3 4.8 0") + EYE(21) + SMILE,
+        love: HEART(11, 16.5, 0.85) + HEART(21, 16.5, 0.85) + SMILE,
+      };
+      function head(id) {
+        el(id + "-head").innerHTML =
+          `<rect x="14" y="0.5" width="4" height="5" rx="2" fill="#8c0f26"/>`
+          + `<g class="puff" opacity="0">${HEART(16, -2, 0.7)}</g>`
+          + `<rect x="1" y="4" width="30" height="27" rx="9" fill="#d9203b"/>`
+          + `<ellipse cx="7.8" cy="21.5" rx="2.2" ry="1.4" fill="#ff7b8f"/><ellipse cx="24.2" cy="21.5" rx="2.2" ry="1.4" fill="#ff7b8f"/>`
+          + Object.entries(FACES).map(([k, f]) => `<g id="${id}-${k}"${k === "plain" ? "" : ` opacity="0"`}>${f}</g>`).join("");
+      }
+      ["buddy", "answer", "summary"].forEach(head);
+
       const tl = gsap.timeline({ paused: true });
+      const IN = "expo.out";
 
-      /* ---- the trouble ------------------------------------------------- */
+      /* ---- the problem --------------------------------------------------- */
 
-      // The wall is the real document, as the terminal shows it: the source
-      // of the plan snyvi renders later in the film.
-      const RAW = `## 2. Design
+      // Frame 0 is the poster: the statement is up. The projects arrive on
+      // "and now, with coding agents", each with an agent at work in it.
+      ["a", "b", "c", "d"].forEach((k, i) => {
+        tl.fromTo("#passion-" + k, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.7, ease: IN }, T("passion", "agents") - 0.2 + i * 0.32);
+      });
+      tl.fromTo("#s-passion dt i", { opacity: 1 }, { opacity: 0.35, duration: 0.6, ease: "sine.inOut", repeat: 5, yoyo: true, stagger: 0.2 }, T("passion", "all"));
 
-A token bucket per API key, refilled at the key's rate, and a second
-bucket per organisation that every key in the organisation draws from.
-Both live in Redis, one \`MULTI\` per request, so a request costs one round
-trip whatever the answer is.
-
-\`\`\`mermaid
-sequenceDiagram
-    participant C as Client
-    participant G as Gateway
-    C->>G: POST /v1/transactions
-    G->>R: MULTI · DECR key · DECR org · EXEC
-    alt both buckets above zero
-        R-->>G: [n, m]
-        A-->>C: 201 Created
-    else either bucket empty
-        G-->>C: 429 · Retry-After: 2
-    end
-\`\`\`
-
-### 2.1 Refill
-
-Buckets refill lazily: the stored value is \`(tokens, updated_at)\` and the
-gateway computes the current level when it reads it. No timers, nothing
-to keep running, and a key that is never used costs nothing.
-
-| Plan | Per key | Per organisation | Burst |
-|---|---|---|---|
-| Free | 10 rps | 20 rps | 30 |
-| Team | 100 rps | 400 rps | 400 |
-
-### 2.2 Limits
-
-The per-organisation bucket is the point. A partner with forty keys is
-one partner, and the gateway should say so with one number.
-
-> **Status:** proposed · **Scope:** \`api/\` and \`gateway/\`
-`;
-      const wall = RAW + RAW.slice(0, 900);
-      ["wall-a", "wall-b", "wall-c"].forEach((id, i) => {
-        document.getElementById(id).textContent = wall.slice(i * 260) + wall.slice(0, i * 260);
+      tl.fromTo("#scatter-title", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, FILM.by.scatter.say - 0.15);
+      [["#scatter-a", "plans"], ["#scatter-b", "todo"], ["#scatter-c", "switch"]].forEach(([sel, cue]) => {
+        tl.fromTo(sel, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.7, ease: IN }, T("scatter", cue) - 0.2);
       });
 
-      const hook = FILM.by.hook;
-      tl.fromTo("#s-hook .wall", { y: 0 }, { y: -560, duration: hook.dur + hook.out[1], ease: "none" }, 0);
-      // The kicker is up from the first frame rather than faded in. That
-      // frame is the poster: GitHub shows it under the play button, and a
-      // wall of dim source with nothing on it is not an invitation. So the
-      // line the voice is about to say is already there, and what moves at
-      // the top of the film is the wall behind it and the words to come.
-      tl.fromTo("#s-hook .kicker u", { scaleX: 0.6 }, { scaleX: 1, duration: 1.2, ease: "power2.out" }, 0.15);
-      // One word struck per sentence, on the pause the voice leaves for it.
-      [["#hk-1", "plans"], ["#hk-2", "reviews"], ["#hk-3", "reports"]].forEach(([sel, cue]) => {
-        tl.fromTo(sel, { opacity: 0, y: 46, scaleY: 1.12 },
-          { opacity: 1, y: 0, scaleY: 1, duration: 0.42, ease: "power4.out" }, T("hook", cue) - 0.1);
+      /* ---- the answer ---------------------------------------------------- */
+
+      tl.fromTo("#answer-lock", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: IN }, FILM.by.answer.say - 0.2);
+      tl.fromTo("#answer-lead", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, T("answer", "app") - 0.2);
+      tl.fromTo("#answer-win", { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 1.0, ease: IN }, T("answer", "app") - 0.1);
+
+      /* ---- how ------------------------------------------------------------ */
+
+      feature("desks");
+      ringAt("desks-r1", T("desks", "folder") - 0.1, T("desks", "four") - 0.15);
+      ringAt("desks-r2", T("desks", "four") - 0.1);
+
+      // The desk; the frame with the new document in its list, which is the
+      // arrival; then the document open over the desk.
+      feature("docs");
+      swap("#docs-b", T("docs", "lands") - 0.3);
+      cam("docs", T("docs", "marked") - 0.5, 90, 30, 1.14);
+      ringAt("docs-r", T("docs", "marked") - 0.1, T("docs", "opens") - 0.2);
+      swap("#docs-c", T("docs", "opens") - 0.2);
+      cam("docs", T("docs", "opens") - 0.2, 45, 20, 1.1);
+
+      feature("library");
+      ringAt("library-r", T("library", "inbox") - 0.3, T("library", "kept") - 0.3);
+      cam("library", T("library", "inbox") - 0.6, 12, 22, 1.14);
+      swap("#library-b", T("library", "kept") - 0.3);
+      cam("library", T("library", "kept") - 0.3, 45, 40, 1.08);
+      press("#library-key", T("library", "key"));
+
+      feature("notes");
+      ringAt("notes-r", T("notes", 1.6));
+      cam("notes", T("notes", 1.3), 90, 50, 1.14);
+
+      feature("switch");
+      cam("switch", T("switch", "left") - 0.4, 10, 45, 1.1);
+      swap("#switch-b", T("switch", "key") - 0.3);
+      cam("switch", T("switch", "key") - 0.3, 50, 30, 1.08);
+      press("#switch-key", T("switch", "key"));
+
+      feature("agents");
+      cam("agents", T("agents", "names") - 0.3, 55, 35, 1.12, 2.4);
+      tl.fromTo("#agents-cmd", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: IN }, T("agents", "mcp") + 0.6);
+
+      tl.fromTo("#private-title", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, at("private") + 0.2);
+      [["#private-a", "app"], ["#private-b", "start"], ["#private-c", "home"]].forEach(([sel, cue]) => {
+        tl.fromTo(sel, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.7, ease: IN }, T("private", cue) - 0.2);
       });
-      tl.to("#s-hook .stack", { opacity: 0.34, duration: 1.1, ease: "sine.inOut" }, T("hook", "raw") - 0.15);
-      tl.fromTo("#hk-tail", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: "power2.out" }, T("hook", "raw"));
+      count("#private-ms", 11, T("private", "start") + 0.4, 0.7);
 
-      /* ---- the name ---------------------------------------------------- */
+      /* ---- what it adds up to ------------------------------------------- */
 
-      tl.fromTo("#rv-brow", { opacity: 0, y: -16 }, { opacity: 1, y: 0, duration: 0.7, ease: "power2.out" }, at("reveal") + 0.35);
-      tl.fromTo("#rv-mark", { scale: 0.55, rotate: -14, opacity: 0 },
-        { scale: 1, rotate: 0, opacity: 1, duration: 0.85, ease: "back.out(1.7)" }, T("reveal", "name") - 0.3);
-      // The letters draw together into the wordmark: each glyph carries its
-      // own spread, so nothing reflows and nothing snaps.
-      tl.fromTo("#rv-name span", { opacity: 0, x: 26, y: 18 },
-        { opacity: 1, x: 0, y: 0, duration: 0.9, ease: "expo.out", stagger: 0.055 }, T("reveal", "name") - 0.15);
-      tl.fromTo("#rv-glow", { scale: 0.2, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.5, ease: "power2.out" }, T("reveal", "name") - 0.35);
-      tl.to("#rv-glow", { scale: 1.12, duration: 4.2, ease: "sine.inOut" }, T("reveal", "name") + 1.15);
-      tl.fromTo("#rv-tag", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 1, ease: "power3.out" }, T("reveal", "tagline"));
+      tl.fromTo("#summary-s1", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, FILM.by.summary.say - 0.2);
+      tl.fromTo("#summary-s2", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, T("summary", "calm") - 0.25);
+      tl.fromTo("#summary-lock", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: IN }, T("summary", "name") - 0.3);
+      tl.fromTo("#summary-free", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.7, ease: IN }, T("summary", "free") - 0.2);
+      tl.fromTo("#summary-url", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.7, ease: IN }, T("summary", "github") - 0.3);
 
-      /* ---- the ask ----------------------------------------------------- */
+      /* ---- one more thing ---------------------------------------------- */
 
-      brow(el("ak-brow"), at("ask") + 0.3);
-      tl.fromTo("#ak-stmt", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, at("ask") + 0.45);
-      tl.fromTo("#ak-sub", { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power1.out" }, at("ask") + 0.75);
-      tl.fromTo("#ak-term", { opacity: 0, y: 60, scale: 0.97 },
-        { opacity: 1, y: 0, scale: 1, duration: 0.9, ease: "expo.out" }, at("ask") + 0.5);
+      // The desk working, for "while your agents work"; the game, from
+      // "there's a rocket", as a flip-book; then a hard cut to black.
+      tl.fromTo("#rk-title", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, ease: IN }, at("rocket") + 0.2);
+      tl.fromTo("#rk-win", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, at("rocket") + 0.1);
+      const start = T("rocket", "rocket") - 0.1;
+      const black = T("rocket", 0) + FILM.by.rocket.line + 0.5;
+      const step = (black - start) / 24;
+      for (let i = 1; i <= 24; i++) {
+        tl.set("#rk-" + String(i).padStart(2, "0"), { opacity: 1 }, start + (i - 1) * step);
+        if (i > 1) tl.set("#rk-" + String(i - 1).padStart(2, "0"), { opacity: 0 }, start + (i - 1) * step);
+      }
+      tl.fromTo("#rk-quip", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, T("rocket", "welcome") - 0.1);
+      tl.set("#rk-black", { opacity: 1 }, black);
+      tl.fromTo("#rk-black span", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "power1.out" }, black + 0.35);
 
-      // The prompt, typed a character at a time -- driven by the timeline, so
-      // any frame of it can be asked for by its second.
-      const PROMPT = "Revise docs/rate-limiting.md against the review of #142, then send it to snyvi.";
-      const typed = document.getElementById("ak-type");
-      tl.set("#ak-l1", { opacity: 1 }, at("ask") + 1.1);
-      tl.fromTo({ i: 0 }, { i: 0 }, {
-        i: PROMPT.length, duration: 2.1, ease: "none", snap: { i: 1 },
-        onUpdate() { typed.textContent = PROMPT.slice(0, this.targets()[0].i | 0); },
-      }, at("ask") + 1.15);
-      // The cursor blinks while it is being read, and goes out when the
-      // model takes over.
-      const blinks = Math.max(0, Math.floor(3.4 / 0.9) - 1);
-      tl.fromTo("#ak-cur", { opacity: 1 }, { opacity: 0, duration: 0.45, ease: "steps(1)", repeat: blinks, yoyo: true }, at("ask") + 3.4);
-      tl.set("#ak-cur", { opacity: 0 }, T("ask", "writes"));
-      tl.fromTo("#ak-l2", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, T("ask", "writes"));
-      tl.fromTo("#ak-l3", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, T("ask", "writes") + 0.45);
-      tl.fromTo("#ak-l4", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.35, ease: "power2.out" }, T("ask", "call"));
-      tl.fromTo("#ak-ul", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.inOut" }, T("ask", "call") + 0.3);
-      tl.fromTo("#ak-l5", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.4, ease: "power2.out" }, T("ask", "reply"));
+      /* ---- snyvi, watching ----------------------------------------------- */
 
-      /* ---- it is already open ------------------------------------------ */
+      // It peeks over the bottom edge from the first frame, looking up at the
+      // statement; it is taken aback when the projects pile up, sorry when the
+      // work scatters, and ducks out for the answer, where its face is the
+      // logo's. From the desk on it comes back up and reacts to the film the
+      // way it reacts in the app: wide-eyed when something arrives, a wink, a
+      // glad face. Then it leaves the summary to the logo, which falls for it.
+      const B = "buddy";
+      look(B, 0.5, -0.9, 0, 0);
+      blink(B, 2.2);
+      look(B, 1.1, 0.2, T("passion", "agents"));
+      mood(B, "whoa", T("passion", "all")); hop(T("passion", "all"));
+      mood(B, "plain", T("passion", "all") + 1.3);
+      blink(B, T("passion", "same") + 0.4);
 
-      tl.fromTo("#ar-win", { opacity: 0, y: 190, scale: 0.94 },
-        { opacity: 1, y: 0, scale: 1, duration: 1.15, ease: "expo.out" }, at("arrive") + 0.15);
-      tl.fromTo("#ar-glow", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 1.4, ease: "power2.out" }, at("arrive") + 0.15);
-      tl.fromTo("#ar-cap", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, T("arrive", "filed") - 0.6);
-      // A slow push in, so the page is read rather than presented.
-      tl.fromTo("#ar-img", { scale: 1, y: 0 }, { scale: 1.06, y: -26, duration: 6.6, ease: "sine.inOut" }, at("arrive") + 0.9);
+      mood(B, "oops", T("scatter", "plans") - 0.1);
+      tl.to("#buddy .rise", { y: 10, duration: 0.6, ease: "power2.out" }, T("scatter", "plans"));
+      tl.to("#buddy .bob", { keyframes: [{ x: -7 }, { x: 7 }, { x: -5 }, { x: 0 }], duration: 0.7, ease: "sine.inOut" }, T("scatter", "switch") + 0.3);
+      tl.to("#buddy .rise", { y: 190, duration: 0.5, ease: "power2.in" }, at("answer") - 0.3);
 
-      /* ---- the queue --------------------------------------------------- */
+      // The logo's own face, in the answer.
+      mood("answer", "glad", FILM.by.answer.say + 0.3);
+      mood("answer", "plain", T("answer", "app") + 0.2);
+      blink("answer", T("answer", "write") + 0.3);
 
-      feature("queue", el("qu-brow"), el("qu-stmt"), el("qu-sub"), el("qu-win"), el("qu-key"), T("queue", "key"));
-      // Into the bar that says one is waiting -- 1.4 about the middle, moved
-      // so the bar sits near the top of the window and no bone shows above
-      // it -- then out again on the document it opens.
-      const QU = { scale: 1.4, x: -192, y: 143 };
-      tl.fromTo("#qu-a", { scale: 1, x: 0, y: 0 }, { ...QU, duration: 2.2, ease: "power2.inOut" }, at("queue") + 0.7);
-      tl.to("#qu-a", { opacity: 0, duration: 0.5, ease: "power1.inOut" }, T("queue", "key") + 0.35);
-      tl.fromTo("#qu-b", { opacity: 0, ...QU }, { opacity: 1, duration: 0.5, ease: "power1.inOut" }, T("queue", "key") + 0.35);
-      tl.to("#qu-b", { scale: 1.03, x: 0, y: 0, duration: 1.7, ease: "power2.out" }, T("queue", "key") + 0.6);
+      mood(B, "plain", at("desks"));
+      look(B, 0, 0, at("desks"), 0);
+      tl.to("#buddy .rise", { y: 0, duration: 0.7, ease: "back.out(1.6)" }, at("desks") + 0.4);
+      blink(B, T("desks", "four") + 0.9);
 
-      /* ---- versions ---------------------------------------------------- */
+      mood(B, "whoa", T("docs", "lands")); hop(T("docs", "lands"));
+      mood(B, "plain", T("docs", "lands") + 1.4);
+      look(B, 0.9, -0.6, T("docs", "opens"));
 
-      feature("diff", el("df-brow"), el("df-stmt"), el("df-sub"), el("df-win"), el("df-key"), T("diff", "key"));
-      tl.fromTo("#df-img", { scale: 1.02, y: 0 }, { scale: 1.36, y: -86, duration: 3.6, ease: "power1.inOut" }, at("diff") + 0.7);
+      look(B, 0, 0, at("library"));
+      mood(B, "wink", T("library", "key") + 0.1);
+      mood(B, "plain", T("library", "key") + 1.3);
 
-      /* ---- diagrams ---------------------------------------------------- */
+      mood(B, "glad", T("notes", "head")); hop(T("notes", "head"));
+      mood(B, "plain", T("notes", "head") + 1.4);
 
-      feature("diagram", el("dg-brow"), el("dg-stmt"), el("dg-sub"), el("dg-win"), null, null);
-      tl.fromTo("#dg-img", { scale: 1.34, y: -150, x: 60 }, { scale: 1.5, y: -190, x: 40, duration: 4.4, ease: "sine.inOut" }, at("diagram") + 0.3);
+      look(B, -1.1, 0, T("switch", "left") - 0.2);
+      look(B, 1.1, 0, T("switch", "left") + 0.9);
+      look(B, 0, 0, T("switch", "left") + 1.9);
+      mood(B, "whoa", T("switch", "key") + 0.2);
+      mood(B, "plain", T("switch", "key") + 1.3);
 
-      /* ---- search ------------------------------------------------------ */
+      look(B, 1.1, -0.4, T("agents", "names"));
+      look(B, 0.3, -0.4, T("agents", "names") + 1.0);
+      mood(B, "glad", T("agents", "mcp") + 0.2);
+      mood(B, "plain", T("agents", "mcp") + 1.4);
 
-      feature("search", el("se-brow"), el("se-stmt"), el("se-sub"), el("se-win"), el("se-key"), T("search", "key"));
-      tl.fromTo("#se-img", { scale: 1.02, y: 0 }, { scale: 1.46, y: 60, x: -120, duration: 4.2, ease: "power1.inOut" }, T("search", "key") + 0.2);
+      mood(B, "wink", T("private", "home") + 0.3);
+      mood(B, "plain", T("private", "home") + 1.5);
+      tl.to("#buddy .rise", { y: 190, duration: 0.5, ease: "power2.in" }, at("summary") - 0.3);
 
-      /* ---- source ------------------------------------------------------ */
+      // The logo, in the summary, on "one calm place".
+      mood("summary", "love", T("summary", "name") + 0.5);
+      tl.fromTo("#summary-head .puff", { opacity: 0, y: 0 }, { opacity: 1, y: -3, duration: 0.5, ease: "power2.out" }, T("summary", "name") + 0.6);
+      tl.to("#summary-head .puff", { opacity: 0, y: -7, duration: 0.8, ease: "power1.in" }, T("summary", "name") + 1.2);
 
-      feature("source", el("sr-brow"), el("sr-stmt"), null, el("sr-win"), null, null);
-      tl.fromTo("#sr-a", { scale: 1.06, y: 0 }, { scale: 1.1, y: -40, duration: 4, ease: "sine.inOut" }, at("source") + 0.3);
-      tl.to("#sr-a", { opacity: 0, duration: 0.8, ease: "power1.inOut" }, T("source", "speed") - 0.4);
-      tl.fromTo("#sr-b", { opacity: 0, scale: 1.1, y: -40 }, { opacity: 1, duration: 0.8, ease: "power1.inOut" }, T("source", "speed") - 0.4);
-      tl.to("#sr-b", { scale: 1.16, y: -90, duration: 3.4, ease: "sine.inOut" }, T("source", "speed") - 0.4);
-      tl.fromTo("#sr-chip", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, T("source", "speed") - 0.3);
-      count("#sr-num", 143, 0, T("source", "speed") - 0.25, 1.1);
-
-      /* ---- measured ----------------------------------------------------- */
-
-      brow(el("nm-brow"), at("numbers") + 0.3);
-      tl.fromTo("#nm-stmt", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at("numbers") + 0.4);
-      tl.fromTo("#nm-glow", { opacity: 0, scale: 0.7 }, { opacity: 0.8, scale: 1, duration: 1.8, ease: "power2.out" }, at("numbers") + 0.5);
-      const statCues = ["binary", "size", "start", "home"];
-      document.querySelectorAll("#s-numbers .stat").forEach((el, i) => {
-        const when = T("numbers", statCues[i]);
-        const dp = +el.dataset.dp;
-        tl.fromTo(el, { opacity: 0, y: 54 }, { opacity: 1, y: 0, duration: 0.55, ease: "power4.out" }, when - 0.12);
-        count(el.querySelector(".v b"), +el.dataset.to, dp, when, 0.85);
-        tl.fromTo(el.querySelector(".b i"), { scaleX: 0 },
-          { scaleX: +getComputedStyle(el.querySelector(".b i")).getPropertyValue("--w"), duration: 1.1, ease: "power2.out" }, when + 0.15);
-      });
-      tl.fromTo("#nm-foot", { opacity: 0 }, { opacity: 1, duration: 0.9, ease: "power1.out" }, T("numbers", "home") + 0.2);
-
-      /* ---- the agents ---------------------------------------------------- */
-
-      brow(el("ag-brow"), at("agents") + 0.3);
-      // The statement is the scene's title, so it is up while the names are
-      // still being read, not held back for the sentence that repeats it.
-      tl.fromTo("#ag-stmt", { opacity: 0, y: 42 }, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at("agents") + 0.4);
-      tl.fromTo("#ag-cmd", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.6, ease: "back.out(1.4)" }, T("agents", "cmd") - 0.2);
-      // The five the voice names land one by one; the rest of the roster
-      // follows under the sentence that says there are more.
-      const rows = document.querySelectorAll("#ag-list .row");
-      ["a1", "a2", "a3", "a4", "a5"].forEach((cue, i) => {
-        tl.fromTo(rows[i], { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.5, ease: "power4.out" }, T("agents", cue));
-        tl.fromTo(rows[i].querySelector("i"), { scale: 0 }, { scale: 1, duration: 0.4, ease: "back.out(3)" }, T("agents", cue) + 0.08);
-      });
-      [5, 6, 7].forEach((n, i) => {
-        tl.fromTo(rows[n], { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, T("agents", "mcp") + 0.9 + i * 0.12);
-        tl.fromTo(rows[n].querySelector("i"), { scale: 0 }, { scale: 1, duration: 0.35, ease: "back.out(3)" }, T("agents", "mcp") + 0.96 + i * 0.12);
-      });
-
-      /* ---- the end ------------------------------------------------------- */
-
-      tl.fromTo("#ot-lock", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.9, ease: "power3.out" }, at("outro") + 0.35);
-      tl.fromTo("#ot-glow", { opacity: 0, scale: 0.75 }, { opacity: 1, scale: 1, duration: 2.2, ease: "power2.out" }, at("outro") + 0.35);
-      tl.fromTo("#ot-stmt", { opacity: 0, y: 46 }, { opacity: 1, y: 0, duration: 0.9, ease: "expo.out" }, T("outro", "shows") - 0.55);
-      tl.fromTo("#ot-url", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, T("outro", "github") - 0.35);
-      tl.fromTo("#ot-badges", { opacity: 0 }, { opacity: 1, duration: 0.9, ease: "power1.out" }, T("outro", "github") + 0.15);
-      // The one scene that is allowed to leave.
-      tl.to("#s-outro .pad", { opacity: 0, duration: 1.1, ease: "power2.in" }, FILM.total - 1.3);
-      tl.to("#ot-glow", { opacity: 0, duration: 1.1, ease: "power2.in" }, FILM.total - 1.3);
+      /** A change of face: the named one shown, every other hidden. */
+      function mood(id, face, when) {
+        for (const k of Object.keys(FACES)) tl.set("#" + id + "-" + k, { opacity: k === face ? 1 : 0 }, when);
+      }
+      /** Its eyes shut and open again, as in the app's bm-blink. */
+      function blink(id, when) {
+        const eyes = "#" + id + "-plain .eyes";
+        tl.to(eyes, { scaleY: 0.1, svgOrigin: "16 17", duration: 0.07, ease: "power1.in" }, when);
+        tl.to(eyes, { scaleY: 1, svgOrigin: "16 17", duration: 0.12, ease: "power1.out" }, when + 0.09);
+      }
+      /** Where it is looking, in the head's own units. */
+      function look(id, dx, dy, when, dur = 0.3) {
+        tl.to("#" + id + "-plain .eyes", { x: dx, y: dy, duration: dur, ease: "power2.out" }, when);
+      }
+      /** The app's bm-hop: up with a squash, down with a stretch, settled. */
+      function hop(when) {
+        tl.to("#buddy .bob", { keyframes: [
+          { y: -26, scaleX: 1.06, scaleY: 0.94, duration: 0.22, ease: "power2.out" },
+          { y: 0, scaleX: 0.95, scaleY: 1.05, duration: 0.2, ease: "power2.in" },
+          { y: -5, scaleX: 1, scaleY: 1, duration: 0.14, ease: "power1.out" },
+          { y: 0, duration: 0.14, ease: "power1.in" },
+        ], transformOrigin: "50% 100%" }, when);
+      }
 
       /* ---- the cuts ------------------------------------------------------ */
 
-      // Each scene hands over at the second the next one begins: a push for
-      // the ordinary cut, and something of its own where the film turns.
       FILM.beats.forEach((b, i) => {
         if (!b.out) return;
         const [kind, d] = b.out;
@@ -688,60 +595,72 @@ one partner, and the gateway should say so with one number.
         const to = el("s-" + FILM.beats[i + 1].name).querySelector(".inner");
         const t = b.at + b.dur;
         if (kind === "leak") {
-          // The dark blown open: a warm bloom that swallows the frame and
-          // leaves the name behind it.
-          tl.fromTo("#leak", { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1.08, duration: d * 0.55, ease: "power2.in" }, t - d * 0.55);
-          tl.to("#leak", { opacity: 0, duration: d * 0.9, ease: "power2.out" }, t + d * 0.1);
-          tl.to(from, { opacity: 0, duration: d * 0.5, ease: "power1.in" }, t - 0.1);
-          tl.fromTo(to, { opacity: 0, scale: 1.06 }, { opacity: 1, scale: 1, duration: d * 1.5, ease: "power2.out" }, t - 0.1);
-        } else if (kind === "zoom") {
-          // Through the terminal and out the other side, into the page.
-          tl.to(from, { opacity: 0, scale: 1.3, duration: d, ease: "power2.in" }, t);
-          tl.fromTo(to, { opacity: 0, scale: 1.14 }, { opacity: 1, scale: 1, duration: d * 1.25, ease: "expo.out" }, t + 0.06);
-        } else if (kind === "blur") {
-          tl.to(from, { opacity: 0, filter: "blur(16px)", duration: d, ease: "power2.inOut" }, t);
-          tl.fromTo(to, { opacity: 0, filter: "blur(12px)" }, { opacity: 1, filter: "blur(0px)", duration: d, ease: "power2.out" }, t);
+          // Out of the problem: a slow dissolve, with the next scene settling in.
+          tl.to(from, { opacity: 0, duration: d, ease: "power1.inOut" }, t);
+          tl.fromTo(to, { opacity: 0, scale: 1.02 }, { opacity: 1, scale: 1, duration: d * 1.6, ease: "power2.out" }, t);
+        } else if (kind === "hold") {
+          // The window stays where it is and the next photograph crossfades
+          // into it over the one before, which stays fully up underneath until
+          // it is covered: no frame of the change is darker than either end.
+          // Only the words beside it change.
+          tl.to(from.querySelector(".col"), { opacity: 0, y: -10, duration: 0.3, ease: "power1.in" }, t);
+          tl.set(to, { opacity: 1 }, t);
+          tl.fromTo(to.querySelector(".win"), { opacity: 0 }, { opacity: 1, duration: d, ease: "power1.inOut" }, t);
+          tl.set(from, { opacity: 0 }, t + d);
+        } else if (kind === "cut") {
+          tl.set(from, { opacity: 0 }, t);
+          tl.set(to, { opacity: 1 }, t);
         } else if (kind === "up") {
-          tl.to(from, { opacity: 0, yPercent: -9, duration: d, ease: "power3.inOut" }, t);
-          tl.fromTo(to, { opacity: 0, yPercent: 7 }, { opacity: 1, yPercent: 0, duration: d, ease: "power3.out" }, t);
+          tl.to(from, { opacity: 0, yPercent: -6, duration: d, ease: "power3.inOut" }, t);
+          tl.fromTo(to, { opacity: 0, yPercent: 5 }, { opacity: 1, yPercent: 0, duration: d, ease: "power3.out" }, t);
         } else {
-          tl.to(from, { opacity: 0, xPercent: -8, duration: d, ease: "power3.inOut" }, t);
-          tl.fromTo(to, { opacity: 0, xPercent: 6 }, { opacity: 1, xPercent: 0, duration: d, ease: "power3.out" }, t);
+          tl.to(from, { opacity: 0, xPercent: -6, duration: d, ease: "power3.inOut" }, t);
+          tl.fromTo(to, { opacity: 0, xPercent: 5 }, { opacity: 1, xPercent: 0, duration: d, ease: "power3.out" }, t);
         }
       });
 
       /* ---- the parts each scene shares ------------------------------------ */
 
-      /** An eyebrow: the tick, the words, the rule. */
-      function brow(node, when) {
-        tl.fromTo(node.querySelector("i"), { scale: 0 }, { scale: 1, duration: 0.45, ease: "back.out(2.6)" }, when);
-        tl.fromTo(node, { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, when + 0.04);
-        tl.fromTo(node.querySelector("u"), { scaleX: 0 }, { scaleX: 1, duration: 0.7, ease: "power2.out" }, when + 0.2);
+      /** A feature: the window is already up, held over from the scene before
+       *  with the new photograph crossfaded into it; the title lands with its
+       *  name in the voice, and the sentence follows. */
+      function feature(name) {
+        const b = FILM.by[name];
+        tl.fromTo("#" + name + "-title", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.7, ease: IN }, b.say - 0.15);
+        tl.fromTo("#" + name + "-lead", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.8, ease: IN }, b.say + 0.55);
       }
 
-      /** One of the five split scenes: the words on the left, the window on
-       *  the right, and the key that did it, struck. */
-      function feature(name, browEl, stmt, sub, win, key, keyAt) {
-        const when = at(name);
-        brow(browEl, when + 0.25);
-        tl.fromTo(stmt, { opacity: 0, y: 38 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, when + 0.35);
-        if (sub) tl.fromTo(sub, { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power1.out" }, when + 0.6);
-        tl.fromTo(win, { opacity: 0, x: 70, scale: 0.98 },
-          { opacity: 1, x: 0, scale: 1, duration: 0.85, ease: "expo.out" }, when + 0.3);
-        if (key) {
-          tl.fromTo(key, { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(2.2)" }, keyAt - 0.25);
-          // Struck: down on the beat, up after it.
-          tl.to(key, { y: 6, duration: 0.09, ease: "power2.in" }, keyAt);
-          tl.to(key, { y: 0, duration: 0.3, ease: "back.out(3)" }, keyAt + 0.09);
-        }
+      /** The camera inside a window, eased to a point of the shot (in % of it)
+       *  at scale `s`, kept inside the frame's edges. */
+      function cam(name, when, fx, fy, s, dur = 1.3) {
+        const clamp = (v, lo) => Math.min(0, Math.max(lo, v));
+        tl.to("#" + name + "-cam", { scale: s, xPercent: clamp(50 - s * fx, 100 - 100 * s), yPercent: clamp(50 - s * fy, 100 - 100 * s),
+                                     duration: dur, ease: "power2.inOut" }, when);
       }
 
-      /** A number counted up to, with the decimals it is quoted at. */
-      function count(target, to, dp, when, dur) {
-        const el = typeof target === "string" ? document.querySelector(target) : target;
+      /** The next photograph, crossfaded in over the one before. */
+      function swap(sel, when) {
+        tl.fromTo(sel, { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power1.inOut" }, when);
+      }
+
+      /** A key, pressed on the word. */
+      function press(sel, when) {
+        tl.to(sel, { y: 3, borderBottomWidth: 1, backgroundColor: "#f04a63", color: "#0b0d12", duration: 0.08, ease: "power2.in" }, when);
+        tl.to(sel, { y: 0, borderBottomWidth: 2, backgroundColor: "#151922", color: "#eeece8", duration: 0.45, ease: "power2.out" }, when + 0.25);
+      }
+
+      /** A ring over the part of the frame being named; `off` takes it down. */
+      function ringAt(id, when, off) {
+        tl.fromTo("#" + id, { opacity: 0, scale: 1.15 }, { opacity: 1, scale: 1, duration: 0.45, ease: "power4.out" }, when);
+        if (off) tl.to("#" + id, { opacity: 0, duration: 0.3, ease: "power1.in" }, off);
+      }
+
+      /** A number counted up to. */
+      function count(sel, to, when, dur) {
+        const node = document.querySelector(sel);
         tl.fromTo({ n: 0 }, { n: 0 }, {
           n: to, duration: dur, ease: "power2.out",
-          onUpdate() { el.textContent = this.targets()[0].n.toFixed(dp); },
+          onUpdate() { node.textContent = Math.round(this.targets()[0].n); },
         }, when);
       }
 

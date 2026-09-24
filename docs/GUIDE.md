@@ -2,15 +2,26 @@
 
 Everything the [README](../README.md) shows, at the length it takes to say
 how it works: the install on each desktop, updating and uninstalling,
-every command, connecting each agent, the window, the keys, and what each
-part of the page does and why. The numbers at the end are the ones
-`snyvi bench` reads.
+every command, connecting each agent, the window, the desks, the keys, and
+what each part of the page does and why. The numbers at the end are the
+ones `snyvi bench` reads.
+
+snyvi is for the person with more passion projects than hours in the day,
+building several of them at once with coding agents. It keeps each project
+in order: a [desk](DESK.md) per project — its folder, and up to four real
+panels rooted at it, each running an agent or a shell — and everything those
+agents write, kept where you can read it.
 
 You ask Claude Code for a plan. It writes one. With snyvi, Claude sends
 the document and replies with a link; by the time you read the reply, the
-document is already open in the viewer, rendered, and filed under the
-project. Markdown and every kind of source file. One direction only:
-agents send, snyvi shows.
+document is already open in the viewer, rendered, filed under the project,
+and listed on the desk beside the panel that wrote it. Markdown and every
+kind of source file. Each desk keeps its own notes, and each is exactly as
+you left it when you come back.
+
+One direction only: agents send, snyvi shows. The rule is about the channel,
+not the window: snyvi cannot be read back by an agent, and nothing a
+document says is ever typed into a panel.
 
 ## Install
 
@@ -435,8 +446,19 @@ From source, `cargo build --release` gives you snyvi alone; add
 
 ### Keys
 
+The single-letter keys start asleep, so a `j` or a `Del` meant for a
+terminal beside snyvi can't move the page or delete a document. Press
+**⌃B** to turn them on. A pill at the bottom of the window reads
+*Keys on · esc* while they're on, and blinks each time a key acts. They go
+back to sleep on Esc, on ⌃B again, on a click, when a text field or a
+panel takes the focus, or after ten seconds with no key pressed. The pill
+dims just before that happens. Inside a panel, ⌃B belongs to the program
+running there (tmux, the shell), and snyvi leaves it alone. Keys with a
+modifier, like ⌘K, ⌃\` and alt ←/→, always work.
+
 | Key   | Action                                     |
 |-------|--------------------------------------------|
+| ⌃B    | turn the letter keys on / off               |
 | ⌘K    | search everything                           |
 | j / k | next / previous document                    |
 | [ / ] | older / newer version in the same workflow  |
@@ -460,8 +482,8 @@ From source, `cargo build --release` gives you snyvi alone; add
 
 Everything the keys do, a finger can do too: on a screen with no
 pointer the controls that appear on hover -- copy, rename, the `#`
-beside a heading, a code block's language -- are simply there, and the
-`? for keys` in the sidebar's footer opens the same box. Tab reaches
+beside a heading, a code block's language -- are simply there, and
+the `?` button at the top of the window opens the same box. Tab reaches
 every control in the order they are on the page; the search palette and
 the keys box keep focus inside them while open and give it back to
 where it was on Escape, and the find count is read out as it changes.

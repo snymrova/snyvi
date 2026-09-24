@@ -66,7 +66,7 @@ const FIRST = [["index.html", "/"], ["boot.js", "/assets/boot.js"], ["app.css", 
  * measured the way the four above are. desk.js is the second chunk, and the
  * one the measurement below was taken to make the case for: the pane view,
  * paid when a desk is opened in the window and never in a tab. */
-const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about or reset is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"]];
+const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"]];
 
 const kb = n => (n / KB).toFixed(1) + " KB";
 
@@ -80,9 +80,12 @@ async function served(path) {
 }
 
 /** An asset that does not parse is worth more than an asset that is small.
- *  Node is the parser here because it is already the thing running this. */
-function parses(name, text) {
-  const f = join(tmp, `check-${name}`);
+ *  Node is the parser here because it is already the thing running this.
+ *  A chunk is parsed as the module the page imports it as: as a plain
+ *  script, two functions of one name are legal, and a desk.js that declared
+ *  `put` twice passed here while the page refused to load it. */
+function parses(name, text, module = false) {
+  const f = join(tmp, `check-${name}${module ? ".mjs" : ""}`);
   writeFileSync(f, text);
   try { execFileSync(process.execPath, ["--check", f], { stdio: "pipe" }); return true; }
   catch { return false; }
@@ -125,7 +128,7 @@ async function main() {
       const body = await served(path);
       const g = gzipSync(body, { level: 9 }).length;
       if (name === "desk.js") desk = g;
-      if (!parses(name, body.toString())) {
+      if (!parses(name, body.toString(), true)) {
         console.error(`bytes: ${name} is not valid JavaScript as served`);
         failed = true;
       }

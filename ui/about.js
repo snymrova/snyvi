@@ -10,6 +10,10 @@
  * facts, `/api/reset` for the census -- so the fetch that brings this module
  * is the one the panel was going to make anyway, on the same localhost.
  *
+ * The connect page came here too, for the same reason: it is what an empty
+ * library shows, and what `?` reaches, and a reader with documents to read
+ * never draws it.
+ *
  * The page owns the markup and the dialog helpers; this owns what goes in
  * them. Everything it needs arrives in `d`, so nothing here reaches into the
  * page's scope and the seam is one object.
@@ -139,4 +143,42 @@ async function submitReset(e, d) {
   // The number has moved: say the new sentence and ask for the new number.
   if (j.census) { resetCensus = j.census; $("#reset-n").value = ""; $("#reset-say").textContent = resetSentence(j.census, plural); }
   resetArm(d);
+}
+
+/** The connect page: one row per agent, from /api/agents. The page keeps
+ *  the timer that asks again, and the copy buttons. */
+export function connect(a, { esc, rel }) {
+  const rows = a ? a.rows : [];
+  const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
+  const row = r => {
+    const other = r.id.startsWith("sender:");
+    const live = r.live || 0;
+    const when = r.last_sent != null ? ` · sent ${rel(r.last_sent)}` : "";
+    let say, state;
+    if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and ${live ? "is here now" : "has sent"}: connected.`; }
+    else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet." : ""}`; }
+    else if (r.state === "stale") { state = "stale"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)}</code>, which no longer exists — every send fails.`; }
+    else if (r.state === "unreadable") { state = "stale"; say = `<code>${esc(r.file)}</code> could not be read (${esc(r.error)}), so it is not edited. Put the entry in by hand.`; }
+    // Here, and nothing in its user file: registered somewhere the daemon
+    // does not read -- a project's own settings, most often.
+    else if (live) { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>, yet it is here: registered somewhere else, a project's own settings perhaps.` : `Here, though not set up in any file snyvi reads.`; }
+    else { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>.` : `Not set up.`; }
+    // An agent that is here now says so in place of "connected": a session
+    // of it is open on the daemon this moment, not only set up to be.
+    const word = live ? `online${live > 1 ? ` ×${live}` : ""}` : { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
+    if (live) state += " is-live";
+    const fix = other || r.state === "connected" ? "" :
+      `<div class="agent-fix">${r.state === "unreadable" ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : "Or by hand, in"} <code>${esc(r.fix.place)}</code></summary>${cmd(r.fix.snippet, "snippet")}</details></div>`;
+    const i = r.instructions;
+    const line = other || !i ? "" : `<p class="agent-instr">${
+      i.present ? `Asked to send what it writes, in <code>${esc(i.place)}</code>.`
+      : state === "connected" ? `Not yet asked to send what it writes: the line below goes in <code>${esc(i.place)}</code>.`
+      : `Then the line below, in <code>${esc(i.place)}</code>.`}</p>`;
+    return `<li class="agent is-${state}" data-agent="${esc(r.id)}"><div class="agent-head"><span class="agent-dot"></span><b class="agent-name">${esc(r.name)}</b><span class="agent-state">${word}${when}</span></div><p class="agent-say">${say}</p>${fix}${line}</li>`;
+  };
+  const line = rows.find(r => r.instructions)?.instructions.line || "";
+  return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Connect an agent</h1><p class="doc-sub">Any agent that speaks MCP can send documents here. Each row is what that agent's own settings say about snyvi, right now.</p></header>` +
+    `<ul class="agents">${rows.map(row).join("")}</ul>` +
+    (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
+    `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand.</p></div>`;
 }

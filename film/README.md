@@ -1,11 +1,13 @@
 # The film
 
-The README's demo. Ninety-four seconds, 1920×1080, narrated, with music.
+The README's demo. A hundred and nine seconds, 1920×1080, narrated, with music.
 Every product pixel in it is the current release, photographed by a script
 against the real binary — nothing here is a mock-up or a memory of a build.
 
 ```
-node film/capture.mjs                 # the frames, from a seeded daemon
+node film/stage.mjs                   # a library, three desks, held-back sends
+node film/shoot.mjs                   # the frames, off the real window, on its own display
+node film/stage.mjs --stop            # and take the library down
 OPENROUTER_API_KEY=… node film/audio.mjs   # the narration and the music
 node film/mix.mjs                     # one soundtrack, voice over a ducked bed
 cd film && npx hyperframes check      # lint, layout, contrast
@@ -30,8 +32,8 @@ three times out of three. So if a render vanishes mid-way, look at free
 memory before looking at the composition, and run it again — the retry costs
 fifteen minutes and usually is the fix.
 
-The render is 48 MB, which is the master; CRF 30 puts the same 1920×1080
-into 7.5 MB, under GitHub's ceiling for an upload, and a frame of the
+The render is about 32 MB, which is the master; CRF 30 puts the same 1920×1080
+into 5.7 MB, under GitHub's ceiling for an upload, and a frame of the
 source scene — the finest text in the film — is indistinguishable from the
 master at 1:1. Anything below CRF 32 was, so the ceiling chose the number.
 
@@ -41,10 +43,12 @@ master at 1:1. Anything below CRF 32 was, so the ceiling chose the number.
 |---|---|
 | `DESIGN.md` | the visual direction, and why it is that and not something else |
 | `beats.js` | the clock: every scene, when it starts, and the second each line lands on |
-| `capture.mjs` | the camera: drives a seeded daemon and Chromium, writes `frames/` |
+| `stage.mjs` | a library worth filming: five projects, three desks, documents sent from inside panels, desk notes |
+| `shoot.mjs` | the camera: an Xvfb, a private session bus and the stage's own window, real Claude Code in the panels, writes `frames/` |
+| `xdo.py` | keys, pointer and tooltips for the camera, straight at the X server |
 | `audio.mjs` | the voice and the music, through OpenRouter, cached by what was asked for |
 | `mix.mjs` | lays the lines against `beats.js` and ducks the music under them |
-| `index.html` | the composition: twelve scenes, one GSAP timeline |
+| `index.html` | the composition: twelve scenes, one GSAP timeline: problem, answer, how, summary, tag |
 | `frames/` | the stills, at the width the film magnifies them to |
 | `audio/` | a line per beat, the bed, and `mix.mp3` — what the film carries |
 | `fonts/` | the page's own two faces, copied out of `ui/fonts` by the camera |
@@ -52,10 +56,11 @@ master at 1:1. Anything below CRF 32 was, so the ceiling chose the number.
 
 `audio/` is committed; `frames/` and `fonts/` are not. The narration cost a
 model call and no two calls say a sentence the same way, so it is kept. The
-frames are a minute of `capture.mjs` against the release binary, and are the
-release either way. The fonts are the page's own, copied out of `ui/fonts`
-by the same script, so a film set in a stale copy of them is not a thing
-that can happen. Run `capture.mjs` first in a fresh checkout, or the
+frames are `stage.mjs` and `shoot.mjs` against the release binary -- a few
+minutes, most of it real Claude Code sessions answering in the panels -- and
+are the release either way. The fonts are the page's own, copied out of
+`ui/fonts` by `capture.mjs`, so a film set in a stale copy of them is not a
+thing that can happen. Run both in a fresh checkout, or the
 composition opens with its pictures and its type missing.
 
 ## The clock

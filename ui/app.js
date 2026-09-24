@@ -162,15 +162,22 @@
     project: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/>',
     desk: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/>',
     folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/>',
+    doc: '<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M9 13h6M9 16.5h6"/>',
   };
-  const icon = k => `<svg class="r-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
+  const icon = (k, px = 16) => `<svg class="r-ico" viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
   /** A section's head, as a Mac sidebar has them: a quiet label that folds
    *  what is under it, the same for all three, and nothing else. Whatever
    *  opens a page is a row. The chevron shows on hover, and stays while the
    *  section is folded so a folded one says so. */
+  /** A row that folds says so after its name, in the section heads' own
+   *  chevron: every row reads icon, name, chevron (app.css, .s-chev). */
+  const chev = `<span class="s-chev" aria-hidden="true"></span>`;
+  /** Documents and files carry the document glyph, smaller and quieter
+   *  than a row that holds things, so the left column is always an icon. */
+  const docIco = () => icon("doc", 14);
   function secHead(key, name, tail = "") {
     const open = !folded.has(key);
-    return `<div class="s-head" data-sec="${key}"><button type="button" class="s-link" data-fold="${key}" aria-expanded="${open}"><span class="s-nm">${name}</span><span class="s-chev" aria-hidden="true"></span></button>${tail}</div>`;
+    return `<div class="s-head" data-sec="${key}"><button type="button" class="s-link" data-fold="${key}" aria-expanded="${open}"><span class="s-nm">${name}</span>${chev}</button>${tail}</div>`;
   }
 
   /** The browse section keeps its own DOM across navigations so expanded folders stay open.
@@ -183,7 +190,7 @@
     const head = secHead("folders", "Folders");
     browseEl.innerHTML = head + `<div class="b-body s-body">` + state.browse.map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
     }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Read a folder as it is on disk"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
@@ -230,7 +237,7 @@
     // Not "active": markActive puts that on, so the rows a reader moves between
     // draw the same and a move between two of them costs no redraw.
     const cls = waitingRow(d) ? "new" : "";
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}"><span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}">${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`;
   };
 
   // ---------- the queue ----------
@@ -265,7 +272,7 @@
       } catch {}
     }, 150);
   }
-  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}"><span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`);
+  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}">${docIco()}<span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
@@ -554,7 +561,7 @@
         continue;
       }
       const open = projOpen(p);
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
+      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -662,8 +669,8 @@
   }
 
   const entryHtml = (rootId, e) => e.dir
-    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${esc(e.name)}${plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
-    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}"><span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
+    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${icon("folder", 14)}<span class="nm">${esc(e.name)}</span>${chev}${plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
+    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}">${docIco()}<span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
 
   /** Fetch one directory level the first time its folder is opened. */
   async function fillTree(ul) {
@@ -1080,6 +1087,7 @@
     applyPreview();
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
+    overBar();
     if (push) history.pushState({ id, over: state.deskBehind }, "", `/d/${id}`);
     if (fromHistory && kept("id", id)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
@@ -1173,6 +1181,7 @@
     if (!items.length) {
       agents = boot.agents; boot.agents = null;
       if (!agents) { try { agents = await (await fetch("/api/agents")).json(); } catch {} }
+      await connectReady();
     }
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
@@ -1192,7 +1201,7 @@
 
   function inboxHtml(items, agents) {
     const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
-    if (!items.length) return connectHtml(agents);
+    if (!items.length) return connectHtml ? connectHtml(agents) : "";
     // What is waiting comes first, oldest first, so the landing page answers
     // "what is new" before "what is there".
     const n = state.waiting;
@@ -1211,41 +1220,14 @@
    * without a reload. It is not a tour: it appears to exactly the person who
    * needs it, and the first document to arrive replaces it. */
   let agentsSeen = "", agentsTimer = 0;
-  function connectHtml(a) {
-    const rows = a ? a.rows : [];
-    agentsSeen = JSON.stringify(rows);
-    const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
-    const row = r => {
-      const other = r.id.startsWith("sender:");
-      const live = r.live || 0;
-      const when = r.last_sent != null ? ` · sent ${rel(r.last_sent)}` : "";
-      let say, state;
-      if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and ${live ? "is here now" : "has sent"}: connected.`; }
-      else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet." : ""}`; }
-      else if (r.state === "stale") { state = "stale"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)}</code>, which no longer exists — every send fails.`; }
-      else if (r.state === "unreadable") { state = "stale"; say = `<code>${esc(r.file)}</code> could not be read (${esc(r.error)}), so it is not edited. Put the entry in by hand.`; }
-      // Here, and nothing in its user file: registered somewhere the daemon
-      // does not read -- a project's own settings, most often.
-      else if (live) { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>, yet it is here: registered somewhere else, a project's own settings perhaps.` : `Here, though not set up in any file snyvi reads.`; }
-      else { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>.` : `Not set up.`; }
-      // An agent that is here now says so in place of "connected": a session
-      // of it is open on the daemon this moment, not only set up to be.
-      const word = live ? `online${live > 1 ? ` ×${live}` : ""}` : { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
-      if (live) state += " is-live";
-      const fix = other || r.state === "connected" ? "" :
-        `<div class="agent-fix">${r.state === "unreadable" ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : "Or by hand, in"} <code>${esc(r.fix.place)}</code></summary>${cmd(r.fix.snippet, "snippet")}</details></div>`;
-      const i = r.instructions;
-      const line = other || !i ? "" : `<p class="agent-instr">${
-        i.present ? `Asked to send what it writes, in <code>${esc(i.place)}</code>.`
-        : state === "connected" ? `Not yet asked to send what it writes: the line below goes in <code>${esc(i.place)}</code>.`
-        : `Then the line below, in <code>${esc(i.place)}</code>.`}</p>`;
-      return `<li class="agent is-${state}" data-agent="${esc(r.id)}"><div class="agent-head"><span class="agent-dot"></span><b class="agent-name">${esc(r.name)}</b><span class="agent-state">${word}${when}</span></div><p class="agent-say">${say}</p>${fix}${line}</li>`;
-    };
-    const line = rows.find(r => r.instructions)?.instructions.line || "";
-    return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Connect an agent</h1><p class="doc-sub">Any agent that speaks MCP can send documents here. Each row is what that agent's own settings say about snyvi, right now.</p></header>` +
-      `<ul class="agents">${rows.map(row).join("")}</ul>` +
-      (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
-      `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand.</p></div>`;
+  /* The page itself is drawn by ui/about.js, with the app's other pages of
+   * its own: an empty library, or `?`, is when it is first fetched. */
+  let connectHtml = null, panelLoading = null;
+  const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
+  async function connectReady() {
+    if (connectHtml) return;
+    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel })); }
+    catch (e) { panelLoading = null; toast("Could not open that page", String(e)); }
   }
   async function showConnect(push = true) {
     if (push) leave();
@@ -1255,6 +1237,7 @@
     if (push) history.pushState({ connect: true }, "", "/connect");
     let a = boot.agents; boot.agents = null;
     if (!a) { try { a = await (await fetch("/api/agents")).json(); } catch { a = null; } }
+    await connectReady();
     docEl.innerHTML = connectHtml(a);
     if (push) swapIn();
     main.scrollTo({ top: 0, behavior: "instant" });
@@ -2480,19 +2463,36 @@
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
-      `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "") + list.map(d => {
-        const m = mark3(d.panes), has = d.panes.length > 0;
-        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
-        // The mark and the count are one column at the row's end, drawn
-        // whether or not there is anything to say, so every row's line up.
-        const end = `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`;
-        // One row a desk, as the Inbox has one row a document: what the desk
-        // holds is said by its mark and its count, and shown by opening it.
-        return `<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">` +
-          `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}${end}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
-      }).join("") + `</ul>`;
+    const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
+    const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
+        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "");
+    const rows = list.map(d => {
+      const m = mark3(d.panes), has = d.panes.length > 0;
+      const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
+      // One row a desk, as the Inbox has one row a document: what the desk
+      // holds is said by its mark and its count, and shown by opening it.
+      // The mark and the count are one column at the row's end, drawn
+      // whether or not there is anything to say, so every row's line up.
+      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
+        `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}`,
+        `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
+        `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`];
+    });
+    // A pane's dot changes far more often than the list does, and the row
+    // under the pointer must not be swapped for a copy of itself: it would
+    // lose its hover until the pointer moved, and a click pressed on the old
+    // row and let go on the new one would not be a click. So what changed
+    // is written, and only that -- the mark column, the head -- and the list
+    // is drawn whole only when a row itself is different.
+    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
+    if (!same) {
+      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
+      deskNav.$top = top; deskNav.$head = head;
+      deskNav.querySelectorAll(".t-desk").forEach((li, i) => { li.$r = rows[i][0] + rows[i][2]; li.$e = rows[i][1]; });
+      return;
+    }
+    if (deskNav.$head !== head) { deskNav.firstElementChild.outerHTML = head; deskNav.$head = head; }
+    rows.forEach((r, i) => { if (lis[i].$e !== r[1]) { lis[i].querySelector(".end").outerHTML = r[1]; lis[i].$e = r[1]; } });
   }
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
@@ -2500,6 +2500,7 @@
     if (push) leave();
     const was = state.view === "desk";
     state.view = "desk"; state.deskId = id; state.deskBehind = null; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    overBar();
     if (id != null) lastDesk = id;
     root.dataset.view = "desk";
     if (push) history.pushState({ desk: id }, "", id == null ? "/desks" : `/desk/${id}`);
@@ -2521,6 +2522,7 @@
     if (state.view === "desk") { delete root.dataset.view; if (desk) desk.close(); }
     else if (state.deskBehind != null && desk) desk.close();
     state.deskBehind = null;
+    overBar();
   }
   /** A document opened from a desk's own list keeps the desk's rail -- its
    *  panes, its documents with this one marked -- and only the page changes.
@@ -2533,7 +2535,18 @@
     if (state.view === "desk" && state.deskId != null && desk) { state.deskBehind = state.deskId; delete root.dataset.view; }
     if (state.deskBehind == null) { offDesk(); return; }
     desk.aside(id);
+    overBar();
   }
+  /** The document's name and a ✕ in the head while it is read over a desk
+   *  (app.css, #chrome .over): the ✕ puts the panels back, with the focus
+   *  they had, as a second click on the row does. */
+  const overEl = $("#chrome .over");
+  function overBar() {
+    const on = state.deskBehind != null;
+    overEl.hidden = !on;
+    overEl.firstChild.textContent = on && state.doc ? state.doc.title : "";
+  }
+  overEl.lastChild.addEventListener("click", () => { if (state.deskBehind != null) showDesk(state.deskBehind, true); });
   /** `⌃\``: between the desk and what was being read. */
   function swapDesk() {
     if (state.view === "desk") { history.length > 1 ? history.back() : showInbox(true); return; }
@@ -2761,7 +2774,7 @@
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
-      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked };
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
       renderDesks();
     });
     // Another tab named a project or a workflow.
@@ -3185,10 +3198,9 @@
    * is answering, the other empties the library. Both go to the daemon the
    * moment they open anyway, so the module that fills them rides with that
    * press instead of being carried by every first paint. ui/about.js. */
-  let panelLoading = null;
   async function panel(which) {
     let m;
-    try { m = await (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    try { m = await panelMod(); }
     catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
     m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural });
   }
@@ -3300,10 +3312,34 @@
     });
   }
 
+  // ---------- the key mode ----------
+  // The single letters sleep until ⌃B wakes them. A viewer sits beside the
+  // terminals a reader types into all day, and a `j` or a Del meant for one of
+  // them that lands here instead moves the page or deletes the document. So a
+  // letter only acts once the reader has said so, and the pill says it is on.
+  // It stays on while it is used, and goes off the way attention leaves: Esc,
+  // ⌃B again, a click, a field or a panel taking the focus, or ten quiet
+  // seconds. Inside a panel ⌃B never gets here -- the panel sends it to the
+  // program (tmux's prefix, readline's back-a-character) and stops it.
+  // The pill that shows all this, and the listeners that notice a click or
+  // the focus leaving, are a chunk (ui/keys.js), fetched on the first ⌃B or
+  // the first letter pressed asleep.
+  let keysOn = false, keyMode = null, keysLoading = null;
+  const useKeys = () => (keysLoading ||= import(`/assets/keys.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (keyMode = m)));
+  function keys(on) {
+    if (on === keysOn) return;
+    keysOn = on;
+    document.body.classList.toggle("keys", on);
+    if (on) useKeys().then(m => { if (keysOn) m.on(() => keys(false)); }, () => {});
+    else keyMode?.off();
+  }
+
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
+      keys(false);
       if (mmd) mmd.escape();
       closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       return;
@@ -3333,7 +3369,9 @@
       return;
     }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!keysOn) { if (e.key.length === 1 || e.key === "Delete") useKeys().then(m => m.hint(), () => {}); return; }
     if (browsing() && (e.key === "j" || e.key === "k")) {
+      keyMode?.hit();
       const links = [...browseEl.querySelectorAll(".b-file a")];
       const at = links.findIndex(a => a.dataset.path === state.browsePath);
       const next = links[at + (e.key === "j" ? 1 : -1)] || (at < 0 ? links[0] : null);
@@ -3381,6 +3419,7 @@
       case "?": help.hidden ? openDialog(help, help.firstElementChild) : closeDialog(help); break;
       default: return;
     }
+    keyMode?.hit();
     e.preventDefault();
   });
 

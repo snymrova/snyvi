@@ -1,53 +1,66 @@
 {
-  "hook": {
-    "text": "Your agents write all day. Plans. Reviews. Reports. And you read them... as raw text, in a terminal.",
-    "seconds": 7.8
+  "intro": {
+    "text": "This is snigh-vee. A desktop app where your coding agents work, and where everything they write becomes a document you can read.",
+    "seconds": 6.336
   },
-  "reveal": {
-    "text": "Meet snigh-vee. A fast, beautiful viewer for everything your agents produce.",
-    "seconds": 6.024
+  "why": {
+    "text": "No more scrolling back through a terminal. Plans, reviews and reports open as clean, rendered pages, right beside the agents that wrote them.",
+    "seconds": 8.184
   },
-  "ask": {
-    "text": "Ask Claude Code for a plan. It writes one. And sends it. One real MCP call: send document.",
-    "seconds": 8.544
+  "desks": {
+    "text": "Each project gets a desk. Its folder, and up to four agents side by side, each in its own panel.",
+    "seconds": 6.264
   },
-  "arrive": {
-    "text": "By the time you read the reply, it's already open. Rendered. Filed under the project.",
-    "seconds": 6.024
+  "docs": {
+    "text": "When an agent writes a plan or a review, it doesn't scroll away. It lands on the desk, marked with the panel that wrote it, and opens as a clean page.",
+    "seconds": 8.448
   },
-  "queue": {
-    "text": "A new document never steals the page. It waits at the top. N opens it.",
-    "seconds": 5.328
+  "library": {
+    "text": "Every document files itself by project, in one inbox. Every revision is kept, and C shows exactly what changed.",
+    "seconds": 7.992
   },
-  "diff": {
-    "text": "C shows exactly what changed since the last version.",
-    "seconds": 3.528
-  },
-  "diagram": {
-    "text": "Diagrams draw themselves, in the page's own colours.",
-    "seconds": 3.648
+  "versions": {
+    "text": "Versions. Every revision is kept. Press C to see exactly what changed.",
+    "seconds": 4.872
   },
   "search": {
-    "text": "Command K searches everything every agent has ever sent. Code included.",
-    "seconds": 4.752
+    "text": "Search. Command K finds anything your agents have ever written.",
+    "seconds": 3.936
   },
-  "source": {
-    "text": "Source files, highlighted, with an outline. Ten thousand lines of Rust, in a hundred and forty-three milliseconds.",
-    "seconds": 8.088
-  },
-  "numbers": {
-    "text": "One static binary. Twelve megabytes. Cold start in eleven milliseconds. And nothing phones home.",
-    "seconds": 8.4
+  "notes": {
+    "text": "Each desk keeps its own notes, so what's left to do stays with the project, not in your head.",
+    "seconds": 5.832
   },
   "agents": {
-    "text": "Claude Code, Codex, Cursor, Gemini, Zed. Any agent that speaks MCP. One command each.",
-    "seconds": 8.736
+    "text": "Bring any agent. Claude Code, Codex, Cursor, Gemini, or anything that speaks MCP.",
+    "seconds": 6.216
   },
-  "outro": {
-    "text": "Agents send. snigh-vee shows. Get it on GitHub.",
-    "seconds": 4.968
+  "private": {
+    "text": "One small app, on your own machine. It starts in eleven milliseconds, and nothing ever leaves your computer.",
+    "seconds": 7.32
   },
-  "music": {
-    "seconds": 91.638
+  "summary": {
+    "text": "All your passion projects, in one calm place. snigh-vee. Free and open source, on GitHub.",
+    "seconds": 7.68
+  },
+  "rocket": {
+    "text": "One more thing. While your agents work... there's a rocket. You're welcome.",
+    "seconds": 5.52
+  },
+  "passion": {
+    "text": "You have more passion projects than hours in the day. And now, with coding agents, you can finally build them all, at the same time.",
+    "seconds": 8.016
+  },
+  "scatter": {
+    "text": "But the work scatters. Plans get lost in terminal scrollback. What's left to do lives in your head. And every project pulls you away from the last.",
+    "seconds": 9.096
+  },
+  "answer": {
+    "text": "snigh-vee keeps it all in order. A desktop app with one desk for each project, and everything your agents write, kept where you can read it.",
+    "seconds": 9.264
+  },
+  "switch": {
+    "text": "Move between projects, and each desk is exactly as you left it. Command K finds anything, across all of them.",
+    "seconds": 8.352
   }
 }

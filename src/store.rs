@@ -122,6 +122,9 @@ pub struct NewDoc<'a> {
     /// The document body as stored. Bytes, not text, so an image or any other
     /// binary keeps exactly what arrived instead of a lossy decode.
     pub source: &'a [u8],
+    /// A body too big to hold, already copied into the docs dir. When set it
+    /// is the body and `source` is empty.
+    pub staged: Option<&'a Staged>,
     /// What search indexes. Empty for a body with no text in it.
     pub search_body: &'a str,
     pub html: &'a str,
@@ -183,6 +186,14 @@ impl Store {
     pub fn open(paths: &Paths) -> Result<Store> {
         fs::create_dir_all(&paths.data_dir).context("creating data dir")?;
         fs::create_dir_all(&paths.docs_dir).context("creating docs dir")?;
+        // A copy cut short by a crash. Nothing points at it.
+        if let Ok(dir) = fs::read_dir(&paths.docs_dir) {
+            for e in dir.flatten() {
+                if e.file_name().to_string_lossy().starts_with(".stage-") {
+                    let _ = fs::remove_file(e.path());
+                }
+            }
+        }
         let conn = Connection::open(&paths.db_path).context("opening database")?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;",
@@ -223,6 +234,8 @@ impl Store {
             "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0",
+            // The Claude conversation a pane last had, to offer it back.
+            "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -262,7 +275,9 @@ impl Store {
         })
     }
 
-    fn src_path(&self, id: &str) -> PathBuf {
+    /// Where a document's body is kept. Handed out so a large one can be
+    /// streamed from disk instead of read whole.
+    pub fn src_path(&self, id: &str) -> PathBuf {
         self.docs_dir.join(format!("{id}.src"))
     }
     fn html_path(&self, id: &str) -> PathBuf {
@@ -283,10 +298,9 @@ impl Store {
 
     pub fn insert(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
-        let hash = blake3::hash(d.source).to_hex().to_string();
         let id = id.to_string();
         // Files first, so a crash never leaves a row without a body.
-        fs::write(self.src_path(&id), d.source)?;
+        let (hash, size) = self.put_source(&id, &d)?;
         fs::write(self.html_path(&id), d.html)?;
 
         let mut conn = self.conn.lock().unwrap();
@@ -316,7 +330,7 @@ impl Store {
         tx.execute(
             "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot)
              VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13, ?14, ?15, ?16)",
-            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.source_path, d.branch, hash, d.origin, d.sender,
+            params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, size, now, d.source_path, d.branch, hash, d.origin, d.sender,
                 d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot)],
         )?;
         tx.execute(
@@ -345,7 +359,7 @@ impl Store {
             title: d.title.to_string(),
             kind: d.kind,
             lang: d.lang.map(str::to_string),
-            size: d.source.len() as i64,
+            size,
             received_at: now,
             source_path: d.source_path.map(str::to_string),
             branch: d.branch.map(str::to_string),
@@ -360,15 +374,14 @@ impl Store {
     /// hook-driven edits of the same file into one snapshot).
     pub fn replace(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
-        let hash = blake3::hash(d.source).to_hex().to_string();
-        fs::write(self.src_path(id), d.source)?;
+        let (hash, size) = self.put_source(id, &d)?;
         fs::write(self.html_path(id), d.html)?;
         // The source changed under it, so the outline is worked out again.
         let _ = fs::remove_file(self.outline_path(id));
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE docs SET title = ?2, kind = ?3, lang = ?4, size = ?5, received_at = ?6, branch = ?7, content_hash = ?8 WHERE id = ?1",
-            params![id, d.title, d.kind.as_str(), d.lang, d.source.len() as i64, now, d.branch, hash],
+            params![id, d.title, d.kind.as_str(), d.lang, size, now, d.branch, hash],
         )?;
         conn.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
         conn.execute(
@@ -398,13 +411,91 @@ impl Store {
         Ok(fs::read_to_string(self.html_path(id))?)
     }
 
+    /// A document's body as text. A body over the send cap is a video or a
+    /// song, and reading it whole to find that out would be a gigabyte in
+    /// memory, so the size is asked first.
     pub fn source(&self, id: &str) -> Result<String> {
+        self.small(id)?;
         Ok(fs::read_to_string(self.src_path(id))?)
     }
 
-    /// The stored body exactly as it arrived, for images and anything else binary.
-    pub fn source_bytes(&self, id: &str) -> Result<Vec<u8>> {
-        Ok(fs::read(self.src_path(id))?)
+    fn small(&self, id: &str) -> Result<()> {
+        let len = fs::metadata(self.src_path(id))?.len();
+        if len > crate::receive::MAX_BYTES as u64 {
+            anyhow::bail!("{id} is {} MB, too large to read into memory", len >> 20);
+        }
+        Ok(())
+    }
+
+    /// Write a new body, from memory or from the stage, and say what it
+    /// hashes to and how long it is.
+    fn put_source(&self, id: &str, d: &NewDoc) -> Result<(String, i64)> {
+        match d.staged {
+            Some(st) => {
+                fs::rename(&st.path, self.src_path(id))?;
+                Ok((st.hash.clone(), st.len as i64))
+            }
+            None => {
+                fs::write(self.src_path(id), d.source)?;
+                Ok((
+                    blake3::hash(d.source).to_hex().to_string(),
+                    d.source.len() as i64,
+                ))
+            }
+        }
+    }
+
+    /// Copy a file into the docs dir without ever holding it: a buffer at a
+    /// time, hashed on the way through. What a video sent by path goes
+    /// through, so the daemon's memory does not grow with what it is sent.
+    ///
+    /// The copy is taken, not a link to the original, so the document stays
+    /// readable when the file moves or goes. `cap` is checked against the
+    /// bytes actually read as well as the size up front, for a file still
+    /// being written to.
+    pub fn stage(&self, from: &std::path::Path, cap: u64) -> Result<Staged> {
+        use std::io::{Read, Write};
+        let mut src =
+            fs::File::open(from).with_context(|| format!("reading {}", from.display()))?;
+        let gb = |n: u64| format!("{:.1} GB", n as f64 / (1u64 << 30) as f64);
+        let too_big = |n: u64| {
+            anyhow::anyhow!(
+                "{} is {}; snyvi keeps media up to {}. `snyvi browse` on its folder plays it where it is.",
+                from.display(),
+                gb(n),
+                gb(cap).replace(".0 ", " ")
+            )
+        };
+        let len = src.metadata()?.len();
+        if len > cap {
+            return Err(too_big(len));
+        }
+        let mut st = Staged {
+            path: self
+                .docs_dir
+                .join(format!(".stage-{}", new_id(&from.to_string_lossy()))),
+            hash: String::new(),
+            len: 0,
+        };
+        let mut out = fs::File::create(&st.path)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = match src.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+            st.len += n as u64;
+            if st.len > cap {
+                return Err(too_big(st.len));
+            }
+            hasher.update(&buf[..n]);
+            out.write_all(&buf[..n])?;
+        }
+        st.hash = hasher.finalize().to_hex().to_string();
+        Ok(st)
     }
 
     /// The version before this one: the same file's previous snapshot, or, for
@@ -970,6 +1061,10 @@ impl Store {
         desk::set_cmd(&self.conn.lock().unwrap(), id, cmd)
     }
 
+    pub fn set_pane_session(&self, id: &str, session: &str) -> Result<bool> {
+        desk::set_agent_session(&self.conn.lock().unwrap(), id, session)
+    }
+
     pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {
         desk::open_pane(&mut self.conn.lock().unwrap(), desk_id, cwd, cmd, now())
     }
@@ -1118,6 +1213,22 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// A body copied into the docs dir under a temporary name, waiting for its id.
+/// Renamed into place by `insert`/`replace`; dropped unused, it is removed.
+#[derive(Debug)]
+pub struct Staged {
+    path: PathBuf,
+    pub hash: String,
+    pub len: u64,
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        // Gone already when it was renamed into place.
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 /// 10 hex chars: content hash mixed with time and a counter, so re-sending identical
 /// content still gets a new id and two sends in the same second never collide.
 pub fn new_id(hash: &str) -> String {
@@ -1169,6 +1280,7 @@ mod tests {
             sender: "",
             desk: None,
             source: src.as_bytes(),
+            staged: None,
             search_body: src,
             html: "<p>x</p>",
         }

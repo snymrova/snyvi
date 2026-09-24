@@ -254,6 +254,24 @@ pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
     Ok(body)
 }
 
+/// Tell the daemon what the agent in a pane is doing, and which conversation
+/// it is, when the event says. Quiet, and quick: this
+/// runs inside a Claude Code hook, on every prompt and tool call, so it never
+/// starts a daemon, never waits more than half a second, and a daemon that is
+/// not there means no status, and nothing more.
+pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Option<&str>) {
+    let Some(token) = config::read_token(paths) else {
+        return;
+    };
+    let _ = ureq::post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(500)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({ "state": state, "session": session }));
+}
+
 /// Leave a note at the foot of the sidebar.
 pub fn note(paths: &Paths, note: &crate::note::NewNote) -> Result<Value> {
     ensure_daemon()?;

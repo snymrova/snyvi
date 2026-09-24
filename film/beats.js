@@ -16,31 +16,35 @@
  */
 (function () {
   const beats = [
-    { name: "hook", dur: 9.2, out: ["leak", 0.6], lead: 0.7, line: 7.8,
-      cues: { plans: 1.92, reviews: 2.76, reports: 3.62, raw: 5.49 } },
-    { name: "reveal", dur: 7.5, out: ["push", 0.45], lead: 0.6, line: 6.024,
-      cues: { name: 0.703, tagline: 2.174 } },
-    { name: "ask", dur: 10.2, out: ["zoom", 0.5], lead: 0.8, line: 8.544,
-      cues: { writes: 2.4, call: 4.6, reply: 6.4 } },
-    { name: "arrive", dur: 7.6, out: ["push", 0.4], lead: 0.7, line: 6.024,
-      cues: { filed: 4.2 } },
-    { name: "queue", dur: 6.7, out: ["push", 0.4], lead: 0.6, line: 5.328,
-      cues: { key: 3.9 } },
-    { name: "diff", dur: 4.9, out: ["push", 0.4], lead: 0.6, line: 3.528,
-      cues: { key: 0.15 } },
-    { name: "diagram", dur: 5.0, out: ["push", 0.4], lead: 0.6, line: 3.648, cues: {} },
-    { name: "search", dur: 6.1, out: ["push", 0.4], lead: 0.6, line: 4.752,
-      cues: { key: 0.15 } },
-    { name: "source", dur: 9.6, out: ["up", 0.5], lead: 0.6, line: 8.1,
-      cues: { speed: 5.81 } },
-    { name: "numbers", dur: 9.9, out: ["push", 0.4], lead: 0.7, line: 8.4,
-      cues: { binary: 0.2, size: 1.85, start: 3.59, home: 6.59 } },
-    { name: "agents", dur: 10.1, out: ["blur", 0.8], lead: 0.6, line: 8.736,
-      cues: { a1: 0.15, a2: 1.25, a3: 2.19, a4: 3.05, a5: 3.97, mcp: 4.91, cmd: 7.45 } },
-    { name: "outro", dur: 7.5, out: null, lead: 0.7, line: 4.968,
-      cues: { shows: 1.589, github: 3.714 } },
+    // The problem: more passion projects than hours, and the work scatters.
+    { name: "passion", dur: 9.6, out: ["push", 0.45], lead: 0.6, line: 8.016,
+      cues: { agents: 4.023, all: 5.214, same: 6.919 } },
+    { name: "scatter", dur: 10.6, out: ["leak", 0.6], lead: 0.6, line: 9.096,
+      cues: { plans: 1.695, todo: 4.399, switch: 6.477 } },
+    // The answer.
+    { name: "answer", dur: 10.8, out: ["hold", 0.5], lead: 0.6, line: 9.264,
+      cues: { app: 2.670, desk: 3.891, write: 6.076 } },
+    // How, one part of the problem a scene.
+    { name: "desks", dur: 7.6, out: ["hold", 0.5], lead: 0.6, line: 6.264,
+      cues: { folder: 1.910, four: 2.807 } },
+    { name: "docs", dur: 9.8, out: ["hold", 0.5], lead: 0.6, line: 8.448,
+      cues: { lands: 3.899, marked: 5.236, opens: 6.907 } },
+    { name: "library", dur: 9.4, out: ["hold", 0.5], lead: 0.6, line: 7.992,
+      cues: { inbox: 2.731, kept: 4.105, key: 5.800 } },
+    { name: "notes", dur: 7.2, out: ["hold", 0.5], lead: 0.6, line: 5.832,
+      cues: { stays: 3.343, head: 4.859 } },
+    { name: "switch", dur: 9.6, out: ["hold", 0.5], lead: 0.6, line: 8.352,
+      cues: { left: 1.688, key: 4.885 } },
+    { name: "agents", dur: 7.8, out: ["up", 0.5], lead: 0.6, line: 6.216,
+      cues: { names: 1.222, mcp: 4.408 } },
+    { name: "private", dur: 8.6, out: ["push", 0.4], lead: 0.6, line: 7.320,
+      cues: { app: 0.050, start: 2.986, home: 5.062 } },
+    // What it adds up to.
+    { name: "summary", dur: 9.4, out: ["cut", 0.04], lead: 0.6, line: 7.680,
+      cues: { calm: 1.942, name: 3.909, free: 5.150, github: 6.890 } },
+    { name: "rocket", dur: 8.6, out: null, lead: 0.6, line: 5.520,
+      cues: { rocket: 3.266, welcome: 4.830 } },
   ];
-
   let at = 0;
   for (const b of beats) {
     b.at = +at.toFixed(3);

@@ -63,17 +63,21 @@ for (const b of beats) {
 }
 
 const end = total.toFixed(3);
+const tag = beats.find(b => b.name === "rocket");
+const musicFade = tag ? 1.4 : 3.6;
+const musicOut = tag ? tag.at - musicFade + 0.3 : total - 4;
 const inputs = [...beats.flatMap(b => ["-i", join(AUDIO, `${b.name}.mp3`)]), "-i", music];
 const voice = beats.map((b, i) => `[${i}:a]adelay=${Math.round(b.say * 1000)}:all=1[v${i}]`);
 const filter = [
   ...voice,
   `${beats.map((_, i) => `[v${i}]`).join("")}amix=inputs=${beats.length}:normalize=0,`
     + `aresample=44100,apad,atrim=0:${end},asplit[voice][key]`,
-  // The bed: quiet, up over two seconds, out over the last three, and cut to
-  // the film. The music is shorter than the film by a breath, so it is
-  // padded rather than looped -- the tail is under the outro's silence.
+  // The bed: quiet, up over two seconds, and gone by the time the last scene
+  // starts. If that scene is the rocket, the tag after the lockup, it is read
+  // over nothing but the voice -- the music leaving is the "one more thing".
+  // Otherwise out over the film's last three seconds, as it always was.
   `[${beats.length}:a]aresample=44100,apad,atrim=0:${end},volume=0.26,`
-    + `afade=t=in:d=2,afade=t=out:st=${(total - 4).toFixed(3)}:d=3.6[bed]`,
+    + `afade=t=in:d=2,afade=t=out:st=${musicOut.toFixed(3)}:d=${musicFade}[bed]`,
   // Under a line the bed steps back, and returns between them.
   `[bed][key]sidechaincompress=threshold=0.035:ratio=4:attack=40:release=600:level_sc=1[duck]`,
   `[voice][duck]amix=inputs=2:normalize=0,alimiter=limit=0.95,`

@@ -63,6 +63,10 @@ const ABOUT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/about.js"));
 /// a document never fetches it, and the page's calls into it are no-ops until
 /// it is there, because until then nothing is marked.
 const FIND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/find.js"));
+/// The key mode's pill -- whether the single letters are awake -- fetched on
+/// the first ⌃B, or the first letter pressed while they sleep. The gate itself
+/// is in `app.js`; only what shows it is here.
+const KEYS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/keys.js"));
 /// What a folder and a desk can be asked to do -- the right-click menu, making
 /// a desk, closing one, opening a folder -- fetched on the first such click. A
 /// reader who only reads never fetches it; the sidebar draws its desks without
@@ -182,6 +186,7 @@ impl Ui {
             ("game.js", GAME_JS),
             ("about.js", ABOUT_JS),
             ("find.js", FIND_JS),
+            ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
@@ -302,6 +307,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(GAME_JS.as_bytes());
         h.update(ABOUT_JS.as_bytes());
         h.update(FIND_JS.as_bytes());
+        h.update(KEYS_JS.as_bytes());
         h.update(MENU_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
@@ -408,6 +414,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
+        .route("/api/panes/{id}/agent", post(pane_agent))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -419,11 +426,22 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/game.js", get(asset_game))
         .route("/assets/about.js", get(asset_about))
         .route("/assets/find.js", get(asset_find))
+        .route("/assets/keys.js", get(asset_keys))
         .route("/assets/menu.js", get(asset_menu))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    // An install from an older snyvi gets the hooks that tell a panel what
+    // Claude is doing, without the reader running `init-claude` again. Only
+    // where our hook already is and names this binary, and only once this
+    // daemon holds the port: one that is about to exit writes nothing. See
+    // `hook::top_up`.
+    tokio::task::spawn_blocking(|| {
+        if let Ok(true) = crate::hook::top_up() {
+            eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");
+        }
+    });
     eprintln!("snyvi {VERSION} listening on http://{addr}");
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
@@ -759,6 +777,16 @@ async fn asset_find(State(app): S) -> Response {
         FIND_JS,
     )
 }
+/// The key mode's pill, on the same terms: the letters have not been woken
+/// until someone presses ⌃B.
+async fn asset_keys(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "keys.js",
+        KEYS_JS,
+    )
+}
 /// The folder menu and the desk actions, on the same terms: nothing here has
 /// happened until someone has clicked something.
 async fn asset_menu(State(app): S) -> Response {
@@ -1012,13 +1040,10 @@ async fn doc_raw(State(app): S, Path(id): Path<String>) -> Response {
 }
 
 /// A stored document's bytes, as they arrived. This is how an image document's
-/// `<img>` gets its picture; the content type comes from the source file's name so
-/// the browser knows what it is.
-async fn doc_blob(State(app): S, Path(id): Path<String>) -> Response {
+/// `<img>` gets its picture and a video's player its frames; the content type
+/// comes from the source file's name so the browser knows what it is.
+async fn doc_blob(State(app): S, Path(id): Path<String>, req: HeaderMap) -> Response {
     let Ok(Some(doc)) = app.store.get(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(bytes) = app.store.source_bytes(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mime = doc
@@ -1042,7 +1067,7 @@ async fn doc_blob(State(app): S, Path(id): Path<String>) -> Response {
             .map(render::ext_of)
             .unwrap_or_default(),
     );
-    (headers, bytes).into_response()
+    serve_file(&app.store.src_path(&id), headers, &req).await
 }
 
 #[derive(Deserialize)]
@@ -2483,6 +2508,10 @@ struct StartBody {
     /// pane ran last; empty means the shell.
     #[serde(default)]
     cmd: Option<String>,
+    /// Resume the conversation the pane last had, instead of `cmd`. The
+    /// command is built here, from the id the pane kept, never from the page.
+    #[serde(default)]
+    resume: bool,
     #[serde(default = "default_cols")]
     cols: u16,
     #[serde(default = "default_rows")]
@@ -2515,10 +2544,24 @@ async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
-    if cmd.trim() != placed.pane.cmd {
-        let _ = app.store.set_pane_cmd(&id, &cmd);
-    }
+    // A resume is a one-off: what `Start` re-runs stays what the reader typed.
+    let cmd = if b.resume {
+        let session = &placed.pane.agent_session;
+        if !crate::desk::valid_session(session) {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "this panel has no conversation to resume" })),
+            )
+                .into_response();
+        }
+        format!("claude --resume {session}")
+    } else {
+        let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
+        if cmd.trim() != placed.pane.cmd {
+            let _ = app.store.set_pane_cmd(&id, &cmd);
+        }
+        cmd
+    };
     let live = app.panes.get(&id);
     let start = crate::pane::Start {
         cwd: &placed.pane.cwd,
@@ -2554,6 +2597,59 @@ async fn stop_pane(
     };
     app.panes.get(&id).stop();
     Json(json!({ "ok": true })).into_response()
+}
+
+#[derive(Deserialize)]
+struct AgentBody {
+    /// Absent when the event says nothing about what the agent is doing (a
+    /// `SessionStart`, which only names the conversation).
+    #[serde(default)]
+    state: Option<String>,
+    /// The Claude Code session id, a UUID, when the event carried one.
+    #[serde(default)]
+    session: Option<String>,
+}
+
+/// What the agent in a pane is doing, told by its hook (`snyvi hook`, run by
+/// Claude Code inside the pane, which knows the pane by `SNYVI_SESSION`).
+///
+/// This is the one pane route behind the token rather than the window's
+/// capability: the hook is a process like `snyvi send`, and it holds the token
+/// and never the capability. What it can do with it is small on purpose. It
+/// sets one word on a pane that is already running, and that word is shown
+/// and nothing more; and it names the conversation in that pane, a UUID the
+/// pane keeps so a reader's click can resume it later. It never starts, stops,
+/// or types into anything, touches the store only through
+/// `set_pane_session`, and an id that is not a running pane is a 404.
+async fn pane_agent(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<AgentBody>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let state_ok = |s: &str| s.is_empty() || crate::pane::AGENT_STATES.contains(&s);
+    if !crate::pane::valid_id(&id)
+        || !b.state.as_deref().is_none_or(state_ok)
+        || !b.session.as_deref().is_none_or(crate::desk::valid_session)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let live = match &b.state {
+        Some(state) => app.panes.set_agent(&id, state),
+        None => app.panes.is_running(&id),
+    };
+    if !live {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Some(session) = &b.session {
+        if let Ok(true) = app.store.set_pane_session(&id, session) {
+            desks_moved(&app);
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
@@ -2844,15 +2940,24 @@ async fn browse_file(State(app): S, Path(id): Path<String>, Query(q): Query<Path
     }
 }
 
-async fn browse_raw(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
-    serve_browsed(&app, &id, q.path.as_deref().unwrap_or("")).await
+async fn browse_raw(
+    State(app): S,
+    Path(id): Path<String>,
+    Query(q): Query<PathQ>,
+    req: HeaderMap,
+) -> Response {
+    serve_browsed(&app, &id, q.path.as_deref().unwrap_or(""), &req).await
 }
 
 /// The same bytes under a path-shaped URL. A framed page is loaded from here so that
 /// its own relative stylesheets, scripts and images resolve against the file's
 /// directory instead of against `/api/browse/<id>/`.
-async fn browse_raw_path(State(app): S, Path((id, rel)): Path<(String, String)>) -> Response {
-    serve_browsed(&app, &id, &rel).await
+async fn browse_raw_path(
+    State(app): S,
+    Path((id, rel)): Path<(String, String)>,
+    req: HeaderMap,
+) -> Response {
+    serve_browsed(&app, &id, &rel, &req).await
 }
 
 /// Headers that make a file safe to frame.
@@ -2877,11 +2982,8 @@ fn protect(headers: &mut HeaderMap, ext: &str) {
     );
 }
 
-async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str) -> Response {
+async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str, req: &HeaderMap) -> Response {
     let Ok(path) = app.browse.resolve(id, rel) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(bytes) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mime = mime_guess::from_path(&path)
@@ -2896,7 +2998,119 @@ async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str) -> Response {
     set(header::CONTENT_TYPE, &mime);
     set(header::CACHE_CONTROL, "private, max-age=60");
     protect(&mut headers, &render::ext_of(&path.to_string_lossy()));
-    (headers, bytes).into_response()
+    serve_file(&path, headers, req).await
+}
+
+/// A file off disk, whole or the one range asked for, streamed.
+///
+/// A player seeks by asking for `bytes=N-`, over and over, and a gigabyte
+/// video must not become a gigabyte in the daemon: the body is read a buffer
+/// at a time as the connection takes it, so what the daemon holds per open
+/// player is one buffer whatever the file weighs. `headers` are the
+/// caller's (type, cache, policy); length and range are added here.
+async fn serve_file(path: &std::path::Path, mut headers: HeaderMap, req: &HeaderMap) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(len) = file.metadata().await.map(|m| m.len()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    let asked = req.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let (status, start, count) = match asked.map(|v| parse_range(v, len)) {
+        None | Some(Span::Whole) => (StatusCode::OK, 0, len),
+        Some(Span::Part(a, b)) => {
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes {a}-{b}/{len}")) {
+                headers.insert(header::CONTENT_RANGE, v);
+            }
+            (StatusCode::PARTIAL_CONTENT, a, b - a + 1)
+        }
+        Some(Span::Unsatisfiable) => {
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes */{len}")) {
+                headers.insert(header::CONTENT_RANGE, v);
+            }
+            return (StatusCode::RANGE_NOT_SATISFIABLE, headers).into_response();
+        }
+    };
+    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(count));
+    let body = Body::from_stream(Chunks {
+        file: file.take(count),
+        buf: vec![0; 128 * 1024].into_boxed_slice(),
+    });
+    (status, headers, body).into_response()
+}
+
+/// What a `Range` header asks of a file `len` bytes long.
+#[derive(Debug, PartialEq)]
+enum Span {
+    /// No usable range: several at once, another unit, or nonsense. The
+    /// header is ignored and the whole file sent, as HTTP allows.
+    Whole,
+    /// First and last byte, inclusive, both inside the file.
+    Part(u64, u64),
+    /// Starts past the end.
+    Unsatisfiable,
+}
+
+fn parse_range(v: &str, len: u64) -> Span {
+    let Some(spec) = v.trim().strip_prefix("bytes=") else {
+        return Span::Whole;
+    };
+    if spec.contains(',') {
+        return Span::Whole;
+    }
+    let Some((a, b)) = spec.trim().split_once('-') else {
+        return Span::Whole;
+    };
+    let (a, b) = (a.trim(), b.trim());
+    let num = |s: &str| s.parse::<u64>().ok();
+    match (a.is_empty(), b.is_empty()) {
+        // `-500`: the last 500 bytes.
+        (true, false) => match num(b) {
+            Some(0) => Span::Unsatisfiable,
+            Some(n) if len > 0 => Span::Part(len.saturating_sub(n), len - 1),
+            Some(_) => Span::Unsatisfiable,
+            None => Span::Whole,
+        },
+        (false, _) => match (num(a), if b.is_empty() { Some(u64::MAX) } else { num(b) }) {
+            (Some(a), Some(b)) if a > b => Span::Whole,
+            (Some(a), Some(_)) if a >= len => Span::Unsatisfiable,
+            (Some(a), Some(b)) => Span::Part(a, b.min(len - 1)),
+            _ => Span::Whole,
+        },
+        (true, true) => Span::Whole,
+    }
+}
+
+/// A file read as a stream of chunks, one buffer at a time, for a body.
+struct Chunks {
+    file: tokio::io::Take<tokio::fs::File>,
+    buf: Box<[u8]>,
+}
+
+impl tokio_stream::Stream for Chunks {
+    type Item = std::io::Result<axum::body::Bytes>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+        let this = &mut *self;
+        let mut rb = tokio::io::ReadBuf::new(&mut this.buf);
+        match tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut this.file), cx, &mut rb) {
+            Poll::Ready(Ok(())) if rb.filled().is_empty() => Poll::Ready(None),
+            Poll::Ready(Ok(())) => {
+                Poll::Ready(Some(Ok(axum::body::Bytes::copy_from_slice(rb.filled()))))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 /// Declarations in a browsed file. Parsing is repeated rather than cached: it is
@@ -3004,11 +3218,44 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, DESK_JS, FIND_JS,
-        FRAME_JS, GAME_JS, INDEX_HTML, MENU_JS, MMD_JS,
+        desk_refusal, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
+        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
+
+    /// What a player sends when it seeks, and what it must get back.
+    #[test]
+    fn ranges_are_read_the_way_players_send_them() {
+        assert_eq!(parse_range("bytes=0-", 1000), Span::Part(0, 999));
+        assert_eq!(parse_range("bytes=100-199", 1000), Span::Part(100, 199));
+        assert_eq!(
+            parse_range("bytes=900-5000", 1000),
+            Span::Part(900, 999),
+            "clamped to the end"
+        );
+        assert_eq!(
+            parse_range("bytes=-500", 1000),
+            Span::Part(500, 999),
+            "a suffix"
+        );
+        assert_eq!(parse_range("bytes=-5000", 1000), Span::Part(0, 999));
+        assert_eq!(parse_range("bytes=1000-", 1000), Span::Unsatisfiable);
+        assert_eq!(
+            parse_range("bytes=0-", 0),
+            Span::Unsatisfiable,
+            "an empty file"
+        );
+        assert_eq!(parse_range("bytes=-0", 1000), Span::Unsatisfiable);
+        assert_eq!(
+            parse_range("bytes=0-1,5-9", 1000),
+            Span::Whole,
+            "several fall back to all"
+        );
+        assert_eq!(parse_range("items=0-1", 1000), Span::Whole);
+        assert_eq!(parse_range("bytes=9-3", 1000), Span::Whole);
+        assert_eq!(parse_range("bytes=x-", 1000), Span::Whole);
+    }
 
     /// The one decision in this server that stands between a web page and a
     /// shell. Every shape that is not a live capability under the key that
@@ -3248,6 +3495,19 @@ mod tests {
         ] {
             assert!(src.contains(route), "the route table should hold {route}");
         }
+        // The one pane route outside the gate, on purpose: the agent's hook
+        // holds the token, not the capability. It answers to the token first,
+        // and it reaches the store for one thing -- the conversation's id,
+        // after the pane is known to be running.
+        let agent = &src[src.find("async fn pane_agent(").unwrap()..];
+        let agent = &agent[..agent.find("\n}\n").unwrap()];
+        assert!(agent.find("authorized(").unwrap() < agent.find("app.panes").unwrap());
+        assert!(agent.find("app.panes").unwrap() < agent.find("app.store").unwrap());
+        assert_eq!(
+            agent.matches("app.store").count(),
+            agent.matches("app.store.set_pane_session(").count(),
+            "pane_agent reaches the store for more than the session id"
+        );
     }
 
     /// The capability is read off the fragment and presented in a frame. If it
@@ -3433,6 +3693,7 @@ mod tests {
             ("game.js", GAME_JS),
             ("about.js", ABOUT_JS),
             ("find.js", FIND_JS),
+            ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
@@ -3469,6 +3730,7 @@ mod tests {
             "GAME_JS",
             "ABOUT_JS",
             "FIND_JS",
+            "KEYS_JS",
             "MENU_JS",
         ] {
             assert!(
