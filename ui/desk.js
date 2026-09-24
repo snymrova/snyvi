@@ -62,6 +62,8 @@ let pickEl = null, pointSaid = null, saidTimer = 0, pointTimer = 0;
 /** How long after a key in a panel its points wait to go in: text arriving
  *  mid-word would be spliced into whatever the reader was typing. */
 const TYPED_MS = 2000;
+/** A word said under one pane's row, when a click on it could not be done. */
+let rowSaid = null, rowTimer = 0;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -115,9 +117,13 @@ function receive(f) {
   else if (f.t === "status") {
     // The rail marks every pane, so a change to any pane's mark redraws it:
     // a panel that needs its reader says so wherever the focus is.
-    const mark = x => `${x.running}${x.blocked}${x.agent}`, was = mark(v.status);
+    // Anything else -- a new title, which an agent changes about once a
+    // second while it works -- is the row's name, set where it stands, so
+    // the row under the pointer is never swapped for a copy of itself.
+    const mark = x => `${x.running}${x.blocked}${x.agent}${talked({ ...v, status: x })}`, was = mark(v.status);
     v.status = f.s; header(v); resume(v);
-    if (v.id === focused || mark(f.s) !== was) rail();
+    if (mark(f.s) !== was) rail();
+    else { named(v); if (v.id === focused) meta(); }
   }
   else if (f.t === "old") {
     // What the last run left, greyed: the scrollback is now the old text, and
@@ -396,7 +402,7 @@ function makeView(p) {
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
-    `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"></form>`;
+    `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
     // A pane with no process and no exit code lost its shell to a daemon that
@@ -432,6 +438,7 @@ function makeView(p) {
   body.addEventListener("paste", e => { e.preventDefault(); paste(v, e.clipboardData); });
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
+  start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
   return v;
@@ -512,13 +519,15 @@ function accent() {
   return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
 }
 
-async function run(v, cmd, quiet) {
+async function run(v, cmd, quiet, again) {
   if (v.starting) return;
   v.starting = true;
   v.resumed = true;
   const [c, r] = v.size ? v.size.split("x").map(Number) : [80, 24];
   try {
-    const j = await ctx.api(`/api/panes/${v.id}/start`, { cmd, cols: c, rows: r, accent: accent() });
+    // `again` resumes the conversation the pane kept; the daemon builds that
+    // command from the id it holds, and what Start re-runs stays as it was.
+    const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
     if (!quiet) v.body.focus();
   } catch (e) {
@@ -538,6 +547,9 @@ const tilde = p => {
   return home && (p === home || p.startsWith(home + "/")) ? "~" + p.slice(home.length) : p;
 };
 const what = v => v.status.title || v.status.cmd || v.pane.cmd || "shell";
+/** The conversation this pane last had, when there is one and Claude is not
+ *  in the pane now. Checked here too: it is about to be a command line. */
+const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
 
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
@@ -559,6 +571,7 @@ function header(v) {
   v.start.hidden = !!s.running || v.resuming || v.starting;
   if (!v.start.hidden && wasHidden) v.start.querySelector("input").value = s.cmd || v.pane.cmd || "";
   v.start.querySelector("input").placeholder = "blank for the shell";
+  v.start.querySelector(".pn-resume").hidden = !talked(v);
   cursor(v);
 }
 
@@ -715,8 +728,11 @@ const ago = s => { const d = Math.max(0, Date.now() / 1000 - s); return d < 60 ?
 
 /** A pane as a row names it: the shell's title less the `user@host:` a
  *  prompt puts before the folder. Every row on a desk carries the same
- *  prefix, and it is the folder after it that tells them apart. */
-const short = v => { const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t); return m ? tilde(m[1]) : t; };
+ *  prefix, and it is the folder after it that tells them apart. A program's
+ *  own marks at the front of its title (Claude Code's ✳, a spinner) go too:
+ *  the row's dot already says what the pane is doing, and the full title is
+ *  the row's tooltip. */
+const short = v => { const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t); return (m ? tilde(m[1]) : t).replace(/^(?:(?!~)[\p{S}\p{Co}\s])+/u, "") || t; };
 
 /** The rail's small controls, drawn as lines the way the sidebar's icons
  *  are: stop and start on a pane, close on a pane or the desk, a pen on the
@@ -730,6 +746,7 @@ const ICO = {
   back: '<path d="M6.5 3L3 8l3.5 5M3 8h10"/>',
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/>',
   tick: '<path d="M3.5 8.5l3 3 6-7"/>',
+  again: '<path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
 /** The head's plus: drawn on the grid the page's own icon buttons use
@@ -775,26 +792,29 @@ function rail() {
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
     return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}" title="${esc(what(v))}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm">${esc(short(v))}</span></button>` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span></button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
+      (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" title="${run ? "Type claude --resume into the shell, for you to run" : "Resume the conversation this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
       sure("close", v.id, "Close panel", `Close panel ${n}`, ico("x")) +
-      `</span></li>`;
+      `</span></li>` +
+      (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "");
   };
   // Replacing the rail takes the focus off whatever had it. A field open on
   // the list has to know that is what happened, and not a reader clicking
   // away, so the replacement says so while it is under way.
   drawing = true;
-  ctx.tocEl.innerHTML = `<div class="dk-rail">` +
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
-    // shows under the cursor, and stays while the list is folded.
-    `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">From the panels<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
+    // shows under the cursor, and stays while the list is folded. The row's
+    // [n] says which panel sent it.
+    `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. Under the cursor, the path it was sent
     // from, to copy -- the thing to hand back to the pane that sent it.
@@ -808,20 +828,60 @@ function rail() {
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
       : `<p class="dk-empty">Nothing yet. What an agent in a panel sends lands here.</p>`) +
-    `</details>` + noteSec(d) + `</div>`;
+    `</details>` + noteSec(d) + `</div>`);
   drawing = false;
-  noteFocus();
-  const v = views.get(focused), s = v ? v.status : null;
+  // The names go in after, and never into what the rail compares itself
+  // with: a panel's name is its title, which an agent changes about once a
+  // second, and a rail that counted it would find itself changed at every
+  // tick of the clock.
+  if (drew) { vs.forEach(named); noteFocus(); }
+  meta();
+}
+
+/** The desk and its focused panel, in the pane under the rail: what the
+ *  clock and the focused panel's own frames redraw, and nothing else. */
+function meta() {
+  const d = current();
+  if (!d) return;
+  const { esc } = ctx, v = views.get(focused), s = v ? v.status : null;
   const since = !s ? "" : s.agent && s.agent_since ? `${s.agent.replace("_", " ")} ${ago(s.agent_since)}` : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
   // The desk's own two actions sit on its name, under the cursor: renaming
   // it and closing it are things done to the desk, and the name is where
   // the desk is.
-  ctx.metaEl.innerHTML = `<div class="row dk-row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span><span class="dk-tools">` +
+  const top = `<div class="row dk-row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span><span class="dk-tools">` +
     `<button type="button" data-a="rename" title="Rename desk" aria-label="Rename desk">${ico("pen")}</button>` +
     sure("drop", "", "Close the desk and its panels", "Close desk", ico("x")) + `</span></div>` +
-    `<div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>` +
-    (v ? `<div class="row"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "");
+    `<div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>`;
+  const low = v ? `<div class="row dk-pl"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "";
+  // The panel's line ticks ("up 12s") on every frame that brings a status,
+  // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
+  // written alone while the rows above it are still the ones drawn here.
+  const el = ctx.metaEl, pl = el.querySelector(".dk-pl");
+  if (el.$top === top && el.firstElementChild === el.$first && (pl || !low)) {
+    if (low !== el.$low) { if (low) pl.outerHTML = low; else if (pl) pl.remove(); }
+  } else drawIn(el, top + low);
+  el.$top = top; el.$low = low;
   ctx.rail.classList.remove("empty");
+}
+
+/** Write `html` into `el`, unless `el` already holds exactly that as this
+ *  filled it. A redraw that changes nothing still replaces every node, and
+ *  the one under the pointer loses its hover until the pointer moves. What
+ *  another hand wrote since (a clear, the document's outline) is not ours,
+ *  so it is written over. */
+function drawIn(el, html) {
+  if (el.$html === html && el.firstElementChild && el.firstElementChild === el.$first) return false;
+  el.innerHTML = html;
+  el.$html = html; el.$first = el.firstElementChild;
+  return true;
+}
+
+/** A pane's row in the rail takes its new name in place. */
+function named(v) {
+  const b = ctx.tocEl.querySelector(`.dk-focus[data-focus="${v.id}"]`);
+  if (!b) return;
+  b.title = what(v);
+  b.querySelector(".nm").textContent = short(v);
 }
 
 /* ---------- the list ----------
@@ -849,7 +909,7 @@ function noteSec(d) {
   const left = mine.filter(x => !x.done && !x.gone).length;
   const rows = mine.map(x => noteRow(x, esc)).join("");
   return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
-    `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left}</span>` : ""}</summary>` +
+    `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     (rows ? `<ul class="dk-list">${rows}</ul>`
       : noteField ? "" : `<p class="dk-empty">Nothing on the list. What this desk owes you goes here.</p>`) +
     (noteField && noteField.kind === "new"
@@ -1064,6 +1124,27 @@ function put(v) {
   if (reading != null) ctx.go(deskId, true, n); else { rail(); focusPane(v.id); }
 }
 
+/** Resume the conversation a pane last had. A stopped pane starts it; a pane
+ *  whose shell is running gets the command typed at its prompt, the way points
+ *  are put -- not run, so Enter is the reader's -- and only where points
+ *  would be let in. A refusal is said under the pane's own row. */
+function again(v) {
+  const id = talked(v), n = v.pane.slot;
+  if (!id) return;
+  if (!v.status.running) { run(v, "", false, true); return; }
+  const why = !v.mode[1] ? `Panel ${n} is not at a prompt, so nothing is typed into it.`
+    : Date.now() - (v.typed || 0) < TYPED_MS ? `You are typing in panel ${n}.` : "";
+  if (why) {
+    clearTimeout(rowTimer);
+    rowSaid = { p: v.id, text: why };
+    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
+    rail();
+    return;
+  }
+  input(v, bracket(v, `claude --resume ${id}`));
+  if (reading != null) ctx.go(deskId, true, n); else focusPane(v.id);
+}
+
 function forgetPoints() {
   hidePick();
   clearTimeout(saidTimer); clearTimeout(pointTimer);
@@ -1103,6 +1184,7 @@ async function act(b) {
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
     else if (a === "put" && v) put(v);
+    else if (a === "again" && v) again(v);
     else if (a === "point-x" || a === "point-back") {
       const ps = points.get(b.dataset.p) || [], x = ps[+b.dataset.n];
       if (x) {
@@ -1419,6 +1501,8 @@ const CSS = `
 .pn-body .g::before { content: ""; position: absolute; inset: 0; background: currentColor; -webkit-mask: var(--g) 0 0 / 100% 100% no-repeat; mask: var(--g) 0 0 / 100% 100% no-repeat; }
 .pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: var(--shadow); }
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
+.pn-start .pn-resume { color: var(--fg); font-weight: 500; }
+.pn-start .pn-resume[hidden] { display: none; }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
 .pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: 12.5px; }
 /* ---------- the rail ----------
@@ -1454,9 +1538,9 @@ const CSS = `
  * folded. */
 .dk-sec > summary { list-style: none; cursor: pointer; }
 .dk-sec > summary::-webkit-details-marker { display: none; }
-/* Always shown here, unlike the sidebar's: the rail has one section that
- * folds and one that does not, and the chevron is what tells them apart. */
-.dk-sec .s-chev { align-self: center; margin-left: 6px; opacity: 1; }
+/* Shown the way the sidebar's are (app.css): under the cursor, and while
+ * the section is folded. One chevron style across the app. */
+.dk-sec .s-chev { align-self: center; margin-left: 6px; }
 .dk-sec:not([open]) .s-chev { transform: rotate(-45deg); }
 .dk-sec > summary:hover { color: var(--fg-2); }
 .dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
@@ -1493,7 +1577,7 @@ const CSS = `
 .dk-docs .title { overflow: hidden; text-overflow: ellipsis; }
 .dk-docs .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 .dk-docs .slot { margin-left: auto; }
-.dk-docs .slot::before { content: "["; } .dk-docs .slot::after { content: "]"; }
+.dk-panes .slot::before, .dk-docs .slot::before { content: "["; } .dk-panes .slot::after, .dk-docs .slot::after { content: "]"; }
 .dk-docs .k { font-family: var(--mono); font-size: 10px; color: var(--fg-3); flex: none; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
 #toc .dk-empty { margin: 2px 8px 0; padding: 0; text-indent: 0; font-size: 12px; line-height: 1.5; color: var(--fg-3); }
 /* The desk's name carries its two tools; the row is a little taller than
@@ -1526,7 +1610,9 @@ const CSS = `
    every platform, with the role and the state a checkbox would have carried. */
 .dk-tick { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin: 5px 0 0 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
 .dk-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
-.dk-tick[aria-checked="true"] { background: var(--accent); box-shadow: none; color: var(--bg); }
+/* Done is quiet: the accent is for what wants looking at, and a done note
+   is the one thing on the rail that does not. */
+.dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
 .dk-tick svg { width: 11px; height: 11px; }
 /* The field's own circle: the row keeps its shape while it is being written,
    so the text does not step left and back again as the field opens and shuts. */

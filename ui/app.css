@@ -22,7 +22,7 @@
   --bg-raise: #ffffff;
   --fg: #1f1d1a;
   --fg-2: #5c574f;
-  --fg-3: #8f897f;
+  --fg-3: #756f66;
   --rule: #e6e2da;
   --rule-2: #d8d3c9;
   /* The accent, picked with the swatch in the sidebar's foot. Each choice is
@@ -72,7 +72,7 @@
     --bg-raise: #1c2029;
     --fg: rgba(255,255,255,.87);
     --fg-2: rgba(255,255,255,.62);
-    --fg-3: rgba(255,255,255,.40);
+    --fg-3: rgba(255,255,255,.47);
     --rule: rgba(255,255,255,.08);
     --rule-2: rgba(255,255,255,.14);
     --accent: var(--accent-d);
@@ -100,7 +100,7 @@
   --bg-raise: #1c2029;
   --fg: rgba(255,255,255,.87);
   --fg-2: rgba(255,255,255,.62);
-  --fg-3: rgba(255,255,255,.40);
+  --fg-3: rgba(255,255,255,.47);
   --rule: rgba(255,255,255,.08);
   --rule-2: rgba(255,255,255,.14);
   --accent: var(--accent-d);
@@ -625,13 +625,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
 .ren { color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; letter-spacing: 0; }
 .t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
-/* On a desk's row the ✎ keeps no space at rest, as the ✕ beside it keeps
-   none: the row's end column is what lines up with the rows above and
-   below, and a hidden control's width would push it in. Both come out
-   together on hover, where the end column steps aside for them. */
-.t-desk > a > .ren { width: 0; padding: 0; margin-left: -8px; overflow: hidden; }
-.t-desk > a:hover > .ren, .t-desk > a > .ren:focus-visible { width: auto; padding: 2px 4px; margin-left: auto; }
-.t-desk > a:has(> .ren:focus-visible) :is(.end, .k) { display: none; }
 .ren:hover { background: var(--rule-2); color: var(--fg); }
 /* The field shows the name as stored, not as the summary styles it. */
 .ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px; }
@@ -670,17 +663,23 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    two auto margins in a row split the slack between them, which put the
    dot and the count halfway along the row and a different halfway on each. */
 .row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: 11px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; }
-/* At rest it is zero wide, but the row's gap still comes before it, and
-   that gap pushed a desk's count 8px in from where its panes' numbers end.
-   The gap is taken back, so every end column reaches the same edge. */
-.t-desk > a > .row-x { margin-left: -8px; }
-.t-doc > a > .row-x { margin-left: -6px; }
-:is(.t-doc, .t-desk) > a:hover .row-x, .t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+.t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
 .t-proj > summary > .row-x.row-x { margin-left: 0; }   /* the ✎ before it already took the free space */
-/* Beside a ✎ that has come out, the ✕ takes no auto margin of its own: one
-   auto margin, on the ✎, and the two sit together at the row's end. */
-.t-desk > a:is(:hover, :has(> .ren:focus-visible)) > .row-x { margin-left: 0; }
-:is(.t-doc, .t-desk) > a:is(:hover, :has(.row-x:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k) { display: none; }
+/* On a desk's row and a document's, the tools stand over the row's end
+   rather than in the row: coming out, they move nothing, and the title's
+   ellipsis stays where it was. The end they cover keeps its place, unseen.
+   Faded rather than removed, so Tab still reaches them. Their ground is the
+   row's colour laid over the sidebar's -- the dark theme's is translucent,
+   and on its own would let the title show through. */
+:is(.t-doc, .t-desk) > a { --row: var(--rule); }
+:is(.t-doc, .t-desk) > a.active { --row: var(--accent-bg); }
+:is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 6px; width: auto; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
+.t-desk > a > .ren { right: 26px; }
+:is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
+:is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
+:is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
+/* A row lights the moment the pointer is on it, and only lets go slowly. */
+:is(.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
 /* The way back, under the tree while anything is out of it: quiet, because it
    is a state of the list rather than something to do, and always there, so
@@ -697,6 +696,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .row-x[data-armed] { color: #dc2626; font-weight: 600; }
 .row-x[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
+:is(.t-doc, .t-desk) > a > .row-x[data-armed]:hover { background: linear-gradient(color-mix(in srgb, #dc2626 12%, transparent) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
 .b-new { margin-left: auto; display: inline-flex; align-items: center; color: var(--fg-3); line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; }
 /* The glyph is the one the Desks section uses, so what the button makes is
    named by its shape rather than by a plus that could mean any addition. */
@@ -890,6 +890,7 @@ pre.code .copy:focus-visible { opacity: 1; }
 @media (hover: none) {
   .ren, .b-close, .b-new, pre.code .copy, pre.code::before { opacity: 1; }
   .t-desk > a > .ren, .t-proj > summary > .row-x { width: auto; padding: 2px 4px; margin-left: 0; }
+  .t-desk > a > .ren { position: static; translate: none; background: none; pointer-events: auto; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }
 }

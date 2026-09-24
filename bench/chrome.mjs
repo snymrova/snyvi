@@ -39,9 +39,39 @@ export const sleep = ms => new Promise(r => setTimeout(r, ms));
  *  its own group, and the negative pid is what reaches the rest of the group;
  *  the fallback is for a platform or a state where that does not apply. */
 export function killTree(proc) {
+  live.delete(proc);
   if (!proc || proc.exitCode !== null) return;
   try { process.kill(-proc.pid, "SIGKILL"); }
   catch { try { proc.kill("SIGKILL"); } catch {} }
+}
+
+/** Every browser this process started and has not killed yet.
+ *
+ *  A browser is spawned detached, in its own process group, so that a
+ *  deliberate teardown reaches the renderers and the zygote rather than only
+ *  the leader. Detached also means nothing reaps it when the script itself
+ *  dies: a bench interrupted at the keyboard, or one that threw on its way to
+ *  its own `finally`, left an eleven-process Chrome behind, holding its
+ *  profile under /tmp and about 190 MB, for as long as the machine stayed up.
+ *  Two were found three days old, from two different benches.
+ *
+ *  So the teardown does not belong to the caller alone. Whatever a caller
+ *  does or forgets, these take every live browser down with the process. */
+const live = new Set();
+let hooked = false;
+function reapAll() { for (const proc of [...live]) killTree(proc); }
+function hook() {
+  if (hooked) return;
+  hooked = true;
+  // `exit` covers the ordinary end, an uncaught throw and an explicit
+  // process.exit -- Node runs these listeners for all three.
+  process.on("exit", reapAll);
+  // A signal does not: it terminates without running them. So reap first,
+  // then leave by the code a shell expects of that signal. SIGKILL cannot be
+  // caught by anything, and is the one case still left to the OS.
+  for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
+    process.on(sig, () => { reapAll(); process.exit(code); });
+  }
 }
 
 /* ---------- the DevTools protocol, in about forty lines ---------- */
@@ -150,6 +180,12 @@ export async function launch(profile, { windowSize = "1280,900", args = [] } = {
     ...args,
     "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
+  // Registered before anything below can throw: every line after this one is
+  // a way to leave `launch` without a browser handle, and a browser nobody
+  // holds is the one that is still running on Thursday.
+  hook();
+  live.add(proc);
+  proc.once("exit", () => live.delete(proc));
   let err = "";
   proc.stderr.on("data", d => { err += d; });
 

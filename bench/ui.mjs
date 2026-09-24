@@ -223,6 +223,7 @@ async function main() {
     sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
+    sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
     sections.push(["the about box", await aboutRows(p, url)]);
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
     sections.push(["an agent that is here", await presenceRows(p, url, base, env, tmp)]);
@@ -1247,6 +1248,66 @@ async function linkRows(p, url, base, env, tmp, token, stub, mcpSend) {
  *  list, so a wash that plays twice, a bar that rises twice, or a row that
  *  is simply gone all fail here -- and so does anything that runs long, or at
  *  all under reduced motion. */
+/** A desk whose panel is busy, and a sidebar that stays where the pointer is.
+ *  An agent retitles its terminal about once a second while it works, and in
+ *  1.3.0 every title redrew the sidebar's desks and the whole rail: the row
+ *  under the pointer was swapped for a copy, lost its hover until the pointer
+ *  moved, and a click pressed on one copy and let go on the next was no click.
+ *  Here a panel retitles itself ten times a second, and the rows read what
+ *  changed while the pointer rests on a desk: nothing but the panel's name.
+ *  In a tab of its own, because the capability it opens with stays in that
+ *  tab, and every other section is a browser tab without one. */
+async function deskRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const a = await post("/api/desks", { name: "still-a" }), b = await post("/api/desks", { name: "still-b" });
+  const [da, db] = [a.desk ? a.desk.id : a.id, b.desk ? b.desk.id : b.id];
+  const pane = (await post(`/api/desks/${da}/panes`)).pane.id;
+  await post(`/api/panes/${pane}/start`, { cmd: `while :; do printf "\\033]0;work %s\\007" $RANDOM; sleep 0.1; done` });
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  try {
+    await p.goto(`${base}/desk/${da}#cap=${cap}`);
+    const opened = await until(`!!document.querySelector(".dk .pn") && /work/.test(document.querySelector(".dk-focus .nm")?.textContent || "")`);
+    rows.push(["a desk opens, its panel at work", opened, opened ? "the desk, its panel, and the panel's title in the rail" : "no desk on the page: the desk chunk did not load, or the panel never said a title"]);
+
+    await p.hoverOn(`a[data-desk="${db}"]`);
+    // What is allowed to change, and where: the panel's name, in its row.
+    const watch = `(() => { const c = window.__still = { side: 0, name: 0, rail: 0 };
+      const inName = n => { const e = n.nodeType === 1 ? n : n.parentElement; return !!(e && e.closest(".dk-focus")); };
+      const o = (el, f) => new MutationObserver(ms => ms.forEach(f)).observe(el, { childList: true, subtree: true, attributes: true, characterData: true });
+      o(document.querySelector("#desk-nav"), () => c.side++);
+      o(document.querySelector("#toc"), m => inName(m.target) ? c.name++ : c.rail++);
+      window.__row = document.querySelector('a[data-desk="${db}"]'); window.__pane = document.querySelector(".dk-focus"); return 1; })()`;
+    await p.ev(watch);
+    await sleep(3000);
+    const still = await p.ev(`({ ...window.__still, same: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover"), paneSame: window.__pane === document.querySelector(".dk-focus") })`);
+    rows.push(["a busy panel leaves the sidebar alone", still.side === 0 && still.same && still.lit,
+      still.side ? `${still.side} changes to the desks under a resting pointer` : !still.same ? "the row under the pointer was replaced" : !still.lit ? "the row under the pointer lost its hover" : "0 changes in 3 s of titles, and the row under the pointer is the same row, still lit"]);
+    rows.push(["and the rail, but for the panel's name", still.rail === 0 && still.name > 0 && still.paneSame,
+      still.rail ? `${still.rail} changes to the rail besides the name` : !still.name ? "the name never took a new title" : !still.paneSame ? "the panel's row was replaced" : `the name took its titles in place (${still.name} changes), nothing else moved`]);
+
+    // A real change: the panel needs its reader. The mark and the head's
+    // count say so; the row under the pointer is still that row.
+    await p.ev(`window.__still.side = 0; window.__rowA = document.querySelector('a[data-desk="${da}"]'); 1`);
+    await post(`/api/panes/${pane}/agent`, { state: "needs_you" }, { "content-type": "application/json", authorization: `Bearer ${token}` });
+    const rang = await until(`!!document.querySelector('a[data-desk="${da}"] .dot.blk') && !!document.querySelector("#desk-nav .s-blk")`);
+    const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
+    rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
+      !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
+  } finally {
+    await post(`/api/panes/${pane}/stop`).catch(() => {});
+    for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 async function motionRows(p, url, arrive) {
   const rows = [];
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };

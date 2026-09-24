@@ -34,13 +34,21 @@ pub fn run(paths: &Paths) -> Result<()> {
     ) {
         crate::session::record(paths, cwd, sid);
     }
-    // In a desk panel, the panel is told. Outside one, nothing new happens.
-    if let Some(state) = agent_state(&event) {
-        if let Some(pane) = std::env::var("SNYVI_SESSION")
-            .ok()
-            .filter(|v| crate::pane::valid_id(v))
-        {
-            client::agent_state(paths, &pane, state);
+    // In a desk panel, the panel is told what the agent is doing and which
+    // conversation it is, so it can offer that conversation back after Claude
+    // or the daemon has gone. Outside one, nothing new happens.
+    if let Some(pane) = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|v| crate::pane::valid_id(v))
+    {
+        let state = agent_state(&event);
+        let session = event
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|s| crate::desk::valid_session(s));
+        let starting = event.get("hook_event_name").and_then(Value::as_str) == Some("SessionStart");
+        if state.is_some() || (starting && session.is_some()) {
+            client::agent_state(paths, &pane, state, session);
         }
     }
     if event.get("hook_event_name").and_then(Value::as_str) != Some("PostToolUse") {

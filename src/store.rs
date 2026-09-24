@@ -234,6 +234,8 @@ impl Store {
             "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0",
+            // The Claude conversation a pane last had, to offer it back.
+            "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1057,6 +1059,10 @@ impl Store {
 
     pub fn set_pane_cmd(&self, id: &str, cmd: &str) -> Result<bool> {
         desk::set_cmd(&self.conn.lock().unwrap(), id, cmd)
+    }
+
+    pub fn set_pane_session(&self, id: &str, session: &str) -> Result<bool> {
+        desk::set_agent_session(&self.conn.lock().unwrap(), id, session)
     }
 
     pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {

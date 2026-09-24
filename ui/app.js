@@ -1181,6 +1181,7 @@
     if (!items.length) {
       agents = boot.agents; boot.agents = null;
       if (!agents) { try { agents = await (await fetch("/api/agents")).json(); } catch {} }
+      await connectReady();
     }
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
@@ -1200,7 +1201,7 @@
 
   function inboxHtml(items, agents) {
     const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
-    if (!items.length) return connectHtml(agents);
+    if (!items.length) return connectHtml ? connectHtml(agents) : "";
     // What is waiting comes first, oldest first, so the landing page answers
     // "what is new" before "what is there".
     const n = state.waiting;
@@ -1219,41 +1220,14 @@
    * without a reload. It is not a tour: it appears to exactly the person who
    * needs it, and the first document to arrive replaces it. */
   let agentsSeen = "", agentsTimer = 0;
-  function connectHtml(a) {
-    const rows = a ? a.rows : [];
-    agentsSeen = JSON.stringify(rows);
-    const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
-    const row = r => {
-      const other = r.id.startsWith("sender:");
-      const live = r.live || 0;
-      const when = r.last_sent != null ? ` · sent ${rel(r.last_sent)}` : "";
-      let say, state;
-      if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and ${live ? "is here now" : "has sent"}: connected.`; }
-      else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet." : ""}`; }
-      else if (r.state === "stale") { state = "stale"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)}</code>, which no longer exists — every send fails.`; }
-      else if (r.state === "unreadable") { state = "stale"; say = `<code>${esc(r.file)}</code> could not be read (${esc(r.error)}), so it is not edited. Put the entry in by hand.`; }
-      // Here, and nothing in its user file: registered somewhere the daemon
-      // does not read -- a project's own settings, most often.
-      else if (live) { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>, yet it is here: registered somewhere else, a project's own settings perhaps.` : `Here, though not set up in any file snyvi reads.`; }
-      else { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>.` : `Not set up.`; }
-      // An agent that is here now says so in place of "connected": a session
-      // of it is open on the daemon this moment, not only set up to be.
-      const word = live ? `online${live > 1 ? ` ×${live}` : ""}` : { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
-      if (live) state += " is-live";
-      const fix = other || r.state === "connected" ? "" :
-        `<div class="agent-fix">${r.state === "unreadable" ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : "Or by hand, in"} <code>${esc(r.fix.place)}</code></summary>${cmd(r.fix.snippet, "snippet")}</details></div>`;
-      const i = r.instructions;
-      const line = other || !i ? "" : `<p class="agent-instr">${
-        i.present ? `Asked to send what it writes, in <code>${esc(i.place)}</code>.`
-        : state === "connected" ? `Not yet asked to send what it writes: the line below goes in <code>${esc(i.place)}</code>.`
-        : `Then the line below, in <code>${esc(i.place)}</code>.`}</p>`;
-      return `<li class="agent is-${state}" data-agent="${esc(r.id)}"><div class="agent-head"><span class="agent-dot"></span><b class="agent-name">${esc(r.name)}</b><span class="agent-state">${word}${when}</span></div><p class="agent-say">${say}</p>${fix}${line}</li>`;
-    };
-    const line = rows.find(r => r.instructions)?.instructions.line || "";
-    return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Connect an agent</h1><p class="doc-sub">Any agent that speaks MCP can send documents here. Each row is what that agent's own settings say about snyvi, right now.</p></header>` +
-      `<ul class="agents">${rows.map(row).join("")}</ul>` +
-      (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
-      `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand.</p></div>`;
+  /* The page itself is drawn by ui/about.js, with the app's other pages of
+   * its own: an empty library, or `?`, is when it is first fetched. */
+  let connectHtml = null, panelLoading = null;
+  const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
+  async function connectReady() {
+    if (connectHtml) return;
+    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel })); }
+    catch (e) { panelLoading = null; toast("Could not open that page", String(e)); }
   }
   async function showConnect(push = true) {
     if (push) leave();
@@ -1263,6 +1237,7 @@
     if (push) history.pushState({ connect: true }, "", "/connect");
     let a = boot.agents; boot.agents = null;
     if (!a) { try { a = await (await fetch("/api/agents")).json(); } catch { a = null; } }
+    await connectReady();
     docEl.innerHTML = connectHtml(a);
     if (push) swapIn();
     main.scrollTo({ top: 0, behavior: "instant" });
@@ -2488,19 +2463,36 @@
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    deskNav.innerHTML = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : "")) +
-      `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "") + list.map(d => {
-        const m = mark3(d.panes), has = d.panes.length > 0;
-        const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
-        // The mark and the count are one column at the row's end, drawn
-        // whether or not there is anything to say, so every row's line up.
-        const end = `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`;
-        // One row a desk, as the Inbox has one row a document: what the desk
-        // holds is said by its mark and its count, and shown by opening it.
-        return `<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}" title="${esc(d.root)}">` +
-          `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}${end}${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`;
-      }).join("") + `</ul>`;
+    const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
+    const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
+        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "");
+    const rows = list.map(d => {
+      const m = mark3(d.panes), has = d.panes.length > 0;
+      const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
+      // One row a desk, as the Inbox has one row a document: what the desk
+      // holds is said by its mark and its count, and shown by opening it.
+      // The mark and the count are one column at the row's end, drawn
+      // whether or not there is anything to say, so every row's line up.
+      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
+        `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}`,
+        `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
+        `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`];
+    });
+    // A pane's dot changes far more often than the list does, and the row
+    // under the pointer must not be swapped for a copy of itself: it would
+    // lose its hover until the pointer moved, and a click pressed on the old
+    // row and let go on the new one would not be a click. So what changed
+    // is written, and only that -- the mark column, the head -- and the list
+    // is drawn whole only when a row itself is different.
+    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
+    if (!same) {
+      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
+      deskNav.$top = top; deskNav.$head = head;
+      deskNav.querySelectorAll(".t-desk").forEach((li, i) => { li.$r = rows[i][0] + rows[i][2]; li.$e = rows[i][1]; });
+      return;
+    }
+    if (deskNav.$head !== head) { deskNav.firstElementChild.outerHTML = head; deskNav.$head = head; }
+    rows.forEach((r, i) => { if (lis[i].$e !== r[1]) { lis[i].querySelector(".end").outerHTML = r[1]; lis[i].$e = r[1]; } });
   }
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
@@ -2782,7 +2774,7 @@
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
-      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked };
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
       renderDesks();
     });
     // Another tab named a project or a workflow.
@@ -3206,10 +3198,9 @@
    * is answering, the other empties the library. Both go to the daemon the
    * moment they open anyway, so the module that fills them rides with that
    * press instead of being carried by every first paint. ui/about.js. */
-  let panelLoading = null;
   async function panel(which) {
     let m;
-    try { m = await (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    try { m = await panelMod(); }
     catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
     m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural });
   }

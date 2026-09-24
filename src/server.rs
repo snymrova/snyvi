@@ -2508,6 +2508,10 @@ struct StartBody {
     /// pane ran last; empty means the shell.
     #[serde(default)]
     cmd: Option<String>,
+    /// Resume the conversation the pane last had, instead of `cmd`. The
+    /// command is built here, from the id the pane kept, never from the page.
+    #[serde(default)]
+    resume: bool,
     #[serde(default = "default_cols")]
     cols: u16,
     #[serde(default = "default_rows")]
@@ -2540,10 +2544,24 @@ async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
-    if cmd.trim() != placed.pane.cmd {
-        let _ = app.store.set_pane_cmd(&id, &cmd);
-    }
+    // A resume is a one-off: what `Start` re-runs stays what the reader typed.
+    let cmd = if b.resume {
+        let session = &placed.pane.agent_session;
+        if !crate::desk::valid_session(session) {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "this panel has no conversation to resume" })),
+            )
+                .into_response();
+        }
+        format!("claude --resume {session}")
+    } else {
+        let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
+        if cmd.trim() != placed.pane.cmd {
+            let _ = app.store.set_pane_cmd(&id, &cmd);
+        }
+        cmd
+    };
     let live = app.panes.get(&id);
     let start = crate::pane::Start {
         cwd: &placed.pane.cwd,
@@ -2583,7 +2601,13 @@ async fn stop_pane(
 
 #[derive(Deserialize)]
 struct AgentBody {
-    state: String,
+    /// Absent when the event says nothing about what the agent is doing (a
+    /// `SessionStart`, which only names the conversation).
+    #[serde(default)]
+    state: Option<String>,
+    /// The Claude Code session id, a UUID, when the event carried one.
+    #[serde(default)]
+    session: Option<String>,
 }
 
 /// What the agent in a pane is doing, told by its hook (`snyvi hook`, run by
@@ -2593,8 +2617,10 @@ struct AgentBody {
 /// capability: the hook is a process like `snyvi send`, and it holds the token
 /// and never the capability. What it can do with it is small on purpose. It
 /// sets one word on a pane that is already running, and that word is shown
-/// and nothing more. It never starts, stops, or types into anything, never
-/// reaches the store, and an id that is not a running pane is a 404.
+/// and nothing more; and it names the conversation in that pane, a UUID the
+/// pane keeps so a reader's click can resume it later. It never starts, stops,
+/// or types into anything, touches the store only through
+/// `set_pane_session`, and an id that is not a running pane is a 404.
 async fn pane_agent(
     State(app): S,
     headers: HeaderMap,
@@ -2604,16 +2630,26 @@ async fn pane_agent(
     if !authorized(&app, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    let state_ok = |s: &str| s.is_empty() || crate::pane::AGENT_STATES.contains(&s);
     if !crate::pane::valid_id(&id)
-        || !(b.state.is_empty() || crate::pane::AGENT_STATES.contains(&b.state.as_str()))
+        || !b.state.as_deref().is_none_or(state_ok)
+        || !b.session.as_deref().is_none_or(crate::desk::valid_session)
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    if app.panes.set_agent(&id, &b.state) {
-        StatusCode::NO_CONTENT.into_response()
-    } else {
-        StatusCode::NOT_FOUND.into_response()
+    let live = match &b.state {
+        Some(state) => app.panes.set_agent(&id, state),
+        None => app.panes.is_running(&id),
+    };
+    if !live {
+        return StatusCode::NOT_FOUND.into_response();
     }
+    if let Some(session) = &b.session {
+        if let Ok(true) = app.store.set_pane_session(&id, session) {
+            desks_moved(&app);
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
@@ -3461,11 +3497,17 @@ mod tests {
         }
         // The one pane route outside the gate, on purpose: the agent's hook
         // holds the token, not the capability. It answers to the token first,
-        // and it never reaches the store -- it sets a word on a running pane.
+        // and it reaches the store for one thing -- the conversation's id,
+        // after the pane is known to be running.
         let agent = &src[src.find("async fn pane_agent(").unwrap()..];
         let agent = &agent[..agent.find("\n}\n").unwrap()];
         assert!(agent.find("authorized(").unwrap() < agent.find("app.panes").unwrap());
-        assert!(!agent.contains("app.store"), "pane_agent reaches the store");
+        assert!(agent.find("app.panes").unwrap() < agent.find("app.store").unwrap());
+        assert_eq!(
+            agent.matches("app.store").count(),
+            agent.matches("app.store.set_pane_session(").count(),
+            "pane_agent reaches the store for more than the session id"
+        );
     }
 
     /// The capability is read off the fragment and presented in a frame. If it

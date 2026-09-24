@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS panes (
   cwd TEXT NOT NULL,
   cmd TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
+  agent_session TEXT NOT NULL DEFAULT '',
   UNIQUE(desk_id, slot)
 );
 CREATE INDEX IF NOT EXISTS panes_desk ON panes(desk_id, slot);
@@ -124,6 +125,10 @@ pub struct Pane {
     /// What to re-run when the reader asks for it. Empty means the shell.
     pub cmd: String,
     pub created_at: i64,
+    /// The last Claude Code conversation that ran in this pane, as its hook
+    /// reported it, so the pane can offer to resume it after Claude or the
+    /// daemon has gone. Empty when none has. Always a `valid_session`.
+    pub agent_session: String,
 }
 
 /// Where a document came from, when it came from a pane: the desk and the
@@ -174,7 +179,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
         .query_map([], row_to_desk)?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
-        "SELECT desk_id, id, slot, cwd, cmd, created_at FROM panes ORDER BY desk_id, slot",
+        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session FROM panes ORDER BY desk_id, slot",
     )?;
     let panes: Vec<(i64, Pane)> = stmt
         .query_map([], |r| Ok((r.get(0)?, row_to_pane(r, 1)?)))?
@@ -200,7 +205,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT id, slot, cwd, cmd, created_at FROM panes WHERE desk_id = ?1 ORDER BY slot",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session FROM panes WHERE desk_id = ?1 ORDER BY slot",
     )?;
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
@@ -323,6 +328,7 @@ pub fn open_pane(
         cwd: cwd.to_string(),
         cmd: cmd.to_string(),
         created_at: now,
+        agent_session: String::new(),
     }))
 }
 
@@ -336,15 +342,15 @@ pub fn close_pane(conn: &Connection, id: &str) -> Result<bool> {
 pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
     Ok(conn
         .query_row(
-            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, d.id, d.name, d.root
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, d.id, d.name, d.root
              FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
             params![id],
             |r| {
                 Ok(Placed {
                     pane: row_to_pane(r, 0)?,
-                    desk_id: r.get(5)?,
-                    desk_name: r.get(6)?,
-                    root: r.get(7)?,
+                    desk_id: r.get(6)?,
+                    desk_name: r.get(7)?,
+                    root: r.get(8)?,
                 })
             },
         )
@@ -358,6 +364,30 @@ pub fn set_cmd(conn: &Connection, id: &str, cmd: &str) -> Result<bool> {
         "UPDATE panes SET cmd = ?2 WHERE id = ?1",
         params![id, cmd.trim()],
     )? > 0)
+}
+
+/// The conversation a pane last had, as its hook said. True only when that
+/// changed something, so a hook firing on every turn is one no-op UPDATE and
+/// the windows are told only when there is something new to offer. The id
+/// ends up on a command line (`claude --resume <id>`), so only a UUID is kept.
+pub fn set_agent_session(conn: &Connection, id: &str, session: &str) -> Result<bool> {
+    if !valid_session(session) {
+        return Ok(false);
+    }
+    Ok(conn.execute(
+        "UPDATE panes SET agent_session = ?2 WHERE id = ?1 AND agent_session <> ?2",
+        params![id, session],
+    )? > 0)
+}
+
+/// A Claude Code session id: a UUID, lowercase hex and four dashes. Nothing
+/// else is stored or put on a command line.
+pub fn valid_session(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        })
 }
 
 /// How many panes are open across every desk, which is the number the budget
@@ -582,6 +612,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
         cwd: r.get(at + 2)?,
         cmd: r.get(at + 3)?,
         created_at: r.get(at + 4)?,
+        agent_session: r.get(at + 5)?,
     })
 }
 
@@ -735,6 +766,50 @@ mod tests {
             .iter()
             .map(|p| p.slot)
             .collect()
+    }
+
+    /// A pane keeps the last conversation its hook named, only a UUID, and a
+    /// hook saying the same id again changes nothing and tells no one.
+    #[test]
+    fn a_pane_keeps_the_last_conversation_and_only_a_uuid() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap();
+        let Opened::Pane(p) = pane(&mut conn, d.id) else {
+            panic!("no pane")
+        };
+        assert_eq!(p.agent_session, "");
+        let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
+        let b = "a1b2c3d4-0000-4000-8000-123456789abc";
+        assert!(set_agent_session(&conn, &p.id, a).unwrap());
+        assert!(
+            !set_agent_session(&conn, &p.id, a).unwrap(),
+            "same id again"
+        );
+        assert_eq!(
+            super::pane(&conn, &p.id)
+                .unwrap()
+                .unwrap()
+                .pane
+                .agent_session,
+            a
+        );
+        assert!(set_agent_session(&conn, &p.id, b).unwrap());
+        assert_eq!(get(&conn, d.id).unwrap().unwrap().panes[0].agent_session, b);
+        for bad in [
+            "",
+            "; rm -rf ~",
+            "A1B2C3D4-0000-4000-8000-123456789ABC",
+            "a1b2c3d4-0000-4000-8000-123456789abc ",
+            "a1b2c3d4-0000-4000-8000-123456789ab$",
+            "a1b2c3d400004000800-0123456789abcde",
+        ] {
+            assert!(!valid_session(bad), "{bad:?}");
+            assert!(!set_agent_session(&conn, &p.id, bad).unwrap());
+        }
+        assert!(!set_agent_session(&conn, "nope", a).unwrap());
+        // Closing the pane takes its conversation with it.
+        assert!(close_pane(&conn, &p.id).unwrap());
+        assert!(super::pane(&conn, &p.id).unwrap().is_none());
     }
 
     /// The gesture is a right-click on a folder, so the folder's name is the
