@@ -1068,7 +1068,10 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(panes.status(id).blocked, "the bell rang");
-        assert!(titles.iter().any(|t| t == "c"), "the header hears titles: {titles:?}");
+        assert!(
+            titles.iter().any(|t| t == "c"),
+            "the header hears titles: {titles:?}"
+        );
         // A repeat of what was said is not said again.
         let s = panes.status(id);
         panes.changed(id, &s);
@@ -1076,7 +1079,11 @@ mod tests {
         while let Ok(m) = ev.try_recv() {
             dots.push(m);
         }
-        assert_eq!(dots.len(), 2, "the start and the bell, nothing per title: {dots:?}");
+        assert_eq!(
+            dots.len(),
+            2,
+            "the start and the bell, nothing per title: {dots:?}"
+        );
         assert!(dots[1].contains("\"blocked\":true"), "{dots:?}");
         live.stop();
     }
