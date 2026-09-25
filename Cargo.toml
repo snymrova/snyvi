@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"

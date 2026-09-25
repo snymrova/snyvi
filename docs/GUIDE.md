@@ -25,6 +25,50 @@ document says is ever typed into a panel.
 
 ## Install
 
+### One line
+
+On Linux and macOS, [`install.sh`](../install.sh) does what the sections
+below say to do by hand, choosing the path for the machine it is on:
+
+```
+curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+```
+
+With Homebrew it installs the cask; on a Mac without it, `snyvi.app` goes
+into Applications and `snyvi` onto your `PATH`. On Debian and Ubuntu it
+installs both packages, snyvi and the window, with `sudo` for `dpkg`; on
+any other Linux the static binary goes into `~/.local/bin`. Every download
+is checked against the `.sha256` published beside it, and Claude Code is
+connected if it is installed. Run it again to update: a daemon that was
+running is restarted on the new version, and nothing you sent is touched.
+
+```
+sh install.sh --tar              the static binary even where dpkg exists
+sh install.sh --no-app           on Debian, without the window package
+sh install.sh --no-init          without registering with Claude Code
+sh install.sh --version 1.3.0    a particular release
+sh install.sh --bin-dir DIR      where the static binary goes
+```
+
+The same flags after `sh -s --` when piping from `curl`. Windows has no
+shell to pipe into; it has [Scoop](#windows) and the installer.
+
+### Cargo
+
+With a Rust toolchain on any platform:
+
+```
+cargo install snyvi
+snyvi init-claude --auto
+```
+
+That builds snyvi from [crates.io](https://crates.io/crates/snyvi): the
+daemon, the CLI, the MCP server and the hook, which is everything but the
+window. The window links a browser engine — WebKitGTK on Linux, WebView2
+on Windows, WebKit on macOS — so it is not in the crate; on Debian it is
+the `snyvi-app` package below, and elsewhere it is built from source as
+[Desktop](#desktop) describes. `cargo install snyvi` again updates it.
+
 ### Debian and Ubuntu
 
 Download `snyvi_<version>_amd64.deb` (or `_arm64.deb`) from the
@@ -59,8 +103,23 @@ browser. See [Desktop](#desktop) for what the window costs.
 
 ### Windows
 
-Download `snyvi-<version>-x86_64-pc-windows-msvc-setup.exe` from the same
-page and double-click it. That is the install:
+With [Scoop](https://scoop.sh):
+
+```
+scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi
+scoop install snyvi
+snyvi init-claude --auto
+```
+
+That is the zip below, unpacked into Scoop's own folder and shimmed onto
+your `PATH`, with both executables in it, so `snyvi app` opens the window
+as it does from the installer. `scoop update snyvi` updates it, stopping
+the daemon and the window first; `scoop uninstall snyvi` removes it and
+leaves your documents. The bucket is written by the same release run that
+publishes the zip, so it cannot say a version that has not shipped.
+
+Without Scoop, download `snyvi-<version>-x86_64-pc-windows-msvc-setup.exe`
+from the same page and double-click it. That is the install:
 
 - snyvi goes into `%LOCALAPPDATA%\Programs\snyvi`, for you alone, so there
   is no administrator prompt;
@@ -170,8 +229,10 @@ after moving the binary, and the registration follows.
 ### Updating
 
 snyvi runs as a background daemon, so a new binary on disk does not take
-effect until the old process exits. Install over the old one
-(`sudo dpkg -i snyvi_*.deb`, which says the same thing), then:
+effect until the old process exits. Install over the old one the way you
+installed it — the one-liner again, `brew upgrade`, `scoop update snyvi`,
+`cargo install snyvi`, `sudo dpkg -i snyvi_*.deb` — and, unless that
+already restarted it for you (the one-liner, Homebrew and Scoop do), then:
 
 ```
 snyvi restart
@@ -935,7 +996,7 @@ not in it.
 | Binary size, `snyvi`                        | 12.4 MB     | 15 MB  |
 | Daemon cold start, to first health          | 11 to 14 ms | 100 ms |
 | Daemon resident, three documents in, settled | 40 MB      | 60 MB  |
-| Daemon resident, after a 1 MB document and a 100k-line file, settled | 82 MB | 100 MB |
+| Daemon resident, after a 1 MB document and a 100k-line file, settled | 57 to 72 MB | 100 MB |
 | Renderer init (86 grammars from the pack)   | 6 ms        |        |
 | Send, 100 KB Markdown, round trip           | 12 to 14 ms | 100 ms |
 | Document page, time to first byte           | 1 to 2 ms   | 30 ms  |
@@ -974,10 +1035,17 @@ replaces its column when there is one, and sets the Windows budget the
 | Binary size, `snyvi`                    | 12.4 MB       | 10.0 MB | 10.9 MB | 10.8 MB |
 | Daemon cold start, to first health      | 11 to 14 ms   | 20 to 35 ms | 32 ms | 408 ms |
 | Daemon resident, three documents in     | 40 MB         | 11 MB   | 8 MB  | 22 MB |
-| Daemon resident, after the two fixtures | 82 MB         | 26 MB   | 30 MB | 33 MB |
+| Daemon resident, after the two fixtures | 57 to 72 MB   | 26 MB   | 30 MB | 33 MB |
 | Send, 100 KB Markdown, round trip       | 12 to 14 ms   | 25 to 41 ms | 37 ms | 31 ms |
 | Render Markdown, 1 MB                   | 108 ms        | 127 to 182 ms | 298 ms | 173 ms |
 | Highlight Rust, 10k lines               | 143 ms        | 166 to 282 ms | 431 ms | 263 ms |
+
+The Linux resident row after the two fixtures used to swing between
+about 80 and 105 MB on the same binary: glibc kept or returned the
+memory a large render freed depending on which threads ran it and when
+they retired. The daemon now returns it after any render over 512 KB,
+off the sender's round trip, and the row settles at 57 to 72 MB. The
+static release is built on musl, which returns large frees at once.
 
 The binary is smaller on the two desktops that ship no static libc. The
 resident rows on macOS are the process's physical footprint, which is

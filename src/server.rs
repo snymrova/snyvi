@@ -1609,9 +1609,31 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
     }
     // Rendering is CPU work; keep it off the async executor.
     let app2 = app.clone();
-    let result =
-        tokio::task::spawn_blocking(move || receive::receive(&app2.store, &app2.renderer, payload))
-            .await;
+    let result = tokio::task::spawn_blocking(move || {
+        let large = payload
+            .content
+            .as_ref()
+            .is_some_and(|c| c.len() > LARGE_RENDER)
+            || payload
+                .path
+                .as_ref()
+                .and_then(|p| std::fs::metadata(p).ok())
+                .is_some_and(|m| m.len() > LARGE_RENDER as u64);
+        (
+            receive::receive(&app2.store, &app2.renderer, payload),
+            large,
+        )
+    })
+    .await;
+    // After the render, not inside it: a trim over a heap that just held a
+    // large render takes long enough to show on the sender's round trip, and
+    // the sender is an agent waiting on its hook.
+    let result = result.map(|(received, large)| {
+        if large {
+            tokio::task::spawn_blocking(crate::platform::release_freed_memory);
+        }
+        received
+    });
     match result {
         Ok(Ok(received)) => {
             let doc = received.doc;
@@ -1710,13 +1732,24 @@ async fn see_notes(State(app): S) -> Json<serde_json::Value> {
 
 /// Large code files are stored partly plain for an instant first view; finish the
 /// highlight off the request path and tell open tabs to refetch.
+/// Past this many bytes a render is large enough that the memory it frees is
+/// worth handing back at once. See `platform::release_freed_memory`.
+const LARGE_RENDER: usize = 512 * 1024;
+
 fn spawn_full_highlight(app: Arc<App>, id: String, lang: Option<String>) {
     tokio::task::spawn_blocking(move || {
-        let Ok(src) = app.store.source(&id) else {
-            return;
+        let stored = {
+            let Ok(src) = app.store.source(&id) else {
+                return;
+            };
+            let html = app.renderer.render_code_uncapped(lang.as_deref(), &src);
+            app.store.replace_html(&id, &html).is_ok()
         };
-        let html = app.renderer.render_code_uncapped(lang.as_deref(), &src);
-        if app.store.replace_html(&id, &html).is_ok() {
+        // A full highlight only runs on a file past the highlight cap, so it
+        // is always a large render; the source and HTML are dropped above.
+        // Nobody waits on this thread, so the trim can run here.
+        crate::platform::release_freed_memory();
+        if stored {
             emit(&app, "rendered", json!({ "id": id }));
         }
     });

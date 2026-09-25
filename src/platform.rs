@@ -837,3 +837,30 @@ mod tests {
         }
     }
 }
+
+/// Hand the memory a large render just freed back to the operating system.
+///
+/// glibc keeps freed memory in its pools and returns it on a schedule of its
+/// own, so after the same 1 MB and 100k-line sends one daemon settled at 54 MB
+/// and the next, same binary and same files, at 93 -- depending only on which
+/// threads the render had run on and when they retired. The bench's settled
+/// row read that coin flip, and so does a reader who sent one big file and
+/// left the daemon running. Called after a render big enough to matter, never
+/// on the small sends an agent makes all day: a trim walks every pool.
+///
+/// glibc only. musl, which the static Linux release is built with, returns
+/// large frees at once and has no such call; macOS and Windows have their own
+/// allocators. Everywhere else this does nothing.
+pub fn release_freed_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> std::os::raw::c_int;
+        }
+        // SAFETY: malloc_trim takes no pointers and only returns free pages;
+        // it is safe to call from any thread at any time.
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+}

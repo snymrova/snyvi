@@ -389,6 +389,44 @@ jobs:
           cargo package --no-verify 2>&1 | tail -1
           cargo publish
 
+  scoop:
+    # `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` and
+    # `scoop install snyvi`. The manifest is written from the .sha256 the
+    # windows job uploaded beside the zip (packaging/scoop.sh) and pushed to
+    # the bucket, so the bucket cannot fall behind a release either.
+    #
+    # The bucket is its own repository, as the Homebrew tap is, because
+    # `scoop bucket add` clones the whole repository it is given and this one
+    # is 80 MB of film. A token with contents:write on snymrova/scoop-snyvi:
+    # SCOOP_BUCKET_TOKEN, or the tap's token if that one already reaches the
+    # bucket. Skipped without either.
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the manifest and push it to the bucket
+        env:
+          BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$BUCKET_TOKEN" ]; then
+            echo "::warning::SCOOP_BUCKET_TOKEN is not set; the bucket was not updated."
+            exit 0
+          fi
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          version="${version#v}"
+          manifest=$(packaging/scoop.sh "$version" dist)
+          python3 -m json.tool "$manifest" > /dev/null
+          git clone --depth 1 "https://x-access-token:${BUCKET_TOKEN}@github.com/snymrova/scoop-snyvi.git" bucket
+          mkdir -p bucket/bucket
+          cp "$manifest" bucket/bucket/snyvi.json
+          cd bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add bucket/snyvi.json
+          git diff --cached --quiet && { echo "the bucket already says $version"; exit 0; }
+          git commit -m "snyvi $version"
+          git push
+
   homebrew:
     # `brew install --cask snymrova/snyvi/snyvi`. The cask is written from the
     # .sha256 files the macos job just uploaded (packaging/homebrew.sh), and
