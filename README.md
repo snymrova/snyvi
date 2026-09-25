@@ -53,7 +53,7 @@ on, checks every download against its published checksum, and connects
 Claude Code if it finds it:
 
 ```
-curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh | sh
 ```
 
 It is [short enough to read first](install.sh). Run it again to update.
