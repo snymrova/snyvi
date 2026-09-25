@@ -257,8 +257,8 @@ pub struct App {
     /// The panes that have been woken since this daemon started: their
     /// screens, and their processes while they run. See `crate::pane`.
     pub panes: Arc<crate::pane::Panes>,
-    /// The last few lines agents left beside the work. See `crate::note`.
-    pub notes: crate::note::Notes,
+    /// The last few lines agents left beside the work. See `crate::aside`.
+    pub asides: crate::aside::Asides,
 }
 
 impl App {
@@ -342,7 +342,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
-        notes: Default::default(),
+        asides: Default::default(),
     });
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
@@ -385,8 +385,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/workflows/{id}/rename", post(rename_workflow))
         .route("/api/docs/{id}/split", get(doc_split))
         .route("/api/docs/{id}/outline", get(doc_outline))
-        .route("/api/notes", get(notes).post(receive_note))
-        .route("/api/notes/seen", post(see_notes))
+        // Asides, on the routes they had when they were called notes: an MCP
+        // server and a page from before the rename still reach them.
+        .route("/api/notes", get(asides).post(receive_aside))
+        .route("/api/notes/seen", post(see_asides))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/reset", get(reset_census).post(reset))
@@ -560,8 +562,8 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
         o.insert("waiting".into(), json!(waiting(app)));
         // Who is here, for the count beside the brand mark on the first paint.
         o.insert("online".into(), app.online());
-        // The note showing at the foot of the sidebar, and the trail under it.
-        o.insert("notes".into(), json!(app.notes.list()));
+        // The aside showing at the foot of the sidebar, and the trail under it.
+        o.insert("notes".into(), json!(app.asides.list()));
     }
     let page = app
         .ui
@@ -1713,12 +1715,12 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
     }
 }
 
-/// A note from an agent: kept, and shown to every page at once. Never a
-/// desktop notification -- a note that could be missed costs nothing.
-async fn receive_note(
+/// An aside from an agent: kept, and shown to every page at once. Never a
+/// desktop notification -- an aside that could be missed costs nothing.
+async fn receive_aside(
     State(app): S,
     headers: HeaderMap,
-    Json(n): Json<crate::note::NewNote>,
+    Json(n): Json<crate::aside::NewAside>,
 ) -> Response {
     if !authorized(&app, &headers) {
         return (
@@ -1727,12 +1729,12 @@ async fn receive_note(
         )
             .into_response();
     }
-    match app.notes.add(n, crate::store::now()) {
-        Ok(note) => {
-            emit(&app, "notes", json!({ "notes": app.notes.list() }));
+    match app.asides.add(n, crate::store::now()) {
+        Ok(aside) => {
+            emit(&app, "notes", json!({ "notes": app.asides.list() }));
             (
                 StatusCode::CREATED,
-                Json(json!({ "note": note, "window": app.has_window() })),
+                Json(json!({ "note": aside, "window": app.has_window() })),
             )
                 .into_response()
         }
@@ -1744,14 +1746,14 @@ async fn receive_note(
     }
 }
 
-async fn notes(State(app): S) -> Json<serde_json::Value> {
-    Json(json!({ "notes": app.notes.list() }))
+async fn asides(State(app): S) -> Json<serde_json::Value> {
+    Json(json!({ "notes": app.asides.list() }))
 }
 
 /// A reader looked: the glow goes out in every page.
-async fn see_notes(State(app): S) -> Json<serde_json::Value> {
-    if app.notes.see() {
-        emit(&app, "notes", json!({ "notes": app.notes.list() }));
+async fn see_asides(State(app): S) -> Json<serde_json::Value> {
+    if app.asides.see() {
+        emit(&app, "notes", json!({ "notes": app.asides.list() }));
     }
     Json(json!({ "ok": true }))
 }
@@ -2311,7 +2313,7 @@ async fn desk_docs(
 }
 
 /// A desk's own list, which is the reader's and not an agent's: `/api/notes`
-/// is the other kind, and the two never meet. Behind the same gate as the rest
+/// is an agent's asides, and the two never meet. Behind the same gate as the rest
 /// of a desk, so what someone wrote on theirs is as unreachable from a tab as
 /// their panes are.
 ///

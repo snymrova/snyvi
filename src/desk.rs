@@ -35,7 +35,7 @@ pub const PER_DESK: i64 = 4;
 pub const EVERYWHERE: i64 = 8;
 
 /// A line on a desk's list, not a paragraph. Past this it is a document and
-/// `send_document` is for it -- the same line `crate::note` draws, for the same
+/// `send_document` is for it -- the same line `crate::aside` draws, for the same
 /// reason: a list whose rows wrap three times is a list no one reads.
 pub const NOTE_CHARS: usize = 200;
 
@@ -97,8 +97,8 @@ pub struct Desk {
 
 /// A line the reader wrote on a desk's own list.
 ///
-/// Not a `crate::note`, which is a sentence an agent leaves and the daemon
-/// forgets when it restarts. This one is the reader's: it is theirs to write,
+/// Not an aside (`crate::aside`), which is a sentence an agent leaves and the
+/// daemon forgets when it restarts. This one is the reader's: it is theirs to write,
 /// tick and put away, it belongs to a desk rather than to a sender, and it is
 /// in the database because a list that did not survive a restart would be a
 /// list no one trusted enough to write on.

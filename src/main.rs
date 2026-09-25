@@ -1,4 +1,5 @@
 mod agents;
+mod aside;
 mod bench;
 mod browse;
 mod capability;
@@ -8,7 +9,6 @@ mod desk;
 mod desktop;
 mod hook;
 mod mcp;
-mod note;
 mod pane;
 mod platform;
 mod project;

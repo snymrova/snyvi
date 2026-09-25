@@ -272,8 +272,8 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
         .send_json(serde_json::json!({ "state": state, "session": session }));
 }
 
-/// Leave a note at the foot of the sidebar.
-pub fn note(paths: &Paths, note: &crate::note::NewNote) -> Result<Value> {
+/// Leave an aside at the foot of the sidebar.
+pub fn aside(paths: &Paths, aside: &crate::aside::NewAside) -> Result<Value> {
     ensure_daemon()?;
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
@@ -281,13 +281,15 @@ pub fn note(paths: &Paths, note: &crate::note::NewNote) -> Result<Value> {
             paths.token_path.display()
         )
     })?;
+    // The route keeps the name it had before the tool was `send_aside`, so an
+    // MCP server from either side of the rename reaches a daemon from the other.
     let mut resp = ureq::post(&format!("{}/api/notes", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(10)))
         .http_status_as_error(false)
         .build()
-        .send_json(note)
+        .send_json(aside)
         .context("sending to snyvi")?;
     let status = resp.status().as_u16();
     let body: Value = resp.body_mut().read_json().unwrap_or(Value::Null);

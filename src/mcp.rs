@@ -1,4 +1,4 @@
-//! A stdio MCP server exposing two tools: send_document, and send_note for
+//! A stdio MCP server exposing two tools: send_document, and send_aside for
 //! the rare line beside the work.
 //! Newline-delimited JSON-RPC 2.0, as the MCP stdio transport specifies.
 
@@ -16,13 +16,14 @@ are supported. The document arrives at once and waits in the viewer to be read. 
 the user where it is: when snyvi has its own window open it is already there and a link would only send them \
 to a browser beside it, so say it is waiting in snyvi; otherwise give them the url the result carries.";
 
-const NOTE_DESCRIPTION: &str = "Leave the user a short personal note in snyvi -- the kind of aside a friend \
+const ASIDE_DESCRIPTION: &str = "Leave the user a short personal aside in snyvi -- the kind of remark a friend \
 working beside them would make about the work they are in: that a hard part just landed, that the thing they \
 worried about turned out fine, that this closes what they set out to do today, or a gentle nudge after a long \
 stretch. It glows quietly at the foot of snyvi's sidebar until they look. Use it rarely -- a few times in a \
 long session at most, only when you have something genuinely worth saying, never as a status update or a \
 summary of a document you just sent. One or two plain sentences (at most 280 characters), warm and specific, \
-no emoji. Do not mention the note to the user in your reply; it speaks for itself.";
+no emoji. It is not a to-do and goes on no list of the user's. Do not mention the aside to the user in your \
+reply; it speaks for itself.";
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()
@@ -67,24 +68,26 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                     "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": "snyvi", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document, and tell them where it went the way the result says. Now and then, when something in the work genuinely deserves a word, leave them a short personal note with send_note."
+                    "instructions": "snyvi is the user's document viewer. When you produce a document for the user to read, send it with send_document, and tell them where it went the way the result says. Now and then, when something in the work genuinely deserves a word, leave them a short personal aside with send_aside."
                 }})
             }
             "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
             "tools/list" => {
-                json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [ tool_spec(), note_spec() ] } })
+                json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": [ tool_spec(), aside_spec() ] } })
             }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                if name == "send_note" {
-                    match call_note(&paths, &args, cwd.as_deref(), sender.as_deref()) {
+                // `send_note` is the name this tool had through 1.4.0: a session that
+                // started before an upgrade still has it from `tools/list`.
+                if name == "send_aside" || name == "send_note" {
+                    match call_aside(&paths, &args, cwd.as_deref(), sender.as_deref()) {
                         Ok(()) => json!({ "jsonrpc": "2.0", "id": id, "result": {
                             "content": [{ "type": "text", "text": "Left in snyvi. No need to mention it to the user." }],
                             "isError": false
                         }}),
                         Err(e) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": format!("snyvi could not take the note: {e}") }],
+                            "content": [{ "type": "text", "text": format!("snyvi could not take the aside: {e}") }],
                             "isError": true
                         }}),
                     }
@@ -133,16 +136,16 @@ fn tool_spec() -> Value {
     })
 }
 
-fn note_spec() -> Value {
+fn aside_spec() -> Value {
     json!({
-        "name": "send_note",
-        "title": "Leave a note in snyvi",
-        "description": NOTE_DESCRIPTION,
+        "name": "send_aside",
+        "title": "Leave an aside in snyvi",
+        "description": ASIDE_DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "The note: one or two sentences, at most 280 characters." },
-                "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) that the note is about; clicking the note opens it." }
+                "text": { "type": "string", "description": "The aside: one or two sentences, at most 280 characters." },
+                "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) that the aside is about; clicking the aside opens it." }
             },
             "required": ["text"],
             "additionalProperties": false
@@ -151,20 +154,20 @@ fn note_spec() -> Value {
     })
 }
 
-fn call_note(
+fn call_aside(
     paths: &Paths,
     args: &Value,
     cwd: Option<&str>,
     sender: Option<&str>,
 ) -> anyhow::Result<()> {
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
-    let note = crate::note::NewNote {
+    let aside = crate::aside::NewAside {
         text: s("text").unwrap_or_default(),
         about: s("about"),
         sender: sender.map(str::to_string),
         cwd: cwd.map(str::to_string),
     };
-    client::note(paths, &note).map(|_| ())
+    client::aside(paths, &aside).map(|_| ())
 }
 
 /// What became of a document, and how to tell the user about it.

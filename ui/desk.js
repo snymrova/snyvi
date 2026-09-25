@@ -40,8 +40,8 @@ let docList = [], docsAt = null;
 const DOCS_SHOWN = 8;
 let docsAll = false;
 /** The reader's own list for this desk, and which desk it belongs to. Not
- *  `crate::note`'s kind: those are an agent's sentences and the daemon forgets
- *  them. These are written here, ticked here, and kept in the database. */
+ *  asides (`crate::aside`): those are an agent's sentences and the daemon
+ *  forgets them. These are written here, ticked here, and kept in the database. */
 let noteList = [], notesAt = null, notesGet = null;
 /** The field that is open on the list, while one is: a new line at the end, or
  *  a line being rewritten in place. Held here rather than in the DOM because

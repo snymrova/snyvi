@@ -364,8 +364,8 @@ and from that count, and `snyvi init` with no agent prints the same rows.
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
 That exposes two MCP tools. `send_document` is the one that matters: it
-takes a file path or inline content and returns a URL. `send_note` is
-the small one, and [Notes](#notes) below says what it is for. The tool
+takes a file path or inline content and returns a URL. `send_aside` is
+the small one, and [Asides](#asides) below says what it is for. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -808,7 +808,7 @@ runs while you read, and `prefers-reduced-motion` turns all of it off
 rather than slowing it down. The `#` beside a heading confirms a copy
 on the mark itself, not at the corner of the screen.
 
-## Notes
+## Asides
 
 An arrival is work: a document an agent finished and you asked for.
 Now and then there is a sentence that is not work -- what it noticed on
@@ -816,24 +816,31 @@ the way, what it would do next, what it is unsure of -- and until this
 existed the only way to say it was to make it a document, which put it
 in your library and your unread count as though it were one.
 
-`send_note` is for that sentence, and it is deliberately small. A note
-is at most 280 characters; past that it is a document and
-`send_document` is the tool for it. Notes are kept in memory, the last
-five of them, so a daemon restart forgets them -- a note is about now,
+`send_aside` is for that sentence, and it is deliberately small. An
+aside is at most 280 characters; past that it is a document and
+`send_document` is the tool for it. Asides are kept in memory, the last
+five of them, so a daemon restart forgets them -- an aside is about now,
 and one that outlived a restart would be about some other now. They
 never enter the queue, never mark anything unread, and never take the
 page away from what you are reading.
 
 One sits at the foot of the sidebar, under the trail of the few before
 it. A new one lights up and snyvi's own mark beside it hops once; rest
-on the note and it is read, and the mark settles. Only one note lights
+on the aside and it is read, and the mark settles. Only one aside lights
 up every ten minutes: an agent that leaves one per edit costs you a
-single glance, and the rest join the trail quietly. A note may name a
+single glance, and the rest join the trail quietly. An aside may name a
 document it is about, and then clicking it opens that document.
 
 It is a channel from the agent to you and nothing comes back: snyvi
-cannot be read by an agent, and a note is not an instruction to
+cannot be read by an agent, and an aside is not an instruction to
 anything.
+
+An aside is not a desk's notes. Those are your own list, kept with the
+desk and written only by you; an agent's asides never land on it.
+
+The tool was called `send_note` through 1.4.0. The old name still
+works, so a session that was already running when you upgraded keeps
+its asides.
 
 ## Where a link opens
 

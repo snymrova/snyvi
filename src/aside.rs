@@ -1,9 +1,9 @@
-//! Notes: a line an agent leaves beside the work, the way a friend at the next
+//! Asides: a line an agent leaves beside the work, the way a friend at the next
 //! desk would -- not a document, not a notification.
 //!
-//! Kept in memory and only the last few: a note is about now, and one that
+//! Kept in memory and only the last few: an aside is about now, and one that
 //! outlived a daemon restart would be about some other now. Rare by
-//! construction as well as by asking: a note that comes within `QUIET_SECS` of
+//! construction as well as by asking: an aside that comes within `QUIET_SECS` of
 //! the last one that lit up joins the trail without lighting up itself, so an
 //! agent that sends one per edit costs the reader nothing.
 
@@ -16,18 +16,18 @@ use std::sync::Mutex;
 pub const KEEP: usize = 5;
 /// A sentence or two. Past this it is a document and `send_document` is for it.
 pub const MAX_CHARS: usize = 280;
-/// A note lights up at most this often.
+/// An aside lights up at most this often.
 const QUIET_SECS: i64 = 600;
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Note {
+pub struct Aside {
     pub id: u64,
     pub text: String,
     /// The agent's name from its MCP `initialize`.
     pub sender: Option<String>,
     /// The project the agent is working in, from its working directory.
     pub project: Option<String>,
-    /// A document the note is about; clicking the note opens it.
+    /// A document the aside is about; clicking the aside opens it.
     pub about: Option<String>,
     pub at: i64,
     /// Whether it arrived glowing. False when it came too soon after the last.
@@ -38,7 +38,7 @@ pub struct Note {
 
 /// What a sender posts.
 #[derive(Debug, Default, Deserialize, Serialize)]
-pub struct NewNote {
+pub struct NewAside {
     pub text: String,
     #[serde(default)]
     pub about: Option<String>,
@@ -50,22 +50,22 @@ pub struct NewNote {
 
 #[derive(Default)]
 struct Inner {
-    notes: VecDeque<Note>,
+    asides: VecDeque<Aside>,
     next: u64,
     last_lit: Option<i64>,
 }
 
 #[derive(Default)]
-pub struct Notes(Mutex<Inner>);
+pub struct Asides(Mutex<Inner>);
 
-impl Notes {
-    pub fn add(&self, n: NewNote, now: i64) -> Result<Note> {
+impl Asides {
+    pub fn add(&self, n: NewAside, now: i64) -> Result<Aside> {
         let text = n.text.split_whitespace().collect::<Vec<_>>().join(" ");
         if text.is_empty() {
-            bail!("a note needs some text");
+            bail!("an aside needs some text");
         }
         if text.chars().count() > MAX_CHARS {
-            bail!("a note is a sentence or two (at most {MAX_CHARS} characters); send anything longer with send_document");
+            bail!("an aside is a sentence or two (at most {MAX_CHARS} characters); send anything longer with send_document");
         }
         let project = n
             .cwd
@@ -78,7 +78,7 @@ impl Notes {
             g.last_lit = Some(now);
         }
         g.next += 1;
-        let note = Note {
+        let aside = Aside {
             id: g.next,
             text,
             sender: n.sender.filter(|s| !s.trim().is_empty()),
@@ -88,22 +88,22 @@ impl Notes {
             lit,
             seen: false,
         };
-        g.notes.push_front(note.clone());
-        g.notes.truncate(KEEP);
-        Ok(note)
+        g.asides.push_front(aside.clone());
+        g.asides.truncate(KEEP);
+        Ok(aside)
     }
 
     /// Newest first.
-    pub fn list(&self) -> Vec<Note> {
+    pub fn list(&self) -> Vec<Aside> {
         let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        g.notes.iter().cloned().collect()
+        g.asides.iter().cloned().collect()
     }
 
     /// Everything kept has been looked at. True when that changed anything.
     pub fn see(&self) -> bool {
         let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let mut changed = false;
-        for n in g.notes.iter_mut().filter(|n| !n.seen) {
+        for n in g.asides.iter_mut().filter(|n| !n.seen) {
             n.seen = true;
             changed = true;
         }
@@ -115,8 +115,8 @@ impl Notes {
 mod tests {
     use super::*;
 
-    fn new(text: &str) -> NewNote {
-        NewNote {
+    fn new(text: &str) -> NewAside {
+        NewAside {
             text: text.into(),
             ..Default::default()
         }
@@ -124,41 +124,41 @@ mod tests {
 
     #[test]
     fn keeps_the_last_few_newest_first() {
-        let notes = Notes::default();
+        let asides = Asides::default();
         for i in 0..7 {
-            notes.add(new(&format!("note {i}")), 1000 + i).unwrap();
+            asides.add(new(&format!("aside {i}")), 1000 + i).unwrap();
         }
-        let l = notes.list();
+        let l = asides.list();
         assert_eq!(l.len(), KEEP);
-        assert_eq!(l[0].text, "note 6");
-        assert_eq!(l[KEEP - 1].text, "note 2");
+        assert_eq!(l[0].text, "aside 6");
+        assert_eq!(l[KEEP - 1].text, "aside 2");
     }
 
     #[test]
     fn lights_up_rarely() {
-        let notes = Notes::default();
-        assert!(notes.add(new("a"), 0).unwrap().lit);
-        assert!(!notes.add(new("b"), 60).unwrap().lit);
-        assert!(notes.add(new("c"), QUIET_SECS).unwrap().lit);
+        let asides = Asides::default();
+        assert!(asides.add(new("a"), 0).unwrap().lit);
+        assert!(!asides.add(new("b"), 60).unwrap().lit);
+        assert!(asides.add(new("c"), QUIET_SECS).unwrap().lit);
     }
 
     #[test]
     fn refuses_empty_and_long() {
-        let notes = Notes::default();
-        assert!(notes.add(new("   "), 0).is_err());
-        assert!(notes.add(new(&"x".repeat(MAX_CHARS + 1)), 0).is_err());
+        let asides = Asides::default();
+        assert!(asides.add(new("   "), 0).is_err());
+        assert!(asides.add(new(&"x".repeat(MAX_CHARS + 1)), 0).is_err());
         assert_eq!(
-            notes.add(new("  two\n  lines "), 0).unwrap().text,
+            asides.add(new("  two\n  lines "), 0).unwrap().text,
             "two lines"
         );
     }
 
     #[test]
     fn seeing_is_once() {
-        let notes = Notes::default();
-        notes.add(new("a"), 0).unwrap();
-        assert!(notes.see());
-        assert!(!notes.see());
-        assert!(notes.list()[0].seen);
+        let asides = Asides::default();
+        asides.add(new("a"), 0).unwrap();
+        assert!(asides.see());
+        assert!(!asides.see());
+        assert!(asides.list()[0].seen);
     }
 }
