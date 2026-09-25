@@ -428,6 +428,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
         .route("/api/panes/{id}/agent", post(pane_agent))
+        .route("/api/panes/{id}/notes", get(pane_notes))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -2713,6 +2714,39 @@ async fn pane_agent(
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// The notes of the desk a pane is on, for the agent running in that pane
+/// (`read_desk_notes`, from `snyvi mcp`, which knows the pane by
+/// `SNYVI_SESSION`).
+///
+/// The second pane route behind the token rather than the capability, and the
+/// only one that gives anything back. It reads and never writes: a desk's list
+/// is the reader's, and an agent that could add to it would be an agent
+/// writing the reader's to-dos. It answers only for a pane that is running, so
+/// a pane id found in an old screen or a log reads nothing once that shell is
+/// gone, and only with that one desk's list -- never another desk's, never the
+/// library. A token holder could already open the store; what this adds is
+/// that an agent is handed one list through the front door instead.
+async fn pane_notes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !app.panes.is_running(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let placed = match app.store.pane(&id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    match app.store.desk_notes(placed.desk_id) {
+        Ok(notes) => Json(json!({ "desk": placed.desk_name, "notes": notes })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
 /// what it does with everything else: the image is received as a document,
 /// named for the pane it came from, and what goes back to the page is a path
@@ -3569,6 +3603,20 @@ mod tests {
             agent.matches("app.store.set_pane_session(").count(),
             "pane_agent reaches the store for more than the session id"
         );
+        // And the one that reads: token first, then a running pane, and then
+        // the store only to find that pane's desk and read its list -- no
+        // write of any kind.
+        let notes = &src[src.find("async fn pane_notes(").unwrap()..];
+        let notes = &notes[..notes.find("\n}\n").unwrap()];
+        assert!(notes.find("authorized(").unwrap() < notes.find("app.panes").unwrap());
+        assert!(notes.find("app.panes.is_running(").unwrap() < notes.find("app.store").unwrap());
+        assert_eq!(
+            notes.matches("app.store").count(),
+            notes.matches("app.store.pane(").count()
+                + notes.matches("app.store.desk_notes(").count(),
+            "pane_notes reaches the store for more than reading one desk's list"
+        );
+        assert!(src.contains(r#".route("/api/panes/{id}/notes", get(pane_notes))"#));
     }
 
     /// The capability is read off the fragment and presented in a frame. If it

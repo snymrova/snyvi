@@ -20,8 +20,10 @@ kind of source file. Each desk keeps its own notes, and each is exactly as
 you left it when you come back.
 
 One direction only: agents send, snyvi shows. The rule is about the channel,
-not the window: snyvi cannot be read back by an agent, and nothing a
-document says is ever typed into a panel.
+not the window: no document in snyvi can be read back by an agent, and
+nothing a document says is ever typed into a panel. The one thing that goes
+the other way is a desk's own notes, to the agent working in that desk's
+panel, and only to read ([Asides](#asides) says where the line is).
 
 ## Install
 
@@ -363,9 +365,11 @@ and from that count, and `snyvi init` with no agent prints the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools. `send_document` is the one that matters: it
-takes a file path or inline content and returns a URL. `send_aside` is
-the small one, and [Asides](#asides) below says what it is for. The tool
+That exposes two MCP tools, and a third inside a desk. `send_document` is
+the one that matters: it takes a file path or inline content and returns a
+URL. `send_aside` is the small one, and [Asides](#asides) below says what it
+is for. `read_desk_notes` is offered only to a Claude running in a desk's
+panel, and reads that desk's notes. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -831,12 +835,21 @@ up every ten minutes: an agent that leaves one per edit costs you a
 single glance, and the rest join the trail quietly. An aside may name a
 document it is about, and then clicking it opens that document.
 
-It is a channel from the agent to you and nothing comes back: snyvi
-cannot be read by an agent, and an aside is not an instruction to
-anything.
+It is a channel from the agent to you and nothing comes back: an aside is
+not an instruction to anything.
 
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.
+
+An agent can *read* that list, and nothing else of snyvi's. A Claude
+running in one of a desk's panels is offered `read_desk_notes`, which
+returns that desk's notes, open and done, and has no way to add, tick,
+change or remove one. It is found by the pane: the panel puts its id in
+the shell's environment as `SNYVI_SESSION`, and the daemon answers only
+while that panel is running, and only with its own desk's list -- never
+another desk's, and never a document. A Claude started anywhere else is
+not offered the tool at all. If a list is for your eyes only, keep it on
+a desk you do not run agents in.
 
 The tool was called `send_note` through 1.4.0. The old name still
 works, so a session that was already running when you upgraded keeps

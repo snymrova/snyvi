@@ -272,6 +272,33 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
         .send_json(serde_json::json!({ "state": state, "session": session }));
 }
 
+/// The notes of the desk `pane` is on, read and never written. It never starts
+/// a daemon: a pane only runs while one does, so none answering means the
+/// shell this came from is already gone.
+pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
+    let token = config::read_token(paths).ok_or_else(|| {
+        anyhow!(
+            "no token at {}; is the daemon running as this user?",
+            paths.token_path.display()
+        )
+    })?;
+    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/notes", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .context("asking snyvi")?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// Leave an aside at the foot of the sidebar.
 pub fn aside(paths: &Paths, aside: &crate::aside::NewAside) -> Result<Value> {
     ensure_daemon()?;

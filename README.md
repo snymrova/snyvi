@@ -76,6 +76,7 @@ with every earlier version. `c` shows what changed.
 ## Out of your head
 
 Each desk keeps its own notes, so what's left to do stays with the project.
+The agents at that desk can read them too, and only read them.
 
 <p align="center">
   <picture>
