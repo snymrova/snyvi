@@ -48,8 +48,21 @@ to, and nothing leaves your computer.
 
 ## Install
 
-**Windows**: download [`snyvi-windows-x64-setup.exe`][win] and double-click
-it. That's it: it connects Claude Code (if you have it) and opens snyvi.
+One line, on Linux or macOS. It picks the right path for the machine it is
+on, checks every download against its published checksum, and connects
+Claude Code if it finds it:
+
+```
+curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+```
+
+It is [short enough to read first](install.sh). Run it again to update.
+By hand, or on Windows:
+
+**Windows**: `scoop install snyvi` after `scoop bucket add snyvi
+https://github.com/snymrova/scoop-snyvi`, or download
+[`snyvi-windows-x64-setup.exe`][win] and double-click it. Either way it
+connects Claude Code (if you have it); the installer also opens snyvi.
 (Windows warns that the installer isn't signed: *More info* → *Run anyway*.)
 
 **macOS**:
@@ -88,9 +101,17 @@ it adds to snyvi rather than replacing it.
 [`snyvi-app-linux-x64.deb`][app-x64] ([arm64][app-arm]) on a Debian-based
 system, or built from source elsewhere.
 
+**Cargo**, on anything with a Rust toolchain: `cargo install snyvi` builds
+the daemon, the CLI and the MCP server from [crates.io][crate] — everything
+but the window, which links a browser engine and is
+[built separately](docs/GUIDE.md#desktop).
+
 Every file above is on the [latest release][rel] with a `.sha256` beside it.
-`cargo install snyvi` and building the window yourself: see the
-[install guide](docs/GUIDE.md#install).
+**Updating** is installing the newer version the way you installed the old
+one — the one-liner again, `brew upgrade`, `scoop update snyvi`,
+`cargo install snyvi`, the newer `.deb` or installer — and then, on Linux,
+`snyvi restart` so the daemon picks it up. The [install guide](docs/GUIDE.md#install)
+has every platform in full.
 
 [win]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-windows-x64-setup.exe
 [mac-arm]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-macos-arm64.tar.gz
@@ -101,6 +122,7 @@ Every file above is on the [latest release][rel] with a `.sha256` beside it.
 [tgz-arm]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-linux-arm64.tar.gz
 [app-x64]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-app-linux-x64.deb
 [app-arm]: https://github.com/snymrova/snyvi/releases/latest/download/snyvi-app-linux-arm64.deb
+[crate]: https://crates.io/crates/snyvi
 [rel]: https://github.com/snymrova/snyvi/releases/latest
 
 ## A desk for each project
@@ -290,9 +312,10 @@ compares with the previous version · `/` finds inside what you are reading ·
 
 ## Update and remove
 
-Install the new version over the old one. On Linux, run `snyvi restart`
-afterwards; on macOS use `brew upgrade`; the Windows installer handles it.
-To remove snyvi: `snyvi uninstall-claude`, then uninstall it the way you
+Install the new version the way you installed the old one: the one-liner
+again, `brew upgrade`, `scoop update snyvi`, `cargo install snyvi`, or the
+newer `.deb` or installer. Those first three restart the daemon for you;
+after a `.deb`, run `snyvi restart`. To remove snyvi: `snyvi uninstall-claude`, then uninstall it the way you
 installed it. Your documents are kept until you run `snyvi reset`.
 
 ## More

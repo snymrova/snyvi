@@ -25,6 +25,50 @@ document says is ever typed into a panel.
 
 ## Install
 
+### One line
+
+On Linux and macOS, [`install.sh`](../install.sh) does what the sections
+below say to do by hand, choosing the path for the machine it is on:
+
+```
+curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+```
+
+With Homebrew it installs the cask; on a Mac without it, `snyvi.app` goes
+into Applications and `snyvi` onto your `PATH`. On Debian and Ubuntu it
+installs both packages, snyvi and the window, with `sudo` for `dpkg`; on
+any other Linux the static binary goes into `~/.local/bin`. Every download
+is checked against the `.sha256` published beside it, and Claude Code is
+connected if it is installed. Run it again to update: a daemon that was
+running is restarted on the new version, and nothing you sent is touched.
+
+```
+sh install.sh --tar              the static binary even where dpkg exists
+sh install.sh --no-app           on Debian, without the window package
+sh install.sh --no-init          without registering with Claude Code
+sh install.sh --version 1.3.0    a particular release
+sh install.sh --bin-dir DIR      where the static binary goes
+```
+
+The same flags after `sh -s --` when piping from `curl`. Windows has no
+shell to pipe into; it has [Scoop](#windows) and the installer.
+
+### Cargo
+
+With a Rust toolchain on any platform:
+
+```
+cargo install snyvi
+snyvi init-claude --auto
+```
+
+That builds snyvi from [crates.io](https://crates.io/crates/snyvi): the
+daemon, the CLI, the MCP server and the hook, which is everything but the
+window. The window links a browser engine — WebKitGTK on Linux, WebView2
+on Windows, WebKit on macOS — so it is not in the crate; on Debian it is
+the `snyvi-app` package below, and elsewhere it is built from source as
+[Desktop](#desktop) describes. `cargo install snyvi` again updates it.
+
 ### Debian and Ubuntu
 
 Download `snyvi_<version>_amd64.deb` (or `_arm64.deb`) from the
@@ -59,8 +103,23 @@ browser. See [Desktop](#desktop) for what the window costs.
 
 ### Windows
 
-Download `snyvi-<version>-x86_64-pc-windows-msvc-setup.exe` from the same
-page and double-click it. That is the install:
+With [Scoop](https://scoop.sh):
+
+```
+scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi
+scoop install snyvi
+snyvi init-claude --auto
+```
+
+That is the zip below, unpacked into Scoop's own folder and shimmed onto
+your `PATH`, with both executables in it, so `snyvi app` opens the window
+as it does from the installer. `scoop update snyvi` updates it, stopping
+the daemon and the window first; `scoop uninstall snyvi` removes it and
+leaves your documents. The bucket is written by the same release run that
+publishes the zip, so it cannot say a version that has not shipped.
+
+Without Scoop, download `snyvi-<version>-x86_64-pc-windows-msvc-setup.exe`
+from the same page and double-click it. That is the install:
 
 - snyvi goes into `%LOCALAPPDATA%\Programs\snyvi`, for you alone, so there
   is no administrator prompt;
@@ -170,8 +229,10 @@ after moving the binary, and the registration follows.
 ### Updating
 
 snyvi runs as a background daemon, so a new binary on disk does not take
-effect until the old process exits. Install over the old one
-(`sudo dpkg -i snyvi_*.deb`, which says the same thing), then:
+effect until the old process exits. Install over the old one the way you
+installed it — the one-liner again, `brew upgrade`, `scoop update snyvi`,
+`cargo install snyvi`, `sudo dpkg -i snyvi_*.deb` — and, unless that
+already restarted it for you (the one-liner, Homebrew and Scoop do), then:
 
 ```
 snyvi restart
