@@ -518,7 +518,14 @@ export async function setTheme(want) {
   // own side stores none and follows the system. boot.js resolves that into
   // a concrete theme, and the theme's block says which side it is.
   const shown = () => getComputedStyle(document.documentElement).colorScheme === "dark" ? "dark" : "light";
-  for (let i = 0; i < 4 && shown() !== want; i++) btn.click();
+  // The button steps through all eight, and a click lands once themes.css is
+  // in, so each click waits for the theme it moved to before the next.
+  const root = document.documentElement;
+  for (let i = 0; i < 8 && shown() !== want; i++) {
+    const was = root.dataset.theme;
+    btn.click();
+    await until(() => root.dataset.theme !== was, 200);
+  }
   if (shown() !== want) return { ok: false, why: `the theme never became ${want}` };
   const drew = await until(() => signature() !== before && !document.querySelector('.mmd[data-state="queued"], .mmd[data-state="rendering"]'));
   return { ok: drew, before, after: signature(),

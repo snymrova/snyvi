@@ -139,7 +139,9 @@ async function main() {
     cdp.on("Fetch.requestPaused", (p, sn) => {
       if (sn !== sessionId) return;
       if (/mermaid/.test(p.request.url)) held = p.requestId;
-      else cdp.send("Fetch.continueRequest", { requestId: p.requestId }, sessionId);
+      // A request can pause just as Fetch.disable lands; the disable releases
+      // it, and the continue that follows is refused. Nothing to do about that.
+      else cdp.send("Fetch.continueRequest", { requestId: p.requestId }, sessionId).catch(() => {});
     });
     // Without this the library comes from the tab's own cache and is never a
     // request at all, so there is nothing to hold and no window to open.
