@@ -996,7 +996,7 @@ not in it.
 | Binary size, `snyvi`                        | 12.4 MB     | 15 MB  |
 | Daemon cold start, to first health          | 11 to 14 ms | 100 ms |
 | Daemon resident, three documents in, settled | 40 MB      | 60 MB  |
-| Daemon resident, after a 1 MB document and a 100k-line file, settled | 82 MB | 100 MB |
+| Daemon resident, after a 1 MB document and a 100k-line file, settled | 57 to 72 MB | 100 MB |
 | Renderer init (86 grammars from the pack)   | 6 ms        |        |
 | Send, 100 KB Markdown, round trip           | 12 to 14 ms | 100 ms |
 | Document page, time to first byte           | 1 to 2 ms   | 30 ms  |
@@ -1035,10 +1035,17 @@ replaces its column when there is one, and sets the Windows budget the
 | Binary size, `snyvi`                    | 12.4 MB       | 10.0 MB | 10.9 MB | 10.8 MB |
 | Daemon cold start, to first health      | 11 to 14 ms   | 20 to 35 ms | 32 ms | 408 ms |
 | Daemon resident, three documents in     | 40 MB         | 11 MB   | 8 MB  | 22 MB |
-| Daemon resident, after the two fixtures | 82 MB         | 26 MB   | 30 MB | 33 MB |
+| Daemon resident, after the two fixtures | 57 to 72 MB   | 26 MB   | 30 MB | 33 MB |
 | Send, 100 KB Markdown, round trip       | 12 to 14 ms   | 25 to 41 ms | 37 ms | 31 ms |
 | Render Markdown, 1 MB                   | 108 ms        | 127 to 182 ms | 298 ms | 173 ms |
 | Highlight Rust, 10k lines               | 143 ms        | 166 to 282 ms | 431 ms | 263 ms |
+
+The Linux resident row after the two fixtures used to swing between
+about 80 and 105 MB on the same binary: glibc kept or returned the
+memory a large render freed depending on which threads ran it and when
+they retired. The daemon now returns it after any render over 512 KB,
+off the sender's round trip, and the row settles at 57 to 72 MB. The
+static release is built on musl, which returns large frees at once.
 
 The binary is smaller on the two desktops that ship no static libc. The
 resident rows on macOS are the process's physical footprint, which is
