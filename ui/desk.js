@@ -156,14 +156,18 @@ function refused() {
 function paint(v, f) {
   // A diff for a grid this page does not hold yet: its snapshot is behind it.
   if (!f.sz && !v.rows) return;
-  born = v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1;
-  const pinned = v.body.scrollTop + v.body.clientHeight >= v.body.scrollHeight - 4;
+  born = bornOf(v);
+  // Only these change how tall the pane's content is; a frame that just
+  // rewrites rows leaves the scroll where it is, and asks nothing of layout.
+  const grows = f.sz || f.sbclear || f.gap || (f.sb && f.sb.length);
   if (f.sz) {
     // Resize-and-clear, on this side as on the daemon's.
     v.cols = f.sz[0]; v.rows = f.sz[1];
     v.cells = Array.from({ length: v.rows }, () => blankRow(v.cols));
     v.scr.replaceChildren(...v.cells.map(() => document.createElement("div")));
+    v.stale.clear();
     v.scr.style.height = v.rows * LINE_PX + "px";
+    sizeCanvas(v);
   }
   // `clear` clears everything the reader could scroll to: the run before
   // this one, greyed above the scrollback, goes with it.
@@ -184,22 +188,31 @@ function paint(v, f) {
           if (wide) row[x++] = null;
         }
       }
-      v.scr.children[y].innerHTML = rowHtml(row);
+      v.stale.add(y);
+      drawRow(v, y, x0, x);
     }
   }
+  if (v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
   if (f.c) v.cur = f.c;
   if (f.m) v.mode = f.m;
   cursor(v);
-  if (pinned) v.body.scrollTop = v.body.scrollHeight;
+  if (grows && v.pinned) v.body.scrollTop = v.body.scrollHeight;
 }
 
+const bornOf = v => (v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1);
 const blankRow = n => Array.from({ length: n }, () => [" ", 0, 0, 0, 1]);
 
 function cursor(v) {
   const [x, y, on] = v.cur;
-  v.caret.hidden = !on || !v.status.running;
+  const hide = !on || !v.status.running, w = cellW * ((v.cells[y] && v.cells[y][x] && v.cells[y][x][4]) || 1);
+  // Written only when it moved: a frame that leaves the caret where it was
+  // is most of them, and the same style written again is still a restyle.
+  const at = `${hide},${x * cellW},${y * LINE_PX},${w}`;
+  if (at === v.caretAt) return;
+  v.caretAt = at;
+  v.caret.hidden = hide;
   v.caret.style.transform = `translate(${x * cellW}px, ${y * LINE_PX}px)`;
-  v.caret.style.width = cellW * ((v.cells[y] && v.cells[y][x] && v.cells[y][x][4]) || 1) + "px";
+  v.caret.style.width = w + "px";
 }
 
 /** A row of cells as HTML: runs that share an attribute become one span.
@@ -263,38 +276,54 @@ for (let n = 1; n < 8; n++) {
   BLOCKS[String.fromCharCode(0x2580 + n)] = [[0, 1 - n / 8, 1, n / 8]];   // ▁ to ▇
   BLOCKS[String.fromCharCode(0x2590 - n)] = [[0, 0, n / 8, 1]];           // ▏ to ▉
 }
-const DRAWN = {};
+const DRAWN = {}, MASK = {}, TINT = new Map();
 
 function drawn(W, H) {
   const t = Math.max(1, Math.round(W / 7)), cx = W / 2, cy = H / 2;
-  const svg = (body, box = `${W} ${H}`) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${box}" preserveAspectRatio="none">${body}</svg>`;
-  const rect = (x, y, w, h, o = 1) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"${o < 1 ? ` fill-opacity="${o}"` : ""}/>`;
-  const line = d => `<path d="${d}" fill="none" stroke="#000" stroke-width="${t}"/>`;
-  const fill = d => `<path d="${d}"/>`;
+  // Each is drawn once, in device pixels, and handed to CSS as a PNG: an SVG
+  // mask is laid out again as a document for every cell on every paint
+  // (docs/DESK-PAINT.md), a bitmap is only drawn.
+  // The canvas is kept: the live screen tints it (`tint`), the scrollback
+  // shows it through CSS as a PNG.
+  const dpr = window.devicePixelRatio || 1;
+  let c;
+  const png = (parts, unit) => {
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(W * dpr)); cv.height = Math.max(1, Math.round(H * dpr));
+    c = cv.getContext("2d");
+    c.setTransform(cv.width / (unit ? 1 : W), 0, 0, cv.height / (unit ? 1 : H), 0, 0);
+    for (const p of parts) if (p) p();
+    return cv;
+  };
+  const rect = (x, y, w, h, o = 1) => () => { c.globalAlpha = o; c.fillRect(x, y, w, h); c.globalAlpha = 1; };
+  const line = d => () => { c.lineWidth = t; c.stroke(new Path2D(d)); };
+  const fill = d => () => c.fill(new Path2D(d));
   for (const [ch, w] of Object.entries(LINES)) {
     const [l, r, u, d] = [...w].map(Number), m = Math.max(l, r, u, d) * t / 2;
-    DRAWN[ch] = svg((l ? rect(0, cy - l * t / 2, cx + m, l * t) : "") + (r ? rect(cx - m, cy - r * t / 2, W - cx + m, r * t) : "") +
-      (u ? rect(cx - u * t / 2, 0, u * t, cy + m) : "") + (d ? rect(cx - d * t / 2, cy - m, d * t, H - cy + m) : ""));
+    MASK[ch] = png([l && rect(0, cy - l * t / 2, cx + m, l * t), r && rect(cx - m, cy - r * t / 2, W - cx + m, r * t),
+      u && rect(cx - u * t / 2, 0, u * t, cy + m), d && rect(cx - d * t / 2, cy - m, d * t, H - cy + m)]);
   }
   const r = cx;
-  DRAWN["╭"] = svg(line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 0 ${cx} ${cy + r}V${H}`));
-  DRAWN["╮"] = svg(line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 1 ${cx} ${cy + r}V${H}`));
-  DRAWN["╯"] = svg(line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 0 ${cx} ${cy - r}V0`));
-  DRAWN["╰"] = svg(line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 1 ${cx} ${cy - r}V0`));
-  for (const [ch, b] of Object.entries(BLOCKS)) DRAWN[ch] = svg((typeof b === "string" ? [...b].map(q => Q[q]) : b).map(a => rect(...a)).join(""), "1 1");
+  MASK["╭"] = png([line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 0 ${cx} ${cy + r}V${H}`)]);
+  MASK["╮"] = png([line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 1 ${cx} ${cy + r}V${H}`)]);
+  MASK["╯"] = png([line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 0 ${cx} ${cy - r}V0`)]);
+  MASK["╰"] = png([line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 1 ${cx} ${cy - r}V0`)]);
+  for (const [ch, b] of Object.entries(BLOCKS)) MASK[ch] = png((typeof b === "string" ? [...b].map(q => Q[q]) : b).map(a => rect(...a)), true);
   // Powerline: the separators a prompt's segments are joined with.
   const P = String.fromCharCode;
-  Object.assign(DRAWN, {
-    [P(0xe0b0)]: svg(fill(`M0 0L${W} ${cy}L0 ${H}Z`)), [P(0xe0b2)]: svg(fill(`M${W} 0L0 ${cy}L${W} ${H}Z`)),
-    [P(0xe0b1)]: svg(line(`M0 0L${W} ${cy}L0 ${H}`)), [P(0xe0b3)]: svg(line(`M${W} 0L0 ${cy}L${W} ${H}`)),
-    [P(0xe0b4)]: svg(fill(`M0 0A${W} ${cy} 0 0 1 0 ${H}Z`)), [P(0xe0b6)]: svg(fill(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}Z`)),
-    [P(0xe0b5)]: svg(line(`M0 0A${W} ${cy} 0 0 1 0 ${H}`)), [P(0xe0b7)]: svg(line(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}`)),
-    [P(0xe0b8)]: svg(fill(`M0 0L${W} ${H}H0Z`)), [P(0xe0ba)]: svg(fill(`M${W} 0V${H}H0Z`)),
-    [P(0xe0bc)]: svg(fill(`M0 0H${W}L0 ${H}Z`)), [P(0xe0be)]: svg(fill(`M0 0H${W}V${H}Z`)),
-    [P(0xe0b9)]: svg(line(`M0 0L${W} ${H}`)), [P(0xe0bf)]: svg(line(`M0 0L${W} ${H}`)),
-    [P(0xe0bb)]: svg(line(`M${W} 0L0 ${H}`)), [P(0xe0bd)]: svg(line(`M${W} 0L0 ${H}`)),
+  Object.assign(MASK, {
+    [P(0xe0b0)]: png([fill(`M0 0L${W} ${cy}L0 ${H}Z`)]), [P(0xe0b2)]: png([fill(`M${W} 0L0 ${cy}L${W} ${H}Z`)]),
+    [P(0xe0b1)]: png([line(`M0 0L${W} ${cy}L0 ${H}`)]), [P(0xe0b3)]: png([line(`M${W} 0L0 ${cy}L${W} ${H}`)]),
+    [P(0xe0b4)]: png([fill(`M0 0A${W} ${cy} 0 0 1 0 ${H}Z`)]), [P(0xe0b6)]: png([fill(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}Z`)]),
+    [P(0xe0b5)]: png([line(`M0 0A${W} ${cy} 0 0 1 0 ${H}`)]), [P(0xe0b7)]: png([line(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}`)]),
+    [P(0xe0b8)]: png([fill(`M0 0L${W} ${H}H0Z`)]), [P(0xe0ba)]: png([fill(`M${W} 0V${H}H0Z`)]),
+    [P(0xe0bc)]: png([fill(`M0 0H${W}L0 ${H}Z`)]), [P(0xe0be)]: png([fill(`M0 0H${W}V${H}Z`)]),
+    [P(0xe0b9)]: png([line(`M0 0L${W} ${H}`)]), [P(0xe0bf)]: png([line(`M0 0L${W} ${H}`)]),
+    [P(0xe0bb)]: png([line(`M${W} 0L0 ${H}`)]), [P(0xe0bd)]: png([line(`M${W} 0L0 ${H}`)]),
   });
-  return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("data:image/svg+xml,${encodeURIComponent(s)}")}`).join("\n") +
+  TINT.clear();
+  for (const ch in MASK) DRAWN[ch] = MASK[ch].toDataURL("image/png");
+  return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("${s}")}`).join("\n") +
     `\n.pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
 }
 
@@ -323,6 +352,203 @@ function color(n) {
   }
   const g = 8 + (i - 232) * 10;
   return `rgb(${g},${g},${g})`;
+}
+
+// ---------- the live screen, on a canvas ----------
+
+/* The rows a program redraws many times a second are drawn on a canvas; the
+ * scrollback stays text (docs/DESK-PAINT.md, Phase 3). A row of spans in the
+ * page cost a layer per drawn cell, walked by the compositor on every frame;
+ * a canvas is one picture however many there are. Over it, the same rows as
+ * plain text nobody sees: the browser's selection, copy on `mouseup` and the
+ * caret's place are all read off that, as they were off the painted rows. */
+
+/** A row as the text over the canvas: characters, and a character that
+ *  could push the rest off the grid in a cell-wide span of its own, as
+ *  `rowHtml` does. No colours and no drawn glyphs: nothing here is seen. */
+function rowText(row) {
+  let out = "", text = "";
+  for (const c of row) {
+    if (!c) continue;
+    if (c[4] === 2 || c[0] >= "\u2000") { out += ctx.esc(text) + `<span class="x${c[4] === 2 ? " w" : ""}">${ctx.esc(c[0])}</span>`; text = ""; continue; }
+    text += c[0];
+  }
+  return out + ctx.esc(text);
+}
+
+/** The text catches up with the canvas once a second, not on every frame:
+ *  a row rewritten in the page is a layout, and a spinner is 25 of them a
+ *  second (docs/DESK-PAINT.md). A press in the pane brings it up to date
+ *  first, so a selection starts on what is drawn; and it waits while a
+ *  button is held, so a selection being dragged is not written over. */
+const TEXT_MS = 1000;
+function textSoon(v) {
+  v.textT = 0;
+  if (v.holding) { v.textT = setTimeout(() => textSoon(v), TEXT_MS); return; }
+  text(v);
+}
+function text(v) {
+  for (const y of v.stale) if (v.scr.children[y]) v.scr.children[y].innerHTML = rowText(v.cells[y]);
+  v.stale.clear();
+}
+
+/** The canvas the size of the grid, in device pixels. */
+function sizeCanvas(v) {
+  const k = window.devicePixelRatio || 1;
+  v.k = k;
+  v.cv.width = Math.max(1, Math.round(v.cols * cellW * k));
+  v.cv.height = Math.max(1, Math.round(v.rows * LINE_PX * k));
+  v.cv.style.width = v.cols * cellW + "px";
+  v.cv.style.height = v.rows * LINE_PX + "px";
+  v.pal = null;
+}
+
+/** The theme, read once for a pane until it changes: the sixteen, the
+ *  accent, the pane's ground and ink, and its font. Resolved on the pane,
+ *  so a pane that wears its own colours is drawn in them. */
+function palette(v) {
+  const col = n => snyviTheme.colour(n, v.body);
+  const t = [];
+  for (let i = 0; i < 16; i++) t.push(col(`--t${i}`));
+  v.pal = { t, accent: col("--accent"), bg: col("--pn-bg"), fg: col("--pn-fg"), font: getComputedStyle(v.body).fontFamily, fonts: new Map() };
+  return v.pal;
+}
+
+/** `color`, for a canvas: the same colours, resolved. */
+function ink(p, n) {
+  if (!n) return "";
+  if (n >= 1 << 24) {
+    const c = n & 0xffffff;
+    return c === born ? p.accent : "#" + c.toString(16).padStart(6, "0");
+  }
+  return n <= 16 ? p.t[n - 1] : color(n);
+}
+
+/** A font at a size, and where its baseline sits in a row: centred in the
+ *  line as CSS centres it, by the font's own ascent and descent. */
+function font(v, g, px, fl) {
+  const key = `${fl & 5},${px}`;
+  let f = v.pal.fonts.get(key);
+  if (!f) {
+    const k = v.k, css = `${fl & 4 ? "italic " : ""}${fl & 1 ? 650 : 400} ${px * k}px ${v.pal.font}`;
+    g.font = css;
+    // Whole pixels, as CSS lays out a line: its ascent and descent rounded,
+    // and the room left over split with the odd pixel below.
+    const m = g.measureText("Hg"), a = Math.round(m.fontBoundingBoxAscent ?? px * k * .8), d = Math.round(m.fontBoundingBoxDescent ?? px * k * .2);
+    f = { css, base: Math.floor((LINE_PX * k - (a + d)) / 2) + a, a, d };
+    v.pal.fonts.set(key, f);
+  }
+  g.font = f.css;
+  // The quick way to set text: no kerning to work out, and no ligatures,
+  // which a grid has no room for anyway.
+  g.textRendering = "optimizeSpeed"; g.fontKerning = "none";
+  return f;
+}
+
+/** A drawn character's mask in one colour, kept: a row that shows it again
+ *  draws a picture it already has. */
+function tint(ch, col) {
+  const key = ch + col;
+  let t = TINT.get(key);
+  if (!t) {
+    const m = MASK[ch];
+    t = document.createElement("canvas");
+    t.width = m.width; t.height = m.height;
+    const c = t.getContext("2d");
+    c.drawImage(m, 0, 0);
+    c.globalCompositeOperation = "source-in";
+    c.fillStyle = col;
+    c.fillRect(0, 0, t.width, t.height);
+    if (TINT.size > 2048) TINT.clear();
+    TINT.set(key, t);
+  }
+  return t;
+}
+
+/** One row of the grid, drawn: its grounds, then its characters, in the
+ *  colours and attributes `span` gives them. Only cells `a` to `b` if that
+ *  is all a frame changed -- a spinner is a cell or two -- cleared a cell
+ *  wider on each side, since a glyph can reach into its neighbour (an icon,
+ *  italics), and drawn from two cells further out, so what reaches back in
+ *  from a neighbour is whole again. */
+function drawRow(v, y, a = 0, b = v.cols) {
+  const g = v.g, row = v.cells[y], p = v.pal || palette(v), k = v.k;
+  const top = Math.round(y * LINE_PX * k), h = Math.round((y + 1) * LINE_PX * k) - top;
+  const X = i => Math.round(i * cellW * k);
+  const inks = c => {
+    let f = ink(p, c[1]), b = ink(p, c[2]);
+    if (c[3] & 32) [f, b] = [b || p.bg, f || p.fg];
+    return [f || p.fg, b];
+  };
+  const whole = a <= 0 && b >= row.length;
+  const c0 = Math.max(0, a - 1), c1 = Math.min(row.length, b + 1);
+  let s = Math.max(0, c0 - 2);
+  while (s > 0 && !row[s]) s--;
+  const e = Math.min(row.length, c1 + 2);
+  if (whole) g.clearRect(0, top, v.cv.width, h);
+  else { g.save(); g.beginPath(); g.rect(X(c0), top, X(c1) - X(c0), h); g.clip(); g.clearRect(X(c0), top, X(c1) - X(c0), h); }
+  for (let x = s; x < e; x++) {
+    const c = row[x];
+    if (!c) continue;
+    const b = inks(c)[1];
+    if (!b) continue;
+    // A run of one ground is one rectangle, so no seam shows between cells.
+    let n = x + c[4];
+    while (n < e && (!row[n] || (inks(row[n])[1] === b && (row[n][3] & 2) === (c[3] & 2)))) n += row[n] ? row[n][4] : 1;
+    g.globalAlpha = c[3] & 2 ? .6 : 1;
+    g.fillStyle = b;
+    g.fillRect(X(x), top, X(n) - X(x), h);
+    x = n - 1;
+  }
+  const size = SIZES[sizeAt][1];
+  for (let x = s; x < e;) {
+    const c = row[x];
+    if (!c) { x++; continue; }
+    const [f] = inks(c), fl = c[3];
+    let n = x + c[4], text = c[0];
+    const own = c[4] === 2 || c[0] >= "\u2000";
+    if (!own) {
+      while (n < e && row[n] && row[n][4] === 1 && row[n][0] < "\u2000" && row[n][1] === c[1] && row[n][2] === c[2] && row[n][3] === fl) text += row[n++][0];
+    }
+    g.globalAlpha = fl & 2 ? .6 : 1;
+    if (!(fl & 64) && text.trim()) {
+      if (own && MASK[text]) g.drawImage(tint(text, f), X(x), top, X(n) - X(x), h);
+      else {
+        const icon = own && /[\ue000-\uf8ff]/.test(text), m = font(v, g, icon ? 10 : size, fl);
+        g.fillStyle = f;
+        if (own) { g.textAlign = "center"; g.fillText(text, (X(x) + X(n)) / 2, top + m.base); g.textAlign = "start"; }
+        else g.fillText(text, X(x), top + m.base);
+      }
+    }
+    if (fl & 136 && !(fl & 64)) {
+      const m = font(v, g, size, fl), th = Math.max(1, Math.round(k * size / 12));
+      g.fillStyle = f;
+      if (fl & 8) g.fillRect(X(x), Math.round(top + m.base + m.d / 3), X(n) - X(x), th);
+      if (fl & 128) g.fillRect(X(x), Math.round(top + m.base - m.a * .3), X(n) - X(x), th);
+    }
+    x = n;
+  }
+  g.globalAlpha = 1;
+  if (!whole) g.restore();
+}
+
+/** Every row again: the size, the theme, the font or the density changed. */
+function drawAll(v) {
+  if (!v.rows || !v.g) return;
+  born = bornOf(v);
+  for (let y = 0; y < v.rows; y++) drawRow(v, y);
+}
+
+/** The theme and the accent are attributes on the root (boot.js resolves
+ *  "follow the system" into one): a change is every pane drawn again. A font
+ *  the page was still fetching when the cell was measured is a cell of
+ *  another width once it lands: that is a measure again, which draws again. */
+let lookWatch = null;
+function watchLook() {
+  if (lookWatch) return;
+  lookWatch = new MutationObserver(() => { for (const v of views.values()) { v.pal = null; drawAll(v); } });
+  lookWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
+  document.fonts?.addEventListener("loadingdone", () => { if (ctx) remeasure(); });
 }
 
 // ---------- keys ----------
@@ -406,7 +632,7 @@ function makeView(p) {
   el.className = "pn";
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span></header>` +
-    `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
+    `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
@@ -415,10 +641,16 @@ function makeView(p) {
     // the way there. `resumed` is one attempt, per daemon.
     resumed: false, starting: false, resuming: !(p.status && (p.status.running || p.status.exit != null)),
     body: el.querySelector(".pn-body"), old: el.querySelector(".pn-old"), sb: el.querySelector(".pn-sb"), scr: el.querySelector(".pn-scr"),
-    caret: el.querySelector(".pn-caret"), start: el.querySelector(".pn-start"), size: "",
+    caret: el.querySelector(".pn-caret"), cv: el.querySelector(".pn-cv"), pal: null, stale: new Set(), textT: 0, holding: false, start: el.querySelector(".pn-start"), size: "",
+    pinned: true,   // at the bottom, so new lines keep it there
   };
   const { body, start } = v;
+  v.g = v.cv.getContext("2d");
+  watchLook();
 
+  // Read where the reader is when they scroll, not on every frame: a read
+  // there is a layout forced once per frame per pane (docs/DESK-PAINT.md).
+  body.addEventListener("scroll", () => { v.pinned = body.scrollTop + body.clientHeight >= body.scrollHeight - 4; }, { passive: true });
   body.addEventListener("focus", () => { focused = v.id; el.classList.add("on"); rail(); });
   body.addEventListener("blur", () => el.classList.remove("on"));
   el.querySelector(".pn-head").addEventListener("click", () => body.focus());
@@ -446,6 +678,7 @@ function makeView(p) {
   });
   // Copy on selection: the scrollback is text in the page, so the browser
   // selects it, and letting go is the copy.
+  body.addEventListener("mousedown", () => { text(v); v.holding = true; addEventListener("mouseup", () => { v.holding = false; }, { once: true }); });
   body.addEventListener("mouseup", () => setTimeout(() => copy(v, false), 0));
   body.addEventListener("wheel", e => wheel(v, e), { passive: false });
   body.addEventListener("paste", e => { e.preventDefault(); paste(v, e.clipboardData); });
@@ -1392,9 +1625,28 @@ function measure() {
   document.body.append(probe);
   cellW = probe.getBoundingClientRect().width / 40 || cellW;
   probe.remove();
+  // Measured in a stand-in if the pane's font is still on its way: measure
+  // again once it is in, or every cell is the stand-in's width.
+  if (document.fonts && document.fonts.status !== "loaded") document.fonts.ready.then(() => { if (ctx) remeasure(); });
   let g = document.getElementById("desk-drawn");
   if (!g) { g = document.createElement("style"); g.id = "desk-drawn"; document.head.append(g); }
   g.textContent = drawn(cellW, LINE_PX);
+  for (const v of views.values()) if (v.rows) { sizeCanvas(v); drawAll(v); }
+  // Cut in device pixels, so cut again when those change: a zoom, or the
+  // window moved to a screen of another density.
+  dprWatch?.abort(); dprWatch = new AbortController();
+  matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener("change", measure, { once: true, signal: dprWatch.signal });
+}
+let dprWatch;
+
+/** Measure again, and give every panel the columns and rows it now has. */
+function remeasure() {
+  measure();
+  for (const v of views.values()) {
+    if (v.rows) v.scr.style.height = v.rows * LINE_PX + "px";
+    if (v.cur) cursor(v);
+    fit(v);
+  }
 }
 
 /** The terminal's text size: `step` of +1 or -1 moves it, 0 puts it back to
@@ -1408,14 +1660,7 @@ export function textSize(step) {
     if (to !== sizeAt) {
       sizeAt = to;
       try { localStorage.setItem("snyvi.term-size", SIZES[to][0]); } catch {}
-      if (ctx) {
-        measure();
-        for (const v of views.values()) {
-          if (v.rows) v.scr.style.height = v.rows * LINE_PX + "px";
-          if (v.cur) cursor(v);
-          fit(v);
-        }
-      }
+      if (ctx) remeasure();
     }
   }
   return { name: SIZES[sizeAt][0], next: SIZES[(sizeAt + 1) % SIZES.length][0], at: sizeAt, of: SIZES.length };
@@ -1539,8 +1784,19 @@ const CSS = `
 .pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
 .pn-sb > .gap { color: var(--fg-3); font-style: italic; }
 .pn-old { color: var(--fg-3); opacity: .7; }
-.pn-live { position: relative; }
-.pn.off .pn-scr { opacity: .55; }
+/* The live screen on a layer of its own, and each row shut in on itself: a
+ * spinner's frame repaints its row, not the pane or the panes beside it
+ * (docs/DESK-PAINT.md, Phase 2). */
+.pn-live { position: relative; will-change: transform; }
+.pn-scr > div { contain: strict; }
+/* Phase 3: the live rows are drawn on the canvas; the text over it is the same
+ * rows, unstyled and unseen, for selection, copy and the caret's reading. */
+.pn-cv { position: absolute; left: 0; top: 0; pointer-events: none; }
+.pn-scr { position: relative; color: transparent; text-rendering: optimizeSpeed; font-variant-ligatures: none; }
+/* A pane's text changing lays out the pane, not the desk's grid around it. */
+.pn-body { contain: strict; }
+.pn-scr ::selection { color: transparent; background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.pn.off .pn-cv { opacity: .55; }
 .pn-caret { position: absolute; left: 0; top: 0; height: var(--pn-line); background: var(--fg); opacity: .35; pointer-events: none; }
 .pn.on .pn-caret { opacity: .75; animation: pn-blink 1.1s steps(1) infinite; }
 @keyframes pn-blink { 50% { opacity: .15; } }
