@@ -16,7 +16,12 @@
  */
 
 const WIDE = 256;
-const LINE_PX = 16;            // a row's height, which the pane's CSS matches
+/** The terminal's text sizes, which Aa steps through on a desk: the font
+ *  size and the row's height, in px. Normal is what a pane always was. One
+ *  size for every desk, kept in `snyvi.term-size`. */
+const SIZES = [["Small", 11.5, 15], ["Normal", 12.5, 16], ["Large", 14, 18], ["Larger", 15.5, 20]];
+let sizeAt = (() => { try { const i = SIZES.findIndex(([n]) => n === localStorage.getItem("snyvi.term-size")); return i < 0 ? 1 : i; } catch { return 1; } })();
+let LINE_PX = SIZES[sizeAt][2];   // a row's height, which the pane's CSS follows through --pn-line
 const KEEP_LINES = 6000;       // scrollback rows kept in the page; the daemon keeps 2 MB
 let ctx = null;                // what app.js handed `open`
 let sock = null, sockP = null, retry = 0;
@@ -424,6 +429,14 @@ function makeView(p) {
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
+    // ⌃= ⌃- ⌃0: the text size, as a terminal does it. ⌃- sent ^_, which is
+    // undo to readline and zsh -- as in GNOME Terminal, undo is still ⌃_.
+    if (e.ctrlKey && !e.altKey && /^[-=+0]$/.test(e.key)) {
+      e.preventDefault(); e.stopPropagation();
+      textSize(e.key === "0" ? 0 : e.key === "-" ? -1 : 1);
+      if (ctx.sized) ctx.sized();
+      return;
+    }
     if (e.isComposing || e.key === "Dead" || e.key === "Process") return;
     const b = keyBytes(e, v.mode[0]);
     if (b == null) return;
@@ -515,7 +528,10 @@ function resume(v) {
  *  the page re-tints instead, in `color`, so a swatch reaches a pane that is
  *  already running. */
 function accent() {
-  const c = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  // Resolved through boot.js rather than read as text: on :root the token is
+  // a light-dark() expression, and the prompt wants six hex digits, which is
+  // how boot.js says an opaque colour.
+  const c = snyviTheme.colour("--accent");
   return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
 }
 
@@ -1341,17 +1357,7 @@ export function open(c) {
   detach();
   ctx = c;
   style();
-  if (first) {
-    // A cell's width, measured in the font a pane is drawn in.
-    const probe = Object.assign(document.createElement("span"), { className: "pn-probe", textContent: "0".repeat(40) });
-    document.body.append(probe);
-    cellW = probe.getBoundingClientRect().width / 40 || cellW;
-    probe.remove();
-    const g = document.createElement("style");
-    g.id = "desk-drawn";
-    g.textContent = drawn(cellW, LINE_PX);
-    document.head.append(g);
-  }
+  if (first) measure();
   if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints(); }
   deskId = c.id; reading = null;
   const d = current();
@@ -1373,6 +1379,53 @@ export function open(c) {
   const v = views.get(focused);
   if (v) setTimeout(() => v.body.focus(), 0);
 }
+
+/** The cell, measured in the font and size a pane is drawn in, and the
+ *  drawn characters cut to it. Run once when the first desk opens, and again
+ *  whenever Aa changes the size. */
+function measure() {
+  const [, px, line] = SIZES[sizeAt];
+  LINE_PX = line;
+  document.documentElement.style.setProperty("--pn-size", px + "px");
+  document.documentElement.style.setProperty("--pn-line", line + "px");
+  const probe = Object.assign(document.createElement("span"), { className: "pn-probe", textContent: "0".repeat(40) });
+  document.body.append(probe);
+  cellW = probe.getBoundingClientRect().width / 40 || cellW;
+  probe.remove();
+  let g = document.getElementById("desk-drawn");
+  if (!g) { g = document.createElement("style"); g.id = "desk-drawn"; document.head.append(g); }
+  g.textContent = drawn(cellW, LINE_PX);
+}
+
+/** The terminal's text size: `step` of +1 or -1 moves it, 0 puts it back to
+ *  Normal, and no step only reads it. Every panel is measured again and told
+ *  its new columns and rows -- the same path a window resize takes, so the
+ *  program redraws itself at the size it now has (resize-and-clear,
+ *  docs/DESK.md). Returns the size's name and the next one up, for Aa. */
+export function textSize(step) {
+  if (step != null) {
+    const to = step ? Math.max(0, Math.min(SIZES.length - 1, sizeAt + step)) : 1;
+    if (to !== sizeAt) {
+      sizeAt = to;
+      try { localStorage.setItem("snyvi.term-size", SIZES[to][0]); } catch {}
+      if (ctx) {
+        measure();
+        for (const v of views.values()) {
+          if (v.rows) v.scr.style.height = v.rows * LINE_PX + "px";
+          if (v.cur) cursor(v);
+          fit(v);
+        }
+      }
+    }
+  }
+  return { name: SIZES[sizeAt][0], next: SIZES[(sizeAt + 1) % SIZES.length][0], at: sizeAt, of: SIZES.length };
+}
+
+/** The focused panel alone, or the grid again: what the width control means
+ *  on a desk. How many panels there are, so it can say when one already fills
+ *  it. */
+export const zoomOn = () => { zoom(); return zoomed; };
+export const panels = () => views.size;
 
 export function update(desks) {
   if (!ctx) return;
@@ -1423,14 +1476,11 @@ function style() {
 const CSS = `
 @font-face { font-family: "snyvi symbols"; font-display: block; unicode-range: U+E000-F8FF;
   src: local("Symbols Nerd Font Mono"), local("SymbolsNerdFontMono-Regular"), url(/assets/fonts/symbols-nerd.woff2) format("woff2"); }
-:root { --pn-bg: var(--bg-raise); --pn-fg: var(--fg);
-  --pn-font: "JetBrains Mono", "snyvi symbols", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --t0:#1f1d1a; --t1:#b3261e; --t2:#3b6d11; --t3:#a16207; --t4:#1d4ed8; --t5:#7e22ce; --t6:#0e7490; --t7:#8f897f;
-  --t8:#5c574f; --t9:#dc2626; --t10:#4d7c0f; --t11:#ca8a04; --t12:#2563eb; --t13:#9333ea; --t14:#0891b2; --t15:#d8d3c9; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --t0:#2a2f3a; --t1:#f87171; --t2:#86c46d; --t3:#e6b450; --t4:#7aa2f7; --t5:#c792ea; --t6:#5ccfe6; --t7:#c8ccd4;
-  --t8:#5c6370; --t9:#ff8b8b; --t10:#a6e3a1; --t11:#f9e2af; --t12:#89b4fa; --t13:#f5c2e7; --t14:#94e2d5; --t15:#ffffff; } }
-:root[data-theme="dark"] { --t0:#2a2f3a; --t1:#f87171; --t2:#86c46d; --t3:#e6b450; --t4:#7aa2f7; --t5:#c792ea; --t6:#5ccfe6; --t7:#c8ccd4;
-  --t8:#5c6370; --t9:#ff8b8b; --t10:#a6e3a1; --t11:#f9e2af; --t12:#89b4fa; --t13:#f5c2e7; --t14:#94e2d5; --t15:#ffffff; }
+/* The terminal's sixteen, --t0 to --t15, are the theme's: each theme block
+ * in app.css sets its own, so a shell is dressed with the page it sits in.
+ * Only the aliases the panel reads are here. */
+:root { --pn-bg: var(--bg-raise); --pn-fg: var(--fg); --pn-size: 12.5px; --pn-line: 16px;
+  --pn-font: "JetBrains Mono", "snyvi symbols", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 :root[data-view="desk"] #main { overflow: hidden; }
 :root[data-view="desk"] #doc { max-width: none; height: 100%; padding: 14px 16px 16px; display: flex; flex-direction: column; }
 :root[data-view="desk"] #doc:has(.inbox-head) { display: block; padding: 56px 48px; max-width: calc(var(--measure) + 96px); overflow-y: auto; }
@@ -1476,24 +1526,28 @@ const CSS = `
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
-.pn.blk .pn-head { border-bottom: 2px solid #d97706; }
-.pn.blk .pn-state { color: #b45309; font-weight: 600; animation: pn-need .8s ease-out; }
+.pn.blk .pn-head { border-bottom: 2px solid var(--warn); }
+.pn.blk .pn-state { color: var(--warn); font-weight: 600; animation: pn-need .8s ease-out; }
 .pn.done .pn-state { color: var(--accent); }
-@keyframes pn-need { 0%, 60% { background: rgba(217,119,6,.18); } 100% { background: transparent; } }
+@keyframes pn-need { 0%, 60% { background: color-mix(in srgb, var(--warn) 18%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .pn.blk .pn-state { animation: none; } }
-.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }
-.pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: ${LINE_PX}px; overflow: hidden; }
+/* The scrollbar's room is kept whether or not there is one: a panel whose
+ * output first overflowed grew a scrollbar, lost a column to it, was resized
+ * and cleared, lost the overflow, gave the column back -- and a busy program
+ * kept that going every frame. */
+.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
+.pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
 .pn-sb > .gap { color: var(--fg-3); font-style: italic; }
 .pn-old { color: var(--fg-3); opacity: .7; }
 .pn-live { position: relative; }
 .pn.off .pn-scr { opacity: .55; }
-.pn-caret { position: absolute; left: 0; top: 0; height: ${LINE_PX}px; background: var(--fg); opacity: .35; pointer-events: none; }
+.pn-caret { position: absolute; left: 0; top: 0; height: var(--pn-line); background: var(--fg); opacity: .35; pointer-events: none; }
 .pn.on .pn-caret { opacity: .75; animation: pn-blink 1.1s steps(1) infinite; }
 @keyframes pn-blink { 50% { opacity: .15; } }
 .pn-body .b { font-weight: 650; } .pn-body .d { opacity: .6; } .pn-body .i { font-style: italic; }
 .pn-body .u { text-decoration: underline; } .pn-body .s { text-decoration: line-through; } .pn-body .u.s { text-decoration: underline line-through; }
 .pn-body .h { color: transparent !important; }
-.pn-body span { display: inline-block; height: ${LINE_PX}px; vertical-align: top; }
+.pn-body span { display: inline-block; height: var(--pn-line); vertical-align: top; }
 /* An icon is drawn a full em wide and a cell is 0.6 of one: set a size down,
  * centred in its cell, and over its neighbours rather than under them. */
 .pn-body .nf { position: relative; font-size: 10px; }
@@ -1504,7 +1558,7 @@ const CSS = `
 .pn-start .pn-resume { color: var(--fg); font-weight: 500; }
 .pn-start .pn-resume[hidden] { display: none; }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
-.pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: 12.5px; }
+.pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: var(--pn-size); }
 /* ---------- the rail ----------
  * Three lists and a label over each, drawn the way the sidebar draws its own
  * rows: a mark at the left, the name, and one fact at the right. */
@@ -1528,11 +1582,11 @@ const CSS = `
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
-.dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: #dc2626; }
-.dk-tools button[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
+.dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: var(--danger); }
+.dk-tools button[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
-.dk-panes .run .dot { color: #16a34a; }
-.dk-panes .blk .dot { color: #b45309; font-weight: 700; font-size: 11px; }
+.dk-panes .run .dot { color: var(--ok); }
+.dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
 /* The documents section folds. Its head is the label, made a summary: the
  * chevron the sidebar's heads carry, shown under the cursor and while
  * folded. */

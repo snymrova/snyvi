@@ -72,6 +72,13 @@ const KEYS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/keys.js"));
 /// reader who only reads never fetches it; the sidebar draws its desks without
 /// it, because drawing them is in `app.js` and only doing something is here.
 const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js"));
+/// ⌘K, fetched the first time it is pressed: the one box a reader summons
+/// rather than meets, so first paint does not carry it.
+const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/palette.js"));
+/// Every theme but Paper and Ink, fetched once the page is idle: first paint
+/// carries only the two defaults, and boot.js paints a returning reader's
+/// own theme from a copy it kept, so the window opens as fast as it can.
+const THEMES_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/themes.css"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -188,6 +195,8 @@ impl Ui {
             ("find.js", FIND_JS),
             ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
+            ("themes.css", THEMES_CSS),
+            ("palette.js", PALETTE_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -309,6 +318,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(FIND_JS.as_bytes());
         h.update(KEYS_JS.as_bytes());
         h.update(MENU_JS.as_bytes());
+        h.update(THEMES_CSS.as_bytes());
+        h.update(PALETTE_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -428,6 +439,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/find.js", get(asset_find))
         .route("/assets/keys.js", get(asset_keys))
         .route("/assets/menu.js", get(asset_menu))
+        .route("/assets/themes.css", get(asset_themes))
+        .route("/assets/palette.js", get(asset_palette))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -789,6 +802,19 @@ async fn asset_keys(State(app): S) -> Response {
 }
 /// The folder menu and the desk actions, on the same terms: nothing here has
 /// happened until someone has clicked something.
+/// ⌘K, on the same terms: nothing asks for it but the first ⌘K.
+async fn asset_palette(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "palette.js",
+        PALETTE_JS,
+    )
+}
+/// The other themes, on the same terms: the page asks once it is idle.
+async fn asset_themes(State(app): S) -> Response {
+    asset(&app, "text/css; charset=utf-8", "themes.css", THEMES_CSS)
+}
 async fn asset_menu(State(app): S) -> Response {
     asset(
         &app,
@@ -3252,7 +3278,7 @@ fn err(e: anyhow::Error) -> Response {
 mod tests {
     use super::{
         desk_refusal, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
-        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
+        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS, PALETTE_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -3728,13 +3754,16 @@ mod tests {
             ("find.js", FIND_JS),
             ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
+            ("palette.js", PALETTE_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
                 let end = rest.find('"').expect("unterminated selector");
                 let id = &rest[..end];
                 let used_at_once = rest[end..].starts_with("\").");
-                if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
+                // Or in the chunk itself: about.js builds the boxes it fills.
+                let built = format!("id=\"{id}\"");
+                if used_at_once && !INDEX_HTML.contains(&built) && !src.contains(&built) {
                     missing.push(format!("{file}: {id}"));
                 }
             }
@@ -3765,6 +3794,8 @@ mod tests {
             "FIND_JS",
             "KEYS_JS",
             "MENU_JS",
+            "THEMES_CSS",
+            "PALETTE_JS",
         ] {
             assert!(
                 block.contains(chunk),
@@ -3789,10 +3820,20 @@ mod tests {
     }
 
     /// The pre-paint script and the app must agree on the keys, or a saved setting is
-    /// written by one and never read by the other.
+    /// written by one and never read by the other. The three theme keys are spelled
+    /// out in full: this is a substring check, and `snyvi.theme` would go on passing
+    /// on the strength of `snyvi.theme.light` alone.
     #[test]
     fn settings_written_by_the_app_are_applied_before_first_paint() {
-        for key in ["theme", "font", "side", "wide", "wrap"] {
+        for key in [
+            "theme.light",
+            "theme.dark",
+            "theme.follow",
+            "font",
+            "side",
+            "wide",
+            "wrap",
+        ] {
             let k = format!("snyvi.{key}");
             assert!(APP_JS.contains(&k), "{k} is not used by app.js");
             assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");

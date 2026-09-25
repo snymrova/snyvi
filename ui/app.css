@@ -10,52 +10,93 @@
 @font-face { font-family: "Atkinson Hyperlegible Next"; font-style: normal; font-weight: 200 800; font-display: swap; src: url(/assets/fonts/atkinson.woff2) format("woff2"); }
 @font-face { font-family: "Atkinson Hyperlegible Next"; font-style: italic; font-weight: 200 800; font-display: swap; src: url(/assets/fonts/atkinson-italic.woff2) format("woff2"); }
 
+/* ---------- the themes ----------
+   Eight, each one block of the same names: surfaces, ink, rules, the accent
+   pair and its wash, code, mark, diff, depth, status, the mascot's pink,
+   ten syntax tokens and the terminal's sixteen (docs/THEMES.md, the token
+   contract). Nothing draws with any other colour. Paper's values sit on
+   :root and every other theme is a block of overrides on it, matched by
+   `[data-theme]` alone rather than `:root[data-theme]` so that any element
+   can wear one -- the rows of the ⌘K theme list are each their own swatch
+   that way, and a desk will wear its own accent by the same route.
+   boot.js always sets `data-theme` on <html> before this sheet applies, so
+   :root alone is only ever seen when storage is unreadable, and then it is
+   Paper. Every status, syntax and terminal colour in every theme is read
+   back by bench/page.mjs on each of its four surfaces and the build fails
+   under 4.5:1 -- 7:1 for Contrast.
+   Only Paper and Ink are here, the two defaults, so a first launch in either
+   light or dark opens in its own colours. The other six are in themes.css,
+   fetched once the page is idle; boot.js paints a returning reader's theme
+   from a copy the app kept of it, so leaving them out costs no flash. */
 :root {
   --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --serif: "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --body: var(--sans);
 
-  /* paper */
+  /* Paper: the warm near-white, the default light theme. */
+  color-scheme: light;
   --bg: #faf9f6;
   --bg-side: #f3f1ec;
   --bg-raise: #ffffff;
   --fg: #1f1d1a;
   --fg-2: #5c574f;
-  --fg-3: #756f66;
+  --fg-3: #8a8378;
   --rule: #e6e2da;
   --rule-2: #d8d3c9;
   /* The accent, picked with the swatch in the sidebar's foot. Each choice is
-     a pair: -l sits on paper, -d on the dark palette. Every warm touch in the
-     chrome derives from it -- washes, syntax keywords, snyvi's own face. */
+     a pair: -l sits on paper, -d on ink. Which half a theme wears is its
+     `color-scheme`, read by light-dark() in the derivation rule below the
+     accents, so a theme never names the half and the accent stays an axis
+     of its own. A theme may set the pair's default (Parchment's red is
+     warmer, Contrast's is lifted to clear 7:1) and a chosen accent, whose
+     block comes later, overrides it. The wash is the accent over the
+     surface: how much, and over what, is the theme's. */
   --accent-l: #8c0f26;
   --accent-d: #f04a63;
-  --accent: var(--accent-l);
-  --accent-bg: color-mix(in srgb, var(--accent) 10%, var(--bg));
-  --brand: var(--accent-l);   /* the logo's colour, the same in both themes */
+  --wash: 10%;
+  --wash-on: var(--bg);
+  --deepen: 0%;   /* how far this theme pulls every accent to black (light) */
+  --lift: 0%;     /* or to white (dark), to keep it at 4.5:1 on its ground */
+  --kw: 85%;   /* the keyword: the accent, and how much of it before black */
+  --brand: var(--accent-l);   /* the logo's colour, the same in every theme */
   /* snyvi's face: a bright tone of the accent for the body, picked per
      accent (the default is a red that means it), the brand itself on the
-     nub, and a deep shade of it for the eyes and mouth. */
+     nub, and a deep shade of it for the eyes and mouth. The blush on the
+     cheeks and the heart it holds up are one pink, on every theme so far. */
   --mascot: #d9203b;
   --mascot-nub: var(--brand);
-  --mascot-ink: color-mix(in srgb, var(--brand) 40%, #000);
+  --heart: #f0607e;
+  --mascot-peek: .22;   /* how far the mascot behind a note comes forward, hovered */
   --code-bg: #f3f1ec;
   --mark: #fde68a;
   --add: #dcfce7; --add-fg: #166534;
   --del: #fee2e2; --del-fg: #991b1b;
   --shadow: 0 10px 40px rgba(30, 25, 15, .16), 0 1px 2px rgba(30, 25, 15, .08);
-
-  /* syntax, paper */
-  --s-comment: #8a8378;
-  --s-keyword: color-mix(in srgb, var(--accent) 85%, #000);
+  --scrim: rgba(20, 16, 10, .28);   /* the dim behind a dialog */
+  /* Status: a running dot, a blocked pane, an armed ✕, an alert's title.
+     The blocked mark is eleven-pixel bold, small text under WCAG, so 4.5:1
+     on every surface is the bar. */
+  --ok: #177a3a;
+  --warn: #9a4505;
+  --danger: #b3261e;
+  --info: #1e5fd0;
+  --important: #7c3aed;
+  /* Syntax. The keyword and the tag are the accent, derived below. */
+  --s-comment: #736c61;
   --s-string: #3b6d11;
   --s-number: #0b6e99;
   --s-function: #6a3fb5;
   --s-type: #0e7490;
   --s-variable: #1f1d1a;
   --s-punct: #6b665e;
-  --s-tag: var(--s-keyword);
   --s-attr: #6a3fb5;
+  /* The terminal's sixteen, for the panels on a desk: a shell is dressed
+     with the page it sits in. On a light ground the bright eight are not
+     brighter -- a bright yellow on paper is no yellow at all -- but a second
+     set of inks that still read at 4.5:1 on the panel. */
+  --t0: #1f1d1a; --t1: #b3261e; --t2: #3b6d11; --t3: #8a5a06; --t4: #1d4ed8; --t5: #7e22ce; --t6: #0e7490; --t7: #6f6a61;
+  --t8: #5c574f; --t9: #c81e1e; --t10: #3f6f0a; --t11: #8a5a06; --t12: #2563eb; --t13: #9333ea; --t14: #0b6e8a; --t15: #d8d3c9;
 
   --side-w: 264px;
   --rail-w: 232px;
@@ -64,37 +105,20 @@
   --radius: 6px;
   --t: 140ms cubic-bezier(.2,.7,.2,1);
 }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #15181f;
-    --bg-side: #111419;
-    --bg-raise: #1c2029;
-    --fg: rgba(255,255,255,.87);
-    --fg-2: rgba(255,255,255,.62);
-    --fg-3: rgba(255,255,255,.47);
-    --rule: rgba(255,255,255,.08);
-    --rule-2: rgba(255,255,255,.14);
-    --accent: var(--accent-d);
-    --accent-bg: color-mix(in srgb, var(--accent) 16%, transparent);
-    --code-bg: #1b1f28;
-    --mark: rgba(253,230,138,.35);
-    --add: rgba(74,222,128,.14); --add-fg: #86efac;
-    --del: rgba(248,113,113,.14); --del-fg: #fca5a5;
-    --shadow: 0 10px 40px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
-    --s-comment: rgba(255,255,255,.40);
-    --s-keyword: var(--accent);
-    --s-string: #a3d977;
-    --s-number: #7dd3fc;
-    --s-function: #c4b5fd;
-    --s-type: #67e8f9;
-    --s-variable: rgba(255,255,255,.87);
-    --s-punct: rgba(255,255,255,.55);
-    --s-tag: var(--accent);
-    --s-attr: #c4b5fd;
-  }
+/* Under a system asking for more contrast, Paper keeps its ground and
+   darkens its lighter inks and rules to 7:1: a light theme at that bar is
+   Paper with heavier ink, not a fifth name. */
+@media (prefers-contrast: more) {
+  [data-theme="paper"] { --fg-2: #3f3b35; --fg-3: #5a554d; --rule: #cfc9be; --rule-2: #b9b2a5; --s-comment: #5a554d; }
 }
-:root[data-theme="dark"] {
+
+/* Ink: the deep grey-blue, the default dark theme. Written once: boot.js
+   resolves "follow the system" into a concrete `data-theme` before first
+   paint, so there is no media block to keep in step with this one.
+   `color-scheme` is what flips the accent, the native controls and every
+   `isDark()` in the scripts. */
+[data-theme="ink"] {
+  color-scheme: dark;
   --bg: #15181f;
   --bg-side: #111419;
   --bg-raise: #1c2029;
@@ -103,32 +127,54 @@
   --fg-3: rgba(255,255,255,.47);
   --rule: rgba(255,255,255,.08);
   --rule-2: rgba(255,255,255,.14);
-  --accent: var(--accent-d);
-  --accent-bg: color-mix(in srgb, var(--accent) 16%, transparent);
+  --wash: 16%;
+  --wash-on: transparent;
+  --kw: 100%;
+  --mascot-peek: .16;
   --code-bg: #1b1f28;
   --mark: rgba(253,230,138,.35);
   --add: rgba(74,222,128,.14); --add-fg: #86efac;
   --del: rgba(248,113,113,.14); --del-fg: #fca5a5;
   --shadow: 0 10px 40px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
-  --s-comment: rgba(255,255,255,.40);
-  --s-keyword: var(--accent);
+  --scrim: rgba(0, 0, 0, .5);
+  --ok: #5bd984;
+  --warn: #e6a23c;
+  --danger: #f87171;
+  --info: #7aa2f7;
+  --important: #c084fc;
+  --s-comment: rgba(255,255,255,.55);
   --s-string: #a3d977;
   --s-number: #7dd3fc;
   --s-function: #c4b5fd;
   --s-type: #67e8f9;
   --s-variable: rgba(255,255,255,.87);
-  --s-punct: rgba(255,255,255,.55);
-  --s-tag: var(--accent);
+  --s-punct: rgba(255,255,255,.62);
   --s-attr: #c4b5fd;
+  --t0: #2a2f3a; --t1: #f87171; --t2: #86c46d; --t3: #e6b450; --t4: #7aa2f7; --t5: #c792ea; --t6: #5ccfe6; --t7: #c8ccd4;
+  --t8: #8b93a3; --t9: #ff8b8b; --t10: #a6e3a1; --t11: #f9e2af; --t12: #89b4fa; --t13: #f5c2e7; --t14: #94e2d5; --t15: #ffffff;
 }
+
 /* The other accents. Passion, the red the mark wears, is the default, set on :root above. */
 :root[data-accent="crimson"] { --accent-l: #b91c1c; --accent-d: #f87171; --mascot: #ff5c8a; }
 :root[data-accent="rose"]    { --accent-l: #be185d; --accent-d: #f472b6; --mascot: #ff7ad9; }
 :root[data-accent="violet"]  { --accent-l: #7c3aed; --accent-d: #a78bfa; --mascot: #c69cff; }
 :root[data-accent="blue"]    { --accent-l: #1d4ed8; --accent-d: #60a5fa; --mascot: #7ab8ff; }
 :root[data-accent="teal"]    { --accent-l: #0f766e; --accent-d: #2dd4bf; --mascot: #5ef2d6; }
-:root[data-accent="green"]   { --accent-l: #15803d; --accent-d: #4ade80; --mascot: #7dff9e; }
+:root[data-accent="green"]   { --accent-l: #137639; --accent-d: #4ade80; --mascot: #7dff9e; }
 :root[data-accent="graphite"] { --accent-l: #57534e; --accent-d: #d6d3d1; --mascot: #dcd7d0; }
+/* What is derived from the pair, in one rule for every element allowed to
+   wear an accent. A var() inside a custom property resolves on the element
+   that declares it and inherits as a colour, so this has to be declared
+   where the pair is set, not once on :root: a theme row in the ⌘K list
+   resolves its own light-dark() by its own color-scheme, and a desk with
+   its own pair (phase 4) will resolve its own accent the same way. */
+:root, [data-theme] {
+  --accent: light-dark(color-mix(in srgb, var(--accent-l), #000 var(--deepen)), color-mix(in srgb, var(--accent-d), #fff var(--lift)));
+  --accent-bg: color-mix(in srgb, var(--accent) var(--wash), var(--wash-on));
+  --mascot-ink: color-mix(in srgb, var(--brand) 40%, #000);
+  --s-keyword: color-mix(in srgb, var(--accent) var(--kw), #000);
+  --s-tag: var(--s-keyword);
+}
 /* The reading face, picked with Aa. It sets documents -- prose, wherever it
    is shown -- and nothing else: code keeps its mono so columns line up, and
    the chrome keeps Inter. Mono sets the headings too, typewriter-style. */
@@ -203,7 +249,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 }
 @keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
 @keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-#scrim { position: fixed; inset: 0; z-index: 15; background: rgba(20, 16, 10, .28); display: none; }
+#scrim { position: fixed; inset: 0; z-index: 15; background: var(--scrim); display: none; }
 :root[data-sheet] #scrim { display: block; }
 /* ---------- the document's head ----------
    A bar across the top of the document pane, the brand row's height, that
@@ -279,7 +325,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .brand-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .brand-mark .bm-body { fill: var(--mascot); transition: opacity var(--t); }
 .brand-mark .bm-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; transition: transform var(--t), opacity .2s ease; }
-.brand-mark .bm-heart { fill: #f0607e; opacity: 0; transform: scale(.4); transform-origin: 16px 3px; transform-box: view-box; transition: opacity .2s ease, transform .3s cubic-bezier(.3,1.6,.5,1); }
+.brand-mark .bm-heart { fill: var(--heart); opacity: 0; transform: scale(.4); transform-origin: 16px 3px; transform-box: view-box; transition: opacity .2s ease, transform .3s cubic-bezier(.3,1.6,.5,1); }
 .brand-mark .bm-open { transform-box: fill-box; transform-origin: center; }
 .brand-mark .bm-open { fill: var(--mascot-ink); }
 .brand-mark .bm-shut, .brand-mark .bm-glad, .brand-mark .bm-mouth { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
@@ -309,7 +355,7 @@ html[data-link="off"] .brand-mark .bm-shut { display: inline; }
    `html[data-note]` weigh the same, so the later block is the one that wins
    while snyvi is talking, and the waiting-note blink stops for the moment. */
 .brand-mark .bm-love, .brand-mark .bm-wink { display: none; }
-.brand-mark .bm-love path { fill: #f0607e; }
+.brand-mark .bm-love path { fill: var(--heart); }
 .brand-mark .bm-wink { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
 html[data-say] .brand-mark .bm-open { animation: none; }
 html[data-say] .brand-mark svg { animation: bm-nod .5s ease 1; transform-origin: 50% 100%; }
@@ -354,6 +400,10 @@ html[data-link="off"] .live { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
 .icon.on { color: var(--accent); background: var(--accent-bg); }
+/* A control that means nothing in this view: faded, still focusable, and
+   its label says why (app.js, `why`). An "on" one fades with it -- wrap left
+   on reads as off on a desk, where it does nothing. */
+.icon.dim, .icon.dim:hover { color: color-mix(in srgb, var(--fg-3) 45%, transparent); background: none; cursor: default; }
 /* Drawn in the face it has picked, so the button says which one it is. */
 .icon .aa { font-size: 13px; font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: 11px; letter-spacing: -.06em; }
@@ -374,14 +424,13 @@ html[data-link="off"] .live { visibility: hidden; }
    feeling. It rises from the corner rather than fading in on the spot. */
 .note-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
   opacity: 0; transform: translate(12px, 26px) rotate(0deg); transition: opacity .25s ease, transform .45s cubic-bezier(.3,1.5,.5,1); }
-#note:hover .note-bg, #note:focus-within .note-bg, #note.peek .note-bg { opacity: .16; transform: rotate(-14deg); transition-delay: .12s; }
+#note:hover .note-bg, #note:focus-within .note-bg, #note.peek .note-bg { opacity: var(--mascot-peek); transform: rotate(-14deg); transition-delay: .12s; }
 .note-bg .nb-body { fill: var(--mascot); }
 .note-bg .nb-nub { fill: var(--mascot-nub); }
-.note-bg .nb-cheek, .note-bg .nb-love { fill: #f0607e; }
+.note-bg .nb-cheek, .note-bg .nb-love { fill: var(--heart); }
 .note-bg .nb-ink { fill: var(--mascot-ink); }
 .note-bg .nb-shine { fill: #fff; }
 .note-bg .nb-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2; stroke-linecap: round; }
-:root[data-theme="light"] #note:hover .note-bg, :root[data-theme="light"] #note:focus-within .note-bg, :root[data-theme="light"] #note.peek .note-bg { opacity: .22; }
 /* Opened -- hovered or focused -- a read note wears the same warm card as
    the ones in the trail above it, so the stack reads as one voice. */
 #note:hover .note-now, #note:focus-within .note-now { background: var(--note-bg); border-color: var(--note-rule); }
@@ -454,8 +503,9 @@ html[data-link="off"] .live { visibility: hidden; }
    reads as one thing growing out of what was already there rather than a
    second thing arriving above it. So the column holds the switch at all
    times and only ever draws its border -- nothing at rest, and the switch
-   sits in it exactly where it sat in the bare row. A hairline and no fill:
-   the sidebar behind it is quiet enough to read the column against.
+   sits in it exactly where it sat in the bare row. Open, it is filled and
+   lifted: it was a hairline and no fill, and the sidebar showed through --
+   the note's text ran behind the swatch. At rest it is still nothing at all.
    `.foot-set` is the resting footprint, one button's worth; the column is out
    of flow above it, so the rest of the controls cost the footer no height.
    The -6px is the column's own 1px border and 5px of padding, which puts the
@@ -463,14 +513,15 @@ html[data-link="off"] .live { visibility: hidden; }
 .foot-set { position: relative; width: 28px; height: 28px; }
 .foot-rail { position: absolute; left: -6px; bottom: -6px; z-index: 28;
   display: flex; flex-direction: column-reverse; align-items: center; gap: 2px; padding: 5px;
-  border-radius: 10px; border: 1px solid transparent;
+  border-radius: 10px; border: 1px solid transparent; background: transparent;
   /* Closed, the column is still there, invisible and the height of all of it.
      It must not take the clicks meant for the note it hangs over -- so it
      passes them through until it opens, and the switch takes its own. */
   pointer-events: none;
-  transition: border-color .18s ease; }
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease; }
 .foot-rail .keep { pointer-events: auto; }
-.foot-set:hover .foot-rail, .foot-set:focus-within .foot-rail { border-color: var(--rule); pointer-events: auto; }
+.foot-set:hover .foot-rail, .foot-set:focus-within .foot-rail, .foot-rail:has(> button.said) {
+  border-color: var(--rule); background: var(--bg-raise); box-shadow: 0 4px 14px rgba(0,0,0,.12); pointer-events: auto; }
 /* Each control arrives a beat after the one below it, so the column reads as
    one thing unfolding rather than five appearing at once. The switch is not
    among them: it was already there. It is held out by a class and not by its
@@ -507,12 +558,13 @@ html[data-link="off"] .live { visibility: hidden; }
 /* And the column holds itself open for as long as it is being answered: the
    pointer has usually left by then, and a tail pointing at the space where a
    button used to be is worse than no tail at all. */
-.foot-rail:has(> button.said) { border-color: var(--rule); pointer-events: auto; }
 .foot-rail:has(> button.said) > button { opacity: 1; transform: none; pointer-events: auto; }
 /* Nothing hovers on a touch screen, so there the row stays as it was. */
 @media (hover: none) {
   .foot-set { width: auto; height: auto; }
-  .foot-rail { position: static; flex-direction: row; padding: 0; gap: 4px;
+  /* :is() for the weight of the open column's rules, which would otherwise
+     fill the row the moment a finger focuses a button in it. */
+  .foot-set:is(*, :hover) .foot-rail { position: static; flex-direction: row; padding: 0; gap: 4px;
     background: none; border: 0; box-shadow: none; pointer-events: auto; }
   .foot-rail > button { opacity: 1; transform: none; pointer-events: auto; }
 }
@@ -558,7 +610,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .s-add { flex: none; display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-3); font-size: 16px; font-weight: 400; line-height: 1; border-radius: 5px; opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
 .s-head:hover .s-add, .s-add:focus-visible, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
 .s-add:hover { background: var(--rule); color: var(--fg); }
-.s-blk { flex: none; margin-right: 4px; color: #b45309; font-size: 11px; font-weight: 700; }
+.s-blk { flex: none; margin-right: 4px; color: var(--warn); font-size: 11px; font-weight: 700; }
 #trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: 12px; color: var(--fg-3); }
@@ -649,8 +701,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    show, so the dot on one row sat where the count did on the next. */
 .t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
 .t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
-.t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #16a34a; }
-.t-desks .dot.blk { color: #b45309; font-size: 11px; font-weight: 700; line-height: 1; }
+.t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.t-desks .dot.blk { color: var(--warn); font-size: 11px; font-weight: 700; line-height: 1; }
 .t-desks .k { min-width: 2ch; text-align: right; font-size: 10px; font-family: var(--mono); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
 /* A row's ✕ -- delete a document, close a desk -- takes the place of what is
    at the row's end on hover. Armed, a desk's says Close? */
@@ -694,9 +746,9 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-back { color: var(--fg-3); font-size: 12px; }
 .t-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
 .t-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.row-x[data-armed] { color: #dc2626; font-weight: 600; }
-.row-x[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
-:is(.t-doc, .t-desk) > a > .row-x[data-armed]:hover { background: linear-gradient(color-mix(in srgb, #dc2626 12%, transparent) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
+.row-x[data-armed] { color: var(--danger); font-weight: 600; }
+.row-x[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+:is(.t-doc, .t-desk) > a > .row-x[data-armed]:hover { background: linear-gradient(color-mix(in srgb, var(--danger) 12%, transparent) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
 .b-new { margin-left: auto; display: inline-flex; align-items: center; color: var(--fg-3); line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; }
 /* The glyph is the one the Desks section uses, so what the button makes is
    named by its shape rather than by a plus that could mean any addition. */
@@ -865,11 +917,11 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose .markdown-alert { margin: 1.4em 0; padding: .8em 1.1em; border-radius: var(--radius); border-left: 3px solid var(--fg-3); background: var(--code-bg); }
 .prose .markdown-alert p:last-child { margin: 0; }
 .prose .markdown-alert-title { font-family: var(--sans); font-weight: 600; font-size: .85em; letter-spacing: .04em; text-transform: uppercase; margin-bottom: .4em; color: var(--fg-2); }
-.prose .markdown-alert-note { border-color: #3b82f6; } .prose .markdown-alert-note .markdown-alert-title { color: #3b82f6; }
-.prose .markdown-alert-tip { border-color: #22c55e; } .prose .markdown-alert-tip .markdown-alert-title { color: #16a34a; }
-.prose .markdown-alert-important { border-color: #a855f7; } .prose .markdown-alert-important .markdown-alert-title { color: #9333ea; }
-.prose .markdown-alert-warning { border-color: #f59e0b; } .prose .markdown-alert-warning .markdown-alert-title { color: #d97706; }
-.prose .markdown-alert-caution { border-color: #ef4444; } .prose .markdown-alert-caution .markdown-alert-title { color: #dc2626; }
+.prose .markdown-alert-note { border-color: var(--info); } .prose .markdown-alert-note .markdown-alert-title { color: var(--info); }
+.prose .markdown-alert-tip { border-color: var(--ok); } .prose .markdown-alert-tip .markdown-alert-title { color: var(--ok); }
+.prose .markdown-alert-important { border-color: var(--important); } .prose .markdown-alert-important .markdown-alert-title { color: var(--important); }
+.prose .markdown-alert-warning { border-color: var(--warn); } .prose .markdown-alert-warning .markdown-alert-title { color: var(--warn); }
+.prose .markdown-alert-caution { border-color: var(--danger); } .prose .markdown-alert-caution .markdown-alert-title { color: var(--danger); }
 
 /* inline code */
 .prose code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: .12em .38em; border-radius: 4px; font-feature-settings: "calt" 0, "liga" 0; }
@@ -1105,36 +1157,6 @@ pre.code .inv { color: var(--del-fg); }
 .inbox-sec button:hover { background: var(--rule); color: var(--fg); }
 .inbox-sec kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
 .inbox.waiting { margin-bottom: 8px; }
-/* The connect page: one row per agent, the state as a dot and a word, and
- * everything to paste in a block with its own Copy. It sits in the document
- * pane at the document's measure, so it reads as a page and not as chrome. */
-.connect .agents { list-style: none; margin: 0; padding: 0; }
-.agent { padding: 16px 0; border-top: 1px solid var(--rule); }
-.agent:last-child { border-bottom: 1px solid var(--rule); }
-.agent-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); align-self: center; flex: none; }
-.agent.is-connected .agent-dot { background: var(--add-fg); }
-/* Here now: the accent, with a ring, so an open session reads apart from one that is only set up. */
-.agent.is-live .agent-dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
-.agent.is-live .agent-state { color: var(--accent); }
-.agent.is-stale .agent-dot { background: var(--del-fg); }
-.agent-name { font-size: 16px; font-weight: 600; }
-.agent-state { color: var(--fg-3); font-size: 13px; }
-.agent-say { margin: 6px 0 0; font-size: 14.5px; color: var(--fg-2); line-height: 1.5; }
-.connect code { font-family: var(--mono); font-size: 12.5px; }
-.agent-fix { margin-top: 10px; }
-.agent-instr { margin: 8px 0 0; font-size: 13.5px; color: var(--fg-3); }
-.connect-line { margin-top: 28px; }
-.connect-line p { margin: 0 0 8px; font-size: 14px; color: var(--fg-2); }
-pre.cmd { position: relative; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border-radius: var(--radius); padding: 8px 72px 8px 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-pre.cmd code { background: none; padding: 0; font-size: inherit; }
-pre.cmd .copy { position: absolute; top: 6px; right: 8px; font: inherit; font-family: var(--sans); font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--bg-raise); color: var(--fg-2); box-shadow: 0 1px 2px rgba(0,0,0,.12); border: 0; cursor: pointer; }
-pre.cmd .copy:hover { color: var(--fg); }
-pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.agent-fix details { margin-top: 8px; }
-.agent-fix summary { cursor: pointer; font-size: 13px; color: var(--fg-3); }
-.agent-fix details[open] summary { margin-bottom: 6px; }
-.connect-foot { margin-top: 24px; color: var(--fg-3); font-size: 13.5px; }
 .empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
 .empty-state h1 { font-size: 22px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
 .empty-state p { margin: 0 0 18px; font-size: 15px; }
@@ -1227,8 +1249,8 @@ pre.code .ln::before { cursor: pointer; }
 #toasts[data-side="below"] .toast { --dx: 0; --dy: -10px; --from: 22px 0; }
 #toasts[data-side] .toast::before { content: ""; position: absolute; width: 8px; height: 8px;
   background: var(--bg-raise); border: 1px solid var(--rule); transform: rotate(45deg); }
-#toasts[data-side="right"] .toast::before { left: -5px; top: 13px; border-top: 0; border-right: 0; }
-#toasts[data-side="left"]  .toast::before { right: -5px; top: 13px; border-bottom: 0; border-left: 0; }
+#toasts[data-side="right"] .toast::before { left: -5px; top: var(--tail, 13px); border-top: 0; border-right: 0; }
+#toasts[data-side="left"]  .toast::before { right: -5px; top: var(--tail, 13px); border-bottom: 0; border-left: 0; }
 #toasts[data-side="below"] .toast::before { top: -5px; left: 16px; border-bottom: 0; border-right: 0; }
 .toast .say { min-width: 0; }
 .toast .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1253,7 +1275,7 @@ pre.code .ln::before { cursor: pointer; }
 .mk-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; }
 .mk-ink { fill: var(--mascot-ink); }
 .mk-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
-.mk-love, .mk-puff { fill: #f0607e; }
+.mk-love, .mk-puff { fill: var(--heart); }
 
 [data-feel="plain"] .mk, [data-feel="wink"] .mk { animation: mk-nod .52s cubic-bezier(.3,1.6,.5,1) 1; }
 [data-feel="glad"] .mk, [data-feel="love"] .mk { animation: mk-hop .62s cubic-bezier(.3,1.7,.5,1) 1; }
@@ -1276,22 +1298,11 @@ pre.code .ln::before { cursor: pointer; }
 }
 
 /* ---------- palette / help ---------- */
-#palette, #help, #about, #reset { position: fixed; inset: 0; background: rgba(20, 16, 10, .28); z-index: 40; display: grid; place-items: start center; padding-top: 12vh; }
+#palette, #help, #about, #reset { position: fixed; inset: 0; background: var(--scrim); z-index: 40; display: grid; place-items: start center; padding-top: 12vh; }
 #palette[hidden], #help[hidden], #about[hidden], #reset[hidden] { display: none; }
 .palette-box, .help-box { width: min(620px, 92vw); background: var(--bg-raise); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; animation: rise 140ms cubic-bezier(.2,.7,.2,1); }
 #palette-input { width: 100%; font: inherit; font-size: 16px; padding: 14px 18px; border: 0; background: transparent; color: inherit; outline: none; border-bottom: 1px solid var(--rule); }
-#palette-list { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow-y: auto; }
-#palette-list:empty { display: none; }
-#palette-list li { padding: 8px 12px; border-radius: 6px; cursor: pointer; display: grid; gap: 1px; }
-#palette-list li.sel, #palette-list li:hover { background: var(--accent-bg); }
-#palette-list .t { font-weight: 550; font-size: 14px; }
-#palette-list .s { font-size: 12px; color: var(--fg-3); }
-#palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
-/* A search with nothing in it: snyvi says so, in the list's own row shape. */
-.pal-none { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 13px; color: var(--fg-3); }
-.pal-none .mk { width: 22px; height: 22px; flex: none; }
-.pal-none b { font-weight: 550; color: var(--fg-2); }
+/* The palette's list is ui/palette.js's, and comes with it. */
 /* The overlay places the box 12vh down, so the cap leaves that and a little
    below it: a box that outgrew the window would put its foot -- About,
    Connect, Reset -- past the bottom edge, where no click can reach it. */
@@ -1312,24 +1323,8 @@ pre.code .ln::before { cursor: pointer; }
 .help-head { flex: none; display: flex; align-items: center; padding: 14px 14px 12px 24px; }
 .help-head h2 { margin: 0; flex: 1; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg); }
 #help .help-close { position: static; }
-.help-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; padding: 4px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
-.help-col { display: flex; flex-direction: column; gap: 18px; align-content: start; }
-.help-col h3 { margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: .01em; color: var(--fg-3); }
-.hk { display: flex; align-items: center; gap: 12px; min-height: 30px; padding: 1px 0; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--fg); }
-.hk:first-of-type { border-top: 0; }
-.hk > span:first-child { flex: 1; min-width: 0; line-height: 1.3; }
-.hk em { font-style: normal; font-size: 12px; color: var(--fg-3); }
-.hk .keys { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--fg-3); }
-.hk .keys i { font-style: normal; font-size: 11px; padding: 0 1px; }
-.hk .keys code { font-family: var(--mono); font-size: 11px; color: var(--fg-2); background: var(--rule); padding: 0 5px; border-radius: 4px; line-height: 18px; }
-#help kbd { display: inline-block; box-sizing: border-box; min-width: 20px; padding: 0 5px; font-family: var(--mono); font-size: 11px; line-height: 18px; text-align: center; color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: 4px; white-space: nowrap; }
-.help-col .help-note { margin: 8px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg-3); }
 #help .help-foot { flex: none; margin: 0; padding: 10px 14px 10px 16px; border-top: 1px solid var(--rule); background: var(--bg-side); }
 #help .help-foot button.text:hover { background: var(--rule); }
-@media (max-width: 600px) {
-  .help-body { grid-template-columns: 1fr; }
-  #help-col-2 { margin-top: 18px; }
-}
 button.text { font: inherit; font-size: 13px; color: var(--fg-2); background: transparent; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 button.text:hover { color: var(--fg); background: var(--bg-side); }
 button.text:focus-visible, button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

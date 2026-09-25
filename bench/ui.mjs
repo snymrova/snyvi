@@ -224,6 +224,9 @@ async function main() {
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
+    sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
+    sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
+    sections.push(["the first frame, in the reader's theme", await firstFrameRows(p, url)]);
     sections.push(["the about box", await aboutRows(p, url)]);
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
     sections.push(["an agent that is here", await presenceRows(p, url, base, env, tmp)]);
@@ -1304,6 +1307,192 @@ async function deskRows(cdp, base, token) {
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** Round 2 of the themes: an answer in the column is centred on the button
+ *  it answers. It kept its top 96 px off the window's foot, a guess at its
+ *  height, and at 802 px tall the theme button's answer sat level with Aa --
+ *  a centre at 729 px for a button at 778. Measured the way it was found. */
+async function answerRows(url, tmp) {
+  const rows = [];
+  /* A browser of its own, told it has a mouse: headless Chromium answers
+   * (hover: none), and under that the column is the touch screen's row, so
+   * every button sits at one height and the fault could not be seen. */
+  const own = await launch(join(tmp, "chrome-hover"), { windowSize: "1280,802",
+    args: ["--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"] });
+  const { sessionId } = await tab(own.cdp);
+  await own.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(own.cdp, sessionId);
+  try {
+  await p.width(1280, 802);
+  await p.goto(url);
+  const hover = await p.ev(`matchMedia("(hover: hover)").matches`);
+  rows.push(["a pointer that hovers", hover, hover ? "the column, not the touch screen's row" : "the page still believes it has no pointer"]);
+  const restore = `(() => { for (const k of ["snyvi.accent", "snyvi.font", "snyvi.theme.light", "snyvi.theme.dark", "snyvi.theme.follow", "snyvi.theme.css.light", "snyvi.theme.css.dark"]) localStorage.removeItem(k);
+    const d = document.documentElement; delete d.dataset.accent; delete d.dataset.font; snyviTheme.apply(); return 1; })()`;
+  const fill = await p.ev(`(() => { const r = document.querySelector(".foot-rail"); return getComputedStyle(r).backgroundColor; })()`);
+  await p.hoverOn(".foot-set");
+  const open = await p.ev(`getComputedStyle(document.querySelector(".foot-rail")).backgroundColor`);
+  await p.pointerAway();
+  rows.push(["the column is filled while open", /rgba\(0, 0, 0, 0\)|transparent/.test(fill) && !/rgba\(0, 0, 0, 0\)|transparent/.test(open),
+    `at rest ${fill}, open ${open}`]);
+  for (const [id, name] of [["#btn-theme", "theme"], ["#btn-accent", "accent"], ["#btn-font", "Aa"]]) {
+    await p.hoverOn(".foot-set");
+    await p.clickOn(id);
+    await sleep(450);
+    const m = await p.ev(`(() => { const t = document.querySelector("#toasts .toast"), b = document.querySelector(${JSON.stringify(id)});
+      if (!t) return null; const r = t.getBoundingClientRect(), s = b.getBoundingClientRect();
+      return { toast: r.top + r.height / 2, button: s.top + s.height / 2, h: r.height }; })()`);
+    const off = m ? Math.abs(m.toast - m.button) : null;
+    rows.push([`${name}'s answer beside it`, off !== null && off <= 3,
+      m === null ? "no answer came up" : `its centre ${Math.round(m.toast)} px, the button's ${Math.round(m.button)} px, ${off.toFixed(1)} px apart`]);
+    await p.pointerAway();
+    await p.ev(restore);
+    // Gone before the next press: at the foot of a short window an answer
+    // can lie over the button below it.
+    await p.ev(`document.querySelectorAll("#toasts .toast").forEach(t => t.remove()); document.querySelectorAll(".foot-rail .said").forEach(b => b.classList.remove("said")); 1`);
+  }
+  } finally {
+    killTree(own.proc);
+  }
+  return rows;
+}
+
+/** Every control means something in every view, or says why not. A click on
+ *  width, wrap or Aa either changes what it sets or is dimmed and answers
+ *  with the reason -- never the silence that `z` on a desk used to be. The
+ *  desk is walked in a tab of its own, with a real panel, which is also
+ *  where the terminal's text size is read back: the columns and rows the
+ *  program is told, the caret over its character, and the character under
+ *  a point being the one the cell grid says. */
+async function controlRows(cdp, p, url, browsed, base, token) {
+  const rows = [];
+  const walk = async (drv, view) => {
+    for (const [c, id] of [["wide", "#btn-wide"], ["wrap", "#btn-wrap"], ["font", "#btn-font"]]) {
+      const read = `(() => { const d = document.documentElement, g = document.querySelector(".dk-grid");
+        return [d.dataset.wide, d.dataset.wrap, d.dataset.font, g && g.dataset.zoom, localStorage.getItem("snyvi.term-size")].join("|"); })()`;
+      const before = await drv.ev(read);
+      await drv.ev(`document.querySelectorAll("#toasts .toast").forEach(t => t.remove()); 1`);
+      await drv.hoverOn(".foot-set");
+      await drv.clickOn(id);
+      await sleep(250);
+      const after = await drv.ev(read);
+      const dim = await drv.ev(`(() => { const b = document.querySelector(${JSON.stringify(id)}); return b.classList.contains("dim") ? { label: b.dataset.label, said: document.querySelector("#toasts .toast .s")?.textContent || "" } : null; })()`);
+      const ok = dim ? !!dim.said && dim.label.endsWith(dim.said) && after === before : after !== before;
+      rows.push([`${c} on ${view}`, ok, dim ? `dimmed: "${dim.label}"${after !== before ? ", and it changed something anyway" : ""}` : after !== before ? "it changed what it sets" : "not dimmed, and it changed nothing"]);
+      // Back as it was: a second press for the toggles; Aa's steps are keys.
+      await drv.pointerAway();
+      await drv.ev(`(() => { const d = document.documentElement; delete d.dataset.font; localStorage.removeItem("snyvi.font"); return 1; })()`);
+      if (!dim && c !== "font") { await drv.hoverOn(".foot-set"); await drv.clickOn(id); await drv.pointerAway(); }
+    }
+  };
+  await p.goto(url);
+  await walk(p, "a prose document");
+  await p.goto(`${browsed}/code.rs`);
+  await sleep(400);
+  await walk(p, "a code file");
+  await p.goto(base + "/");
+  await walk(p, "the inbox");
+
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}) => (await fetch(base + path, { method: "POST", headers: H, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "sizes" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const panes = [(await post(`/api/desks/${desk}/panes`)).pane.id, (await post(`/api/desks/${desk}/panes`)).pane.id];
+  // It says its size whenever it is told one, then leaves the caret after ">>".
+  // By full path: the daemon's PATH here leaves out any directory holding a
+  // snyvi-app, which on an installed machine is /usr/bin, sleep and stty too.
+  const which = c => execFileSync("sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).trim();
+  const [stty, sleepBin] = [which("stty"), which("sleep")];
+  for (const pane of panes) await post(`/api/panes/${pane}/start`, { cmd: `trap 'clear; ${stty} size; printf ">>"' WINCH; clear; ${stty} size; printf ">>"; while :; do ${sleepBin} 0.1; done` });
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const size = `(() => { const t = document.querySelector(".dk .pn-scr")?.innerText || ""; const m = /(\\d+) (\\d+)/.exec(t); return m ? m[2] + "x" + m[1] : ""; })()`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`(${size}) !== ""`);
+    const was = await q.ev(size);
+    await walk(q, "a desk");
+    await q.ev(`document.querySelector(".dk .pn-body").focus(); 1`);
+    await q.cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "0", code: "Digit0", windowsVirtualKeyCode: 48, modifiers: 2 }, q.s);
+    await q.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "0", code: "Digit0", windowsVirtualKeyCode: 48, modifiers: 2 }, q.s);
+    const back = await until(`(${size}) === ${JSON.stringify(was)}`);
+    rows.push(["⌃0 in a panel puts it back", back, back ? `Aa stepped it, and ⌃0 told it ${was} again` : `told ${await q.ev(size)}, not ${was}`]);
+    await q.hoverOn(".foot-set");
+    await q.clickOn("#btn-font");
+    await q.pointerAway();
+    const grew = await until(`(${size}) !== "" && (${size}) !== ${JSON.stringify(was)}`);
+    const now = await q.ev(size);
+    rows.push(["Aa on a desk: the program's size", grew, grew ? `told ${was}, then ${now} at the next size up` : `still ${now || "nothing"} after a step up`]);
+    const at = await q.ev(`(() => {
+      const body = document.querySelector(".dk .pn-body"), caret = body.querySelector(".pn-caret"), scr = body.querySelector(".pn-scr");
+      const row = [...scr.children].find(r => r.textContent.startsWith(">>"));
+      if (!row) return null;
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT); let n, off = 2;
+      while ((n = walker.nextNode()) && off > n.length) off -= n.length;
+      const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off);
+      const want = r.getBoundingClientRect().left, got = caret.getBoundingClientRect().left;
+      const cell = row.getBoundingClientRect(), mid = caret.getBoundingClientRect();
+      const hit = document.caretRangeFromPoint(cell.left + (mid.left - cell.left) / 2 - 2, mid.top + mid.height / 2);
+      return { want, got, ch: hit && hit.startContainer.textContent[hit.startOffset] };
+    })()`);
+    const caretOk = at && Math.abs(at.want - at.got) <= 1.5;
+    rows.push(["the caret still on its character", !!caretOk, !at ? "no prompt row to read" : `caret at ${at.got.toFixed(1)} px, the character after ">>" at ${at.want.toFixed(1)} px`]);
+    rows.push(["a point still finds its character", !!at && at.ch === ">", !at ? "no prompt row to read" : `the character under the first cell is "${at.ch}"`]);
+  } finally {
+    await q.ev(`localStorage.removeItem("snyvi.term-size"); 1`).catch(() => {});
+    for (const pane of panes) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** The window opens in the reader's theme, not in Paper and then theirs.
+ *  First paint carries Paper and Ink only; boot.js paints any other theme
+ *  from the copy the app kept of it. Each of the eight is chosen, and the
+ *  page reloaded twice: with its copy, the first frame is already that
+ *  theme's ground; without, it is Paper or Ink by side -- never a light
+ *  frame on a dark choice -- and the theme follows when themes.css lands,
+ *  with a fresh copy kept. The first frame is read by the first animation
+ *  frame, which is not given until the page can be drawn. */
+async function firstFrameRows(p, url) {
+  const rows = [];
+  const { identifier } = await p.cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `requestAnimationFrame(() => {
+    const d = document.documentElement; window.__first = { theme: d.dataset.theme, bg: getComputedStyle(d).getPropertyValue("--bg").trim(),
+      later: !!document.querySelector('link[href*="themes.css"]') }; })` }, p.s);
+  const THEMES = { paper: "light", snow: "light", sage: "light", parchment: "light", ink: "dark", midnight: "dark", espresso: "dark", contrast: "dark" };
+  const settle = async () => { for (let i = 0; i < 40; i++) { if (await p.ev(`[...document.styleSheets].some(s => /themes\\.css/.test(s.href || ""))`)) break; await sleep(50); } await sleep(150); };
+  try {
+    await p.goto(url);
+    for (const [name, side] of Object.entries(THEMES)) {
+      await p.ev(`(async () => { document.querySelector("#btn-search").click();
+        const i = document.querySelector("#palette-input"); i.value = "theme"; i.dispatchEvent(new Event("input", { bubbles: true }));
+        for (let n = 0; n < 80 && !document.querySelector('#palette-list li.theme[data-theme="${name}"]'); n++) await new Promise(r => setTimeout(r, 25));
+        document.querySelector('#palette-list li.theme[data-theme="${name}"]')?.click(); return 1; })()`);
+      await sleep(150);
+      const bg = await p.ev(`getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()`);
+      await p.reload(); await settle();
+      const kept = await p.ev(`({ ...window.__first, now: document.documentElement.dataset.theme })`);
+      const core = name === "paper" || name === "ink";
+      rows.push([`${name}, reopened`, kept.theme === name && kept.bg === bg && !kept.later && kept.now === name,
+        kept.theme !== name ? `the first frame was ${kept.theme}` : kept.bg !== bg ? `the first frame's ground was ${kept.bg}, not ${bg}` : kept.later ? "themes.css was already in the page" : core ? "in first paint itself" : "from its kept copy, before themes.css"]);
+      if (core) continue;
+      await p.ev(`localStorage.removeItem("snyvi.theme.css.light"); localStorage.removeItem("snyvi.theme.css.dark"); 1`);
+      await p.reload(); await settle();
+      const cold = await p.ev(`({ ...window.__first, now: document.documentElement.dataset.theme, copy: !!localStorage.getItem("snyvi.theme.css.${side}") })`);
+      const stand = side === "dark" ? "ink" : "paper";
+      rows.push([`${name}, with no copy`, cold.theme === stand && cold.now === name && cold.copy,
+        cold.theme !== stand ? `the first frame was ${cold.theme}, not ${stand}` : cold.now !== name ? `it stayed ${cold.now}` : !cold.copy ? "no copy was kept for next time" : `${stand} first, then ${name}, and a copy kept`]);
+    }
+  } finally {
+    await p.cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }, p.s).catch(() => {});
+    await p.ev(`(() => { for (const k of Object.keys(localStorage)) if (k.startsWith("snyvi.theme")) localStorage.removeItem(k); snyviTheme.apply(); return 1; })()`);
   }
   return rows;
 }

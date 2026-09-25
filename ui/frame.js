@@ -68,7 +68,11 @@ export function frame(root, $) {
     s.id = "frame-css";
     s.textContent = CSS;
     document.head.append(s);
-    $("#help-col-2").insertAdjacentHTML("beforeend", HELP);
+    // The card's rows arrive with the about chunk the first time it opens
+    // (ui/about.js), which says so on the card; the window's own rows go in
+    // then, or now if a reader beat this chunk to it.
+    const help = $("#help"), more = () => help.querySelector("#help-col-2")?.insertAdjacentHTML("beforeend", HELP);
+    help.querySelector(".hk") ? more() : help.addEventListener("snyvi:help", more, { once: true });
     const mac = /^Mac/.test(navigator.platform);
     root.dataset.frame = mac ? "mac" : "page";
     if (mac) return;

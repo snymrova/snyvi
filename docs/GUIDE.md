@@ -561,10 +561,41 @@ license and the repository. *Reset snyvi…* is described under
 Five buttons sit at the foot of the sidebar -- theme, accent, Aa, width,
 wrap -- and what each one does is kept for next time.
 
-The **theme** button flips light and dark. One click always changes
-what you see: landing on the theme your system already shows drops the
-choice rather than storing it, so the page follows the system again
-from there, and the button's tooltip says which of the two you are in.
+There are eight themes, four light and four dark, each designed rather
+than derived from another. The light ones: **Paper**, the warm
+near-white the window opens in; **Snow**, a cool near-white;
+**Sage**, a soft green-grey that is easy on the eyes over a long day;
+and **Parchment**, a sepia page with brown ink for long reads and a
+bright room in the evening. The dark ones: **Ink**, the deep grey-blue
+for night; **Midnight**, a deep navy; **Espresso**, a warm brown-black,
+the dark side of Parchment; and **Contrast**, white on black at 7:1
+everywhere, with rules at full weight and no faint washes. Each has its own syntax colours and its own
+terminal palette, so code and the shells on a desk look like part of the
+page, and every colour a theme draws text in is measured on every
+surface it sits on -- 4.5:1 or better, 7:1 for Contrast -- with each
+of the eight accents, on every build.
+
+Paper and Ink come with the window itself, so it opens at full speed;
+the other six load in the background a moment later. Whichever you
+choose, the window opens in it with no flash of another theme first.
+
+The **theme** button steps through the eight, the way the accent button
+steps through its colours: the four light ones, then the four dark, and
+round again. Its icon shows whether a click lands on a light or a dark
+one, and its tooltip names the one showing and the one a click brings.
+To jump straight to one, press `⌘K` and type `theme`: the eight appear as
+rows, each drawn in its own colours, and moving the highlight puts that
+theme on the window behind the box, so the page is the preview. Enter
+keeps it; Esc puts the window back.
+
+Either way, the theme you land on is remembered as your light or your
+dark one, so when your system switches between light and dark the
+window moves between those two. A system asking for more contrast gets
+Contrast as its dark theme until you choose one, and Paper with heavier ink in the light.
+
+![The same plan in Parchment](media/plan-parchment.webp)
+
+![The same plan in Midnight](media/plan-midnight.webp)
 
 **Aa** steps through the reading faces: Inter, Source Serif, Literata,
 Atkinson Hyperlegible, JetBrains Mono. The first three are a matter of
@@ -584,6 +615,17 @@ for both. The tab's icon is repainted to match, so two snyvi windows
 side by side are told apart at the tab strip.
 
 The **width** and **wrap** buttons are `w` and `z` above.
+
+A control that means nothing in the view you are in is faded rather
+than hidden, and its tooltip says why -- `Wrap · no code on this page`,
+`Font · code is always monospace`. Clicking it, or pressing its key,
+gives the same answer instead of silently doing nothing. On a desk they
+mean the desk's own things: **width** shows the focused panel
+full-size, as `⌃⌥Z` does, and **Aa** sets the terminal's text size --
+Small, Normal, Large, Larger -- for every panel on every desk. Inside a
+panel, `⌃=` and `⌃-` step it and `⌃0` puts it back to Normal, as in
+most terminals; readline's undo, which `⌃-` used to send, is still
+`⌃_`. Wrap is faded there: a terminal always wraps.
 
 The **rocket**, at the top of that column, is a game: snyvi in a helmet,
 in a small ship, and rocks coming down. It covers the sidebar and only
@@ -618,9 +660,9 @@ files show their first 2000 rows with a note; `o` opens the whole file.
 
 A ```` ```mermaid ```` block is drawn as a diagram — flowcharts, sequence,
 class, state, ER and gantt — in snyvi's own palette, so it belongs to the
-page rather than arriving from somewhere else. Both themes are checked on
-every build: every label has to stay legible against whatever is behind
-it.
+page rather than arriving from somewhere else. All four themes are
+checked on every build: every label has to stay legible against whatever
+is behind it.
 
 Drawing happens after the text is on screen and only for diagrams the
 reader is near, one at a time, so a page with eight of them opens as fast

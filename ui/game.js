@@ -130,11 +130,11 @@ class Game {
     for (const t of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) this.canvas.addEventListener(t, this.onPointer);
     this.el.querySelector(".game-close").addEventListener("click", () => this.end());
     // The colours are read off the page; when the page's change, a sky
-    // drawn once and left would keep the old ones.
+    // drawn once and left would keep the old ones. The theme is always an
+    // attribute -- boot.js resolves "follow the system" into one -- so the
+    // observer sees a system flip too, and no media query is watched here.
     this.mo = new MutationObserver(this.retheme);
     this.mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
-    this.sysDark = matchMedia("(prefers-color-scheme: dark)");
-    this.sysDark.addEventListener("change", this.retheme);
 
     // The sky is the size the sidebar gives it, at the screen's density. A
     // folded sidebar reports nothing, and nothing is a pause: there is no one
@@ -433,7 +433,9 @@ class Game {
     const cs = getComputedStyle(this.host);
     const v = n => cs.getPropertyValue(n).trim();
     this.paletteAt = now;
-    const accent = v("--accent");
+    // Resolved on the host rather than read as text: as text the accent is a
+    // light-dark() expression, which a gradient stop will not take.
+    const accent = snyviTheme.colour("--accent", this.host);
     let glow = this.palette?.glow;
     if (!glow || this.palette.accent !== accent) {
       glow = this.ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
@@ -638,7 +640,6 @@ class Game {
     removeEventListener("blur", this.onBlur);
     document.removeEventListener("visibilitychange", this.onBlur);
     this.mo.disconnect();
-    this.sysDark.removeEventListener("change", this.retheme);
     for (const n of this.covered) n.inert = false;
     // A canvas keeps its bitmap until it is collected, which may be a while;
     // a zero-sized one keeps nothing, so the sky is emptied before it goes.

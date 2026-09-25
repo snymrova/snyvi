@@ -93,56 +93,7 @@
       <h2 id="help-title">Keyboard shortcuts</h2>
       <button class="icon help-close" id="help-close" title="Close (Esc)" aria-label="Close">✕</button>
     </div>
-    <div class="help-body">
-    <div class="help-col">
-      <section>
-        <h3>Everywhere</h3>
-        <div class="hk"><span>Letter keys on / off</span><span class="keys"><kbd>⌃</kbd><kbd>B</kbd></span></div>
-        <div class="hk"><span>Search</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>K</kbd></span></div>
-        <div class="hk"><span>These shortcuts</span><span class="keys"><kbd>?</kbd></span></div>
-        <div class="hk"><span>Close</span><span class="keys"><kbd>esc</kbd></span></div>
-      </section>
-      <section>
-        <h3>Move</h3>
-        <div class="hk"><span>Next / previous document</span><span class="keys"><kbd>j</kbd><i>/</i><kbd>k</kbd></span></div>
-        <div class="hk"><span>Older / newer version</span><span class="keys"><kbd>[</kbd><i>/</i><kbd>]</kbd></span></div>
-        <div class="hk"><span>The next document waiting</span><span class="keys"><kbd>n</kbd></span></div>
-        <div class="hk"><span>Inbox</span><span class="keys"><kbd>i</kbd></span></div>
-        <div class="hk"><span>Back / forward</span><span class="keys"><kbd>alt</kbd><kbd>←</kbd><i>/</i><kbd>→</kbd></span></div>
-        <div class="hk"><span>Go to a line</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>K</kbd><code>:120</code></span></div>
-      </section>
-      <section>
-        <h3>Read</h3>
-        <div class="hk"><span>Find in document</span><span class="keys"><kbd>/</kbd></span></div>
-        <div class="hk"><span>Compare with previous version</span><span class="keys"><kbd>c</kbd></span></div>
-        <div class="hk"><span>Split / inline diff</span><span class="keys"><kbd>s</kbd></span></div>
-        <div class="hk"><span>Preview / source</span><span class="keys"><kbd>v</kbd></span></div>
-        <div class="hk"><span>Maximise width</span><span class="keys"><kbd>w</kbd></span></div>
-        <div class="hk"><span>Wrap long lines</span><span class="keys"><kbd>z</kbd></span></div>
-        <div class="hk"><span>Open source</span><span class="keys"><kbd>o</kbd></span></div>
-      </section>
-    </div>
-    <div class="help-col" id="help-col-2">
-      <section>
-        <h3>Diagram</h3>
-        <div class="hk"><span>Fullscreen</span><span class="keys"><kbd>f</kbd></span></div>
-        <div class="hk"><span>Fit to window</span><span class="keys"><kbd>0</kbd></span></div>
-        <div class="hk"><span>Zoom</span><span class="keys"><kbd data-mod>⌘</kbd><i>+</i>scroll</span></div>
-        <div class="hk"><span>Pan</span><span class="keys">drag</span></div>
-      </section>
-      <section>
-        <h3>Layout</h3>
-        <div class="hk"><span>Contents</span><span class="keys"><kbd>t</kbd></span></div>
-        <div class="hk"><span>Sidebar</span><span class="keys"><kbd>\</kbd></span></div>
-      </section>
-      <section>
-        <h3>Keep</h3>
-        <div class="hk"><span>Pin <em>kept by prune</em></span><span class="keys"><kbd>p</kbd></span></div>
-        <div class="hk"><span>Delete</span><span class="keys"><kbd>del</kbd></span></div>
-        <div class="hk"><span>Undo a delete</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>Z</kbd></span></div>
-      </section>
-    </div>
-    </div>
+    <div class="help-body"></div>
     <div class="help-foot">
       <button class="text" id="btn-connect">Connect an agent…</button>
       <button class="text" id="btn-about">About snyvi</button>
@@ -151,27 +102,8 @@
     </div>
   </div>
 </div>
-<div id="about" hidden>
-  <div class="help-box about-box" role="dialog" aria-modal="true" aria-labelledby="about-title" tabindex="-1">
-    <button class="icon help-close" id="about-close" title="Close (Esc)" aria-label="Close">✕</button>
-    <h2 id="about-title">snyvi</h2>
-    <p id="about-say">A fast, beautiful viewer for the documents your agents produce.</p>
-    <dl id="about-facts"></dl>
-  </div>
-</div>
-<div id="reset" hidden>
-  <form class="help-box reset-box" role="dialog" aria-modal="true" aria-labelledby="reset-title" tabindex="-1">
-    <button class="icon help-close" id="reset-close" type="button" title="Close (Esc)" aria-label="Close">✕</button>
-    <h2 id="reset-title">Reset snyvi</h2>
-    <p id="reset-say">Reading what there is…</p>
-    <label id="reset-pinned-row" hidden><input type="checkbox" id="reset-pinned"> <span id="reset-pinned-say"></span></label>
-    <label class="reset-ask">Type the number of documents to continue
-      <input id="reset-n" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="reset-say">
-    </label>
-    <p id="reset-err" class="reset-err" role="alert" hidden></p>
-    <div class="reset-act"><button class="text" type="button" id="reset-cancel">Cancel</button><button class="danger" type="submit" id="reset-go" disabled>Reset</button></div>
-  </form>
-</div>
+<div id="about" hidden></div>
+<div id="reset" hidden></div>
 <script id="boot" type="application/json">{{BOOT_JSON}}</script>
 <script src="/assets/app.js?v={{V}}" defer></script>
 </body>
