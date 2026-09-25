@@ -31,7 +31,7 @@ On Linux and macOS, [`install.sh`](../install.sh) does what the sections
 below say to do by hand, choosing the path for the machine it is on:
 
 ```
-curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh | sh
 ```
 
 With Homebrew it installs the cask; on a Mac without it, `snyvi.app` goes

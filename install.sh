@@ -1,11 +1,9 @@
 #!/bin/sh
 # snyvi, in one line, on Linux and macOS:
 #
-#   curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh | sh
 #
-# The same file lives at
-# https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh, and it is
-# short enough to read first. It does what the README's Install section says
+# It is short enough to read first. It does what the README's Install section says
 # to do by hand, choosing the path for the machine it is on:
 #
 #   macOS with Homebrew      brew install --cask snymrova/snyvi/snyvi
