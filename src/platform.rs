@@ -753,7 +753,7 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(test)]
 mod tests {
