@@ -16,7 +16,12 @@
  */
 
 const WIDE = 256;
-const LINE_PX = 16;            // a row's height, which the pane's CSS matches
+/** The terminal's text sizes, which Aa steps through on a desk: the font
+ *  size and the row's height, in px. Normal is what a pane always was. One
+ *  size for every desk, kept in `snyvi.term-size`. */
+const SIZES = [["Small", 11.5, 15], ["Normal", 12.5, 16], ["Large", 14, 18], ["Larger", 15.5, 20]];
+let sizeAt = (() => { try { const i = SIZES.findIndex(([n]) => n === localStorage.getItem("snyvi.term-size")); return i < 0 ? 1 : i; } catch { return 1; } })();
+let LINE_PX = SIZES[sizeAt][2];   // a row's height, which the pane's CSS follows through --pn-line
 const KEEP_LINES = 6000;       // scrollback rows kept in the page; the daemon keeps 2 MB
 let ctx = null;                // what app.js handed `open`
 let sock = null, sockP = null, retry = 0;
@@ -35,8 +40,8 @@ let docList = [], docsAt = null;
 const DOCS_SHOWN = 8;
 let docsAll = false;
 /** The reader's own list for this desk, and which desk it belongs to. Not
- *  `crate::note`'s kind: those are an agent's sentences and the daemon forgets
- *  them. These are written here, ticked here, and kept in the database. */
+ *  asides (`crate::aside`): those are an agent's sentences and the daemon
+ *  forgets them. These are written here, ticked here, and kept in the database. */
 let noteList = [], notesAt = null, notesGet = null;
 /** The field that is open on the list, while one is: a new line at the end, or
  *  a line being rewritten in place. Held here rather than in the DOM because
@@ -151,14 +156,18 @@ function refused() {
 function paint(v, f) {
   // A diff for a grid this page does not hold yet: its snapshot is behind it.
   if (!f.sz && !v.rows) return;
-  born = v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1;
-  const pinned = v.body.scrollTop + v.body.clientHeight >= v.body.scrollHeight - 4;
+  born = bornOf(v);
+  // Only these change how tall the pane's content is; a frame that just
+  // rewrites rows leaves the scroll where it is, and asks nothing of layout.
+  const grows = f.sz || f.sbclear || f.gap || (f.sb && f.sb.length);
   if (f.sz) {
     // Resize-and-clear, on this side as on the daemon's.
     v.cols = f.sz[0]; v.rows = f.sz[1];
     v.cells = Array.from({ length: v.rows }, () => blankRow(v.cols));
     v.scr.replaceChildren(...v.cells.map(() => document.createElement("div")));
+    v.stale.clear();
     v.scr.style.height = v.rows * LINE_PX + "px";
+    sizeCanvas(v);
   }
   // `clear` clears everything the reader could scroll to: the run before
   // this one, greyed above the scrollback, goes with it.
@@ -179,22 +188,31 @@ function paint(v, f) {
           if (wide) row[x++] = null;
         }
       }
-      v.scr.children[y].innerHTML = rowHtml(row);
+      v.stale.add(y);
+      drawRow(v, y, x0, x);
     }
   }
+  if (v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
   if (f.c) v.cur = f.c;
   if (f.m) v.mode = f.m;
   cursor(v);
-  if (pinned) v.body.scrollTop = v.body.scrollHeight;
+  if (grows && v.pinned) v.body.scrollTop = v.body.scrollHeight;
 }
 
+const bornOf = v => (v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1);
 const blankRow = n => Array.from({ length: n }, () => [" ", 0, 0, 0, 1]);
 
 function cursor(v) {
   const [x, y, on] = v.cur;
-  v.caret.hidden = !on || !v.status.running;
+  const hide = !on || !v.status.running, w = cellW * ((v.cells[y] && v.cells[y][x] && v.cells[y][x][4]) || 1);
+  // Written only when it moved: a frame that leaves the caret where it was
+  // is most of them, and the same style written again is still a restyle.
+  const at = `${hide},${x * cellW},${y * LINE_PX},${w}`;
+  if (at === v.caretAt) return;
+  v.caretAt = at;
+  v.caret.hidden = hide;
   v.caret.style.transform = `translate(${x * cellW}px, ${y * LINE_PX}px)`;
-  v.caret.style.width = cellW * ((v.cells[y] && v.cells[y][x] && v.cells[y][x][4]) || 1) + "px";
+  v.caret.style.width = w + "px";
 }
 
 /** A row of cells as HTML: runs that share an attribute become one span.
@@ -258,38 +276,54 @@ for (let n = 1; n < 8; n++) {
   BLOCKS[String.fromCharCode(0x2580 + n)] = [[0, 1 - n / 8, 1, n / 8]];   // ▁ to ▇
   BLOCKS[String.fromCharCode(0x2590 - n)] = [[0, 0, n / 8, 1]];           // ▏ to ▉
 }
-const DRAWN = {};
+const DRAWN = {}, MASK = {}, TINT = new Map();
 
 function drawn(W, H) {
   const t = Math.max(1, Math.round(W / 7)), cx = W / 2, cy = H / 2;
-  const svg = (body, box = `${W} ${H}`) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${box}" preserveAspectRatio="none">${body}</svg>`;
-  const rect = (x, y, w, h, o = 1) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"${o < 1 ? ` fill-opacity="${o}"` : ""}/>`;
-  const line = d => `<path d="${d}" fill="none" stroke="#000" stroke-width="${t}"/>`;
-  const fill = d => `<path d="${d}"/>`;
+  // Each is drawn once, in device pixels, and handed to CSS as a PNG: an SVG
+  // mask is laid out again as a document for every cell on every paint
+  // (docs/DESK-PAINT.md), a bitmap is only drawn.
+  // The canvas is kept: the live screen tints it (`tint`), the scrollback
+  // shows it through CSS as a PNG.
+  const dpr = window.devicePixelRatio || 1;
+  let c;
+  const png = (parts, unit) => {
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(W * dpr)); cv.height = Math.max(1, Math.round(H * dpr));
+    c = cv.getContext("2d");
+    c.setTransform(cv.width / (unit ? 1 : W), 0, 0, cv.height / (unit ? 1 : H), 0, 0);
+    for (const p of parts) if (p) p();
+    return cv;
+  };
+  const rect = (x, y, w, h, o = 1) => () => { c.globalAlpha = o; c.fillRect(x, y, w, h); c.globalAlpha = 1; };
+  const line = d => () => { c.lineWidth = t; c.stroke(new Path2D(d)); };
+  const fill = d => () => c.fill(new Path2D(d));
   for (const [ch, w] of Object.entries(LINES)) {
     const [l, r, u, d] = [...w].map(Number), m = Math.max(l, r, u, d) * t / 2;
-    DRAWN[ch] = svg((l ? rect(0, cy - l * t / 2, cx + m, l * t) : "") + (r ? rect(cx - m, cy - r * t / 2, W - cx + m, r * t) : "") +
-      (u ? rect(cx - u * t / 2, 0, u * t, cy + m) : "") + (d ? rect(cx - d * t / 2, cy - m, d * t, H - cy + m) : ""));
+    MASK[ch] = png([l && rect(0, cy - l * t / 2, cx + m, l * t), r && rect(cx - m, cy - r * t / 2, W - cx + m, r * t),
+      u && rect(cx - u * t / 2, 0, u * t, cy + m), d && rect(cx - d * t / 2, cy - m, d * t, H - cy + m)]);
   }
   const r = cx;
-  DRAWN["╭"] = svg(line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 0 ${cx} ${cy + r}V${H}`));
-  DRAWN["╮"] = svg(line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 1 ${cx} ${cy + r}V${H}`));
-  DRAWN["╯"] = svg(line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 0 ${cx} ${cy - r}V0`));
-  DRAWN["╰"] = svg(line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 1 ${cx} ${cy - r}V0`));
-  for (const [ch, b] of Object.entries(BLOCKS)) DRAWN[ch] = svg((typeof b === "string" ? [...b].map(q => Q[q]) : b).map(a => rect(...a)).join(""), "1 1");
+  MASK["╭"] = png([line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 0 ${cx} ${cy + r}V${H}`)]);
+  MASK["╮"] = png([line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 1 ${cx} ${cy + r}V${H}`)]);
+  MASK["╯"] = png([line(`M0 ${cy}H${cx - r}A${r} ${r} 0 0 0 ${cx} ${cy - r}V0`)]);
+  MASK["╰"] = png([line(`M${W} ${cy}H${cx + r}A${r} ${r} 0 0 1 ${cx} ${cy - r}V0`)]);
+  for (const [ch, b] of Object.entries(BLOCKS)) MASK[ch] = png((typeof b === "string" ? [...b].map(q => Q[q]) : b).map(a => rect(...a)), true);
   // Powerline: the separators a prompt's segments are joined with.
   const P = String.fromCharCode;
-  Object.assign(DRAWN, {
-    [P(0xe0b0)]: svg(fill(`M0 0L${W} ${cy}L0 ${H}Z`)), [P(0xe0b2)]: svg(fill(`M${W} 0L0 ${cy}L${W} ${H}Z`)),
-    [P(0xe0b1)]: svg(line(`M0 0L${W} ${cy}L0 ${H}`)), [P(0xe0b3)]: svg(line(`M${W} 0L0 ${cy}L${W} ${H}`)),
-    [P(0xe0b4)]: svg(fill(`M0 0A${W} ${cy} 0 0 1 0 ${H}Z`)), [P(0xe0b6)]: svg(fill(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}Z`)),
-    [P(0xe0b5)]: svg(line(`M0 0A${W} ${cy} 0 0 1 0 ${H}`)), [P(0xe0b7)]: svg(line(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}`)),
-    [P(0xe0b8)]: svg(fill(`M0 0L${W} ${H}H0Z`)), [P(0xe0ba)]: svg(fill(`M${W} 0V${H}H0Z`)),
-    [P(0xe0bc)]: svg(fill(`M0 0H${W}L0 ${H}Z`)), [P(0xe0be)]: svg(fill(`M0 0H${W}V${H}Z`)),
-    [P(0xe0b9)]: svg(line(`M0 0L${W} ${H}`)), [P(0xe0bf)]: svg(line(`M0 0L${W} ${H}`)),
-    [P(0xe0bb)]: svg(line(`M${W} 0L0 ${H}`)), [P(0xe0bd)]: svg(line(`M${W} 0L0 ${H}`)),
+  Object.assign(MASK, {
+    [P(0xe0b0)]: png([fill(`M0 0L${W} ${cy}L0 ${H}Z`)]), [P(0xe0b2)]: png([fill(`M${W} 0L0 ${cy}L${W} ${H}Z`)]),
+    [P(0xe0b1)]: png([line(`M0 0L${W} ${cy}L0 ${H}`)]), [P(0xe0b3)]: png([line(`M${W} 0L0 ${cy}L${W} ${H}`)]),
+    [P(0xe0b4)]: png([fill(`M0 0A${W} ${cy} 0 0 1 0 ${H}Z`)]), [P(0xe0b6)]: png([fill(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}Z`)]),
+    [P(0xe0b5)]: png([line(`M0 0A${W} ${cy} 0 0 1 0 ${H}`)]), [P(0xe0b7)]: png([line(`M${W} 0A${W} ${cy} 0 0 0 ${W} ${H}`)]),
+    [P(0xe0b8)]: png([fill(`M0 0L${W} ${H}H0Z`)]), [P(0xe0ba)]: png([fill(`M${W} 0V${H}H0Z`)]),
+    [P(0xe0bc)]: png([fill(`M0 0H${W}L0 ${H}Z`)]), [P(0xe0be)]: png([fill(`M0 0H${W}V${H}Z`)]),
+    [P(0xe0b9)]: png([line(`M0 0L${W} ${H}`)]), [P(0xe0bf)]: png([line(`M0 0L${W} ${H}`)]),
+    [P(0xe0bb)]: png([line(`M${W} 0L0 ${H}`)]), [P(0xe0bd)]: png([line(`M${W} 0L0 ${H}`)]),
   });
-  return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("data:image/svg+xml,${encodeURIComponent(s)}")}`).join("\n") +
+  TINT.clear();
+  for (const ch in MASK) DRAWN[ch] = MASK[ch].toDataURL("image/png");
+  return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("${s}")}`).join("\n") +
     `\n.pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
 }
 
@@ -318,6 +352,203 @@ function color(n) {
   }
   const g = 8 + (i - 232) * 10;
   return `rgb(${g},${g},${g})`;
+}
+
+// ---------- the live screen, on a canvas ----------
+
+/* The rows a program redraws many times a second are drawn on a canvas; the
+ * scrollback stays text (docs/DESK-PAINT.md, Phase 3). A row of spans in the
+ * page cost a layer per drawn cell, walked by the compositor on every frame;
+ * a canvas is one picture however many there are. Over it, the same rows as
+ * plain text nobody sees: the browser's selection, copy on `mouseup` and the
+ * caret's place are all read off that, as they were off the painted rows. */
+
+/** A row as the text over the canvas: characters, and a character that
+ *  could push the rest off the grid in a cell-wide span of its own, as
+ *  `rowHtml` does. No colours and no drawn glyphs: nothing here is seen. */
+function rowText(row) {
+  let out = "", text = "";
+  for (const c of row) {
+    if (!c) continue;
+    if (c[4] === 2 || c[0] >= "\u2000") { out += ctx.esc(text) + `<span class="x${c[4] === 2 ? " w" : ""}">${ctx.esc(c[0])}</span>`; text = ""; continue; }
+    text += c[0];
+  }
+  return out + ctx.esc(text);
+}
+
+/** The text catches up with the canvas once a second, not on every frame:
+ *  a row rewritten in the page is a layout, and a spinner is 25 of them a
+ *  second (docs/DESK-PAINT.md). A press in the pane brings it up to date
+ *  first, so a selection starts on what is drawn; and it waits while a
+ *  button is held, so a selection being dragged is not written over. */
+const TEXT_MS = 1000;
+function textSoon(v) {
+  v.textT = 0;
+  if (v.holding) { v.textT = setTimeout(() => textSoon(v), TEXT_MS); return; }
+  text(v);
+}
+function text(v) {
+  for (const y of v.stale) if (v.scr.children[y]) v.scr.children[y].innerHTML = rowText(v.cells[y]);
+  v.stale.clear();
+}
+
+/** The canvas the size of the grid, in device pixels. */
+function sizeCanvas(v) {
+  const k = window.devicePixelRatio || 1;
+  v.k = k;
+  v.cv.width = Math.max(1, Math.round(v.cols * cellW * k));
+  v.cv.height = Math.max(1, Math.round(v.rows * LINE_PX * k));
+  v.cv.style.width = v.cols * cellW + "px";
+  v.cv.style.height = v.rows * LINE_PX + "px";
+  v.pal = null;
+}
+
+/** The theme, read once for a pane until it changes: the sixteen, the
+ *  accent, the pane's ground and ink, and its font. Resolved on the pane,
+ *  so a pane that wears its own colours is drawn in them. */
+function palette(v) {
+  const col = n => snyviTheme.colour(n, v.body);
+  const t = [];
+  for (let i = 0; i < 16; i++) t.push(col(`--t${i}`));
+  v.pal = { t, accent: col("--accent"), bg: col("--pn-bg"), fg: col("--pn-fg"), font: getComputedStyle(v.body).fontFamily, fonts: new Map() };
+  return v.pal;
+}
+
+/** `color`, for a canvas: the same colours, resolved. */
+function ink(p, n) {
+  if (!n) return "";
+  if (n >= 1 << 24) {
+    const c = n & 0xffffff;
+    return c === born ? p.accent : "#" + c.toString(16).padStart(6, "0");
+  }
+  return n <= 16 ? p.t[n - 1] : color(n);
+}
+
+/** A font at a size, and where its baseline sits in a row: centred in the
+ *  line as CSS centres it, by the font's own ascent and descent. */
+function font(v, g, px, fl) {
+  const key = `${fl & 5},${px}`;
+  let f = v.pal.fonts.get(key);
+  if (!f) {
+    const k = v.k, css = `${fl & 4 ? "italic " : ""}${fl & 1 ? 650 : 400} ${px * k}px ${v.pal.font}`;
+    g.font = css;
+    // Whole pixels, as CSS lays out a line: its ascent and descent rounded,
+    // and the room left over split with the odd pixel below.
+    const m = g.measureText("Hg"), a = Math.round(m.fontBoundingBoxAscent ?? px * k * .8), d = Math.round(m.fontBoundingBoxDescent ?? px * k * .2);
+    f = { css, base: Math.floor((LINE_PX * k - (a + d)) / 2) + a, a, d };
+    v.pal.fonts.set(key, f);
+  }
+  g.font = f.css;
+  // The quick way to set text: no kerning to work out, and no ligatures,
+  // which a grid has no room for anyway.
+  g.textRendering = "optimizeSpeed"; g.fontKerning = "none";
+  return f;
+}
+
+/** A drawn character's mask in one colour, kept: a row that shows it again
+ *  draws a picture it already has. */
+function tint(ch, col) {
+  const key = ch + col;
+  let t = TINT.get(key);
+  if (!t) {
+    const m = MASK[ch];
+    t = document.createElement("canvas");
+    t.width = m.width; t.height = m.height;
+    const c = t.getContext("2d");
+    c.drawImage(m, 0, 0);
+    c.globalCompositeOperation = "source-in";
+    c.fillStyle = col;
+    c.fillRect(0, 0, t.width, t.height);
+    if (TINT.size > 2048) TINT.clear();
+    TINT.set(key, t);
+  }
+  return t;
+}
+
+/** One row of the grid, drawn: its grounds, then its characters, in the
+ *  colours and attributes `span` gives them. Only cells `a` to `b` if that
+ *  is all a frame changed -- a spinner is a cell or two -- cleared a cell
+ *  wider on each side, since a glyph can reach into its neighbour (an icon,
+ *  italics), and drawn from two cells further out, so what reaches back in
+ *  from a neighbour is whole again. */
+function drawRow(v, y, a = 0, b = v.cols) {
+  const g = v.g, row = v.cells[y], p = v.pal || palette(v), k = v.k;
+  const top = Math.round(y * LINE_PX * k), h = Math.round((y + 1) * LINE_PX * k) - top;
+  const X = i => Math.round(i * cellW * k);
+  const inks = c => {
+    let f = ink(p, c[1]), b = ink(p, c[2]);
+    if (c[3] & 32) [f, b] = [b || p.bg, f || p.fg];
+    return [f || p.fg, b];
+  };
+  const whole = a <= 0 && b >= row.length;
+  const c0 = Math.max(0, a - 1), c1 = Math.min(row.length, b + 1);
+  let s = Math.max(0, c0 - 2);
+  while (s > 0 && !row[s]) s--;
+  const e = Math.min(row.length, c1 + 2);
+  if (whole) g.clearRect(0, top, v.cv.width, h);
+  else { g.save(); g.beginPath(); g.rect(X(c0), top, X(c1) - X(c0), h); g.clip(); g.clearRect(X(c0), top, X(c1) - X(c0), h); }
+  for (let x = s; x < e; x++) {
+    const c = row[x];
+    if (!c) continue;
+    const b = inks(c)[1];
+    if (!b) continue;
+    // A run of one ground is one rectangle, so no seam shows between cells.
+    let n = x + c[4];
+    while (n < e && (!row[n] || (inks(row[n])[1] === b && (row[n][3] & 2) === (c[3] & 2)))) n += row[n] ? row[n][4] : 1;
+    g.globalAlpha = c[3] & 2 ? .6 : 1;
+    g.fillStyle = b;
+    g.fillRect(X(x), top, X(n) - X(x), h);
+    x = n - 1;
+  }
+  const size = SIZES[sizeAt][1];
+  for (let x = s; x < e;) {
+    const c = row[x];
+    if (!c) { x++; continue; }
+    const [f] = inks(c), fl = c[3];
+    let n = x + c[4], text = c[0];
+    const own = c[4] === 2 || c[0] >= "\u2000";
+    if (!own) {
+      while (n < e && row[n] && row[n][4] === 1 && row[n][0] < "\u2000" && row[n][1] === c[1] && row[n][2] === c[2] && row[n][3] === fl) text += row[n++][0];
+    }
+    g.globalAlpha = fl & 2 ? .6 : 1;
+    if (!(fl & 64) && text.trim()) {
+      if (own && MASK[text]) g.drawImage(tint(text, f), X(x), top, X(n) - X(x), h);
+      else {
+        const icon = own && /[\ue000-\uf8ff]/.test(text), m = font(v, g, icon ? 10 : size, fl);
+        g.fillStyle = f;
+        if (own) { g.textAlign = "center"; g.fillText(text, (X(x) + X(n)) / 2, top + m.base); g.textAlign = "start"; }
+        else g.fillText(text, X(x), top + m.base);
+      }
+    }
+    if (fl & 136 && !(fl & 64)) {
+      const m = font(v, g, size, fl), th = Math.max(1, Math.round(k * size / 12));
+      g.fillStyle = f;
+      if (fl & 8) g.fillRect(X(x), Math.round(top + m.base + m.d / 3), X(n) - X(x), th);
+      if (fl & 128) g.fillRect(X(x), Math.round(top + m.base - m.a * .3), X(n) - X(x), th);
+    }
+    x = n;
+  }
+  g.globalAlpha = 1;
+  if (!whole) g.restore();
+}
+
+/** Every row again: the size, the theme, the font or the density changed. */
+function drawAll(v) {
+  if (!v.rows || !v.g) return;
+  born = bornOf(v);
+  for (let y = 0; y < v.rows; y++) drawRow(v, y);
+}
+
+/** The theme and the accent are attributes on the root (boot.js resolves
+ *  "follow the system" into one): a change is every pane drawn again. A font
+ *  the page was still fetching when the cell was measured is a cell of
+ *  another width once it lands: that is a measure again, which draws again. */
+let lookWatch = null;
+function watchLook() {
+  if (lookWatch) return;
+  lookWatch = new MutationObserver(() => { for (const v of views.values()) { v.pal = null; drawAll(v); } });
+  lookWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
+  document.fonts?.addEventListener("loadingdone", () => { if (ctx) remeasure(); });
 }
 
 // ---------- keys ----------
@@ -401,7 +632,7 @@ function makeView(p) {
   el.className = "pn";
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span></header>` +
-    `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
+    `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
@@ -410,10 +641,16 @@ function makeView(p) {
     // the way there. `resumed` is one attempt, per daemon.
     resumed: false, starting: false, resuming: !(p.status && (p.status.running || p.status.exit != null)),
     body: el.querySelector(".pn-body"), old: el.querySelector(".pn-old"), sb: el.querySelector(".pn-sb"), scr: el.querySelector(".pn-scr"),
-    caret: el.querySelector(".pn-caret"), start: el.querySelector(".pn-start"), size: "",
+    caret: el.querySelector(".pn-caret"), cv: el.querySelector(".pn-cv"), pal: null, stale: new Set(), textT: 0, holding: false, start: el.querySelector(".pn-start"), size: "",
+    pinned: true,   // at the bottom, so new lines keep it there
   };
   const { body, start } = v;
+  v.g = v.cv.getContext("2d");
+  watchLook();
 
+  // Read where the reader is when they scroll, not on every frame: a read
+  // there is a layout forced once per frame per pane (docs/DESK-PAINT.md).
+  body.addEventListener("scroll", () => { v.pinned = body.scrollTop + body.clientHeight >= body.scrollHeight - 4; }, { passive: true });
   body.addEventListener("focus", () => { focused = v.id; el.classList.add("on"); rail(); });
   body.addEventListener("blur", () => el.classList.remove("on"));
   el.querySelector(".pn-head").addEventListener("click", () => body.focus());
@@ -424,6 +661,14 @@ function makeView(p) {
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
+    // ⌃= ⌃- ⌃0: the text size, as a terminal does it. ⌃- sent ^_, which is
+    // undo to readline and zsh -- as in GNOME Terminal, undo is still ⌃_.
+    if (e.ctrlKey && !e.altKey && /^[-=+0]$/.test(e.key)) {
+      e.preventDefault(); e.stopPropagation();
+      textSize(e.key === "0" ? 0 : e.key === "-" ? -1 : 1);
+      if (ctx.sized) ctx.sized();
+      return;
+    }
     if (e.isComposing || e.key === "Dead" || e.key === "Process") return;
     const b = keyBytes(e, v.mode[0]);
     if (b == null) return;
@@ -433,6 +678,7 @@ function makeView(p) {
   });
   // Copy on selection: the scrollback is text in the page, so the browser
   // selects it, and letting go is the copy.
+  body.addEventListener("mousedown", () => { text(v); v.holding = true; addEventListener("mouseup", () => { v.holding = false; }, { once: true }); });
   body.addEventListener("mouseup", () => setTimeout(() => copy(v, false), 0));
   body.addEventListener("wheel", e => wheel(v, e), { passive: false });
   body.addEventListener("paste", e => { e.preventDefault(); paste(v, e.clipboardData); });
@@ -515,7 +761,10 @@ function resume(v) {
  *  the page re-tints instead, in `color`, so a swatch reaches a pane that is
  *  already running. */
 function accent() {
-  const c = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  // Resolved through boot.js rather than read as text: on :root the token is
+  // a light-dark() expression, and the prompt wants six hex digits, which is
+  // how boot.js says an opaque colour.
+  const c = snyviTheme.colour("--accent");
   return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
 }
 
@@ -1341,17 +1590,7 @@ export function open(c) {
   detach();
   ctx = c;
   style();
-  if (first) {
-    // A cell's width, measured in the font a pane is drawn in.
-    const probe = Object.assign(document.createElement("span"), { className: "pn-probe", textContent: "0".repeat(40) });
-    document.body.append(probe);
-    cellW = probe.getBoundingClientRect().width / 40 || cellW;
-    probe.remove();
-    const g = document.createElement("style");
-    g.id = "desk-drawn";
-    g.textContent = drawn(cellW, LINE_PX);
-    document.head.append(g);
-  }
+  if (first) measure();
   if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints(); }
   deskId = c.id; reading = null;
   const d = current();
@@ -1373,6 +1612,65 @@ export function open(c) {
   const v = views.get(focused);
   if (v) setTimeout(() => v.body.focus(), 0);
 }
+
+/** The cell, measured in the font and size a pane is drawn in, and the
+ *  drawn characters cut to it. Run once when the first desk opens, and again
+ *  whenever Aa changes the size. */
+function measure() {
+  const [, px, line] = SIZES[sizeAt];
+  LINE_PX = line;
+  document.documentElement.style.setProperty("--pn-size", px + "px");
+  document.documentElement.style.setProperty("--pn-line", line + "px");
+  const probe = Object.assign(document.createElement("span"), { className: "pn-probe", textContent: "0".repeat(40) });
+  document.body.append(probe);
+  cellW = probe.getBoundingClientRect().width / 40 || cellW;
+  probe.remove();
+  // Measured in a stand-in if the pane's font is still on its way: measure
+  // again once it is in, or every cell is the stand-in's width.
+  if (document.fonts && document.fonts.status !== "loaded") document.fonts.ready.then(() => { if (ctx) remeasure(); });
+  let g = document.getElementById("desk-drawn");
+  if (!g) { g = document.createElement("style"); g.id = "desk-drawn"; document.head.append(g); }
+  g.textContent = drawn(cellW, LINE_PX);
+  for (const v of views.values()) if (v.rows) { sizeCanvas(v); drawAll(v); }
+  // Cut in device pixels, so cut again when those change: a zoom, or the
+  // window moved to a screen of another density.
+  dprWatch?.abort(); dprWatch = new AbortController();
+  matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener("change", measure, { once: true, signal: dprWatch.signal });
+}
+let dprWatch;
+
+/** Measure again, and give every panel the columns and rows it now has. */
+function remeasure() {
+  measure();
+  for (const v of views.values()) {
+    if (v.rows) v.scr.style.height = v.rows * LINE_PX + "px";
+    if (v.cur) cursor(v);
+    fit(v);
+  }
+}
+
+/** The terminal's text size: `step` of +1 or -1 moves it, 0 puts it back to
+ *  Normal, and no step only reads it. Every panel is measured again and told
+ *  its new columns and rows -- the same path a window resize takes, so the
+ *  program redraws itself at the size it now has (resize-and-clear,
+ *  docs/DESK.md). Returns the size's name and the next one up, for Aa. */
+export function textSize(step) {
+  if (step != null) {
+    const to = step ? Math.max(0, Math.min(SIZES.length - 1, sizeAt + step)) : 1;
+    if (to !== sizeAt) {
+      sizeAt = to;
+      try { localStorage.setItem("snyvi.term-size", SIZES[to][0]); } catch {}
+      if (ctx) remeasure();
+    }
+  }
+  return { name: SIZES[sizeAt][0], next: SIZES[(sizeAt + 1) % SIZES.length][0], at: sizeAt, of: SIZES.length };
+}
+
+/** The focused panel alone, or the grid again: what the width control means
+ *  on a desk. How many panels there are, so it can say when one already fills
+ *  it. */
+export const zoomOn = () => { zoom(); return zoomed; };
+export const panels = () => views.size;
 
 export function update(desks) {
   if (!ctx) return;
@@ -1423,14 +1721,11 @@ function style() {
 const CSS = `
 @font-face { font-family: "snyvi symbols"; font-display: block; unicode-range: U+E000-F8FF;
   src: local("Symbols Nerd Font Mono"), local("SymbolsNerdFontMono-Regular"), url(/assets/fonts/symbols-nerd.woff2) format("woff2"); }
-:root { --pn-bg: var(--bg-raise); --pn-fg: var(--fg);
-  --pn-font: "JetBrains Mono", "snyvi symbols", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --t0:#1f1d1a; --t1:#b3261e; --t2:#3b6d11; --t3:#a16207; --t4:#1d4ed8; --t5:#7e22ce; --t6:#0e7490; --t7:#8f897f;
-  --t8:#5c574f; --t9:#dc2626; --t10:#4d7c0f; --t11:#ca8a04; --t12:#2563eb; --t13:#9333ea; --t14:#0891b2; --t15:#d8d3c9; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --t0:#2a2f3a; --t1:#f87171; --t2:#86c46d; --t3:#e6b450; --t4:#7aa2f7; --t5:#c792ea; --t6:#5ccfe6; --t7:#c8ccd4;
-  --t8:#5c6370; --t9:#ff8b8b; --t10:#a6e3a1; --t11:#f9e2af; --t12:#89b4fa; --t13:#f5c2e7; --t14:#94e2d5; --t15:#ffffff; } }
-:root[data-theme="dark"] { --t0:#2a2f3a; --t1:#f87171; --t2:#86c46d; --t3:#e6b450; --t4:#7aa2f7; --t5:#c792ea; --t6:#5ccfe6; --t7:#c8ccd4;
-  --t8:#5c6370; --t9:#ff8b8b; --t10:#a6e3a1; --t11:#f9e2af; --t12:#89b4fa; --t13:#f5c2e7; --t14:#94e2d5; --t15:#ffffff; }
+/* The terminal's sixteen, --t0 to --t15, are the theme's: each theme block
+ * in app.css sets its own, so a shell is dressed with the page it sits in.
+ * Only the aliases the panel reads are here. */
+:root { --pn-bg: var(--bg-raise); --pn-fg: var(--fg); --pn-size: 12.5px; --pn-line: 16px;
+  --pn-font: "JetBrains Mono", "snyvi symbols", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 :root[data-view="desk"] #main { overflow: hidden; }
 :root[data-view="desk"] #doc { max-width: none; height: 100%; padding: 14px 16px 16px; display: flex; flex-direction: column; }
 :root[data-view="desk"] #doc:has(.inbox-head) { display: block; padding: 56px 48px; max-width: calc(var(--measure) + 96px); overflow-y: auto; }
@@ -1476,24 +1771,39 @@ const CSS = `
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
-.pn.blk .pn-head { border-bottom: 2px solid #d97706; }
-.pn.blk .pn-state { color: #b45309; font-weight: 600; animation: pn-need .8s ease-out; }
+.pn.blk .pn-head { border-bottom: 2px solid var(--warn); }
+.pn.blk .pn-state { color: var(--warn); font-weight: 600; animation: pn-need .8s ease-out; }
 .pn.done .pn-state { color: var(--accent); }
-@keyframes pn-need { 0%, 60% { background: rgba(217,119,6,.18); } 100% { background: transparent; } }
+@keyframes pn-need { 0%, 60% { background: color-mix(in srgb, var(--warn) 18%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .pn.blk .pn-state { animation: none; } }
-.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: 12.5px; line-height: ${LINE_PX}px; color: var(--pn-fg); outline: none; scrollbar-width: thin; }
-.pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: ${LINE_PX}px; overflow: hidden; }
+/* The scrollbar's room is kept whether or not there is one: a panel whose
+ * output first overflowed grew a scrollbar, lost a column to it, was resized
+ * and cleared, lost the overflow, gave the column back -- and a busy program
+ * kept that going every frame. */
+.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
+.pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
 .pn-sb > .gap { color: var(--fg-3); font-style: italic; }
 .pn-old { color: var(--fg-3); opacity: .7; }
-.pn-live { position: relative; }
-.pn.off .pn-scr { opacity: .55; }
-.pn-caret { position: absolute; left: 0; top: 0; height: ${LINE_PX}px; background: var(--fg); opacity: .35; pointer-events: none; }
+/* The live screen on a layer of its own, and each row shut in on itself: a
+ * spinner's frame repaints its row, not the pane or the panes beside it
+ * (docs/DESK-PAINT.md, Phase 2). */
+.pn-live { position: relative; will-change: transform; }
+.pn-scr > div { contain: strict; }
+/* Phase 3: the live rows are drawn on the canvas; the text over it is the same
+ * rows, unstyled and unseen, for selection, copy and the caret's reading. */
+.pn-cv { position: absolute; left: 0; top: 0; pointer-events: none; }
+.pn-scr { position: relative; color: transparent; text-rendering: optimizeSpeed; font-variant-ligatures: none; }
+/* A pane's text changing lays out the pane, not the desk's grid around it. */
+.pn-body { contain: strict; }
+.pn-scr ::selection { color: transparent; background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.pn.off .pn-cv { opacity: .55; }
+.pn-caret { position: absolute; left: 0; top: 0; height: var(--pn-line); background: var(--fg); opacity: .35; pointer-events: none; }
 .pn.on .pn-caret { opacity: .75; animation: pn-blink 1.1s steps(1) infinite; }
 @keyframes pn-blink { 50% { opacity: .15; } }
 .pn-body .b { font-weight: 650; } .pn-body .d { opacity: .6; } .pn-body .i { font-style: italic; }
 .pn-body .u { text-decoration: underline; } .pn-body .s { text-decoration: line-through; } .pn-body .u.s { text-decoration: underline line-through; }
 .pn-body .h { color: transparent !important; }
-.pn-body span { display: inline-block; height: ${LINE_PX}px; vertical-align: top; }
+.pn-body span { display: inline-block; height: var(--pn-line); vertical-align: top; }
 /* An icon is drawn a full em wide and a cell is 0.6 of one: set a size down,
  * centred in its cell, and over its neighbours rather than under them. */
 .pn-body .nf { position: relative; font-size: 10px; }
@@ -1504,7 +1814,7 @@ const CSS = `
 .pn-start .pn-resume { color: var(--fg); font-weight: 500; }
 .pn-start .pn-resume[hidden] { display: none; }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
-.pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: 12.5px; }
+.pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: var(--pn-size); }
 /* ---------- the rail ----------
  * Three lists and a label over each, drawn the way the sidebar draws its own
  * rows: a mark at the left, the name, and one fact at the right. */
@@ -1528,11 +1838,11 @@ const CSS = `
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
-.dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: #dc2626; }
-.dk-tools button[data-armed]:hover { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
+.dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: var(--danger); }
+.dk-tools button[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
-.dk-panes .run .dot { color: #16a34a; }
-.dk-panes .blk .dot { color: #b45309; font-weight: 700; font-size: 11px; }
+.dk-panes .run .dot { color: var(--ok); }
+.dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
 /* The documents section folds. Its head is the label, made a summary: the
  * chevron the sidebar's heads carry, shown under the cursor and while
  * folded. */

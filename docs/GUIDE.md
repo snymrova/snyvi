@@ -20,8 +20,10 @@ kind of source file. Each desk keeps its own notes, and each is exactly as
 you left it when you come back.
 
 One direction only: agents send, snyvi shows. The rule is about the channel,
-not the window: snyvi cannot be read back by an agent, and nothing a
-document says is ever typed into a panel.
+not the window: no document in snyvi can be read back by an agent, and
+nothing a document says is ever typed into a panel. The one thing that goes
+the other way is a desk's own notes, to the agent working in that desk's
+panel, and only to read ([Asides](#asides) says where the line is).
 
 ## Install
 
@@ -31,7 +33,7 @@ On Linux and macOS, [`install.sh`](../install.sh) does what the sections
 below say to do by hand, choosing the path for the machine it is on:
 
 ```
-curl -fsSL https://mrova.rocks/snyvi/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh | sh
 ```
 
 With Homebrew it installs the cask; on a Mac without it, `snyvi.app` goes
@@ -363,9 +365,11 @@ and from that count, and `snyvi init` with no agent prints the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools. `send_document` is the one that matters: it
-takes a file path or inline content and returns a URL. `send_note` is
-the small one, and [Notes](#notes) below says what it is for. The tool
+That exposes two MCP tools, and a third inside a desk. `send_document` is
+the one that matters: it takes a file path or inline content and returns a
+URL. `send_aside` is the small one, and [Asides](#asides) below says what it
+is for. `read_desk_notes` is offered only to a Claude running in a desk's
+panel, and reads that desk's notes. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -561,10 +565,41 @@ license and the repository. *Reset snyvi…* is described under
 Five buttons sit at the foot of the sidebar -- theme, accent, Aa, width,
 wrap -- and what each one does is kept for next time.
 
-The **theme** button flips light and dark. One click always changes
-what you see: landing on the theme your system already shows drops the
-choice rather than storing it, so the page follows the system again
-from there, and the button's tooltip says which of the two you are in.
+There are eight themes, four light and four dark, each designed rather
+than derived from another. The light ones: **Paper**, the warm
+near-white the window opens in; **Snow**, a cool near-white;
+**Sage**, a soft green-grey that is easy on the eyes over a long day;
+and **Parchment**, a sepia page with brown ink for long reads and a
+bright room in the evening. The dark ones: **Ink**, the deep grey-blue
+for night; **Midnight**, a deep navy; **Espresso**, a warm brown-black,
+the dark side of Parchment; and **Contrast**, white on black at 7:1
+everywhere, with rules at full weight and no faint washes. Each has its own syntax colours and its own
+terminal palette, so code and the shells on a desk look like part of the
+page, and every colour a theme draws text in is measured on every
+surface it sits on -- 4.5:1 or better, 7:1 for Contrast -- with each
+of the eight accents, on every build.
+
+Paper and Ink come with the window itself, so it opens at full speed;
+the other six load in the background a moment later. Whichever you
+choose, the window opens in it with no flash of another theme first.
+
+The **theme** button steps through the eight, the way the accent button
+steps through its colours: the four light ones, then the four dark, and
+round again. Its icon shows whether a click lands on a light or a dark
+one, and its tooltip names the one showing and the one a click brings.
+To jump straight to one, press `⌘K` and type `theme`: the eight appear as
+rows, each drawn in its own colours, and moving the highlight puts that
+theme on the window behind the box, so the page is the preview. Enter
+keeps it; Esc puts the window back.
+
+Either way, the theme you land on is remembered as your light or your
+dark one, so when your system switches between light and dark the
+window moves between those two. A system asking for more contrast gets
+Contrast as its dark theme until you choose one, and Paper with heavier ink in the light.
+
+![The same plan in Parchment](media/plan-parchment.webp)
+
+![The same plan in Midnight](media/plan-midnight.webp)
 
 **Aa** steps through the reading faces: Inter, Source Serif, Literata,
 Atkinson Hyperlegible, JetBrains Mono. The first three are a matter of
@@ -584,6 +619,17 @@ for both. The tab's icon is repainted to match, so two snyvi windows
 side by side are told apart at the tab strip.
 
 The **width** and **wrap** buttons are `w` and `z` above.
+
+A control that means nothing in the view you are in is faded rather
+than hidden, and its tooltip says why -- `Wrap · no code on this page`,
+`Font · code is always monospace`. Clicking it, or pressing its key,
+gives the same answer instead of silently doing nothing. On a desk they
+mean the desk's own things: **width** shows the focused panel
+full-size, as `⌃⌥Z` does, and **Aa** sets the terminal's text size --
+Small, Normal, Large, Larger -- for every panel on every desk. Inside a
+panel, `⌃=` and `⌃-` step it and `⌃0` puts it back to Normal, as in
+most terminals; readline's undo, which `⌃-` used to send, is still
+`⌃_`. Wrap is faded there: a terminal always wraps.
 
 The **rocket**, at the top of that column, is a game: snyvi in a helmet,
 in a small ship, and rocks coming down. It covers the sidebar and only
@@ -618,9 +664,9 @@ files show their first 2000 rows with a note; `o` opens the whole file.
 
 A ```` ```mermaid ```` block is drawn as a diagram — flowcharts, sequence,
 class, state, ER and gantt — in snyvi's own palette, so it belongs to the
-page rather than arriving from somewhere else. Both themes are checked on
-every build: every label has to stay legible against whatever is behind
-it.
+page rather than arriving from somewhere else. All four themes are
+checked on every build: every label has to stay legible against whatever
+is behind it.
 
 Drawing happens after the text is on screen and only for diagrams the
 reader is near, one at a time, so a page with eight of them opens as fast
@@ -766,7 +812,7 @@ runs while you read, and `prefers-reduced-motion` turns all of it off
 rather than slowing it down. The `#` beside a heading confirms a copy
 on the mark itself, not at the corner of the screen.
 
-## Notes
+## Asides
 
 An arrival is work: a document an agent finished and you asked for.
 Now and then there is a sentence that is not work -- what it noticed on
@@ -774,24 +820,40 @@ the way, what it would do next, what it is unsure of -- and until this
 existed the only way to say it was to make it a document, which put it
 in your library and your unread count as though it were one.
 
-`send_note` is for that sentence, and it is deliberately small. A note
-is at most 280 characters; past that it is a document and
-`send_document` is the tool for it. Notes are kept in memory, the last
-five of them, so a daemon restart forgets them -- a note is about now,
+`send_aside` is for that sentence, and it is deliberately small. An
+aside is at most 280 characters; past that it is a document and
+`send_document` is the tool for it. Asides are kept in memory, the last
+five of them, so a daemon restart forgets them -- an aside is about now,
 and one that outlived a restart would be about some other now. They
 never enter the queue, never mark anything unread, and never take the
 page away from what you are reading.
 
 One sits at the foot of the sidebar, under the trail of the few before
 it. A new one lights up and snyvi's own mark beside it hops once; rest
-on the note and it is read, and the mark settles. Only one note lights
+on the aside and it is read, and the mark settles. Only one aside lights
 up every ten minutes: an agent that leaves one per edit costs you a
-single glance, and the rest join the trail quietly. A note may name a
+single glance, and the rest join the trail quietly. An aside may name a
 document it is about, and then clicking it opens that document.
 
-It is a channel from the agent to you and nothing comes back: snyvi
-cannot be read by an agent, and a note is not an instruction to
-anything.
+It is a channel from the agent to you and nothing comes back: an aside is
+not an instruction to anything.
+
+An aside is not a desk's notes. Those are your own list, kept with the
+desk and written only by you; an agent's asides never land on it.
+
+An agent can *read* that list, and nothing else of snyvi's. A Claude
+running in one of a desk's panels is offered `read_desk_notes`, which
+returns that desk's notes, open and done, and has no way to add, tick,
+change or remove one. It is found by the pane: the panel puts its id in
+the shell's environment as `SNYVI_SESSION`, and the daemon answers only
+while that panel is running, and only with its own desk's list -- never
+another desk's, and never a document. A Claude started anywhere else is
+not offered the tool at all. If a list is for your eyes only, keep it on
+a desk you do not run agents in.
+
+The tool was called `send_note` through 1.4.0. The old name still
+works, so a session that was already running when you upgraded keeps
+its asides.
 
 ## Where a link opens
 

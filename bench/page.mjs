@@ -514,13 +514,130 @@ export async function setTheme(want) {
     }).join("|");
   const before = signature();
   const btn = document.querySelector("#btn-theme");
-  // The theme drawn, not the one stored: a click that lands on the system's
-  // own theme stores none and follows the system.
-  const shown = () => document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  for (let i = 0; i < 4 && shown() !== want; i++) btn.click();
+  // The side drawn, not the one stored: a click that lands on the system's
+  // own side stores none and follows the system. boot.js resolves that into
+  // a concrete theme, and the theme's block says which side it is.
+  const shown = () => getComputedStyle(document.documentElement).colorScheme === "dark" ? "dark" : "light";
+  // The button steps through all eight, and a click lands once themes.css is
+  // in, so each click waits for the theme it moved to before the next.
+  const root = document.documentElement;
+  for (let i = 0; i < 8 && shown() !== want; i++) {
+    const was = root.dataset.theme;
+    btn.click();
+    await until(() => root.dataset.theme !== was, 200);
+  }
   if (shown() !== want) return { ok: false, why: `the theme never became ${want}` };
   const drew = await until(() => signature() !== before && !document.querySelector('.mmd[data-state="queued"], .mmd[data-state="rendering"]'));
   return { ok: drew, before, after: signature(),
     why: drew ? `every drawn diagram was redrawn in ${want}`
       : `switched to ${want} and the diagrams on screen kept the colours they were drawn in` };
+}
+
+/** Pick a theme by name the way a reader does: ⌘K, `theme`, the row. The
+ *  rows preview as the highlight moves and a click keeps one, so this is the
+ *  palette's whole path and not a shortcut past it. Reports the same two
+ *  things setTheme does: that the theme took, and that every drawn diagram
+ *  was redrawn in it. */
+export async function chooseTheme(name) {
+  const until = async (test, tries = 400) => {
+    for (let i = 0; i < tries; i++) {
+      if (test()) return true;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+  };
+  const signature = () => [...document.querySelectorAll('.mmd[data-state="done"] svg')]
+    .map(svg => { const shape = svg.querySelector("rect, circle, polygon, path"); return shape ? getComputedStyle(shape).fill : "-"; }).join("|");
+  const before = signature(), was = document.documentElement.dataset.theme;
+  if (was === name) return { ok: true, before, after: before, why: `already ${name}` };
+  document.querySelector("#btn-search").click();
+  const input = document.querySelector("#palette-input");
+  input.value = "theme"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  // The rows of the last search stay in the list until the new one lands, so
+  // the palette's own mark that these rows are theme rows is waited for too.
+  const row = await until(() => document.querySelector(`#palette.themes #palette-list li.theme[data-theme="${name}"]`), 80);
+  if (!row) return { ok: false, why: `⌘K theme listed no row for ${name}` };
+  const scrim = getComputedStyle(document.querySelector("#palette")).backgroundColor;
+  document.querySelector(`#palette-list li.theme[data-theme="${name}"]`).click();
+  if (document.documentElement.dataset.theme !== name) return { ok: false, why: `the row was clicked and the theme stayed ${document.documentElement.dataset.theme}` };
+  if (!/rgba\(0, 0, 0, 0\)|transparent/.test(scrim)) return { ok: false, why: `the palette kept its scrim (${scrim}) over the page it was previewing on` };
+  const drew = await until(() => signature() !== before && !document.querySelector('.mmd[data-state="queued"], .mmd[data-state="rendering"]'));
+  return { ok: drew, before, after: signature(),
+    why: drew ? `⌘K theme → ${name}, and every drawn diagram was redrawn in it`
+      : `⌘K theme → ${name}, and the diagrams on screen kept the colours they were drawn in` };
+}
+
+/** Every colour a theme draws text in -- the five status tokens, the accent,
+ *  the syntax ten and the terminal's sixteen less black and white -- read back
+ *  against every surface it is drawn on, in the theme the page is showing.
+ *  The status ones used to be fixed hex values, and measured (2026-09-24)
+ *  three of them failed 4.5:1 on Ink and three on Paper; the blocked mark is
+ *  eleven-pixel bold, which is small text under WCAG, so 4.5:1 is the bar,
+ *  and Contrast's is 7:1. The diagram pass above cannot see any of this: it
+ *  reads labels off rendered SVG, and a sidebar glyph is not in a diagram.
+ *  The terminal's black and white -- --t0 and --t15 -- are left out: a
+ *  shell's "black" on a dark ground and its "white" on a light one are the
+ *  ground's own colour, and a program that prints in them means the ground.
+ *
+ *  Each token is resolved the way the page resolves it -- as the colour of a
+ *  probe element -- so a color-mix() or an alpha comes back composited over
+ *  the surface, and the number is about what is on screen. */
+export async function status(label) {
+  // A mixed colour is said as `color(srgb …)` on a 0..1 scale, a plain one
+  // as rgb() on 0..255; both are read, as boot.js's colour() reads them.
+  const parse = c => {
+    let m = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)$/.exec(c || "");
+    if (m) return { r: m[1] * 255, g: m[2] * 255, b: m[3] * 255, a: m[4] == null ? 1 : +m[4] };
+    m = /rgba?\(([^)]+)\)/.exec(c || "");
+    if (!m) return null;
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    return p.length < 3 || p.some(Number.isNaN) ? null : { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  };
+  const over = (f, b) => ({ r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a), b: f.b * f.a + b.b * (1 - f.a), a: 1 });
+  const lum = c => {
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const ratio = (x, y) => {
+    const a = lum(x), b = lum(y), hi = Math.max(a, b), lo = Math.min(a, b);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const probe = document.createElement("i");
+  probe.style.cssText = "position:absolute;visibility:hidden";
+  document.body.append(probe);
+  const cs = getComputedStyle(probe);
+  const colour = t => { probe.style.color = `var(${t})`; return parse(cs.color); };
+  const surface = s => { probe.style.backgroundColor = `var(${s})`; return parse(cs.backgroundColor); };
+  const rows = [], root = document.documentElement, was = root.dataset.accent;
+  try {
+    const page = surface("--bg") || { r: 255, g: 255, b: 255, a: 1 };
+    const tokens = ["--ok", "--warn", "--danger", "--info", "--important", "--accent",
+      "--s-comment", "--s-keyword", "--s-string", "--s-number", "--s-function", "--s-type", "--s-variable", "--s-punct", "--s-tag", "--s-attr",
+      ...Array.from({ length: 14 }, (_, i) => `--t${i + 1}`)];
+    const read = (token, name = token) => {
+      for (const s of ["--bg", "--bg-side", "--bg-raise", "--code-bg"]) {
+        let bg = surface(s), fg = colour(token);
+        if (!bg || !fg) { rows.push({ theme: label, token: name, surface: s, ratio: null }); continue; }
+        if (bg.a < 1) bg = over(bg, page);
+        if (fg.a < 1) fg = over(fg, bg);
+        rows.push({ theme: label, token: name, surface: s, ratio: ratio(fg, bg) });
+      }
+    };
+    for (const token of tokens) read(token);
+    /* And every accent, not only the default: a reader picks the theme and
+     * the accent apart, so each of the eight has to hold on each theme. The
+     * default alone was measured until 2026-09-25, and green on Paper's
+     * sidebar and three accents on Parchment's had been under all along. */
+    for (const a of ["crimson", "rose", "violet", "blue", "teal", "green", "graphite"]) {
+      root.dataset.accent = a;
+      read("--accent", `--accent (${a})`);
+      read("--s-keyword", `--s-keyword (${a})`);
+    }
+  } finally {
+    was ? (root.dataset.accent = was) : delete root.dataset.accent;
+    probe.remove();
+  }
+  const worst = rows.reduce((w, r) => (r.ratio === null ? { ...r, ratio: 0 } : (!w || r.ratio < w.ratio) ? r : w), null);
+  const theme = document.documentElement.dataset.theme;
+  return { theme, label, rows, worst, bar: theme === "contrast" ? 7 : 4.5 };
 }

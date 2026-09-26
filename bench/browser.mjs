@@ -139,7 +139,9 @@ async function main() {
     cdp.on("Fetch.requestPaused", (p, sn) => {
       if (sn !== sessionId) return;
       if (/mermaid/.test(p.request.url)) held = p.requestId;
-      else cdp.send("Fetch.continueRequest", { requestId: p.requestId }, sessionId);
+      // A request can pause just as Fetch.disable lands; the disable releases
+      // it, and the continue that follows is refused. Nothing to do about that.
+      else cdp.send("Fetch.continueRequest", { requestId: p.requestId }, sessionId).catch(() => {});
     });
     // Without this the library comes from the tab's own cache and is never a
     // request at all, so there is nothing to hold and no window to open.
@@ -179,9 +181,27 @@ async function main() {
     const famLoaded = pageLoad(cdp, sessionId, "the families document");
     await cdp.send("Page.navigate", { url: famUrl }, sessionId);
     await famLoaded;
-    const light = await evaluate(cdp, sessionId, call(page.legible, "light"));
+    /* Eight themes, read in the order a reader reaches them: Paper is what
+     * the page opens in, the system flips it to Ink, and the other six are
+     * rows in ⌘K -- which waits for themes.css, as a reader's click does. Every text colour a theme draws -- status, accent, syntax,
+     * the terminal -- is read in the same theme by a pass of its own, since
+     * none of them is in a diagram. Paper is chosen back at the end so the
+     * sidebar's page below opens in the default. */
+    const legible = [], status = [], chosen = [];
+    legible.push(...await evaluate(cdp, sessionId, call(page.legible, "paper")));
+    status.push(await evaluate(cdp, sessionId, call(page.status, "paper")));
     const toggled = await evaluate(cdp, sessionId, call(page.setTheme, "dark"));
-    const dark = toggled.ok ? await evaluate(cdp, sessionId, call(page.legible, "dark")) : [];
+    if (toggled.ok) {
+      legible.push(...await evaluate(cdp, sessionId, call(page.legible, "ink")));
+      status.push(await evaluate(cdp, sessionId, call(page.status, "ink")));
+    }
+    for (const name of ["snow", "sage", "parchment", "midnight", "espresso", "contrast", "paper"]) {
+      const c = await evaluate(cdp, sessionId, call(page.chooseTheme, name));
+      chosen.push({ name, ...c });
+      if (!c.ok || name === "paper") continue;
+      legible.push(...await evaluate(cdp, sessionId, call(page.legible, name)));
+      status.push(await evaluate(cdp, sessionId, call(page.status, name)));
+    }
 
     /* The sidebar, on a library that has been used rather than the two
      * documents every number above was taken against. Last, and in a page of
@@ -189,7 +209,7 @@ async function main() {
      * every one of them lands in whatever tab is open. */
     const seeded = await sidebar(cdp, env);
 
-    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible: [...light, ...dark], toggled, throttle, seeded, readable, full });
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, status: status.filter(Boolean), toggled, chosen, throttle, seeded, readable, full });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -326,7 +346,7 @@ function judge(expect, got) {
   }
 }
 
-function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, toggled, throttle, seeded, readable, full }) {
+function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, status, toggled, chosen, throttle, seeded, readable, full }) {
   const mark = n => perf.marks.find(m => m.name === n)?.start ?? null;
   const fcp = perf.paints.find(p => p.name === "first-contentful-paint")?.start ?? null;
   const libStart = mark("snyvi:mermaid-load");
@@ -427,6 +447,10 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   console.log("\nhow they look");
   failed ||= !toggled.ok;
   console.log(`  ${"theme toggle".padEnd(20)}${toggled.ok ? " ok  " : " FAIL"} ${toggled.why}`);
+  for (const c of chosen) {
+    failed ||= !c.ok;
+    console.log(`  ${`⌘K theme ${c.name}`.padEnd(20)}${c.ok ? " ok  " : " FAIL"} ${c.why}`);
+  }
   if (!legible.length) {
     failed = true;
     console.log(`  ${"legibility".padEnd(20)} FAIL no diagram family was read back at all`);
@@ -440,6 +464,20 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
         : ok ? `${f.checked} labels, worst ${ratio}:1`
           : `"${f.text}" is ${ratio}:1 against what is behind it`;
     console.log(`  ${`${f.id} (${f.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);
+  }
+  /* Every text colour of every theme, one row per theme: the worst pair of
+   * token and surface decides the row. 4.5:1 is the bar because the smallest
+   * thing drawn in them is eleven-pixel bold, and Contrast holds 7:1.
+   * docs/THEMES.md has the table these replaced, and eight is the count. */
+  if (status.length < 8) {
+    failed = true;
+    console.log(`  ${"theme colours".padEnd(28)} FAIL ${status.length} of 8 themes were read back`);
+  }
+  for (const s of status) {
+    const w = s.worst, ok = !!w && w.ratio >= s.bar;
+    failed ||= !ok;
+    const why = !w ? "nothing was read" : `${s.rows.length} pairs at ${s.bar}:1, worst ${w.token} on ${w.surface} at ${w.ratio.toFixed(2)}:1`;
+    console.log(`  ${`colours (${s.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);
   }
 
   /* Phase 3: a diagram of a few hundred nodes is only worth drawing if it can

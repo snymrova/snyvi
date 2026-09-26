@@ -1,0 +1,248 @@
+/* snyvi's other themes: every one but Paper and Ink.
+
+   First paint carries only those two, because the window has to open as
+   fast as it can and eight themes do not fit in its budget. This sheet is
+   fetched once the page is idle (app.js, `loadThemes`) -- long before
+   anyone reaches the theme button or ⌘K theme, and both wait for it if not.
+   A reader whose theme lives here does not see Paper first: the app keeps a
+   copy of the blocks for its light and dark slots, and boot.js paints the
+   first frame from that copy (docs/THEMES.md).
+
+   Each block is the same token contract as Paper's on :root in app.css,
+   matched by `[data-theme]` alone so a ⌘K row can wear one as its swatch.
+   Every text colour in every one is read back on four surfaces by
+   bench/page.mjs, with all eight accents: 4.5:1, and 7:1 for Contrast.
+   `--deepen` and `--lift` are how far a theme pulls every accent towards
+   black or white to hold that bar on its own ground. */
+
+/* Parchment: a sepia page for long reads and a bright room in the evening.
+   The ink is brown rather than black, every colour is pulled toward the
+   page's warmth, and the default red is a warmer one. */
+[data-theme="parchment"] {
+  color-scheme: light;
+  --bg: #f3e9d2;
+  --bg-side: #ebdfc2;
+  --bg-raise: #faf3e2;
+  --fg: #3b2f1e;
+  --fg-2: #5a4a36;
+  --fg-3: #6f5f4b;
+  --rule: #dccfb3;
+  --rule-2: #cbbc9c;
+  --accent-l: #93301a;
+  --deepen: 8%;
+  --code-bg: #ece1c8;
+  --mark: #f2d27f;
+  --add: #dcebc8; --add-fg: #2f5e1a;
+  --del: #f2d0c2; --del-fg: #8b2a1f;
+  --shadow: 0 10px 40px rgba(60, 40, 10, .18), 0 1px 2px rgba(60, 40, 10, .10);
+  --scrim: rgba(50, 34, 12, .3);
+  --ok: #2f6b1f;
+  --warn: #8a4a06;
+  --danger: #a3281c;
+  --info: #1f56a8;
+  --important: #6b3fb0;
+  --s-comment: #6f5f47;
+  --s-string: #3f6a12;
+  --s-number: #135f85;
+  --s-function: #63409c;
+  --s-type: #146a72;
+  --s-variable: #3b2f1e;
+  --s-punct: #6b5c48;
+  --s-attr: #63409c;
+  --t0: #3b2f1e; --t1: #a3281c; --t2: #3f6a12; --t3: #7a4e04; --t4: #1f56a8; --t5: #6b3fb0; --t6: #146a72; --t7: #6f604b;
+  --t8: #5c4f3c; --t9: #b52a1c; --t10: #436b0f; --t11: #7a4e04; --t12: #2359ad; --t13: #6f45b5; --t14: #126a78; --t15: #cbbc9c;
+}
+
+/* Contrast: white on black at 7:1 everywhere, rules at full weight, no
+   faint washes. The one wash it keeps -- the on-state of a tab, a pane, a
+   desk row -- is the accent mixed strongly enough to read as a block; its
+   ink is the accent, and an accent that clears 7:1 on black cannot also
+   clear it on a wash of itself, so that one pair holds 4.5:1. The default
+   red is lifted for the same bar; the seven chosen accents already clear it.
+   Depth is a ring, since a shadow on black is no depth at all. The dark
+   slot's default under `prefers-contrast: more` (boot.js). */
+[data-theme="contrast"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-side: #070707;
+  --bg-raise: #0f0f0f;
+  --fg: #ffffff;
+  --fg-2: #d4d4d4;
+  --fg-3: #b0b0b0;
+  --rule: #4a4a4a;
+  --rule-2: #6e6e6e;
+  --accent-d: #f97e92;
+  --lift: 4%;
+  --wash: 22%;
+  --wash-on: transparent;
+  --kw: 100%;
+  --mascot-peek: .16;
+  --code-bg: #0c0c0c;
+  --mark: rgba(255, 224, 138, .45);
+  --add: rgba(95, 224, 143, .2); --add-fg: #b8f0a8;
+  --del: rgba(255, 138, 138, .2); --del-fg: #ffa3a3;
+  --shadow: 0 0 0 1px #6e6e6e;
+  --scrim: rgba(0, 0, 0, .7);
+  --ok: #5fe08f;
+  --warn: #ffb454;
+  --danger: #ff8a8a;
+  --info: #8ec5ff;
+  --important: #d3a8ff;
+  --s-comment: #a8a8a8;
+  --s-string: #b8e986;
+  --s-number: #8fd3ff;
+  --s-function: #d9b8ff;
+  --s-type: #7ee8f0;
+  --s-variable: #ffffff;
+  --s-punct: #c8c8c8;
+  --s-attr: #d9b8ff;
+  --t0: #1a1a1a; --t1: #ff8a8a; --t2: #8ee07a; --t3: #ffc857; --t4: #8ec5ff; --t5: #d9a8ff; --t6: #7ee8f0; --t7: #e6e6e6;
+  --t8: #a8a8a8; --t9: #ffa3a3; --t10: #b8f0a8; --t11: #ffe08a; --t12: #a8d4ff; --t13: #eabfff; --t14: #a8f0f4; --t15: #ffffff;
+}
+
+/* Snow: a cool near-white, for a bright screen that should not look warm.
+   The inks lean blue-grey the way Paper's lean brown. */
+[data-theme="snow"] {
+  color-scheme: light;
+  --bg: #f8f9fb;
+  --bg-side: #f1f3f6;
+  --bg-raise: #ffffff;
+  --fg: #181b21;
+  --fg-2: #4a515e;
+  --fg-3: #666e7c;
+  --rule: #e1e4ea;
+  --rule-2: #cfd4dc;
+  --code-bg: #f1f3f6;
+  --mark: #fde68a;
+  --add: #dcfce7; --add-fg: #166534;
+  --del: #fee2e2; --del-fg: #991b1b;
+  --shadow: 0 10px 40px rgba(15, 20, 35, .14), 0 1px 2px rgba(15, 20, 35, .08);
+  --scrim: rgba(12, 16, 28, .28);
+  --ok: #15753a;
+  --warn: #94430a;
+  --danger: #b0261f;
+  --info: #1d5bc8;
+  --important: #7033d6;
+  --s-comment: #626a77;
+  --s-string: #386a12;
+  --s-number: #0a6893;
+  --s-function: #6537b0;
+  --s-type: #0d6d88;
+  --s-variable: #181b21;
+  --s-punct: #5f6674;
+  --s-attr: #6537b0;
+  --t0: #181b21; --t1: #b0261f; --t2: #386a12; --t3: #855605; --t4: #1d4ed8; --t5: #7a22c4; --t6: #0d6d88; --t7: #626a77;
+  --t8: #4a515e; --t9: #c01d1d; --t10: #3b6a0a; --t11: #855605; --t12: #235bd8; --t13: #8a2fd9; --t14: #0a6886; --t15: #cfd4dc;
+}
+
+/* Sage: a soft green-grey, a page that is easy on the eyes for a long day.
+   Its surfaces are kept pale enough that every accent, green included,
+   still reads on the sidebar. */
+[data-theme="sage"] {
+  color-scheme: light;
+  --bg: #f2f5ef;
+  --bg-side: #ebf0e7;
+  --bg-raise: #fafcf8;
+  --fg: #1c211b;
+  --fg-2: #475045;
+  --fg-3: #5f685c;
+  --rule: #dce2d6;
+  --rule-2: #c7cfbf;
+  --code-bg: #ebf0e7;
+  --mark: #f3e08a;
+  --add: #d8efd2; --add-fg: #1f5c1a;
+  --del: #f6dcd6; --del-fg: #8e2219;
+  --shadow: 0 10px 40px rgba(20, 30, 15, .14), 0 1px 2px rgba(20, 30, 15, .08);
+  --scrim: rgba(16, 22, 12, .28);
+  --ok: #14652f;
+  --warn: #843c06;
+  --danger: #9f221b;
+  --info: #1a51b0;
+  --important: #652fc0;
+  --s-comment: #586155;
+  --s-string: #335e0f;
+  --s-number: #085c82;
+  --s-function: #5b319e;
+  --s-type: #0b5f77;
+  --s-variable: #1c211b;
+  --s-punct: #565f53;
+  --s-attr: #5b319e;
+  --t0: #1c211b; --t1: #9f221b; --t2: #335e0f; --t3: #744b04; --t4: #1b47c4; --t5: #6c1fae; --t6: #0b5f77; --t7: #586155;
+  --t8: #475045; --t9: #ab1b1b; --t10: #355e09; --t11: #744b04; --t12: #1f50c0; --t13: #7a29c2; --t14: #085c77; --t15: #c7cfbf;
+}
+
+/* Midnight: deep navy, a dark theme with a colour to it. */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --bg: #0e1424;
+  --bg-side: #0a0f1c;
+  --bg-raise: #151d31;
+  --fg: #e3e8f4;
+  --fg-2: #a3adc2;
+  --fg-3: #7f8aa2;
+  --rule: #222c42;
+  --rule-2: #2f3a54;
+  --wash: 16%;
+  --wash-on: transparent;
+  --kw: 100%;
+  --mascot-peek: .16;
+  --code-bg: #131a2c;
+  --mark: rgba(253, 230, 138, .32);
+  --add: rgba(74, 222, 128, .14); --add-fg: #86efac;
+  --del: rgba(248, 113, 113, .14); --del-fg: #fca5a5;
+  --shadow: 0 10px 40px rgba(0, 4, 16, .55), 0 1px 2px rgba(0, 4, 16, .4);
+  --scrim: rgba(2, 6, 18, .55);
+  --ok: #5bd984;
+  --warn: #eaa546;
+  --danger: #f87c7c;
+  --info: #82aaff;
+  --important: #c792ea;
+  --s-comment: #8993a8;
+  --s-string: #a8dc7e;
+  --s-number: #7fd4fb;
+  --s-function: #c6b8fd;
+  --s-type: #6fe3f5;
+  --s-variable: #e3e8f4;
+  --s-punct: #a3adc2;
+  --s-attr: #c6b8fd;
+  --t0: #232c42; --t1: #f87c7c; --t2: #8fcd72; --t3: #e8b85a; --t4: #82aaff; --t5: #c792ea; --t6: #63d0e6; --t7: #c8cedb;
+  --t8: #8993a8; --t9: #ff9090; --t10: #a8e3a2; --t11: #f7dfa6; --t12: #93bafc; --t13: #f2c3e6; --t14: #98e1d6; --t15: #ffffff;
+}
+
+/* Espresso: warm brown-black, the dark side of Parchment. */
+[data-theme="espresso"] {
+  color-scheme: dark;
+  --bg: #1b1512;
+  --bg-side: #16110e;
+  --bg-raise: #241d19;
+  --fg: #efe6dc;
+  --fg-2: #b8a898;
+  --fg-3: #948472;
+  --rule: #302722;
+  --rule-2: #40352e;
+  --wash: 16%;
+  --wash-on: transparent;
+  --kw: 100%;
+  --mascot-peek: .16;
+  --code-bg: #211a16;
+  --mark: rgba(242, 200, 110, .32);
+  --add: rgba(127, 207, 111, .14); --add-fg: #a9e29a;
+  --del: rgba(245, 131, 111, .14); --del-fg: #f8ad9e;
+  --shadow: 0 10px 40px rgba(8, 4, 0, .55), 0 1px 2px rgba(8, 4, 0, .4);
+  --scrim: rgba(10, 6, 2, .55);
+  --ok: #7fcf6f;
+  --warn: #eaaa55;
+  --danger: #f5836f;
+  --info: #8fb0f0;
+  --important: #d49ae6;
+  --s-comment: #9a8b7a;
+  --s-string: #b9d67f;
+  --s-number: #86c9e8;
+  --s-function: #d3b0f0;
+  --s-type: #7dd6cc;
+  --s-variable: #efe6dc;
+  --s-punct: #b8a898;
+  --s-attr: #d3b0f0;
+  --t0: #302722; --t1: #f5836f; --t2: #9fc873; --t3: #e8b760; --t4: #8fb0f0; --t5: #d49ae6; --t6: #72cfc4; --t7: #d9cdbf;
+  --t8: #9a8b7a; --t9: #ff9a86; --t10: #b8dc92; --t11: #f5d89a; --t12: #a8c2f5; --t13: #e8b8ee; --t14: #98ddd3; --t15: #ffffff;
+}

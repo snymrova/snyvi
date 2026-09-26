@@ -1275,12 +1275,6 @@
     refreshAgents();
   }
   renderLive();
-  docEl.addEventListener("click", e => {
-    const b = e.target.closest(".connect pre.cmd .copy");
-    if (!b) return;
-    navigator.clipboard?.writeText(b.parentElement.querySelector("code").textContent);
-    b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200);
-  });
 
   async function showCompare(aId, bId) {
     const cur = state.doc;
@@ -2515,7 +2509,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -2882,9 +2876,16 @@
     if (side === "right") s.left = Math.round(r.right + gap) + "px";
     else if (side === "left") s.right = Math.round(innerWidth - r.left + gap) + "px";
     else s.left = Math.round(Math.max(12, Math.min(r.left, innerWidth - box - 12))) + "px";
-    // Level with the thing it answers, or under it; never off the window.
-    const want = side === "below" ? r.bottom + gap : r.top + r.height / 2 - 21;
-    s.top = Math.round(Math.max(12, Math.min(want, innerHeight - 96))) + "px";
+    // Centred on the thing it answers, or under it, by its own measured
+    // height; moved only as far as it takes to stay on the window. This held
+    // its top 96px off the bottom, a guess at the height, and every button
+    // low in the rail -- theme, accent, Aa -- was answered a button too high.
+    // The tail follows the button, so a nudged box still points at it.
+    const h = toastsEl.offsetHeight || 42, cy = r.top + r.height / 2;
+    const want = side === "below" ? r.bottom + gap : cy - h / 2;
+    const top = Math.round(Math.max(4, Math.min(want, innerHeight - h - 4)));
+    s.top = top + "px";
+    s.setProperty("--tail", Math.round(Math.max(8, Math.min(cy - top - 4, h - 16))) + "px");
     toastsEl.dataset.side = side;
   }
   /* A button in the rail names itself on hover, in the very spot its answer
@@ -2925,9 +2926,6 @@
   function toast(title, sub, onClick, action, opts = {}) {
     const at = "at" in opts ? opts.at : liveAct();
     hush();
-    placeToasts(at);
-    const anchor = toastAt;
-    saidBy(anchor);
     const el = document.createElement("div");
     el.className = "toast";
     el.dataset.feel = opts.face || feelFor(title);
@@ -2942,6 +2940,10 @@
       el.addEventListener("click", () => { hush(); onClick && onClick(); });
     }
     toastsEl.appendChild(el);
+    // Placed once it is in, so it is placed by the height it really has.
+    placeToasts(at);
+    const anchor = toastAt;
+    saidBy(anchor);
     const life = action ? UNDO_MS : onClick ? 8000 : 3500;
     // It fades where it stands, and only if it is still the one being said.
     const mine = { el, anchor, timer: 0 };
@@ -2954,112 +2956,174 @@
   }
 
   // ---------- palette ----------
-  const pal = $("#palette"), palIn = $("#palette-input"), palList = $("#palette-list");
-  let palSel = 0, palItems = [], palTimer = null;
-  function openPalette() {
-    palIn.value = "";
-    palIn.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
-      : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff)";
-    openDialog(pal, palIn); palSearch("");
+  /* ⌘K is ui/palette.js, fetched the first time it is asked for: the one box
+   * a reader summons rather than meets, so first paint does not carry it.
+   * The page keeps `#palette` and these two names, so Esc and ⌘K mean the
+   * same thing before it is fetched -- a palette never opened has nothing to
+   * close. */
+  const pal = $("#palette");
+  let palMod = null, palLoading = null;
+  async function openPalette() {
+    // The box goes up now and the chunk fills it when it lands, searching
+    // whatever was typed in between -- a ⌘K followed at once by a word
+    // would otherwise lose the word to a box that was not there yet.
+    const input = $("#palette-input");
+    if (pal.hidden) { input.value = ""; openDialog(pal, input); }
+    try { palMod = await (palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
+    palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc });
   }
+  const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
-  function closePalette() { closeDialog(pal); }
-  /** A desk to open, and -- where the reader is in a folder -- a new one
-   *  there: the palette is the keyboard's way to what the folder menu does. */
-  function deskItems(q) {
-    if (!capability || !state.desks) return [];
-    const l = q.trim().toLowerCase(), out = [];
-    if (browsing() && "new desk here".startsWith(l || "n")) {
-      const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
-      out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
-    } else if (l && "new desk".startsWith(l)) out.push({ newdesk: "home", t: "New desk", s: state.desks.home || "~" });
-    for (const d of state.desks.desks) if (!l || d.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: d.id, t: `Desk · ${d.name}`, s: d.root });
-    return out;
-  }
-  /** The keyboard's way to the `+` beside Folders. */
-  function folderItems(q) {
-    const l = q.trim().toLowerCase();
-    if (!capability || !l || !("open folder".startsWith(l) || "folder".startsWith(l) || "browse".startsWith(l))) return [];
-    return [{ pick: true, t: "Open folder…", s: "The desktop's folder dialog" }];
-  }
-  const palRow = (it, i) => `<li class="${i === 0 ? "sel" : ""}" data-i="${i}">` + (
-    it.t ? `<span class="t">${esc(it.t)}</span><span class="s">${esc(it.s)}</span>`
-      : it.file ? `<span class="t">${esc(it.file.split("/").pop())}</span><span class="s">${esc(it.file)}</span>`
-        : `<span class="t">${esc(it.title)}</span><span class="s">${esc(it.project)} · ${esc(it.workflow_title)} · ${rel(it.received_at)}</span>${it.snippet ? `<span class="snip">${it.snippet}</span>` : ""}`) + `</li>`;
-  async function palSearch(q) {
-    // A line number is not a search term. `:120` and `L120` jump instead.
-    const g = /^\s*[:lL]\s*(\d+)\s*$/.exec(q);
-    if (g && codePre()) {
-      palItems = [{ line: +g[1] }]; palSel = 0;
-      palList.innerHTML = `<li class="sel" data-i="0"><span class="t">Go to line ${+g[1]}</span><span class="s">${esc(document.title)}</span></li>`;
-      return;
-    }
-    let items = [];
-    if (browsing()) {
-      try { items = (await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json()).map(p => ({ file: p })); } catch {}
-    } else if (!q.trim()) items = (await (await fetch("/api/inbox?limit=12")).json()).map(d => ({ ...d, snippet: "" }));
-    else items = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
-    palItems = deskItems(q).concat(folderItems(q), items); palSel = 0;
-    palList.innerHTML = palItems.length ? palItems.map(palRow).join("") : palNone(q);
-  }
-  /** Nothing matched: said, so an empty list is not a search still running.
-   *  Not a row -- there is nothing to pick -- so the arrows and Enter pass
-   *  it by. The face is sorry and still: it is redrawn on every keystroke
-   *  that finds nothing, and a head that shook on each would be nagging. */
-  const palNone = q => `<div class="pal-none">${mascotHead("oops")}<span>${q.trim() ? `Nothing for <b>${esc(q.trim())}</b>` : "Nothing here yet"}</span></div>`;
-  palIn.addEventListener("input", () => { clearTimeout(palTimer); palTimer = setTimeout(() => palSearch(palIn.value), 60); });
-  palIn.addEventListener("keydown", e => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      palSel = (palSel + (e.key === "ArrowDown" ? 1 : -1) + palItems.length) % Math.max(1, palItems.length);
-      palList.querySelectorAll("li").forEach((li, i) => li.classList.toggle("sel", i === palSel));
-      palList.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
-    } else if (e.key === "Enter" && palItems[palSel]) { closePalette(); openPalItem(palItems[palSel]); }
-  });
-  const openPalItem = it => it.pick ? act("pick") : it.line ? gotoLine(it.line) : it.newdesk ? act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? showDesk(it.desk, true)
-    : it.file ? showBrowse(state.browseRoot.id, it.file, true) : showDoc(it.id, true);
-  palList.addEventListener("click", e => { const li = e.target.closest("li"); if (li) { closePalette(); openPalItem(palItems[+li.dataset.i]); } });
-  pal.addEventListener("click", e => { if (e.target === pal) closePalette(); });
   $("#btn-search").addEventListener("click", openPalette);
 
   // ---------- theme / font / panes ----------
-  /* One click always changes what you see: it flips light and dark. Landing
-   * on what the system already shows drops the choice, so the page follows the
-   * system again from there. It was a three-step cycle through "system", and
-   * one of the three clicks drew the same page -- read as a click that missed. */
-  const sysDark = matchMedia("(prefers-color-scheme: dark)");
-  const isDark = () => root.dataset.theme === "dark" || (!root.dataset.theme && sysDark.matches);
+  /* One click always changes what you see: the button steps to the next of
+   * the eight, as the swatch steps to the next accent. The one it lands on is
+   * kept exactly as a palette pick is -- in the slot of its side, and
+   * dropped to "the system" when that side is what the system shows, so the
+   * OS switching light and dark still moves between your two.
+   *
+   * Which theme is in each slot, and whether the system or the button picks
+   * the slot, are the three `snyvi.theme.*` keys; boot.js owns resolving them
+   * into `data-theme` and "is it dark?". */
+  const { system: sysDark } = snyviTheme;
+  /* The eight, each with the side it is: which slot it lives in, and which
+   * side the button lands on when it is kept. Four light and four dark, one
+   * of each for every pair of accents. */
+  const THEMES = { paper: ["Paper", "light"], snow: ["Snow", "light"], sage: ["Sage", "light"], parchment: ["Parchment", "light"],
+    ink: ["Ink", "dark"], midnight: ["Midnight", "dark"], espresso: ["Espresso", "dark"], contrast: ["Contrast", "dark"] };
+  const sysSide = () => (sysDark.matches ? "dark" : "light");
+  const slot = k => store.get(k === "light" ? "snyvi.theme.light" : "snyvi.theme.dark") || (k === "light" ? "paper" : (matchMedia("(prefers-contrast: more)").matches ? "contrast" : "ink"));
+  // The button steps through the eight like the swatch steps through the
+  // accents: one click, the next one, the whole window in it.
+  const ORDER = Object.keys(THEMES);
+  const nextTheme = () => ORDER[(ORDER.indexOf(root.dataset.theme) + 1) % ORDER.length];
   const SUN = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10" cy="10" r="3.5"/><path d="M10 2.5v1.5M10 16v1.5M2.5 10H4M16 10h1.5M4.7 4.7l1.06 1.06M14.24 14.24l1.06 1.06M4.7 15.3l1.06-1.06M14.24 5.76l1.06-1.06"/></svg>';
   const MOON = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M16.5 12.2A6.8 6.8 0 0 1 7.8 3.5a6.8 6.8 0 1 0 8.7 8.7z"/></svg>';
   function paintThemeBtn() {
-    const b = $("#btn-theme"), dark = isDark();
-    // The icon is what a click will switch to.
-    b.innerHTML = dark ? SUN : MOON;
-    b.dataset.label = `${dark ? "Dark" : "Light"}${root.dataset.theme ? "" : " (system)"} · click for ${dark ? "light" : "dark"}`;
+    const b = $("#btn-theme"), n = nextTheme();
+    // The icon is the side a click will land on.
+    b.innerHTML = THEMES[n][1] === "dark" ? MOON : SUN;
+    b.dataset.label = `Theme: ${(THEMES[root.dataset.theme] || [root.dataset.theme])[0]} · click for ${THEMES[n][0]}`;
   }
-  $("#btn-theme").addEventListener("click", () => {
-    const want = isDark() ? "light" : "dark";
-    const next = want === (sysDark.matches ? "dark" : "light") ? "" : want;
-    next ? (root.dataset.theme = next) : delete root.dataset.theme;
-    store.set("snyvi.theme", next);
-    toast("Theme", next ? want : `${want}, as the system`, null, null, { face: "wink", at: $("#btn-theme") });
-    paintThemeBtn();
-    if (mmd) mmd.retheme();
-  });
+  $("#btn-theme").addEventListener("click", async () => { await loadThemes(); setTheme(nextTheme()); });
   paintThemeBtn();
-  // The same fault by a different route: with no explicit choice stored the page
-  // follows the system, and the diagrams on it were drawn before it moved.
-  sysDark.addEventListener("change", () => {
-    paintThemeBtn();
-    if (mmd && !root.dataset.theme) mmd.retheme();
+  /* Every theme but Paper and Ink, fetched once the page is idle rather than
+   * carried by first paint. The button and ⌘K theme wait on the same promise,
+   * so a click that beats it -- a few milliseconds from the local daemon --
+   * lands anyway. When it is in, the theme boot.js stood in for is drawn,
+   * and the copies it will stand in with next time are brought up to date. */
+  let themesP = null;
+  const loadThemes = () => themesP ||= new Promise(done => {
+    const l = document.createElement("link");
+    l.rel = "stylesheet"; l.href = `/assets/themes.css${boot.v ? `?v=${boot.v}` : ""}`;
+    l.onload = () => {
+      const was = root.dataset.theme;
+      snyviTheme.ready();
+      keepCopies();
+      paintThemeBtn();
+      if (mmd && root.dataset.theme !== was) mmd.retheme();
+      done(true);
+    };
+    l.onerror = () => { l.remove(); themesP = null; done(false); };
+    document.head.append(l);
   });
+  (window.requestIdleCallback || setTimeout)(() => loadThemes(), { timeout: 1500 });
+  /** The copies boot.js paints the first frame from: the block of the theme
+   *  in each slot, as the sheet has it now, so a copy lasts exactly as long
+   *  as that theme's colours do. Paper and Ink are in first paint and need
+   *  none; a slot naming a theme that no longer exists goes back to its
+   *  default. */
+  function keepCopies() {
+    const sheet = [...document.styleSheets].find(x => /\/assets\/themes\.css/.test(x.href || ""));
+    if (!sheet) return;
+    for (const side of ["light", "dark"]) {
+      const t = slot(side), key = `snyvi.theme.css.${side}`;
+      if (t === "paper" || t === "ink") { store.del(key); continue; }
+      const rule = [...sheet.cssRules].find(r => r.selectorText === `[data-theme="${t}"]`);
+      if (rule) store.set(key, ":root" + rule.cssText);
+      else { store.del(key); store.del(`snyvi.theme.${side}`); }
+    }
+  }
+  /** Keep a theme picked in the palette: it goes in the slot of its side, and
+   *  the button lands on that side -- dropped to "the system" when that is
+   *  what the system shows, the same rule as a click on the button. */
+  function setTheme(name) {
+    const [label, side] = THEMES[name] || [];
+    if (!side) return;
+    store.set(side === "light" ? "snyvi.theme.light" : "snyvi.theme.dark", name);
+    store.set("snyvi.theme.follow", side === sysSide() ? "" : side);
+    keepCopies();
+    previewTheme(null);
+    paintThemeBtn();
+    toast("Theme", label, null, null, { face: "glad", at: $("#btn-theme") });
+  }
+  /** Draw a theme without keeping it, or, with no name, the one that is
+   *  kept. Diagrams already drawn in it come back from their cache. */
+  function previewTheme(name) {
+    const was = root.dataset.theme;
+    name ? (root.dataset.theme = name) : snyviTheme.apply();
+    if (mmd && root.dataset.theme !== was) mmd.retheme();
+  }
+  // The same fault by a different route: following the system, the page
+  // moves when the system does, and the diagrams on it were drawn before it
+  // moved. boot.js has already re-resolved `data-theme` by the time this runs;
+  // applying again is free and keeps this from depending on that order.
+  sysDark.addEventListener("change", () => {
+    const was = root.dataset.theme;
+    snyviTheme.apply();
+    paintThemeBtn();
+    if (mmd && root.dataset.theme !== was) mmd.retheme();
+  });
+  /* Which controls mean something where the reader is, in one place: the
+   * column paints from it and `w` and `z` ask it, so the two cannot
+   * disagree. A control that does nothing here is dimmed, not hidden -- it
+   * stays focusable, and its tooltip, a click and its key all say why,
+   * instead of the silence it used to answer with. "" is "it works". */
+  const onDesk = () => root.dataset.view === "desk" && !!desk && !!docEl.querySelector(".pn");
+  function where() {
+    if (onDesk()) return "desk";
+    const a = docEl.querySelector("article.prose, article.preview");
+    return !a ? "list" : a.matches(".kind-markdown") ? "prose" : "code";
+  }
+  const NAMES = { wide: "Width", wrap: "Wrap", font: "Font" };
+  function why(c) {
+    const w = where();
+    if (c === "wide") return w === "code" ? "already full width" : w === "desk" && desk.panels() < 2 ? "one panel already fills the desk" : "";
+    if (c === "wrap") return w === "desk" ? "not for desks, terminals always wrap" : docEl.querySelector("pre.code") ? "" : "no code on this page";
+    return w === "code" ? "code is always monospace" : w === "list" ? "for documents" : "";
+  }
+  const btnOf = c => $(c === "font" ? "#btn-font" : c === "wide" ? "#btn-wide" : "#btn-wrap");
+  function paintControls() {
+    for (const c of Object.keys(NAMES)) {
+      const b = btnOf(c), no = why(c);
+      b.classList.toggle("dim", !!no);
+      no ? b.setAttribute("aria-disabled", "true") : b.removeAttribute("aria-disabled");
+      if (no) b.dataset.label = `${NAMES[c]} · ${no}`;
+    }
+    if (!why("wide")) $("#btn-wide").dataset.label = onDesk() ? "Focused panel full-size · w" : "Maximise width · w";
+    if (!why("wrap")) $("#btn-wrap").dataset.label = "Wrap long lines · z";
+    if (!why("font")) paintFontBtn();
+  }
+  /** Run a control, or say why it does nothing here, beside its button. */
+  const control = (c, run) => () => {
+    const no = why(c);
+    no ? toast(NAMES[c], no, null, null, { at: btnOf(c) }) : run();
+    paintControls();
+  };
+  // It is only seen while the column is open, so that is when it is painted.
+  $(".foot-set").addEventListener("pointerenter", paintControls);
+  $(".foot-set").addEventListener("focusin", paintControls);
   function toggleWide() {
+    if (onDesk()) { const z = desk.zoomOn(); toast("Width", z ? "the focused panel, full-size" : "all panels", null, null, { at: $("#btn-wide") }); return; }
     const on = root.dataset.wide !== "1";
     on ? (root.dataset.wide = "1") : delete root.dataset.wide;
     store.set("snyvi.wide", on ? "1" : "0");
     $("#btn-wide").classList.toggle("on", on);
   }
-  $("#btn-wide").addEventListener("click", toggleWide);
+  $("#btn-wide").addEventListener("click", control("wide", toggleWide));
   $("#btn-wide").classList.toggle("on", root.dataset.wide === "1");
 
   function toggleWrap() {
@@ -3067,28 +3131,30 @@
     on ? (root.dataset.wrap = "1") : delete root.dataset.wrap;
     store.set("snyvi.wrap", on ? "1" : "0");
     $("#btn-wrap").classList.toggle("on", on);
-    // On prose there is nothing to wrap, so say what the setting did instead.
-    if (!docEl.querySelector("pre.code")) toast("Line wrap", on ? "on, for code" : "off", null, null, { at: $("#btn-wrap") });
   }
-  $("#btn-wrap").addEventListener("click", toggleWrap);
+  $("#btn-wrap").addEventListener("click", control("wrap", toggleWrap));
   $("#btn-wrap").classList.toggle("on", root.dataset.wrap === "1");
 
   // The reading faces, in the order Aa steps through them. "" is Inter.
   const FONTS = [["", "Inter"], ["serif", "Source Serif"], ["literata", "Literata"], ["atkinson", "Atkinson Hyperlegible"], ["mono", "JetBrains Mono"]];
   function paintFontBtn() {
     const f = FONTS.find(([k]) => k === (root.dataset.font || "")) || FONTS[0];
+    // On a desk, Aa is the terminal's text size; the face there is always mono.
+    if (onDesk()) { const t = desk.textSize(); $("#btn-font").dataset.label = `Text size: ${t.name} · click for ${t.next}`; return; }
     $("#btn-font").dataset.label = `Font: ${f[1]} · click for the next`;
   }
-  $("#btn-font").addEventListener("click", () => {
+  /** The terminal's text size, said beside Aa: after a click, or ⌃= ⌃- ⌃0 in
+   *  a panel. */
+  const sayTermSize = () => { paintControls(); toast("Text size", desk.textSize().name, null, null, { face: "glad", at: $("#btn-font") }); };
+  $("#btn-font").addEventListener("click", control("font", () => {
+    if (onDesk()) { const t = desk.textSize(); desk.textSize(t.at === t.of - 1 ? -(t.of - 1) : 1); sayTermSize(); return; }
     const i = FONTS.findIndex(([k]) => k === (root.dataset.font || ""));
     const [next, name] = FONTS[(i + 1) % FONTS.length];
     next ? (root.dataset.font = next) : delete root.dataset.font;
     store.set("snyvi.font", next);
     paintFontBtn();
-    // A code file, a diff or a desk has no prose to set; say where it shows.
-    const prose = root.dataset.view !== "desk" && docEl.querySelector(".prose:not(.kind-code):not(.kind-text):not(.kind-diff)");
-    toast("Font", prose ? name : `${name}, for documents`, null, null, { face: "glad", at: $("#btn-font") });
-  });
+    toast("Font", name, null, null, { face: "glad", at: $("#btn-font") });
+  }));
   paintFontBtn();
   /* The accent colours, in the order a click steps through them. "" is
    * passion, the default: the red the mark itself wears. They were a popover of eight swatches, which is a
@@ -3106,15 +3172,10 @@
     accBtn.dataset.label = `Accent: ${accName(ACCENTS[i][0])} · click for ${accName(ACCENTS[(i + 1) % ACCENTS.length][0])}`;
   }
   /* The tab's icon wears the accent too: snyvi's face drawn in the mascot
-   * colours the stylesheet resolved, each normalised through a canvas so a
-   * color-mix() comes out as a plain hex the SVG can hold. */
+   * colours the stylesheet resolved, each a plain hex the SVG can hold,
+   * which is how boot.js hands a token back. */
   function paintFavicon() {
-    const probe = document.createElement("i"), cs = getComputedStyle(probe);
-    probe.style.cssText = "position:absolute;visibility:hidden";
-    document.body.append(probe);
-    const col = v => { probe.style.color = `var(${v})`; const c = cs.color; if (!fitCtx) return c; fitCtx.fillStyle = "#000"; fitCtx.fillStyle = c; return fitCtx.fillStyle; };
-    const [body, nub, ink] = ["--mascot", "--mascot-nub", "--mascot-ink"].map(col);
-    probe.remove();
+    const [body, nub, ink] = ["--mascot", "--mascot-nub", "--mascot-ink"].map(v => snyviTheme.colour(v));
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><rect x="14" y="0.5" width="4" height="5" rx="2" fill="${nub}"/><rect x="1" y="4" width="30" height="27" rx="9" fill="${body}"/><ellipse cx="11" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><path d="M13.5 23Q16 25.2 18.5 23" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/></svg>`;
     const link = $("#favicon");
     if (link) link.href = "data:image/svg+xml," + encodeURIComponent(svg);
@@ -3174,9 +3235,10 @@
   }, true);
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
   $("#help-close").addEventListener("click", () => closeDialog(help));
-  $("#btn-help").addEventListener("click", () => openDialog(help, help.firstElementChild));
-  // The chip that says ⌘ says it on a Mac; everywhere else the key is ctrl.
-  if (!/Mac/.test(navigator.platform)) help.querySelectorAll("kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
+  /* The card opens at once with its title and foot; its rows of keys ride
+   * with the about chunk (ui/about.js) and are put in the first time. */
+  function openHelp() { openDialog(help, help.firstElementChild); if (!help.querySelector(".hk")) panel("help"); }
+  $("#btn-help").addEventListener("click", openHelp);
 
   // ---------- the rocket: a game, over the sidebar and nowhere else ----------
   /* A chunk on the desk view's terms: fetched on the first press and never on
@@ -3398,8 +3460,8 @@
       case "Delete": deleteCurrent(); break;
       case "n": openNext(); break;
       case "i": showInbox(true); break;
-      case "w": toggleWide(); break;
-      case "z": toggleWrap(); break;
+      case "w": control("wide", toggleWide)(); break;
+      case "z": control("wrap", toggleWrap)(); break;
       case "t":
         if (railNarrow.matches) { if (!rail.classList.contains("empty")) toggleSheet("rail"); }
         else fold("rail");
@@ -3416,7 +3478,7 @@
         if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
         else if (browsing() && state.browsePath) window.open(rawUrl(state.browseRoot.id, state.browsePath), "_blank");
         break;
-      case "?": help.hidden ? openDialog(help, help.firstElementChild) : closeDialog(help); break;
+      case "?": help.hidden ? openHelp() : closeDialog(help); break;
       default: return;
     }
     keyMode?.hit();

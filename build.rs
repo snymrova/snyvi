@@ -48,7 +48,9 @@ fn strip_ui() {
         ("find.js", strip::Lang::Js),
         ("keys.js", strip::Lang::Js),
         ("menu.js", strip::Lang::Js),
+        ("palette.js", strip::Lang::Js),
         ("app.css", strip::Lang::Css),
+        ("themes.css", strip::Lang::Css),
     ] {
         let from = dir.join(name);
         println!("cargo:rerun-if-changed={}", from.display());

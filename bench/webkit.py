@@ -21,6 +21,14 @@ these rows are what says it still does.
 
     xvfb-run -a python3 bench/webkit.py            report
     xvfb-run -a python3 bench/webkit.py --check    and exit non-zero on a fault
+    xvfb-run -a python3 bench/webkit.py --desk     only what a working desk costs
+
+The last row is a measurement rather than a check: four panels on a desk,
+each drawing bench/tui-load.mjs, and what the web process spends painting
+them (docs/DESK-PAINT.md). Xvfb draws with llvmpipe, so the number is not the
+window's; the same row before and after a change is what it is for. `--ui
+<dir>` serves the page from disk rather than the binary, so a change to ui/
+is measured without a build, and `--seconds <n>` samples for longer than 10.
 
 Needs the distribution's Python with its GObject bindings, the WebKitGTK
 introspection data, xdotool for the one gesture the page cannot fake -- the
@@ -34,12 +42,14 @@ at ./target/release/snyvi, or --bin.
 """
 
 import json
+import math
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 
 import gi
 
@@ -54,6 +64,10 @@ args = sys.argv[1:]
 CHECK = "--check" in args
 BIN = os.path.abspath(args[args.index("--bin") + 1] if "--bin" in args else "./target/release/snyvi")
 PORT = "7798"  # 7796 and 7797 are the Chromium benches
+DESK_ONLY = "--desk" in args
+UI = os.path.abspath(args[args.index("--ui") + 1]) if "--ui" in args else None
+SECONDS = int(args[args.index("--seconds") + 1]) if "--seconds" in args else 10
+LOAD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tui-load.mjs")
 
 
 def flowchart(n):
@@ -154,9 +168,9 @@ GO = """(() => { window.__go = null; (async () => {
 
 
 class View:
-    def __init__(self, url):
+    def __init__(self, url, size=(1280, 900)):
         self.win = Gtk.Window()
-        self.win.set_default_size(1280, 900)
+        self.win.set_default_size(*size)
         self.view = WebKit2.WebView.new_with_context(WebKit2.WebContext.new_ephemeral())
         self.view.get_settings().set_enable_fullscreen(True)
         self.win.add(self.view)
@@ -220,6 +234,139 @@ def ink(surface, box):
     return sum(1 for py in range(y0, y1) for px in range(x0, x1) if abs(lum(px, py) - base) > 60)
 
 
+# ---------- what a working desk costs ----------
+
+
+def post(base, path, body, headers):
+    req = urllib.request.Request(base + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"content-type": "application/json", **headers})
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def web_processes():
+    """This process's WebKit web processes, by pid. Each view's context starts
+    its own, as a child of the harness."""
+    me, found = os.getpid(), set()
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                st = f.read()
+        except OSError:
+            continue
+        comm, rest = st[st.index("(") + 1:st.rindex(")")], st[st.rindex(")") + 2:].split()
+        if comm == "WebKitWebProces" and int(rest[1]) == me:
+            found.add(int(pid))
+    return found
+
+
+def cpu_ticks(path):
+    """utime + stime, fields 14 and 15 of a /proc stat file."""
+    with open(path) as f:
+        st = f.read()
+    rest = st[st.rindex(")") + 2:].split()
+    return int(rest[11]) + int(rest[12])
+
+
+def threads(pid):
+    """Each thread's name and ticks. The main thread is where the page is laid
+    out and painted; the rest are mostly the compositor, which under Xvfb is
+    llvmpipe drawing in software, a cost the window's GPU does not have."""
+    out = {}
+    for tid in os.listdir(f"/proc/{pid}/task"):
+        try:
+            with open(f"/proc/{pid}/task/{tid}/comm") as f:
+                out[int(tid)] = (f.read().strip(), cpu_ticks(f"/proc/{pid}/task/{tid}/stat"))
+        except OSError:
+            pass
+    return out
+
+
+# What is on the screen while it is measured: the panes, how many live screens
+# are canvases, and how many frames reached the page -- so a number that falls
+# because frames stopped arriving says so. Frames are counted as the desk
+# parses them: a live screen on a canvas writes no rows into the page to count.
+DESK_WATCH = """(() => {
+  window.__frames = 0;
+  const parse = JSON.parse;
+  JSON.parse = function (t) { if (typeof t === 'string' && t.startsWith('{"t":"frame"')) window.__frames++; return parse.apply(this, arguments); };
+  return 1;
+})()"""
+DESK_SEEN = """JSON.stringify({ panes: document.querySelectorAll('.dk .pn').length,
+  working: [...document.querySelectorAll('.dk .pn-scr')].filter(s => /Painting/.test(s.textContent)).length,
+  drawn: document.querySelectorAll('.dk .pn-cv').length,
+  size: [...document.querySelectorAll('.dk .pn-body')].map(b => b.clientWidth + 'x' + b.clientHeight)[0] || '',
+  frames: window.__frames || 0 })"""
+
+
+def desk_row(env, base):
+    """Four panels at work on one desk, and the web process's CPU while it
+    draws them: the mean and the 95th percentile of one-second samples, as a
+    percentage of one core."""
+    token = open(f"{env['SNYVI_CONFIG_DIR']}/token").read().strip()
+    cap = post(base, "/api/capability", {}, {"authorization": f"Bearer {token}"})["capability"]
+    H = {"x-snyvi-capability": cap}
+    d = post(base, "/api/desks", {"name": "paint"}, H)
+    desk = (d.get("desk") or d)["id"]
+    node = shutil.which("node") or "node"
+    for _ in range(4):
+        pane = post(base, f"/api/desks/{desk}/panes", {}, H)["pane"]["id"]
+        post(base, f"/api/panes/{pane}/start", {"cmd": f"{node} {LOAD}"}, H)
+
+    before = web_processes()
+    # A window the size of a screen, as the desk is usually worked in.
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+    seen = {}
+    for _ in range(150):
+        seen = json.loads(v.js(DESK_SEEN))
+        if seen["working"] == 4:
+            break
+        v.wait(100)
+    if seen.get("working") != 4:
+        v.win.destroy()
+        return ("a desk of 4 at work", False, f"{seen.get('panes', 0)} panels open, {seen.get('working', 0)} drawing the load")
+    v.wait(3000)
+    procs = web_processes() - before
+    if len(procs) != 1:
+        v.win.destroy()
+        return ("a desk of 4 at work", False, f"found {len(procs)} new web processes, expected one")
+    pid = procs.pop()
+    hz = os.sysconf("SC_CLK_TCK")
+    v.js(DESK_WATCH)
+    # For a profile of what it measures: the web process's pid, written to
+    # this file once sampling begins, for a `perf record -p` to wait on.
+    if os.environ.get("SNYVI_DESK_PID"):
+        with open(os.environ["SNYVI_DESK_PID"], "w") as f:
+            f.write(str(pid))
+    stat = f"/proc/{pid}/stat"
+    first, t0 = threads(pid), time.monotonic()
+    samples, last, t = [], cpu_ticks(stat), t0
+    for _ in range(SECONDS):
+        v.wait(1000)
+        now, nt = cpu_ticks(stat), time.monotonic()
+        samples.append(100 * (now - last) / hz / (nt - t))
+        last, t = now, nt
+    end, span = threads(pid), time.monotonic() - t0
+    seen = json.loads(v.js(DESK_SEEN))
+    v.win.destroy()
+    pct = lambda ticks: 100 * ticks / hz / span  # noqa: E731
+    main = pct(end[pid][1] - first.get(pid, ("", 0))[1])
+    others = {}
+    for tid, (name, ticks) in end.items():
+        if tid != pid:
+            others[name] = others.get(name, 0) + ticks - first.get(tid, (name, 0))[1]
+    top = ", ".join(f"{n} {pct(k):.0f}%" for n, k in sorted(others.items(), key=lambda x: -x[1])[:3] if pct(k) >= 1)
+    mean = sum(samples) / len(samples)
+    p95 = sorted(samples)[max(0, math.ceil(0.95 * len(samples)) - 1)]
+    fps = seen["frames"] / span
+    # A saturated process draws fewer frames at the same CPU, so the cost of
+    # one frame on the main thread is the number that cannot hide.
+    return ("a desk of 4 at work", True,
+            f"main thread {main:.0f}% of a core, {10 * main / max(fps, 0.1):.2f} ms per frame "
+            f"({fps:.0f}/s); whole process {mean:.0f}%, p95 {p95:.0f}% ({top}); "
+            f"{seen['drawn']} live canvases, panes {seen['size']} px")
+
+
 # The two rows below need a real key press, which only xdotool can send. It
 # is a prerequisite rather than a dependency: without it those rows say so
 # and the rest of the file still runs, which is better than the whole check
@@ -227,13 +374,147 @@ def ink(surface, box):
 HAVE_XDO = shutil.which("xdotool") is not None
 
 
+# A panel that prints a known screen, then ticks one row: a red ground on
+# cells 0-6, a box corner at 8, 中 over 13-14 and an x at 15 on row 0; a line,
+# shades and a powerline separator on row 1; a counter on row 2.
+CANVAS_LOAD = (
+    "printf '\\033[2J\\033[H\\033[41m  RED  \\033[0m \u256d\u2500\u2500\u256e \u4e2dx \\033[1mbold\\033[0m \\033[4mund\\033[0m\\n'\n"
+    "printf '\u2502ab\u2502 \u2591\u2592\u2593 \\033[34m\ue0b0\\033[0m\\n'\n"
+    "i=0; while true; do i=$((i+1)); printf '\\033[3;1Htick %s' $i; sleep 0.1; done\n")
+CANVAS_GEOMETRY = """JSON.stringify((() => {
+  const cv = document.querySelector('.pn-cv'), b = document.querySelector('.pn-body'), scr = document.querySelector('.pn-scr');
+  const r = cv.getBoundingClientRect(), s = scr.getBoundingClientRect();
+  const probe = Object.assign(document.createElement('span'), { className: 'pn-probe', textContent: '0'.repeat(40) });
+  document.body.append(probe); const cw = probe.getBoundingClientRect().width / 40; probe.remove();
+  return { x: r.left, y: r.top, w: r.width, sx: s.left, sy: s.top, cw, dpr: devicePixelRatio, pw: cv.width,
+           lh: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--pn-line')),
+           red: snyviTheme.colour('--t1', b), blue: snyviTheme.colour('--t4', b), t0: scr.children[0].textContent };
+})())"""
+# The canvas as drawn, against the same canvas drawn whole in the same task: a
+# theme set to itself redraws every row, before any frame can land between.
+CANVAS_WHOLE = """(() => { const cv = document.querySelector('.pn-cv'), g = cv.getContext('2d');
+  const a = g.getImageData(0, 0, cv.width, cv.height).data;
+  document.documentElement.dataset.theme = document.documentElement.dataset.theme;
+  Promise.resolve().then(() => { const b = g.getImageData(0, 0, cv.width, cv.height).data; let n = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; window.__whole = n; }); return 1; })()"""
+
+
+def canvas_rows(env, base):
+    """The live screen drawn on a canvas (docs/DESK-PAINT.md, Phase 3): what
+    it draws, where, in which colours, and the text over it that selection
+    and copy read."""
+    token = open(f"{env['SNYVI_CONFIG_DIR']}/token").read().strip()
+    cap = post(base, "/api/capability", {}, {"authorization": f"Bearer {token}"})["capability"]
+    H = {"x-snyvi-capability": cap}
+    d = post(base, "/api/desks", {"name": "canvas"}, H)
+    desk = (d.get("desk") or d)["id"]
+    load = f"{env['HOME']}/canvas-load.sh"
+    with open(load, "w") as f:
+        f.write(CANVAS_LOAD)
+    pane = post(base, f"/api/desks/{desk}/panes", {}, H)["pane"]["id"]
+    post(base, f"/api/panes/{pane}/start", {"cmd": f"sh {load}"}, H)
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1280, 900))
+    rows = []
+    try:
+        for _ in range(200):
+            if v.js("(r => !!r && /RED/.test(r.textContent))(document.querySelector('.pn-scr > div'))") == "true":
+                break
+            v.wait(100)
+        v.wait(1500)
+        g = json.loads(v.js(CANVAS_GEOMETRY))
+        ok = abs(g["x"] - g["sx"]) < .5 and abs(g["y"] - g["sy"]) < .5 and g["pw"] == round(g["w"] * g["dpr"]) and g["w"] > 0 \
+            and g["t0"].startswith("  RED   \u256d\u2500\u2500\u256e \u4e2dx bold und")
+        rows.append(("the live screen: a canvas under its text", ok,
+                     f"{g['pw']} device px over {g['w']:.0f} px, on the text at ({g['sx']:.0f}, {g['sy']:.0f}); the text reads {g['t0'][:22]!r}"))
+
+        shot = v.snapshot()
+        data, stride = shot.get_data(), shot.get_stride()
+
+        def px(x, y):
+            o = int(y) * stride + int(x) * 4
+            return "#%02x%02x%02x" % (data[o + 2], data[o + 1], data[o])
+
+        def near(a, b, t=24):
+            return all(abs(int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) <= t for i in (1, 3, 5))
+        cx = lambda i: g["x"] + (i + .5) * g["cw"]  # noqa: E731
+        cy = lambda j: g["y"] + (j + .5) * g["lh"]  # noqa: E731
+        ground, red = px(cx(40), cy(0)), px(cx(3), g["y"] + 2)
+        corner = any(not near(px(cx(8) + dx, cy(0) + dy), ground, 40) for dx in (-1, 0, 1) for dy in (0, 3, 6))
+        top, bottom = px(cx(0), g["y"] + g["lh"] + 1), px(cx(0), g["y"] + 2 * g["lh"] - 1)
+        line = not near(top, ground, 40) and not near(bottom, ground, 40)
+        sep = px(cx(9) - g["cw"] * .3, cy(1))
+        ok = near(red, g["red"]) and corner and line and near(sep, g["blue"], 40)
+        rows.append(("drawn to the cell, in the theme's colours", ok,
+                     f"red ground {red} for {g['red']}; corner {'drawn' if corner else 'missing'}; "
+                     f"│ {'meets both rows' if line else 'falls short'}; powerline {sep} for {g['blue']}"))
+
+        at = json.loads(v.js("""JSON.stringify((() => {
+          const row = document.querySelector('.pn-scr').children[0], w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT); let n;
+          while ((n = w.nextNode())) { const i = n.data.indexOf('x bold'); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 1); return r.getBoundingClientRect().left; } }
+          return null; })())"""))
+        want = g["x"] + 15 * g["cw"]
+        rows.append(("a wide character keeps the grid", at is not None and abs(at - want) < 1.5,
+                     f"the x after 中 at {at} px in the text, column 15 at {want:.1f} px" if at is not None else "no x after 中 in the text"))
+
+        t1 = v.js("document.querySelector('.pn-scr').children[2].textContent")
+        s1 = v.snapshot()
+        v.wait(2200)
+        t2 = v.js("document.querySelector('.pn-scr').children[2].textContent")
+        s2 = v.snapshot()
+
+        def band(s):
+            dd, st, y0, x0 = s.get_data(), s.get_stride(), int(g["y"] + 2 * g["lh"]), int(g["x"])
+            return b"".join(bytes(dd[(y0 + k) * st + x0 * 4:(y0 + k) * st + (x0 + int(20 * g["cw"])) * 4]) for k in range(int(g["lh"])))
+        ok = band(s1) != band(s2) and t1 != t2 and t2.startswith("tick")
+        rows.append(("new frames drawn, and the text catches up", ok, f"the counter drawn anew; its text went {t1.strip()!r} to {t2.strip()!r}"))
+
+        v.js(CANVAS_WHOLE)
+        v.wait(100)
+        n = v.js("window.__whole")
+        rows.append(("the cells a frame changed, drawn as a whole row would be", n == "0", f"{n} bytes differ from the canvas drawn whole"))
+
+        sel = v.js("""(() => { const s = document.querySelector('.pn-scr'), r = document.createRange();
+          s.parentElement.closest('.pn-body').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); dispatchEvent(new MouseEvent('mouseup'));
+          r.setStart(s.children[0].firstChild, 2); r.setEnd(s.children[1], 0);
+          getSelection().removeAllRanges(); getSelection().addRange(r); const t = getSelection().toString(); getSelection().removeAllRanges(); return t; })()""")
+        rows.append(("selecting the live screen gives its text", sel.startswith("RED") and "\u4e2dx" in sel, repr(sel.strip()[:30])))
+
+        themes = ["paper", "ink", "contrast", "espresso", "midnight", "parchment", "sage", "snow"]
+        off = []
+        for th in themes:
+            v.js(f"document.documentElement.dataset.theme = '{th}'")
+            v.wait(400)
+            want = v.js("snyviTheme.colour('--t1', document.querySelector('.pn-body'))")
+            s = v.snapshot()
+            dd, st = s.get_data(), s.get_stride()
+            o = int(g["y"] + 2) * st + int(cx(3)) * 4
+            got = "#%02x%02x%02x" % (dd[o + 2], dd[o + 1], dd[o])
+            if not near(got, want):
+                off.append(f"{th} {got} for {want}")
+        rows.append(("every theme redraws the canvas", not off, "; ".join(off) or f"the red ground follows all {len(themes)}"))
+    finally:
+        v.win.destroy()
+    return rows
+
+
 def xdo(*a):
     subprocess.run(["xdotool", *a], check=False)
 
 
 def main():
-    tmp = tempfile.mkdtemp(prefix="snyvi-webkit-")
-    env = dict(os.environ, SNYVI_DATA_DIR=f"{tmp}/data", SNYVI_CONFIG_DIR=f"{tmp}/config", SNYVI_PORT=PORT)
+    # In memory where there is some: a daemon on a busy disk can take longer
+    # to open its database than `send` waits, and a desk's numbers should not
+    # carry the disk's.
+    tmp = tempfile.mkdtemp(prefix="snyvi-webkit-", dir="/dev/shm" if os.path.isdir("/dev/shm") else None)
+    # A daemon of its own, and panels that start in a home of their own: none
+    # of the desk this may be running in, and none of the reader's shell rc.
+    # And no notifications: a document sent here is not the reader's news.
+    env = {k: val for k, val in os.environ.items() if not k.startswith("SNYVI_")}
+    env.update(SNYVI_DATA_DIR=f"{tmp}/data", SNYVI_CONFIG_DIR=f"{tmp}/config", SNYVI_PORT=PORT, HOME=f"{tmp}/home",
+               SNYVI_NOTIFY="0")
+    if UI:
+        env["SNYVI_UI_DIR"] = UI
+    os.makedirs(env["HOME"])
     rows = []
     try:
         path = f"{tmp}/doc.md"
@@ -241,6 +522,10 @@ def main():
             f.write(DOC)
         out = subprocess.run([BIN, "send", path], env=env, cwd=tmp, capture_output=True, text=True).stdout
         url = next(w for w in out.split() if w.startswith("http"))
+        base = url.split("/d/")[0] if "/d/" in url else "/".join(url.split("/")[:3])
+        if DESK_ONLY:
+            rows.append(desk_row(env, base))
+            return report(rows)
         v = View(url)
         v.wait(1500)
         for _ in range(40):
@@ -332,10 +617,16 @@ def main():
                      if deep["find"]["inView"] else
                      f"marked {deep['find']['marks']} and stopped at {deep['find']['scroll']}, "
                      f"the match {deep['find']['top']} px away"))
+        v.win.destroy()
+        rows += canvas_rows(env, base)
+        rows.append(desk_row(env, base))
     finally:
         subprocess.run([BIN, "stop"], env=env, capture_output=True)
         shutil.rmtree(tmp, ignore_errors=True)
+    report(rows)
 
+
+def report(rows):
     print(f"webkit: what the page does in WebKitGTK {WebKit2.get_major_version()}.{WebKit2.get_minor_version()}.{WebKit2.get_micro_version()}\n")
     failed = False
     for name, ok, why in rows:

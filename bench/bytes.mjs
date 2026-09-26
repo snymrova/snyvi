@@ -66,7 +66,7 @@ const FIRST = [["index.html", "/"], ["boot.js", "/assets/boot.js"], ["app.css", 
  * measured the way the four above are. desk.js is the second chunk, and the
  * one the measurement below was taken to make the case for: the pane view,
  * paid when a desk is opened in the window and never in a tab. */
-const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"]];
+const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"], ["palette.js", "/assets/palette.js", "⌘K is pressed"]];
 
 const kb = n => (n / KB).toFixed(1) + " KB";
 
@@ -138,6 +138,20 @@ async function main() {
     for (const [f, n, until] of deferred) console.log(`  ${f.padEnd(20)}${kb(n).padStart(12)}   ${until}`);
     console.log("");
 
+    /* The themes. First paint carries Paper, on :root, and Ink, the dark
+     * default, and no other: the window opens as fast as it can, and every
+     * other theme is themes.css, fetched once the page is idle. So app.css
+     * holds exactly one `[data-theme]` block -- Paper's own block under
+     * prefers-contrast is Paper's, not a theme's -- and themes.css holds
+     * the six, under a budget of their own (docs/THEMES.md). */
+    const css = (await served("/assets/app.css")).toString();
+    const firstThemes = [...css.matchAll(/\[data-theme="([a-z]+)"\]\s*\{/g)].map(m => m[1]).filter(n => n !== "paper");
+    const themesCss = await served("/assets/themes.css");
+    const later = [...themesCss.toString().matchAll(/\[data-theme="([a-z]+)"\]\s*\{/g)].map(m => m[1]);
+    const themesCost = gzipSync(themesCss, { level: 9 }).length;
+    const THEMES_BUDGET = 2 * KB;
+    console.log(`  ${"themes.css".padEnd(20)}${kb(themesCost).padStart(12)}   the page is idle\n`);
+
     /* Two tests and one reading. The tests are the budget and the parse, and
      * they are the only lines here a push can break. The reading is the
      * question the probe was built to answer and has no budget of its own to
@@ -148,12 +162,20 @@ async function main() {
     console.log(`  ${"first paint against its budget".padEnd(38)}${over > 0 ? " FAIL" : " ok  "} ${
       over > 0 ? `${kb(total)}, ${kb(over)} over ${kb(BUDGET)}` : `${kb(total)} of ${kb(BUDGET)}, ${kb(-over)} spare`}`);
     console.log(`  ${"every asset parses as served".padEnd(38)}${failed && over <= 0 ? " FAIL" : " ok  "} the strip in build.rs did not eat one`);
+    const onlyTwo = firstThemes.join() === "ink";
+    if (!onlyTwo) failed = true;
+    console.log(`  ${"first paint has Paper and Ink only".padEnd(38)}${onlyTwo ? " ok  " : " FAIL"} ${
+      onlyTwo ? "every other theme waits for the page to be idle" : `app.css carries ${firstThemes.join(", ") || "no Ink"}`}`);
+    const sixLater = later.length === 6 && !later.includes("paper") && !later.includes("ink");
+    if (themesCost > THEMES_BUDGET || !sixLater) failed = true;
+    console.log(`  ${"themes.css against its budget".padEnd(38)}${themesCost > THEMES_BUDGET || !sixLater ? " FAIL" : " ok  "} ${
+      !sixLater ? `${later.length} theme blocks served (${later.join(", ")}), the six expected` : `${themesCost} B gzipped for ${later.length} themes, under ${kb(THEMES_BUDGET)}`}`);
     console.log(`  ${"the desk chunk at first paint".padEnd(38)}      ${
       total + desk <= BUDGET ? `${kb(desk)} more would still fit under ${kb(BUDGET)}` : `${kb(desk)} more is ${kb(total + desk - BUDGET)} over ${kb(BUDGET)}, which is why it is a chunk`}`);
     console.log("");
 
     if (failed && CHECK) {
-      console.error("bytes: the page is heavier than its budget, or an asset did not survive the strip");
+      console.error("bytes: the page is heavier than its budget, the themes than theirs, or an asset did not survive the strip");
       process.exitCode = 1;
     }
   } finally {

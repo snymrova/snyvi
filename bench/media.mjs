@@ -38,6 +38,9 @@ const PORT = flag("--port") || "7798";   // 7796 is browser.mjs, 7797 ui.mjs
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SEED = join(HERE, "seed");
 const W = 1440, H = 900;
+/** The side a named theme is, so the emulated media agrees with the pick and
+ *  the page does not flip back on the next system read. */
+const getComputedStyleScheme = name => (["ink", "midnight", "espresso", "contrast"].includes(name) ? "dark" : "light");
 
 /** What the two panes in the desk picture are working on, left then right.
  *  These are real Claude Code sessions in the seeded checkout, not a mock-up:
@@ -95,6 +98,18 @@ class Driver {
   }
   async type(text) { await this.cdp.send("Input.insertText", { text }, this.s); await sleep(300); }
   async move(x, y) { await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s); await sleep(100); }
+  /** A theme by name, through ⌘K the way a reader picks one; the two
+   *  above are the system's sides, which the page follows by default. */
+  async pick(name) {
+    await this.ev(`(async () => {
+      document.querySelector("#btn-search").click();
+      const i = document.querySelector("#palette-input"); i.value = "theme"; i.dispatchEvent(new Event("input", { bubbles: true }));
+      for (let n = 0; n < 40 && !document.querySelector('#palette-list li.theme[data-theme="${name}"]'); n++) await new Promise(r => setTimeout(r, 25));
+      document.querySelector('#palette-list li.theme[data-theme="${name}"]')?.click();
+    })()`);
+    await sleep(200);
+    await this.theme(getComputedStyleScheme(name));
+  }
   async theme(name) {
     await this.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: name }] }, this.s);
     // Diagrams redraw in the new theme; wait for the queue to empty.
@@ -347,6 +362,12 @@ async function main() {
 
       // The plan, read: sidebar, document, rail.
       await p.shot(`plan-${theme}`);
+      // Once, the same page in Parchment and once in Midnight, for the
+      // GUIDE's Appearance section; the README's pair stays Paper and Ink.
+      // Picked back to the default after, so the passes below are Paper's
+      // and Ink's.
+      if (theme === "light") { await p.pick("parchment"); await p.shot("plan-parchment"); await p.pick("paper"); }
+      else { await p.pick("midnight"); await p.shot("plan-midnight"); await p.pick("ink"); }
 
       // The same plan against the version before it.
       await p.press("c");

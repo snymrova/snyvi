@@ -92,6 +92,23 @@ shows two panes, and below 700 px it shows one. The others stay one key away.
    is not unlogged either: it arrives as `snyvi-app` argv, where `ps` can see
    it.
 
+5. **An agent in a pane reads its desk's notes and nothing else.**
+   `GET /api/panes/{id}/notes` (`pane_notes`) is behind the token, like the
+   hook's `pane_agent`, because `snyvi mcp` is a process like the hook: it
+   holds the token and never the capability. The pane id it sends is
+   `SNYVI_SESSION`, so this is the first thing the session id *reads*;
+   before it, the id only labelled what went in. The handler checks the token,
+   then that the pane is running, and only then touches the store, to find
+   the pane's desk and read that desk's list. A pane id seen in an old
+   screen or a log reads nothing once its shell is gone. There is no write
+   route for an agent: the list is the reader's, and the MCP tool
+   (`read_desk_notes`) is read-only and offered only when `SNYVI_SESSION`
+   is set. This does not widen what a token holder can reach -- the store
+   is a file the reader's processes can already open -- it hands an agent
+   one list through the front door. `every_desk_route_is_behind_the_gate`
+   holds the order of those checks, and that the store is reached for
+   nothing else.
+
 One consequence to know about: **a capability dies with the daemon that
 minted it.** After a restart or an upgrade, an open window's socket is
 refused, and the desk says so and asks for the window to be reopened.

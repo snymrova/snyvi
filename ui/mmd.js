@@ -64,7 +64,7 @@ let mmdWatcher = null;
  * orders of magnitude larger than another's, and a tab left open all day
  * reading documents is exactly the tab this project promises will stay
  * small. */
-const mmdCache = new Map();          // `theme\nsource` -> {svg} or {err}, least recent first
+const mmdCache = new Map();          // `theme|accent\nsource` -> {svg} or {err}, least recent first
 const MMD_CACHE_BYTES = 4 << 20;
 const MMD_ID = "__mmd_id__";
 let mmdCacheBytes = 0;
@@ -280,12 +280,16 @@ function mermaidLib() {
   return mermaidReady;
 }
 
-/** `initialize` decides the theme of the next render and nothing else, so it is
- *  called when the theme has moved rather than once. Diagrams already drawn
- *  keep the theme they were drawn in; re-drawing them belongs with the cache. */
+/** The look a diagram is drawn in: the theme and the accent, since the focus
+ *  node, the notes and the gantt bars are all accent. It is half of the cache
+ *  key and the whole of what `initialize` is compared against, so a swatch
+ *  click misses the cache and re-initialises Mermaid the same as a theme
+ *  change does -- without it, every diagram already drawn came back in the
+ *  accent it was drawn in, and one never drawn was rendered with the stale
+ *  palette `initialize` still held. boot.js always sets `data-theme`, so
+ *  there is no media query to consult here. */
 function mmdCurrentTheme() {
-  const dark = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
-  return dark ? "dark" : "light";
+  return `${root.dataset.theme || "paper"}|${root.dataset.accent || ""}`;
 }
 
 /** The diagram is drawn in the viewer's own palette, read off `:root` rather
@@ -305,10 +309,17 @@ function mmdTheme() {
   const bg = v("--bg"), raise = v("--bg-raise"), side = v("--bg-side");
   const fg = v("--fg"), fg2 = v("--fg-2"), fg3 = v("--fg-3");
   const rule = v("--rule"), rule2 = v("--rule-2");
-  const accent = v("--accent"), accentBg = v("--accent-bg");
+  // The two derived tokens resolved to plain rgb() through boot.js: as text
+  // they are a light-dark() and a color-mix(), which Mermaid's own colour
+  // maths cannot read.
+  const accent = snyviTheme.colour("--accent"), accentBg = snyviTheme.colour("--accent-bg");
   return {
     fontFamily: v("--sans"),
     themeVariables: {
+      // Mermaid derives what is not named below by lightening or darkening
+      // what is, and `darkMode` is which way; the one answer to "is it dark?"
+      // is the theme block's own `color-scheme`.
+      darkMode: snyviTheme.isDark(),
       background: bg, edgeLabelBackground: bg,
       mainBkg: raise, primaryColor: raise, actorBkg: raise, stateBkg: raise,
       secondaryColor: side, clusterBkg: side, labelBoxBkgColor: side,

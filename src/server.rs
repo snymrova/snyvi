@@ -72,6 +72,13 @@ const KEYS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/keys.js"));
 /// reader who only reads never fetches it; the sidebar draws its desks without
 /// it, because drawing them is in `app.js` and only doing something is here.
 const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js"));
+/// ⌘K, fetched the first time it is pressed: the one box a reader summons
+/// rather than meets, so first paint does not carry it.
+const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/palette.js"));
+/// Every theme but Paper and Ink, fetched once the page is idle: first paint
+/// carries only the two defaults, and boot.js paints a returning reader's
+/// own theme from a copy it kept, so the window opens as fast as it can.
+const THEMES_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/themes.css"));
 /// Mermaid, gzip-compressed at build time; served with Content-Encoding: gzip.
 const MERMAID_JS_GZ: &[u8] = include_bytes!("../ui/mermaid.min.js.gz");
 /// Content-Security-Policy for the UI. Everything comes from the daemon itself; Mermaid
@@ -188,6 +195,8 @@ impl Ui {
             ("find.js", FIND_JS),
             ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
+            ("themes.css", THEMES_CSS),
+            ("palette.js", PALETTE_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -248,8 +257,8 @@ pub struct App {
     /// The panes that have been woken since this daemon started: their
     /// screens, and their processes while they run. See `crate::pane`.
     pub panes: Arc<crate::pane::Panes>,
-    /// The last few lines agents left beside the work. See `crate::note`.
-    pub notes: crate::note::Notes,
+    /// The last few lines agents left beside the work. See `crate::aside`.
+    pub asides: crate::aside::Asides,
 }
 
 impl App {
@@ -309,6 +318,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         h.update(FIND_JS.as_bytes());
         h.update(KEYS_JS.as_bytes());
         h.update(MENU_JS.as_bytes());
+        h.update(THEMES_CSS.as_bytes());
+        h.update(PALETTE_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -331,7 +342,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
-        notes: Default::default(),
+        asides: Default::default(),
     });
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
@@ -374,8 +385,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/workflows/{id}/rename", post(rename_workflow))
         .route("/api/docs/{id}/split", get(doc_split))
         .route("/api/docs/{id}/outline", get(doc_outline))
-        .route("/api/notes", get(notes).post(receive_note))
-        .route("/api/notes/seen", post(see_notes))
+        // Asides, on the routes they had when they were called notes: an MCP
+        // server and a page from before the rename still reach them.
+        .route("/api/notes", get(asides).post(receive_aside))
+        .route("/api/notes/seen", post(see_asides))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/reset", get(reset_census).post(reset))
@@ -415,6 +428,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
         .route("/api/panes/{id}/agent", post(pane_agent))
+        .route("/api/panes/{id}/notes", get(pane_notes))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -428,6 +442,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/assets/find.js", get(asset_find))
         .route("/assets/keys.js", get(asset_keys))
         .route("/assets/menu.js", get(asset_menu))
+        .route("/assets/themes.css", get(asset_themes))
+        .route("/assets/palette.js", get(asset_palette))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -547,8 +563,8 @@ fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str
         o.insert("waiting".into(), json!(waiting(app)));
         // Who is here, for the count beside the brand mark on the first paint.
         o.insert("online".into(), app.online());
-        // The note showing at the foot of the sidebar, and the trail under it.
-        o.insert("notes".into(), json!(app.notes.list()));
+        // The aside showing at the foot of the sidebar, and the trail under it.
+        o.insert("notes".into(), json!(app.asides.list()));
     }
     let page = app
         .ui
@@ -789,6 +805,19 @@ async fn asset_keys(State(app): S) -> Response {
 }
 /// The folder menu and the desk actions, on the same terms: nothing here has
 /// happened until someone has clicked something.
+/// ⌘K, on the same terms: nothing asks for it but the first ⌘K.
+async fn asset_palette(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "palette.js",
+        PALETTE_JS,
+    )
+}
+/// The other themes, on the same terms: the page asks once it is idle.
+async fn asset_themes(State(app): S) -> Response {
+    asset(&app, "text/css; charset=utf-8", "themes.css", THEMES_CSS)
+}
 async fn asset_menu(State(app): S) -> Response {
     asset(
         &app,
@@ -1687,12 +1716,12 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
     }
 }
 
-/// A note from an agent: kept, and shown to every page at once. Never a
-/// desktop notification -- a note that could be missed costs nothing.
-async fn receive_note(
+/// An aside from an agent: kept, and shown to every page at once. Never a
+/// desktop notification -- an aside that could be missed costs nothing.
+async fn receive_aside(
     State(app): S,
     headers: HeaderMap,
-    Json(n): Json<crate::note::NewNote>,
+    Json(n): Json<crate::aside::NewAside>,
 ) -> Response {
     if !authorized(&app, &headers) {
         return (
@@ -1701,12 +1730,12 @@ async fn receive_note(
         )
             .into_response();
     }
-    match app.notes.add(n, crate::store::now()) {
-        Ok(note) => {
-            emit(&app, "notes", json!({ "notes": app.notes.list() }));
+    match app.asides.add(n, crate::store::now()) {
+        Ok(aside) => {
+            emit(&app, "notes", json!({ "notes": app.asides.list() }));
             (
                 StatusCode::CREATED,
-                Json(json!({ "note": note, "window": app.has_window() })),
+                Json(json!({ "note": aside, "window": app.has_window() })),
             )
                 .into_response()
         }
@@ -1718,14 +1747,14 @@ async fn receive_note(
     }
 }
 
-async fn notes(State(app): S) -> Json<serde_json::Value> {
-    Json(json!({ "notes": app.notes.list() }))
+async fn asides(State(app): S) -> Json<serde_json::Value> {
+    Json(json!({ "notes": app.asides.list() }))
 }
 
 /// A reader looked: the glow goes out in every page.
-async fn see_notes(State(app): S) -> Json<serde_json::Value> {
-    if app.notes.see() {
-        emit(&app, "notes", json!({ "notes": app.notes.list() }));
+async fn see_asides(State(app): S) -> Json<serde_json::Value> {
+    if app.asides.see() {
+        emit(&app, "notes", json!({ "notes": app.asides.list() }));
     }
     Json(json!({ "ok": true }))
 }
@@ -2285,7 +2314,7 @@ async fn desk_docs(
 }
 
 /// A desk's own list, which is the reader's and not an agent's: `/api/notes`
-/// is the other kind, and the two never meet. Behind the same gate as the rest
+/// is an agent's asides, and the two never meet. Behind the same gate as the rest
 /// of a desk, so what someone wrote on theirs is as unreachable from a tab as
 /// their panes are.
 ///
@@ -2683,6 +2712,39 @@ async fn pane_agent(
         }
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// The notes of the desk a pane is on, for the agent running in that pane
+/// (`read_desk_notes`, from `snyvi mcp`, which knows the pane by
+/// `SNYVI_SESSION`).
+///
+/// The second pane route behind the token rather than the capability, and the
+/// only one that gives anything back. It reads and never writes: a desk's list
+/// is the reader's, and an agent that could add to it would be an agent
+/// writing the reader's to-dos. It answers only for a pane that is running, so
+/// a pane id found in an old screen or a log reads nothing once that shell is
+/// gone, and only with that one desk's list -- never another desk's, never the
+/// library. A token holder could already open the store; what this adds is
+/// that an agent is handed one list through the front door instead.
+async fn pane_notes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !app.panes.is_running(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let placed = match app.store.pane(&id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    match app.store.desk_notes(placed.desk_id) {
+        Ok(notes) => Json(json!({ "desk": placed.desk_name, "notes": notes })).into_response(),
+        Err(e) => err(e),
+    }
 }
 
 /// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
@@ -3252,7 +3314,7 @@ fn err(e: anyhow::Error) -> Response {
 mod tests {
     use super::{
         desk_refusal, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
-        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
+        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS, PALETTE_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -3541,6 +3603,20 @@ mod tests {
             agent.matches("app.store.set_pane_session(").count(),
             "pane_agent reaches the store for more than the session id"
         );
+        // And the one that reads: token first, then a running pane, and then
+        // the store only to find that pane's desk and read its list -- no
+        // write of any kind.
+        let notes = &src[src.find("async fn pane_notes(").unwrap()..];
+        let notes = &notes[..notes.find("\n}\n").unwrap()];
+        assert!(notes.find("authorized(").unwrap() < notes.find("app.panes").unwrap());
+        assert!(notes.find("app.panes.is_running(").unwrap() < notes.find("app.store").unwrap());
+        assert_eq!(
+            notes.matches("app.store").count(),
+            notes.matches("app.store.pane(").count()
+                + notes.matches("app.store.desk_notes(").count(),
+            "pane_notes reaches the store for more than reading one desk's list"
+        );
+        assert!(src.contains(r#".route("/api/panes/{id}/notes", get(pane_notes))"#));
     }
 
     /// The capability is read off the fragment and presented in a frame. If it
@@ -3728,13 +3804,16 @@ mod tests {
             ("find.js", FIND_JS),
             ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
+            ("palette.js", PALETTE_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
                 let end = rest.find('"').expect("unterminated selector");
                 let id = &rest[..end];
                 let used_at_once = rest[end..].starts_with("\").");
-                if used_at_once && !INDEX_HTML.contains(&format!("id=\"{id}\"")) {
+                // Or in the chunk itself: about.js builds the boxes it fills.
+                let built = format!("id=\"{id}\"");
+                if used_at_once && !INDEX_HTML.contains(&built) && !src.contains(&built) {
                     missing.push(format!("{file}: {id}"));
                 }
             }
@@ -3765,6 +3844,8 @@ mod tests {
             "FIND_JS",
             "KEYS_JS",
             "MENU_JS",
+            "THEMES_CSS",
+            "PALETTE_JS",
         ] {
             assert!(
                 block.contains(chunk),
@@ -3789,10 +3870,20 @@ mod tests {
     }
 
     /// The pre-paint script and the app must agree on the keys, or a saved setting is
-    /// written by one and never read by the other.
+    /// written by one and never read by the other. The three theme keys are spelled
+    /// out in full: this is a substring check, and `snyvi.theme` would go on passing
+    /// on the strength of `snyvi.theme.light` alone.
     #[test]
     fn settings_written_by_the_app_are_applied_before_first_paint() {
-        for key in ["theme", "font", "side", "wide", "wrap"] {
+        for key in [
+            "theme.light",
+            "theme.dark",
+            "theme.follow",
+            "font",
+            "side",
+            "wide",
+            "wrap",
+        ] {
             let k = format!("snyvi.{key}");
             assert!(APP_JS.contains(&k), "{k} is not used by app.js");
             assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
