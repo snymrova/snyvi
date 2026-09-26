@@ -866,9 +866,14 @@ function layout() {
   // with them, or their next key would land on the reading view.
   const keep = [...grid.querySelectorAll(":scope > .dk-div")], want = [...shown.map(v => v.el), ...keep];
   if (want.length !== grid.children.length || want.some((el, i) => grid.children[i] !== el)) {
-    const had = grid.contains(document.activeElement) ? document.activeElement : null;
+    const had = grid.contains(document.activeElement) ? document.activeElement : null, back = shown.filter(v => !v.el.isConnected);
     grid.replaceChildren(...want);
     if (had && had.isConnected) had.focus({ preventScroll: true });
+    // A canvas put back in the page -- after a document read over the desk,
+    // or a pane the grid had no room for -- keeps its pixels, but WebKit's
+    // GPU canvas shows none of them until something draws on it: the pane
+    // stood empty until a scroll. Drawn whole, it is shown whole.
+    for (const v of back) drawAll(v);
   }
   if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
