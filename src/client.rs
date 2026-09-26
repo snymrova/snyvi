@@ -299,6 +299,35 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
     }
 }
 
+/// Tick a line on the list of the desk this pane is on, as `by`.
+pub fn tick_desk_note(paths: &Paths, pane: &str, note: i64, by: &str) -> Result<Value> {
+    let token = config::read_token(paths).ok_or_else(|| {
+        anyhow!(
+            "no token at {}; is the daemon running as this user?",
+            paths.token_path.display()
+        )
+    })?;
+    let mut resp = ureq::post(&format!(
+        "{}/api/panes/{pane}/notes/{note}/tick",
+        config::base_url()
+    ))
+    .header("Authorization", &format!("Bearer {token}"))
+    .config()
+    .timeout_global(Some(Duration::from_secs(5)))
+    .http_status_as_error(false)
+    .build()
+    .send_json(serde_json::json!({ "by": by }))
+    .context("asking snyvi")?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// Leave an aside at the foot of the sidebar.
 pub fn aside(paths: &Paths, aside: &crate::aside::NewAside) -> Result<Value> {
     ensure_daemon()?;

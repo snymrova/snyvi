@@ -414,6 +414,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/desks", get(desks).post(create_desk))
         .route("/api/desks/{id}/rename", post(rename_desk))
         .route("/api/desks/{id}/layout", post(desk_layout))
+        .route("/api/desks/{id}/move", post(move_pane))
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/desks/{id}/docs", get(desk_docs))
@@ -432,6 +433,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .route("/api/panes/{id}/stop", post(stop_pane))
         .route("/api/panes/{id}/agent", post(pane_agent))
         .route("/api/panes/{id}/notes", get(pane_notes))
+        .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -2052,7 +2054,7 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
                             .into_iter()
                             .filter(|id| crate::pane::valid_id(id))
                             .filter(|id| matches!(app.store.pane(id), Ok(Some(_))))
-                            .take(crate::desk::EVERYWHERE as usize)
+                            .take(crate::desk::PER_DESK as usize)
                             .collect();
                         watching.retain(|id, (_, task)| {
                             let keep = wanted.contains(id);
@@ -2216,6 +2218,12 @@ struct LayoutBody {
 }
 
 #[derive(Deserialize)]
+struct MoveBody {
+    from: i64,
+    to: i64,
+}
+
+#[derive(Deserialize)]
 struct NewPaneBody {
     /// What to re-run when the reader asks for it. Nothing here means a shell,
     /// and nothing here starts anything: Phase 3 spawns, this phase records.
@@ -2223,7 +2231,7 @@ struct NewPaneBody {
     cmd: Option<String>,
 }
 
-/// Every desk, with its panes, and how much of the global cap is spent.
+/// Every desk, with its panes, and how many panes are open across them.
 async fn desks(
     State(app): S,
     headers: HeaderMap,
@@ -2238,7 +2246,6 @@ async fn desks(
             // So a pane's header can say `~/snyvi` rather than the whole path.
             "home": dirs::home_dir(),
             "panes": panes,
-            "cap": crate::desk::EVERYWHERE,
             "per_desk": crate::desk::PER_DESK,
         }))
         .into_response(),
@@ -2491,6 +2498,28 @@ async fn desk_layout(
     }
 }
 
+/// A pane to another position on its desk, trading places with the pane
+/// there. Every window redraws: the numbers moved, not only this one's grid.
+async fn move_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<MoveBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.move_pane(id, b.from, b.to) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 async fn delete_desk(
     State(app): S,
     headers: HeaderMap,
@@ -2544,17 +2573,10 @@ async fn open_pane(
             desks_moved(&app);
             (StatusCode::CREATED, Json(json!({ "pane": pane }))).into_response()
         }
-        // Full, twice, and the two say different things because the reader has
-        // to do something different about them: another desk takes the next
-        // pane, or something has to be closed first.
+        // Full: another desk takes the next pane. There is no cap across desks.
         Ok(crate::desk::Opened::DeskFull) => (
             StatusCode::CONFLICT,
             Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
-        )
-            .into_response(),
-        Ok(crate::desk::Opened::NoRoomLeft) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": format!("{} panels is the whole of it", crate::desk::EVERYWHERE), "full": "everywhere" })),
         )
             .into_response(),
         Ok(crate::desk::Opened::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
@@ -2771,6 +2793,54 @@ async fn pane_notes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -
     };
     match app.store.desk_notes(placed.desk_id) {
         Ok(notes) => Json(json!({ "desk": placed.desk_name, "notes": notes })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct TickBody {
+    /// The agent's name, as its MCP client gave it in `initialize`.
+    #[serde(default)]
+    by: String,
+}
+
+/// An agent ticks a line on its own desk's list: `tick_desk_note`. The same
+/// gate as reading it -- the token, then a pane that is running -- and the one
+/// write an agent has on the list: done, by it, on an open line of the desk
+/// its pane is on. Every window's rail is told, so the tick shows at once.
+async fn pane_tick_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(String, i64)>,
+    body: Option<Json<TickBody>>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !app.panes.is_running(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let placed = match app.store.pane(&id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    let by = body.map(|Json(b)| b.by).unwrap_or_default();
+    match app.store.tick_desk_note(placed.desk_id, note, &by) {
+        Ok(true) => {
+            emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
+            Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
+        }
+        // Not on this desk's list, taken off it, or already done: the agent is
+        // told which it cannot tell apart, and nothing changed.
+        Ok(false) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no open note by that id on this desk" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -3651,6 +3721,7 @@ mod tests {
             "async fn browse_pick(",
             "async fn rename_desk(",
             "async fn desk_layout(",
+            "async fn move_pane(",
             "async fn delete_desk(",
             "async fn desk_docs(",
             "async fn desk_notes(",
@@ -3690,6 +3761,7 @@ mod tests {
             r#".route("/api/browse/pick", post(browse_pick))"#,
             r#".route("/api/desks/{id}/rename", post(rename_desk))"#,
             r#".route("/api/desks/{id}/layout", post(desk_layout))"#,
+            r#".route("/api/desks/{id}/move", post(move_pane))"#,
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
             r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
@@ -3732,6 +3804,21 @@ mod tests {
             "pane_notes reaches the store for more than reading one desk's list"
         );
         assert!(src.contains(r#".route("/api/panes/{id}/notes", get(pane_notes))"#));
+        // And the one write: token, running pane, then the store only to find
+        // the pane's desk and tick one line on it.
+        let tick = &src[src.find("async fn pane_tick_note(").unwrap()..];
+        let tick = &tick[..tick.find("\n}\n").unwrap()];
+        assert!(tick.find("authorized(").unwrap() < tick.find("app.panes").unwrap());
+        assert!(tick.find("app.panes.is_running(").unwrap() < tick.find("app.store").unwrap());
+        assert_eq!(
+            tick.matches("app.store").count(),
+            tick.matches("app.store.pane(").count()
+                + tick.matches("app.store.tick_desk_note(").count(),
+            "pane_tick_note reaches the store for more than ticking one line"
+        );
+        assert!(
+            src.contains(r#".route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))"#)
+        );
     }
 
     /// The capability is read off the fragment and presented in a frame. If it

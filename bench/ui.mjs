@@ -233,6 +233,7 @@ async function main() {
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
+    sections.push(["panels: full view, moved, linked, and their menus", await panelRows(cdp, base, token)]);
     sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
     sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
     sections.push(["the first frame, in the reader's theme", await firstFrameRows(p, url)]);
@@ -1515,6 +1516,146 @@ async function deskRows(cdp, base, token) {
   return rows;
 }
 
+/** 1.6's desk: a panel in full view fills the window and comes back; a head
+ *  dragged onto another panel trades their places, and so does ⌃⌥⇧ and an
+ *  arrow, the daemon renumbering them; a link a program printed opens on a
+ *  Ctrl-click and only then; the context menu on a panel, a note and a
+ *  sidebar row, doing what the row's own controls do; an agent's tick lands
+ *  in the rail with its name; and a narrow window still offers a third panel.
+ *  In a tab of its own, with the capability, as `deskRows` is. */
+async function panelRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const slotOf = async (desk, pane) => { const j = await (await fetch(`${base}/api/desks`, { headers: H })).json(); return j.desks.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot; };
+  const d = await post("/api/desks", { name: "panels" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  await post(`/api/panes/${pa}/start`, { cmd: `printf 'see https://example.com/snyvi-bench. then\\n'; while :; do ${sleepBin} 1; done` });
+  await post(`/api/panes/${pb}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const n1 = (await post(`/api/desks/${desk}/notes`, { text: "a line for the menu" })).note.id;
+  const n2 = (await post(`/api/desks/${desk}/notes`, { text: "a line for an agent" })).note.id;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
+  const rightOn = async sel => { const at = await q.ui("center", sel); await mouse("mouseMoved", at.x, at.y); await mouse("mousePressed", at.x, at.y, { button: "right", clickCount: 1 }); await mouse("mouseReleased", at.x, at.y, { button: "right", clickCount: 1 }); await sleep(250); };
+  const menu = `(() => { const m = document.querySelector("#ctx"); return m && !m.hidden ? { head: m.querySelector(".ctx-head")?.textContent, items: [...m.querySelectorAll("button")].map(b => b.textContent) } : null; })()`;
+  const pick = async label => { await q.ev(`[...document.querySelectorAll("#ctx button")].find(b => b.textContent.startsWith(${JSON.stringify(label)}))?.click(); 1`); await sleep(300); };
+  const P = id => `.pn[data-id="${id}"]`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && /snyvi-bench/.test(document.querySelector('${P(pa)} .pn-scr')?.textContent || "")`);
+
+    // Full view, from the head's button, and back by the key.
+    await q.hoverOn(`${P(pa)} .pn-head`);
+    await q.clickOn(`${P(pa)} .pn-full`);
+    await sleep(300);
+    const fv = await q.ev(`(() => { const p = document.querySelector('${P(pa)}'); return { full: document.documentElement.dataset.full === "1", side: getComputedStyle(document.querySelector("#side")).display,
+      w: Math.round(p.getBoundingClientRect().width), W: innerWidth, other: !!document.querySelector('${P(pb)}')?.isConnected, tab: !!document.querySelector('.dk-tabs [data-focus="${pb}"]') }; })()`);
+    rows.push(["⤢ puts a panel in full view", fv.full && fv.side === "none" && fv.w > fv.W - 60 && !fv.other && fv.tab,
+      !fv.full ? "the window was not told" : fv.side !== "none" ? "the sidebar is still there" : fv.w <= fv.W - 60 ? `the panel is ${fv.w} px of ${fv.W}` : !fv.tab ? "the other panel has no tab" : `${fv.w} of ${fv.W} px, no sidebar, the other panel a tab`]);
+    await q.press("z", { ctrl: true, alt: true });
+    await sleep(300);
+    const back = await q.ev(`({ full: "full" in document.documentElement.dataset, side: getComputedStyle(document.querySelector("#side")).display, both: document.querySelectorAll(".dk-grid > .pn").length })`);
+    rows.push(["and ⌃⌥Z brings the grid back", !back.full && back.side !== "none" && back.both === 2,
+      back.full ? "still in full view" : back.side === "none" ? "the sidebar did not come back" : `${back.both} panels in the grid`]);
+
+    // A head dragged onto the other panel, then the keys the other way.
+    const from = await q.ui("center", `${P(pa)} .pn-head`), to = await q.ui("center", `${P(pb)} .pn-body`);
+    await mouse("mouseMoved", from.x, from.y);
+    await mouse("mousePressed", from.x, from.y, { button: "left", clickCount: 1 });
+    for (let i = 1; i <= 8; i++) { await mouse("mouseMoved", from.x + (to.x - from.x) * i / 8, from.y + (to.y - from.y) * i / 8, { button: "left", buttons: 1 }); await sleep(25); }
+    await mouse("mouseReleased", to.x, to.y, { button: "left", clickCount: 1 });
+    let moved = false;
+    for (let i = 0; i < 30 && !moved; i++) { moved = (await slotOf(desk, pa)) === 2 && (await slotOf(desk, pb)) === 1; if (!moved) await sleep(100); }
+    const order = await until(`document.querySelector(".dk-grid > .pn")?.dataset.id === ${JSON.stringify(pb)}`, 30);
+    rows.push(["a head dragged onto a panel trades their places", moved && order,
+      !moved ? `panel 1 is at ${await slotOf(desk, pa)}, panel 2 at ${await slotOf(desk, pb)}` : !order ? "the daemon moved them, the grid did not" : "1 and 2 traded, in the daemon and on the page"]);
+    await q.ev(`document.querySelector('${P(pa)} .pn-body').focus(); 1`);
+    for (const type of ["rawKeyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, modifiers: 11 }, sessionId);
+    let keyed = false;
+    for (let i = 0; i < 30 && !keyed; i++) { keyed = (await slotOf(desk, pa)) === 1; if (!keyed) await sleep(100); }
+    rows.push(["⌃⌥⇧← moves the focused panel back", keyed, keyed ? "position 1 again, and the other at 2" : `still at ${await slotOf(desk, pa)}`]);
+
+    // A link a program printed: a plain click does nothing, a Ctrl-click opens it.
+    await until(`document.querySelector('${P(pa)}')?.isConnected`);
+    await q.ev(`window.__opened = []; window.open = u => { window.__opened.push(u); return null; }; 1`);
+    const at = await q.ev(`(() => { const row = [...document.querySelectorAll('${P(pa)} .pn-scr > div')].find(r => r.textContent.includes("example.com"));
+      if (!row) return null; const w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT); let n, off = row.textContent.indexOf("example");
+      while ((n = w.nextNode()) && off >= n.length) off -= n.length; const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 3);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    if (at) {
+      await mouse("mouseMoved", at.x, at.y);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, at.x, at.y, { button: "left", clickCount: 1 });
+      await sleep(200);
+      const plain = await q.ev("window.__opened.length");
+      await mouse("mouseMoved", at.x, at.y, { modifiers: 2 });
+      await sleep(100);
+      const lined = await q.ev(`!!document.querySelector('${P(pa)} .pn-ul i')`);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, at.x, at.y, { button: "left", clickCount: 1, modifiers: 2 });
+      await sleep(200);
+      const opened = await q.ev("window.__opened");
+      rows.push(["a plain click on a link opens nothing", plain === 0, plain ? `opened ${plain}` : "the click only went to the panel"]);
+      rows.push(["Ctrl shows it, and Ctrl-click opens it", lined && opened.length === 1 && opened[0] === "https://example.com/snyvi-bench",
+        !lined ? "no underline under Ctrl" : `opened ${JSON.stringify(opened)}${opened[0] === "https://example.com/snyvi-bench" ? ", the sentence's full stop left off" : ""}`]);
+    } else rows.push(["a link in a panel", false, "the printed link never reached the panel's text"]);
+
+    // The menu on a panel's head: it names the panel, and Close asks twice.
+    await rightOn(`${P(pa)} .pn-head`);
+    const pm = await q.ev(menu);
+    rows.push(["a right-click on a panel's head opens its menu", !!pm && /^Panel 1/.test(pm.head) && pm.items.some(t => t.startsWith("Full view")) && pm.items.some(t => t.startsWith("Close panel")),
+      pm ? `"${pm.head}": ${pm.items.join(" · ")}` : "no menu"]);
+    await pick("Close panel");
+    const armed = await q.ev(`({ still: document.querySelector("#ctx") && !document.querySelector("#ctx").hidden, says: [...document.querySelectorAll("#ctx button")].map(b => b.textContent).find(t => /click again/.test(t)) || "" })`);
+    rows.push(["and Close panel asks twice", armed.still && !!armed.says && !!(await slotOf(desk, pa)), armed.says ? `"${armed.says}", and the panel is still open` : "it closed on the first click"]);
+    await q.press("Escape", { raw: true });
+    const shut = await q.ev(`!document.querySelector("#ctx") || document.querySelector("#ctx").hidden`);
+    rows.push(["Esc closes the menu", shut, shut ? "closed" : "still open"]);
+
+    // A note's menu ticks it, as its box does; an agent's tick lands with its name.
+    await rightOn(`.dk-note:has([data-n="${n1}"]) .nm`);
+    const nm = await q.ev(menu);
+    await pick("Tick");
+    const ticked = await until(`!!document.querySelector('.dk-note.done [data-n="${n1}"]')`, 30);
+    rows.push(["a note's menu ticks it", !!nm && ticked, !nm ? "no menu on the note" : ticked ? `"${nm.head}": ${nm.items.join(" · ")}` : "the note is still open"]);
+    const tk = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
+    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by')?.textContent === "bench-agent"`, 40);
+    const again = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
+    rows.push(["an agent's tick shows in the rail, with its name", byAgent && again.status === 409,
+      !tk.ok ? `the tick answered ${tk.status}` : !byAgent ? "the rail never showed it" : again.status !== 409 ? `a second tick answered ${again.status}` : "done, \"bench-agent\" at its end, and a second tick refused"]);
+
+    // A sidebar document's menu: Remove from inbox leaves the row's own Undo.
+    const doc = await q.ev(`document.querySelector("#trees a[data-id]")?.dataset.id || ""`);
+    if (doc) {
+      await rightOn(`#trees a[data-id="${doc}"]`);
+      const dm = await q.ev(menu);
+      await pick("Remove from inbox");
+      const ghost = await until(`!!document.querySelector("#trees [data-undoc]")`, 20);
+      rows.push(["a document's menu removes it, with the row's Undo", !!dm && dm.items.includes("Remove from inboxDel") && ghost,
+        !dm ? "no menu on the row" : !ghost ? "no Undo in the row" : `${dm.items.length} entries, and the row holds its Undo`]);
+      if (ghost) { await q.clickOn("#trees [data-undoc]"); await sleep(300); }
+    } else rows.push(["a document's menu", false, "no document row in the sidebar to try it on"]);
+
+    // A narrow window: the width shows fewer, and never refuses one.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 600, height: 800, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await sleep(400);
+    const narrow = await q.ev(`({ plus: document.querySelector('.dk-head .icon[data-a="new"]')?.disabled, shown: document.querySelectorAll(".dk-grid > .pn").length, tabs: document.querySelectorAll(".dk-tabs [data-focus]").length })`);
+    await cdp.send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
+    rows.push(["600 px wide: one panel shown, and + still offered", narrow.plus === false && narrow.shown === 1 && narrow.tabs === 2,
+      narrow.plus ? "the + is refused at this width" : `${narrow.shown} shown, ${narrow.tabs} tabs, and + offered`]);
+  } finally {
+    for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** Round 2 of the themes: an answer in the column is centred on the button
  *  it answers. It kept its top 96 px off the window's foot, a guess at its
  *  height, and at 802 px tall the theme button's answer sat level with Aa --
@@ -1589,7 +1730,12 @@ async function controlRows(cdp, p, url, browsed, base, token) {
       // Back as it was: a second press for the toggles; Aa's steps are keys.
       await drv.pointerAway();
       await drv.ev(`(() => { const d = document.documentElement; delete d.dataset.font; localStorage.removeItem("snyvi.font"); return 1; })()`);
-      if (!dim && c !== "font") { await drv.hoverOn(".foot-set"); await drv.clickOn(id); await drv.pointerAway(); }
+      // On a desk, width is full view, which folds the sidebar the button
+      // sits in away: the way back is the key, as it is for a reader.
+      if (!dim && c !== "font") {
+        if (await drv.ev(`"full" in document.documentElement.dataset`)) await drv.press("z", { ctrl: true, alt: true });
+        else { await drv.hoverOn(".foot-set"); await drv.clickOn(id); await drv.pointerAway(); }
+      }
     }
   };
   await p.goto(url);

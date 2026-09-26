@@ -32,17 +32,25 @@ Concrete budgets (targets, not measurements yet):
 | Render a 1 MB Markdown file         | < 200 ms              |
 | Render a 50k-line code file         | scrolls at 60 fps (virtualized) |
 | Binary size                         | < 15 MB single file   |
-| Network on first load (web)         | < 50 KB gzipped UI, all from localhost |
+| Network on first load (web)         | < 53 KB gzipped UI, all from localhost |
 | Open an already-received document   | < 30 ms request to first paint |
 | Any interaction                     | < 100 ms, or it is a bug |
 | Library of 10,000 docs              | sidebar and search stay instant |
-| Panes running, across every desk    | ≤ 8                   |
+| Panes per desk                      | ≤ 4, none across desks |
 | Scrollback per pane                 | ≤ 2 MB, counted in bytes |
+| A pane no page is watching          | one frame a second    |
 
-The two pane lines are the memory row spent on desks. There are 20 MB of
-headroom at 40 MB resident, and 8 panes × 2 MB is a 16 MB ceiling. Four panes
-per desk is not in this table because it bounds nothing: desks are unbounded,
-and the global cap is the line that holds. `docs/DESK.md` has the rest.
+The pane lines are the memory row spent on desks. There are 20 MB of headroom
+at 40 MB resident. Until 1.6 a cap of 8 panes across every desk held that to
+16 MB of scrollback; it went because a reader with three projects running wants
+three desks of panels, and what an unwatched pane costs is kept small instead.
+Twelve panes can hold 24 MB of scrollback at the most, which a reader who
+opens them has chosen. `docs/DESK.md` has the rest.
+
+The first-load line was 50 KB through 1.5.0, which stood at 49.2 KB. 1.6
+raised it to 53 KB on purpose: a removed row's Undo and the ✕ that goes back
+must answer in the frame of the click, so they are in first paint, while the
+context menus and their look went to `ui/menu.js`. `bench/bytes.mjs` holds it.
 
 What these budgets rule out:
 

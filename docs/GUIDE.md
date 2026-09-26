@@ -41,7 +41,10 @@ into Applications and `snyvi` onto your `PATH`. On Debian and Ubuntu it
 installs both packages, snyvi and the window, with `sudo` for `dpkg`; on
 any other Linux the static binary goes into `~/.local/bin`. Every download
 is checked against the `.sha256` published beside it, and Claude Code is
-connected if it is installed. Run it again to update: a daemon that was
+connected if it is installed. Each download also carries a build
+attestation: `gh attestation verify <file> --repo snymrova/snyvi` proves it
+came out of the release workflow in this repository, on the commit the tag
+names. Run it again to update: a daemon that was
 running is restarted on the new version, and nothing you sent is touched.
 
 ```
@@ -365,11 +368,12 @@ and from that count, and `snyvi init` with no agent prints the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and a third inside a desk. `send_document` is
+That exposes two MCP tools, and two more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
 URL. `send_aside` is the small one, and [Asides](#asides) below says what it
-is for. `read_desk_notes` is offered only to a Claude running in a desk's
-panel, and reads that desk's notes. The tool
+is for. `read_desk_notes` and `tick_desk_note` are offered only to a Claude
+running in a desk's panel: one reads that desk's notes, the other ticks one
+done. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -545,6 +549,25 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | ?     | show keys                                   |
 | Esc   | back to where the document was opened from  |
 | alt ← / → | back / forward                          |
+| ☰ / ⇧F10 | the menu for what has the focus           |
+| F2    | rename the project or desk row you are on   |
+
+**Right-click** anything in the sidebar, the rail or a desk for what it can
+do: a folder, a file, a project, a document, a desk, a panel's head or its
+terminal, a document in a desk's rail, a note, a point. The top line names
+what the menu is for; what removes or closes comes last, in red, and Close
+panel and Close desk ask a second time. Each entry does what the row's own
+button does -- Remove from inbox leaves the same Undo in the row as its ✕.
+The menu key or ⇧F10 opens it from the keyboard for whatever has the focus
+(inside a panel, only the menu key: ⇧F10 is the program's), arrow keys and
+the first letter move through it, and Esc closes it and puts you back. In
+the window, right-clicking anywhere else shows nothing rather than the web
+view's Back and Reload; a text field and a selection in a document keep
+their usual menu for Copy and Paste.
+
+In a panel, hold **Ctrl** over a link a program printed and it is
+underlined; **Ctrl-click** opens it in your browser. A plain click never
+does, and only http and https links count.
 
 Everything the keys do, a finger can do too: on a screen with no
 pointer the controls that appear on hover -- copy, rename, the `#`
@@ -626,7 +649,7 @@ than hidden, and its tooltip says why -- `Wrap · no code on this page`,
 `Font · code is always monospace`. Clicking it, or pressing its key,
 gives the same answer instead of silently doing nothing. On a desk they
 mean the desk's own things: **width** shows the focused panel
-full-size, as `⌃⌥Z` does, and **Aa** sets the terminal's text size --
+in full view, as `⌃⌥Z` does, and **Aa** sets the terminal's text size --
 Small, Normal, Large, Larger -- for every panel on every desk. Inside a
 panel, `⌃=` and `⌃-` step it and `⌃0` puts it back to Normal, as in
 most terminals; readline's undo, which `⌃-` used to send, is still
@@ -865,10 +888,13 @@ not an instruction to anything.
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.
 
-An agent can *read* that list, and nothing else of snyvi's. A Claude
-running in one of a desk's panels is offered `read_desk_notes`, which
-returns that desk's notes, open and done, and has no way to add, tick,
-change or remove one. It is found by the pane: the panel puts its id in
+An agent can *read* that list, and tick a line done, and nothing else of
+snyvi's. A Claude running in one of a desk's panels is offered
+`read_desk_notes`, which returns that desk's notes, open and done, each
+with its number, and `tick_desk_note`, which marks one open line done when
+the work it names is finished. A line an agent ticked carries the agent's
+name at its end; untick it and it is yours again. There is no way for an
+agent to add, untick, change or remove a line. It is found by the pane: the panel puts its id in
 the shell's environment as `SNYVI_SESSION`, and the daemon answers only
 while that panel is running, and only with its own desk's list -- never
 another desk's, and never a document. A Claude started anywhere else is

@@ -26,11 +26,14 @@ const KEEP_LINES = 6000;       // scrollback rows kept in the page; the daemon k
 let ctx = null;                // what app.js handed `open`
 let sock = null, sockP = null, retry = 0;
 let deskId = null, focused = null, cellW = 7.5;
-/** Zoomed: the focused pane alone, at the grid's full size, and the rest as
- *  tabs -- tmux's `prefix z`. A state of the view rather than of a pane, so
- *  focusing another pane while zoomed shows that one at full size, and the
- *  key that zoomed puts the grid back. */
+/** Full view: the focused pane alone, filling the window -- the sidebar and
+ *  the rail folded away, the rest of the panes as tabs in the desk's head.
+ *  A state of the view rather than of a pane, so focusing another pane in
+ *  full view shows that one, and the key that went in comes back out.
+ *  Kept per desk, by the pane it shows, so leaving a desk and coming back
+ *  finds it as it was, until the page reloads. */
 let zoomed = false;
+const fullAt = new Map();
 /** The documents this desk's panes have sent, for the rail, and which desk
  *  they belong to -- so a desk swapped for another never shows the last
  *  one's list while its own is on the way. */
@@ -174,7 +177,7 @@ function paint(v, f) {
   if (f.sbclear) { v.sb.replaceChildren(); v.old.replaceChildren(); }
   if (f.gap) v.sb.insertAdjacentHTML("beforeend", `<div class="gap">⋯ ${f.gap.toLocaleString()} lines went by</div>`);
   if (f.sb && f.sb.length) {
-    v.sb.insertAdjacentHTML("beforeend", f.sb.map(l => `<div>${runsHtml(l.r || l) || " "}</div>`).join(""));
+    v.sb.insertAdjacentHTML("beforeend", f.sb.map(l => `<div${l.w ? ' data-w="1"' : ""}>${runsHtml(l.r || l) || " "}</div>`).join(""));
     for (let n = v.sb.childElementCount - KEEP_LINES; n > 0; n--) v.sb.firstElementChild.remove();
   }
   if (f.r) {
@@ -631,7 +634,7 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   const v = {
@@ -653,7 +656,15 @@ function makeView(p) {
   body.addEventListener("scroll", () => { v.pinned = body.scrollTop + body.clientHeight >= body.scrollHeight - 4; }, { passive: true });
   body.addEventListener("focus", () => { focused = v.id; el.classList.add("on"); rail(); });
   body.addEventListener("blur", () => el.classList.remove("on"));
-  el.querySelector(".pn-head").addEventListener("click", () => body.focus());
+  const hd = el.querySelector(".pn-head");
+  hd.addEventListener("click", e => {
+    if (e.target.closest(".pn-full")) { focused = v.id; zoom(); return; }
+    if (!v.dragged) body.focus();
+    v.dragged = false;
+  });
+  // A double-click on the head, not the body: there it selects a word.
+  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full")) { focused = v.id; zoom(); } });
+  hd.addEventListener("pointerdown", e => drag(v, e));
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
@@ -670,6 +681,7 @@ function makeView(p) {
       return;
     }
     if (e.isComposing || e.key === "Dead" || e.key === "Process") return;
+    if (e.key === "Control" && v.at) hover(v, v.at);
     const b = keyBytes(e, v.mode[0]);
     if (b == null) return;
     e.preventDefault(); e.stopPropagation();
@@ -678,8 +690,21 @@ function makeView(p) {
   });
   // Copy on selection: the scrollback is text in the page, so the browser
   // selects it, and letting go is the copy.
-  body.addEventListener("mousedown", () => { text(v); v.holding = true; addEventListener("mouseup", () => { v.holding = false; }, { once: true }); });
-  body.addEventListener("mouseup", () => setTimeout(() => copy(v, false), 0));
+  body.addEventListener("mousedown", e => { v.down = [e.clientX, e.clientY]; text(v); v.holding = true; addEventListener("mouseup", () => { v.holding = false; }, { once: true }); });
+  body.addEventListener("mouseup", e => {
+    // Ctrl-click on a link opens it, and only that: a plain click never does,
+    // and neither does a press that travelled or left a selection.
+    const still = v.down && Math.hypot(e.clientX - v.down[0], e.clientY - v.down[1]) < 4;
+    if (e.button === 0 && e.ctrlKey && still && getSelection().isCollapsed) {
+      const l = linkAt(v, e);
+      if (l) { openLink(l.url); return; }
+    }
+    setTimeout(() => copy(v, false), 0);
+  });
+  // Held Ctrl shows the link under the pointer, underlined, as a terminal does.
+  body.addEventListener("mousemove", e => { v.at = e; hover(v, e.ctrlKey ? e : null); });
+  body.addEventListener("mouseleave", () => { v.at = null; hover(v, null); });
+  body.addEventListener("keyup", e => { if (e.key === "Control") hover(v, null); });
   body.addEventListener("wheel", e => wheel(v, e), { passive: false });
   body.addEventListener("paste", e => { e.preventDefault(); paste(v, e.clipboardData); });
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
@@ -834,15 +859,13 @@ function current() {
  *  700px, one below. Four panes at phone width are four unreadable panes. */
 const room = () => (innerWidth > 1100 ? 4 : innerWidth > 700 ? 2 : 1);
 
-/** Why there is no new pane, when there is not: the nearer of the two caps,
- *  or the width, is the one worth naming. Empty while one can be made. Both
- *  places that offer a pane -- the + in the head and the row in the rail --
- *  ask this, so they never disagree. */
+/** Why there is no new pane, when there is not: the desk holds four, and
+ *  that is the only cap. The width is not one -- panes it has no room for are
+ *  tabs. Empty while one can be made. Both places that offer a pane -- the +
+ *  in the head and the row in the rail -- ask this, so they never disagree. */
 function noNew(d) {
   const j = ctx.desks;
-  return j.panes >= j.cap ? `Every panel is in use: ${j.panes} of ${j.cap} everywhere`
-    : d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}`
-    : d.panes.length >= room() ? "No room for another at this width" : "";
+  return d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}` : "";
 }
 
 function layout() {
@@ -853,6 +876,9 @@ function layout() {
   const n = zoomed ? 1 : room(), f = all.find(v => v.id === focused);
   const shown = all.length <= n ? all : [f, ...all.filter(v => v !== f)].filter(Boolean).slice(0, n).sort((a, b) => a.pane.slot - b.pane.slot);
   if (zoomed && all.length > 1) grid.dataset.zoom = "1"; else delete grid.dataset.zoom;
+  // The window's too: the sidebar and the rail go while the desk is the page.
+  if (zoomed && all.length && reading == null) ctx.root.dataset.full = "1"; else delete ctx.root.dataset.full;
+  for (const v of all) { const b = v.el.querySelector(".pn-full"); if (b) { b.textContent = zoomed ? "⤡" : "⤢"; b.title = zoomed ? "Back to the grid  ⌃⌥Z" : "Full view  ⌃⌥Z"; } }
   const cols = shown.length > 1 ? 2 : 1, rows = shown.length > 2 ? 2 : 1;
   grid.style.gridTemplateColumns = cols === 2 ? `${d.col}fr ${1 - d.col}fr` : "1fr";
   grid.style.gridTemplateRows = rows === 2 ? `${d.row}fr ${1 - d.row}fr` : "1fr";
@@ -866,11 +892,13 @@ function layout() {
   // with them, or their next key would land on the reading view.
   const keep = [...grid.querySelectorAll(":scope > .dk-div")], want = [...shown.map(v => v.el), ...keep];
   if (want.length !== grid.children.length || want.some((el, i) => grid.children[i] !== el)) {
-    const had = grid.contains(document.activeElement) ? document.activeElement : null, back = shown.filter(v => !v.el.isConnected);
+    // Every pane that is not where it was is drawn whole below: one put back
+    // in the page, or one a move put in another place.
+    const had = grid.contains(document.activeElement) ? document.activeElement : null, back = shown.filter((v, i) => grid.children[i] !== v.el);
     grid.replaceChildren(...want);
     if (had && had.isConnected) had.focus({ preventScroll: true });
     // A canvas put back in the page -- after a document read over the desk,
-    // or a pane the grid had no room for -- keeps its pixels, but WebKit's
+    // a pane the grid had no room for, a pane moved -- keeps its pixels, but WebKit's
     // GPU canvas shows none of them until something draws on it: the pane
     // stood empty until a scroll. Drawn whole, it is shown whole.
     for (const v of back) drawAll(v);
@@ -882,8 +910,11 @@ function layout() {
 function tabs(d, all, shown) {
   const t = ctx.docEl.querySelector(".dk-tabs");
   if (!t) return;
-  t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}">[${v.pane.slot}]</button>`).join("") : "";
-  t.title = zoomed && all.length > 1 ? "Zoomed  ⌃⌥Z" : "";
+  // A pane out of sight that needs the reader says so on its tab, with the
+  // rail's mark: full view never hides a pane that is waiting.
+  const need = v => v.status.blocked || v.status.agent === "needs_you";
+  t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}"${!shown.includes(v) && need(v) ? ' title="Waiting on you"' : ""}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
+  t.title = zoomed && all.length > 1 ? "Full view  ⌃⌥Z" : "";
   // The + goes quiet when there is no pane to add, and says why under the
   // cursor. At the desk's own cap the count sits beside it -- 4/4 -- which
   // is what ties the greyed + to the panes on the desk.
@@ -929,7 +960,7 @@ function sync(d) {
     if (v) { v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
     else views.set(p.id, makeView(p));
   }
-  if (!views.has(focused)) focused = d.panes[0] ? d.panes[0].id : null;
+  if (!views.has(focused)) { focused = d.panes[0] ? d.panes[0].id : null; if (zoomed) fullAt.set(deskId, focused); }
   layout();
   watch();
 }
@@ -939,6 +970,180 @@ function list() {
   return `<div class="inbox-head"><h1>Desks</h1><p>A desk is up to four terminal panels side by side. A new one starts in your home folder; to start one in a folder, right-click the folder under Folders, or press the desk button beside it.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
     (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "panel")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
 }
+
+// ---------- links ----------
+
+/** A URL in what a panel shows, at a character: the http or https link that
+ *  covers `i` in `text`, with the punctuation a sentence puts after a link
+ *  trimmed off -- and a closing bracket kept when the link opened one, as a
+ *  Wikipedia link does. Nothing else is a link: what a program prints is not
+ *  trusted, and `file:`, `javascript:` and every other scheme stay text. */
+export function urlAt(text, i) {
+  const re = /https?:\/\/[^\s<>"'`]+/g;
+  for (let m; (m = re.exec(text));) {
+    let u = m[0];
+    for (;;) {
+      const last = u[u.length - 1];
+      if (/[.,;:!?'"]/.test(last)) u = u.slice(0, -1);
+      else if (/[)\]}]/.test(last)) {
+        const open = { ")": "(", "]": "[", "}": "{" }[last];
+        if (u.split(open).length < u.split(last).length) u = u.slice(0, -1); else break;
+      } else break;
+    }
+    if (i >= m.index && i < m.index + u.length) {
+      try { const p = new URL(u); if (p.protocol === "http:" || p.protocol === "https:") return { url: u, from: m.index, to: m.index + u.length }; } catch {}
+      return null;
+    }
+    if (m.index > i) return null;
+  }
+  return null;
+}
+
+/** The link under the pointer in a pane, with the rectangles it covers on
+ *  screen. On the live grid it is read from the cells, which are never
+ *  behind; a row that runs to the last column is read on into the next, so
+ *  a link the terminal wrapped is one link. In the scrollback it is the
+ *  line's text, joined over the lines the daemon marked as wrapped. */
+function linkAt(v, e) {
+  const r = v.scr.getBoundingClientRect();
+  if (v.rows && e.clientY >= r.top && e.clientY < r.top + v.rows * LINE_PX) {
+    const y = Math.floor((e.clientY - r.top) / LINE_PX), x = Math.floor((e.clientX - r.left) / cellW);
+    if (x < 0 || x >= v.cols) return null;
+    const full = row => row && row[v.cols - 1] && row[v.cols - 1][0] !== " ";
+    let y0 = y, y1 = y;
+    while (y0 > 0 && y - y0 < 4 && full(v.cells[y0 - 1])) y0--;
+    while (y1 < v.rows - 1 && y1 - y < 4 && full(v.cells[y1])) y1++;
+    // One string for the rows, and where each character's cell is.
+    let text = "", at = -1;
+    const cellOf = [];
+    for (let yy = y0; yy <= y1; yy++) {
+      v.cells[yy].forEach((c, xx) => {
+        if (yy === y && xx === x) at = c ? text.length : text.length - 1;
+        if (!c) return;
+        cellOf.push([xx, yy, c[4] || 1]);
+        text += c[0];
+      });
+    }
+    const u = urlAt(text, at);
+    if (!u) return null;
+    const rects = [];
+    for (let k = u.from; k < u.to; k++) {
+      const [xx, yy, w] = cellOf[k], last = rects[rects.length - 1];
+      if (last && last.y === yy) last.w = (xx + w) * cellW - last.x;
+      else rects.push({ x: xx * cellW, y: yy, w: w * cellW });
+    }
+    return { url: u.url, rects: rects.map(q => ({ left: r.left + q.x, top: r.top + q.y * LINE_PX, width: q.w, height: LINE_PX })) };
+  }
+  const line = e.target.closest && e.target.closest(".pn-sb > div, .pn-old > div");
+  const hit = line && document.caretRangeFromPoint && document.caretRangeFromPoint(e.clientX, e.clientY);
+  if (!hit || !line.contains(hit.startContainer)) return null;
+  const lines = [line];
+  if (line.parentElement === v.sb) {
+    for (let p = line.previousElementSibling; p && p.dataset.w && lines.length < 5; p = p.previousElementSibling) lines.unshift(p);
+    for (let n = line; n.dataset.w && n.nextElementSibling && lines.length < 5; n = n.nextElementSibling) lines.push(n.nextElementSibling);
+  }
+  // The character under the pointer, counted from the first of the lines.
+  let at = 0;
+  for (const l of lines) {
+    if (l !== line) { at += l.textContent.length; continue; }
+    const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) { if (n === hit.startContainer) { at += hit.startOffset; break; } at += n.length; }
+    break;
+  }
+  const u = urlAt(lines.map(l => l.textContent).join(""), at);
+  if (!u) return null;
+  // Its rectangles, from a range over the same characters.
+  const rects = [];
+  let k = 0;
+  for (const l of lines) {
+    const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) {
+      const a = Math.max(u.from - k, 0), b = Math.min(u.to - k, n.length);
+      if (a < b) { const rg = document.createRange(); rg.setStart(n, a); rg.setEnd(n, b); rects.push(...rg.getClientRects()); }
+      k += n.length;
+    }
+  }
+  return { url: u.url, rects };
+}
+
+/** The underline under a link while Ctrl is held: divs laid over the pane,
+ *  never drawn into the canvas, so the paint budget does not see them. */
+function hover(v, e) {
+  const l = e && linkAt(v, e);
+  v.body.classList.toggle("pn-on-link", !!l);
+  if (!l) { v.ul?.remove(); v.ul = null; return; }
+  if (!v.ul) { v.ul = document.createElement("div"); v.ul.className = "pn-ul"; v.el.append(v.ul); }
+  const o = v.el.getBoundingClientRect();
+  v.ul.innerHTML = [...l.rects].map(q => `<i style="left:${q.left - o.left}px;top:${q.top - o.top + q.height - 2}px;width:${q.width}px"></i>`).join("");
+  v.ul.title = l.url;
+}
+
+/** Out to the desktop's browser. In the window, a new window is handed to
+ *  the desktop (`on_new_window`), as a link in a document is. */
+function openLink(url) {
+  window.open(url, "_blank", "noopener");
+}
+
+// ---------- moving a pane ----------
+
+/** Move a pane to another position; the pane there takes its old one. The
+ *  number goes with the position -- pane 2 is always the one ⌃⌥2 reaches --
+ *  and the daemon moves what each pane sent with it, so "From desk [2]"
+ *  still leads to the pane that sent it. Every window redraws from the
+ *  daemon's word, this one too. */
+async function moveTo(v, slot) {
+  const d = current();
+  if (!d || slot === v.pane.slot) return;
+  try { await ctx.api(`/api/desks/${d.id}/move`, { from: v.pane.slot, to: slot }); }
+  catch (e) { ctx.toast("Could not move the panel", String(e.message || e)); }
+}
+
+/** A pane's head dragged onto another pane, or onto its tab, trades their
+ *  places. Pointer events, as the dividers are: the window's own drop
+ *  handler takes HTML drag and drop. A press that does not travel is a
+ *  click, and focuses the pane as before. */
+function drag(v, e) {
+  if (e.button !== 0 || e.target.closest("button")) return;
+  const x0 = e.clientX, y0 = e.clientY;
+  let on = false, over = null;
+  const target = ev => {
+    const at = document.elementFromPoint(ev.clientX, ev.clientY);
+    const t = at && (at.closest(".dk-grid > .pn") || at.closest(".dk-tabs [data-focus]"));
+    const w = t && views.get(t.dataset.id || t.dataset.focus);
+    return w && w !== v ? { w, el: t } : null;
+  };
+  const move = ev => {
+    if (!on && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+    if (!on) { on = true; v.el.classList.add("pn-drag"); ctx.root.dataset.resizing = "1"; }
+    const t = target(ev);
+    if (over && (!t || t.el !== over)) over.classList.remove("pn-drop");
+    over = t ? t.el : null;
+    if (over) over.classList.add("pn-drop");
+  };
+  const up = ev => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    removeEventListener("pointercancel", up);
+    if (over) over.classList.remove("pn-drop");
+    if (!on) return;
+    v.el.classList.remove("pn-drag");
+    delete ctx.root.dataset.resizing;
+    v.dragged = true;
+    const t = ev.type === "pointerup" && target(ev);
+    if (t) moveTo(v, t.w.pane.slot);
+  };
+  // Followed on the window, not captured by the head: a captured pointer
+  // makes the head the target of the click that follows a press, and the ⤢
+  // in it would never be clicked.
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+  addEventListener("pointercancel", up);
+}
+
+/** ⌃⌥⇧ and an arrow: the focused pane trades places with the one beside it
+ *  that way. Positions are 1 2 over 3 4; there is nothing to trade with past
+ *  the edge, or where no pane is. */
+const NEXT = { ArrowLeft: [0, 1, 0, 3], ArrowRight: [2, 0, 4, 0], ArrowUp: [0, 0, 1, 2], ArrowDown: [3, 4, 0, 0] };
 
 // ---------- the dividers ----------
 
@@ -1031,7 +1236,7 @@ function rail() {
   const { esc } = ctx, j = ctx.desks;
   const dot = v => v.status.blocked ? "!" : v.status.agent === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
-  const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} of ${j.cap} everywhere`;
+  const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} open on every desk`;
   const why = noNew(d);
   const dl = docsAt === d.id ? docList : [];
   // The latest few, and always the one on the page: a document being read
@@ -1187,7 +1392,8 @@ function noteRow(x, esc) {
   }
   return `<li class="dk-note${x.done ? " done" : ""}">` +
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
-    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" title="Click to rewrite">${esc(x.text)}</button>` +
+    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" title="${x.done_by ? `Ticked by ${esc(x.done_by)} · click to rewrite` : "Click to rewrite"}">${esc(x.text)}</button>` +
+    (x.done && x.done_by ? `<span class="dk-by" title="Ticked by ${esc(x.done_by)}">${esc(x.done_by)}</span>` : "") +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" title="Take it off the list · nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></li>`;
 }
 
@@ -1210,6 +1416,13 @@ async function getNotes(id, again) {
   if (id !== deskId) return;
   noteList = j.notes || []; notesAt = id;
   if (current()) rail();
+}
+
+/** An agent ticked a line on a desk's list (`tick_desk_note`): read this
+ *  desk's list again if it is that desk. A field being typed in is left be --
+ *  the list is read, and the rail redraws around it, as after a tick here. */
+export function notesChanged(id) {
+  if (ctx && id === deskId) getNotes(id, true);
 }
 
 /** Put the open field back after a redraw, with what was typed into it and the
@@ -1532,6 +1745,7 @@ function focusPane(id) {
   // with that pane focused.
   if (reading != null) { ctx.go(deskId, true, v.pane.slot); return; }
   focused = id;
+  if (zoomed) fullAt.set(deskId, id);
   layout();
   v.body.focus();
 }
@@ -1547,18 +1761,27 @@ function click(e) {
   if (b && !b.disabled) act(b);
 }
 
-/** The focused pane alone, or the grid again. */
+/** The focused pane in full view, or the grid again. */
 function zoom() {
   zoomed = !zoomed;
+  if (zoomed) fullAt.set(deskId, focused); else fullAt.delete(deskId);
   layout();
   const v = views.get(focused);
   if (v) v.body.focus();
 }
 
 /** ⌃⌥1 to ⌃⌥4: a pane by its slot, from anywhere on the desk. ⌃⌥Z: the
- *  focused pane alone. */
+ *  focused pane alone. ⌃⌥⇧ and an arrow: the focused pane moved. */
 function keys(e) {
   if (!(e.ctrlKey && e.altKey) || e.metaKey) return;
+  if (e.shiftKey && NEXT[e.key]) {
+    const d = current(), v = views.get(focused);
+    if (reading != null || !d || !v) return;
+    const to = NEXT[e.key][v.pane.slot - 1];
+    e.preventDefault(); e.stopPropagation();
+    if (to && d.panes.some(p => p.slot === to)) moveTo(v, to);
+    return;
+  }
   if (e.code === "KeyZ") { if (reading != null) return; e.preventDefault(); e.stopPropagation(); zoom(); return; }
   if (!/^Digit[1-4]$/.test(e.code)) return;
   const d = current(), p = d && d.panes.find(x => x.slot === +e.code[5]);
@@ -1597,9 +1820,13 @@ export function open(c) {
   ctx = c;
   style();
   if (first) measure();
-  if (deskId !== c.id) { views.clear(); focused = null; zoomed = false; docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints(); }
+  if (deskId !== c.id) {
+    views.clear(); docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints();
+    focused = fullAt.get(c.id) ?? null; zoomed = fullAt.has(c.id);
+  }
   deskId = c.id; reading = null;
   const d = current();
+  if (zoomed && d && !d.panes.some(p => p.id === focused)) { zoomed = false; fullAt.delete(c.id); }
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
   draw();
   ctx.docEl.addEventListener("click", click);
@@ -1675,6 +1902,88 @@ export function textSize(step) {
 /** The focused panel alone, or the grid again: what the width control means
  *  on a desk. How many panels there are, so it can say when one already fills
  *  it. */
+/** What the context menu offers on this desk's surfaces (menu.js asks, with
+ *  the element under the pointer or the focus): a panel, from its rail row,
+ *  its head or its body; a document in the rail; a note; a point. Each entry
+ *  runs what that surface's own control runs -- `act` with the same data a
+ *  button carries -- so the two cannot disagree. "rule" is a rule. */
+export function actions(el) {
+  const R = "rule", d = current();
+  if (!d) return null;
+  const pane = el.closest(".dk-pane, .pn-head, .pn-body");
+  if (pane) {
+    const id = pane.matches(".dk-pane") ? pane.querySelector("[data-focus]")?.dataset.focus : pane.closest(".pn")?.dataset.id;
+    const v = id && views.get(id);
+    if (!v) return null;
+    const does = a => () => act({ dataset: { a, p: v.id } });
+    const body = pane.matches(".pn-body"), sel = getSelection();
+    const picked = body && !sel.isCollapsed && v.body.contains(sel.anchorNode);
+    const s = v.status;
+    return { head: `Panel ${v.pane.slot} · ${short(v)}`, items: [
+      picked && { label: "Copy", key: "⌃⇧C", run: () => copy(v, true) },
+      body && s.running && { label: "Paste", key: "⌃⇧V", run: () => pasteText(v) },
+      body && R,
+      body && { label: "Text size +", key: "⌃=", run: () => { textSize(1); if (ctx.sized) ctx.sized(); } },
+      body && { label: "Text size −", key: "⌃-", run: () => { textSize(-1); if (ctx.sized) ctx.sized(); } },
+      body && { label: "Reset text size", key: "⌃0", run: () => { textSize(0); if (ctx.sized) ctx.sized(); } },
+      body && R,
+      v.id !== focused && { label: "Focus", key: `⌃⌥${v.pane.slot}`, run: () => focusPane(v.id) },
+      { label: zoomed && v.id === focused ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => { if (!(zoomed && v.id === focused)) { focused = v.id; if (zoomed) { fullAt.set(deskId, v.id); layout(); v.body.focus(); return; } } zoom(); } },
+      ...[1, 2, 3, 4].filter(n => n !== v.pane.slot).map(n => ({ label: `Move to position ${n}`, run: () => moveTo(v, n) })),
+      R,
+      s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
+      !s.running && talked(v) && { label: "Resume conversation", run: () => run(v, "", false, true) },
+      R,
+      { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
+      { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
+      R,
+      { label: "Close panel", danger: true, sure: true, run: does("close") },
+    ] };
+  }
+  const doc = el.closest(".dk-doc");
+  if (doc) {
+    const id = doc.querySelector("a[data-read]")?.dataset.read, x = docList.find(y => y.id === id);
+    if (!x) return null;
+    return { head: x.title, items: [
+      { label: "Open", run: () => ctx.read(x.id) },
+      x.source_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.source_path); ctx.toast("Copied", x.source_path); } },
+      { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } },
+    ] };
+  }
+  const point = el.closest(".dk-point");
+  if (point) {
+    const b = point.querySelector("[data-a=\"point-x\"]");
+    const v = b && views.get(b.dataset.p);
+    if (!v) return null;
+    return { head: `A point for panel ${v.pane.slot}`, items: [
+      { label: `Type into panel ${v.pane.slot}`, run: () => act({ dataset: { a: "put", p: v.id } }) }, R,
+      { label: "Let go", danger: true, run: () => act({ dataset: { a: "point-x", p: b.dataset.p, n: b.dataset.n } }) },
+    ] };
+  }
+  const note = el.closest(".dk-note");
+  const n = note && note.querySelector("[data-a=\"note-tick\"]")?.dataset.n, x = n && noteList.find(y => y.id === +n);
+  if (x) {
+    const does = a => () => act({ dataset: { a, n: String(x.id) } });
+    return { head: x.text, items: [
+      { label: "Edit", run: does("note-edit") },
+      { label: x.done ? "Untick" : "Tick", run: does("note-tick") }, R,
+      { label: "Take off the list", danger: true, run: does("note-x") },
+    ] };
+  }
+  return null;
+}
+
+/** Paste from the menu: the clipboard read as text, as ⌃⇧V would bring it.
+ *  WebKit may refuse a read the page asks for itself; then the menu says
+ *  which keys do it rather than doing nothing without a word. */
+async function pasteText(v) {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) { v.typed = Date.now(); input(v, bracket(v, t)); }
+    v.body.focus();
+  } catch { ctx.toast("Paste with ⌃⇧V", "the window would not hand the clipboard to the menu"); }
+}
+
 export const zoomOn = () => { zoom(); return zoomed; };
 export const panels = () => views.size;
 
@@ -1697,6 +2006,7 @@ export function update(desks) {
 export function aside(docId) {
   if (!ctx || deskId == null) return;
   reading = docId;
+  delete ctx.root.dataset.full;
   hidePick();
   ctx.docEl.removeEventListener("click", click);
   if (current()) rail();
@@ -1705,6 +2015,7 @@ export function aside(docId) {
 export function close() {
   if (!ctx) return;
   say({ t: "watch", panes: [] });
+  delete ctx.root.dataset.full;
   deskId = null; reading = null;
   views.clear();
   focused = null;
@@ -1750,9 +2061,20 @@ const CSS = `
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
 .dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: 4px; }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }
-/* Zoomed: the one tab that is on carries a mark, so a full-size pane with
- * tabs beside it reads as a zoom and not as a window too narrow for two. */
+/* Full view: the one tab that is on carries a mark, so a full-size pane with
+ * tabs beside it reads as full view and not as a window too narrow for two;
+ * a tab out of sight that is waiting on the reader is amber, as the rail is. */
 .dk:has(.dk-grid[data-zoom="1"]) .dk-tabs button.on::after { content: " ⤢"; }
+.dk-tabs button.blk { color: var(--warn); font-weight: 600; }
+/* And the window gives the pane everything: no sidebar, no rail, and none of
+ * the buttons that would bring them back -- ⤡ or ⌃⌥Z is the way out. The
+ * fold preferences are not touched, so coming back is exactly as it was. */
+:root[data-full] #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
+:root[data-full] #side, :root[data-full] #rail { display: none !important; }
+:root[data-full] #chrome #btn-side, :root[data-full] #chrome #btn-rail { display: none !important; }
+.pn-full { flex: none; align-self: center; width: 18px; height: 18px; margin: -2px -4px -2px 2px; display: grid; place-items: center; border-radius: 4px; font-size: 12px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
+.pn:hover .pn-full, .pn.on .pn-full, .pn-full:focus-visible, :root[data-full] .pn-full { opacity: 1; }
+.pn-full:hover { background: var(--rule-2); color: var(--fg); }
 .dk-head .icon:first-of-type { margin-left: auto; }
 .dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
 /* At the cap: the + at rest, and the count beside it in the tab strip's
@@ -1771,6 +2093,15 @@ const CSS = `
 .dk-div:hover, .dk-div:focus-visible { background: var(--accent-bg); }
 .pn { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--pn-bg); overflow: hidden; }
 .pn.on { border-color: var(--rule-2); box-shadow: 0 0 0 1px var(--accent-bg); }
+/* A head carried onto another pane: the one carried goes faint, the one it
+   would trade places with is outlined. */
+.pn.pn-drag { opacity: .55; }
+/* A link under the pointer with Ctrl held: underlined over the pane, and the
+   pointer says it can be clicked. */
+.pn-body.pn-on-link { cursor: pointer; }
+.pn-ul { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.pn-ul i { position: absolute; height: 1px; background: var(--accent); }
+.pn.pn-drop, .dk-tabs .pn-drop { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pn-head { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; font-size: 11.5px; color: var(--fg-3); border-bottom: 1px solid var(--rule); cursor: default; white-space: nowrap; flex: none; }
 .pn-slot { font-family: var(--mono); color: var(--fg-2); }
 .pn-start[hidden] { display: none; }
@@ -1925,6 +2256,9 @@ const CSS = `
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
 .dk-note.done > .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-3); }
+/* A line an agent ticked says which agent, small, at its end: the reader
+   can untick it like any other. */
+.dk-by { flex: none; align-self: center; margin-left: 6px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); opacity: .8; }
 /* The circle. A button rather than a checkbox input so it draws the same on
    every platform, with the role and the state a checkbox would have carried. */
 .dk-tick { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin: 5px 0 0 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }

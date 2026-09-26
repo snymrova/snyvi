@@ -615,7 +615,7 @@
       const open = projOpen(p);
       // The one held for a ghost closes with it.
       const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
-      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
+      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -879,77 +879,25 @@
     if (r) {
       // Inside a <summary>, the default action is toggling the project open.
       e.preventDefault(); e.stopPropagation();
-      startRename(r);
+      startRename(r.parentElement, r.dataset.rename, +r.dataset.id);
       return;
     }
     const b = e.target.closest("[data-close]");
     if (!b) return;
     e.preventDefault(); e.stopPropagation();
-    const id = b.dataset.close;
+    closeRoot(b.dataset.close);
+  });
+
+  /** A folder off the Folders list: the ✕ on its row, and its menu's Close
+   *  folder. Nothing on disk is touched. */
+  async function closeRoot(id) {
     try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
     state.browse = state.browse.filter(r => r.id !== id);
     if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else { renderTree(); markActive(); }
-  });
-
-  /** Turn a name in the tree into a field, in place. Enter and blur keep what was
-   *  typed, Escape abandons it; the label goes back the moment either happens, so
-   *  the tree is never left holding an input. */
-  function startRename(btn) {
-    const holder = btn.parentElement;
-    const label = holder.querySelector(":scope > .nm");
-    if (!label || holder.querySelector("input.ren-in")) return;
-    const what = btn.dataset.rename, id = +btn.dataset.id, before = label.textContent, cls = label.className;
-    const input = document.createElement("input");
-    input.className = "ren-in";
-    input.value = before;
-    input.spellcheck = false;
-    input.setAttribute("aria-label", `Name of this ${what}`);
-    label.replaceWith(input);
-    holder.classList.add("renaming");
-    input.focus(); input.select();
-
-    let settled = false;
-    const finish = async keep => {
-      if (settled) return;
-      settled = true;
-      const next = input.value.trim();
-      const label = document.createElement("span");
-      label.className = cls;
-      label.textContent = before;
-      input.replaceWith(label);
-      holder.classList.remove("renaming");
-      if (!keep || !next || next === before) return;
-      label.textContent = next;   // stands in until the tree comes back
-      try {
-        // A desk is renamed behind the window's capability, as everything
-        // about a desk is; a project or a workflow by anyone reading.
-        if (what === "desk") { await deskApi(`/api/desks/${id}/rename`, { name: next }); await loadDesks(); }
-        else {
-          const where = what === "project" ? "projects" : "workflows";
-          const r = await fetch(`/api/${where}/${id}/rename`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name: next }),
-          });
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          await applyRename(what, id);
-        }
-      } catch (e) {
-        label.textContent = before;
-        toast("Could not rename", String(e));
-      }
-    };
-    // The app answers single keys, and Escape closes find and the palette.
-    input.addEventListener("keydown", e => {
-      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finish(true); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
-      else e.stopPropagation();
-    });
-    input.addEventListener("blur", () => finish(true));
-    // A click in the field must not open the document or fold the project.
-    input.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
   }
 
+  /** Turn a name in the tree into a field, in place (menu.js, `rename`). */
+  const startRename = (holder, what, id) => act("rename", holder, what, id);
   /** Fold a rename into everything showing it: the tree, and the open document,
    *  whose header and rail name its project and workflow too. */
   async function applyRename(what, id) {
@@ -2430,36 +2378,11 @@
    *  The request carries no token because this page has none, and is allowed
    *  through by being same-origin instead; a page on another origin is refused
    *  by the daemon. */
-  async function openTerminal(body = state.view === "browse"
-      ? { root: state.browseRoot.id, path: state.browsePath || "" }
-      : { doc: state.doc.id }) {
-    try {
-      const r = await fetch("/api/terminal", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok) toast("Terminal", j.dir || "opened");
-      else toast("No terminal", j.error || `${r.status}`);
-    } catch (e) { toast("No terminal", String(e)); }
-  }
-  /** The same place, in the file manager -- Files, Finder, Explorer. The same
-   *  ids go over and the daemon resolves them the same way; a desk's folder
-   *  goes with the capability, behind the desk's gate. */
-  async function openFolder(body = state.view === "browse"
-      ? { root: state.browseRoot.id, path: state.browsePath || "" }
-      : { doc: state.doc.id }) {
-    try {
-      const j = body.desk != null ? await deskApi("/api/reveal", body) : await (async () => {
-        const r = await fetch("/api/reveal", {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.error || `${r.status}`);
-        return j;
-      })();
-      toast("Opened", j.dir || "the folder");
-    } catch (e) { toast("Could not open the folder", e.message || String(e)); }
-  }
+  /** Where the terminal and the file manager open when nothing is named:
+   *  the folder or the document on the page (menu.js, `terminal`, `reveal`). */
+  const here = () => state.view === "browse" ? { root: state.browseRoot.id, path: state.browsePath || "" } : { doc: state.doc.id };
+  const openTerminal = (body = here()) => act("terminal", body);
+  const openFolder = (body = here()) => act("reveal", body);
 
   async function togglePin() {
     if (!state.doc) return;
@@ -2687,9 +2610,19 @@
     show: (id, push, slot) => showDesk(id, push, slot),
     browse: (root, path, push) => showBrowse(root, path, push),
     drawBrowse: () => renderBrowse(),
-    terminal: body => openTerminal(body),
-    reveal: body => openFolder(body),
     forget: id => { if (lastDesk === id) lastDesk = null; },
+    // What the context menu and the moves out of this file reach for: the
+    // page's own functions, so the chunk runs the code a row's button runs.
+    get desk() { return desk; },
+    folderOf: el => folderOf(el),
+    closeRoot: id => closeRoot(id),
+    open: id => showDoc(id, true),
+    togglePin: () => togglePin(),
+    refreshTree: pid => refreshTree(pid),
+    deleteDoc: d => deleteDoc(d),
+    knownDocs,
+    putAway: pid => putAway(String(pid)),
+    applyRename: (what, id) => applyRename(what, id),
   };
   /** Wait for the chunk, then do the thing that was clicked. A failure is the
    *  reader's to see: they pressed something and nothing happened otherwise. */
@@ -2721,7 +2654,7 @@
       // The mark and the count are one column at the row's end, drawn
       // whether or not there is anything to say, so every row's line up.
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
-        `${icon("desk")}<span class="title nm">${esc(d.name)}</span>${capability ? renameBtn("desk", d.id) : ""}`,
+        `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`];
     });
@@ -2862,16 +2795,44 @@
     return { root: r.id, path, abs: r.path + (path ? "/" + path : "") };
   }
 
-  /* The one part of the folder menu that cannot be deferred: a page has to be
-   * listening for the right-click before it can know one is coming. What the
-   * menu is and does is in the chunk. */
-  treesEl.addEventListener("contextmenu", e => {
-    const s = e.target.closest(".b-dir > details > summary, .b-root > summary");
-    const f = s && folderOf(s);
-    if (!f) return;
+  /* The one part of every context menu that cannot be deferred: a page has
+   * to be listening for the right-click before it can know one is coming,
+   * and has to decide at once whether the browser's own menu shows. What the
+   * menus are and do is in the chunk (menu.js, `entries`). A field keeps the
+   * browser's menu -- paste, spelling -- and so does a selection in a
+   * document, for its Copy. Anywhere else in the window, WebKit's Back,
+   * Forward and Reload are not snyvi's, and do not show. */
+  const MENU_AT = ".b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
+    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone)";
+  const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
+  document.addEventListener("contextmenu", e => {
+    if (e.target.closest("input, textarea, [contenteditable]")) return;
+    const sel = getSelection();
+    if (!sel.isCollapsed && e.target.closest("#doc") && !e.target.closest(".pn-body")) return;
+    const at = e.target.closest(MENU_AT);
+    if (!at) { if (capability) e.preventDefault(); return; }
     e.preventDefault();
-    act("open", f, e.clientX, e.clientY);
+    menuFor(at, e.clientX, e.clientY, false);
   });
+  /* And from the keyboard: the menu key or ⇧F10 on whatever has the focus,
+   * at its corner; F2 renames the project or desk row that has it. Inside a
+   * panel only the menu key: ⇧F10 and F2 are the program's. */
+  document.addEventListener("keydown", e => {
+    const el = document.activeElement;
+    if (!el || el.closest("input, textarea, [contenteditable]")) return;
+    const inPane = !!el.closest(".pn-body");
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey && !inPane)) {
+      const at = el.closest(MENU_AT);
+      if (!at) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = at.getBoundingClientRect();
+      menuFor(at, r.left + 12, r.top + Math.min(r.height, 28), true);
+    } else if (e.key === "F2" && !inPane && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const p = el.closest(".t-proj > summary"), d = el.closest("a[data-desk]");
+      if (p) { e.preventDefault(); startRename(p, "project", +p.parentElement.dataset.pid); }
+      else if (d && capability) { e.preventDefault(); startRename(d, "desk", +d.dataset.desk); }
+    }
+  }, true);
 
   /** The daemon's event stream, and the one socket this page holds open for
    *  as long as it lives.
@@ -3065,6 +3026,8 @@
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
+    // An agent ticked a line on a desk's list.
+    es.addEventListener("desknotes", ev => { try { const j = JSON.parse(ev.data); if (desk && desk.notesChanged) desk.notesChanged(j.desk); } catch {} });
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -3403,7 +3366,7 @@
       no ? b.setAttribute("aria-disabled", "true") : b.removeAttribute("aria-disabled");
       if (no) b.dataset.label = `${NAMES[c]} · ${no}`;
     }
-    if (!why("wide")) $("#btn-wide").dataset.label = onDesk() ? "Focused panel full-size · w" : "Maximise width · w";
+    if (!why("wide")) $("#btn-wide").dataset.label = onDesk() ? "Focused panel in full view · w" : "Maximise width · w";
     if (!why("wrap")) $("#btn-wrap").dataset.label = "Wrap long lines · z";
     if (!why("font")) paintFontBtn();
   }
@@ -3417,7 +3380,7 @@
   $(".foot-set").addEventListener("pointerenter", paintControls);
   $(".foot-set").addEventListener("focusin", paintControls);
   function toggleWide() {
-    if (onDesk()) { const z = desk.zoomOn(); toast("Width", z ? "the focused panel, full-size" : "all panels", null, null, { at: $("#btn-wide") }); return; }
+    if (onDesk()) { const z = desk.zoomOn(); toast("Width", z ? "the focused panel, in full view" : "all panels", null, null, { at: $("#btn-wide") }); return; }
     const on = root.dataset.wide !== "1";
     on ? (root.dataset.wide = "1") : delete root.dataset.wide;
     store.set("snyvi.wide", on ? "1" : "0");

@@ -236,6 +236,8 @@ impl Store {
             "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0",
             // The Claude conversation a pane last had, to offer it back.
             "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''",
+            // Who ticked a desk's line, when an agent did.
+            "ALTER TABLE desk_notes ADD COLUMN done_by TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1069,6 +1071,24 @@ impl Store {
         desk::open_pane(&mut self.conn.lock().unwrap(), desk_id, cwd, cmd, now())
     }
 
+    /// Move a pane to another slot on its desk (`desk::move_pane`), and what
+    /// each of the two panes sent with it: "From desk [2]" is the panel now in
+    /// position 2, so a document's slot is rewritten in the same transaction.
+    pub fn move_pane(&self, desk_id: i64, from: i64, to: i64) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        if !desk::move_pane(&tx, desk_id, from, to)? {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE docs SET desk_slot = CASE desk_slot WHEN ?2 THEN ?3 ELSE ?2 END
+             WHERE desk_id = ?1 AND desk_slot IN (?2, ?3)",
+            params![desk_id, from, to],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn close_pane(&self, id: &str) -> Result<bool> {
         desk::close_pane(&self.conn.lock().unwrap(), id)
     }
@@ -1095,6 +1115,10 @@ impl Store {
         done: Option<bool>,
     ) -> Result<bool> {
         desk::set_note(&self.conn.lock().unwrap(), desk_id, id, text, done, now())
+    }
+
+    pub fn tick_desk_note(&self, desk_id: i64, id: i64, by: &str) -> Result<bool> {
+        desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, by, now())
     }
 
     pub fn remove_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
@@ -1551,6 +1575,46 @@ mod tests {
         // A store again: the next desk is the first.
         let again = s.create_desk("/home/p/snyvi", None).unwrap();
         assert_eq!(again.name, "snyvi");
+    }
+
+    /// A moved pane takes what it sent with it: the document pane 1 sent says
+    /// "[2]" once pane 1 is in position 2, and the other pane's the reverse.
+    #[test]
+    fn a_moved_pane_takes_its_documents_slot_with_it() {
+        let (s, _d) = temp_store();
+        let desk = s.create_desk("/home/p/snyvi", None).unwrap();
+        for _ in 0..2 {
+            assert!(matches!(
+                s.open_pane(desk.id, "/home/p/snyvi", "").unwrap(),
+                Opened::Pane(_)
+            ));
+        }
+        let at = |slot| Origin {
+            id: desk.id,
+            name: "snyvi".into(),
+            slot,
+        };
+        let (one, two) = (at(1), at(2));
+        let mut d = new_doc("From one", "aaa", "w");
+        d.desk = Some(&one);
+        s.insert(&new_id("a"), d).unwrap();
+        let mut d = new_doc("From two", "bbb", "w");
+        d.desk = Some(&two);
+        s.insert(&new_id("b"), d).unwrap();
+
+        assert!(s.move_pane(desk.id, 1, 2).unwrap());
+        let slot_of = |title: &str| {
+            s.desk_docs(desk.id, 40)
+                .unwrap()
+                .into_iter()
+                .find(|d| d.title == title)
+                .unwrap()
+                .slot
+        };
+        assert_eq!(slot_of("From one"), 2);
+        assert_eq!(slot_of("From two"), 1);
+        assert!(!s.move_pane(desk.id, 3, 1).unwrap(), "no pane at 3");
+        assert_eq!(slot_of("From one"), 2, "a refused move changes nothing");
     }
 
     /// The rail's Documents list: what a pane on this desk sent, newest
