@@ -147,6 +147,11 @@
    *  what the sidebar just did. Cleared by the timer, by the undo, or by the
    *  next one put away, which is the moment the offer stops being about it. */
   let awayJust = null, awayTimer = 0;
+  /** The document just removed, while its row still offers Undo: what it was,
+   *  where its row stood (`where` "queue" or "proj", and the place in that
+   *  list), and the clock. Captured at the click, because the refetch that
+   *  follows no longer has the row to say where it was. One at a time. */
+  let gone = null;
   const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
   function toggleFold(key) {
@@ -219,9 +224,8 @@
 
   /** The ✕ on a project's row: the same glyph a folder's row carries, meaning
    *  the same thing -- this list stops showing it. Nothing on disk or in the
-   *  library changes, so unlike the ✕ on a document this one does not ask
-   *  twice; the ghost row it leaves behind holds the Undo, and the row under
-   *  the tree is the way back after that. */
+   *  library changes; the ghost row it leaves behind holds the Undo, and the
+   *  row under the tree is the way back after that. */
   const awayBtn = p =>
     `<button type="button" class="row-x" data-away="${p.id}" title="Remove from the sidebar · the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">✕</button>`;
 
@@ -229,7 +233,10 @@
    *  document on screen is in it, or when it is the only one there is. Not
    *  for a document read over a desk: it was opened from the desk's own
    *  list, and the sidebar has no reason to move. */
-  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.deskBehind == null && state.doc.project_id === p.id) || state.tree.length === 1;
+  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.deskBehind == null && state.doc.project_id === p.id) || state.tree.length === 1 ||
+    // The document on screen was removed and the page went to the inbox: its
+    // project stays open while its row offers Undo.
+    (gone && gone.where === "proj" && gone.pid === String(p.id));
 
   const docRow = d => {
     noteKnown(d);
@@ -237,8 +244,24 @@
     // Not "active": markActive puts that on, so the rows a reader moves between
     // draw the same and a move between two of them costs no redraw.
     const cls = waitingRow(d) ? "new" : "";
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}">${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}">${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
   };
+  /** The ✕ on a document's row takes it out of the inbox. It is said as a
+   *  removal because that is what it is: the daemon keeps the document, and
+   *  the row stands where it was for GHOST_MS with the Undo in it. */
+  function removeBtn(d) {
+    return `<button type="button" class="row-x" data-deldoc="${d.id}" title="Remove from inbox · Undo for 4 s" aria-label="Remove ${esc(d.title)} from inbox">✕</button>`;
+  }
+  /** The row a removed document leaves behind, at its height and in its
+   *  place, so nothing below it moves while the offer stands. The bar along
+   *  its foot is the time left; resting on it stops the clock. `--t` starts
+   *  both where the last draw left them, as `moment` does for a wash. */
+  function ghostRow() {
+    const g = gone;
+    g.drawn = true;
+    const t = g.closing ? Date.now() - g.closing : ghostSpent(g);
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost">${docIco()}<span class="title">${esc(g.d.title)}</span><span class="k">removed</span><button type="button" class="t-undo" data-undoc>Undo</button></div></li>`;
+  }
 
   // ---------- the queue ----------
   /* What arrived and has not been opened, in the order it came. An arrival
@@ -272,7 +295,7 @@
       } catch {}
     }, 150);
   }
-  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}">${docIco()}<span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span><button type="button" class="row-x" data-deldoc="${d.id}" title="Delete" aria-label="Delete ${esc(d.title)}">✕</button></a></li>`);
+  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}">${docIco()}<span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
@@ -342,10 +365,16 @@
     // The rows state says, with the ones still closing put back where they
     // were, so a read takes its row out rather than the list snapping up.
     const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
-    const gone = [...leaving.values()].sort((a, b) => a.at - b.at);
-    for (const l of gone) if (!queueIds.has(l.d.id)) rows.splice(Math.min(l.at, rows.length), 0, queueRow(l.d, " leaving"));
-    const empty = (!n || !head) && !gone.length;
-    queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
+    const ghost = gone && gone.where === "queue" && !queueIds.has(gone.id);
+    const left = [...leaving.values()].filter(l => !(ghost && l.d.id === gone.id)).sort((a, b) => a.at - b.at);
+    for (const l of left) if (!queueIds.has(l.d.id)) rows.splice(Math.min(l.at, rows.length), 0, queueRow(l.d, " leaving"));
+    if (ghost) rows.splice(Math.min(gone.at, rows.length), 0, ghostRow());
+    // Removed from its project while it was also waiting: its row here stays,
+    // quiet, until the ghost down there ends, and then both close together.
+    const held = gone && gone.where === "proj" && gone.qDoc && !queueIds.has(gone.id);
+    if (held) rows.splice(Math.min(gone.qAt, rows.length), 0, queueRow(gone.qDoc, gone.closing ? " held leaving" : " held"));
+    const empty = (!n || !head) && !left.length && !ghost && !held;
+    queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
       rows.join("") +
       (n > shown ? `<li class="t-more"><a href="/" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
     lastQueue = state.queue.slice(0, QUEUE_ROWS);
@@ -478,8 +507,15 @@
     const pid = String(p.id), wfs = state.sub.get(pid);
     if (!wfs) return `<li class="t-wait">…</li>`;
     const allWfs = liftedCaps.has(pid);
+    // A removed document's row stands in its session until the offer goes.
+    // Its session may have gone with it, when it was the only document there:
+    // then the row stands alone where the session was.
+    const g = gone && gone.where === "proj" && gone.pid === pid ? gone : null;
+    const lostWf = g && !wfs.some(w => w.id === g.wf);
+    const lone = () => `<li class="t-wf solo"><ul>${ghostRow()}</ul></li>`;
     let h = "", shownWfs = 0, rows = 0;
-    for (const w of wfs) {
+    for (const [wi, w] of wfs.entries()) {
+      if (lostWf && wi === g.wfAt) h += lone();
       // Past the budget, only the session being read is drawn.
       if (!allWfs && rows >= SHOW_ROWS && !(state.doc && state.doc.workflow_id === w.id)) continue;
       shownWfs++;
@@ -487,15 +523,21 @@
       // workflow with its first document's title, so the header above a lone
       // row is a truncated copy of it -- 4 of 17 sessions in live data. The
       // row stands alone instead, which holds however sessions get named.
-      const solo = w.total === 1 && w.docs.length === 1;
+      // While a removed row stands in it, a session keeps the shape it had,
+      // so its head does not come or go above the row.
+      const ghostHere = g && g.wf === w.id && !w.docs.some(d => d.id === g.id);
+      const solo = ghostHere ? g.solo : w.total === 1 && w.docs.length === 1;
       const whole = wholeWf(w), docs = whole ? w.docs : w.docs.slice(0, SHOW_DOCS);
       h += `<li class="t-wf${solo ? " solo" : ""}">${solo ? "" : `<div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div>`}<ul>`;
-      for (const d of docs) h += docRow(d);
+      const drawn = docs.map(docRow);
+      if (ghostHere) drawn.splice(Math.min(g.at, drawn.length), 0, ghostRow());
+      h += drawn.join("");
       rows += docs.length;
       if (w.total > docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - docs.length} more</button></li>`;
       else if (liftedWorkflows.has(w.id) && w.total > SHOW_DOCS) h += `<li class="t-more"><button type="button" data-less-docs="${w.id}">less</button></li>`;
       h += `</ul></li>`;
     }
+    if (lostWf && g.wfAt >= wfs.length) h += lone();
     if (p.workflows > shownWfs) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - shownWfs} more sessions</button></li>`;
     else if (allWfs && wfs.length > 1 && liftedCaps.has(pid)) h += `<li class="t-more"><button type="button" data-less-wf="${p.id}">fewer sessions</button></li>`;
     return h;
@@ -509,9 +551,19 @@
   let drawnTree = null;
   const treeTouched = new MutationObserver(() => { drawnTree = null; });
   treeTouched.observe(treeEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
+  /** The daemon's projects, and the one whose last document was just removed:
+   *  it has left the daemon's tree, but it stands, open, until the ghost in it
+   *  ends, so the Undo has a row to be in. */
+  function heldTree() {
+    const g = gone;
+    if (!g || g.where !== "proj" || !g.proj || state.tree.some(p => String(p.id) === g.pid)) return state.tree;
+    const t = state.tree.slice();
+    t.splice(Math.min(g.projAt, t.length), 0, g.proj);
+    return t;
+  }
   function renderTree() {
-    const projects = state.tree;
-    const total = projects.reduce((n, p) => n + p.docs, 0);
+    const projects = heldTree();
+    const total = state.tree.reduce((n, p) => n + p.docs, 0);
     // A link, so the keyboard reaches it: a div with a click handler is a row
     // Tab walks straight past.
     inboxRowEl.innerHTML = secHead("inbox", "Inbox") +
@@ -561,7 +613,9 @@
         continue;
       }
       const open = projOpen(p);
-      h += `<details class="t-proj" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
+      // The one held for a ghost closes with it.
+      const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
+      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${renameBtn("project", p.id)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -791,7 +845,14 @@
       e.preventDefault(); e.stopPropagation();
       const id = dx.dataset.deldoc, proj = dx.closest(".t-proj");
       const d = state.queue.find(x => x.id === id) || { id, title: dx.closest("a").title.split(" · ")[0], project_id: proj ? +proj.dataset.pid : null };
-      deleteDoc(d);
+      deleteDoc(d, dx);
+      return;
+    }
+    if (e.target.closest("[data-undoc]")) {
+      e.preventDefault(); e.stopPropagation();
+      // Not in the first moments: the Undo is drawn where the ✕ was, and the
+      // second click of a quick double-click is not a change of mind.
+      if (gone && Date.now() - gone.made > 350) undoGone(gone);
       return;
     }
     const dd = e.target.closest("[data-dropdesk]");
@@ -1057,6 +1118,7 @@
    *  clicked in the sidebar is a move to the library, not a redraw. */
   async function showDoc(id, push = true, fromHistory = false, over) {
     if (over === undefined) over = !push && state.deskBehind != null && !!state.doc && state.doc.id === id;
+    const back = push ? cameFrom() : null;
     const turn = ++opening;
     let j = state.cache.get(id), waited = false;
     if (!j) {
@@ -1067,7 +1129,8 @@
       behindDesk(id, over);
       state.view = "doc"; state.opening = id; state.comparing = null;
       pending(id, fromHistory);
-      if (push) { history.pushState({ id, over: state.deskBehind }, "", `/d/${id}`); push = false; }
+      if (push) { history.pushState({ id, over: state.deskBehind, back }, "", `/d/${id}`); push = false; }
+      overBar();
       try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", String(e)); } return; }
       if (turn !== opening) return;
       state.opening = null;
@@ -1088,7 +1151,7 @@
     if (j.doc.kind === "diff" && state.split) { await applySplit(); }
     document.title = j.doc.title;
     overBar();
-    if (push) history.pushState({ id, over: state.deskBehind }, "", `/d/${id}`);
+    if (push) history.pushState({ id, over: state.deskBehind, back }, "", `/d/${id}`);
     if (fromHistory && kept("id", id)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
@@ -1144,6 +1207,7 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       j = await r.json();
     } catch (e) { toast("Could not open file", String(e)); return; }
+    const back = push ? cameFrom() : null;
     if (push) leave();
     offDesk();
     state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
@@ -1153,7 +1217,7 @@
     swapIn();
     applyPreview();
     document.title = j.file.name;
-    if (push) history.pushState({ browse: rootId, path }, "", `/b/${rootId}/${path}`);
+    if (push) history.pushState({ browse: rootId, path, back }, "", `/b/${rootId}/${path}`);
     const restored = fromHistory && history.state.browse === rootId && kept("path", path);
     if (restored) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
@@ -1306,33 +1370,150 @@
 
   /** How long Undo is on the screen, and how long it answers to ⌘Z. */
   const UNDO_MS = 8000;
+  /** How long a removed document's row stands with its Undo: long enough to
+   *  see what went and take it back, short enough that the list is settled
+   *  again before the eye has moved on. */
+  const GHOST_MS = 4000;
   let undoing = null;
 
-  /** Delete now, ask nothing, and offer the way back.
+  /** Remove now, ask nothing, and offer the way back.
    *
    *  The question used to be a `window.confirm`, which the native window draws
    *  as the toolkit's own dialog in the toolkit's theme, over a page it has
    *  nothing to do with -- and which had to be answered before anything else
    *  could happen. The daemon keeps the document until `prune` runs, so the
-   *  eight seconds below are a real offer and not a hopeful one. */
+   *  seconds below are a real offer and not a hopeful one. */
   async function deleteCurrent() {
     if (state.doc) deleteDoc(state.doc);
   }
+
+  /** Where a document's row stands, as a place that outlives the row: the
+   *  row that was clicked, or -- for the meta pane and Del, which have none --
+   *  the tree's row before the queue's. Null when neither is drawn. */
+  function rowOf(id, from) {
+    const sel = `a[data-id="${id}"]`;
+    const inQueue = from ? !!from.closest("#queue") : !treeEl.querySelector(sel) && !!queueEl.querySelector(sel);
+    if (inQueue) {
+      const at = lastQueue.findIndex(x => x.id === id);
+      return at < 0 ? null : { where: "queue", at };
+    }
+    if (!from && !treeEl.querySelector(sel)) return null;
+    for (const [pid, wfs] of state.sub) for (const [wfAt, w] of wfs.entries()) {
+      const at = w.docs.findIndex(x => x.id === id);
+      if (at >= 0) return { where: "proj", pid, wf: w.id, wfAt, at, solo: w.total === 1 && w.docs.length === 1, doc: w.docs[at] };
+    }
+    return null;
+  }
+
+  /** The clock on a removed row is the bar's own animation: it drains in CSS,
+   *  stops there while a pointer or a focus rests on the row -- a reader
+   *  deciding is not a reader who has gone -- and its end ends the offer. So
+   *  the bar and the offer cannot disagree. A redraw asks the bar how far it
+   *  got and starts the new one there. Where nothing animates (reduced
+   *  motion, or no row to stand in) a plain timer does it. */
+  const stillMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  function ghostSpent(g, el = document.querySelector("#trees .t-ghost")) {
+    const a = el && el.getAnimations ? el.getAnimations({ subtree: true }).find(x => x.animationName === "drain") : null;
+    const at = a && a.effect ? a.effect.getComputedTiming().progress : null;
+    if (a) g.spent = at == null ? GHOST_MS : Math.round(at * GHOST_MS);
+    return g.spent;
+  }
+  treesEl.addEventListener("animationend", e => {
+    if (e.animationName === "drain" && gone && e.target.closest(".t-ghost")) ghostSettle(gone);
+  });
+  /** The offer is over: the row closes where it stood, as a read one does. */
+  function ghostSettle(g) {
+    if (gone !== g || g.closing) return;
+    clearTimeout(g.timer);
+    if (undoing === g.undo) undoing = null;
+    g.closing = Date.now();
+    renderTree(); markActive();
+    setTimeout(() => { if (gone === g) { gone = null; renderTree(); markActive(); } }, LEAVE_MS + 20);
+  }
+  async function refetchQueue() {
+    try {
+      const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
+      if (Array.isArray(q)) { state.queue = q; state.waiting = Math.max(state.waiting, q.length); }
+    } catch {}
+  }
+
   /** The same, for any document: the one on screen, or a row's ✕ in the
-   *  sidebar, which leaves the reader where they are unless that was it. */
-  async function deleteDoc(d) {
+   *  sidebar, which leaves the reader where they are unless that was it.
+   *  The row turns into its ghost under the click, from what the page
+   *  already holds, and the daemon is told after. */
+  async function deleteDoc(d, from = null) {
     const here = !!state.doc && state.doc.id === d.id;
+    const place = rowOf(d.id, from);
+    if (place && place.doc) d = { ...place.doc, ...d, title: place.doc.title };
+    // Only the newest offer stands: two rows both saying Undo cannot both mean
+    // the last thing that happened.
+    if (gone) { clearTimeout(gone.timer); if (undoing === gone.undo) undoing = null; gone = null; }
+    const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), spent: 0, timer: 0, drawn: false, made: Date.now() };
+    g.undo = () => undoGone(g);
+    // What stands around the ghost stands with it until the offer ends, so
+    // nothing above it moves the row out from under the pointer either: the
+    // project, which leaves the daemon's tree with its last document, and the
+    // same document's row in Waiting.
+    if (g.where === "proj") {
+      g.projAt = state.tree.findIndex(p => String(p.id) === g.pid);
+      g.proj = g.projAt >= 0 ? state.tree[g.projAt] : null;
+      g.qAt = lastQueue.findIndex(x => x.id === d.id);
+      g.qDoc = g.qAt >= 0 ? lastQueue[g.qAt] : null;
+    } else if (g.where !== "queue") depart([d.id]);
+    state.queue = state.queue.filter(x => x.id !== d.id);
+    state.waiting = Math.max(0, state.waiting - (g.waiting ? 1 : 0));
+    for (const wfs of state.sub.values()) for (const w of wfs) {
+      const n = w.docs.length;
+      w.docs = w.docs.filter(x => x.id !== d.id);
+      if (w.docs.length < n) w.total = Math.max(0, w.total - 1);
+    }
+    gone = g;
+    undoing = g.undo;
+    renderTree(); markActive();
+    if (!g.drawn || stillMotion.matches) g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
     try {
       const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status}`);
       state.cache.delete(d.id);
-      depart([d.id]);
-      state.queue = state.queue.filter(x => x.id !== d.id);
-      state.waiting = Math.max(0, state.waiting - (waitingRow(d) ? 1 : 0));
+      g.drawn = false;
       await refreshTree(d.project_id);
       if (here) showInbox(true);
-      offerUndo(d, here);
-    } catch (e) { toast("Could not delete", String(e)); }
+      // No row to stand in -- the meta pane's button or Del, with the row not
+      // drawn: the offer goes where the toast goes.
+      if (gone === g && !g.drawn) {
+        toast("Removed", d.title, null, { label: "Undo", run: g.undo }, { life: GHOST_MS });
+        clearTimeout(g.timer);
+        g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
+      }
+    } catch (e) {
+      if (gone === g) { clearTimeout(g.timer); gone = null; if (undoing === g.undo) undoing = null; }
+      if (g.waiting) await refetchQueue();
+      await refreshTree(d.project_id);
+      toast("Could not remove", String(e));
+    }
+  }
+
+  /** Take the removal back. The ghost holds the place until the row is back
+   *  in it -- the renderers stop drawing it as soon as the document is in
+   *  their list again -- so the list never closes up and opens again. */
+  async function undoGone(g) {
+    if (gone !== g || g.closing || g.back) return;
+    clearTimeout(g.timer);
+    g.back = true;
+    if (undoing === g.undo) undoing = null;
+    renderTree(); markActive();
+    try {
+      const r = await fetch(`/api/docs/${g.id}/undelete`, { method: "POST" });
+      if (r.status === 410) { g.back = false; ghostSettle(g); return toast("Too late to undo", "it has been pruned"); }
+      if (!r.ok) throw new Error(`${r.status}`);
+      wash([g.id]);
+      if (g.waiting) await refetchQueue();
+      await refreshTree(g.d.project_id);
+      // The "restored" event puts the row back in every other tab.
+      if (g.here) showDoc(g.id);
+    } catch (e) { toast("Could not undo", String(e)); }
+    if (gone === g) gone = null;
+    renderTree(); markActive();
   }
 
   /** Take a project out of the sidebar. Nothing is asked for and nothing is
@@ -1365,27 +1546,6 @@
     renderTree(); markActive();
   }
 
-  /** The other half of a delete: a button in the toast, and ⌘Z for as long as
-   *  it is there, which is where a reader's hand goes first. */
-  function offerUndo(d, open = true) {
-    const run = async () => {
-      if (undoing !== run) return;
-      undoing = null;
-      try {
-        const r = await fetch(`/api/docs/${d.id}/undelete`, { method: "POST" });
-        if (r.status === 410) return toast("Too late to undo", "it has been pruned");
-        if (!r.ok) throw new Error(`${r.status}`);
-        wash([d.id]);
-        await refreshTree(d.project_id);
-        // The "restored" event puts the row and its queue place back.
-        if (open) showDoc(d.id);
-      } catch (e) { toast("Could not undo", String(e)); }
-    };
-    undoing = run;
-    setTimeout(() => { if (undoing === run) undoing = null; }, UNDO_MS);
-    toast("Deleted", d.title, null, { label: "Undo", run });
-  }
-
   /** What hangs off a new page. The rail and the reader's place are put right
    *  now; the sidebar, the code blocks' controls and the versions wait for the
    *  first paint, so a click shows the document before anything else is done
@@ -1393,6 +1553,7 @@
   let rendered = 0;
   function afterRender() {
     const turn = ++rendered;
+    overBar();
     markActive();
     buildToc();
     renderMeta(false);
@@ -1429,7 +1590,13 @@
    *  one quiet line. The ones before it wait in a trail a hover away. Seen is
    *  the daemon's, so a glance in one window puts the glow out in all. */
   const noteEl = $("#note");
-  let noteLook = 0, notePeek = 0, noteShown = (state.notes[0] || {}).id || 0;
+  let noteLook = 0, notePeek = 0, noteShown = (state.notes.find(n => !n.dismissed) || {}).id || 0;
+  /** The asides on the card: the daemon keeps a closed one, flagged, for Undo. */
+  const liveNotes = () => state.notes.filter(n => !n.dismissed);
+  /** An aside a reader just closed: the card stands where it was as one line
+   *  holding the Undo, on the same drain as a removed document's row, and
+   *  only when that ends does the next aside take the card. */
+  let noteGone = null;
   /** There is one snyvi on screen, the logo, and the note is its voice: a
    *  waiting note perks it up, a new one makes it hop, and a reader resting on
    *  the note gets a smile and a heart. The card itself carries no face. */
@@ -1453,13 +1620,23 @@
     return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
   }
   function renderNote() {
-    const [n, ...trail] = state.notes;
+    const [n, ...trail] = noteGone ? [] : liveNotes();
     // Removed rather than emptied: `html[data-note]` matches an empty value
     // too, so writing "" left the mark blinking on every page from boot, note
     // or no note -- a perpetual animation for a state the page was not in.
     // It blinks while a note waits and stops when the reader rests on it.
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
+    if (noteGone) {
+      // The daemon's word on the close arrives while the ghost stands; the
+      // ghost it would redraw is this one, and redrawing it drops the
+      // keyboard off its Undo.
+      if (noteEl.querySelector(".note-ghost")?.dataset.ids === noteGone.ids.join(",")) return;
+      const g = noteGone, t = ghostSpent(g, noteEl.querySelector(".t-ghost"));
+      noteEl.hidden = false; noteEl.dataset.lit = ""; noteEl.dataset.seen = "";
+      noteEl.innerHTML = `<div class="t-ghost note-ghost" data-ids="${g.ids.join(",")}" style="--t:-${t}ms"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
+      return;
+    }
     if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }
     noteEl.hidden = false;
     noteEl.dataset.lit = n.lit && !n.seen ? "1" : "";
@@ -1478,9 +1655,10 @@
     noteShown = n.id;
     const by = noteBy(n);
     noteEl.innerHTML =
-      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}</ol>` : "") +
+      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}` +
+        `<li class="note-all"><button type="button" data-note-all title="Close every aside · Undo for 4 s">Close all</button></li></ol>` : "") +
       `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : ""}>` +
-      noteBg(n.id) + `<p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
+      noteBg(n.id) + `<button type="button" class="note-x" data-note-x title="Close · Undo for 4 s  Esc" aria-label="Close this aside">✕</button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
     // A new note brings snyvi up from behind it for a moment, as a hover does.
     // A window in the background would play that to nobody, so it waits.
     if (arrived) { if (document.hidden) peekOwed = true; else peekNote(); }
@@ -1495,9 +1673,12 @@
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && peekOwed) peekNote(); });
   function seeNotes() {
-    if (!state.notes.some(n => !n.seen)) return;
+    if (!liveNotes().some(n => !n.seen)) return;
     state.notes = state.notes.map(n => ({ ...n, seen: true }));
-    renderNote();
+    // Only the card's marks change, not what is in it: a rebuild here, on
+    // the focus a press on its ✕ brings, swapped the button out between the
+    // press and the release, and the click never happened.
+    if (!noteGone) { noteEl.dataset.lit = ""; noteEl.dataset.seen = "1"; delete root.dataset.note; }
     fetch("/api/notes/seen", { method: "POST" }).catch(() => {});
   }
   // Resting on it is reading it; passing over on the way to the theme button is not.
@@ -1509,16 +1690,67 @@
   noteEl.addEventListener("focusout", () => noteNear(false));
   markEl?.addEventListener("animationend", e => { if (e.animationName === "bm-hop") markEl.classList.remove("hop"); });
   noteEl.addEventListener("click", e => {
+    if (e.target.closest("[data-note-undo]")) { if (noteGone) noteGone.undo(); return; }
+    // `detail` is 0 for a click a key made, and only a keyboard is handed on to Undo.
+    if (e.target.closest("[data-note-x]")) { closeNotes(liveNotes().slice(0, 1).map(n => n.id), !e.detail); return; }
+    if (e.target.closest("[data-note-all]")) { closeNotes(liveNotes().map(n => n.id), !e.detail); return; }
     seeNotes();
     const a = e.target.closest("[data-about]");
     if (a) showDoc(a.dataset.about, true);
   });
   noteEl.addEventListener("keydown", e => {
+    // Esc closes the aside the hand is on, and goes no further: not back a
+    // page, which is what it does with nothing over the page.
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      if (e.target.closest(".note-now")) closeNotes(liveNotes().slice(0, 1).map(n => n.id), true);
+      return;
+    }
+    if (e.target.closest("button")) return;
     const a = e.target.closest(".note-now[data-about]");
     if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDoc(a.dataset.about, true); }
   });
+  noteEl.addEventListener("animationend", e => {
+    if (e.animationName === "drain" && noteGone) noteSettle(noteGone);
+  });
+  /** Close asides: off the card at once, in every page once the daemon has
+   *  it, and the card holds the way back for GHOST_MS. Nothing is deleted. */
+  function closeNotes(ids, byKey = false) {
+    if (!ids.length) return;
+    if (noteGone) noteSettle(noteGone);
+    const g = { ids, spent: 0, timer: 0 };
+    g.undo = () => undoNotes(g);
+    state.notes = state.notes.map(n => ids.includes(n.id) ? { ...n, dismissed: true, seen: true } : n);
+    noteGone = g; undoing = g.undo;
+    renderNote();
+    if (stillMotion.matches) g.timer = setTimeout(() => noteSettle(g), GHOST_MS);
+    // A keyboard that closed it lands on the Undo, not on the page's start.
+    // A pointer does not: a focus resting there would hold the clock.
+    if (byKey) noteEl.querySelector("[data-note-undo]")?.focus({ preventScroll: true });
+    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", String(e)); });
+  }
+  function noteSettle(g) {
+    if (noteGone !== g) return;
+    clearTimeout(g.timer);
+    if (undoing === g.undo) undoing = null;
+    noteGone = null;
+    renderNote();
+  }
+  function undoNotes(g, tell = true) {
+    if (noteGone !== g) return;
+    clearTimeout(g.timer);
+    if (undoing === g.undo) undoing = null;
+    noteGone = null;
+    state.notes = state.notes.map(n => g.ids.includes(n.id) ? { ...n, dismissed: false } : n);
+    renderNote();
+    if (tell) notesSay("restore", g.ids).catch(e => toast("Could not bring the aside back", String(e)));
+  }
+  async function notesSay(what, ids) {
+    const r = await fetch(`/api/notes/${what}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
+    if (!r.ok) throw new Error(`${r.status}`);
+  }
   // "3 min ago" stays true without anything arriving.
-  setInterval(() => { if (state.notes.length && !noteEl.matches(":hover")) renderNote(); }, 60000);
+  setInterval(() => { if (liveNotes().length && !noteGone && !noteEl.matches(":hover")) renderNote(); }, 60000);
   renderNote();
 
   // ---------- snyvi answers ----------
@@ -2137,7 +2369,7 @@
       `<button data-act="delete">Delete<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
-      (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button>` : "") +
+      (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button><button data-act="reveal" title="${esc(state.folder)}">Open in file manager</button>` : "") +
       `</div>`;
   }
   const rawUrl = (rootId, path) => `/api/browse/${rootId}/raw/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -2159,6 +2391,7 @@
       (p ? `<a href="${rawUrl(r.id, p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
       `<button data-act="copybrowse">Copy path</button>` +
       `<button data-act="terminal" title="${esc(r.path + (p ? "/" + p : ""))}">Open terminal here</button>` +
+      `<button data-act="reveal" title="${esc(r.path + (p ? "/" + p : ""))}">Open in file manager</button>` +
       `<a href="/b/${r.id}" data-browse="${r.id}" data-path="">Folder contents</a>` +
       `<button data-act="closebrowse">Close folder</button>` +
       `</div>`;
@@ -2179,6 +2412,7 @@
       navigator.clipboard?.writeText(full); toast("Copied", full);
     }
     if (b.dataset.act === "terminal") openTerminal();
+    if (b.dataset.act === "reveal") openFolder();
     if (b.dataset.act === "closebrowse") {
       const id = state.browseRoot.id;
       try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
@@ -2207,6 +2441,24 @@
       if (r.ok) toast("Terminal", j.dir || "opened");
       else toast("No terminal", j.error || `${r.status}`);
     } catch (e) { toast("No terminal", String(e)); }
+  }
+  /** The same place, in the file manager -- Files, Finder, Explorer. The same
+   *  ids go over and the daemon resolves them the same way; a desk's folder
+   *  goes with the capability, behind the desk's gate. */
+  async function openFolder(body = state.view === "browse"
+      ? { root: state.browseRoot.id, path: state.browsePath || "" }
+      : { doc: state.doc.id }) {
+    try {
+      const j = body.desk != null ? await deskApi("/api/reveal", body) : await (async () => {
+        const r = await fetch("/api/reveal", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `${r.status}`);
+        return j;
+      })();
+      toast("Opened", j.dir || "the folder");
+    } catch (e) { toast("Could not open the folder", e.message || String(e)); }
   }
 
   async function togglePin() {
@@ -2436,6 +2688,7 @@
     browse: (root, path, push) => showBrowse(root, path, push),
     drawBrowse: () => renderBrowse(),
     terminal: body => openTerminal(body),
+    reveal: body => openFolder(body),
     forget: id => { if (lastDesk === id) lastDesk = null; },
   };
   /** Wait for the chunk, then do the thing that was clicked. A failure is the
@@ -2509,7 +2762,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -2531,16 +2784,62 @@
     desk.aside(id);
     overBar();
   }
-  /** The document's name and a ✕ in the head while it is read over a desk
-   *  (app.css, #chrome .over): the ✕ puts the panels back, with the focus
-   *  they had, as a second click on the row does. */
-  const overEl = $("#chrome .over");
-  function overBar() {
-    const on = state.deskBehind != null;
-    overEl.hidden = !on;
-    overEl.firstChild.textContent = on && state.doc ? state.doc.title : "";
+  /** The screen a document or a file was opened from, for its ✕ to go back
+   *  to: the Inbox, a folder's contents, the agents page, a desk. Asked just
+   *  before the page leaves it. Read on from one document to the next, with
+   *  `j`, a link or the palette, and the reader is still on the same visit:
+   *  the entry being left already knows where that visit began. */
+  function cameFrom() {
+    if (state.view === "doc" || (state.view === "browse" && state.browsePath)) return (history.state && history.state.back) || null;
+    if (state.view === "inbox") return { inbox: true };
+    if (state.view === "browse" && state.browseRoot) return { browse: state.browseRoot.id, path: "" };
+    if (state.view === "connect") return { connect: true };
+    if (state.view === "desk") return { desk: state.deskId };
+    return null;
   }
-  overEl.lastChild.addEventListener("click", () => { if (state.deskBehind != null) showDesk(state.deskBehind, true); });
+  /** Where the ✕ leads, and its name for it. A document over a desk goes
+   *  back to the panels, with the focus they had, as a second click on the
+   *  row does. Otherwise the screen it was opened from, past every document
+   *  read in between -- a step to that screen, not a walk back through
+   *  history. With none, a file goes to its folder and anything else to the
+   *  Inbox: a deep link, a first load and a new window have no screen
+   *  behind them. */
+  function backTo() {
+    if (state.deskBehind != null) return { name: "the panels", go: () => showDesk(state.deskBehind, true) };
+    let b = history.state && history.state.back;
+    if (!b && state.view === "browse" && state.browseRoot) b = { browse: state.browseRoot.id, path: "" };
+    if (b && b.browse) {
+      const r = state.browse.find(x => x.id === b.browse);
+      return { name: r ? r.name : "the folder", go: () => showBrowse(b.browse, "", true) };
+    }
+    if (b && b.connect) return { name: "Connect an agent", go: () => showConnect(true) };
+    if (b && "desk" in b) {
+      const d = b.desk != null && state.desks && state.desks.desks.find(x => x.id === b.desk);
+      return { name: d ? d.name : "Desks", go: () => showDesk(b.desk, true) };
+    }
+    return { name: "Inbox", go: () => showInbox(true) };
+  }
+  /** Out of what is being read. A comparison is left first, as `c` does. */
+  function goBack() {
+    if (state.comparing && state.doc) { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); return; }
+    backTo().go();
+  }
+  /** The name of what is being read and a ✕ in the head (app.css, #chrome
+   *  .over), on every document and every file -- the way back to where it
+   *  was opened from. Not on a list: the Inbox, a folder or a desk is where
+   *  the reader goes back to, not something to leave. */
+  const overEl = $("#chrome .over"), overX = overEl.lastChild;
+  function overBar() {
+    const file = state.view === "browse" && state.browseRoot && state.browsePath;
+    const on = (state.view === "doc" && (!!state.doc || !!state.opening)) || !!file;
+    overEl.hidden = !on;
+    overEl.firstChild.textContent = !on || state.opening ? "" : file ? state.browsePath.split("/").pop() : state.doc.title;
+    if (!on) return;
+    const to = backTo().name, label = `Back to ${to}`;
+    overX.title = `${label}  ${state.deskBehind != null ? "⌃`" : "Esc"}`;
+    overX.setAttribute("aria-label", label);
+  }
+  overX.addEventListener("click", goBack);
   /** `⌃\``: between the desk and what was being read. */
   function swapDesk() {
     if (state.view === "desk") { history.length > 1 ? history.back() : showInbox(true); return; }
@@ -2742,6 +3041,7 @@
       await refreshTree();
       deskDocs();
       if (state.doc && state.doc.id === j.id) showInbox(true);
+      else if (state.view === "inbox") showInbox(false);
     });
     // A delete that was taken back, in every tab and the window: the row is
     // where it was, and so is its place in the queue if it never got read.
@@ -2944,7 +3244,7 @@
     placeToasts(at);
     const anchor = toastAt;
     saidBy(anchor);
-    const life = action ? UNDO_MS : onClick ? 8000 : 3500;
+    const life = opts.life || (action ? UNDO_MS : onClick ? 8000 : 3500);
     // It fades where it stands, and only if it is still the one being said.
     const mine = { el, anchor, timer: 0 };
     mine.timer = setTimeout(() => {
@@ -3401,9 +3701,14 @@
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     if (e.key === "Escape") {
+      // Esc takes down whatever is over the page, one press for all of it;
+      // only with nothing over it, and the hand in no field and no panel,
+      // does it leave the page, the way its ✕ does.
+      const over = keysOn || anyDialogOpen() || !!root.dataset.sheet || !findBar.hidden || !!docEl.querySelector(".mmd[data-full]") || !!document.querySelector("#ctx:not([hidden])");
       keys(false);
       if (mmd) mmd.escape();
       closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
+      if (!over && !inField && !e.target.closest(".pn") && !overEl.hidden) { e.preventDefault(); goBack(); }
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

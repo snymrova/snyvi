@@ -543,6 +543,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+| Esc   | back to where the document was opened from  |
 | alt ← / → | back / forward                          |
 
 Everything the keys do, a finger can do too: on a screen with no
@@ -786,15 +787,28 @@ waiting: the empty state exists to be filled. Before 0.14 an arrival
 opened itself whenever the page had gone 2.5 seconds without a scroll
 or a key, which is what reading a paragraph looks like.
 
+Every document and every file has a ✕ at the right of the bar across
+its top, and it goes back to the screen you opened it from: the Inbox, a
+folder, the agents page, a desk. Documents read one after another, with
+`j`, a link or the search, are one visit, so the ✕ goes back past all of
+them, not to the one before. A document with nothing behind it, opened
+from a link or when the window starts, goes back to the Inbox. Its
+tooltip names where it leads. Esc does the same once there's nothing
+else to close: the first Esc shuts the search, the find bar or the keys,
+and the next one goes back.
+
 Back opens a document where you left it, not at the top: the place is
 written into the history entry as you leave and after each scroll, as
 a block and an offset into it, the way a save already keeps it. In the
 desktop window, which has no toolbar, alt+← and alt+→ are Back and
 Forward; in a browser they are the same one step, not two.
 
-Deleting is one keystroke and no question. `Del` deletes the document
-you are reading at once, and the line at the corner offers "Undo" for
-eight seconds — or ⌘/ctrl Z, which is where your hand goes anyway.
+Removing is one keystroke and no question. `Del`, or the ✕ on a
+document's row in the sidebar, takes it out of the inbox at once. Its
+row stays where it was, saying "removed", with an "Undo" in it and a
+thin bar along its foot that drains over four seconds; resting the
+pointer on the row stops the bar. ⌘/ctrl Z does the same, which is
+where your hand goes anyway.
 Nothing is destroyed in the meantime: the daemon marks the document
 deleted and keeps it until `prune` runs, which is what makes the offer
 real. It disappears from the tree, the inbox, search and the queue in
@@ -834,6 +848,16 @@ on the aside and it is read, and the mark settles. Only one aside lights
 up every ten minutes: an agent that leaves one per edit costs you a
 single glance, and the rest join the trail quietly. An aside may name a
 document it is about, and then clicking it opens that document.
+
+An aside can be closed: the ✕ in its corner, or Esc while it has the
+focus. Its card stays where it was as one line, "Aside closed", with an
+"Undo" and the same draining four-second bar a removed document's row
+has; ⌘/ctrl Z works too. When the bar runs out, the next aside you
+haven't closed takes the card, or the card goes. With a trail behind it,
+"Close all" at the foot of the trail closes every one at once. Closing
+is not muting: the next aside an agent sends shows as usual. A closed
+aside is closed in every window, and the daemon only marks it closed,
+which is why the Undo is real.
 
 It is a channel from the agent to you and nothing comes back: an aside is
 not an instruction to anything.
@@ -945,6 +969,13 @@ A link into a folder lands where it points: `#L120` on a file opens it
 at that line, marked, and a section link opens it at that heading -- the
 same two the library's own documents answer to, and worth having because
 a link into a browsed file is how one agent tells you where to look.
+
+**Open in file manager**, under the file or folder you are reading, shows
+it in Files, Finder or Explorer; a file opens the folder it sits in. It
+is beside **Open terminal here**, in a folder's right-click menu too, and
+a desk's **Folder** line in its rail does the same for the desk's folder.
+The page sends only the id of what you are reading and the daemon works
+out the folder itself, as it does for the terminal.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does

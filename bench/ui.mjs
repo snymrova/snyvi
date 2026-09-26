@@ -28,7 +28,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
@@ -132,7 +132,13 @@ async function main() {
   copyFileSync(BIN_SRC, BIN);
   const app = process.platform === "win32" ? "snyvi-app.exe" : "snyvi-app";
   const sep = process.platform === "win32" ? ";" : ":";
-  const path = (process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app))).join(sep);
+  // What opens a folder or a link on this machine, stood in for: nothing the
+  // probe does may open a real file manager on the desk it runs on. Each
+  // writes down what it was handed, for the row that opens a folder.
+  const openers = join(tmp, "openers");
+  mkdirSync(openers);
+  for (const o of ["xdg-open", "open"]) writeFileSync(join(openers, o), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${join(tmp, "opened")}"\n`, { mode: 0o755 });
+  const path = [openers, ...(process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app)))].join(sep);
   const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, PATH: path };
   const stub = join(bin, app);
   const base = `http://127.0.0.1:${PORT}`;
@@ -217,6 +223,9 @@ async function main() {
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
+    sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
+    sections.push(["an aside, closed", await asideRows(p, base, token)]);
+    sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
     sections.push(["a link into a folder", await browseRows(p, browsed)]);
     sections.push(["a link out of a document", await docLinkRows(p, base, token, first.doc.id)]);
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
@@ -588,7 +597,9 @@ async function narrowRows(p, url) {
 
   for (const w of [1000, 700]) {
     await p.width(w);
-    await p.press("Escape");
+    // Clear anything left over; with nothing over the page, Esc would take
+    // the reader off the document (backRows), which is not this row's to do.
+    if (await p.ev(`!!document.documentElement.dataset.sheet || document.body.classList.contains("keys")`)) await p.press("Escape");
     const worked = [], broke = [];
     const check = (name, ok) => (ok ? worked : broke).push(name);
     await p.press("?"); check("?", await p.ui("vis", "#help")); await p.press("Escape");
@@ -897,15 +908,17 @@ async function queueRows(p, url, arrive) {
   return rows;
 }
 
-/** 0.15: a delete is one keystroke and eight seconds of Undo, over a soft
+/** 0.15: a removal is one keystroke and a few seconds of Undo, over a soft
  *  delete the daemon keeps until `prune` runs. The confirmation it replaces
  *  was a `window.confirm`, which the native window draws as the toolkit's own
  *  dialog -- and which would hang every row below, since a blocked page
- *  answers nothing. */
+ *  answers nothing. 1.6: the Undo stands in the row's own place, for 4 s,
+ *  with a bar that drains, and no toast says "Deleted". */
 async function deleteRows(p, arrive) {
   const rows = [];
   const listed = title => p.ev(`[...document.querySelectorAll(".inbox .title")].map(t => t.textContent).includes(${JSON.stringify(title)})`);
   const toastEl = () => p.ev(`(() => { const t = document.querySelector("#toasts .toast"); return t ? { text: t.textContent, act: !!t.querySelector(".act") } : null; })()`);
+  const ghost = () => p.ev(`(() => { const g = document.querySelector("#trees .t-ghost"); if (!g) return null; const r = g.getBoundingClientRect(); return { text: g.textContent, y: Math.round(r.top), h: Math.round(r.height) }; })()`);
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
 
   const doomed = await arrive();
@@ -913,28 +926,219 @@ async function deleteRows(p, arrive) {
   await p.pointerAway();
   await p.press("Delete");
   await sleep(500);
-  const after = await toastEl();
+  const after = await toastEl(), g1 = await ghost();
   const gone = !(await listed(doomed.title));
-  rows.push(["Del deletes at once", gone && !!after && after.act && /Deleted/.test(after.text) && await p.ev(`document.title === "snyvi"`),
-    !gone ? "the document is still in the inbox" : !after ? "nothing was said" : !after.act ? `"${after.text}" with no Undo in it` : `nothing asked, the row is gone, and the toast offers Undo`]);
+  const said = g1 && g1.text.includes(doomed.title) && /removed/.test(g1.text);
+  rows.push(["Del removes at once", gone && said && !(after && /Deleted/.test(after.text)) && await p.ev(`document.title === "snyvi"`),
+    !gone ? "the document is still in the inbox" : !g1 ? "no row offers Undo in the sidebar" : after && /Deleted/.test(after.text) ? `a toast still says "${after.text}"` : `nothing asked, and its row says "${g1.text}"`]);
 
-  await p.clickOn("#toasts .toast .act");
+  await p.clickOn("#trees .t-ghost .t-undo");
   const back = await until(`document.title === ${JSON.stringify(doomed.title)}`);
-  rows.push(["Undo puts it back", back, back ? "the document is open again, where it was deleted from" : `landed on "${await p.ev("document.title")}"`]);
+  rows.push(["Undo in the row puts it back", back, back ? "the document is open again, where it was removed from" : `landed on "${await p.ev("document.title")}"`]);
 
   await p.press("Delete");
   await sleep(400);
   await p.press("z", { ctrl: true });
   const byKey = await until(`document.title === ${JSON.stringify(doomed.title)}`);
-  rows.push(["and ⌘Z does the same", byKey, byKey ? "deleted and undone without touching the toast" : `landed on "${await p.ev("document.title")}"`]);
+  rows.push(["and ⌘Z does the same", byKey, byKey ? "removed and undone without touching the row" : `landed on "${await p.ev("document.title")}"`]);
 
-  await p.press("Delete");
-  await sleep(500);
+  // The ✕ on the row itself: the ghost takes the row's own place and height.
+  const sel = `#tree a[data-id="${doomed.id}"]`;
+  const was = await p.ev(`(() => { const a = document.querySelector(${JSON.stringify(sel)}); if (!a) return null; const r = a.getBoundingClientRect(); return { y: Math.round(r.top), h: Math.round(r.height) }; })()`);
+  if (was) {
+    await p.hoverOn(sel);
+    await p.clickOn(`${sel} [data-deldoc]`);
+    await sleep(300);
+    const g2 = await ghost(), t2 = await toastEl();
+    const inPlace = g2 && Math.abs(g2.y - was.y) <= 1 && Math.abs(g2.h - was.h) <= 1;
+    rows.push(["the ✕ leaves its Undo in the row", !!inPlace && !t2,
+      !g2 ? "no ghost row" : t2 ? `a toast came too: "${t2.text}"` : inPlace ? `at the row's own place, ${g2.h} px high` : `the row was at y ${was.y}, ${was.h} px; the ghost is at y ${g2.y}, ${g2.h} px`]);
+    // Resting on it stops the clock.
+    await p.hoverOn("#trees .t-ghost");
+    await sleep(4600);
+    const held = !!(await ghost());
+    rows.push(["resting on it stops the clock", held, held ? "still offering Undo after 4.6 s under the pointer" : "it went while the pointer was on it"]);
+    await p.pointerAway();
+    await sleep(4800);
+    const settled = !(await ghost());
+    rows.push(["and off it, the offer ends", settled, settled ? "the row closed once the 4 s had run" : "the ghost is still there"]);
+  } else rows.push(["the ✕ leaves its Undo in the row", false, "the document's row is not in the sidebar"]);
+
   await p.reload();
   const stillGone = !(await listed(doomed.title));
   const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);
-  rows.push(["a delete a reload agrees with", stillGone && found === 0,
+  rows.push(["a removal a reload agrees with", stillGone && found === 0,
     !stillGone ? "the inbox lists it again after the reload" : found ? `search still finds ${found}` : "gone from the inbox and from search, because the daemon did it"]);
+  return rows;
+}
+
+/** Every document and every file has a ✕ in its head, and it goes back to
+ *  the screen the reading began on: the Inbox, past every document `j` read
+ *  on to; a folder's contents; and the Inbox for a deep link, which has no
+ *  screen behind it. Esc does the same, once nothing is over the page. The
+ *  desk's own way back is deskRows' to read, since a tab has no desk. */
+async function backRows(p, browsed) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const where = () => p.ev("location.pathname");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const bar = () => p.ev(`(() => { const o = document.querySelector("#chrome .over"), x = o.querySelector(".over-x"), r = x.getBoundingClientRect();
+    return { shown: !o.hidden && r.width > 0, title: x.title }; })()`);
+
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  const onInbox = await bar();
+  await p.clickOn(".inbox a[data-id]");
+  await until(`location.pathname.startsWith("/d/")`);
+  const first = await where(), b1 = await bar();
+  await p.press("j"); await until(`location.pathname !== ${JSON.stringify(first)}`);
+  const second = await where();
+  await p.press("j"); await until(`location.pathname !== ${JSON.stringify(second)}`);
+  const read = new Set([first, second, await where()]).size;
+  rows.push(["every document has the ✕", !onInbox.shown && b1.shown && /Back to Inbox/.test(b1.title),
+    onInbox.shown ? "the Inbox has one too" : !b1.shown ? "a document opened from the Inbox has none" : `its tooltip reads "${b1.title}"`]);
+  await p.clickOn("#chrome .over-x");
+  const home = await until(`location.pathname === "/" && !!document.querySelector(".inbox")`);
+  rows.push(["and it goes back past what j read", home && read === 3,
+    read !== 3 ? `j read ${read} documents, not 3` : home ? "three documents read, one click, the Inbox" : `landed on ${await where()}`]);
+
+  const root = browsed.replace(/^.*\/b\//, "/b/").replace(/\/$/, "");
+  await p.goto(browsed);
+  await p.pointerAway();
+  await p.clickOn(`.inbox a[data-path="notes.md"]`);
+  await until(`location.pathname.endsWith("/notes.md")`);
+  const b2 = await bar();
+  await p.clickOn("#chrome .over-x");
+  const folder = await until(`location.pathname === ${JSON.stringify(root)}`);
+  rows.push(["a file goes back to its folder", b2.shown && folder,
+    !b2.shown ? "the file has no ✕" : folder ? `back on the folder's contents, "${b2.title}"` : `landed on ${await where()}`]);
+
+  await p.goto(`${origin}${first}`);
+  await p.pointerAway();
+  await p.clickOn("#chrome .over-x");
+  const deep = await until(`location.pathname === "/"`);
+  rows.push(["a deep link goes to the Inbox", deep, deep ? "no screen behind it, so the Inbox" : `landed on ${await where()}`]);
+
+  await p.goto(`${origin}${first}`);
+  await p.pointerAway();
+  await p.press("k", { ctrl: true });
+  const pal = await until(`!document.querySelector("#palette").hidden`, 10);
+  await p.press("Escape"); await sleep(200);
+  const stayed = await p.ev(`document.querySelector("#palette").hidden && location.pathname === ${JSON.stringify(first)}`);
+  await p.press("Escape");
+  const esc = await until(`location.pathname === "/"`);
+  rows.push(["Esc takes one thing down at a time", pal && stayed && esc,
+    !pal ? "⌃K opened no palette" : !stayed ? `the first Esc left the page for ${await where()}` : esc ? "the first Esc shut the palette, the second went to the Inbox" : "the second Esc stayed on the document"]);
+  return rows;
+}
+
+/** An aside can be closed: the ✕ on its card, or Esc on it, and the card
+ *  stands as one line holding the Undo for 4 s, as a removed document's row
+ *  does. The daemon only flags it, so Undo is real, and a closed one is
+ *  closed in every page. The next aside takes the card once the offer ends. */
+async function asideRows(p, base, token) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const say = async text => {
+    const r = await fetch(`${base}/api/notes`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text, sender: "bench-agent" }),
+    });
+    if (!r.ok) throw new Error(`aside: ${r.status} ${await r.text()}`);
+    return (await r.json()).note;
+  };
+  const daemon = async () => (await (await fetch(`${base}/api/notes`)).json()).notes;
+  const card = () => p.ev(`(() => { const n = document.querySelector("#note"); if (n.hidden) return null;
+    const g = n.querySelector(".note-ghost"), c = n.querySelector(".note-now p");
+    return { ghost: g ? g.textContent : null, text: c ? c.textContent : null }; })()`);
+
+  const older = await say("An older aside, for the trail.");
+  const newer = await say("A newer aside, to close.");
+  await p.goto(`${base}/`);
+  await p.pointerAway();
+  await until(`!!document.querySelector("#note .note-now")`);
+  await p.hoverOn("#note .note-now");
+  await sleep(300);
+  await p.clickOn("#note .note-x");
+  await sleep(300);
+  const c1 = await card(), d1 = await daemon();
+  const flagged = d1.find(n => n.id === newer.id)?.dismissed === true;
+  rows.push(["the ✕ closes the aside, and Undo stands in its place", !!c1 && /Aside closed/.test(c1.ghost || "") && flagged,
+    !c1 ? "the card went with nothing in its place" : !c1.ghost ? `the card still reads "${c1.text}"` : !flagged ? "the daemon was not told" : "one line, \"Aside closed · Undo\", and the daemon keeps it flagged"]);
+
+  await p.clickOn("#note [data-note-undo]");
+  await sleep(300);
+  const c2 = await card(), d2 = await daemon();
+  const back = c2?.text === newer.text && d2.find(n => n.id === newer.id)?.dismissed === false;
+  rows.push(["Undo puts it back", back, back ? "the same aside on the card, and unflagged in the daemon" : `the card reads ${JSON.stringify(c2)}`]);
+
+  await p.ev(`document.querySelector("#note .note-now").focus()`);
+  const was = await p.ev("location.pathname");
+  await p.press("Escape");
+  await sleep(300);
+  const c3 = await card(), stayed = await p.ev(`location.pathname === ${JSON.stringify(was)}`);
+  const onUndo = await p.ev(`!!document.activeElement?.matches("#note [data-note-undo]")`);
+  rows.push(["Esc on the card closes it, and only that", /Aside closed/.test(c3?.ghost || "") && stayed && onUndo,
+    !stayed ? `Esc also left the page for ${await p.ev("location.pathname")}` : !c3?.ghost ? "Esc did not close it" : onUndo ? "closed, the page stayed, and the hand is on Undo" : "closed, but the focus went back to the page's start"]);
+
+  await p.pointerAway();
+  await p.ev(`document.activeElement?.blur()`);
+  const next = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(older.text)}`, 70);
+  rows.push(["when the offer ends, the next aside has the card", next, next ? "the older aside, after 4 s" : `the card reads ${JSON.stringify(await card())}`]);
+
+  await say("One more, so there is a trail to close.");
+  await until(`!!document.querySelector("#note .note-all")`);
+  await p.hoverOn("#note .note-now");
+  await sleep(500);
+  await p.clickOn("#note [data-note-all]");
+  await sleep(300);
+  const c4 = await card();
+  await p.pointerAway();
+  const empty = await until(`document.querySelector("#note").hidden`, 70);
+  const allFlagged = (await daemon()).every(n => n.dismissed);
+  rows.push(["Close all, from the trail", /Asides closed/.test(c4?.ghost || "") && empty && allFlagged,
+    !c4?.ghost ? "no Undo stood after Close all" : !empty ? "the card is still there after the offer" : !allFlagged ? "the daemon still has one open" : "one Undo for all of them, then no card at all"]);
+
+  const fresh = await say("A new aside after closing them all.");
+  const shows = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(fresh.text)}`);
+  rows.push(["a new aside still shows", shows, shows ? "closing is not muting" : `the card reads ${JSON.stringify(await card())}`]);
+  // Read, the way a reader does: an aside left waiting keeps the logo
+  // blinking, and the rows after this one count every animation that runs.
+  await p.hoverOn("#note .note-now");
+  await sleep(1000);
+  await p.pointerAway();
+  return rows;
+}
+
+/** An Open in file manager beside every Open terminal here: the document's, the
+ *  browsed folder's, and the folder row's menu. The daemon resolves the ids
+ *  itself and hands the folder to the desktop's opener -- stubbed for the
+ *  probe, which reads back what it was handed. */
+async function revealRows(p, browsed, folder, tmp) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const opened = join(tmp, "opened");
+  const origin = await p.ev("location.origin");
+  await p.goto(`${origin}/`);
+  await p.clickOn(".inbox a[data-id]");
+  await until(`location.pathname.startsWith("/d/")`);
+  const inDoc = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
+  await p.goto(`${browsed.replace(/\/$/, "")}/notes.md`);
+  const inBrowse = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
+  rows.push(["Open in file manager beside Open terminal here", inDoc && inBrowse,
+    !inDoc ? "a document's meta has none" : inBrowse ? "in a document's meta and a browsed file's" : "a browsed file's meta has none"]);
+
+  if (process.platform === "win32") { rows.push(["the folder a file sits in is opened", true, "not clicked on Windows, where Explorer itself would open"]); return rows; }
+  if (existsSync(opened)) unlinkSync(opened);
+  await p.clickOn('#meta [data-act="reveal"]');
+  for (let i = 0; i < 30 && !existsSync(opened); i++) await sleep(100);
+  const handed = existsSync(opened) ? readFileSync(opened, "utf8").trim() : null;
+  const said = await p.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
+  const want = realpathSync(folder);
+  const noDisplay = !handed && /no desktop session/.test(said);
+  rows.push(["the folder a file sits in is opened", handed === want || noDisplay,
+    handed === want ? `the opener was handed ${handed}` : noDisplay ? "no display in this run, and the daemon said so" : handed ? `the opener was handed ${handed}, not ${want}` : `nothing was opened; the page said "${said}"`]);
   return rows;
 }
 

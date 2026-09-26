@@ -1105,7 +1105,7 @@ function meta() {
   const top = `<div class="row dk-row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span><span class="dk-tools">` +
     `<button type="button" data-a="rename" title="Rename desk" aria-label="Rename desk">${ico("pen")}</button>` +
     sure("drop", "", "Close the desk and its panels", "Close desk", ico("x")) + `</span></div>` +
-    `<div class="row"><b>Folder</b><span title="${esc(d.root)}">${esc(tilde(d.root))}</span></div>`;
+    `<div class="row"><b>Folder</b><button type="button" class="dk-folder" data-a="reveal" title="Open ${esc(d.root)} in the file manager">${esc(tilde(d.root))}</button></div>`;
   const low = v ? `<div class="row dk-pl"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "";
   // The panel's line ticks ("up 12s") on every frame that brings a status,
   // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
@@ -1434,6 +1434,7 @@ async function act(b) {
     else if (a === "close" && v) { await ctx.api(`/api/panes/${v.id}/delete`, {}); await ctx.refresh(); }
     else if (a === "drop") { await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true); }
     else if (a === "rename") renameDesk(d);
+    else if (a === "reveal") ctx.reveal({ desk: d.id });
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
@@ -1839,6 +1840,9 @@ const CSS = `
 .dk-pane.on { background: var(--accent-bg); color: var(--accent); }
 .dk-focus { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; text-align: left; padding: 4px 8px; color: inherit; white-space: nowrap; overflow: hidden; }
 .dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; width: 0; overflow: hidden; }
+/* The desk's folder is the folder's own name, and a click opens it in the file manager. */
+.dk-folder { min-width: 0; padding: 0; text-align: left; font: inherit; color: inherit; overflow-wrap: anywhere; border-radius: 3px; }
+.dk-folder:hover { color: var(--accent); }
 .dk-pane:hover .dk-tools, .dk-doc:hover .dk-tools, .dk-note:hover .dk-tools, .dk-row:hover .dk-tools, .dk-tools:has(:focus-visible), .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }

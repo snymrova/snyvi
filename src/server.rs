@@ -389,10 +389,13 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         // server and a page from before the rename still reach them.
         .route("/api/notes", get(asides).post(receive_aside))
         .route("/api/notes/seen", post(see_asides))
+        .route("/api/notes/dismiss", post(dismiss_asides))
+        .route("/api/notes/restore", post(restore_asides))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/terminal", post(terminal))
+        .route("/api/reveal", post(reveal))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/pick", post(browse_pick))
         .route("/api/browse/{id}/close", post(browse_close))
@@ -1759,6 +1762,27 @@ async fn see_asides(State(app): S) -> Json<serde_json::Value> {
     Json(json!({ "ok": true }))
 }
 
+#[derive(Deserialize)]
+struct AsideIds {
+    ids: Vec<u64>,
+}
+
+/// A reader closed an aside, or all of them: gone from the card in every
+/// page. Only flagged, so `restore` is the Undo.
+async fn dismiss_asides(State(app): S, Json(b): Json<AsideIds>) -> Json<serde_json::Value> {
+    if app.asides.dismiss(&b.ids) {
+        emit(&app, "notes", json!({ "notes": app.asides.list() }));
+    }
+    Json(json!({ "ok": true }))
+}
+
+async fn restore_asides(State(app): S, Json(b): Json<AsideIds>) -> Json<serde_json::Value> {
+    if app.asides.restore(&b.ids) {
+        emit(&app, "notes", json!({ "notes": app.asides.list() }));
+    }
+    Json(json!({ "ok": true }))
+}
+
 /// Large code files are stored partly plain for an instant first view; finish the
 /// highlight off the request path and tell open tabs to refetch.
 /// Past this many bytes a render is large enough that the memory it frees is
@@ -1809,6 +1833,10 @@ struct TerminalBody {
     doc: Option<String>,
     root: Option<String>,
     path: Option<String>,
+    /// A desk's folder. Behind the desk's gate: see `refuse_folder`.
+    desk: Option<i64>,
+    /// A project's root, as the sidebar's project rows know it.
+    project: Option<i64>,
 }
 
 /// The directory a terminal would open in for a document, if one exists.
@@ -2843,38 +2871,16 @@ async fn paste_image(
 /// directory is looked up here, no command is passed, and nothing comes back.
 /// `docs/TERMINAL.md` has the argument, and section 3 of it has what is
 /// deliberately absent.
-async fn terminal(State(app): S, headers: HeaderMap, Json(b): Json<TerminalBody>) -> Response {
-    if !from_this_page(&headers) && !authorized(&app, &headers) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "not from this page, and no token" })),
-        )
-            .into_response();
+async fn terminal(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<TerminalBody>,
+) -> Response {
+    if let Some(no) = refuse_folder(&app, &headers, &q, &b) {
+        return no;
     }
-    let dir = if let Some(id) = b.root.as_deref() {
-        // `resolve` is what keeps a path from the caller inside the root it
-        // names -- the same guard `browse_file` reads its bytes through. A file
-        // opens beside itself; the root opens at the root.
-        app.browse
-            .resolve(id, b.path.as_deref().unwrap_or(""))
-            .ok()
-            .and_then(|p| {
-                if p.is_dir() {
-                    Some(p)
-                } else {
-                    p.parent().map(|d| d.to_path_buf())
-                }
-            })
-    } else if let Some(id) = b.doc.as_deref() {
-        app.store
-            .get(id)
-            .ok()
-            .flatten()
-            .and_then(|d| doc_folder(&app, &d))
-    } else {
-        None
-    };
-    let Some(dir) = dir.filter(|d| d.is_dir()) else {
+    let Some(dir) = folder_of(&app, &b) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "no folder to open" })),
@@ -2898,6 +2904,104 @@ async fn terminal(State(app): S, headers: HeaderMap, Json(b): Json<TerminalBody>
             Json(json!({ "error": "no terminal found on this machine" })),
         )
             .into_response()
+    }
+}
+
+/// Open the folder the reader is looking at in the system's file manager.
+/// The same ids in and the same guard as `terminal`; `platform::open_folder`
+/// does the opening.
+async fn reveal(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<TerminalBody>,
+) -> Response {
+    if let Some(no) = refuse_folder(&app, &headers, &q, &b) {
+        return no;
+    }
+    let Some(dir) = folder_of(&app, &b) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "no folder to open" })),
+        )
+            .into_response();
+    };
+    if !platform::has_display() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "no desktop session to open a folder in" })),
+        )
+            .into_response();
+    }
+    if platform::open_folder(&dir) {
+        Json(json!({ "dir": dir })).into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "nothing on this machine opens folders" })),
+        )
+            .into_response()
+    }
+}
+
+/// Who may open a folder: a desk's only behind the desk's own gate, since a
+/// desk is reached by nothing less; anything else from this page or with the
+/// token, as `terminal` always was.
+fn refuse_folder(
+    app: &App,
+    headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+    b: &TerminalBody,
+) -> Option<Response> {
+    if b.desk.is_some() {
+        return refuse_desk(app, headers, q);
+    }
+    if !from_this_page(headers) && !authorized(app, headers) {
+        return Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "not from this page, and no token" })),
+            )
+                .into_response(),
+        );
+    }
+    None
+}
+
+/// The folder a request names, looked up here from an id snyvi already
+/// holds, so nothing the caller types is ever a path. One function for
+/// `terminal` and `reveal`, so the two can never open different places.
+fn folder_of(app: &App, b: &TerminalBody) -> Option<std::path::PathBuf> {
+    let dir = if let Some(id) = b.root.as_deref() {
+        // `resolve` is what keeps a path from the caller inside the root it
+        // names -- the same guard `browse_file` reads its bytes through. A file
+        // opens beside itself; the root opens at the root.
+        app.browse
+            .resolve(id, b.path.as_deref().unwrap_or(""))
+            .ok()
+            .and_then(dir_of)
+    } else if let Some(id) = b.doc.as_deref() {
+        app.store
+            .get(id)
+            .ok()
+            .flatten()
+            .and_then(|d| doc_folder(app, &d))
+    } else if let Some(id) = b.desk {
+        app.store.desk(id).ok().flatten().map(|d| d.root.into())
+    } else if let Some(id) = b.project {
+        app.store.project_root(id).map(Into::into)
+    } else {
+        None
+    };
+    dir.filter(|d| d.is_dir())
+}
+
+/// A folder is itself; a file is the folder it sits in.
+fn dir_of(p: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    if p.is_dir() {
+        Some(p)
+    } else {
+        p.parent().map(|d| d.to_path_buf())
     }
 }
 
@@ -3313,11 +3417,22 @@ fn err(e: anyhow::Error) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        desk_refusal, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
-        DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS, PALETTE_JS,
+        desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
+        BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
+        PALETTE_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
+
+    /// A file opens the folder it sits in; a folder opens itself.
+    #[test]
+    fn a_file_opens_beside_itself() {
+        let tmp = crate::store::tempdir::Dir::new("snyvi-reveal");
+        let file = tmp.path.join("notes.md");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(dir_of(file), Some(tmp.path.clone()));
+        assert_eq!(dir_of(tmp.path.clone()), Some(tmp.path.clone()));
+    }
 
     /// What a player sends when it seeks, and what it must get back.
     #[test]

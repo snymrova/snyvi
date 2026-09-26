@@ -95,7 +95,8 @@ export function open(ctx, f, x, y) {
   const here = state.desks ? state.desks.desks.filter(d => d.root === f.abs) : [];
   menu.innerHTML = (capability ? `<button role="menuitem" data-m="new">New desk here</button>` +
     here.map(d => `<button role="menuitem" data-m="show" data-id="${d.id}">Show desk ${esc(d.name)}</button>`).join("") + `<hr>` : "") +
-    `<button role="menuitem" data-m="copy">Copy path</button><button role="menuitem" data-m="term">Open terminal here</button>`;
+    `<button role="menuitem" data-m="copy">Copy path</button><button role="menuitem" data-m="term">Open terminal here</button>` +
+    `<button role="menuitem" data-m="reveal">Open in file manager</button>`;
   menu.hidden = false;
   menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 8)) + "px";
   menu.style.top = Math.max(4, Math.min(y, innerHeight - menu.offsetHeight - 8)) + "px";
@@ -119,6 +120,7 @@ function install(ctx) {
     if (m === "new") make(ctx, f);
     else if (m === "show") ctx.show(+b.dataset.id, true);
     else if (m === "copy") { navigator.clipboard?.writeText(f.abs); ctx.toast("Copied", f.abs); }
+    else if (m === "reveal") ctx.reveal({ root: f.root, path: f.path });
     else ctx.terminal({ root: f.root, path: f.path });
   });
   menu.addEventListener("keydown", e => {
