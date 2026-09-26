@@ -99,6 +99,28 @@ pub fn open_url(url: &str) -> bool {
     }
 }
 
+/// Show a folder in the desktop's file manager.
+///
+/// On Windows that is Explorer by name, with the path as its argument, rather
+/// than `open_url`'s `cmd /C start`: a command line for cmd would read a `%`
+/// or a `^` in a folder's name as its own. Elsewhere the link opener already
+/// does it -- `xdg-open` and `open` show a directory in the file manager.
+pub fn open_folder(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return Command::new("explorer")
+            .arg(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_url(&dir.to_string_lossy())
+    }
+}
+
 /// The browsers that can open a chrome-less window, in the order to try them.
 ///
 /// A Chromium-family browser in app mode has no tabs, no address bar and no
@@ -753,7 +775,7 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(test)]
 mod tests {

@@ -15,12 +15,13 @@
 //! in-memory beside these rows and die with the daemon, which is why a pane row
 //! carries no state column at all.
 //!
-//! The two caps are the budget, not a preference. `docs/BRAINSTORM.md:31` sets
-//! 60 MB resident and `:549` records 40 MB today, so there are 20 MB to spend.
-//! A truecolor cell is about 11 bytes, so a 2 MB scrollback is roughly 900 rows
-//! at 200 columns, and eight of those is a 16 MB ceiling that fits. Four panes
-//! per desk bounds nothing once desks are unbounded -- the global cap is the
-//! line that holds, and it is the one worth writing a test about.
+//! A desk holds four panes and there is no cap across desks. There was one,
+//! eight, written against the memory budget: a truecolor cell is about 11
+//! bytes, so a 2 MB scrollback is roughly 900 rows at 200 columns, and eight
+//! of those was a 16 MB ceiling. It went because a reader with three projects
+//! running wants three desks of panels, not a refusal; what an unwatched pane
+//! costs is kept small instead -- its frames run once a second
+//! (`pane::UNWATCHED_FRAME`) -- and its scrollback is still capped at 2 MB.
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -29,10 +30,6 @@ use serde::Serialize;
 /// How many panes one desk holds. Two columns, two rows, and the third pane
 /// spans the bottom rather than leaving a hole beside it.
 pub const PER_DESK: i64 = 4;
-
-/// How many panes exist at once, across every desk. This is the number the
-/// memory budget is written against.
-pub const EVERYWHERE: i64 = 8;
 
 /// A line on a desk's list, not a paragraph. Past this it is a document and
 /// `send_document` is for it -- the same line `crate::aside` draws, for the same
@@ -74,7 +71,8 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   text TEXT NOT NULL,
   done_at INTEGER NOT NULL DEFAULT 0,
   removed_at INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  done_by TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
@@ -108,6 +106,11 @@ pub struct DeskNote {
     pub text: String,
     pub done: bool,
     pub created_at: i64,
+    /// Who ticked it, when it was not the reader: the agent's name, as its
+    /// MCP client gave it. Empty for a tick from the page, and for any line
+    /// not done.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub done_by: String,
 }
 
 /// A pane, which in this phase is a workspace row and no process.
@@ -155,15 +158,10 @@ pub struct Placed {
 
 /// What came of asking for a pane.
 ///
-/// The two refusals are separate because the sentence a reader gets is
-/// different: one says this desk is full and a second desk would take the next
-/// pane, the other says snyvi is full and something has to be closed first.
-/// Collapsing them would make the first look like the second.
 #[derive(Debug)]
 pub enum Opened {
     Pane(Pane),
     DeskFull,
-    NoRoomLeft,
     NoSuchDesk,
 }
 
@@ -305,10 +303,6 @@ pub fn open_pane(
     if !exists {
         return Ok(Opened::NoSuchDesk);
     }
-    let total: i64 = tx.query_row("SELECT COUNT(*) FROM panes", [], |r| r.get(0))?;
-    if total >= EVERYWHERE {
-        return Ok(Opened::NoRoomLeft);
-    }
     let taken: Vec<i64> = tx
         .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
         .query_map(params![desk_id], |r| r.get(0))?
@@ -332,8 +326,44 @@ pub fn open_pane(
     }))
 }
 
-/// Close one pane. Its slot is free immediately, and so is its share of the
-/// global cap.
+/// Move the pane at slot `from` to slot `to` on one desk, and the pane that
+/// was at `to`, if any, to `from`. The slot is the pane's place and its number
+/// both -- pane 2 is always the one in position 2, the one ⌃⌥2 reaches -- so a
+/// move renumbers. Returns false when there is no pane at `from` or a slot is
+/// out of range. Runs inside the caller's transaction, which also moves what
+/// the panes sent (`Store::move_pane`); `UNIQUE(desk_id, slot)` is checked
+/// row by row, so the pane moving out goes through slot 0 first.
+pub fn move_pane(tx: &rusqlite::Transaction, desk_id: i64, from: i64, to: i64) -> Result<bool> {
+    let range = 1..=PER_DESK;
+    if !range.contains(&from) || !range.contains(&to) {
+        return Ok(false);
+    }
+    let moving: Option<String> = tx
+        .query_row(
+            "SELECT id FROM panes WHERE desk_id = ?1 AND slot = ?2",
+            params![desk_id, from],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(moving) = moving else {
+        return Ok(false);
+    };
+    if from == to {
+        return Ok(true);
+    }
+    tx.execute("UPDATE panes SET slot = 0 WHERE id = ?1", params![moving])?;
+    tx.execute(
+        "UPDATE panes SET slot = ?3 WHERE desk_id = ?1 AND slot = ?2",
+        params![desk_id, to, from],
+    )?;
+    tx.execute(
+        "UPDATE panes SET slot = ?2 WHERE id = ?1",
+        params![moving, to],
+    )?;
+    Ok(true)
+}
+
+/// Close one pane. Its slot is free immediately.
 pub fn close_pane(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn.execute("DELETE FROM panes WHERE id = ?1", params![id])? > 0)
 }
@@ -390,8 +420,8 @@ pub fn valid_session(s: &str) -> bool {
         })
 }
 
-/// How many panes are open across every desk, which is the number the budget
-/// cares about and the rail shows as `7 of 8 total`.
+/// How many panes are open across every desk, which the rail's tooltip
+/// shows as `7 open on every desk`.
 pub fn panes_open(conn: &Connection) -> Result<i64> {
     Ok(conn.query_row("SELECT COUNT(*) FROM panes", [], |r| r.get(0))?)
 }
@@ -411,7 +441,7 @@ pub fn clear(conn: &Connection) -> Result<()> {
 /// the row under the reader's cursor on every keystroke they finished.
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
-        "SELECT id, text, done_at, created_at FROM desk_notes
+        "SELECT id, text, done_at, created_at, done_by FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at = 0 THEN 0 ELSE 1 END, done_at, id",
     )?;
@@ -468,6 +498,7 @@ pub fn add_note(
         text,
         done: false,
         created_at: now,
+        done_by: String::new(),
     }))
 }
 
@@ -505,9 +536,29 @@ pub fn set_note(
     // `done_at` carries the order the done half is listed in, so ticking a row
     // twice moves it to the end of that half rather than leaving it where the
     // first tick put it.
+    // A tick from the page is the reader's own: whoever ticked it before, it
+    // is theirs now, and an untick clears it.
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        "UPDATE desk_notes SET done_at = ?3, done_by = '' WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
         params![desk_id, id, if done { now } else { 0 }],
+    )? > 0)
+}
+
+/// An agent ticks a line on its own desk's list: done, and by whom. Only
+/// ever done -- an agent cannot untick, write, add or take a line off -- and
+/// only an open line: one the reader already ticked stays theirs. False when
+/// the line is not on this desk's list, or is already done.
+pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, by: &str, now: i64) -> Result<bool> {
+    let by = if by.trim().is_empty() {
+        "an agent"
+    } else {
+        by.trim()
+    };
+    let by: String = by.chars().take(60).collect();
+    Ok(conn.execute(
+        "UPDATE desk_notes SET done_at = ?3, done_by = ?4
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0",
+        params![desk_id, id, now, by],
     )? > 0)
 }
 
@@ -544,6 +595,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         text: r.get(1)?,
         done: r.get::<_, i64>(2)? != 0,
         created_at: r.get(3)?,
+        done_by: r.get(4)?,
     })
 }
 
@@ -691,6 +743,43 @@ mod tests {
         assert!(!remove_note(&conn, yours, n.id, 1).unwrap());
         assert_eq!(notes(&conn, mine).unwrap()[0].text, "mine");
         assert!(notes(&conn, yours).unwrap().is_empty());
+    }
+
+    /// An agent ticks only: an open line on its own desk, once, with its name
+    /// kept -- and the reader's untick or re-tick makes the line theirs again.
+    #[test]
+    fn an_agent_ticks_an_open_line_on_its_own_desk_and_nothing_else() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let yours = create(&conn, "/yours", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "wire the route", 0)
+            .unwrap()
+            .unwrap();
+        assert!(
+            !tick_note(&conn, yours, n.id, "claude-code", 1).unwrap(),
+            "not across desks"
+        );
+        assert!(tick_note(&conn, mine, n.id, "claude-code", 1).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert!(got.done);
+        assert_eq!(got.done_by, "claude-code");
+        assert!(
+            !tick_note(&conn, mine, n.id, "claude-code", 2).unwrap(),
+            "a done line stays as it is"
+        );
+
+        // The reader unticks it: open again, and no one's but theirs.
+        assert!(set_note(&conn, mine, n.id, None, Some(false), 3).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert!(!got.done);
+        assert_eq!(got.done_by, "");
+        // A tick from nobody in particular still says an agent did it.
+        assert!(tick_note(&conn, mine, n.id, "  ", 4).unwrap());
+        assert_eq!(notes(&conn, mine).unwrap()[0].done_by, "an agent");
+        // A line taken off the list cannot be ticked.
+        assert!(set_note(&conn, mine, n.id, None, Some(false), 5).unwrap());
+        assert!(remove_note(&conn, mine, n.id, 6).unwrap());
+        assert!(!tick_note(&conn, mine, n.id, "claude-code", 7).unwrap());
     }
 
     /// An emptied line is not a blank row: rewriting a note to nothing takes
@@ -858,29 +947,74 @@ mod tests {
         assert_eq!(slots(&conn, d), vec![1, 2, 3, 4]);
     }
 
-    /// The cap that protects the budget. Four per desk bounds nothing once
-    /// desks are unbounded; this is the line that holds, and it answers
-    /// differently from the desk's own cap because the reader has to do
-    /// something different about it.
+    /// A move renumbers: the pane at 1 is at 3 and the one at 3 at 1, an
+    /// empty slot takes a pane without a partner, and nothing leaves its desk.
     #[test]
-    fn eight_panes_is_the_whole_of_it_however_many_desks_there_are() {
+    fn a_pane_moves_to_another_slot_and_the_one_there_takes_its_place() {
         let mut conn = db();
-        let desks: Vec<i64> = (0..4)
+        let d = create(&conn, "/p", None, 0).unwrap().id;
+        let other = create(&conn, "/q", None, 0).unwrap().id;
+        for _ in 0..3 {
+            pane(&mut conn, d);
+        }
+        pane(&mut conn, other);
+        let ids = |conn: &Connection, d| -> Vec<String> {
+            get(conn, d)
+                .unwrap()
+                .unwrap()
+                .panes
+                .iter()
+                .map(|p| p.id.clone())
+                .collect()
+        };
+        let before = ids(&conn, d);
+        let tx = conn.transaction().unwrap();
+        assert!(move_pane(&tx, d, 1, 3).unwrap());
+        tx.commit().unwrap();
+        assert_eq!(
+            ids(&conn, d),
+            [before[2].clone(), before[1].clone(), before[0].clone()]
+        );
+
+        // Into the empty slot 4: nothing comes back the other way.
+        let tx = conn.transaction().unwrap();
+        assert!(move_pane(&tx, d, 2, 4).unwrap());
+        tx.commit().unwrap();
+        assert_eq!(slots(&conn, d), vec![1, 3, 4]);
+
+        // No pane at the slot, a slot out of range: refused, nothing moved.
+        let tx = conn.transaction().unwrap();
+        assert!(!move_pane(&tx, d, 2, 1).unwrap());
+        assert!(!move_pane(&tx, d, 1, 5).unwrap());
+        assert!(!move_pane(&tx, d, 0, 1).unwrap());
+        tx.commit().unwrap();
+        assert_eq!(slots(&conn, d), vec![1, 3, 4]);
+        assert_eq!(slots(&conn, other), vec![1], "the other desk is untouched");
+    }
+
+    /// No cap across desks: twelve panes on three desks all open, and each
+    /// desk still stops at its own four.
+    #[test]
+    fn twelve_panes_on_three_desks_all_open() {
+        let mut conn = db();
+        let desks: Vec<i64> = (0..3)
             .map(|_| create(&conn, "/p", None, 0).unwrap().id)
             .collect();
-        for d in &desks[..2] {
+        for d in &desks {
             for _ in 0..PER_DESK {
                 assert!(matches!(pane(&mut conn, *d), Opened::Pane(_)));
             }
+            assert!(matches!(pane(&mut conn, *d), Opened::DeskFull));
         }
-        assert_eq!(panes_open(&conn).unwrap(), EVERYWHERE);
-        // A desk with three slots free is still refused, and not as "full".
-        assert!(matches!(pane(&mut conn, desks[2]), Opened::NoRoomLeft));
+        assert_eq!(panes_open(&conn).unwrap(), 3 * PER_DESK);
 
-        // Closing a whole desk gives its four back, panes and all.
+        // Closing a whole desk takes its panes with it.
         assert!(delete(&conn, desks[0]).unwrap());
-        assert_eq!(panes_open(&conn).unwrap(), 4, "the cascade took its panes");
-        assert!(matches!(pane(&mut conn, desks[2]), Opened::Pane(_)));
+        assert_eq!(
+            panes_open(&conn).unwrap(),
+            2 * PER_DESK,
+            "the cascade took its panes"
+        );
     }
 
     /// A pane id leaves the daemon -- Phase 3 puts it in a child's environment

@@ -41,7 +41,10 @@ into Applications and `snyvi` onto your `PATH`. On Debian and Ubuntu it
 installs both packages, snyvi and the window, with `sudo` for `dpkg`; on
 any other Linux the static binary goes into `~/.local/bin`. Every download
 is checked against the `.sha256` published beside it, and Claude Code is
-connected if it is installed. Run it again to update: a daemon that was
+connected if it is installed. Each download also carries a build
+attestation: `gh attestation verify <file> --repo snymrova/snyvi` proves it
+came out of the release workflow in this repository, on the commit the tag
+names. Run it again to update: a daemon that was
 running is restarted on the new version, and nothing you sent is touched.
 
 ```
@@ -365,11 +368,12 @@ and from that count, and `snyvi init` with no agent prints the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and a third inside a desk. `send_document` is
+That exposes two MCP tools, and two more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
 URL. `send_aside` is the small one, and [Asides](#asides) below says what it
-is for. `read_desk_notes` is offered only to a Claude running in a desk's
-panel, and reads that desk's notes. The tool
+is for. `read_desk_notes` and `tick_desk_note` are offered only to a Claude
+running in a desk's panel: one reads that desk's notes, the other ticks one
+done. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -543,7 +547,27 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | \     | toggle sidebar                              |
 | o     | open source                                 |
 | ?     | show keys                                   |
+| Esc   | back to where the document was opened from  |
 | alt ← / → | back / forward                          |
+| ☰ / ⇧F10 | the menu for what has the focus           |
+| F2    | rename the project or desk row you are on   |
+
+**Right-click** anything in the sidebar, the rail or a desk for what it can
+do: a folder, a file, a project, a document, a desk, a panel's head or its
+terminal, a document in a desk's rail, a note, a point. The top line names
+what the menu is for; what removes or closes comes last, in red, and Close
+panel and Close desk ask a second time. Each entry does what the row's own
+button does -- Remove from inbox leaves the same Undo in the row as its ✕.
+The menu key or ⇧F10 opens it from the keyboard for whatever has the focus
+(inside a panel, only the menu key: ⇧F10 is the program's), arrow keys and
+the first letter move through it, and Esc closes it and puts you back. In
+the window, right-clicking anywhere else shows nothing rather than the web
+view's Back and Reload; a text field and a selection in a document keep
+their usual menu for Copy and Paste.
+
+In a panel, hold **Ctrl** over a link a program printed and it is
+underlined; **Ctrl-click** opens it in your browser. A plain click never
+does, and only http and https links count.
 
 Everything the keys do, a finger can do too: on a screen with no
 pointer the controls that appear on hover -- copy, rename, the `#`
@@ -625,7 +649,7 @@ than hidden, and its tooltip says why -- `Wrap · no code on this page`,
 `Font · code is always monospace`. Clicking it, or pressing its key,
 gives the same answer instead of silently doing nothing. On a desk they
 mean the desk's own things: **width** shows the focused panel
-full-size, as `⌃⌥Z` does, and **Aa** sets the terminal's text size --
+in full view, as `⌃⌥Z` does, and **Aa** sets the terminal's text size --
 Small, Normal, Large, Larger -- for every panel on every desk. Inside a
 panel, `⌃=` and `⌃-` step it and `⌃0` puts it back to Normal, as in
 most terminals; readline's undo, which `⌃-` used to send, is still
@@ -786,15 +810,28 @@ waiting: the empty state exists to be filled. Before 0.14 an arrival
 opened itself whenever the page had gone 2.5 seconds without a scroll
 or a key, which is what reading a paragraph looks like.
 
+Every document and every file has a ✕ at the right of the bar across
+its top, and it goes back to the screen you opened it from: the Inbox, a
+folder, the agents page, a desk. Documents read one after another, with
+`j`, a link or the search, are one visit, so the ✕ goes back past all of
+them, not to the one before. A document with nothing behind it, opened
+from a link or when the window starts, goes back to the Inbox. Its
+tooltip names where it leads. Esc does the same once there's nothing
+else to close: the first Esc shuts the search, the find bar or the keys,
+and the next one goes back.
+
 Back opens a document where you left it, not at the top: the place is
 written into the history entry as you leave and after each scroll, as
 a block and an offset into it, the way a save already keeps it. In the
 desktop window, which has no toolbar, alt+← and alt+→ are Back and
 Forward; in a browser they are the same one step, not two.
 
-Deleting is one keystroke and no question. `Del` deletes the document
-you are reading at once, and the line at the corner offers "Undo" for
-eight seconds — or ⌘/ctrl Z, which is where your hand goes anyway.
+Removing is one keystroke and no question. `Del`, or the ✕ on a
+document's row in the sidebar, takes it out of the inbox at once. Its
+row stays where it was, saying "removed", with an "Undo" in it and a
+thin bar along its foot that drains over four seconds; resting the
+pointer on the row stops the bar. ⌘/ctrl Z does the same, which is
+where your hand goes anyway.
 Nothing is destroyed in the meantime: the daemon marks the document
 deleted and keeps it until `prune` runs, which is what makes the offer
 real. It disappears from the tree, the inbox, search and the queue in
@@ -835,16 +872,29 @@ up every ten minutes: an agent that leaves one per edit costs you a
 single glance, and the rest join the trail quietly. An aside may name a
 document it is about, and then clicking it opens that document.
 
+An aside can be closed: the ✕ in its corner, or Esc while it has the
+focus. Its card stays where it was as one line, "Aside closed", with an
+"Undo" and the same draining four-second bar a removed document's row
+has; ⌘/ctrl Z works too. When the bar runs out, the next aside you
+haven't closed takes the card, or the card goes. With a trail behind it,
+"Close all" at the foot of the trail closes every one at once. Closing
+is not muting: the next aside an agent sends shows as usual. A closed
+aside is closed in every window, and the daemon only marks it closed,
+which is why the Undo is real.
+
 It is a channel from the agent to you and nothing comes back: an aside is
 not an instruction to anything.
 
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.
 
-An agent can *read* that list, and nothing else of snyvi's. A Claude
-running in one of a desk's panels is offered `read_desk_notes`, which
-returns that desk's notes, open and done, and has no way to add, tick,
-change or remove one. It is found by the pane: the panel puts its id in
+An agent can *read* that list, and tick a line done, and nothing else of
+snyvi's. A Claude running in one of a desk's panels is offered
+`read_desk_notes`, which returns that desk's notes, open and done, each
+with its number, and `tick_desk_note`, which marks one open line done when
+the work it names is finished. A line an agent ticked carries the agent's
+name at its end; untick it and it is yours again. There is no way for an
+agent to add, untick, change or remove a line. It is found by the pane: the panel puts its id in
 the shell's environment as `SNYVI_SESSION`, and the daemon answers only
 while that panel is running, and only with its own desk's list -- never
 another desk's, and never a document. A Claude started anywhere else is
@@ -945,6 +995,13 @@ A link into a folder lands where it points: `#L120` on a file opens it
 at that line, marked, and a section link opens it at that heading -- the
 same two the library's own documents answer to, and worth having because
 a link into a browsed file is how one agent tells you where to look.
+
+**Open in file manager**, under the file or folder you are reading, shows
+it in Files, Finder or Explorer; a file opens the folder it sits in. It
+is beside **Open terminal here**, in a folder's right-click menu too, and
+a desk's **Folder** line in its rail does the same for the desk's folder.
+The page sends only the id of what you are reading and the daemon works
+out the folder itself, as it does for the terminal.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does

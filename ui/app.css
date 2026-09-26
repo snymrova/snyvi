@@ -263,9 +263,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main.scrolled #chrome { box-shadow: 0 1px 0 var(--rule); }
 #chrome .icon { display: none; }
 #chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; }
-/* A document read over a desk: its name as the bar's heading, at the left,
-   and the ✕ that puts the panels back at the right, beside the rail it was
-   opened from -- the way out where the click in was. Both in the bar the
+/* Every document and file: its name as the bar's heading, at the left, and
+   the ✕ that goes back to where it was opened from at the right -- the
+   panels, for one read over a desk, beside the rail it was opened from:
+   the way out where the click in was. Both in the bar the
    text scrolls under, so the page gives up no room for them. The name
    rises in once the page scrolls (#main.scrolled); at the top the page's
    own <h1> is right under it, and it would say the title twice. */
@@ -474,6 +475,23 @@ html[data-link="off"] .live { visibility: hidden; }
 .note-trail li[data-about]:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule)); }
 .note-trail p { color: var(--fg); }
 .note-trail .note-by { margin-top: 4px; }
+/* The ✕ that closes the aside: in the card's corner, there only while the
+   card is opened -- hovered or focused -- like the other rows' tools. The
+   words keep clear of it. */
+.note-now > p { padding-right: 14px; }
+.note-x { position: absolute; top: 5px; right: 5px; z-index: 2; width: 18px; height: 18px; display: grid; place-items: center; padding: 0;
+  font: inherit; font-size: 10px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; opacity: 0; pointer-events: none; }
+#note:is(:hover, :focus-within) .note-x { opacity: 1; pointer-events: auto; }
+.note-x:hover { background: var(--rule-2); color: var(--fg); }
+/* A closed aside, standing where the card was with its Undo, on the same
+   drain as a removed document's row. */
+.note-ghost { padding: 5px 12px; font-size: 12px; }
+.note-ghost::after { left: 12px; right: 12px; }
+.note-ghost > .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Close all: the trail's own quiet last line, not a card. */
+.note-trail li.note-all { padding: 0; background: none; border: 0; box-shadow: none; text-align: right; }
+.note-all button { font: inherit; font-family: var(--sans); font-size: 11px; color: var(--fg-3); padding: 2px 6px; border-radius: 4px; background: var(--bg-side); }
+.note-all button:hover { color: var(--fg); background: var(--rule-2); }
 
 .side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
 .side-foot { position: relative; }
@@ -664,6 +682,27 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-doc.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is */
 .t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
 @keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
+/* A removed document's row, standing where it was on the row's own grid, so
+   nothing below it moves: the title dims, says "removed", and holds the Undo.
+   The bar along its foot drains over the time the offer stands (GHOST_MS in
+   app.js) and stops while a pointer or a focus rests on the row. `--t` starts
+   both where the last draw left them, so a redraw never plays them again. */
+.t-ghost { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: 6px; color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
+.t-gone:not(.leaving) > .t-ghost { animation: ghost-in 120ms ease-out both; animation-delay: var(--t, 0ms); }
+@keyframes ghost-in { from { color: var(--fg-2); } }
+.t-ghost > .r-ico { align-self: center; opacity: .4; }
+.t-ghost > .title { min-width: 0; }
+.t-gone > .t-ghost > .k { margin-left: 0; font-family: inherit; font-size: 11px; }
+.t-ghost > .t-undo { margin-left: auto; align-self: center; padding: 2px 7px; }
+.t-ghost::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; animation: drain 4000ms linear forwards; animation-delay: var(--t, 0ms); }
+.t-ghost:is(:hover, :focus-within)::after, .t-gone.back .t-ghost::after { animation-play-state: paused; }
+@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.t-gone.leaving { animation-delay: var(--t, 0ms); }
+/* What stands around a ghost only for its sake -- the same document's row in
+   Waiting, a project that left with its last document -- is there to be read
+   past, not used, and closes when the ghost does. */
+.t-doc.held > a { opacity: .45; pointer-events: none; }
+.t-proj.leaving > summary { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
 .t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
 .t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
@@ -716,7 +755,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    dot and the count halfway along the row and a different halfway on each. */
 .row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: 11px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; }
 .t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
-.t-proj > summary > .row-x.row-x { margin-left: 0; }   /* the ✎ before it already took the free space */
 /* On a desk's row and a document's, the tools stand over the row's end
    rather than in the row: coming out, they move nothing, and the title's
    ellipsis stays where it was. The end they cover keeps its place, unseen.
@@ -756,11 +794,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
-#ctx { position: fixed; z-index: 40; min-width: 200px; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: 13px; }
-#ctx button { display: block; width: 100%; text-align: left; padding: 5px 10px; border-radius: 5px; color: var(--fg-2); }
-#ctx button:hover, #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
-#ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
-
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
 .b-root > summary::-webkit-details-marker { display: none; }
@@ -941,8 +974,7 @@ pre.code .copy:focus-visible { opacity: 1; }
    the way the diagram tools already are. */
 @media (hover: none) {
   .ren, .b-close, .b-new, pre.code .copy, pre.code::before { opacity: 1; }
-  .t-desk > a > .ren, .t-proj > summary > .row-x { width: auto; padding: 2px 4px; margin-left: 0; }
-  .t-desk > a > .ren { position: static; translate: none; background: none; pointer-events: auto; }
+  .t-proj > summary > .row-x { width: auto; padding: 2px 4px; margin-left: auto; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }
 }

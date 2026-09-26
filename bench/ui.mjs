@@ -28,7 +28,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
@@ -132,7 +132,13 @@ async function main() {
   copyFileSync(BIN_SRC, BIN);
   const app = process.platform === "win32" ? "snyvi-app.exe" : "snyvi-app";
   const sep = process.platform === "win32" ? ";" : ":";
-  const path = (process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app))).join(sep);
+  // What opens a folder or a link on this machine, stood in for: nothing the
+  // probe does may open a real file manager on the desk it runs on. Each
+  // writes down what it was handed, for the row that opens a folder.
+  const openers = join(tmp, "openers");
+  mkdirSync(openers);
+  for (const o of ["xdg-open", "open"]) writeFileSync(join(openers, o), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${join(tmp, "opened")}"\n`, { mode: 0o755 });
+  const path = [openers, ...(process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app)))].join(sep);
   const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, PATH: path };
   const stub = join(bin, app);
   const base = `http://127.0.0.1:${PORT}`;
@@ -217,6 +223,9 @@ async function main() {
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
+    sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
+    sections.push(["an aside, closed", await asideRows(p, base, token)]);
+    sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
     sections.push(["a link into a folder", await browseRows(p, browsed)]);
     sections.push(["a link out of a document", await docLinkRows(p, base, token, first.doc.id)]);
     sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
@@ -224,6 +233,7 @@ async function main() {
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
+    sections.push(["panels: full view, moved, linked, and their menus", await panelRows(cdp, base, token)]);
     sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
     sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
     sections.push(["the first frame, in the reader's theme", await firstFrameRows(p, url)]);
@@ -588,7 +598,9 @@ async function narrowRows(p, url) {
 
   for (const w of [1000, 700]) {
     await p.width(w);
-    await p.press("Escape");
+    // Clear anything left over; with nothing over the page, Esc would take
+    // the reader off the document (backRows), which is not this row's to do.
+    if (await p.ev(`!!document.documentElement.dataset.sheet || document.body.classList.contains("keys")`)) await p.press("Escape");
     const worked = [], broke = [];
     const check = (name, ok) => (ok ? worked : broke).push(name);
     await p.press("?"); check("?", await p.ui("vis", "#help")); await p.press("Escape");
@@ -897,15 +909,17 @@ async function queueRows(p, url, arrive) {
   return rows;
 }
 
-/** 0.15: a delete is one keystroke and eight seconds of Undo, over a soft
+/** 0.15: a removal is one keystroke and a few seconds of Undo, over a soft
  *  delete the daemon keeps until `prune` runs. The confirmation it replaces
  *  was a `window.confirm`, which the native window draws as the toolkit's own
  *  dialog -- and which would hang every row below, since a blocked page
- *  answers nothing. */
+ *  answers nothing. 1.6: the Undo stands in the row's own place, for 4 s,
+ *  with a bar that drains, and no toast says "Deleted". */
 async function deleteRows(p, arrive) {
   const rows = [];
   const listed = title => p.ev(`[...document.querySelectorAll(".inbox .title")].map(t => t.textContent).includes(${JSON.stringify(title)})`);
   const toastEl = () => p.ev(`(() => { const t = document.querySelector("#toasts .toast"); return t ? { text: t.textContent, act: !!t.querySelector(".act") } : null; })()`);
+  const ghost = () => p.ev(`(() => { const g = document.querySelector("#trees .t-ghost"); if (!g) return null; const r = g.getBoundingClientRect(); return { text: g.textContent, y: Math.round(r.top), h: Math.round(r.height) }; })()`);
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
 
   const doomed = await arrive();
@@ -913,28 +927,219 @@ async function deleteRows(p, arrive) {
   await p.pointerAway();
   await p.press("Delete");
   await sleep(500);
-  const after = await toastEl();
+  const after = await toastEl(), g1 = await ghost();
   const gone = !(await listed(doomed.title));
-  rows.push(["Del deletes at once", gone && !!after && after.act && /Deleted/.test(after.text) && await p.ev(`document.title === "snyvi"`),
-    !gone ? "the document is still in the inbox" : !after ? "nothing was said" : !after.act ? `"${after.text}" with no Undo in it` : `nothing asked, the row is gone, and the toast offers Undo`]);
+  const said = g1 && g1.text.includes(doomed.title) && /removed/.test(g1.text);
+  rows.push(["Del removes at once", gone && said && !(after && /Deleted/.test(after.text)) && await p.ev(`document.title === "snyvi"`),
+    !gone ? "the document is still in the inbox" : !g1 ? "no row offers Undo in the sidebar" : after && /Deleted/.test(after.text) ? `a toast still says "${after.text}"` : `nothing asked, and its row says "${g1.text}"`]);
 
-  await p.clickOn("#toasts .toast .act");
+  await p.clickOn("#trees .t-ghost .t-undo");
   const back = await until(`document.title === ${JSON.stringify(doomed.title)}`);
-  rows.push(["Undo puts it back", back, back ? "the document is open again, where it was deleted from" : `landed on "${await p.ev("document.title")}"`]);
+  rows.push(["Undo in the row puts it back", back, back ? "the document is open again, where it was removed from" : `landed on "${await p.ev("document.title")}"`]);
 
   await p.press("Delete");
   await sleep(400);
   await p.press("z", { ctrl: true });
   const byKey = await until(`document.title === ${JSON.stringify(doomed.title)}`);
-  rows.push(["and ⌘Z does the same", byKey, byKey ? "deleted and undone without touching the toast" : `landed on "${await p.ev("document.title")}"`]);
+  rows.push(["and ⌘Z does the same", byKey, byKey ? "removed and undone without touching the row" : `landed on "${await p.ev("document.title")}"`]);
 
-  await p.press("Delete");
-  await sleep(500);
+  // The ✕ on the row itself: the ghost takes the row's own place and height.
+  const sel = `#tree a[data-id="${doomed.id}"]`;
+  const was = await p.ev(`(() => { const a = document.querySelector(${JSON.stringify(sel)}); if (!a) return null; const r = a.getBoundingClientRect(); return { y: Math.round(r.top), h: Math.round(r.height) }; })()`);
+  if (was) {
+    await p.hoverOn(sel);
+    await p.clickOn(`${sel} [data-deldoc]`);
+    await sleep(300);
+    const g2 = await ghost(), t2 = await toastEl();
+    const inPlace = g2 && Math.abs(g2.y - was.y) <= 1 && Math.abs(g2.h - was.h) <= 1;
+    rows.push(["the ✕ leaves its Undo in the row", !!inPlace && !t2,
+      !g2 ? "no ghost row" : t2 ? `a toast came too: "${t2.text}"` : inPlace ? `at the row's own place, ${g2.h} px high` : `the row was at y ${was.y}, ${was.h} px; the ghost is at y ${g2.y}, ${g2.h} px`]);
+    // Resting on it stops the clock.
+    await p.hoverOn("#trees .t-ghost");
+    await sleep(4600);
+    const held = !!(await ghost());
+    rows.push(["resting on it stops the clock", held, held ? "still offering Undo after 4.6 s under the pointer" : "it went while the pointer was on it"]);
+    await p.pointerAway();
+    await sleep(4800);
+    const settled = !(await ghost());
+    rows.push(["and off it, the offer ends", settled, settled ? "the row closed once the 4 s had run" : "the ghost is still there"]);
+  } else rows.push(["the ✕ leaves its Undo in the row", false, "the document's row is not in the sidebar"]);
+
   await p.reload();
   const stillGone = !(await listed(doomed.title));
   const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);
-  rows.push(["a delete a reload agrees with", stillGone && found === 0,
+  rows.push(["a removal a reload agrees with", stillGone && found === 0,
     !stillGone ? "the inbox lists it again after the reload" : found ? `search still finds ${found}` : "gone from the inbox and from search, because the daemon did it"]);
+  return rows;
+}
+
+/** Every document and every file has a ✕ in its head, and it goes back to
+ *  the screen the reading began on: the Inbox, past every document `j` read
+ *  on to; a folder's contents; and the Inbox for a deep link, which has no
+ *  screen behind it. Esc does the same, once nothing is over the page. The
+ *  desk's own way back is deskRows' to read, since a tab has no desk. */
+async function backRows(p, browsed) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const where = () => p.ev("location.pathname");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const bar = () => p.ev(`(() => { const o = document.querySelector("#chrome .over"), x = o.querySelector(".over-x"), r = x.getBoundingClientRect();
+    return { shown: !o.hidden && r.width > 0, title: x.title }; })()`);
+
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  const onInbox = await bar();
+  await p.clickOn(".inbox a[data-id]");
+  await until(`location.pathname.startsWith("/d/")`);
+  const first = await where(), b1 = await bar();
+  await p.press("j"); await until(`location.pathname !== ${JSON.stringify(first)}`);
+  const second = await where();
+  await p.press("j"); await until(`location.pathname !== ${JSON.stringify(second)}`);
+  const read = new Set([first, second, await where()]).size;
+  rows.push(["every document has the ✕", !onInbox.shown && b1.shown && /Back to Inbox/.test(b1.title),
+    onInbox.shown ? "the Inbox has one too" : !b1.shown ? "a document opened from the Inbox has none" : `its tooltip reads "${b1.title}"`]);
+  await p.clickOn("#chrome .over-x");
+  const home = await until(`location.pathname === "/" && !!document.querySelector(".inbox")`);
+  rows.push(["and it goes back past what j read", home && read === 3,
+    read !== 3 ? `j read ${read} documents, not 3` : home ? "three documents read, one click, the Inbox" : `landed on ${await where()}`]);
+
+  const root = browsed.replace(/^.*\/b\//, "/b/").replace(/\/$/, "");
+  await p.goto(browsed);
+  await p.pointerAway();
+  await p.clickOn(`.inbox a[data-path="notes.md"]`);
+  await until(`location.pathname.endsWith("/notes.md")`);
+  const b2 = await bar();
+  await p.clickOn("#chrome .over-x");
+  const folder = await until(`location.pathname === ${JSON.stringify(root)}`);
+  rows.push(["a file goes back to its folder", b2.shown && folder,
+    !b2.shown ? "the file has no ✕" : folder ? `back on the folder's contents, "${b2.title}"` : `landed on ${await where()}`]);
+
+  await p.goto(`${origin}${first}`);
+  await p.pointerAway();
+  await p.clickOn("#chrome .over-x");
+  const deep = await until(`location.pathname === "/"`);
+  rows.push(["a deep link goes to the Inbox", deep, deep ? "no screen behind it, so the Inbox" : `landed on ${await where()}`]);
+
+  await p.goto(`${origin}${first}`);
+  await p.pointerAway();
+  await p.press("k", { ctrl: true });
+  const pal = await until(`!document.querySelector("#palette").hidden`, 10);
+  await p.press("Escape"); await sleep(200);
+  const stayed = await p.ev(`document.querySelector("#palette").hidden && location.pathname === ${JSON.stringify(first)}`);
+  await p.press("Escape");
+  const esc = await until(`location.pathname === "/"`);
+  rows.push(["Esc takes one thing down at a time", pal && stayed && esc,
+    !pal ? "⌃K opened no palette" : !stayed ? `the first Esc left the page for ${await where()}` : esc ? "the first Esc shut the palette, the second went to the Inbox" : "the second Esc stayed on the document"]);
+  return rows;
+}
+
+/** An aside can be closed: the ✕ on its card, or Esc on it, and the card
+ *  stands as one line holding the Undo for 4 s, as a removed document's row
+ *  does. The daemon only flags it, so Undo is real, and a closed one is
+ *  closed in every page. The next aside takes the card once the offer ends. */
+async function asideRows(p, base, token) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const say = async text => {
+    const r = await fetch(`${base}/api/notes`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text, sender: "bench-agent" }),
+    });
+    if (!r.ok) throw new Error(`aside: ${r.status} ${await r.text()}`);
+    return (await r.json()).note;
+  };
+  const daemon = async () => (await (await fetch(`${base}/api/notes`)).json()).notes;
+  const card = () => p.ev(`(() => { const n = document.querySelector("#note"); if (n.hidden) return null;
+    const g = n.querySelector(".note-ghost"), c = n.querySelector(".note-now p");
+    return { ghost: g ? g.textContent : null, text: c ? c.textContent : null }; })()`);
+
+  const older = await say("An older aside, for the trail.");
+  const newer = await say("A newer aside, to close.");
+  await p.goto(`${base}/`);
+  await p.pointerAway();
+  await until(`!!document.querySelector("#note .note-now")`);
+  await p.hoverOn("#note .note-now");
+  await sleep(300);
+  await p.clickOn("#note .note-x");
+  await sleep(300);
+  const c1 = await card(), d1 = await daemon();
+  const flagged = d1.find(n => n.id === newer.id)?.dismissed === true;
+  rows.push(["the ✕ closes the aside, and Undo stands in its place", !!c1 && /Aside closed/.test(c1.ghost || "") && flagged,
+    !c1 ? "the card went with nothing in its place" : !c1.ghost ? `the card still reads "${c1.text}"` : !flagged ? "the daemon was not told" : "one line, \"Aside closed · Undo\", and the daemon keeps it flagged"]);
+
+  await p.clickOn("#note [data-note-undo]");
+  await sleep(300);
+  const c2 = await card(), d2 = await daemon();
+  const back = c2?.text === newer.text && d2.find(n => n.id === newer.id)?.dismissed === false;
+  rows.push(["Undo puts it back", back, back ? "the same aside on the card, and unflagged in the daemon" : `the card reads ${JSON.stringify(c2)}`]);
+
+  await p.ev(`document.querySelector("#note .note-now").focus()`);
+  const was = await p.ev("location.pathname");
+  await p.press("Escape");
+  await sleep(300);
+  const c3 = await card(), stayed = await p.ev(`location.pathname === ${JSON.stringify(was)}`);
+  const onUndo = await p.ev(`!!document.activeElement?.matches("#note [data-note-undo]")`);
+  rows.push(["Esc on the card closes it, and only that", /Aside closed/.test(c3?.ghost || "") && stayed && onUndo,
+    !stayed ? `Esc also left the page for ${await p.ev("location.pathname")}` : !c3?.ghost ? "Esc did not close it" : onUndo ? "closed, the page stayed, and the hand is on Undo" : "closed, but the focus went back to the page's start"]);
+
+  await p.pointerAway();
+  await p.ev(`document.activeElement?.blur()`);
+  const next = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(older.text)}`, 70);
+  rows.push(["when the offer ends, the next aside has the card", next, next ? "the older aside, after 4 s" : `the card reads ${JSON.stringify(await card())}`]);
+
+  await say("One more, so there is a trail to close.");
+  await until(`!!document.querySelector("#note .note-all")`);
+  await p.hoverOn("#note .note-now");
+  await sleep(500);
+  await p.clickOn("#note [data-note-all]");
+  await sleep(300);
+  const c4 = await card();
+  await p.pointerAway();
+  const empty = await until(`document.querySelector("#note").hidden`, 70);
+  const allFlagged = (await daemon()).every(n => n.dismissed);
+  rows.push(["Close all, from the trail", /Asides closed/.test(c4?.ghost || "") && empty && allFlagged,
+    !c4?.ghost ? "no Undo stood after Close all" : !empty ? "the card is still there after the offer" : !allFlagged ? "the daemon still has one open" : "one Undo for all of them, then no card at all"]);
+
+  const fresh = await say("A new aside after closing them all.");
+  const shows = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(fresh.text)}`);
+  rows.push(["a new aside still shows", shows, shows ? "closing is not muting" : `the card reads ${JSON.stringify(await card())}`]);
+  // Read, the way a reader does: an aside left waiting keeps the logo
+  // blinking, and the rows after this one count every animation that runs.
+  await p.hoverOn("#note .note-now");
+  await sleep(1000);
+  await p.pointerAway();
+  return rows;
+}
+
+/** An Open in file manager beside every Open terminal here: the document's, the
+ *  browsed folder's, and the folder row's menu. The daemon resolves the ids
+ *  itself and hands the folder to the desktop's opener -- stubbed for the
+ *  probe, which reads back what it was handed. */
+async function revealRows(p, browsed, folder, tmp) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const opened = join(tmp, "opened");
+  const origin = await p.ev("location.origin");
+  await p.goto(`${origin}/`);
+  await p.clickOn(".inbox a[data-id]");
+  await until(`location.pathname.startsWith("/d/")`);
+  const inDoc = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
+  await p.goto(`${browsed.replace(/\/$/, "")}/notes.md`);
+  const inBrowse = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
+  rows.push(["Open in file manager beside Open terminal here", inDoc && inBrowse,
+    !inDoc ? "a document's meta has none" : inBrowse ? "in a document's meta and a browsed file's" : "a browsed file's meta has none"]);
+
+  if (process.platform === "win32") { rows.push(["the folder a file sits in is opened", true, "not clicked on Windows, where Explorer itself would open"]); return rows; }
+  if (existsSync(opened)) unlinkSync(opened);
+  await p.clickOn('#meta [data-act="reveal"]');
+  for (let i = 0; i < 30 && !existsSync(opened); i++) await sleep(100);
+  const handed = existsSync(opened) ? readFileSync(opened, "utf8").trim() : null;
+  const said = await p.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
+  const want = realpathSync(folder);
+  const noDisplay = !handed && /no desktop session/.test(said);
+  rows.push(["the folder a file sits in is opened", handed === want || noDisplay,
+    handed === want ? `the opener was handed ${handed}` : noDisplay ? "no display in this run, and the daemon said so" : handed ? `the opener was handed ${handed}, not ${want}` : `nothing was opened; the page said "${said}"`]);
   return rows;
 }
 
@@ -1311,6 +1516,146 @@ async function deskRows(cdp, base, token) {
   return rows;
 }
 
+/** 1.6's desk: a panel in full view fills the window and comes back; a head
+ *  dragged onto another panel trades their places, and so does ⌃⌥⇧ and an
+ *  arrow, the daemon renumbering them; a link a program printed opens on a
+ *  Ctrl-click and only then; the context menu on a panel, a note and a
+ *  sidebar row, doing what the row's own controls do; an agent's tick lands
+ *  in the rail with its name; and a narrow window still offers a third panel.
+ *  In a tab of its own, with the capability, as `deskRows` is. */
+async function panelRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const slotOf = async (desk, pane) => { const j = await (await fetch(`${base}/api/desks`, { headers: H })).json(); return j.desks.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot; };
+  const d = await post("/api/desks", { name: "panels" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  await post(`/api/panes/${pa}/start`, { cmd: `printf 'see https://example.com/snyvi-bench. then\\n'; while :; do ${sleepBin} 1; done` });
+  await post(`/api/panes/${pb}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const n1 = (await post(`/api/desks/${desk}/notes`, { text: "a line for the menu" })).note.id;
+  const n2 = (await post(`/api/desks/${desk}/notes`, { text: "a line for an agent" })).note.id;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
+  const rightOn = async sel => { const at = await q.ui("center", sel); await mouse("mouseMoved", at.x, at.y); await mouse("mousePressed", at.x, at.y, { button: "right", clickCount: 1 }); await mouse("mouseReleased", at.x, at.y, { button: "right", clickCount: 1 }); await sleep(250); };
+  const menu = `(() => { const m = document.querySelector("#ctx"); return m && !m.hidden ? { head: m.querySelector(".ctx-head")?.textContent, items: [...m.querySelectorAll("button")].map(b => b.textContent) } : null; })()`;
+  const pick = async label => { await q.ev(`[...document.querySelectorAll("#ctx button")].find(b => b.textContent.startsWith(${JSON.stringify(label)}))?.click(); 1`); await sleep(300); };
+  const P = id => `.pn[data-id="${id}"]`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && /snyvi-bench/.test(document.querySelector('${P(pa)} .pn-scr')?.textContent || "")`);
+
+    // Full view, from the head's button, and back by the key.
+    await q.hoverOn(`${P(pa)} .pn-head`);
+    await q.clickOn(`${P(pa)} .pn-full`);
+    await sleep(300);
+    const fv = await q.ev(`(() => { const p = document.querySelector('${P(pa)}'); return { full: document.documentElement.dataset.full === "1", side: getComputedStyle(document.querySelector("#side")).display,
+      w: Math.round(p.getBoundingClientRect().width), W: innerWidth, other: !!document.querySelector('${P(pb)}')?.isConnected, tab: !!document.querySelector('.dk-tabs [data-focus="${pb}"]') }; })()`);
+    rows.push(["⤢ puts a panel in full view", fv.full && fv.side === "none" && fv.w > fv.W - 60 && !fv.other && fv.tab,
+      !fv.full ? "the window was not told" : fv.side !== "none" ? "the sidebar is still there" : fv.w <= fv.W - 60 ? `the panel is ${fv.w} px of ${fv.W}` : !fv.tab ? "the other panel has no tab" : `${fv.w} of ${fv.W} px, no sidebar, the other panel a tab`]);
+    await q.press("z", { ctrl: true, alt: true });
+    await sleep(300);
+    const back = await q.ev(`({ full: "full" in document.documentElement.dataset, side: getComputedStyle(document.querySelector("#side")).display, both: document.querySelectorAll(".dk-grid > .pn").length })`);
+    rows.push(["and ⌃⌥Z brings the grid back", !back.full && back.side !== "none" && back.both === 2,
+      back.full ? "still in full view" : back.side === "none" ? "the sidebar did not come back" : `${back.both} panels in the grid`]);
+
+    // A head dragged onto the other panel, then the keys the other way.
+    const from = await q.ui("center", `${P(pa)} .pn-head`), to = await q.ui("center", `${P(pb)} .pn-body`);
+    await mouse("mouseMoved", from.x, from.y);
+    await mouse("mousePressed", from.x, from.y, { button: "left", clickCount: 1 });
+    for (let i = 1; i <= 8; i++) { await mouse("mouseMoved", from.x + (to.x - from.x) * i / 8, from.y + (to.y - from.y) * i / 8, { button: "left", buttons: 1 }); await sleep(25); }
+    await mouse("mouseReleased", to.x, to.y, { button: "left", clickCount: 1 });
+    let moved = false;
+    for (let i = 0; i < 30 && !moved; i++) { moved = (await slotOf(desk, pa)) === 2 && (await slotOf(desk, pb)) === 1; if (!moved) await sleep(100); }
+    const order = await until(`document.querySelector(".dk-grid > .pn")?.dataset.id === ${JSON.stringify(pb)}`, 30);
+    rows.push(["a head dragged onto a panel trades their places", moved && order,
+      !moved ? `panel 1 is at ${await slotOf(desk, pa)}, panel 2 at ${await slotOf(desk, pb)}` : !order ? "the daemon moved them, the grid did not" : "1 and 2 traded, in the daemon and on the page"]);
+    await q.ev(`document.querySelector('${P(pa)} .pn-body').focus(); 1`);
+    for (const type of ["rawKeyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, modifiers: 11 }, sessionId);
+    let keyed = false;
+    for (let i = 0; i < 30 && !keyed; i++) { keyed = (await slotOf(desk, pa)) === 1; if (!keyed) await sleep(100); }
+    rows.push(["⌃⌥⇧← moves the focused panel back", keyed, keyed ? "position 1 again, and the other at 2" : `still at ${await slotOf(desk, pa)}`]);
+
+    // A link a program printed: a plain click does nothing, a Ctrl-click opens it.
+    await until(`document.querySelector('${P(pa)}')?.isConnected`);
+    await q.ev(`window.__opened = []; window.open = u => { window.__opened.push(u); return null; }; 1`);
+    const at = await q.ev(`(() => { const row = [...document.querySelectorAll('${P(pa)} .pn-scr > div')].find(r => r.textContent.includes("example.com"));
+      if (!row) return null; const w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT); let n, off = row.textContent.indexOf("example");
+      while ((n = w.nextNode()) && off >= n.length) off -= n.length; const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 3);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    if (at) {
+      await mouse("mouseMoved", at.x, at.y);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, at.x, at.y, { button: "left", clickCount: 1 });
+      await sleep(200);
+      const plain = await q.ev("window.__opened.length");
+      await mouse("mouseMoved", at.x, at.y, { modifiers: 2 });
+      await sleep(100);
+      const lined = await q.ev(`!!document.querySelector('${P(pa)} .pn-ul i')`);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, at.x, at.y, { button: "left", clickCount: 1, modifiers: 2 });
+      await sleep(200);
+      const opened = await q.ev("window.__opened");
+      rows.push(["a plain click on a link opens nothing", plain === 0, plain ? `opened ${plain}` : "the click only went to the panel"]);
+      rows.push(["Ctrl shows it, and Ctrl-click opens it", lined && opened.length === 1 && opened[0] === "https://example.com/snyvi-bench",
+        !lined ? "no underline under Ctrl" : `opened ${JSON.stringify(opened)}${opened[0] === "https://example.com/snyvi-bench" ? ", the sentence's full stop left off" : ""}`]);
+    } else rows.push(["a link in a panel", false, "the printed link never reached the panel's text"]);
+
+    // The menu on a panel's head: it names the panel, and Close asks twice.
+    await rightOn(`${P(pa)} .pn-head`);
+    const pm = await q.ev(menu);
+    rows.push(["a right-click on a panel's head opens its menu", !!pm && /^Panel 1/.test(pm.head) && pm.items.some(t => t.startsWith("Full view")) && pm.items.some(t => t.startsWith("Close panel")),
+      pm ? `"${pm.head}": ${pm.items.join(" · ")}` : "no menu"]);
+    await pick("Close panel");
+    const armed = await q.ev(`({ still: document.querySelector("#ctx") && !document.querySelector("#ctx").hidden, says: [...document.querySelectorAll("#ctx button")].map(b => b.textContent).find(t => /click again/.test(t)) || "" })`);
+    rows.push(["and Close panel asks twice", armed.still && !!armed.says && !!(await slotOf(desk, pa)), armed.says ? `"${armed.says}", and the panel is still open` : "it closed on the first click"]);
+    await q.press("Escape", { raw: true });
+    const shut = await q.ev(`!document.querySelector("#ctx") || document.querySelector("#ctx").hidden`);
+    rows.push(["Esc closes the menu", shut, shut ? "closed" : "still open"]);
+
+    // A note's menu ticks it, as its box does; an agent's tick lands with its name.
+    await rightOn(`.dk-note:has([data-n="${n1}"]) .nm`);
+    const nm = await q.ev(menu);
+    await pick("Tick");
+    const ticked = await until(`!!document.querySelector('.dk-note.done [data-n="${n1}"]')`, 30);
+    rows.push(["a note's menu ticks it", !!nm && ticked, !nm ? "no menu on the note" : ticked ? `"${nm.head}": ${nm.items.join(" · ")}` : "the note is still open"]);
+    const tk = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
+    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by')?.textContent === "bench-agent"`, 40);
+    const again = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
+    rows.push(["an agent's tick shows in the rail, with its name", byAgent && again.status === 409,
+      !tk.ok ? `the tick answered ${tk.status}` : !byAgent ? "the rail never showed it" : again.status !== 409 ? `a second tick answered ${again.status}` : "done, \"bench-agent\" at its end, and a second tick refused"]);
+
+    // A sidebar document's menu: Remove from inbox leaves the row's own Undo.
+    const doc = await q.ev(`document.querySelector("#trees a[data-id]")?.dataset.id || ""`);
+    if (doc) {
+      await rightOn(`#trees a[data-id="${doc}"]`);
+      const dm = await q.ev(menu);
+      await pick("Remove from inbox");
+      const ghost = await until(`!!document.querySelector("#trees [data-undoc]")`, 20);
+      rows.push(["a document's menu removes it, with the row's Undo", !!dm && dm.items.includes("Remove from inboxDel") && ghost,
+        !dm ? "no menu on the row" : !ghost ? "no Undo in the row" : `${dm.items.length} entries, and the row holds its Undo`]);
+      if (ghost) { await q.clickOn("#trees [data-undoc]"); await sleep(300); }
+    } else rows.push(["a document's menu", false, "no document row in the sidebar to try it on"]);
+
+    // A narrow window: the width shows fewer, and never refuses one.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 600, height: 800, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await sleep(400);
+    const narrow = await q.ev(`({ plus: document.querySelector('.dk-head .icon[data-a="new"]')?.disabled, shown: document.querySelectorAll(".dk-grid > .pn").length, tabs: document.querySelectorAll(".dk-tabs [data-focus]").length })`);
+    await cdp.send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
+    rows.push(["600 px wide: one panel shown, and + still offered", narrow.plus === false && narrow.shown === 1 && narrow.tabs === 2,
+      narrow.plus ? "the + is refused at this width" : `${narrow.shown} shown, ${narrow.tabs} tabs, and + offered`]);
+  } finally {
+    for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** Round 2 of the themes: an answer in the column is centred on the button
  *  it answers. It kept its top 96 px off the window's foot, a guess at its
  *  height, and at 802 px tall the theme button's answer sat level with Aa --
@@ -1385,7 +1730,12 @@ async function controlRows(cdp, p, url, browsed, base, token) {
       // Back as it was: a second press for the toggles; Aa's steps are keys.
       await drv.pointerAway();
       await drv.ev(`(() => { const d = document.documentElement; delete d.dataset.font; localStorage.removeItem("snyvi.font"); return 1; })()`);
-      if (!dim && c !== "font") { await drv.hoverOn(".foot-set"); await drv.clickOn(id); await drv.pointerAway(); }
+      // On a desk, width is full view, which folds the sidebar the button
+      // sits in away: the way back is the key, as it is for a reader.
+      if (!dim && c !== "font") {
+        if (await drv.ev(`"full" in document.documentElement.dataset`)) await drv.press("z", { ctrl: true, alt: true });
+        else { await drv.hoverOn(".foot-set"); await drv.clickOn(id); await drv.pointerAway(); }
+      }
     }
   };
   await p.goto(url);

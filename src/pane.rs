@@ -38,6 +38,11 @@ const FRAME: Duration = Duration::from_millis(16);
 /// every cell a different colour -- and nothing real sends it twice in a row.
 const HEAVY_FRAME: usize = 32 * 1024;
 const SLOW_FRAME: Duration = Duration::from_millis(33);
+/// And with no page watching, once a second. The frame still has to be made --
+/// it is what moves lines off the screen into the scrollback that is kept --
+/// but nobody is drawing it, so a spinner in a panel on another desk costs one
+/// diff a second rather than sixty. A page that attaches is caught up at once.
+const UNWATCHED_FRAME: Duration = Duration::from_secs(1);
 /// How often a pane that has changed writes its text down, so a daemon that is
 /// killed rather than stopped loses at most this much of it.
 const PERSIST_EVERY: Duration = Duration::from_secs(15);
@@ -112,11 +117,32 @@ struct Inner {
     cwd: String,
 }
 
+impl Inner {
+    /// The frame for whatever changed since the pages were last sent one, and
+    /// `shown` brought up to date. The frame task calls it, and so does an
+    /// attach, which is why it is one function: the two must never disagree
+    /// about what the pages hold.
+    fn frame_now(&mut self, id: &str) -> Option<String> {
+        // `clear` empties everything the reader could scroll back to, and
+        // the last run's text sits above the scrollback: it goes with it,
+        // here and on disk, so a page that attaches later is not sent it
+        // back. The page drops its own copy on the frame that says so.
+        if self.screen.scrollback_cleared() && !self.old.is_empty() {
+            self.old.clear();
+            self.unsaved = true;
+        }
+        self.screen.frame(id, &mut self.shown)
+    }
+}
+
 pub struct Live {
     pub id: String,
     inner: Mutex<Inner>,
     tx: broadcast::Sender<Arc<str>>,
     wake: Notify,
+    /// A page began watching: the frame task, idling at `UNWATCHED_FRAME`,
+    /// stops waiting out the rest of its second.
+    watched: Notify,
 }
 
 /// What `start` needs to know that is not the pane's own.
@@ -204,6 +230,7 @@ impl Panes {
             }),
             tx,
             wake: Notify::new(),
+            watched: Notify::new(),
         });
         live.insert(id.to_string(), l.clone());
         drop(live);
@@ -434,7 +461,14 @@ impl Live {
     /// receiver it goes on reading. Taken under the lock the frame task sends
     /// under, so the snapshot and the next frame join up exactly.
     pub fn attach(&self) -> (Vec<String>, broadcast::Receiver<Arc<str>>) {
-        let i = self.inner.lock().unwrap();
+        let mut i = self.inner.lock().unwrap();
+        // An unwatched pane's frames run a second behind; what the frame task
+        // has not sent yet goes now, to whoever else is watching, so the
+        // snapshot below starts from the screen as it is.
+        if let Some(f) = i.frame_now(&self.id) {
+            let _ = self.tx.send(f.into());
+        }
+        self.watched.notify_one();
         let mut first = vec![status_frame(&self.id, &i.status)];
         if !i.old.is_empty() {
             first.push(serde_json::json!({ "t": "old", "p": self.id, "lines": i.old }).to_string());
@@ -702,31 +736,26 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
         }
         let since = last.elapsed();
         if since < gap {
-            tokio::time::sleep(gap - since).await;
+            let Some(l) = me.upgrade() else { return };
+            let watched = {
+                let l2 = l.clone();
+                drop(l);
+                async move { l2.watched.notified().await }
+            };
+            tokio::select! {
+                _ = tokio::time::sleep(gap - since) => {}
+                _ = watched => {}
+            }
         }
         let Some(l) = me.upgrade() else { return };
         let mut i = l.inner.lock().unwrap();
-        let Inner {
-            screen,
-            shown,
-            status,
-            old,
-            unsaved,
-            ..
-        } = &mut *i;
-        // `clear` empties everything the reader could scroll back to, and
-        // the last run's text sits above the scrollback: it goes with it,
-        // here and on disk, so a page that attaches later is not sent it
-        // back. The page drops its own copy on the frame that says so.
-        if screen.scrollback_cleared() && !old.is_empty() {
-            old.clear();
-            *unsaved = true;
-        }
-        let frame = screen.frame(&l.id, shown);
+        let frame = i.frame_now(&l.id);
         gap = match &frame {
+            _ if l.tx.receiver_count() == 0 => UNWATCHED_FRAME,
             Some(f) if f.len() > HEAVY_FRAME => SLOW_FRAME,
             _ => FRAME,
         };
+        let Inner { screen, status, .. } = &mut *i;
         if let Some(f) = frame {
             let _ = l.tx.send(f.into());
         }
@@ -962,6 +991,37 @@ mod tests {
         let text =
             std::fs::read_to_string(dir.path.join("panes").join(format!("{id}.txt"))).unwrap();
         assert!(text.contains(&format!("pane={id}")));
+    }
+
+    /// A pane nobody watches makes a frame a second, not sixty -- and a page
+    /// that attaches between two of them still gets the screen as it is.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unwatched_pane_is_caught_up_when_a_page_attaches() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-idle");
+        let (events, _) = broadcast::channel(16);
+        let panes = Panes::new(&dir.path, events);
+        let live = panes.get("ffeeddccbbaa99887766554433221100");
+        let cwd = dir.path.to_string_lossy().to_string();
+        live.start(
+            Start {
+                cwd: &cwd,
+                cmd: "printf 'early\\n'; sleep 0.3; printf 'late\\n'; sleep 2",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+            },
+            &panes,
+        )
+        .unwrap();
+        // "late" is printed 0.3 s in; the next unwatched frame is a second
+        // after the first, so without a catch-up the snapshot would miss it.
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let (first, _rx) = live.attach();
+        let snap = first.last().unwrap();
+        assert!(snap.contains("late"), "{snap}");
     }
 
     /// The agent's word reaches only a pane that is running, is sent once per

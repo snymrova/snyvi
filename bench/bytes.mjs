@@ -53,7 +53,11 @@ const PORT = flag("--port") || "7797";   // 7791, 7794-7796 and 7812-7814 are ta
 const UI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "ui");
 
 const KB = 1024;
-const BUDGET = 50 * KB;   // docs/BRAINSTORM.md:31
+// 50 KB through 1.5.0 (49.2 KB). 1.6 raised it to 53 KB, on purpose: a
+// removed row's Undo and the ✕ that goes back have to answer in the same
+// frame as the click, so they cannot wait for a chunk; the menus and their
+// look already went to menu.js. docs/BRAINSTORM.md:35 says the same.
+const BUDGET = 53 * KB;   // docs/BRAINSTORM.md:35
 
 /* The four the page cannot start without: the document it is served, the
  * script that boots it, and the two the boot pulls in. Fonts are woff2 and
