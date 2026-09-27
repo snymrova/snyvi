@@ -162,7 +162,7 @@ pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 .welcome .doc-title { margin: 14px 0 12px; }
 .w-lede { font-size: 16px; line-height: 1.55; color: var(--fg-2); margin: 0 0 36px; }
 .w-q { font-size: 20px; font-weight: 600; margin: 0 0 14px; }
-.w-btn { font: inherit; font-size: 14.5px; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
+.w-btn { font: inherit; font-size: 14.5px; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
 .w-btn:hover { filter: brightness(1.08); }
 .w-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .w-or { margin: 26px 0 8px; font-size: 13.5px; color: var(--fg-3); }

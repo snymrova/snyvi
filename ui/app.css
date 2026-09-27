@@ -171,6 +171,9 @@
 :root, [data-theme] {
   --accent: light-dark(color-mix(in srgb, var(--accent-l), #000 var(--deepen)), color-mix(in srgb, var(--accent-d), #fff var(--lift)));
   --accent-bg: color-mix(in srgb, var(--accent) var(--wash), var(--wash-on));
+  /* Text and marks on an accent fill: the ground, which clears 4.5:1 on
+     every accent in every theme (lowest 4.96). White fails every dark one. */
+  --on-accent: var(--bg);
   --mascot-ink: color-mix(in srgb, var(--brand) 40%, #000);
   --s-keyword: color-mix(in srgb, var(--accent) var(--kw), #000);
   --s-tag: var(--s-keyword);
@@ -608,7 +611,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-doc a.new .title { color: var(--fg); font-weight: 550; }
 .t-queue { margin: 0 0 6px; }
 .t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
-.t-queue .t-label .n { margin-left: auto; background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: 10px; }
+.t-queue .t-label .n { margin-left: auto; background: var(--accent); color: var(--on-accent); border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: 10px; }
 .t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
 .t-queue .t-more { margin-left: 8px; }
 .t-queue .t-more a { display: inline-block; font-size: 11px; color: var(--fg-3); padding: 3px 6px; border-radius: 5px; }
@@ -870,7 +873,7 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose li.task-list-item, .prose li:has(> input[type=checkbox]) { list-style: none; margin-left: -1.4em; padding-left: 1.6em; position: relative; }
 .prose input[type=checkbox] { position: absolute; left: 0; top: .45em; appearance: none; width: 14px; height: 14px; border: 1.5px solid var(--rule-2); border-radius: 4px; background: var(--bg-raise); pointer-events: none; }
 .prose input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
-.prose input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.prose input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .prose li:has(> input:checked) { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--rule-2); }
 .prose blockquote { margin: 1.4em 0; padding: .1em 0 .1em 1.2em; border-left: 2px solid var(--accent); color: var(--fg-2); }
 .prose blockquote p:last-child { margin-bottom: 0; }
@@ -994,7 +997,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 #find-count { font-size: 12px; color: var(--fg-3); padding: 0 6px; font-variant-numeric: tabular-nums; background: none; }
 #find .icon { border: 1px solid var(--rule); }
 mark.find { background: var(--mark); color: inherit; border-radius: 2px; }
-mark.find.cur { background: var(--accent); color: #fff; }
+mark.find.cur { background: var(--accent); color: var(--on-accent); }
 
 /* split diff */
 .split { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--mono); font-size: 13px; line-height: 1.6; border: 1px solid var(--rule); border-radius: var(--radius); overflow-x: auto; }
@@ -1071,7 +1074,7 @@ pre.code .inv { color: var(--del-fg); }
 .inbox .sub b { font-weight: 500; color: var(--fg-2); }
 .inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
 .inbox-sec { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; margin: 30px 0 4px; }
-.inbox-sec .n { background: var(--accent); color: #fff; border-radius: 9px; padding: 0 7px; line-height: 17px; letter-spacing: 0; font-size: 11px; }
+.inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: 9px; padding: 0 7px; line-height: 17px; letter-spacing: 0; font-size: 11px; }
 .inbox-sec button { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12.5px; color: var(--fg-2); padding: 3px 8px; border-radius: 5px; }
 .inbox-sec button + button { margin-left: 0; }
 .inbox-sec button:hover { background: var(--rule); color: var(--fg); }

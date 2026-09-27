@@ -2554,7 +2554,7 @@ const CSS = `
 .pn-connect p { margin: 0 0 8px; line-height: 1.45; }
 .pn-connect p:last-child { margin: 0; }
 .pn-connect .ok { color: var(--ok); }
-.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
 .dk-wait .dk-empty { display: flex; align-items: center; gap: 6px; }
 .dk-ask { margin: 2px 8px 6px; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
 .dk-ask q { color: var(--fg); }
@@ -2634,7 +2634,7 @@ const CSS = `
 .dk-doc .dk-tools { gap: 3px; }
 .dk-doc .dk-tools button { background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2); }
 .dk-doc.on .dk-tools button { color: var(--accent); opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
-.dk-doc .dk-tools button:hover { background: var(--accent); color: var(--bg); box-shadow: none; }
+.dk-doc .dk-tools button:hover { background: var(--accent); color: var(--on-accent); box-shadow: none; }
 .dk-docs .title { overflow: hidden; text-overflow: ellipsis; }
 .dk-docs .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
 .dk-docs .slot { margin-left: auto; }
@@ -2647,7 +2647,7 @@ const CSS = `
 #meta .dk-row .dk-nm { flex: 1; }
 #meta .dk-row .dk-tools { line-height: 1; }
 .dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
-.dk-make:hover { background: var(--accent); color: var(--bg); }
+.dk-make:hover { background: var(--accent); color: var(--on-accent); }
 /* ---------- the list ----------
  * A checklist, drawn on the same row grid as the panels and the documents
  * above it, so the three read as one rail and not as three widgets. The
@@ -2718,7 +2718,7 @@ const CSS = `
  * row grid, a few lines each: a passage is quoted whole when it goes in, and
  * the rail only has to say which one it is. */
 .dk-pick { position: fixed; z-index: 30; padding: 4px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; color: var(--accent); background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2), 0 4px 14px rgb(0 0 0 / .18); animation: dk-fade 120ms ease-out; }
-.dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .dk-pick:disabled { cursor: default; }
 .dk-points { margin-top: 16px; }
 .dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
