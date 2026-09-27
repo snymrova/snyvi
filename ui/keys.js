@@ -149,7 +149,7 @@ export function letter(e, c) {
     case "/": c.openFind(); break;
     // Delete and not Backspace: a key a reader leans on while thinking is
     // not a key to lose a document to.
-    case "Delete": c.deleteCurrent(); break;
+    case "Delete": c.deleteCurrent(true); break;
     case "n": c.openNext(); break;
     case "i": c.showInbox(true); break;
     case "w": c.wide(); break;

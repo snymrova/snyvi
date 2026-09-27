@@ -208,7 +208,7 @@
     });
     // A folder just closed stands where it was, holding its Undo, as a
     // removed document's row does. A refused Undo says so in it.
-    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone"><div class="t-ghost b-ghost" style="--undo-left:${shut.clock.left()}">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
+    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone"><div class="t-ghost b-ghost" role="status" style="--undo-left:${shut.clock.left()}">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
     browseEl.innerHTML = head + `<div class="b-body s-body">` + rows.join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
@@ -287,7 +287,7 @@
     const t = Date.now() - (g.closing || g.made);
     // A refused Undo says so in the row and holds its clock: the button is
     // its Retry. Pruned, there is nothing to retry, and the row just closes.
-    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` title="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost" role="status" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` title="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
   }
 
   // ---------- the queue ----------
@@ -684,7 +684,10 @@
     // being edited -- clears `drawnTree`, so what is on screen is always what
     // this string describes when it is skipped.
     if (h !== drawnTree) {
+      // A keyboard on a ghost's Undo stays on it through the redraw.
+      const onUndo = document.activeElement?.matches(".t-gone .t-undo");
       treeEl.innerHTML = h;
+      if (onUndo) toUndo();
       drawnTree = h;
       treeTouched.takeRecords();
     }
@@ -912,7 +915,7 @@
       e.preventDefault(); e.stopPropagation();
       const id = dx.dataset.deldoc, proj = dx.closest(".t-proj");
       const d = state.queue.find(x => x.id === id) || { id, title: dx.closest("a").title.split(" · ")[0], project_id: proj ? +proj.dataset.pid : null };
-      deleteDoc(d, dx);
+      deleteDoc(d, dx, !e.detail);
       return;
     }
     if (e.target.closest("[data-reopen]")) {
@@ -1513,9 +1516,11 @@
    *  nothing to do with -- and which had to be answered before anything else
    *  could happen. The daemon keeps the document until `prune` runs, so the
    *  seconds below are a real offer and not a hopeful one. */
-  async function deleteCurrent() {
-    if (state.doc) deleteDoc(state.doc);
+  async function deleteCurrent(byKey) {
+    if (state.doc) deleteDoc(state.doc, null, byKey);
   }
+  /** A removal a key made leaves the hand on its Undo, as an aside's does. */
+  const toUndo = () => treesEl.querySelector(".t-gone .t-undo")?.focus({ preventScroll: true });
 
   /** Where a document's row stands, as a place that outlives the row: the
    *  row that was clicked, or -- for the meta pane and Del, which have none --
@@ -1574,7 +1579,7 @@
    *  sidebar, which leaves the reader where they are unless that was it.
    *  The row turns into its ghost under the click, from what the page
    *  already holds, and the daemon is told after. */
-  async function deleteDoc(d, from = null) {
+  async function deleteDoc(d, from = null, byKey = false) {
     const here = !!state.doc && state.doc.id === d.id;
     const place = rowOf(d.id, from);
     if (place && place.doc) d = { ...place.doc, ...d, title: place.doc.title };
@@ -1604,18 +1609,20 @@
     gone = g;
     undoing = g.undo;
     renderTree(); markActive();
+    if (byKey) toUndo();
     try {
       const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status}`);
       state.cache.delete(d.id);
       g.drawn = false;
       await refreshTree(d.project_id);
-      if (here) showInbox(true);
+      if (here) { await showInbox(true); if (byKey) toUndo(); }
       // No row to stand in -- the meta pane's button or Del, with the row not
       // drawn: the offer goes where the toast goes.
       if (gone === g && !g.drawn) {
         toast("Removed", d.title, null, { label: "Undo", run: g.undo }, { life: GHOST_MS });
         g.clock.again();
+        if (byKey) $("#toasts .act")?.focus({ preventScroll: true });
       }
     } catch (e) {
       if (gone === g) { g.clock.stop(); gone = null; if (undoing === g.undo) undoing = null; }
@@ -2451,7 +2458,7 @@
     if (b.dataset.act === "pin") togglePin();
     if (b.dataset.act === "split") toggleSplit();
     if (b.dataset.act === "preview") togglePreview();
-    if (b.dataset.act === "delete") deleteCurrent();
+    if (b.dataset.act === "delete") deleteCurrent(!e.detail);
     if (b.dataset.act === "copybrowse") {
       const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
       navigator.clipboard?.writeText(full); toast("Copied", full);

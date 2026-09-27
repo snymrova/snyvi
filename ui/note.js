@@ -154,7 +154,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
       if (noteEl.querySelector(".note-ghost")?.dataset.ids === noteGone.ids.join(",")) return;
       const g = noteGone;
       noteEl.hidden = false; noteEl.dataset.lit = ""; noteEl.dataset.seen = "";
-      noteEl.innerHTML = `<div class="t-ghost note-ghost" data-ids="${g.ids.join(",")}" style="--undo-left:${g.clock.left()}"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
+      noteEl.innerHTML = `<div class="t-ghost note-ghost" role="status" data-ids="${g.ids.join(",")}" style="--undo-left:${g.clock.left()}"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
       return;
     }
     if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }

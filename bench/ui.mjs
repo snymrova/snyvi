@@ -1302,6 +1302,18 @@ async function reachRows(p, base, token, arrive) {
     !menu ? "the right-click opened no menu" : esc ? "the menu went, and the focus is on the row that was right-clicked" : `the focus is on ${JSON.stringify(await p.ui("focus"))}`]);
   await p.pointerAway();
 
+  // Del: the removal leaves the hand on its Undo, and Enter takes it back.
+  const del = await arrive({ name: "reach-del.md", body: "# Reach del\n\nRemoved by a key.\n" });
+  await p.goto(`${origin}/d/${del.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  await sleep(500);
+  const onUndo = await p.ui("at", ".t-gone .t-undo");
+  if (onUndo) await p.press("Enter");
+  const undone = onUndo && await until(`document.title === ${JSON.stringify(del.title)}`);
+  rows.push(["Del on a row → focus on Undo; Enter brings it back", !!undone,
+    !onUndo ? `the focus is on ${JSON.stringify(await p.ui("focus"))}, not the Undo` : undone ? "the hand was on the Undo, and Enter brought the document back" : "Enter on the Undo did not bring it back"]);
+
   // An older aside in the trail is reached by Tab and opened by Enter.
   const say = async (text, about) => {
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent", ...(about ? { about } : {}) }) });

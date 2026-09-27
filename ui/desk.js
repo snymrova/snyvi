@@ -1381,7 +1381,7 @@ function rail() {
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
-      ? `<li class="dk-note gone"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
+      ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     pointSec(vs) +
@@ -1525,7 +1525,7 @@ const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(no
  *  ✕ was rather than in a corner of the window. */
 function noteRow(x, esc) {
   if (x.gone) {
-    return `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span>` +
+    return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span>` +
       `<button type="button" class="dk-undo" data-a="note-back" data-n="${x.id}">Undo</button></li>` + errLine(`n${x.id}`, esc);
   }
   if (noteField && noteField.kind === "edit" && noteField.id === x.id) {
@@ -1743,7 +1743,7 @@ function pointSec(vs) {
     has.map(v => {
       const ps = points.get(v.id) || [], live = ps.filter(x => !x.gone).length;
       return `<ul class="dk-list">` + ps.map((x, i) => x.gone
-        ? `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
+        ? `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
         : `<li class="dk-note dk-point"><span class="nm" title="${esc(x.from)}">${esc(x.text)}</span>` +
           `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" title="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
         (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" title="Type ${live === 1 ? "it" : "them"} into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
@@ -1849,7 +1849,7 @@ async function act(b, byKey) {
     } else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
     else if (a === "start" && v) run(v, v.start.querySelector("input").value);
     else if (a === "all") { for (const x of views.values()) if (!x.status.running) await run(x, x.status.cmd || x.pane.cmd || ""); }
-    else if (a === "close" && v) await closePanel(v);
+    else if (a === "close" && v) await closePanel(v, byKey);
     else if (a === "pane-back") await restorePanel(b.dataset.p);
     else if (a === "pane-rename" && v) renamePanel(v);
     else if (a === "drop") { await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true); }
@@ -1876,6 +1876,7 @@ async function act(b, byKey) {
           }, BACK_MS);
         } else delete x.gone;
         rail();
+        if (byKey && x.gone) ctx.tocEl.querySelector(`[data-a="point-back"][data-p="${b.dataset.p}"][data-n="${b.dataset.n}"]`)?.focus();
       }
     }
     // The list. Each of these draws first and tells the daemon after: on a
@@ -1910,6 +1911,8 @@ async function act(b, byKey) {
           if (current()) rail();
         }, BACK_MS);
         rail();
+        // A removal a key made leaves the hand on its Undo.
+        if (byKey) ctx.tocEl.querySelector(`[data-a="note-back"][data-n="${x.id}"]`)?.focus();
         await told(b.dataset, `n${x.id}`, "Could not take it off", () => { clearTimeout(backTimer); delete x.gone; },
           () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {}));
       }
@@ -1967,7 +1970,7 @@ async function told(again, k, why, back, call) {
 /** Close a panel: its process stops, its row stays in the rail for BACK_MS
  *  with Undo, and the panels after it close up. Nothing asks first, since
  *  nothing is lost: the daemon keeps it until `prune`. */
-async function closePanel(v) {
+async function closePanel(v, byKey) {
   const d = current();
   // The keyboard goes on to a neighbour, if it was in the one that closed:
   // it is not left on nothing, typing into nowhere.
@@ -1983,7 +1986,9 @@ async function closePanel(v) {
   closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
   closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
   await ctx.refresh();
-  if (next && (had || document.activeElement === document.body)) focusPane(next);
+  // A key's close leaves the hand on the Undo; a pointer's, on a neighbour.
+  if (byKey) ctx.tocEl.querySelector("[data-a=pane-back]")?.focus();
+  else if (next && (had || document.activeElement === document.body)) focusPane(next);
 }
 
 /** Undo a close. A desk that filled up in the meantime says so in the row,
@@ -2149,7 +2154,7 @@ function keys(e) {
     e.preventDefault(); e.stopPropagation();
     if (e.code === "KeyN") { const why = noNew(d); if (why) ctx.toast("New panel", why); else act({ dataset: { a: "new" } }); }
     else if (!v) return;
-    else if (e.code === "KeyW") closePanel(v).catch(err => ctx.toast("Could not close it", String(err)));
+    else if (e.code === "KeyW") closePanel(v, true).catch(err => ctx.toast("Could not close it", String(err)));
     else if (e.code === "KeyR") { if (v.status.running) ctx.api(`/api/panes/${v.id}/stop`, {}).catch(() => {}); else run(v, v.status.cmd || v.pane.cmd || ""); }
     else {
       const ps = d.panes, i = ps.findIndex(p => p.id === focused);
