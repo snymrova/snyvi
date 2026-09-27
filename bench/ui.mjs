@@ -1580,7 +1580,12 @@ async function panelRows(cdp, base, token) {
     for (const type of ["rawKeyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, modifiers: 11 }, sessionId);
     let keyed = false;
     for (let i = 0; i < 30 && !keyed; i++) { keyed = (await slotOf(desk, pa)) === 1; if (!keyed) await sleep(100); }
-    rows.push(["⌃⌥⇧← moves the focused panel back", keyed, keyed ? "position 1 again, and the other at 2" : `still at ${await slotOf(desk, pa)}`]);
+    // And on the page: the daemon's word lands before the grid is redrawn,
+    // and the link below is measured on screen. Measured a beat early it was
+    // measured in the right-hand column, and the Ctrl that followed landed
+    // on the other panel once this one had moved -- which failed CI on #39.
+    const drawnBack = keyed && await until(`document.querySelector(".dk-grid > .pn")?.dataset.id === ${JSON.stringify(pa)}`, 30);
+    rows.push(["⌃⌥⇧← moves the focused panel back", keyed && drawnBack, !keyed ? `still at ${await slotOf(desk, pa)}` : !drawnBack ? "the daemon moved it, the grid did not" : "position 1 again, and the other at 2"]);
 
     // A link a program printed: a plain click does nothing, a Ctrl-click opens it.
     await until(`document.querySelector('${P(pa)}')?.isConnected`);

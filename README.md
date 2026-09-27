@@ -39,8 +39,9 @@ your machine, with no account and nothing to configure.
 curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh | sh
 ```
 
-Linux and macOS. It checks every download against its checksum and connects
-Claude Code if it finds it. [Read it first](install.sh); run it again to update.
+Linux and macOS, and no root on Linux. It checks every download against its
+checksum and connects Claude Code if it finds it. From then on snyvi updates
+itself, once a day, when you are not looking. [Read it first](install.sh).
 
 **Windows**: `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi`
 then `scoop install snyvi`, or the [installer][win].

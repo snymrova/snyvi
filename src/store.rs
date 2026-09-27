@@ -238,6 +238,9 @@ impl Store {
             "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''",
             // Who ticked a desk's line, when an agent did.
             "ALTER TABLE desk_notes ADD COLUMN done_by TEXT NOT NULL DEFAULT ''",
+            // Marked by a planned restart: bring this pane back as
+            // `claude --resume`. Taken by the daemon that comes up next.
+            "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1065,6 +1068,17 @@ impl Store {
 
     pub fn set_pane_session(&self, id: &str, session: &str) -> Result<bool> {
         desk::set_agent_session(&self.conn.lock().unwrap(), id, session)
+    }
+
+    /// The panes a planned restart brings back as `claude --resume`
+    /// (`desk::mark_resume`); how many were marked.
+    pub fn mark_panes_resume(&self, ids: &[String]) -> Result<usize> {
+        desk::mark_resume(&self.conn.lock().unwrap(), ids)
+    }
+
+    /// Those marks, taken by the daemon that comes up (`desk::take_resume`).
+    pub fn take_panes_resume(&self) -> Result<Vec<String>> {
+        desk::take_resume(&self.conn.lock().unwrap())
     }
 
     pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {

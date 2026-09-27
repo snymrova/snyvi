@@ -1,0 +1,10 @@
+Fixtures for the updater's tests in src/update.rs.
+
+  test.pub                 a throwaway minisign key's public half; not the release key
+  latest.json              a manifest for 1.9.9 naming one linux-x64 download
+  latest.json.minisig      that manifest's signature by the throwaway key
+  snyvi-linux-x64.tar.gz   the download: a tarball whose `snyvi` is a line of text
+
+Made together by `node tests/fixtures/update/make.mjs`; the secret half never
+touched the disk. The release key is packaging/minisign.pub, and one test here
+is that it does not vouch for this manifest.

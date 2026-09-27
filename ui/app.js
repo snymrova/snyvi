@@ -1288,6 +1288,40 @@
   }
   renderLive();
 
+  /** The update pill beside it, from the daemon's `update` block. Shown
+   *  only when the daemon says so: the day's slot is open or the reader
+   *  asked, a version failed to start, or the file on disk is newer than
+   *  the daemon. A click restarts onto the staged version once the panels
+   *  are quiet; in a tab, which holds no capability, or on an install that
+   *  is only told, it opens About, which says what to run. */
+  const updEl = $("#upd");
+  let upd = null, updWaiting = false;
+  function renderUpd() {
+    const u = upd;
+    let text = "", cls = "", title = "";
+    if (u && u.show) {
+      if (u.ready) { text = updWaiting ? "Restarting…" : `Restart to update · ${u.ready}`; cls = (u.amber ? "amber " : "") + (updWaiting ? "waiting" : ""); title = "Restarts once no panel is busy; Claude panels come back with their conversation"; }
+      else if (u.failed_recent) { text = `${u.failed} did not start · kept ${boot.version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
+      else if (u.available) { text = `${u.available} is out · how`; title = "This install is updated by hand; About says how"; }
+      else if (u.stale) { text = updWaiting ? "Restarting…" : "Restart to update"; cls = updWaiting ? "waiting" : ""; title = "The snyvi on disk is newer than the one running"; }
+    }
+    updEl.hidden = !text;
+    if (!text) return;
+    updEl.textContent = text; updEl.className = `upd ${cls}`.trim(); updEl.title = title;
+  }
+  function setUpd(u) { upd = u && typeof u === "object" ? u : null; renderUpd(); }
+  updEl.addEventListener("click", async () => {
+    const u = upd;
+    if (!u) return;
+    if ((u.ready || (u.stale && !u.failed_recent)) && capability && !updWaiting) {
+      updWaiting = true; renderUpd();
+      try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); }
+      catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", String(e)); }
+      return;
+    }
+    panel("about");
+  });
+
   async function showCompare(aId, bId) {
     const cur = state.doc;
     const a = aId || state.previous, b = bId || (cur && cur.id);
@@ -2552,17 +2586,22 @@
    *  navigates all day, and a mark in a URL would be lost by the first of
    *  those and copied into every link the reader shares. Storage that belongs
    *  to this one page and dies with it is exactly the lifetime wanted. */
-  const inWindow = (() => {
+  /* The mark's value is the window's version from 1.7 on (`1` from an older
+   * window), kept for the session and sent back on the event stream so the
+   * daemon knows which window it has. */
+  const windowMark = (() => {
     try {
-      if (new URLSearchParams(location.search).has("window")) {
-        sessionStorage.setItem("snyvi.window", "1");
+      const p = new URLSearchParams(location.search);
+      if (p.has("window")) {
+        sessionStorage.setItem("snyvi.window", p.get("window") || "1");
         // Out of the address bar at once, and out of the history entry, so
         // Back never returns to a marked URL and no copied link carries it.
         history.replaceState(history.state, "", location.pathname + location.hash);
       }
-      return sessionStorage.getItem("snyvi.window") === "1";
-    } catch { return false; }
+      return sessionStorage.getItem("snyvi.window") || "";
+    } catch { return ""; }
   })();
+  const inWindow = windowMark !== "";
 
   // ---------- the window's frame ----------
   /* In the native window the page is the frame: no title bar, the header rows
@@ -2885,7 +2924,7 @@
   }
 
   function connect() {
-    const es = new EventSource("/api/events" + (inWindow ? "?window=1" : ""));
+    const es = new EventSource("/api/events" + (inWindow ? `?window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
     es.onopen = async () => {
       // A first connection is not a return.
@@ -2897,7 +2936,7 @@
       let h = null;
       try { h = await (await fetch("/api/health")).json(); } catch {}
       if (h && h.v && boot.v && h.v !== boot.v) { location.reload(); return; }
-      if (h) setOnline(h.agents);
+      if (h) { setOnline(h.agents); setUpd(h.update); }
       catchUp();
     };
     // The dev loop, and only the dev loop: a daemon started with SNYVI_UI_DIR
@@ -2909,6 +2948,12 @@
     es.addEventListener("agents", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       setOnline(j.online);
+    });
+    // The updater's word: first on every stream, then whenever it changes.
+    es.addEventListener("update", ev => {
+      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      updWaiting = false;
+      setUpd(j);
     });
     // An agent left a note, or a reader looked at one somewhere.
     es.addEventListener("notes", ev => {
@@ -3527,7 +3572,7 @@
     let m;
     try { m = await panelMod(); }
     catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
-    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural });
+    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural, rel, capability, deskApi });
   }
   $("#btn-about").addEventListener("click", () => panel("about"));
   $("#btn-reset").addEventListener("click", () => panel("reset"));

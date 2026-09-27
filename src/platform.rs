@@ -702,6 +702,13 @@ pub fn terminate(pid: u32, force: bool) {
 /// and a write to a stdout or stderr that a process does not have is a write
 /// that goes nowhere rather than an error.
 pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
+    spawn_detached(exe, &["serve"])
+}
+
+/// The same detached start for any of snyvi's own commands: `serve`, `app`
+/// when the daemon relaunches the window after an update, `--quit` handed
+/// to the window binary. Arguments are plain words, never paths.
+pub fn spawn_detached(exe: &std::path::Path, args: &[&str]) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -719,7 +726,10 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
         let mut line: Vec<u16> = vec![b'"' as u16];
         line.extend(exe.as_os_str().encode_wide().filter(|c| *c != b'"' as u16));
         line.push(b'"' as u16);
-        line.extend(" serve".encode_utf16());
+        for a in args {
+            line.push(b' ' as u16);
+            line.extend(a.encode_utf16());
+        }
         line.push(0);
 
         let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
@@ -758,7 +768,7 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
     #[cfg(not(windows))]
     {
         let mut cmd = Command::new(exe);
-        cmd.arg("serve")
+        cmd.args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());

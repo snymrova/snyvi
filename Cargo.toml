@@ -24,6 +24,15 @@ exclude = [
     "/.github",
 ]
 
+# The oldest snyvi-app this daemon is happy with. The release job copies it
+# into latest.json as `app_min`, and a daemon updating itself relaunches the
+# window only when the manifest's app_min is above the window it has; most
+# releases never touch the window, and the reader should not see it flash for
+# them. Bump it by hand, to the version being released, whenever the window's
+# own code changes: src/desktop.rs, src/bin/app.rs, tauri.conf.json, the frame.
+[package.metadata.snyvi]
+app_min = "1.6.0"
+
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-std", "io-util", "sync", "time", "signal"] }
@@ -53,6 +62,16 @@ toml_edit = "0.25.15"
 portable-pty = "0.9"
 vte = "0.15"
 unicode-width = "0.2"
+# The daemon updating itself (src/update.rs): the manifest's signature, the
+# version compare, the downloads' checksums, and the tarballs. sha2, semver
+# and flate2 were already in the lock through other crates; tar is small,
+# and minisign-verify has no dependencies at all. The Windows zip is read by
+# forty lines of its own rather than a crate that brings its compressors.
+minisign-verify = "0.2"
+semver = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 
 [profile.release]
 opt-level = 3

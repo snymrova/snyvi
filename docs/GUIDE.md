@@ -37,22 +37,32 @@ curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh | sh
 ```
 
 With Homebrew it installs the cask; on a Mac without it, `snyvi.app` goes
-into Applications and `snyvi` onto your `PATH`. On Debian and Ubuntu it
-installs both packages, snyvi and the window, with `sudo` for `dpkg`; on
-any other Linux the static binary goes into `~/.local/bin`. Every download
-is checked against the `.sha256` published beside it, and Claude Code is
-connected if it is installed. Each download also carries a build
-attestation: `gh attestation verify <file> --repo snymrova/snyvi` proves it
-came out of the release workflow in this repository, on the commit the tag
-names. Run it again to update: a daemon that was
-running is restarted on the new version, and nothing you sent is touched.
+into Applications and `snyvi` onto your `PATH`. On every Linux it installs
+into your home, with no root: `snyvi` into `~/.local/bin`, the window
+beside it when the machine has a display and WebKitGTK 4.1, and what a
+package would put under `/usr/share` — a menu entry, the icon, `snyvi://`
+links, and a systemd user unit, written but not enabled. A machine that
+already has snyvi as a `.deb` keeps it as one, upgraded in a single apt
+run, and the script says how to move. Every download is checked against
+the `.sha256` published beside it, and Claude Code is connected if it is
+installed. Each download also carries a build attestation:
+`gh attestation verify <file> --repo snymrova/snyvi` proves it came out of
+the release workflow in this repository, on the commit the tag names.
+
+From then on snyvi [updates itself](#updating). Running the script again
+does the same by hand: a daemon that was running is restarted on the new
+version once its desks are quiet, Claude Code's registration is pointed at
+the new binary without anything added, and nothing you sent is touched.
+The last lines say what is true — which `snyvi` a new terminal will run,
+and whether it updates itself.
 
 ```
-sh install.sh --tar              the static binary even where dpkg exists
-sh install.sh --no-app           on Debian, without the window package
+sh install.sh --deb              the two .debs instead (Debian, Ubuntu; needs root)
+sh install.sh --tar              the per-user install, even over a .deb
+sh install.sh --no-app           without the window
 sh install.sh --no-init          without registering with Claude Code
 sh install.sh --version 1.3.0    a particular release
-sh install.sh --bin-dir DIR      where the static binary goes
+sh install.sh --bin-dir DIR      where the per-user install goes
 ```
 
 The same flags after `sh -s --` when piping from `curl`. Windows has no
@@ -74,10 +84,13 @@ on Windows, WebKit on macOS — so it is not in the crate; on Debian it is
 the `snyvi-app` package below, and elsewhere it is built from source as
 [Desktop](#desktop) describes. `cargo install snyvi` again updates it.
 
-### Debian and Ubuntu
+### Debian and Ubuntu, as a package instead
 
-Download `snyvi_<version>_amd64.deb` (or `_arm64.deb`) from the
-[releases page](https://github.com/snymrova/snyvi/releases):
+The one-liner's per-user install works on Debian and Ubuntu as on any
+Linux, and updates itself. As packages instead — owned by root, upgraded
+by apt, and so only told of a new version, never updated in place — run
+`sh install.sh --deb`, or download `snyvi_<version>_amd64.deb` (or
+`_arm64.deb`) from the [releases page](https://github.com/snymrova/snyvi/releases):
 
 ```
 sudo dpkg -i snyvi_*.deb
@@ -216,16 +229,23 @@ onto your `PATH`, and takes the quarantine off the app it installed.
 `brew upgrade` stops the daemon before it swaps the binary; `brew zap`,
 and only `brew zap`, deletes the library.
 
-### Any other Linux
+### By hand, on any Linux
 
-Download the tarball for your architecture from the same page:
+What the one-liner does, from the tarball for your architecture on the
+same page:
 
 ```
-tar xzf snyvi-*-linux.tar.gz
-install -m 755 snyvi-*/snyvi ~/.local/bin/snyvi   # or /usr/local/bin
+tar xzf snyvi-linux-x64.tar.gz
+install -m 755 snyvi-*/snyvi ~/.local/bin/snyvi   # anywhere you own
+snyvi install-desktop    # menu entry, icon, snyvi:// links, a user unit
 snyvi send README.md
 snyvi init-claude
 ```
+
+`install-desktop` writes into your home only, names the binary by its
+path, and is safe to run again after moving it; `uninstall-desktop` takes
+out exactly what it wrote. A binary in a folder you own updates itself;
+one under `/usr` is left for its package manager.
 
 If `~/.local/bin` is not on your `PATH`, `snyvi init-claude` writes the
 binary's full path into Claude Code's settings and says so; run it again
@@ -233,35 +253,85 @@ after moving the binary, and the registration follows.
 
 ### Updating
 
-snyvi runs as a background daemon, so a new binary on disk does not take
-effect until the old process exits. Install over the old one the way you
-installed it — the one-liner again, `brew upgrade`, `scoop update snyvi`,
-`cargo install snyvi`, `sudo dpkg -i snyvi_*.deb` — and, unless that
-already restarted it for you (the one-liner, Homebrew and Scoop do), then:
+snyvi updates itself. The daemon reads one small file off the newest
+GitHub release a few times a day — `latest.json`, signed, fetched with a
+`snyvi/<version>` user agent and nothing else sent — and when it names a
+newer version, downloads that version's files for your kind of install,
+checks every sha256, and keeps them staged. Once a day, at a quiet moment,
+it swaps them in and restarts onto them. Quiet means no panel with an
+agent mid-turn and none with a program still printing; a moment means the
+window is closed, or has been in the background for ten minutes, or the
+machine is unattended. Nothing is shown to you for any of that.
+
+Which installs are swapped, and which are only told:
+
+| Install | What happens |
+|---|---|
+| the per-user install, or the tarball in any folder you own | swapped |
+| the tarball in a folder you cannot write (`/usr/local/bin` with `sudo`) | told: About shows the two lines to run |
+| macOS, `snyvi.app` in Applications, the cask too | swapped (the cask says `auto_updates`, so `brew upgrade` leaves it alone unless `--greedy`) |
+| Windows, the installer's folder or Scoop's | swapped (`scoop update` later reinstalls over it harmlessly) |
+| the `.deb` | told: root owns `/usr/bin/snyvi`, so About and `snyvi status` show the two lines to run |
+| `cargo install` | told: `cargo install snyvi` |
+| a build under `target/` | never checked |
+
+When the window is in front at the moment an update could go, a pill
+appears beside the agents count: `Restart to update · 1.6.3`. A click
+applies it as soon as the panels are quiet, and the page comes back on the
+new build with every Claude panel resumed (`claude --resume`, the same as
+the ↻ button) and every shell restarted with its old screen greyed above.
+Left alone, the pill stays quiet for a day and turns amber after — a panel
+whose agent is stuck at "working" because Claude died without saying so
+is the usual reason, and `snyvi restart --now` is the way through.
+
+Sooner than the daily slot, when you want it:
 
 ```
-snyvi restart
+snyvi update            check, stage, restart when the panels are quiet
+snyvi update --now      the same, without the wait
+snyvi update check      say whether a newer one is out; exit 10 when it is
+snyvi update --to 1.7.0 one release by number, even an older one
+snyvi update --back     the version the last update replaced (kept as .prev)
+snyvi update off | on   the automatic path; `snyvi update` still works when off
 ```
 
-That is the whole update. Your documents, database and token are kept,
-and the schema migrates itself. If you forget, any snyvi command tells
-you:
+About has the same: `You're on 1.6.2 · checked 40 min ago · next update
+tomorrow`, with `Check now`, `Restart to update` when one is ready, and the
+on/off switch. A release marked as a hotfix (`hotfix_below` in the
+manifest, set by hand in the release job) is applied at the next quiet
+moment rather than the next day.
+
+`SNYVI_UPDATES=off` in the daemon's environment turns the whole thing off,
+for CI, packagers and the dev loop, and wins over the switch. What is
+trusted: the manifest's minisign signature, against the key compiled in
+(`packaging/minisign.pub`); the sha256 of every download, at staging and
+again on the file just placed; a new daemon that does not answer within
+ten seconds is rolled back to `.prev` and health says `failed`. Under
+systemd the unit does the restart (the daemon exits 75 and
+`Restart=on-failure` starts the new file); `.prev` stays for `--back`.
+
+Installed by hand over the old one — the one-liner again, `brew upgrade`,
+`sudo dpkg -i` — the daemon notices the file changed under it and any
+snyvi command says so:
 
 ```
 note: snyvi 0.2.0 is still running but this binary is 0.3.0.
 Run `snyvi restart` to pick up the new version.
 ```
 
-`snyvi status` shows both versions, `snyvi stop` shuts the daemon down,
-and both work against daemons old enough to predate the stop command.
-Under systemd use `systemctl --user restart snyvi` instead.
+A restart waits for the desks to be quiet the same way, says which panels
+it is waiting on, and `--now` skips the wait; Ctrl-C leaves it to happen
+on its own. Your documents, database and token are kept across every
+kind of update, and the schema migrates itself. `snyvi status` shows both
+versions and one line about updates; `snyvi stop` shuts the daemon down.
 
 ### Uninstalling
 
 ```
 snyvi uninstall-claude        # the MCP server, the hooks, the CLAUDE.md line
+snyvi uninstall-desktop       # Linux: the menu entry, icons and unit it wrote
 snyvi stop                    # the daemon
-sudo apt remove snyvi-app snyvi   # or delete the binary, the .app, the folder
+rm ~/.local/bin/snyvi ~/.local/bin/snyvi-app   # or: sudo apt remove snyvi-app snyvi
 ```
 
 That leaves your documents and index in `~/.local/share/snyvi` and the
@@ -287,28 +357,17 @@ without extra packages. To build from source instead:
 cargo install --path .
 ```
 
-One binary, no runtime, no network access ever. It embeds its own UI,
-fonts, and syntax grammars.
+One binary, no runtime. It embeds its own UI, fonts, and syntax
+grammars, and the only thing it reads off the network is the small signed
+file that says whether a newer version is out; `snyvi update off` stops
+that.
 
 To keep the daemon resident from login rather than letting the first
-send start it, enable the user service. The `.deb` already ships one:
+send start it, enable the user service. The one-liner and
+`snyvi install-desktop` write one for the binary in your home, and the
+`.deb` ships one; either way:
 
 ```
-systemctl --user enable --now snyvi
-```
-
-From the tarball, write it first:
-
-```
-mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/snyvi.service <<'UNIT'
-[Unit]
-Description=snyvi document viewer
-[Service]
-ExecStart=%h/.local/bin/snyvi serve
-Restart=on-failure
-[Install]
-WantedBy=default.target
-UNIT
 systemctl --user enable --now snyvi
 ```
 

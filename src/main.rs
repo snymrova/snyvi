@@ -26,6 +26,7 @@ mod store;
 /// put the scanner's tests in `cargo test`, where they belong.
 #[cfg(test)]
 mod strip;
+mod update;
 mod watch;
 
 use anyhow::{Context, Result};
@@ -135,9 +136,16 @@ enum Cmd {
         /// Also add one line to ~/.claude/CLAUDE.md asking Claude to send you what it writes.
         #[arg(long)]
         claude_md: bool,
+        /// What an installer runs on an update: point whatever Claude Code already has of snyvi at this binary, and add nothing.
+        #[arg(long, conflicts_with_all = ["auto", "claude_md"])]
+        refresh: bool,
     },
     /// The same as `uninstall claude`: the MCP server, the hooks and the CLAUDE.md line. Documents are kept.
     UninstallClaude,
+    /// Linux: a menu entry, the icon, `snyvi://` links, and a systemd user unit (written, not enabled), all for this binary and all in your home. Safe to run again.
+    InstallDesktop,
+    /// Undo `install-desktop`: exactly the files it wrote.
+    UninstallDesktop,
     /// Put `snyvi` on PATH: a link in /usr/local/bin or ~/.local/bin, or the binary's folder on Windows.
     InstallCli {
         /// Directory to link into (Linux and macOS). Defaults to /usr/local/bin when writable, else ~/.local/bin.
@@ -168,8 +176,26 @@ enum Cmd {
     },
     /// Stop the background daemon.
     Stop,
-    /// Restart the daemon so a newly installed binary takes over.
-    Restart,
+    /// Restart the daemon so a newly installed binary takes over. Waits until no panel has an agent mid-turn or a program printing; Claude panels come back with their conversation.
+    Restart {
+        /// Do not wait for the panels to be quiet.
+        #[arg(long)]
+        now: bool,
+    },
+    /// Check for a new version, stage it, and restart onto it when the panels are quiet. Ignores the once-a-day floor: you asked.
+    Update {
+        #[command(subcommand)]
+        what: Option<UpdateCmd>,
+        /// Do not wait for the panels to be quiet.
+        #[arg(long)]
+        now: bool,
+        /// One release by number, even an older one.
+        #[arg(long)]
+        to: Option<String>,
+        /// Put the previous version back: the one the last update replaced.
+        #[arg(long)]
+        back: bool,
+    },
     /// Show daemon status.
     Status,
     /// Measure render speed on synthetic documents, and a daemon of its own: binary size, cold start, send, first byte, resident memory.
@@ -178,6 +204,16 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// Say whether a newer version is out, and stop. Exit 10 when one is, 0 on the latest, 1 when the check failed.
+    Check,
+    /// Automatic updates on (the default): checked a few times a day, applied once a day at a quiet moment.
+    On,
+    /// Automatic updates off. `snyvi update` still works when you ask.
+    Off,
 }
 
 fn main() -> Result<()> {
@@ -197,7 +233,15 @@ fn main() -> Result<()> {
                 .thread_keep_alive(std::time::Duration::from_secs(1))
                 .enable_all()
                 .build()?;
-            rt.block_on(server::run(paths))
+            let why = rt.block_on(server::run(paths.clone()))?;
+            // The runtime goes before a successor is started: its listener
+            // is what the successor binds, and it must be closed, not merely
+            // no longer served.
+            drop(rt);
+            match why {
+                server::Leaving::Stopped => Ok(()),
+                server::Leaving::Restart { exe, apply } => server::relaunch(exe, apply, &paths),
+            }
         }
         Cmd::Send {
             file,
@@ -341,7 +385,12 @@ fn main() -> Result<()> {
                 agents::ids().join(", ")
             ),
         },
-        Cmd::InitClaude { auto, claude_md } => setup::init_claude(auto, claude_md),
+        Cmd::InitClaude { refresh: true, .. } => setup::refresh_claude(),
+        Cmd::InitClaude {
+            auto, claude_md, ..
+        } => setup::init_claude(auto, claude_md),
+        Cmd::InstallDesktop => setup::install_desktop(),
+        Cmd::UninstallDesktop => setup::uninstall_desktop(),
         Cmd::UninstallClaude => setup::uninstall_claude(),
         Cmd::InstallCli { dir } => setup::install_cli(dir),
         Cmd::Prune { days, dry_run } => {
@@ -385,19 +434,23 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Restart => {
-            client::stop(&paths)?;
-            client::ensure_daemon()?;
-            let v = client::health()
-                .and_then(|h| {
-                    h.get("version")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                })
-                .unwrap_or_default();
-            println!("snyvi {v} running on {}", config::base_url());
-            Ok(())
-        }
+        Cmd::Restart { now } => client::restart(&paths, now),
+        Cmd::Update {
+            what,
+            now,
+            to,
+            back,
+        } => match what {
+            Some(UpdateCmd::Check) => {
+                if client::update_check(&paths)? {
+                    std::process::exit(10);
+                }
+                Ok(())
+            }
+            Some(UpdateCmd::On) => client::update_auto(&paths, true),
+            Some(UpdateCmd::Off) => client::update_auto(&paths, false),
+            None => client::update(&paths, client::UpdateOpts { now, to, back }),
+        },
         Cmd::Status => {
             match client::health() {
                 Some(h) => {
@@ -408,6 +461,9 @@ fn main() -> Result<()> {
                             "\nthis binary is {} but the daemon is {running}; run `snyvi restart`",
                             server::VERSION
                         );
+                    }
+                    if let Some(line) = client::update_line(&h["update"]) {
+                        println!("{line}");
                     }
                 }
                 None => println!("not running (would listen on {})", config::base_url()),

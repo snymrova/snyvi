@@ -771,14 +771,19 @@ function fit(v) {
  *  about it: the pane starts what it ran before, and the old screen stays
  *  above it, greyed, as scrollback. A process that ended on its own, or that
  *  the reader stopped, has an exit code -- that one keeps the Start bar,
- *  because what to do next is a question only the reader can answer. */
+ *  because what to do next is a question only the reader can answer.
+ *
+ *  A daemon that went on purpose -- `snyvi restart`, an update -- marks the
+ *  panes an agent was in, and the status that says the pane lost its process
+ *  says `resume` too: that one comes back as the conversation, the way the
+ *  ↻ button brings it, rather than as the shell. */
 function resume(v) {
   if (v.resumed || v.starting || !v.size) return;
   if (v.status.running || v.status.exit != null) {
     if (v.resuming) { v.resuming = false; header(v); }
     return;
   }
-  run(v, v.status.cmd || v.pane.cmd || "", true);
+  run(v, v.status.cmd || v.pane.cmd || "", true, !!v.status.resume);
 }
 
 /** The accent this window wears, as CSS resolved it, for the prompt the shell
@@ -797,6 +802,7 @@ async function run(v, cmd, quiet, again) {
   if (v.starting) return;
   v.starting = true;
   v.resumed = true;
+  let shell = false;
   const [c, r] = v.size ? v.size.split("x").map(Number) : [80, 24];
   try {
     // `again` resumes the conversation the pane kept; the daemon builds that
@@ -805,15 +811,19 @@ async function run(v, cmd, quiet, again) {
     v.status = j.status;
     if (!quiet) v.body.focus();
   } catch (e) {
+    // A conversation the daemon no longer has an id for -- the mark outlived
+    // it -- is not worth a word: the shell is what the pane gets instead.
+    if (again && quiet && /no conversation/i.test(String(e))) shell = true;
     // Two windows on one desk both resume it, and the one that loses is told
     // "already running" -- which is the outcome it wanted. Anything else is
     // worth saying, even for a start nobody asked for: the folder may be gone.
-    if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start", String(e));
+    else if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start", String(e));
   } finally {
     v.starting = false;
     v.resuming = false;
     header(v);
   }
+  if (shell) return run(v, cmd, quiet, false);
 }
 
 const tilde = p => {

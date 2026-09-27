@@ -8,18 +8,24 @@
 #
 #   macOS with Homebrew      brew install --cask snymrova/snyvi/snyvi
 #   macOS without            snyvi.app into /Applications, `snyvi` linked on PATH
-#   Debian and Ubuntu        the two .debs: snyvi, and the window desks run in
-#   any other Linux          the static binary into ~/.local/bin
+#   Linux                    snyvi into ~/.local/bin, the window beside it when this
+#                            machine can show one, a menu entry and a user unit; no
+#                            root, and it updates itself from then on
+#   Linux, snyvi as a .deb   stays a package: both .debs upgraded in one apt run
 #
 # Every download is checked against the .sha256 published beside it. Running
 # it again installs the newer version over the old one and restarts the
 # daemon if one was running; nothing you sent is touched.
 #
-#   sh install.sh --tar             the static binary even where dpkg exists
-#   sh install.sh --no-app          on Debian, skip the window package
+#   sh install.sh --deb             the two .debs instead (Debian, Ubuntu; needs root)
+#   sh install.sh --tar             the per-user install, even over a .deb
+#   sh install.sh --no-app          no window
 #   sh install.sh --no-init         do not register with Claude Code
 #   sh install.sh --version 1.3.0   a particular release, not the latest
-#   sh install.sh --bin-dir DIR     where the static binary goes (~/.local/bin)
+#   sh install.sh --bin-dir DIR     where the per-user install goes (~/.local/bin)
+#
+# SNYVI_ASSET_DIR=DIR takes the downloads from a folder instead of GitHub, and
+# checks them the same way; CI runs this script that way in three distributions.
 #
 # Windows: `scoop install snyvi` from the snymrova/scoop-snyvi bucket, or the
 # installer on the releases page. The README has both.
@@ -28,6 +34,7 @@ set -eu
 repo=${SNYVI_REPO:-snymrova/snyvi}
 version=${SNYVI_VERSION:-}
 bin_dir=${SNYVI_BIN_DIR:-$HOME/.local/bin}
+asset_dir=${SNYVI_ASSET_DIR:-}
 mode=auto
 want_app=1
 want_init=1
@@ -36,13 +43,14 @@ snyvi=
 while [ $# -gt 0 ]; do
   case $1 in
     --tar) mode=tar ;;
+    --deb) mode=deb ;;
     --no-app) want_app=0 ;;
     --no-init) want_init=0 ;;
     --version) version=${2:?--version needs a value}; shift ;;
     --version=*) version=${1#--version=} ;;
     --bin-dir) bin_dir=${2:?--bin-dir needs a value}; shift ;;
     --bin-dir=*) bin_dir=${1#--bin-dir=} ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "install.sh: unknown option $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -51,10 +59,12 @@ done
 say()  { printf '%s\n' "$*"; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# A path with its links resolved, where the system can say.
+real() { readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"; }
 
 # The release to install: `latest` resolves on GitHub's side, and a pinned
 # version is the same file names under that tag. Both are the names that do
-# not move -- snyvi-linux-x64.deb, snyvi-macos-arm64.tar.gz -- which every
+# not move -- snyvi-linux-x64.tar.gz, snyvi-macos-arm64.tar.gz -- which every
 # release since 1.0 has carried beside its versioned copies.
 version=${version#v}
 if [ -n "$version" ]; then
@@ -74,7 +84,7 @@ if have curl; then
   fetch() { curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"; }
 elif have wget; then
   fetch() { wget -q -O "$2" "$1"; }
-else
+elif [ -z "$asset_dir" ]; then
   die "curl or wget is needed to download the release"
 fi
 
@@ -96,33 +106,75 @@ chmod 755 "$tmp"
 
 # Download one asset and its checksum, and refuse a file that does not match.
 get() {
-  say "  fetching $1"
-  fetch "$base/$1" "$tmp/$1" || die "could not download $base/$1"
-  fetch "$base/$1.sha256" "$tmp/$1.sha256" || die "could not download $base/$1.sha256"
+  if [ -n "$asset_dir" ]; then
+    say "  taking $1 from $asset_dir"
+    cp "$asset_dir/$1" "$tmp/$1" 2>/dev/null || die "no $1 in $asset_dir"
+    cp "$asset_dir/$1.sha256" "$tmp/$1.sha256" 2>/dev/null || die "no $1.sha256 in $asset_dir"
+  else
+    say "  fetching $1"
+    fetch "$base/$1" "$tmp/$1" || die "could not download $base/$1"
+    fetch "$base/$1.sha256" "$tmp/$1.sha256" || die "could not download $base/$1.sha256"
+  fi
   check "$tmp/$1" || die "$1 does not match its published sha256; not installing it"
 }
 
 sudo_if_needed() {
   if [ "$(id -u)" = 0 ]; then "$@"
-  elif have sudo; then say "  (sudo, for dpkg)"; sudo "$@"
-  else die "root is needed to install a .deb; run as root, or use --tar for a copy in $bin_dir"
+  elif have sudo; then say "  (sudo, for apt)"; sudo "$@"
+  else die "root is needed to install a .deb; run as root, or leave out --deb for the per-user install in $bin_dir"
   fi
 }
 
-# Was a daemon running before the swap? The new binary on disk does not take
-# effect until the old process exits, so a daemon that was up is restarted at
-# the end; one that was not is left alone.
-old=$(command -v snyvi 2>/dev/null || true)
-was_running=0
-if [ -n "$old" ]; then
-  status=$("$old" status 2>/dev/null || true)
-  case $status in
-    '{'*) was_running=1 ;;
-  esac
-fi
+# ---------- what is here already ----------
+
+# The daemon, found by asking it rather than by PATH: a daemon started from
+# another copy of snyvi, or from a folder PATH does not name, is still the
+# one to restart. `ask health` prints its answer, or nothing.
+port=${SNYVI_PORT:-7777}
+ask() {
+  url=http://127.0.0.1:$port/api/$1
+  if have curl; then curl -fsS --max-time 2 "$url" 2>/dev/null || true
+  elif have wget; then wget -q -T 2 -O - "$url" 2>/dev/null || true
+  else
+    # Neither: any snyvi here can ask for us, pretty-printed.
+    for s in "$(command -v snyvi 2>/dev/null || true)" "$bin_dir/snyvi" /usr/bin/snyvi; do
+      if [ -n "$s" ] && [ -x "$s" ]; then
+        if [ "$1" = health ]; then "$s" status 2>/dev/null | sed -n '/^{/,/^}/p' || true; fi
+        return 0
+      fi
+    done
+  fi
+}
+# One top-level field out of JSON, compact or pretty, without a JSON tool.
+field() { tr ',' '\n' | sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" | head -n 1; }
+
+health=$(ask health)
+running_pid=$(printf '%s' "$health" | field pid)
+running_version=$(printf '%s' "$health" | field version)
+running_bin=
+[ -n "$running_pid" ] && running_bin=$(ask about | field binary)
+
+# Any snyvi at all, before this run: an update, not a first install. What
+# decides between refreshing Claude Code's registration and making one.
+previous=
+for s in "$(command -v snyvi 2>/dev/null || true)" "$bin_dir/snyvi" /usr/bin/snyvi; do
+  if [ -n "$s" ] && [ -x "$s" ]; then previous=$s; break; fi
+done
+[ -z "$previous" ] && [ -n "$running_pid" ] && previous=running
+
+deb_installed() {
+  have dpkg-query && [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]
+}
+display() { [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }
 
 say "snyvi: ${version:-latest} for $os $arch"
+if [ -n "$running_pid" ]; then
+  say "  snyvi ${running_version:-?} is running (pid $running_pid)${running_bin:+ from $running_bin}"
+fi
 
+switched=0
+app=0
+told=
 case $os in
   Darwin)
     if [ "$mode" = auto ] && have brew; then
@@ -139,43 +191,115 @@ case $os in
       # to refuse.
       get "snyvi-macos-$arch.tar.gz"
       tar -C "$tmp" -xzf "$tmp/snyvi-macos-$arch.tar.gz"
-      app=$(find "$tmp" -maxdepth 2 -name snyvi.app -type d | head -n 1)
-      [ -n "$app" ] || die "the tarball did not contain snyvi.app"
+      bundle=$(find "$tmp" -maxdepth 2 -name snyvi.app -type d | head -n 1)
+      [ -n "$bundle" ] || die "the tarball did not contain snyvi.app"
       if [ -w /Applications ]; then dest=/Applications; else dest=$HOME/Applications; mkdir -p "$dest"; fi
-      [ "$was_running" = 1 ] && "$old" stop >/dev/null 2>&1 || true
       rm -rf "$dest/snyvi.app"
-      mv "$app" "$dest/snyvi.app"
+      mv "$bundle" "$dest/snyvi.app"
       say "  snyvi.app is in $dest"
       snyvi=$dest/snyvi.app/Contents/MacOS/snyvi
       "$snyvi" install-cli
     fi
     ;;
   Linux)
-    if [ "$mode" = auto ] && have dpkg && have apt-get; then
-      get "snyvi-linux-$arch.deb"
-      sudo_if_needed dpkg -i "$tmp/snyvi-linux-$arch.deb"
-      snyvi=/usr/bin/snyvi
-      if [ "$want_app" = 1 ]; then
-        # apt rather than dpkg for the window, so WebKitGTK resolves; and
-        # `./` so apt reads a file instead of looking a name up.
-        get "snyvi-app-linux-$arch.deb"
-        chmod 644 "$tmp/snyvi-app-linux-$arch.deb"
-        sudo_if_needed apt-get install -y "$tmp/snyvi-app-linux-$arch.deb"
+    # A machine that has snyvi as a package keeps it as one: nobody's
+    # install is moved behind their back. --tar is how to move.
+    if [ "$mode" = auto ]; then
+      if deb_installed snyvi; then
+        mode=deb
+        told="installed as a package; snyvi tells you when a new one is out. \`sh install.sh --tar\` moves to the per-user install, which updates itself"
+      else
+        mode=tar
       fi
+    fi
+    if [ "$mode" = deb ]; then
+      { have dpkg && have apt-get; } || die "--deb needs dpkg and apt-get, which this Linux does not have; the per-user install needs neither: sh install.sh"
+      get "snyvi-linux-$arch.deb"
+      debs="$tmp/snyvi-linux-$arch.deb"
+      # The window: when asked for and there is a display to show it on,
+      # or when it is installed already and would otherwise fall behind.
+      if [ "$want_app" = 1 ] && { display || deb_installed snyvi-app; }; then
+        get "snyvi-app-linux-$arch.deb"
+        debs="$debs $tmp/snyvi-app-linux-$arch.deb"
+        app=1
+      elif [ "$want_app" = 1 ]; then
+        say "  no display here, so no window; run this again from the desktop for one"
+      fi
+      # One apt transaction for both, so WebKitGTK resolves and the two
+      # never disagree; a path rather than a name, so apt reads the file.
+      # shellcheck disable=SC2086
+      chmod 644 $debs
+      # shellcheck disable=SC2086
+      sudo_if_needed apt-get install -y $debs
+      snyvi=/usr/bin/snyvi
+      [ -x "$bin_dir/snyvi" ] && switched=1
     else
       get "snyvi-linux-$arch.tar.gz"
       tar -C "$tmp" -xzf "$tmp/snyvi-linux-$arch.tar.gz"
-      bin=$(find "$tmp" -maxdepth 2 -name snyvi -type f | head -n 1)
+      bin=
+      for f in "$tmp"/snyvi-*/snyvi "$tmp"/snyvi; do
+        if [ -f "$f" ]; then bin=$f; break; fi
+      done
       [ -n "$bin" ] || die "the tarball did not contain a snyvi binary"
       mkdir -p "$bin_dir"
-      install -m 755 "$bin" "$bin_dir/snyvi"
+      # Beside the old file and renamed over it: a running daemon keeps the
+      # file it started from, and a write into a running executable fails.
+      place() { install -m 755 "$1" "$bin_dir/.$2.new" && mv -f "$bin_dir/.$2.new" "$bin_dir/$2"; }
+      place "$bin" snyvi
       snyvi=$bin_dir/snyvi
       say "  snyvi is in $bin_dir"
-      case ":$PATH:" in
-        *":$bin_dir:"*) ;;
-        *) say "  $bin_dir is not on your PATH yet; add it, or call $bin_dir/snyvi by that name" ;;
-      esac
-      [ "$want_app" = 1 ] && [ "$mode" = auto ] && say "  the window is a .deb or a source build; docs/GUIDE.md#desktop says how" || true
+      if deb_installed snyvi; then switched=1; fi
+
+      # The window, beside it, when this machine can run one: a display,
+      # WebKitGTK 4.1, and a glibc as new as the one it was built against.
+      # One already here is always kept in step with the daemon.
+      if [ "$want_app" = 1 ] || [ -x "$bin_dir/snyvi-app" ]; then
+        glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc //p')
+        webkit=0
+        if { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libwebkit2gtk-4\.1\.so\.0'; then webkit=1; fi
+        gmaj=${glibc%%.*}; gmin=${glibc#*.}; gmin=${gmin%%.*}
+        if [ -z "$glibc" ]; then
+          say "  the window needs glibc, which this Linux does not use; snyvi opens in a browser here"
+        elif [ "$gmaj" -lt 2 ] || { [ "$gmaj" = 2 ] && [ "$gmin" -lt 34 ]; }; then
+          say "  the window needs glibc 2.34 or newer and this has $glibc; snyvi opens in a browser here"
+        elif [ ! -x "$bin_dir/snyvi-app" ] && ! display; then
+          say "  no display here, so no window; run this again from the desktop for one"
+        elif [ "$webkit" = 0 ]; then
+          distro=$(sed -n 's/^ID_LIKE=//p; s/^ID=//p' /etc/os-release 2>/dev/null | tr -d '"' | tr '\n' ' ')
+          case " $distro " in
+            *" fedora "*|*" rhel "*) line="sudo dnf install webkit2gtk4.1" ;;
+            *" arch "*) line="sudo pacman -S webkit2gtk-4.1" ;;
+            *" suse "*|*" opensuse "*) line="sudo zypper install libwebkit2gtk-4_1-0" ;;
+            *" debian "*|*" ubuntu "*) line="sudo apt install libwebkit2gtk-4.1-0" ;;
+            *) line="your distribution's WebKitGTK 4.1 package" ;;
+          esac
+          say "  the window needs WebKitGTK 4.1, which is not installed: $line, then run this again"
+        else
+          get "snyvi-app-linux-$arch.tar.gz"
+          mkdir "$tmp/app"
+          tar -C "$tmp/app" -xzf "$tmp/snyvi-app-linux-$arch.tar.gz"
+          win=
+          for f in "$tmp"/app/snyvi-*/snyvi-app "$tmp"/app/snyvi-app; do
+            if [ -f "$f" ]; then win=$f; break; fi
+          done
+          [ -n "$win" ] || die "the window's tarball did not contain snyvi-app"
+          place "$win" snyvi-app
+          app=1
+          say "  the window is beside it"
+        fi
+      fi
+
+      # What a package puts under /usr/share, in this home: the menu entry,
+      # the icon, snyvi:// links, a user unit (written, not enabled).
+      "$snyvi" install-desktop | sed 's/^/  /'
+
+      # The receipt the daemon reads to know how it was installed, and so
+      # what an update may do to it. See src/update.rs.
+      conf=${SNYVI_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/snyvi}
+      mkdir -p "$conf"
+      esc=$(real "$bin_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      if [ "$app" = 1 ]; then app_json=true; else app_json=false; fi
+      printf '{ "channel": "tar", "bin_dir": "%s", "app": %s }\n' "$esc" "$app_json" > "$conf/install.json"
     fi
     ;;
   *)
@@ -184,23 +308,61 @@ case $os in
 esac
 
 [ -x "$snyvi" ] || die "installed, but $snyvi is not there to finish with; open a new terminal and run \`snyvi status\`"
+new_version=$("$snyvi" --version 2>/dev/null || true)
+new_version=${new_version##* }
 
-# The daemon that was up is now the old code still serving; the new binary
-# takes over. One that was not running is not started.
-if [ "$was_running" = 1 ]; then
-  "$snyvi" restart
+# The daemon that was up is the old code still serving; the new file takes
+# over. When it runs from the same path, `restart` waits for the desks to be
+# quiet and brings the Claude panels back. When it runs from another copy --
+# a move between the package and the per-user install -- that copy is
+# stopped and this one started, since a restart would start the old path.
+restarted=
+if [ -n "$running_pid" ]; then
+  if [ "$switched" = 1 ] || { [ -n "$running_bin" ] && [ "$(real "$running_bin")" != "$(real "$snyvi")" ]; }; then
+    "$snyvi" stop >/dev/null 2>&1 || true
+    if "$snyvi" restart >/dev/null; then restarted=moved; fi
+  elif "$snyvi" restart; then
+    restarted=same
+  fi
 fi
 
 if [ "$want_init" = 1 ]; then
-  if have claude || [ -d "$HOME/.claude" ]; then
+  if [ -n "$previous" ]; then
+    # An update: whatever Claude Code has of snyvi is pointed here, and
+    # nothing is added that the reader took out.
+    "$snyvi" init-claude --refresh | sed 's/^/  /'
+  elif have claude || [ -d "$HOME/.claude" ]; then
     "$snyvi" init-claude --auto
   else
     say "  Claude Code is not here; \`snyvi init-claude --auto\` when it is, or \`snyvi init <agent>\` for another agent"
   fi
 fi
 
+# The last lines say what is true, not what was hoped: which file runs when
+# `snyvi` is typed in a new terminal, and whether it updates itself.
 say ""
-say "snyvi $("$snyvi" --version 2>/dev/null | awk '{print $NF}') is installed."
+case $os/$mode in
+  Linux/tar)
+    with=
+    [ "$app" = 1 ] && with=", with the window beside it"
+    say "snyvi $new_version is in $bin_dir$with, and updates itself from now on." ;;
+  Linux/deb) say "snyvi $new_version is installed as a package; snyvi tells you when a new one is out." ;;
+  *) say "snyvi $new_version is installed, and updates itself from now on." ;;
+esac
+[ -n "$told" ] && say "  $told"
+case $restarted in
+  same) say "  The daemon that was running is now $new_version." ;;
+  moved) say "  The daemon that ran from ${running_bin:-the other copy} was stopped; this one is running now." ;;
+esac
+if [ "$os/$mode" = Linux/tar ] && [ "$switched" = 1 ]; then
+  say "  The .deb is still installed; \`sudo apt-get remove snyvi snyvi-app\` takes it out."
+fi
+found=$(command -v snyvi 2>/dev/null || true)
+if [ -z "$found" ]; then
+  say "  $(dirname "$snyvi") is not on your PATH yet; add it, or call $snyvi by that name."
+elif [ "$(real "$found")" != "$(real "$snyvi")" ]; then
+  say "  But \`snyvi\` runs $found, which comes first on your PATH; call $snyvi by that name, or put $(dirname "$snyvi") first."
+fi
 say "  snyvi send README.md    a document, and a link to read it"
 say "  snyvi app               the window, where desks run"
 say "  snyvi status            what is running, what is registered"

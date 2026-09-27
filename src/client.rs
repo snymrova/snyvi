@@ -146,7 +146,343 @@ fn warn_if_stale(h: &Value) {
             "note: snyvi {running} is still running but this binary is {}. Run `snyvi restart` to pick up the new version.",
             crate::server::VERSION
         );
+    } else if h.get("stale").and_then(Value::as_bool) == Some(true) {
+        // Same version, different file: the daemon re-stats what it was
+        // started from. An `apt upgrade` to the same number, a rebuild, a
+        // copy by hand -- whichever, the process is not the file any more.
+        eprintln!(
+            "note: the snyvi binary on disk has changed since the daemon started. Run `snyvi restart` to pick it up."
+        );
     }
+}
+
+/// `snyvi restart`: ask the daemon to restart itself and wait for it to come
+/// back. The daemon waits for its panes to be quiet unless `now`; while it
+/// waits, this says which panels it is waiting on, and Ctrl-C leaves the
+/// restart pending in the daemon rather than cancelling it. A daemon too old
+/// to have the route is stopped and started the old way, and no daemon at
+/// all is simply started.
+pub fn restart(paths: &Paths, now: bool) -> Result<()> {
+    let Some(h) = health() else {
+        ensure_daemon()?;
+        return print_running();
+    };
+    let was = h.get("pid").and_then(Value::as_u64);
+    let Some(token) = config::read_token(paths) else {
+        bail!(
+            "no token in {}; is this the same user the daemon runs as?",
+            paths.config_dir.display()
+        );
+    };
+    let asked = ureq::post(&format!("{}/api/restart", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({ "when": if now { "now" } else { "idle" } }));
+    match asked {
+        Ok(r) if r.status() == 404 || r.status() == 405 => {
+            // Before 1.7.0 there was no restart route: the old stop, then
+            // a start from this binary.
+            stop(paths)?;
+            ensure_daemon()?;
+            return print_running();
+        }
+        Ok(r) if r.status().is_success() => {}
+        Ok(mut r) => bail!(
+            "the daemon refused the restart: {} {}",
+            r.status(),
+            r.body_mut().read_to_string().unwrap_or_default().trim()
+        ),
+        Err(e) => bail!("asking the daemon to restart: {e}"),
+    }
+    wait_for_another(was)
+}
+
+/// Watch health until a process other than `was` answers, saying which
+/// panels are holding it up while it waits. By pid rather than version: the
+/// point of a restart may be a file that says the same number.
+fn wait_for_another(was: Option<u64>) -> Result<()> {
+    let mut said: Option<usize> = None;
+    let mut gone_since: Option<Instant> = None;
+    loop {
+        match health() {
+            Some(h) if h.get("pid").and_then(Value::as_u64) != was => {
+                if said.is_some() {
+                    eprintln!();
+                }
+                return print_running();
+            }
+            Some(h) => {
+                gone_since = None;
+                let waiting = h["restart"]["waiting_on"]
+                    .as_array()
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                if waiting > 0 && said != Some(waiting) {
+                    eprintln!(
+                        "waiting on {waiting} panel{} still busy (an agent mid-turn, or a program printing)… --now skips the wait; Ctrl-C leaves the restart to happen when they are quiet",
+                        if waiting == 1 { "" } else { "s" }
+                    );
+                    said = Some(waiting);
+                }
+            }
+            None => {
+                // The old one has gone; the new one is on its way. Under
+                // systemd that is two seconds; by hand, about 25 ms.
+                let since = *gone_since.get_or_insert_with(Instant::now);
+                if since.elapsed() > Duration::from_secs(15) {
+                    bail!(
+                        "the daemon went down for the restart but nothing came back on {} in 15 s. Run `snyvi serve` in a terminal to see why",
+                        config::base_url()
+                    );
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+// ---------- snyvi update ----------
+
+pub struct UpdateOpts {
+    pub now: bool,
+    pub to: Option<String>,
+    pub back: bool,
+}
+
+/// A POST with the token, the status left to the caller.
+fn post(paths: &Paths, path: &str, body: Value, within: Duration) -> Result<(u16, Value)> {
+    let Some(token) = config::read_token(paths) else {
+        bail!(
+            "no token in {}; is this the same user the daemon runs as?",
+            paths.config_dir.display()
+        );
+    };
+    let mut r = ureq::post(&format!("{}{path}", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(within))
+        .http_status_as_error(false)
+        .build()
+        .send_json(body)
+        .with_context(|| format!("asking the daemon ({path})"))?;
+    let status = r.status().as_u16();
+    let json = r.body_mut().read_json::<Value>().unwrap_or(Value::Null);
+    Ok((status, json))
+}
+
+/// `snyvi update`: the daemon checks, stages, and restarts onto what it
+/// staged when the panels are quiet. Each step is printed. A told-only
+/// install (a `.deb`, a cargo build) is told the command instead.
+pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
+    ensure_daemon()?;
+    let was = health().and_then(|h| h.get("pid").and_then(Value::as_u64));
+    if o.back {
+        let (status, j) = post(
+            paths,
+            "/api/restart",
+            serde_json::json!({ "when": if o.now { "now" } else { "idle" }, "back": true }),
+            Duration::from_secs(5),
+        )?;
+        match status {
+            200..=299 => {
+                eprintln!(
+                    "putting the previous version back, and restarting onto it{}",
+                    if o.now {
+                        " now"
+                    } else {
+                        " when the panels are quiet"
+                    }
+                );
+                return wait_for_another(was);
+            }
+            404 | 405 => bail!("the daemon is too old to go back; `snyvi restart` first"),
+            _ => bail!("{}", j["error"].as_str().unwrap_or("the daemon refused")),
+        }
+    }
+    eprintln!("checking…");
+    let (status, j) = post(
+        paths,
+        "/api/update/check",
+        serde_json::json!({ "to": o.to }),
+        Duration::from_secs(600),
+    )?;
+    match status {
+        200..=299 => {}
+        404 | 405 => bail!("the daemon is {} and has no updater; install a newer snyvi by hand and run `snyvi restart`", health().and_then(|h| h["version"].as_str().map(str::to_string)).unwrap_or_default()),
+        _ => bail!("{}", j["error"].as_str().unwrap_or("the check failed")),
+    }
+    let running = j["running"].as_str().unwrap_or("?");
+    let latest = j["latest"].as_str().unwrap_or("?");
+    let newer = j["newer"].as_bool().unwrap_or(false);
+    if !newer && o.to.is_none() {
+        println!("snyvi {running} is the latest");
+        return Ok(());
+    }
+    if j["told"].as_bool().unwrap_or(false) {
+        println!("{latest} is out; you are on {running}. This install is updated by hand:");
+        for line in j["update"]["how"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            println!("  {line}");
+        }
+        return Ok(());
+    }
+    let Some(ready) = j["ready"].as_str() else {
+        if j["update"]["failed"].as_str() == Some(latest) {
+            bail!("{latest} is out, but it was applied here before and did not start, so it is not staged again on its own; `snyvi update --to {latest}` tries it again");
+        }
+        bail!(
+            "{latest} is out but nothing was staged: {}",
+            j["update"]["error"].as_str().unwrap_or("no reason given")
+        );
+    };
+    eprintln!(
+        "{ready} is staged and verified; restarting onto it{}",
+        if o.now {
+            " now"
+        } else {
+            " when the panels are quiet"
+        }
+    );
+    let (status, j) = post(
+        paths,
+        "/api/restart",
+        serde_json::json!({ "when": if o.now { "now" } else { "idle" }, "apply": true }),
+        Duration::from_secs(5),
+    )?;
+    if !(200..=299).contains(&status) {
+        bail!(
+            "{}",
+            j["error"]
+                .as_str()
+                .unwrap_or("the daemon refused the restart")
+        );
+    }
+    wait_for_another(was)
+}
+
+/// `snyvi update check`: true when a newer version is out, and nothing is
+/// restarted. The daemon stages what it finds, as it would on its own timer.
+pub fn update_check(paths: &Paths) -> Result<bool> {
+    ensure_daemon()?;
+    let (status, j) = post(
+        paths,
+        "/api/update/check",
+        serde_json::json!({}),
+        Duration::from_secs(600),
+    )?;
+    match status {
+        200..=299 => {}
+        404 | 405 => bail!("the daemon is too old to check"),
+        _ => bail!("{}", j["error"].as_str().unwrap_or("the check failed")),
+    }
+    let running = j["running"].as_str().unwrap_or("?");
+    let latest = j["latest"].as_str().unwrap_or("?");
+    let newer = j["newer"].as_bool().unwrap_or(false);
+    if newer {
+        println!(
+            "{latest} is out; this is {running}{}",
+            if j["ready"].is_string() {
+                ", and it is staged"
+            } else {
+                ""
+            }
+        );
+    } else {
+        println!("{running} is the latest");
+    }
+    Ok(newer)
+}
+
+/// `snyvi update on|off`: through the daemon when one is up, so About
+/// changes with it; else the file it reads at its next start.
+pub fn update_auto(paths: &Paths, on: bool) -> Result<()> {
+    if health().is_some() {
+        let (status, j) = post(
+            paths,
+            "/api/update/auto",
+            serde_json::json!({ "on": on }),
+            Duration::from_secs(5),
+        )?;
+        if !(200..=299).contains(&status) {
+            bail!("{}", j["error"].as_str().unwrap_or("the daemon refused"));
+        }
+        if j["update"]["env_off"].as_bool() == Some(true) && on {
+            println!(
+                "automatic updates stay off: SNYVI_UPDATES=off is set in the daemon's environment"
+            );
+            return Ok(());
+        }
+    } else {
+        std::fs::create_dir_all(&paths.config_dir)?;
+        std::fs::write(
+            paths.config_dir.join("updates.json"),
+            format!("{{ \"auto\": {on} }}\n"),
+        )?;
+    }
+    println!(
+        "automatic updates are {}",
+        if on {
+            "on: checked a few times a day, applied once a day at a quiet moment"
+        } else {
+            "off; `snyvi update` still works when you ask"
+        }
+    );
+    Ok(())
+}
+
+/// The one line `snyvi status` adds, from health's `update` block.
+pub fn update_line(u: &Value) -> Option<String> {
+    let s = |k: &str| u[k].as_str().map(str::to_string);
+    Some(if let Some(v) = s("failed") {
+        format!("update: {v} was applied and did not start; the previous version was kept. `snyvi update --to {v}` tries again")
+    } else if let Some(v) = s("ready") {
+        if u["slot_open"].as_bool() == Some(true) {
+            format!(
+                "update: {v} is ready; it applies at the next quiet moment, or now: snyvi update"
+            )
+        } else {
+            format!("update: {v} is ready; it applies in the next day when the desks are quiet, or now: snyvi update")
+        }
+    } else if let Some(v) = s("available") {
+        let how = u["how"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" && ");
+        format!("update: {v} is out; this install is updated by hand: {how}")
+    } else if let Some(e) = s("error") {
+        format!("update: the last check failed: {e}")
+    } else if u["checked"].is_i64() {
+        format!(
+            "update: on the latest as of the last check{}",
+            if u["auto"].as_bool() == Some(false) {
+                " (automatic updates off)"
+            } else {
+                ""
+            }
+        )
+    } else if u["channel"].as_str() == Some("dev") {
+        return None;
+    } else {
+        "update: not checked yet".to_string()
+    })
+}
+
+fn print_running() -> Result<()> {
+    let v = health()
+        .and_then(|h| h.get("version").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_default();
+    println!("snyvi {v} running on {}", config::base_url());
+    Ok(())
 }
 
 /// Make sure a daemon is listening; spawn one detached if not.

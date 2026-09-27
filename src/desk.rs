@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS panes (
   cmd TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   agent_session TEXT NOT NULL DEFAULT '',
+  resume_next INTEGER NOT NULL DEFAULT 0,
   UNIQUE(desk_id, slot)
 );
 CREATE INDEX IF NOT EXISTS panes_desk ON panes(desk_id, slot);
@@ -408,6 +409,44 @@ pub fn set_agent_session(conn: &Connection, id: &str, session: &str) -> Result<b
         "UPDATE panes SET agent_session = ?2 WHERE id = ?1 AND agent_session <> ?2",
         params![id, session],
     )? > 0)
+}
+
+/// Mark the panes a planned restart should bring back as `claude --resume`:
+/// the ones given, and of those only the ones whose conversation is known,
+/// since a mark on a pane with nothing to resume would start `claude
+/// --resume ` with no id. Every other mark is cleared in the same statement,
+/// so the table only ever describes the one restart in progress.
+pub fn mark_resume(conn: &Connection, ids: &[String]) -> Result<usize> {
+    conn.execute(
+        "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
+        [],
+    )?;
+    let mut n = 0;
+    for id in ids {
+        n += conn.execute(
+            "UPDATE panes SET resume_next = 1 WHERE id = ?1 AND agent_session <> ''",
+            params![id],
+        )?;
+    }
+    Ok(n)
+}
+
+/// The marks the last daemon left, taken: read once by the daemon that comes
+/// up after a planned restart, and cleared in the same breath, so a daemon
+/// that crashes later does not find them again a day on. The runtime keeps
+/// them from here (`pane::Panes::mark_resume`), for as long as they hold.
+pub fn take_resume(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT id FROM panes WHERE resume_next <> 0 ORDER BY id")?;
+    let ids: Vec<String> = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if !ids.is_empty() {
+        conn.execute(
+            "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
+            [],
+        )?;
+    }
+    Ok(ids)
 }
 
 /// A Claude Code session id: a UUID, lowercase hex and four dashes. Nothing
@@ -899,6 +938,45 @@ mod tests {
         // Closing the pane takes its conversation with it.
         assert!(close_pane(&conn, &p.id).unwrap());
         assert!(super::pane(&conn, &p.id).unwrap().is_none());
+    }
+
+    /// A planned restart marks the panes it should bring back, and only the
+    /// ones with a conversation to bring; the next daemon takes the marks
+    /// once, and a third daemon finds none.
+    #[test]
+    fn resume_marks_are_set_for_known_conversations_and_taken_once() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap();
+        let Opened::Pane(talked) = pane(&mut conn, d.id) else {
+            panic!("no pane")
+        };
+        let Opened::Pane(silent) = pane(&mut conn, d.id) else {
+            panic!("no pane")
+        };
+        let Opened::Pane(other) = pane(&mut conn, d.id) else {
+            panic!("no pane")
+        };
+        let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
+        assert!(set_agent_session(&conn, &talked.id, a).unwrap());
+        assert!(set_agent_session(&conn, &other.id, a).unwrap());
+        assert_eq!(take_resume(&conn).unwrap(), Vec::<String>::new());
+        // Two asked for, one with a conversation: one mark. The third pane
+        // knows a conversation but was not asked for, and stays unmarked.
+        assert_eq!(
+            mark_resume(&conn, &[talked.id.clone(), silent.id.clone()]).unwrap(),
+            1
+        );
+        assert_eq!(take_resume(&conn).unwrap(), vec![talked.id.clone()]);
+        assert_eq!(
+            take_resume(&conn).unwrap(),
+            Vec::<String>::new(),
+            "taken once"
+        );
+        // A new set replaces the old, so a mark cannot outlive the restart
+        // that made it.
+        mark_resume(&conn, std::slice::from_ref(&talked.id)).unwrap();
+        mark_resume(&conn, std::slice::from_ref(&other.id)).unwrap();
+        assert_eq!(take_resume(&conn).unwrap(), vec![other.id.clone()]);
     }
 
     /// The gesture is a right-click on a folder, so the folder's name is the
