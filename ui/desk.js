@@ -83,6 +83,10 @@ let pickEl = null, pointSaid = null, saidTimer = 0, pointTimer = 0;
 const TYPED_MS = 2000;
 /** A word said under one pane's row, when a click on it could not be done. */
 let rowSaid = null, rowTimer = 0;
+/** The one refusal the rail is saying: in the row that asked (`k`), naming
+ *  the verb, with a Retry that is the same action again (`again`, the
+ *  button's data). It stands until the Retry or the next thing done here. */
+let rowErr = null;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -1356,7 +1360,7 @@ function rail() {
   // whichever pane happens to have the focus.
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
-    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}">` +
+    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
       `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
@@ -1364,7 +1368,7 @@ function rail() {
       (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" title="${run ? "Type claude --resume into the shell, for you to run" : "Resume the conversation this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
       `<button type="button" data-a="close" data-p="${v.id}" title="Close panel · Undo for 8 s  ⌃⌥W" aria-label="Close panel ${n}">${ico("x")}</button>` +
       `</span></li>` +
-      (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "");
+      (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc);
   };
   // Replacing the rail takes the focus off whatever had it. A field open on
   // the list has to know that is what happened, and not a reader clicking
@@ -1373,7 +1377,7 @@ function rail() {
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
-      ? `<li class="dk-note gone"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` : "") + `</ul>` +
+      ? `<li class="dk-note gone"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     pointSec(vs) +
@@ -1500,9 +1504,13 @@ function noteSec(d) {
       : noteField ? "" : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
     (noteField && noteField.kind === "new"
       ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}</div>`
-      : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>`) +
+      : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>` + errLine("clear", esc, "p")) +
     `</details>`;
 }
+
+/** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
+const errLine = (k, esc, tag = "li") => rowErr && rowErr.k === k
+  ? `<${tag} class="dk-err" role="alert" title="${esc(rowErr.raw)}">${esc(rowErr.why)}<button type="button" class="dk-undo" data-a="retry">Retry</button></${tag}>` : "";
 
 /** Why the field is open again, after a save the daemon refused. */
 const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(noteErr)}</span>` : "";
@@ -1514,7 +1522,7 @@ const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(no
 function noteRow(x, esc) {
   if (x.gone) {
     return `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span>` +
-      `<button type="button" class="dk-undo" data-a="note-back" data-n="${x.id}">Undo</button></li>`;
+      `<button type="button" class="dk-undo" data-a="note-back" data-n="${x.id}">Undo</button></li>` + errLine(`n${x.id}`, esc);
   }
   if (noteField && noteField.kind === "edit" && noteField.id === x.id) {
     return `<li class="dk-note${x.done ? " done" : ""}"><span class="dk-tick ghost" aria-hidden="true"></span>` +
@@ -1524,7 +1532,7 @@ function noteRow(x, esc) {
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" title="${x.done_by ? `Ticked by ${esc(x.done_by)} · click to rewrite` : "Click to rewrite"}">${esc(x.text)}</button>` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" title="Take it off the list · nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
-    (x.done && x.done_by ? byLine(x, esc) : "") + `</li>`;
+    (x.done && x.done_by ? byLine(x, esc) : "") + `</li>` + errLine(`n${x.id}`, esc);
 }
 
 /** Copy a tick's commit, and say so where it is: the hash reads "copied" for
@@ -1804,6 +1812,9 @@ async function act(b) {
     setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.innerHTML = was; b.title = title; } }, 3000);
     return;
   }
+  const e0 = rowErr;
+  rowErr = null;
+  if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
     if (a === "make") ctx.make(b);
     else if (a === "swap") ctx.swap();
@@ -1857,10 +1868,10 @@ async function act(b) {
       if (x) {
         x.done = !x.done;
         rail();
-        await ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done });
         // The daemon owns the order -- a line just ticked goes to the end of
         // the done half -- so the list is read back rather than guessed at.
-        await getNotes(d.id, true);
+        if (await told(b.dataset, `n${x.id}`, `Could not ${x.done ? "tick" : "untick"} this`, () => { x.done = !x.done; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done }))) await getNotes(d.id, true);
       }
     } else if (a === "note-sha" || a === "want-copy") copySha(b);
     else if (a === "note-doc") ctx.read(b.dataset.d);
@@ -1878,7 +1889,8 @@ async function act(b) {
           if (current()) rail();
         }, BACK_MS);
         rail();
-        await ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {});
+        await told(b.dataset, `n${x.id}`, "Could not take it off", () => { clearTimeout(backTimer); delete x.gone; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {}));
       }
     } else if (a === "note-back") {
       const x = noteList.find(y => y.id === +b.dataset.n);
@@ -1886,29 +1898,49 @@ async function act(b) {
       if (x) {
         delete x.gone;
         rail();
-        await ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {});
-        await getNotes(d.id, true);
+        if (await told(b.dataset, `n${x.id}`, "Could not bring it back", () => { x.gone = true; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))) await getNotes(d.id, true);
       }
     } else if (a === "note-clear") {
       const xs = noteList.filter(y => y.done && !y.gone);
       if (xs.length) {
+        const was = noteList;
         clearTimeout(backTimer);
         noteList = noteList.filter(y => !y.done && !y.gone);
         cleared = { at: d.id, xs };
         backTimer = setTimeout(() => { cleared = null; if (current()) rail(); }, BACK_MS);
         rail();
-        await Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {})));
+        if (!(await told(b.dataset, "clear", "Could not clear the done notes", () => { clearTimeout(backTimer); cleared = null; noteList = was; },
+          () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {})))))) getNotes(d.id, true);
       }
     } else if (a === "note-unclear" && cleared) {
-      const xs = cleared.xs;
+      const c = cleared, xs = c.xs;
       clearTimeout(backTimer);
       cleared = null;
       noteList = noteList.concat(xs);
       rail();
-      await Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {})));
-      await getNotes(d.id, true);
+      if (await told(b.dataset, "clear", "Could not bring them back", () => { noteList = noteList.filter(y => !xs.includes(y)); cleared = c; },
+        () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
-  } catch (e) { ctx.toast("Could not do that", String(e)); }
+  } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e.message); }
+}
+
+/** What each of the rail's other buttons was asked to do, for its error. */
+const VERB = { new: "open a new panel", stop: "stop the panel", start: "start the panel", all: "start the panels", drop: "close the desk",
+  copy: "copy it", put: "put the points in", again: "resume it", "pane-rename": "rename the panel" };
+
+/** The daemon, asked for what the rail already shows. A no puts back what
+ *  was changed (`back`) and says so in the row that asked (`k`), with a
+ *  Retry that does the same thing again (`again`, the button's data).
+ *  True when the daemon said yes. */
+async function told(again, k, why, back, call) {
+  try { await call(); return true; }
+  catch (e) {
+    back();
+    rowErr = { k, why, raw: e.message, again: { ...again } };
+    if (current()) rail();
+    return false;
+  }
 }
 
 /** Close a panel: its process stops, its row stays in the rail for BACK_MS
@@ -1916,14 +1948,19 @@ async function act(b) {
  *  nothing is lost: the daemon keeps it until `prune`. */
 async function closePanel(v) {
   const d = current();
-  clearTimeout(closedTimer);
-  closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
-  closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
   // The keyboard goes on to a neighbour, if it was in the one that closed:
   // it is not left on nothing, typing into nowhere.
   const ps = d.panes, i = ps.findIndex(p => p.id === v.id), next = (ps[i + 1] || ps[i - 1] || {}).id;
   const had = v.el.contains(document.activeElement);
-  await ctx.api(`/api/panes/${v.id}/delete`, {});
+  // "Closed · Undo" is said once it is true: until the daemon has it, the
+  // panel's row says it is closing, and a no leaves it running.
+  v.closing = true; rail();
+  const ok = await told({ a: "close", p: v.id }, `p${v.id}`, `Could not close panel ${v.pane.slot}`, () => { v.closing = false; },
+    () => ctx.api(`/api/panes/${v.id}/delete`, {}));
+  if (!ok) return;
+  clearTimeout(closedTimer);
+  closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
+  closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
   await ctx.refresh();
   if (next && (had || document.activeElement === document.body)) focusPane(next);
 }
@@ -1937,8 +1974,8 @@ async function restorePanel(id) {
   try { await ctx.api(`/api/panes/${id}/restore`, {}); }
   catch (e) {
     keepStopped.delete(id);
-    if (!/holds/.test(String(e))) throw e;
-    c.said = "the desk filled up";
+    if (/holds/.test(String(e))) c.said = "the desk filled up";
+    else rowErr = { k: "closed", why: "Could not bring it back", raw: e.message, again: { a: "pane-back", p: id } };
     rail();
     return;
   }
@@ -2643,6 +2680,9 @@ const CSS = `
    it back is where the ✕ was, which is where the eye already is. Nothing was
    deleted, so the row says the mildest true thing and says it quietly. */
 .dk-note.gone { color: var(--fg-3); font-size: 12px; padding: 4px 8px; animation: dk-fade 140ms ease-out; }
+/* A refusal, in the row that asked, with its Retry. */
+.dk-err { list-style: none; display: flex; align-items: baseline; gap: 6px; padding: 2px 8px 4px 26px; font-size: 11.5px; color: var(--danger); }
+.dk-pane.closing { opacity: .5; }
 .dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
 .dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }

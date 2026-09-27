@@ -1824,6 +1824,10 @@ async function deskLossRows(cdp, base, token) {
   const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
   const d = await post("/api/desks", { name: "refusals" });
   const desk = d.desk ? d.desk.id : d.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const pane = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  await post(`/api/desks/${desk}/notes`, { text: "a line to tick" });
 
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -1858,7 +1862,28 @@ async function deskLossRows(cdp, base, token) {
     rows.push(["rename refused → typed name back in the field", await refused(p) && f2?.value === "a name the daemon refuses" && /^Could not rename/.test(f2.err || ""),
       !(await refused(p)) ? "Enter never asked the daemon" : !f2 ? "the field closed, and the name with it" : f2.value !== "a name the daemon refuses" ? `the field holds "${f2.value}"` : !f2.err ? "the name is back, but nothing says why" : `"${f2.value}", and under it "${f2.err}"`]);
     await p.press("Escape");
+
+    // A tick, refused: the box is unticked again, and the row says so.
+    const err = () => p.ev(`[...document.querySelectorAll("#toc .dk-err")].map(e => e.firstChild.textContent)`);
+    await until(`!!document.querySelector("#toc [data-a=note-tick]")`);
+    await refuse(p, "POST", /\/notes\/\d+$/);
+    await p.clickOn("#toc [data-a=note-tick]");
+    await sleep(400);
+    const tick = await p.ev(`document.querySelector("#toc [data-a=note-tick]")?.getAttribute("aria-checked")`), e1 = await err();
+    rows.push(["tick refused → unticked again", await refused(p) && tick === "false" && e1.includes("Could not tick this"),
+      !(await refused(p)) ? "the tick never asked the daemon" : tick !== "false" ? "the box stayed ticked" : !e1.length ? "nothing said it failed" : `unticked, and the row says "${e1.join(" / ")}"`]);
+
+    // A close, refused: the panel is still in its row, running, and no
+    // "Closed · Undo" was ever said.
+    await until(`!!document.querySelector("#toc .dk-pane [data-a=close]")`);
+    await refuse(p, "POST", /^\/api\/panes\/[^/]+\/delete$/);
+    await p.clickOn("#toc .dk-pane [data-a=close]");
+    await sleep(500);
+    const shut = await p.ev(`({ row: !!document.querySelector("#toc .dk-pane.run:not(.closing)"), closed: [...document.querySelectorAll("#toc .dk-panes .dk-note.gone")].some(r => /Closed/.test(r.textContent)) })`), e2 = await err();
+    rows.push(["close refused → panel row running, no Closed row", await refused(p) && shut.row && !shut.closed && e2.includes("Could not close panel 1"),
+      !(await refused(p)) ? "the ✕ never asked the daemon" : !shut.row ? "the panel's row is gone or still closing" : shut.closed ? "a Closed · Undo row was drawn anyway" : !e2.length ? "nothing said it failed" : `still running, and its row says "${e2.join(" / ")}"`]);
   } finally {
+    await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
