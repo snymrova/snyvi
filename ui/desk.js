@@ -1822,7 +1822,7 @@ function keepPoints(desks) {
 
 // ---------- actions ----------
 
-async function act(b) {
+async function act(b, byKey) {
   const a = b.dataset.a, d = current(), v = views.get(b.dataset.p || focused);
   // Closing ends a process, and there is no undoing that: the first click
   // says what the second will do, in the control's own place.
@@ -1836,7 +1836,7 @@ async function act(b) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (a === "make") ctx.make(b);
+    if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
       const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
@@ -2097,7 +2097,8 @@ function click(e) {
   // the panes back, the way the first put the document up.
   if (r) { e.preventDefault(); if (r.dataset.read === reading) ctx.go(deskId, true); else ctx.read(r.dataset.read); return; }
   const b = e.target.closest("[data-a]");
-  if (b && !b.disabled) act(b);
+  // `detail` is 0 for a click a key made: what it opens is then a keyboard's.
+  if (b && !b.disabled) act(b, !e.detail);
 }
 
 /** Full view, as the slot it shows, kept by the daemon for this desk. */
@@ -2311,7 +2312,7 @@ export function actions(el) {
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,
-      { label: "Rename…", key: "F2", run: () => renamePanel(v) },
+      { label: "Rename…", key: "F2", moves: 1, run: () => renamePanel(v) },
       { label: "Close panel", key: "⌃⌥W", danger: true, run: does("close") },
     ] };
   }
@@ -2320,7 +2321,7 @@ export function actions(el) {
     const id = doc.querySelector("a[data-read]")?.dataset.read, x = docList.find(y => y.id === id);
     if (!x) return null;
     return { head: x.title, items: [
-      { label: "Open", run: () => ctx.read(x.id) },
+      { label: "Open", moves: 1, run: () => ctx.read(x.id) },
       x.source_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.source_path); ctx.toast("Copied", x.source_path); } },
       { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } },
     ] };

@@ -278,7 +278,7 @@ function entries(ctx, el) {
     const root = el.matches(".b-root > summary");
     return { head: f.abs.split("/").pop() || f.abs, items: [
       capability && { label: "New desk here", run: () => make(ctx, f) },
-      ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, run: () => ctx.show(d.id, true) })) : []),
+      ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })) : []),
       capability && RULE,
       term({ root: f.root, path: f.path }), files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
       root && RULE, root && { label: "Close folder", danger: true, run: () => ctx.closeRoot(f.root) },
@@ -287,7 +287,7 @@ function entries(ctx, el) {
   if (el.matches("a[data-browse]")) {
     const root = el.dataset.browse, path = el.dataset.path || "", r = ctx.state.browse.find(x => x.id === root), abs = r ? r.path + (path ? "/" + path : "") : "";
     return { head: path.split("/").pop() || abs, items: [
-      { label: "Open", run: () => ctx.browse(root, path, true) }, RULE,
+      { label: "Open", moves: 1, run: () => ctx.browse(root, path, true) }, RULE,
       term({ root, path }), files({ root, path }), abs && copyIt(abs, "Copy path"),
     ] };
   }
@@ -297,17 +297,17 @@ function entries(ctx, el) {
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
-      ...here.map(d => ({ label: `Show desk ${d.name}`, run: () => ctx.show(d.id, true) })),
+      ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
       capability && p.root && RULE,
       term({ project: pid }), files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
-      { label: "Rename…", key: "F2", run: () => rename(ctx, el, "project", pid) },
+      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
       { label: "Remove from sidebar", danger: true, run: () => ctx.putAway(pid) },
     ] };
   }
   if (el.matches("a[data-id]")) {
     const id = el.dataset.id, d = docById(ctx, id), path = d && d.source_path;
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
-      { label: "Open", run: () => ctx.open(id) },
+      { label: "Open", moves: 1, run: () => ctx.open(id) },
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
       term({ doc: id }), files({ doc: id }), RULE,
@@ -327,7 +327,7 @@ function entries(ctx, el) {
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => dk.zoomOn() }, RULE,
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
-      { label: "Rename…", key: here ? "" : "F2", run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
+      { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       { label: "Close desk", danger: true, sure: true, run: () => dropDesk(ctx, id) },
     ] };
   }
@@ -338,10 +338,10 @@ function entries(ctx, el) {
     if (!capability) return null;
     const places = ctx.places();
     return { head: "New desk in…", items: [
-      ...places.map(f => ({ label: f.name, run: () => make(ctx, f) })),
+      ...places.map(f => ({ label: f.name, moves: 1, run: () => make(ctx, f) })),
       places.length && RULE,
       { label: "Another folder…", run: () => pick(ctx, true) },
-      { label: "A shell in your home folder", run: () => make(ctx, null) },
+      { label: "A shell in your home folder", moves: 1, run: () => make(ctx, null) },
     ] };
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;
@@ -357,7 +357,10 @@ export function open(ctx, el, x, y, byKey = false) {
   if (!items.some(e => e !== RULE)) return false;
   if (!menu) install(ctx);
   shown = items;
-  opener = byKey ? document.activeElement : null;
+  // Where the focus goes back to when the menu goes: what had it, for a
+  // key; for a pointer, the row that was right-clicked (or the nearest
+  // thing in it that takes focus), so a keyboard picks up where it was.
+  opener = byKey ? document.activeElement : el.closest("a[href], button, summary, [tabindex]") || el;
   menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? "<hr>"
     : `<button type="button" role="menuitem" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.key ? `<kbd>${ctx.esc(e.key)}</kbd>` : ""}</button>`).join("");
   menu.hidden = false;
@@ -423,7 +426,9 @@ function install(ctx) {
     // Where the item stood, taken before the menu goes: an answer that has
     // no control left to stand beside stands there (`pin`).
     const at = b.getBoundingClientRect();
-    close();
+    // The focus goes back where the menu came from, unless the entry moves
+    // it itself -- renaming, opening, going to a desk (`moves`).
+    close(!it.moves);
     Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast("Could not do that", String(err)));
   });
   menu.addEventListener("keydown", e => {

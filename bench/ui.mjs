@@ -227,6 +227,7 @@ async function main() {
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
     sections.push(["nothing lost when snyvi says no", await lossRows(p, base, token, arrive, browsed)]);
+    sections.push(["by keyboard, and back", await reachRows(p, arrive)]);
     sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
     sections.push(["an aside, closed", await asideRows(p, base, token)]);
     sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
@@ -290,6 +291,7 @@ const KEYS = {
   ArrowDown: { key: "ArrowDown", code: "ArrowDown", vk: 40 },
   ArrowUp: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
   Delete: { key: "Delete", code: "Delete", vk: 46 },
+  "⇧F10": { key: "F10", code: "F10", vk: 121, shift: true },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
   "\\": { key: "\\", code: "Backslash", vk: 220, text: "\\" },
@@ -344,6 +346,13 @@ class Driver {
     await sleep(200);
   }
   async clickOn(selector) { const at = await this.ui("center", selector); await this.click(at.x, at.y); }
+  /** A right-click, which is what opens a row's menu with the pointer. */
+  async rightClickOn(selector) {
+    const { x, y } = await this.ui("center", selector);
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s);
+    for (const type of ["mousePressed", "mouseReleased"]) await this.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "right", clickCount: 1 }, this.s);
+    await sleep(250);
+  }
   /** Rest the pointer on something, for what only opens under one. */
   async hoverOn(selector) {
     const at = await this.ui("center", selector);
@@ -1252,6 +1261,44 @@ async function lossRows(p, base, token, arrive, browsed) {
   const still = (await (await fetch(`${base}/api/notes`)).json()).notes.find(n => n.id === aside.id)?.dismissed === true;
   rows.push(["aside undo refused → card still shows the ghost", await refused(p) && /Could not bring it back/.test(card || "") && still,
     !(await refused(p)) ? "the Undo never asked the daemon" : !/Could not bring it back/.test(card || "") ? `the card reads "${card}"` : "the ghost says so, and the daemon still has it closed"]);
+  await p.pointerAway();
+  return rows;
+}
+
+/** 1.7.2: a keyboard is never left on nothing. A menu gives the focus back
+ *  to the row it came from, however it was opened and however it closed. */
+async function reachRows(p, arrive) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const d = await arrive({ name: "reach.md", body: "# Reach\n\nA row to open a menu on.\n" });
+  const row = `#trees a[data-id="${d.id}"]`;
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`!!document.querySelector(${JSON.stringify(row)})`);
+
+  // By key: ⇧F10 on the row, `p` to Pin, Enter. The focus is on the row again.
+  await p.ev(`document.querySelector(${JSON.stringify(row)}).focus()`);
+  await p.press("⇧F10", { raw: true });
+  const opened = await until(`!document.querySelector("#ctx")?.hidden`, 20);
+  await p.press("p", { raw: true });
+  await p.press("Enter");
+  await sleep(400);
+  const back = await p.ui("at", row);
+  rows.push(["menu item by Enter → focus on the row it was opened from", opened && back,
+    !opened ? "⇧F10 opened no menu" : back ? "Pin ran, and the focus is on the row" : `the focus is on ${JSON.stringify(await p.ui("focus"))}`]);
+  // Unpinned again, the same way, so the library is as it was.
+  await p.press("⇧F10", { raw: true }); await p.press("u", { raw: true }); await p.press("Enter"); await sleep(300);
+
+  // By pointer: a right-click, then Esc. The focus is on the row.
+  await p.ev(`document.activeElement?.blur()`);
+  await p.rightClickOn(row);
+  const menu = await until(`!document.querySelector("#ctx")?.hidden`, 20);
+  await p.press("Escape");
+  await sleep(200);
+  const esc = await p.ui("at", row);
+  rows.push(["Esc after right-click → focus back", menu && esc,
+    !menu ? "the right-click opened no menu" : esc ? "the menu went, and the focus is on the row that was right-clicked" : `the focus is on ${JSON.stringify(await p.ui("focus"))}`]);
   await p.pointerAway();
   return rows;
 }
