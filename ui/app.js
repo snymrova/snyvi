@@ -275,7 +275,9 @@
     const g = gone;
     g.drawn = true;
     const t = g.closing ? Date.now() - g.closing : ghostSpent(g);
-    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost">${docIco()}<span class="title">${esc(g.d.title)}</span><span class="k">removed</span><button type="button" class="t-undo" data-undoc>Undo</button></div></li>`;
+    // A refused Undo says so in the row and holds its clock: the button is
+    // its Retry. Pruned, there is nothing to retry, and the row just closes.
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost">${docIco()}<span class="title"${g.err ? ` title="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
   }
 
   // ---------- the queue ----------
@@ -1618,21 +1620,34 @@
   async function undoGone(g) {
     if (gone !== g || g.closing || g.back) return;
     clearTimeout(g.timer);
-    g.back = true;
+    g.back = true; g.err = "";
     if (undoing === g.undo) undoing = null;
     renderTree(); markActive();
+    const r = await post(`/api/docs/${g.id}/undelete`);
+    if (!r?.ok) {
+      // The offer stands: the ghost says what happened, in its own row, and
+      // its button (or ⌘Z) asks again. Only a newer offer takes it away.
+      if (gone !== g) return;
+      g.back = false;
+      g.dead = r?.status === 410;
+      g.err = g.dead ? "Could not undo · prune has deleted it" : "Could not bring it back";
+      if (g.dead) g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
+      else undoing = g.undo;
+      renderTree(); markActive();
+      // No row to say it in: the toast the offer was made in says it instead.
+      if (!g.drawn) toast(g.err, g.d.title, null, g.dead ? null : { label: "Retry", run: g.undo });
+      return;
+    }
     try {
-      const r = await fetch(`/api/docs/${g.id}/undelete`, { method: "POST" });
-      if (r.status === 410) { g.back = false; ghostSettle(g); return toast("Too late to undo", "it has been pruned"); }
-      if (!r.ok) throw new Error(`${r.status}`);
       wash([g.id]);
       if (g.waiting) await refetchQueue();
       await refreshTree(g.d.project_id);
       // The "restored" event puts the row back in every other tab.
       if (g.here) showDoc(g.id);
-    } catch (e) { toast("Could not undo", String(e)); }
-    if (gone === g) gone = null;
-    renderTree(); markActive();
+    } finally {
+      if (gone === g) gone = null;
+      renderTree(); markActive();
+    }
   }
 
   /** Take a project out of the sidebar. Nothing is asked for and nothing is

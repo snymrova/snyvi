@@ -91,6 +91,7 @@ const CSS = `
    drain as a removed document's row. */
 .note-ghost { padding: 5px 12px; font-size: 12px; }
 .note-ghost::after { left: 12px; right: 12px; }
+.note-ghost.hold::after { animation-play-state: paused; }
 .note-ghost > .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Close all: the trail's own quiet last line, not a card. */
 .note-trail li.note-all { padding: 0; background: none; border: 0; box-shadow: none; text-align: right; }
@@ -230,7 +231,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); a.dataset.about ? showDoc(a.dataset.about, true) : showStart(true, a.dataset.href.slice(a.dataset.href.indexOf("#"))); }
   });
   noteEl.addEventListener("animationend", e => {
-    if (e.animationName === "drain" && noteGone) noteSettle(noteGone);
+    if (e.animationName === "drain" && noteGone && !noteGone.held) noteSettle(noteGone);
   });
   /** Close asides: off the card at once, in every page once the daemon has
    *  it, and the card holds the way back for GHOST_MS. Nothing is deleted. */
@@ -255,14 +256,29 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     noteGone = null;
     renderNote();
   }
-  function undoNotes(g, tell = true) {
-    if (noteGone !== g) return;
+  async function undoNotes(g, tell = true) {
+    if (noteGone !== g || g.asking) return;
     clearTimeout(g.timer);
+    if (tell) {
+      // The daemon first: an aside put back on the card while the daemon
+      // still holds it closed would be gone again at the next page. The
+      // clock holds while it is asked, and after a no, which the card says
+      // where the Undo was, with the Undo as its Retry.
+      const gh = noteEl.querySelector(".note-ghost");
+      gh?.classList.add("hold");
+      g.held = g.asking = true;
+      const ok = await notesSay("restore", g.ids).then(() => true, () => false);
+      g.asking = false;
+      if (noteGone !== g) return;
+      if (!ok) {
+        if (gh) { gh.querySelector(".title").textContent = "Could not bring it back"; gh.querySelector("[data-note-undo]").textContent = "Retry"; }
+        return;
+      }
+    }
     dropUndo(g.undo);
     noteGone = null;
     state.notes = state.notes.map(n => g.ids.includes(n.id) ? { ...n, dismissed: false } : n);
     renderNote();
-    if (tell) notesSay("restore", g.ids).catch(e => toast("Could not bring the aside back", String(e)));
   }
   async function notesSay(what, ids) {
     // snyvi's own lines live in this page; only an agent's reach the daemon.

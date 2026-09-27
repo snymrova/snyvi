@@ -226,7 +226,7 @@ async function main() {
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
-    sections.push(["nothing lost when snyvi says no", await lossRows(p, arrive)]);
+    sections.push(["nothing lost when snyvi says no", await lossRows(p, base, token, arrive)]);
     sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
     sections.push(["an aside, closed", await asideRows(p, base, token)]);
     sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
@@ -1120,7 +1120,7 @@ async function deleteRows(p, arrive) {
  *  daemon say no once (`refuse`), and reads that the page says so where the
  *  thing was done and still holds what it held: an error stays until its ✕,
  *  and news that comes meanwhile waits behind it rather than taking its place. */
-async function lossRows(p, arrive) {
+async function lossRows(p, base, token, arrive) {
   const rows = [];
   const origin = await p.ev("location.origin");
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
@@ -1162,6 +1162,46 @@ async function lossRows(p, arrive) {
   await p.clickOn("#toasts .toast .act");
   const back = await until(`fetch("/api/queue").then(r => r.json()).then(q => q.length >= ${before})`, 30);
   rows.push(["and its Undo puts them back", back, back ? `${before} waiting again` : `${await waiting()} waiting, not ${before}`]);
+
+  // A removal's Undo, refused: the ghost stays, says so, and offers Retry.
+  const ghost = () => p.ev(`(() => { const g = document.querySelector("#trees .t-ghost"); return g ? { text: g.querySelector(".title").textContent, btn: g.querySelector(".t-undo")?.textContent || null } : null; })()`);
+  const doomed = await arrive({ name: "loss-undo.md", body: "# Loss undo\n\nRemoved, and wanted back.\n" });
+  await p.goto(`${origin}/d/${doomed.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  await sleep(500);
+  await refuse(p, "POST", /\/undelete$/);
+  await p.clickOn("#trees .t-ghost .t-undo");
+  await sleep(300);
+  const g1 = await ghost();
+  rows.push(["undo refused → ghost and Undo still there", await refused(p) && g1?.text === "Could not bring it back" && g1.btn === "Retry",
+    !(await refused(p)) ? "the Undo never asked the daemon" : !g1 ? "the ghost went, and its Undo with it" : `the ghost reads "${g1.text}" with ${g1.btn ? `"${g1.btn}"` : "no button"}`]);
+  await p.clickOn("#trees .t-ghost .t-undo");
+  const again = await until(`document.title === ${JSON.stringify(doomed.title)}`);
+  rows.push(["undo refused → Retry brings it back", again, again ? "the second ask was answered, and the document is open again" : `landed on "${await p.ev("document.title")}"`]);
+
+  // An aside's Undo, refused: the daemon still holds it closed, so the card
+  // must not show it again; it shows the ghost, saying so.
+  const say = async text => {
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent" }) });
+    return (await r.json()).note;
+  };
+  const aside = await say("An aside whose Undo will be refused.");
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(aside.text)}`);
+  await p.hoverOn("#note .note-now");
+  await sleep(300);
+  await p.clickOn("#note .note-x");
+  await sleep(300);
+  await refuse(p, "POST", /^\/api\/notes\/restore$/);
+  await p.clickOn("#note [data-note-undo]");
+  await sleep(300);
+  const card = await p.ev(`(() => { const g = document.querySelector("#note .note-ghost"); return g ? g.textContent : document.querySelector("#note .note-now p")?.textContent || null; })()`);
+  const still = (await (await fetch(`${base}/api/notes`)).json()).notes.find(n => n.id === aside.id)?.dismissed === true;
+  rows.push(["aside undo refused → card still shows the ghost", await refused(p) && /Could not bring it back/.test(card || "") && still,
+    !(await refused(p)) ? "the Undo never asked the daemon" : !/Could not bring it back/.test(card || "") ? `the card reads "${card}"` : "the ghost says so, and the daemon still has it closed"]);
+  await p.pointerAway();
   return rows;
 }
 
