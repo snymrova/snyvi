@@ -236,6 +236,7 @@ async function main() {
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
+    sections.push(["a desk for each project", await projectDeskRows(cdp, base, token, tmp)]);
     sections.push(["panels: full view, moved, linked, and their menus", await panelRows(cdp, base, token)]);
     sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
     sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
@@ -1631,6 +1632,60 @@ async function deskRows(cdp, base, token) {
   } finally {
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** A desk is for a project. `+ New desk` asks where before it makes anything,
+ *  the Inbox's project is among the answers and the home folder is the last;
+ *  the project, chosen, is a desk on its folder named for it; and its row in
+ *  the Inbox then carries the desk glyph lit, which goes back to that desk
+ *  rather than making another. In a tab of its own, with the capability, as
+ *  `deskRows` is. */
+async function projectDeskRows(cdp, base, token, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const desks = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks;
+  // The project the probe's sends made: their working folder is `tmp`.
+  const proj = (await (await fetch(`${base}/api/tree`)).json()).find(x => x.root && (x.root === tmp || x.root.endsWith(basename(tmp))));
+  const before = (await desks()).length;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  let made = null;
+  try {
+    await p.goto(`${base}/#cap=${cap}`);
+    await until(`!!document.querySelector("#desk-nav .s-add")`);
+    await p.clickOn("#desk-nav .s-add");
+    const asked = await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
+    const menu = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`) : [];
+    const none = (await desks()).length === before, at = proj ? menu.indexOf(proj.name) : -1;
+    rows.push(["+ New desk asks where first", asked && none && at >= 0 && /home folder/.test(menu[menu.length - 1] || ""),
+      !proj ? "the probe's sends made no project on its folder" : !asked ? "no menu under the +" : !none ? "a desk was made before anything was chosen"
+        : at < 0 ? `the project is not offered: ${menu.join(" · ")}` : !/home folder/.test(menu[menu.length - 1] || "") ? `the home folder is not last: ${menu.join(" · ")}` : `${menu.join(" · ")}, and no desk yet`]);
+
+    if (at >= 0) {
+      await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.trim() === ${JSON.stringify(proj.name)})`)}"]`);
+      const on = await until(`location.pathname.startsWith("/desk/")`);
+      made = (await desks()).find(d => d.root === proj.root) || null;
+      rows.push(["the project, chosen, is a desk on its folder", on && !!made && made.name === proj.name,
+        !on ? "the page did not go to a desk" : !made ? "no desk on the project's folder" : made.name !== proj.name ? `the desk is named ${made.name}` : `desk ${made.name} on ${made.root}`]);
+
+      const glyph = `.t-proj[data-pid="${proj.id}"] > summary > .b-new.has`;
+      await p.clickOn(".t-inbox");
+      const lit = await until(`!!document.querySelector(${JSON.stringify(glyph)})`);
+      if (lit) await p.clickOn(glyph);
+      const back = lit && made && await until(`location.pathname === "/desk/${made.id}"`), one = (await desks()).length === before + 1;
+      rows.push(["its row's glyph goes back to that desk", !!back && one,
+        !lit ? "the project's row shows no lit desk glyph" : !back ? "the glyph did not open the project's desk" : !one ? "the glyph made a second desk" : "the glyph is lit, and a click on it is the same desk"]);
+    }
+  } finally {
+    if (made) await post(`/api/desks/${made.id}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
   return rows;

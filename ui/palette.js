@@ -85,7 +85,18 @@ function deskItems(q) {
   if (browsing() && "new desk here".startsWith(l || "n")) {
     const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
     out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
-  } else if (l && "new desk".startsWith(l)) out.push({ newdesk: "home", t: "New desk", s: state.desks.home || "~" });
+  } else if (l && ("new desk".startsWith(l) || l.startsWith("new desk "))) {
+    // Where, as the + asks: each project and folder with no desk yet, then
+    // the home folder last. A word after "new desk" narrows the list.
+    // Until the words are nearly typed, one row that opens the list, so an
+    // "n" is not answered with every project.
+    const w = l.slice(9).trim();
+    if (l.length < 5) out.push({ cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell" });
+    else {
+      for (const f of d.places()) if (!w || f.name.toLowerCase().includes(w)) out.push({ newdesk: f, t: `New desk · ${f.name}`, s: f.abs });
+      if (!w) out.push({ newdesk: "home", t: "New desk · a shell", s: state.desks.home || "~" });
+    }
+  }
   for (const k of state.desks.desks) if (!l || k.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: k.id, t: `Desk · ${k.name}`, s: k.root });
   return out;
 }
@@ -94,7 +105,7 @@ function deskItems(q) {
  *  has no list of its own to read yet. */
 const COMMANDS = [
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
-  { cmd: "desk", t: "New desk", s: "A shell on a desk, in your home folder", window: true },
+  { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
   { cmd: "connect", t: "Connect an agent", s: "Claude Code, Codex, Cursor and the rest" },
   { cmd: "start", t: "The first ten minutes", s: "What snyvi does, a paragraph each" },
@@ -163,11 +174,13 @@ async function search(q) {
 function pick(it) {
   // Theme… is a way into the theme rows, which preview as they are walked.
   if (it.cmd === "theme") { d.input.value = "theme"; search("theme"); return; }
+  // New desk… is a way into the rows that say where, as the + asks.
+  if (it.cmd === "desk") { d.input.value = "new desk"; search("new desk"); return; }
   if (it.theme) previewing = false;
   close();
   if (it.cmd) {
     const c = it.cmd;
-    c === "desk" ? d.act("make", null) : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+    c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
       : c === "start" ? d.showStart(true) : d.openHelp();
     return;
   }

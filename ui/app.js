@@ -228,6 +228,16 @@
    *  row under the tree is the way back after that. */
   const awayBtn = p =>
     `<button type="button" class="row-x" data-away="${p.id}" title="Remove from the sidebar · the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">✕</button>`;
+  /** A project's desk, from its row: the glyph stays lit while the project
+   *  has one and goes to it, and waits for the pointer, as a folder's does,
+   *  while it has none. The Inbox's project and the desk on its folder are
+   *  the same project, and this is where the sidebar says so. */
+  const projDeskBtn = p => {
+    if (!capability || !p.root) return "";
+    const d = state.desks && state.desks.desks.find(x => x.root === p.root);
+    return d ? `<button type="button" class="b-new has" data-projdesk="${p.id}" title="Show desk ${esc(d.name)}" aria-label="Show desk ${esc(d.name)}">${icon("desk")}</button>`
+      : `<button type="button" class="b-new" data-projdesk="${p.id}" title="New desk for ${esc(p.name)}" aria-label="New desk for ${esc(p.name)}">${icon("desk")}</button>`;
+  };
 
   /** A project is drawn expanded when the reader left it that way, when the
    *  document on screen is in it, or when it is the only one there is. Not
@@ -627,7 +637,7 @@
       const open = projOpen(p);
       // The one held for a ghost closes with it.
       const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
-      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${awayBtn(p)}</summary><ul>`;
+      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -847,8 +857,16 @@
     if (nd) {
       // Inside a <summary> too: a click on the + is not a click on the folder.
       e.preventDefault(); e.stopPropagation();
-      // In a folder's row, a desk on that folder; in the Desks head, one on no folder.
-      act("make", folderOf(nd));
+      // In a folder's row, a desk on that folder; in the Desks head, the
+      // question of where.
+      const f = folderOf(nd);
+      if (f) act("make", f); else askWhere(nd, e.detail === 0);
+      return;
+    }
+    const pd = e.target.closest("[data-projdesk]");
+    if (pd) {
+      e.preventDefault(); e.stopPropagation();
+      act("projectDesk", +pd.dataset.projdesk);
       return;
     }
     const dx = e.target.closest("[data-deldoc]");
@@ -2590,7 +2608,21 @@
     knownDocs,
     putAway: pid => putAway(String(pid)),
     applyRename: (what, id) => applyRename(what, id),
+    places: () => deskPlaces(),
   };
+  /** Where a new desk could go besides the home folder: the folders the
+   *  Inbox's projects were written from, then the folders open under Folders,
+   *  one row a folder, less any that already has a desk -- that one is a
+   *  click on its row away, and a second desk on it is its menu's to offer. */
+  function deskPlaces() {
+    const home = state.desks && state.desks.home, taken = new Set(state.desks ? state.desks.desks.map(d => d.root) : []), out = [];
+    const put = (abs, f) => { if (abs && abs !== home && !taken.has(abs)) { taken.add(abs); out.push({ abs, ...f }); } };
+    for (const p of state.tree) if (!away.has(String(p.id))) put(p.root, { project: p.id, name: p.name });
+    for (const r of state.browse) put(r.path, { root: r.id, path: "", name: r.name });
+    return out;
+  }
+  /** `+ New desk` asks where, under the button that asked. */
+  const askWhere = (el, byKey) => { const r = el.getBoundingClientRect(); return menuFor(el, r.left, r.bottom + 4, byKey); };
   /** Wait for the chunk, then do the thing that was clicked. A failure is the
    *  reader's to see: they pressed something and nothing happened otherwise. */
   async function act(what, ...args) {
@@ -2598,9 +2630,14 @@
     catch (e) { actsLoading = null; toast("Could not do that", String(e)); }
   }
 
+  let deskRoots = "";
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
-    renderDesks();
+    // A project's row says whether it has a desk; only a desk made, closed
+    // or moved changes that, not the panes' dots, which change all day. The
+    // tree draws the desks as it goes.
+    const roots = state.desks ? state.desks.desks.map(d => d.root).join("\n") : "";
+    if (roots !== deskRoots) { deskRoots = roots; renderTree(); markActive(); } else renderDesks();
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
   const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
@@ -2620,7 +2657,7 @@
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "");
+        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Put a project on a desk</button></li>` : "");
     const rows = list.map(d => {
       const m = mark3(d.panes), has = d.panes.length > 0;
       const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
@@ -2670,7 +2707,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: el => el ? askWhere(el, false) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3229,7 +3266,7 @@
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, openHelp });
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, openHelp, places: deskPlaces });
   }
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;

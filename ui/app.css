@@ -738,6 +738,11 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
+/* A project's glyph stays while the project has a desk: that is the row
+   saying so, and the way to it. Its ✕ follows it rather than splitting the
+   slack with it. */
+.b-new.has { opacity: 1; color: var(--fg-2); }
+.t-proj > summary > .b-new + .row-x { margin-left: 0; }
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
 .b-root > summary::-webkit-details-marker { display: none; }

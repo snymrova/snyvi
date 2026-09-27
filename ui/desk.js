@@ -1033,7 +1033,7 @@ function sync(d) {
 
 function list() {
   const ds = ctx.desks ? ctx.desks.desks : [];
-  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is up to four terminal panels side by side. A new one starts in your home folder; to start one in a folder, right-click the folder under Folders, or press the desk button beside it.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
+  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is one project: its folder, and up to four terminal panels side by side in it. A new one asks where: a project snyvi knows, another folder, or a shell in your home folder.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
     (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "panel")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
 }
 
@@ -1712,7 +1712,7 @@ async function act(b) {
     return;
   }
   try {
-    if (a === "make") ctx.make();
+    if (a === "make") ctx.make(b);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
       const j = await ctx.api(`/api/desks/${d.id}/panes`, {});

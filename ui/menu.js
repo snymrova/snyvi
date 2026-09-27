@@ -23,10 +23,10 @@ let menu = null;
 let picking = false;
 
 /** The desktop's own folder dialog, which the daemon shows, and the folder the
- *  reader chose, opened. The page names no path. Only the window can ask --
- *  the same gate the desks are behind -- so a tab is told where it can be
- *  done instead. */
-export async function pick(ctx) {
+ *  reader chose, opened -- or, for a desk, a desk made on it. The page names
+ *  no path. Only the window can ask -- the same gate the desks are behind --
+ *  so a tab is told where it can be done instead. */
+export async function pick(ctx, forDesk = false) {
   const { capability, state, toast, browseEl } = ctx;
   if (!capability) { toast("Folders open from the snyvi window", "Or from a terminal: snyvi browse <folder>"); return; }
   if (picking) return;
@@ -39,6 +39,8 @@ export async function pick(ctx) {
     if (!r.ok) { toast("Could not open a folder", j.error || `HTTP ${r.status}`); return; }
     if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
     ctx.drawBrowse();
+    // Kept under Folders either way: it is a folder the reader works in now.
+    if (forDesk) { await make(ctx, { root: j.root.id, path: "" }); return; }
     // Open in the sidebar as well as on the page; the toggle fills its tree.
     const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
     if (d) d.open = true;
@@ -47,12 +49,13 @@ export async function pick(ctx) {
   finally { picking = false; browseEl.classList.remove("picking"); }
 }
 
-/** A new desk on folder `f`, or with none on no folder: it starts in the home
- *  directory, which the daemon names. */
+/** A new desk on folder `f` -- a folder under Folders, or a project by its
+ *  id -- or with none on no folder: it starts in the home directory, which
+ *  the daemon names. */
 export async function make(ctx, f) {
   const { toast, api } = ctx;
   try {
-    const j = await api("/api/desks", f ? { root: f.root, path: f.path } : {});
+    const j = await api("/api/desks", !f ? {} : f.project != null ? { project: f.project, name: f.name } : { root: f.root, path: f.path });
     // A new desk opens on a shell, not on an empty grid: one panel, started.
     // The view sizes it to the panel the moment it is drawn.
     try {
@@ -62,6 +65,16 @@ export async function make(ctx, f) {
     await ctx.load();
     ctx.show(j.desk.id, true);
   } catch (e) { toast("Could not make a desk", String(e)); }
+}
+
+/** The desk glyph on a project's row: the project's desk when it has one,
+ *  and a new one on its folder, named for it, when it does not. */
+export async function projectDesk(ctx, pid) {
+  const p = ctx.state.tree.find(x => x.id === pid);
+  if (!p) return;
+  const d = ctx.state.desks && ctx.state.desks.desks.find(x => x.root === p.root);
+  if (d) ctx.show(d.id, true);
+  else await make(ctx, { project: pid, name: p.name });
 }
 
 /** The ✕ on a desk's row. Closing a desk ends its panels' processes, and there
@@ -263,7 +276,11 @@ function entries(ctx, el) {
   if (el.matches(".t-proj > summary")) {
     const pid = +el.parentElement.dataset.pid, p = ctx.state.tree.find(x => x.id === pid);
     if (!p) return null;
+    const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
+      capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
+      ...here.map(d => ({ label: `Show desk ${d.name}`, run: () => ctx.show(d.id, true) })),
+      capability && p.root && RULE,
       term({ project: pid }), files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
       { label: "Rename…", key: "F2", run: () => rename(ctx, el, "project", pid) },
       { label: "Remove from sidebar", danger: true, run: () => ctx.putAway(pid) },
@@ -294,6 +311,19 @@ function entries(ctx, el) {
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
       { label: "Rename…", key: here ? "" : "F2", run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       { label: "Close desk", danger: true, sure: true, run: () => dropDesk(ctx, id) },
+    ] };
+  }
+  // `+ New desk`, wherever it is -- the Desks head, the empty Desks row, the
+  // Desks page -- asks where before it makes anything: a desk is for a
+  // project, and one in the home folder is the exception, so it is last.
+  if (el.matches("[data-newdesk]:not(.b-new), [data-a=make]")) {
+    if (!capability) return null;
+    const places = ctx.places();
+    return { head: "New desk in…", items: [
+      ...places.map(f => ({ label: f.name, run: () => make(ctx, f) })),
+      places.length && RULE,
+      { label: "Another folder…", run: () => pick(ctx, true) },
+      { label: "A shell in your home folder", run: () => make(ctx, null) },
     ] };
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;

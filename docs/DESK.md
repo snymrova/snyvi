@@ -46,11 +46,19 @@ new pane wait for a Start click, and a new desk opened as a grid of empty
 boxes with nothing in them to type into. What runs is still only ever the
 reader's shell, or a command the reader typed.
 
-**A desk needs no folder.** `POST /api/desks` with no `root` makes a desk in
-the home directory, named `desk` (then `desk 2`, ...), and the Desks page and
-the palette offer it as `New desk`. The home directory is the daemon's to
-name, so no path from the page reaches the filesystem on that route. A folder
-under Folders still gives one on that folder, from its `+` or its menu.
+**A desk needs no folder, but it asks for one.** `POST /api/desks` with no
+`root` and no `project` makes a desk in the home directory, named `desk` (then
+`desk 2`, ...). The home directory is the daemon's to name, so no path from
+the page reaches the filesystem on that route. With `project` it is the folder
+the store recorded for that project, found by id as the terminal button finds
+it. A desk is for a project, so `+ New desk` (the Desks head, the empty Desks
+row, the Desks page) asks where first: the Inbox's projects and the open
+folders that have no desk yet, then *Another folder…* (the folder dialog),
+then *A shell in your home folder*, last. The palette's `New desk…` lists the
+same. A project's row has the desk glyph too: lit while the project has a
+desk, and a click goes there; otherwise it makes one, named for the project.
+A folder under Folders still gives one on that folder, from its glyph or its
+menu.
 
 **Four per desk, and no cap across desks.** Four panes per desk keeps each
 pane readable, and it is checked inside the transaction that inserts the pane.

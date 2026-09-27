@@ -3169,6 +3169,10 @@ struct NewDeskBody {
     root: Option<String>,
     #[serde(default)]
     path: String,
+    /// Or a project, by id: the folder its agents wrote from, which the store
+    /// holds. The page names the project, never the path.
+    #[serde(default)]
+    project: Option<i64>,
     #[serde(default)]
     name: Option<String>,
 }
@@ -3231,12 +3235,13 @@ fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
     v
 }
 
-/// A new desk, on a folder or on none.
+/// A new desk, on a folder, on a project's folder, or on none.
 ///
 /// The folder arrives as a root id and a relative path rather than as an
 /// absolute one, so it goes through `resolve` -- the same guard the terminal
 /// button and every byte `browse_file` reads go through, which is what keeps a
-/// path from the page inside the root it names.
+/// path from the page inside the root it names. A project arrives as its id,
+/// and its folder is the one the store recorded, as the terminal button's is.
 async fn create_desk(
     State(app): S,
     headers: HeaderMap,
@@ -3255,6 +3260,16 @@ async fn create_desk(
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": "no such folder" })),
+                )
+                    .into_response()
+            }
+        },
+        None if b.project.is_some() => match b.project.and_then(|id| app.store.project_root(id)) {
+            Some(root) => (std::path::PathBuf::from(root), None),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "no such project" })),
                 )
                     .into_response()
             }
