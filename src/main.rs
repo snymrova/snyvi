@@ -412,6 +412,31 @@ fn main() -> Result<()> {
                     " deleted"
                 }
             );
+            // Closed panels, on the same terms as a deleted document: kept
+            // for Undo until a prune, and their saved text goes with them.
+            let panels = store.prune_panes(before, dry_run)?;
+            for (id, what) in &panels {
+                if !dry_run {
+                    let _ = std::fs::remove_file(
+                        paths.data_dir.join("panes").join(format!("{id}.txt")),
+                    );
+                }
+                println!(
+                    "{} panel {id}  {what}",
+                    if dry_run { "would delete" } else { "deleted" }
+                );
+            }
+            if !panels.is_empty() {
+                println!(
+                    "{} closed panel(s){}",
+                    panels.len(),
+                    if dry_run {
+                        " would be deleted"
+                    } else {
+                        " deleted"
+                    }
+                );
+            }
             Ok(())
         }
         Cmd::Reset {

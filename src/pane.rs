@@ -443,15 +443,32 @@ impl Panes {
             .count()
     }
 
-    /// The process on a pane is stopped, its text is deleted, and the pane is
-    /// forgotten here -- which is what closing a pane or a desk does, after
-    /// the store has let go of the row.
-    pub fn close(&self, id: &str) {
+    /// The process on a pane is stopped and the pane is forgotten here, its
+    /// text written down and kept -- which is what closing a pane does: the
+    /// store keeps the row for Undo, and a pane brought back shows its last
+    /// screen, greyed, as after a restart.
+    pub fn forget(&self, id: &str) {
         let l = self.live.lock().unwrap().remove(id);
         if let Some(l) = l {
+            let text = {
+                let mut i = l.inner.lock().unwrap();
+                i.unsaved.then(|| {
+                    i.unsaved = false;
+                    keep_text(&i.old, i.screen.text())
+                })
+            };
+            if let Some(text) = text {
+                self.write_text(&l.id, &text);
+            }
             l.stop();
         }
         self.told.lock().unwrap().remove(id);
+    }
+
+    /// Forgotten, and its text deleted: closing a desk, or a closed pane
+    /// ended by `prune` or by its desk going.
+    pub fn discard(&self, id: &str) {
+        self.forget(id);
         let _ = std::fs::remove_file(self.text_path(id));
     }
 

@@ -279,14 +279,20 @@ function entries(ctx, el) {
       { label: "Remove from inbox", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }
-  if (el.matches("a[data-desk]")) {
-    const id = +el.dataset.desk, d = ctx.state.desks && ctx.state.desks.desks.find(x => x.id === id);
+  // A desk's row in the sidebar, and the ⋯ at the end of the desk's own
+  // head: one menu, less Show on the desk that is already the page, with
+  // what the head's desk can do besides -- start what is stopped, and full view.
+  if (el.matches("a[data-desk], [data-desk-menu]")) {
+    const here = el.matches("[data-desk-menu]"), dk = here && ctx.desk;
+    const id = +(el.dataset.desk || el.dataset.deskMenu), d = ctx.state.desks && ctx.state.desks.desks.find(x => x.id === id);
     if (!d || !capability) return null;
     return { head: d.name, items: [
-      { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", run: () => newPanel(ctx, id) }, RULE,
+      !here && { label: "Show", run: () => ctx.show(id, true) },
+      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? "⌃⌥N" : "", run: () => newPanel(ctx, id) },
+      dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
+      dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => dk.zoomOn() }, RULE,
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
-      { label: "Rename…", key: "F2", run: () => rename(ctx, el, "desk", id) },
+      { label: "Rename…", key: here ? "" : "F2", run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       { label: "Close desk", danger: true, sure: true, run: () => dropDesk(ctx, id) },
     ] };
   }

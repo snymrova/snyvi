@@ -30,10 +30,10 @@ let deskId = null, focused = null, cellW = 7.5;
  *  the rail folded away, the rest of the panes as tabs in the desk's head.
  *  A state of the view rather than of a pane, so focusing another pane in
  *  full view shows that one, and the key that went in comes back out.
- *  Kept per desk, by the pane it shows, so leaving a desk and coming back
- *  finds it as it was, until the page reloads. */
-let zoomed = false;
-const fullAt = new Map();
+ *  Kept per desk by the daemon, as the slot it shows (`desks.full_slot`), so
+ *  a desk comes back as it was left, after a reload or a restart too; a
+ *  close renumbers it with the slots. */
+let full = false;
 /** The documents this desk's panes have sent, for the rail, and which desk
  *  they belong to -- so a desk swapped for another never shows the last
  *  one's list while its own is on the way. */
@@ -58,6 +58,13 @@ let drawing = false;
 /** How long the offer to put a line back stands, matching the page's own undo. */
 const BACK_MS = 8000;
 let backTimer = 0;
+/** A panel just closed: its row stays in the rail for BACK_MS, greyed, with
+ *  Undo -- { id, desk, name, said }. The daemon keeps the closed panel until
+ *  `prune`; the row is only the offer. Only the newest close is offered. */
+let closedRow = null, closedTimer = 0;
+/** A panel brought back by Undo comes back stopped, with Start offered, and
+ *  not started again as a panel the daemon lost would be. */
+const keepStopped = new Set();
 /** Points: passages the reader picked out of a document read over this desk,
  *  gathered for the panel that sent it -- pane id -> [{ text, from }] -- until
  *  the reader puts them in that panel's input. Held in the page and nowhere
@@ -634,15 +641,17 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
+  const kept = keepStopped.delete(p.id);
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
     // A pane with no process and no exit code lost its shell to a daemon that
     // went away: it will start itself, so it does not flash the Start bar on
-    // the way there. `resumed` is one attempt, per daemon.
-    resumed: false, starting: false, resuming: !(p.status && (p.status.running || p.status.exit != null)),
+    // the way there. `resumed` is one attempt, per daemon. One brought back
+    // by Undo is not one of those: it waits for Start.
+    resumed: kept, starting: false, resuming: !kept && !(p.status && (p.status.running || p.status.exit != null)),
     body: el.querySelector(".pn-body"), old: el.querySelector(".pn-old"), sb: el.querySelector(".pn-sb"), scr: el.querySelector(".pn-scr"),
     caret: el.querySelector(".pn-caret"), cv: el.querySelector(".pn-cv"), pal: null, stale: new Set(), textT: 0, holding: false, start: el.querySelector(".pn-start"), size: "",
     pinned: true,   // at the bottom, so new lines keep it there
@@ -659,16 +668,17 @@ function makeView(p) {
   const hd = el.querySelector(".pn-head");
   hd.addEventListener("click", e => {
     if (e.target.closest(".pn-full")) { focused = v.id; zoom(); return; }
+    if (e.target.closest(".pn-ren")) { renamePanel(v); return; }
     if (!v.dragged) body.focus();
     v.dragged = false;
   });
   // A double-click on the head, not the body: there it selects a word.
-  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full")) { focused = v.id; zoom(); } });
+  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren")) { focused = v.id; zoom(); } });
   hd.addEventListener("pointerdown", e => drag(v, e));
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && /^(Digit[1-4]|KeyZ)$/.test(e.code))) return;
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && /^(Digit[1-4]|Key[ZNWR]|Bracket(Left|Right))$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
@@ -830,7 +840,7 @@ const tilde = p => {
   const home = ctx.desks && ctx.desks.home;
   return home && (p === home || p.startsWith(home + "/")) ? "~" + p.slice(home.length) : p;
 };
-const what = v => v.status.title || v.status.cmd || v.pane.cmd || "shell";
+const what = v => v.pane.name || v.status.title || v.status.cmd || v.pane.cmd || "shell";
 /** The conversation this pane last had, when there is one and Claude is not
  *  in the pane now. Checked here too: it is about to be a command line. */
 const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
@@ -838,7 +848,8 @@ const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.ag
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
   $(".pn-slot").textContent = `[${v.pane.slot}]`;
-  $(".pn-cmd").textContent = what(v);
+  const c = $(".pn-cmd");
+  if (c) { c.textContent = what(v); c.title = v.pane.name && v.status.title ? v.status.title : ""; }
   // The branch and whether the tree is modified: snyvi's own answer, not the
   // prompt's, so a pane whose shell it cannot dress says both too.
   $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";
@@ -865,9 +876,15 @@ function current() {
   return ctx.desks && ctx.desks.desks.find(d => d.id === deskId);
 }
 
-/** How many panes the width has room for: four above 1100px, two above
- *  700px, one below. Four panes at phone width are four unreadable panes. */
-const room = () => (innerWidth > 1100 ? 4 : innerWidth > 700 ? 2 : 1);
+/** How many panes the grid has room for: four above 720px, two above
+ *  560px, one below. The grid's own width, not the window's: a sidebar folded
+ *  to its rail or a rail put away is room, and the window never said so.
+ *  The numbers keep what the window's 1100px used to give with both panes
+ *  open (a 1280px window's grid is about 780px, four panes), and a 600px
+ *  window one. Four panes at phone width are four unreadable panes. */
+const room = () => { const w = ctx.docEl.querySelector(".dk-grid")?.clientWidth || innerWidth; return w > 720 ? 4 : w > 560 ? 2 : 1; };
+/** Lays the panes out again when the grid's width changes, for whatever reason. */
+let gridWatch = null;
 
 /** Why there is no new pane, when there is not: the desk holds four, and
  *  that is the only cap. The width is not one -- panes it has no room for are
@@ -883,12 +900,12 @@ function layout() {
   if (!d || !grid) return;
   const all = d.panes.map(p => views.get(p.id)).filter(Boolean);
   // The focused pane is always shown; the rest in slot order, while there is room.
-  const n = zoomed ? 1 : room(), f = all.find(v => v.id === focused);
+  const n = full ? 1 : room(), f = all.find(v => v.id === focused);
   const shown = all.length <= n ? all : [f, ...all.filter(v => v !== f)].filter(Boolean).slice(0, n).sort((a, b) => a.pane.slot - b.pane.slot);
-  if (zoomed && all.length > 1) grid.dataset.zoom = "1"; else delete grid.dataset.zoom;
+  if (full && all.length > 1) grid.dataset.zoom = "1"; else delete grid.dataset.zoom;
   // The window's too: the sidebar and the rail go while the desk is the page.
-  if (zoomed && all.length && reading == null) ctx.root.dataset.full = "1"; else delete ctx.root.dataset.full;
-  for (const v of all) { const b = v.el.querySelector(".pn-full"); if (b) { b.textContent = zoomed ? "⤡" : "⤢"; b.title = zoomed ? "Back to the grid  ⌃⌥Z" : "Full view  ⌃⌥Z"; } }
+  if (full && all.length && reading == null) ctx.root.dataset.full = "1"; else delete ctx.root.dataset.full;
+  for (const v of all) { const b = v.el.querySelector(".pn-full"); if (b) { b.textContent = full ? "⤡" : "⤢"; b.title = full ? "Back to the grid  ⌃⌥Z" : "Full view  ⌃⌥Z"; } }
   const cols = shown.length > 1 ? 2 : 1, rows = shown.length > 2 ? 2 : 1;
   grid.style.gridTemplateColumns = cols === 2 ? `${d.col}fr ${1 - d.col}fr` : "1fr";
   grid.style.gridTemplateRows = rows === 2 ? `${d.row}fr ${1 - d.row}fr` : "1fr";
@@ -924,7 +941,7 @@ function tabs(d, all, shown) {
   // rail's mark: full view never hides a pane that is waiting.
   const need = v => v.status.blocked || v.status.agent === "needs_you";
   t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}"${!shown.includes(v) && need(v) ? ' title="Waiting on you"' : ""}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
-  t.title = zoomed && all.length > 1 ? "Full view  ⌃⌥Z" : "";
+  t.title = full && all.length > 1 ? "Full view  ⌃⌥Z" : "";
   // The + goes quiet when there is no pane to add, and says why under the
   // cursor. At the desk's own cap the count sits beside it -- 4/4 -- which
   // is what ties the greyed + to the panes on the desk.
@@ -933,9 +950,9 @@ function tabs(d, all, shown) {
     plus.disabled = !!why;
     plus.title = why ? `New panel · ${why}` : "New panel";
     let n = plus.previousElementSibling?.classList.contains("dk-cap") ? plus.previousElementSibling : null;
-    const full = d.panes.length >= j.per_desk;
-    if (full && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
-    if (n) { if (full) { n.textContent = `${d.panes.length}/${j.per_desk}`; n.title = why; } else n.remove(); }
+    const atCap = d.panes.length >= j.per_desk;
+    if (atCap && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
+    if (n) { if (atCap) { n.textContent = `${d.panes.length}/${j.per_desk}`; n.title = why; } else n.remove(); }
   }
 }
 
@@ -951,10 +968,15 @@ function draw() {
   }
   document.title = `${d.name} · desk`;
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon" data-a="new" title="New panel" aria-label="New panel">${head("plus")}</button></header>` +
+    `<button type="button" class="icon" data-a="new" title="New panel  ⌃⌥N" aria-label="New panel">${head("plus")}</button>` +
+    `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" title="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
+  gridWatch?.disconnect();
+  let seen = 0;
+  gridWatch = new ResizeObserver(([en]) => { const w = Math.round(en.contentRect.width); if (w !== seen) { seen = w; if (current()) layout(); } });
+  gridWatch.observe(docEl.querySelector(".dk-grid"));
   sync(d);
   dividers();
   rail();
@@ -970,7 +992,12 @@ function sync(d) {
     if (v) { v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
     else views.set(p.id, makeView(p));
   }
-  if (!views.has(focused)) { focused = d.panes[0] ? d.panes[0].id : null; if (zoomed) fullAt.set(deskId, focused); }
+  // The daemon's word on full view: this window's own changes are in it
+  // already, and another window's, or a close that moved the slots, arrive here.
+  const fp = d.full_slot && d.panes.find(p => p.slot === d.full_slot);
+  full = !!fp;
+  if (fp) focused = fp.id;
+  if (!views.has(focused)) focused = d.panes[0] ? d.panes[0].id : null;
   layout();
   watch();
 }
@@ -1266,7 +1293,7 @@ function rail() {
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
       (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" title="${run ? "Type claude --resume into the shell, for you to run" : "Resume the conversation this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
-      sure("close", v.id, "Close panel", `Close panel ${n}`, ico("x")) +
+      `<button type="button" data-a="close" data-p="${v.id}" title="Close panel · Undo for 8 s  ⌃⌥W" aria-label="Close panel ${n}">${ico("x")}</button>` +
       `</span></li>` +
       (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "");
   };
@@ -1276,7 +1303,8 @@ function rail() {
   drawing = true;
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
-    `<ul class="dk-panes">` + vs.map(paneRow).join("") + `</ul>` +
+    `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
+      ? `<li class="dk-note gone"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     pointSec(vs) +
@@ -1654,7 +1682,9 @@ async function act(b) {
     } else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
     else if (a === "start" && v) run(v, v.start.querySelector("input").value);
     else if (a === "all") { for (const x of views.values()) if (!x.status.running) await run(x, x.status.cmd || x.pane.cmd || ""); }
-    else if (a === "close" && v) { await ctx.api(`/api/panes/${v.id}/delete`, {}); await ctx.refresh(); }
+    else if (a === "close" && v) await closePanel(v);
+    else if (a === "pane-back") await restorePanel(b.dataset.p);
+    else if (a === "pane-rename" && v) renamePanel(v);
     else if (a === "drop") { await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true); }
     else if (a === "rename") renameDesk(d);
     else if (a === "reveal") ctx.reveal({ desk: d.id });
@@ -1724,6 +1754,69 @@ async function act(b) {
   } catch (e) { ctx.toast("Could not do that", String(e)); }
 }
 
+/** Close a panel: its process stops, its row stays in the rail for BACK_MS
+ *  with Undo, and the panels after it close up. Nothing asks first, since
+ *  nothing is lost: the daemon keeps it until `prune`. */
+async function closePanel(v) {
+  const d = current();
+  clearTimeout(closedTimer);
+  closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
+  closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
+  await ctx.api(`/api/panes/${v.id}/delete`, {});
+  await ctx.refresh();
+}
+
+/** Undo a close. A desk that filled up in the meantime says so in the row,
+ *  which keeps the rest of its time. */
+async function restorePanel(id) {
+  const c = closedRow;
+  if (!c || c.id !== id) return;
+  keepStopped.add(id);
+  try { await ctx.api(`/api/panes/${id}/restore`, {}); }
+  catch (e) {
+    keepStopped.delete(id);
+    if (!/holds/.test(String(e))) throw e;
+    c.said = "the desk filled up";
+    rail();
+    return;
+  }
+  clearTimeout(closedTimer);
+  closedRow = null;
+  focused = id;
+  await ctx.refresh();
+}
+
+/** Name a panel, in its head, in place of the title its program sets. Empty
+ *  gives the head back to the program. */
+function renamePanel(v) {
+  // A panel the grid has no room for is brought up first: its head is where the name goes.
+  if (!v.el.isConnected && reading == null) focusPane(v.id);
+  const nm = v.el.querySelector(".pn-cmd");
+  if (!nm || !v.el.isConnected) return;
+  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: v.pane.name || "", placeholder: short(v), spellcheck: false });
+  input.setAttribute("aria-label", `Name of panel ${v.pane.slot}`);
+  nm.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = async keep => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    input.replaceWith(nm);
+    if (keep && name !== (v.pane.name || "")) {
+      try { await ctx.api(`/api/panes/${v.id}/rename`, { name }); v.pane.name = name; await ctx.refresh(); } catch (e) { ctx.toast("Could not rename", String(e)); }
+    }
+    header(v); rail();
+    v.body.focus();
+  };
+  input.addEventListener("keydown", e => {
+    e.stopPropagation();
+    if (e.key === "Enter") finish(true); else if (e.key === "Escape") finish(false);
+  });
+  for (const t of ["click", "dblclick", "pointerdown"]) input.addEventListener(t, e => e.stopPropagation());
+  input.addEventListener("blur", () => finish(true));
+}
+
 function renameDesk(d) {
   const nm = ctx.metaEl.querySelector(".dk-nm");
   if (!nm) return;
@@ -1755,12 +1848,14 @@ function focusPane(id) {
   // with that pane focused.
   if (reading != null) { ctx.go(deskId, true, v.pane.slot); return; }
   focused = id;
-  if (zoomed) fullAt.set(deskId, id);
+  if (full) saveFull();
   layout();
   v.body.focus();
 }
 
 function click(e) {
+  const m = e.target.closest("[data-desk-menu]");
+  if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const f = e.target.closest("[data-focus]");
   if (f) { focusPane(f.dataset.focus); return; }
   const r = e.target.closest("a[data-read]");
@@ -1771,18 +1866,34 @@ function click(e) {
   if (b && !b.disabled) act(b);
 }
 
+/** Full view, as the slot it shows, kept by the daemon for this desk. */
+function saveFull() {
+  const d = current(), v = views.get(focused);
+  if (!d) return;
+  d.full_slot = full && v ? v.pane.slot : 0;
+  ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row, full: d.full_slot }).catch(() => {});
+}
+
 /** The focused pane in full view, or the grid again. */
 function zoom() {
-  zoomed = !zoomed;
-  if (zoomed) fullAt.set(deskId, focused); else fullAt.delete(deskId);
+  full = !full;
+  saveFull();
   layout();
   const v = views.get(focused);
   if (v) v.body.focus();
 }
 
 /** ⌃⌥1 to ⌃⌥4: a pane by its slot, from anywhere on the desk. ⌃⌥Z: the
- *  focused pane alone. ⌃⌥⇧ and an arrow: the focused pane moved. */
+ *  focused pane alone. ⌃⌥⇧ and an arrow: the focused pane moved. ⌃⌥N a new
+ *  panel, ⌃⌥W the focused one closed (with Undo in the rail), ⌃⌥] and ⌃⌥[
+ *  the next and the previous focused, ⌃⌥R the focused one stopped or started. */
 function keys(e) {
+  // F2 on a panel's row in the rail names it, as F2 on a file does.
+  if (e.key === "F2" && !e.ctrlKey && !e.altKey && !e.metaKey && reading == null) {
+    const f = document.activeElement?.closest?.(".dk-focus"), v = f && views.get(f.dataset.focus);
+    if (v) { e.preventDefault(); e.stopPropagation(); renamePanel(v); }
+    return;
+  }
   if (!(e.ctrlKey && e.altKey) || e.metaKey) return;
   if (e.shiftKey && NEXT[e.key]) {
     const d = current(), v = views.get(focused);
@@ -1793,6 +1904,20 @@ function keys(e) {
     return;
   }
   if (e.code === "KeyZ") { if (reading != null) return; e.preventDefault(); e.stopPropagation(); zoom(); return; }
+  if (/^(Key[NWR]|Bracket(Left|Right))$/.test(e.code)) {
+    const d = current(), v = views.get(focused);
+    if (reading != null || !d) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.code === "KeyN") { const why = noNew(d); if (why) ctx.toast("New panel", why); else act({ dataset: { a: "new" } }); }
+    else if (!v) return;
+    else if (e.code === "KeyW") closePanel(v).catch(err => ctx.toast("Could not close it", String(err)));
+    else if (e.code === "KeyR") { if (v.status.running) ctx.api(`/api/panes/${v.id}/stop`, {}).catch(() => {}); else run(v, v.status.cmd || v.pane.cmd || ""); }
+    else {
+      const ps = d.panes, i = ps.findIndex(p => p.id === focused);
+      focusPane(ps[(i + (e.code === "BracketRight" ? 1 : ps.length - 1)) % ps.length].id);
+    }
+    return;
+  }
   if (!/^Digit[1-4]$/.test(e.code)) return;
   const d = current(), p = d && d.panes.find(x => x.slot === +e.code[5]);
   if (!p) return;
@@ -1821,6 +1946,7 @@ function detach() {
   document.removeEventListener("keyup", pickKey);
   removeEventListener("scroll", hidePick, true);
   removeEventListener("resize", onResize);
+  gridWatch?.disconnect(); gridWatch = null;
   hidePick();
 }
 
@@ -1832,11 +1958,10 @@ export function open(c) {
   if (first) measure();
   if (deskId !== c.id) {
     views.clear(); docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints();
-    focused = fullAt.get(c.id) ?? null; zoomed = fullAt.has(c.id);
+    focused = null; full = false;
   }
   deskId = c.id; reading = null;
   const d = current();
-  if (zoomed && d && !d.panes.some(p => p.id === focused)) { zoomed = false; fullAt.delete(c.id); }
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
   draw();
   ctx.docEl.addEventListener("click", click);
@@ -1938,7 +2063,7 @@ export function actions(el) {
       body && { label: "Reset text size", key: "⌃0", run: () => { textSize(0); if (ctx.sized) ctx.sized(); } },
       body && R,
       v.id !== focused && { label: "Focus", key: `⌃⌥${v.pane.slot}`, run: () => focusPane(v.id) },
-      { label: zoomed && v.id === focused ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => { if (!(zoomed && v.id === focused)) { focused = v.id; if (zoomed) { fullAt.set(deskId, v.id); layout(); v.body.focus(); return; } } zoom(); } },
+      { label: full && v.id === focused ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => { if (!(full && v.id === focused)) { focused = v.id; if (full) { saveFull(); layout(); v.body.focus(); return; } } zoom(); } },
       ...[1, 2, 3, 4].filter(n => n !== v.pane.slot).map(n => ({ label: `Move to position ${n}`, run: () => moveTo(v, n) })),
       R,
       s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
@@ -1947,7 +2072,8 @@ export function actions(el) {
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,
-      { label: "Close panel", danger: true, sure: true, run: does("close") },
+      { label: "Rename…", key: "F2", run: () => renamePanel(v) },
+      { label: "Close panel", key: "⌃⌥W", danger: true, run: does("close") },
     ] };
   }
   const doc = el.closest(".dk-doc");
@@ -1994,7 +2120,10 @@ async function pasteText(v) {
   } catch { ctx.toast("Paste with ⌃⇧V", "the window would not hand the clipboard to the menu"); }
 }
 
-export const zoomOn = () => { zoom(); return zoomed; };
+export const zoomOn = () => { zoom(); return full; };
+export const isFull = () => full;
+export const startAll = () => act({ dataset: { a: "all" } });
+export const renameHere = () => { const d = current(); if (d) renameDesk(d); };
 export const panels = () => views.size;
 
 export function update(desks) {
@@ -2082,7 +2211,11 @@ const CSS = `
 :root[data-full] #chrome #btn-rail { display: none !important; }
 .pn-full { flex: none; align-self: center; width: 18px; height: 18px; margin: -2px -4px -2px 2px; display: grid; place-items: center; border-radius: 4px; font-size: 12px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
 .pn:hover .pn-full, .pn.on .pn-full, .pn-full:focus-visible, :root[data-full] .pn-full { opacity: 1; }
-.pn-full:hover { background: var(--rule-2); color: var(--fg); }
+.pn-full:hover, .pn-ren:hover { background: var(--rule-2); color: var(--fg); }
+/* The pen, beside ⤢: there only under the cursor, as the rows' tools are. */
+.pn-ren { flex: none; align-self: center; width: 18px; height: 18px; margin: -2px 0 -2px 4px; display: grid; place-items: center; border-radius: 4px; font-size: 11px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity var(--t), background var(--t); }
+.pn:hover .pn-ren, .pn-ren:focus-visible { opacity: 1; }
+.pn-head .ren-in { flex: 1; min-width: 60px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; outline: none; }
 .dk-head .icon:first-of-type { margin-left: auto; }
 .dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
 /* At the cap: the + at rest, and the count beside it in the tab strip's

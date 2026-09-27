@@ -2589,7 +2589,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => act("make", null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3173,7 +3173,7 @@
   const NAMES = { wide: "Width", wrap: "Wrap", font: "Font" };
   function why(c) {
     const w = where();
-    if (c === "wide") return w === "code" ? "already full width" : w === "desk" && desk.panels() < 2 ? "one panel already fills the desk" : "";
+    if (c === "wide") return w === "code" ? "already full width" : "";
     if (c === "wrap") return w === "desk" ? "not for desks, terminals always wrap" : docEl.querySelector("pre.code") ? "" : "no code on this page";
     return w === "code" ? "code is always monospace" : w === "list" ? "for documents" : "";
   }

@@ -1723,9 +1723,6 @@ async function panelRows(cdp, base, token) {
     const pm = await q.ev(menu);
     rows.push(["a right-click on a panel's head opens its menu", !!pm && /^Panel 1/.test(pm.head) && pm.items.some(t => t.startsWith("Full view")) && pm.items.some(t => t.startsWith("Close panel")),
       pm ? `"${pm.head}": ${pm.items.join(" · ")}` : "no menu"]);
-    await pick("Close panel");
-    const armed = await q.ev(`({ still: document.querySelector("#ctx") && !document.querySelector("#ctx").hidden, says: [...document.querySelectorAll("#ctx button")].map(b => b.textContent).find(t => /click again/.test(t)) || "" })`);
-    rows.push(["and Close panel asks twice", armed.still && !!armed.says && !!(await slotOf(desk, pa)), armed.says ? `"${armed.says}", and the panel is still open` : "it closed on the first click"]);
     await q.press("Escape", { raw: true });
     const shut = await q.ev(`!document.querySelector("#ctx") || document.querySelector("#ctx").hidden`);
     rows.push(["Esc closes the menu", shut, shut ? "closed" : "still open"]);
@@ -1761,6 +1758,33 @@ async function panelRows(cdp, base, token) {
     await cdp.send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
     rows.push(["600 px wide: one panel shown, and + still offered", narrow.plus === false && narrow.shown === 1 && narrow.tabs === 2,
       narrow.plus ? "the + is refused at this width" : `${narrow.shown} shown, ${narrow.tabs} tabs, and + offered`]);
+
+    // 1.7.1: ✕ closes at once, the row holds Undo for 8 s, and the panels
+    // after it close up, so ⌃⌥2 is the one now second.
+    const pc = (await post(`/api/desks/${desk}/panes`)).pane.id;
+    await until(`document.querySelectorAll(".dk-pane").length === 3`);
+    const slotsBefore = [await slotOf(desk, pa), await slotOf(desk, pb), await slotOf(desk, pc)];
+    const first = [pa, pb, pc][slotsBefore.indexOf(1)], second = [pa, pb, pc][slotsBefore.indexOf(2)], third = [pa, pb, pc][slotsBefore.indexOf(3)];
+    await q.hoverOn(`.dk-pane:has([data-focus="${first}"])`);
+    await q.clickOn(`.dk-pane [data-a="close"][data-p="${first}"]`);
+    const offered = await until(`!!document.querySelector('.dk-note.gone [data-a="pane-back"][data-p="${first}"]')`, 30);
+    const after = { gone: !(await slotOf(desk, first)), a: await slotOf(desk, second), b: await slotOf(desk, third) };
+    rows.push(["✕ closes a panel at once, and the rest close up", offered && after.gone && after.a === 1 && after.b === 2,
+      !after.gone ? "the panel is still open" : !offered ? "no Undo in the rail" : `the others are at ${after.a} and ${after.b}`]);
+    await q.ev(`document.querySelector('${P(second)} .pn-body')?.focus(); 1`);
+    for (const type of ["rawKeyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "2", code: "Digit2", windowsVirtualKeyCode: 50, modifiers: 3 }, sessionId);
+    await sleep(200);
+    const on2 = await q.ev(`document.activeElement?.closest(".pn")?.dataset.id || ""`);
+    rows.push(["⌃⌥2 is the panel now second", on2 === third, on2 === third ? "the former third" : `focus went to ${on2 === second ? "the first" : on2 || "nothing"}`]);
+    await q.clickOn(`[data-a="pane-back"][data-p="${first}"]`);
+    const stopped = await until(`!!document.querySelector('${P(first)} .pn-start:not([hidden])') || !!document.querySelector('.dk-pane:has([data-focus="${first}"]) [data-a="start"]')`, 40);
+    const at3 = await slotOf(desk, first);
+    rows.push(["Undo brings it back, stopped, Start offered", stopped && at3 === 3, !at3 ? "it did not come back" : at3 !== 3 ? `it came back at ${at3}` : !stopped ? "it started itself" : "at the end, with Start"]);
+    await q.hoverOn(`.dk-pane:has([data-focus="${first}"])`);
+    await q.clickOn(`.dk-pane [data-a="close"][data-p="${first}"]`);
+    await sleep(8600);
+    const spent = await q.ev(`!document.querySelector('[data-a="pane-back"]')`);
+    rows.push(["the offer ends after 8 s", spent, spent ? "gone, and the panel stays closed" : "Undo is still offered"]);
   } finally {
     for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});

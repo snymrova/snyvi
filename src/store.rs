@@ -241,6 +241,9 @@ impl Store {
             // Marked by a planned restart: bring this pane back as
             // `claude --resume`. Taken by the daemon that comes up next.
             "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0",
+            // 1.7.1: what the reader called a panel, and a desk's full view.
+            "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1050,8 +1053,8 @@ impl Store {
         desk::rename(&self.conn.lock().unwrap(), id, name)
     }
 
-    pub fn set_desk_layout(&self, id: i64, col: f64, row: f64) -> Result<bool> {
-        desk::layout(&self.conn.lock().unwrap(), id, col, row)
+    pub fn set_desk_layout(&self, id: i64, col: f64, row: f64, full: Option<i64>) -> Result<bool> {
+        desk::layout(&self.conn.lock().unwrap(), id, col, row, full)
     }
 
     pub fn delete_desk(&self, id: i64) -> Result<bool> {
@@ -1103,8 +1106,42 @@ impl Store {
         Ok(true)
     }
 
+    /// Close a pane (`desk::close_pane`), and renumber what the panes after it
+    /// sent in the same transaction, as `move_pane` does: "From desk [3]" is
+    /// the panel now in position 3. What the closed one sent keeps its desk
+    /// and loses its slot, since no panel on screen is that one any more.
     pub fn close_pane(&self, id: &str) -> Result<bool> {
-        desk::close_pane(&self.conn.lock().unwrap(), id)
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let Some((desk_id, slot)) = desk::close_pane(&tx, id, now())? else {
+            return Ok(false);
+        };
+        tx.execute(
+            "UPDATE docs SET desk_slot = CASE WHEN desk_slot = ?2 THEN 0 ELSE desk_slot - 1 END
+             WHERE desk_id = ?1 AND desk_slot >= ?2",
+            params![desk_id, slot],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    pub fn restore_pane(&self, id: &str) -> Result<desk::Restored> {
+        desk::restore_pane(&mut self.conn.lock().unwrap(), id)
+    }
+
+    pub fn rename_pane(&self, id: &str, name: &str) -> Result<bool> {
+        desk::rename_pane(&self.conn.lock().unwrap(), id, name)
+    }
+
+    /// The closed panes of a desk (`desk::closed_on`).
+    pub fn closed_panes(&self, desk_id: i64) -> Result<Vec<String>> {
+        desk::closed_on(&self.conn.lock().unwrap(), desk_id)
+    }
+
+    /// Closed panes older than `before` (`desk::prune_closed`); what `prune`
+    /// ends beside the documents.
+    pub fn prune_panes(&self, before: i64, dry_run: bool) -> Result<Vec<(String, String)>> {
+        desk::prune_closed(&self.conn.lock().unwrap(), before, dry_run)
     }
 
     pub fn panes_open(&self) -> Result<i64> {

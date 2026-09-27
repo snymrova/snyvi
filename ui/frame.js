@@ -57,6 +57,12 @@ const HELP =
   `<div class="hk"><span>Desk / reading view</span><span class="keys"><kbd>ctrl</kbd><kbd>\`</kbd></span></div>` +
   `<div class="hk"><span>Focus a panel by slot</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>1</kbd><i>–</i><kbd>4</kbd></span></div>` +
   `<div class="hk"><span>The focused panel alone</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>Z</kbd></span></div>` +
+  `<div class="hk"><span>Next / previous panel</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>]</kbd><i>/</i><kbd>[</kbd></span></div>` +
+  `<div class="hk"><span>New panel</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>N</kbd></span></div>` +
+  `<div class="hk"><span>Close the panel (Undo in the rail)</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>W</kbd></span></div>` +
+  `<div class="hk"><span>Stop / start the panel</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>R</kbd></span></div>` +
+  `<div class="hk"><span>Move the panel</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>shift</kbd><i>+</i>arrow</span></div>` +
+  `<div class="hk"><span>Rename the panel</span><span class="keys"><kbd>F2</kbd></span></div>` +
   `<div class="hk"><span>Copy / paste</span><span class="keys"><kbd>ctrl</kbd><kbd>shift</kbd><kbd>C</kbd><i>/</i><kbd>V</kbd></span></div>` +
   `<div class="hk"><span>Scroll the scrollback</span><span class="keys"><kbd>shift</kbd><i>+</i>wheel</span></div>` +
   `<p class="help-note">Every other key goes to the shell in the focused panel.</p></section>`;

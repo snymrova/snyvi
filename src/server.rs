@@ -704,6 +704,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
             post(restore_desk_note),
         )
         .route("/api/panes/{id}/delete", post(close_pane))
+        .route("/api/panes/{id}/restore", post(restore_pane))
+        .route("/api/panes/{id}/rename", post(rename_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
         .route("/api/panes/{id}/agent", post(pane_agent))
@@ -2968,6 +2970,9 @@ struct NewDeskBody {
 struct LayoutBody {
     col: f64,
     row: f64,
+    /// The slot in full view, 0 for the grid; left out keeps what is there.
+    #[serde(default)]
+    full: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -3242,7 +3247,7 @@ async fn desk_layout(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.set_desk_layout(id, b.col, b.row) {
+    match app.store.set_desk_layout(id, b.col, b.row, b.full) {
         // Silent: a drag ends hundreds of times an hour and no other window
         // needs to be told where this one's divider came to rest.
         Ok(true) => Json(json!({ "ok": true })).into_response(),
@@ -3282,17 +3287,19 @@ async fn delete_desk(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let panes: Vec<String> = app
+    let mut panes: Vec<String> = app
         .store
         .desk(id)
         .ok()
         .flatten()
         .map(|d| d.panes.into_iter().map(|p| p.id).collect())
         .unwrap_or_default();
+    // Its closed panes go with it, before the cascade forgets which they were.
+    panes.extend(app.store.closed_panes(id).unwrap_or_default());
     match app.store.delete_desk(id) {
         Ok(true) => {
             for p in &panes {
-                app.panes.close(p);
+                app.panes.discard(p);
             }
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
@@ -3347,8 +3354,57 @@ async fn close_pane(
         return no;
     }
     match app.store.close_pane(&id) {
+        // Stopped and kept: the row waits in `panes_closed` and the text on
+        // disk, for Undo, until `prune`.
         Ok(true) => {
-            app.panes.close(&id);
+            app.panes.forget(&id);
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A closed pane back on its desk, stopped, in the lowest free slot: the
+/// Undo on a close. 409 when the desk filled up in the meantime.
+async fn restore_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.restore_pane(&id) {
+        Ok(crate::desk::Restored::Pane(pane)) => {
+            desks_moved(&app);
+            Json(json!({ "pane": pane })).into_response()
+        }
+        Ok(crate::desk::Restored::DeskFull) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
+        )
+            .into_response(),
+        Ok(crate::desk::Restored::Gone) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Call a pane something; empty gives it back to its program's title.
+async fn rename_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.rename_pane(&id, &b.name) {
+        Ok(true) => {
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
@@ -4241,8 +4297,8 @@ fn err(e: anyhow::Error) -> Response {
 mod tests {
     use super::{
         desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-        BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
-        PALETTE_JS,
+        BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS,
+        MMD_JS, NOTE_JS, PALETTE_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -4484,6 +4540,8 @@ mod tests {
             "async fn restore_desk_note(",
             "async fn open_pane(",
             "async fn close_pane(",
+            "async fn restore_pane(",
+            "async fn rename_pane(",
             "async fn start_pane(",
             "async fn stop_pane(",
             "async fn paste_image(",
@@ -4523,6 +4581,8 @@ mod tests {
             r#".route("/api/desks/{id}/notes/{note}/remove", post(remove_desk_note))"#,
             r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
+            r#".route("/api/panes/{id}/restore", post(restore_pane))"#,
+            r#".route("/api/panes/{id}/rename", post(rename_pane))"#,
             r#".route("/api/panes/{id}/start", post(start_pane))"#,
             r#".route("/api/panes/{id}/stop", post(stop_pane))"#,
             r#""/api/panes/{id}/paste""#,
