@@ -1873,6 +1873,20 @@ async function deskLossRows(cdp, base, token) {
     rows.push(["tick refused → unticked again", await refused(p) && tick === "false" && e1.includes("Could not tick this"),
       !(await refused(p)) ? "the tick never asked the daemon" : tick !== "false" ? "the box stayed ticked" : !e1.length ? "nothing said it failed" : `unticked, and the row says "${e1.join(" / ")}"`]);
 
+    // An edit that empties the line takes it off the ✕'s way: a ghost with
+    // its Undo, and the Undo brings the words back.
+    await p.clickOn("#toc [data-a=note-edit]");
+    await until(`!!document.querySelector("#toc .dk-note-in")`);
+    await p.ev(`document.querySelector("#toc .dk-note-in").select()`);
+    await p.press("Delete");
+    await p.press("Enter");
+    await sleep(400);
+    const ghost = await p.ev(`(() => { const g = document.querySelector("#toc .dk-note.gone"); return g ? { text: g.querySelector(".nm").textContent, undo: !!g.querySelector("[data-a=note-back]") } : null; })()`);
+    if (ghost?.undo) await p.clickOn("#toc .dk-note.gone [data-a=note-back]");
+    const back = ghost?.undo && await until(`document.querySelector("#toc [data-a=note-edit]")?.textContent === "a line to tick"`);
+    rows.push(["empty edit → ghost with Undo; Undo brings the text back", !!back,
+      !ghost ? "the line went with no ghost" : !ghost.undo ? `the ghost "${ghost.text}" offers no Undo` : back ? `"${ghost.text} · Undo", and the Undo put the words back` : "the Undo did not bring the line back"]);
+
     // A close, refused: the panel is still in its row, running, and no
     // "Closed · Undo" was ever said.
     await until(`!!document.querySelector("#toc .dk-pane [data-a=close]")`);

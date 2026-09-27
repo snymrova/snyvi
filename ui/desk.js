@@ -1625,8 +1625,7 @@ function noteFocus() {
 
 /** Keep what is in the field. `again` is Enter, which on a new line opens the
  *  next one: a list is written in a run, not one visit per line. An emptied
- *  line is taken off rather than kept blank, which is what the daemon does
- *  with an empty rewrite. */
+ *  line is taken off, with its Undo, rather than kept blank. */
 async function saveNote(again) {
   const f = noteField, text = noteDraft.trim(), d = current();
   if (!f || !d) return;
@@ -1634,6 +1633,10 @@ async function saveNote(again) {
   noteDraft = ""; noteCaret = 0; noteErr = "";
   rail();
   if (f.kind === "new" && !text) return;
+  // A line rewritten to nothing is a line taken off, which is what the ✕
+  // does: it goes the ✕'s way, so it leaves its ghost and its Undo, and the
+  // Undo brings back the text it had.
+  if (!text) return act({ dataset: { a: "note-x", n: String(f.id) } });
   try {
     if (f.kind === "new") await ctx.api(`/api/desks/${d.id}/notes`, { text });
     else await ctx.api(`/api/desks/${d.id}/notes/${f.id}`, { text });
