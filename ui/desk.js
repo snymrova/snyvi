@@ -2591,7 +2591,7 @@ const CSS = `
 /* The desk's folder is the folder's own name, and a click opens it in the file manager. */
 .dk-folder { min-width: 0; padding: 0; text-align: left; font: inherit; color: inherit; overflow-wrap: anywhere; border-radius: 3px; }
 .dk-folder:hover { color: var(--accent); }
-.dk-pane:hover .dk-tools, .dk-doc:hover .dk-tools, .dk-note:hover .dk-tools, .dk-row:hover .dk-tools, .dk-tools:has(:focus-visible), .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
+:is(.dk-pane, .dk-doc, .dk-note, .dk-row):is(:hover, :focus-within) .dk-tools, .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
@@ -2701,7 +2701,7 @@ const CSS = `
    room given only under the pointer rewrapped it -- the row changed height
    under the hand that was reaching for it. */
 .dk-note .dk-tools { align-self: flex-start; margin-top: 3px; width: auto; padding-right: 3px; opacity: 0; transition: opacity var(--t); }
-.dk-note:hover .dk-tools, .dk-note .dk-tools:has(:focus-visible), .dk-note .dk-tools:has([data-armed]) { opacity: 1; }
+.dk-note:is(:hover, :focus-within) .dk-tools, .dk-note .dk-tools:has([data-armed]) { opacity: 1; }
 .dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
 .dk-note-in:focus { outline: none; }
 .dk-note-in::placeholder { color: var(--fg-3); }

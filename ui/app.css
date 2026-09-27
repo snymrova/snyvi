@@ -531,7 +531,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .s-head:hover .s-chev, .s-link:focus-visible .s-chev, .s-link[aria-expanded="false"] .s-chev { opacity: 1; }
 .s-link[aria-expanded="false"] .s-chev { transform: rotate(-45deg); }
 .s-add { flex: none; display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-3); font-size: 16px; font-weight: 400; line-height: 1; border-radius: 5px; opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
-.s-head:hover .s-add, .s-add:focus-visible, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
+.s-head:is(:hover, :focus-within) .s-add, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
 .s-add:hover { background: var(--rule); color: var(--fg); }
 .s-blk { flex: none; margin-right: 4px; color: var(--warn); font-size: 11px; font-weight: 700; }
 :root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
@@ -669,7 +669,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    two auto margins in a row split the slack between them, which put the
    dot and the count halfway along the row and a different halfway on each. */
 .row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: 11px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; }
-.t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+.t-proj > summary:is(:hover, :focus-visible) .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
 /* On a desk's row and a document's, the tools stand over the row's end
    rather than in the row: coming out, they move nothing, and the title's
    ellipsis stays where it was. The end they cover keeps its place, unseen.
@@ -680,7 +680,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 :is(.t-doc, .t-desk) > a.active { --row: var(--accent-bg); }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 6px; width: auto; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 .t-desk > a > .ren { right: 26px; }
-:is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
+:is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
 :is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
@@ -706,7 +706,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* The glyph is the one the Desks section uses, so what the button makes is
    named by its shape rather than by a plus that could mean any addition. */
 .b-new .r-ico { color: inherit; }
-summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
+summary:is(:hover, :focus-visible) > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
 /* A project's glyph stays while the project has a desk: that is the row
@@ -722,7 +722,7 @@ summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-root > summary::-webkit-details-marker { display: none; }
 .b-root > summary:hover { background: var(--rule); color: var(--fg); }
 .b-close { margin-left: auto; color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; }
-.b-root > summary:hover .b-close { opacity: 1; }
+.b-root > summary:is(:hover, :focus-visible) .b-close { opacity: 1; }
 .b-close:hover { background: var(--rule-2); color: var(--fg); }
 .b-close:focus-visible { opacity: 1; }
 /* Each level hangs its icons under its parent's name. */
