@@ -1219,7 +1219,7 @@ const ICO = {
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
 /** The head's plus: drawn on the grid the page's own icon buttons use
- *  (#btn-side, #btn-rail), so it sits on the same centre as a pane's
+ *  (#btn-side-hide, #btn-rail), so it sits on the same centre as a pane's
  *  outline and not on a text baseline. */
 const HEAD = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
@@ -2058,14 +2058,12 @@ const CSS = `
 :root[data-view="desk"] #doc:has(.inbox-head) { display: block; padding: 56px 48px; max-width: calc(var(--measure) + 96px); overflow-y: auto; }
 .dk { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .dk-head { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; }
-/* The page's bar lays its buttons over this row (app.css, #chrome): the one
- * that brings the sidebar back at the left, the rail's at the right, each
- * there only while its pane is folded, or a sheet. The head makes room for
- * whichever is showing; the window adds its own three (frame.js). */
-:root[data-side="0"] .dk-head { padding-left: 30px; }
+/* The page's bar lays its buttons over this row (app.css, #chrome): the
+ * rail's at the right, there only while that pane is folded, or a sheet.
+ * The head makes room for it when it is showing; the window adds its own three (frame.js). The
+ * sidebar folds to its rail rather than away, so it needs no button here. */
 :root[data-rail="0"] .dk-head, #app:has(#rail.empty) .dk-head { padding-right: 30px; }
 @media (max-width: 1100px) { .dk-head { padding-right: 30px; } }
-@media (max-width: 760px) { .dk-head { padding-left: 30px; } }
 .dk-name { font-weight: 600; }
 .dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
@@ -2081,7 +2079,7 @@ const CSS = `
  * fold preferences are not touched, so coming back is exactly as it was. */
 :root[data-full] #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
 :root[data-full] #side, :root[data-full] #rail { display: none !important; }
-:root[data-full] #chrome #btn-side, :root[data-full] #chrome #btn-rail { display: none !important; }
+:root[data-full] #chrome #btn-rail { display: none !important; }
 .pn-full { flex: none; align-self: center; width: 18px; height: 18px; margin: -2px -4px -2px 2px; display: grid; place-items: center; border-radius: 4px; font-size: 12px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
 .pn:hover .pn-full, .pn.on .pn-full, .pn-full:focus-visible, :root[data-full] .pn-full { opacity: 1; }
 .pn-full:hover { background: var(--rule-2); color: var(--fg); }

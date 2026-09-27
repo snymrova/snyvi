@@ -33,6 +33,10 @@ const CSS = `
 :root[data-frame="page"][data-rail="0"] #chrome, :root[data-frame="page"]:has(#rail.empty) #chrome { padding-right: 112px; }
 :root[data-frame="page"][data-view="desk"][data-rail="0"] .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 132px; }
 :root[data-frame="mac"] .side-head { padding-left: 84px; }
+/* Folded to its rail the sidebar is narrower than the traffic lights: its
+   icons start under them, and the page's bar starts after them. */
+:root[data-frame="mac"][data-side="0"] .side-head { padding: 40px 0 4px; }
+:root[data-frame="mac"][data-side="0"] #chrome { padding-left: 36px; }
 @media (max-width: 1100px) {
   :root[data-frame="page"] #chrome { padding-right: 112px; }
   :root[data-frame="page"][data-view="desk"] .dk-head { padding-right: 132px; }

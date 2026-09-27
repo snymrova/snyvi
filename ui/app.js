@@ -362,6 +362,7 @@
     for (const [id, t] of washes) if (now - t >= WASH_MS) washes.delete(id);
     for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
     const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
+    badge('[data-pop="inbox"]', n);
     // The rows state says, with the ones still closing put back where they
     // were, so a read takes its row out rather than the list snapping up.
     const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
@@ -1280,6 +1281,8 @@
     liveEl.textContent = String(n);
     liveEl.classList.toggle("on", n > 0);
     liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
+    const rl = $("#rail-live");
+    rl.classList.toggle("on", n > 0); rl.dataset.label = liveEl.title; badge("#rail-live", n);
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};
@@ -2532,6 +2535,7 @@
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
+    badge('[data-pop="desks"]', blocked, " blk");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
@@ -3260,6 +3264,8 @@
   const gameBtn = $("#btn-game");
   gameBtn.addEventListener("click", async () => {
     if (game?.isOpen()) { game.close(); return; }
+    // The sky is the sidebar, and a rail is 44 px of it.
+    if (root.dataset.side === "0") { toast("Asteroids", sideNarrow.matches ? "needs a wider window" : "needs the sidebar open · \\", null, null, { at: gameBtn }); return; }
     try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
     catch (e) { gameLoading = null; toast("Could not start the game", String(e)); return; }
     gameBtn.classList.add("on");
@@ -3281,13 +3287,13 @@
   $("#btn-reset").addEventListener("click", () => panel("reset"));
   $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
 
-  // ---------- the panes on a narrow window ----------
-  /* Past the widths in app.css the rail and then the sidebar stop fitting
-   * beside the document, and each becomes a sheet over it: `t` and `\`
-   * open the sheet rather than changing the setting the wide layout keeps,
-   * the two buttons in #chrome do the same for a finger, and Escape or a
-   * tap on the scrim closes it. The contents inside the sheet open on the
-   * current section, which the hidden pane could not scroll to. */
+  // ---------- the contents on a narrow window ----------
+  /* Past 1100 px the rail stops fitting beside the document and becomes a
+   * sheet over it: `t` opens the sheet rather than changing the setting the
+   * wide layout keeps, the button in #chrome does the same for a finger, and
+   * Escape or a tap on the scrim closes it. The contents inside the sheet
+   * open on the current section, which the hidden pane could not scroll to.
+   * The sidebar has no sheet: narrow, it is its rail (below). */
   const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
   const sideEl = $("#side");
   let sheetOpener = null;
@@ -3295,11 +3301,8 @@
     if (root.dataset.sheet === which) return;
     sheetOpener = opener || document.activeElement;
     root.dataset.sheet = which;
-    if (which === "rail") keepCurInView(true);
-    const first = which === "rail"
-      ? tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a")
-      : sideEl.querySelector("#trees a[aria-current], #trees a, #trees summary");
-    (first || (which === "rail" ? rail : sideEl)).focus({ preventScroll: true });
+    keepCurInView(true);
+    (tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a") || rail).focus({ preventScroll: true });
   }
   function closeSheet() {
     if (!root.dataset.sheet) return false;
@@ -3309,23 +3312,104 @@
     return true;
   }
   const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
-  $("#scrim").addEventListener("click", closeSheet);
-  /** A pane folded away (`t`, `\`, or the button at its top) at a width
-   *  where it is a column, not a sheet. Remembered, so the one visible way
-   *  back is the same button that opens the sheet when the window is
-   *  narrow: it stays on screen while the pane is folded, and unfolds it.
-   *  Without that a rail put away by a stray `t` was gone for good as far
-   *  as the reader could see. */
-  const fold = which => { const off = root.dataset[which] !== "0"; root.dataset[which] = off ? "0" : "1"; store.set(`snyvi.${which}`, off ? "0" : "1"); };
+  $("#scrim").addEventListener("click", () => { closeSheet(); closePop(); });
+  /** A pane folded (`t`, `\`, or the button at its top) at a width where it
+   *  is a column, not a sheet. Remembered. The rail folds away and its
+   *  button in #chrome is the way back; the sidebar folds to its rail, which
+   *  is its own way back. Under 760 px the sidebar is only ever its rail,
+   *  so there `\` has nothing to fold. */
+  const fold = which => {
+    if (which === "side") { closePop(false); if (sideNarrow.matches) return; if (game?.isOpen()) game.close(); }
+    const off = root.dataset[which] !== "0";
+    root.dataset[which] = off ? "0" : "1";
+    store.set(`snyvi.${which}`, off ? "0" : "1");
+    if (which === "side") paintSideBtn();
+  };
   $("#btn-rail").addEventListener("click", e => railNarrow.matches ? toggleSheet("rail", e.currentTarget) : fold("rail"));
-  $("#btn-side").addEventListener("click", e => sideNarrow.matches ? toggleSheet("side", e.currentTarget) : fold("side"));
   // The button on the pane itself: puts it away, or, when the pane is a
   // sheet, closes the sheet and gives focus back to what opened it.
   $("#btn-rail-hide").addEventListener("click", () => railNarrow.matches ? closeSheet() : fold("rail"));
-  $("#btn-side-hide").addEventListener("click", () => sideNarrow.matches ? closeSheet() : fold("side"));
+  $("#btn-side-hide").addEventListener("click", () => fold("side"));
   // The window grew past the width that made it a sheet: it is a pane again.
-  const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
-  for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
+  railNarrow.addEventListener("change", () => { if (!railNarrow.matches) closeSheet(); });
+
+  // ---------- the rail: the sidebar folded to its icons ----------
+  /* Each icon opens its section in #pop, beside the rail: the section's own
+   * element, moved in, and moved back to its place when the popover closes.
+   * Every renderer writes by id, so what arrives while it is open lands in
+   * the popover; #pop is inside #trees, so the clicks the tree delegates
+   * still reach it. One at a time; Esc, a click outside it, a link followed
+   * in it and `\` close it. The numbers on the icons are the ones the
+   * sections say: waiting, panels waiting on you, agents connected. */
+  const railNav = $("#rail-nav"), popEl = $("#pop");
+  const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
+  ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
+  for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
+  /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
+  function badge(sel, n, cls = "") {
+    const b = document.querySelector(`#rail-nav ${sel} .badge`);
+    if (b) { b.textContent = n ? String(n) : ""; b.className = "badge" + cls; }
+  }
+  let popBtn = null;
+  function openPop(sec, btn) {
+    if (root.dataset.pop === sec) { closePop(); return; }
+    closePop(false);
+    root.dataset.pop = sec; popBtn = btn;
+    btn.classList.add("on"); btn.setAttribute("aria-expanded", "true");
+    popEl.setAttribute("aria-label", btn.getAttribute("aria-label"));
+    popEl.append(...POPS[sec].map(id => $(id)));
+    popEl.hidden = false;
+    // Drawn while folded, the titles were cut to a column that was not there.
+    if (sec === "tree") renderTree();
+    // Level with the icon, and moved only as far as it takes to stay on the
+    // window, the way a toast answers a control in the rail.
+    const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
+    popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
+    (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
+  }
+  /** Put the section back where it lives. `back` gives the focus to its icon. */
+  function closePop(back = true) {
+    const sec = root.dataset.pop;
+    if (!sec) return false;
+    delete root.dataset.pop;
+    popEl.hidden = true;
+    for (const id of POPS[sec]) id === "#note" ? sideEl.insertBefore($(id), $(".side-foot")) : treesEl.insertBefore($(id), popEl);
+    // Put back in #trees' order: the inbox's two are the only ones that share it.
+    if (sec === "inbox") treesEl.insertBefore($("#inbox-row"), $("#queue"));
+    const b = popBtn; popBtn = null;
+    b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
+    if (back && b?.isConnected) b.focus({ preventScroll: true });
+    return true;
+  }
+  railNav.addEventListener("click", e => {
+    const b = e.target.closest("[data-pop]");
+    if (b) openPop(b.dataset.pop, b);
+    else if (e.target.closest("#rail-search")) openPalette();
+  });
+  // A toolbar: the arrows walk it, Tab leaves it.
+  railNav.addEventListener("keydown", e => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const all = [...railNav.querySelectorAll(".icon")].filter(x => x.offsetParent), i = all.indexOf(document.activeElement);
+    all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
+    e.preventDefault();
+  });
+  // Following a link in it is being done with it; opening a row's fold is not.
+  popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => closePop()); });
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target)) closePop(false); }, true);
+  function paintSideBtn() {
+    const b = $("#btn-side-hide"), slim = root.dataset.side === "0";
+    b.title = slim ? "Show sidebar  \\" : "Hide sidebar  \\";
+    b.setAttribute("aria-label", slim ? "Show sidebar" : "Hide sidebar");
+  }
+  // Narrow, the sidebar is its rail; wide again, it is what the reader left it.
+  const sideFits = () => {
+    closePop(false);
+    if (sideNarrow.matches) root.dataset.side = "0";
+    else if (store.get("snyvi.side") !== "0") delete root.dataset.side;
+    paintSideBtn();
+  };
+  sideNarrow.addEventListener("change", sideFits);
+  sideFits();
 
   // ---------- the panes' widths ----------
   /* Each pane's edge drags, between a floor where its rows stop being
@@ -3412,7 +3496,7 @@
     openFind, deleteCurrent, openNext, showInbox, rawUrl, mmd: () => mmd,
     wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
     rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
-    side: () => sideNarrow.matches ? toggleSheet("side") : fold("side") };
+    side: () => closePop() || fold("side") };
 
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
@@ -3422,10 +3506,10 @@
       // Esc takes down whatever is over the page, one press for all of it;
       // only with nothing over it, and the hand in no field and no panel,
       // does it leave the page, the way its ✕ does.
-      const over = keysOn || anyDialogOpen() || !!root.dataset.sheet || !findBar.hidden || !!docEl.querySelector(".mmd[data-full]") || !!document.querySelector("#ctx:not([hidden])");
+      const over = keysOn || anyDialogOpen() || !!root.dataset.sheet || !!root.dataset.pop || !findBar.hidden || !!docEl.querySelector(".mmd[data-full]") || !!document.querySelector("#ctx:not([hidden])");
       keys(false);
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closePop(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       if (!over && !inField && !e.target.closest(".pn") && !overEl.hidden) { e.preventDefault(); goBack(); }
       return;
     }

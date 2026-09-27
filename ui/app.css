@@ -199,18 +199,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 ::selection { background: var(--accent-bg); }
 
 /* ---------- layout ---------- */
+/* The sidebar's column is --side-c: its width, or the 44 px rail it folds
+   to (below, "the rail"). */
 #app {
   display: grid; height: 100%;
-  grid-template-columns: var(--side-w) minmax(0, 1fr) var(--rail-w);
+  grid-template-columns: var(--side-c) minmax(0, 1fr) var(--rail-w);
   grid-template-areas: "side main rail";
+  transition: grid-template-columns 160ms ease;
 }
-:root[data-side="0"] #app { grid-template-columns: 0 minmax(0,1fr) var(--rail-w); }
-:root[data-side="0"] #side { display: none; }
-:root[data-rail="0"] #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0; }
+:root { --side-c: var(--side-w); }
+:root[data-side="0"] { --side-c: 44px; }
+:root[data-rail="0"] #app, #app:has(#rail.empty) { grid-template-columns: var(--side-c) minmax(0,1fr) 0; }
 :root[data-rail="0"] #rail, #rail.empty { display: none; }
-:root[data-rail="0"][data-side="0"] #app { grid-template-columns: 0 minmax(0,1fr) 0; }
-#app:has(#rail.empty) { grid-template-columns: var(--side-w) minmax(0,1fr) 0; }
-:root[data-side="0"] #app:has(#rail.empty) { grid-template-columns: 0 minmax(0,1fr) 0; }
 
 
 #side, #rail { background: var(--bg-side); display: flex; flex-direction: column; min-height: 0; position: relative; }
@@ -232,20 +232,13 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    window grows past that. The scrim behind a sheet is what a tap outside
    lands on. The two buttons in #chrome exist for the same widths. */
 @media (max-width: 1100px) {
-  #app { grid-template-columns: var(--side-w) minmax(0,1fr) 0 !important; }
+  #app { grid-template-columns: var(--side-c) minmax(0,1fr) 0 !important; }
   #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: 20; box-shadow: var(--shadow); padding: 44px 0 20px 16px; }
   #btn-rail-hide { top: 10px; left: 12px; }
   :root[data-sheet="rail"] #rail { display: flex; animation: sheet-r 160ms cubic-bezier(.2,.7,.2,1); }
   #chrome #btn-rail { display: inline-grid; }
   #app:has(#rail.empty) #btn-rail { display: none; }
   #rail .gutter { display: none; }
-}
-@media (max-width: 760px)  {
-  #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
-  #side { display: none; position: fixed; inset: 0 auto 0 0; width: min(88vw, var(--side-w)); z-index: 20; box-shadow: var(--shadow); }
-  :root[data-sheet="side"] #side { display: flex; animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
-  #chrome #btn-side { display: inline-grid; }
-  #side .gutter { display: none; }
 }
 @keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
 @keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -284,7 +277,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-view="desk"] #chrome .icon { pointer-events: auto; }
 /* A pane folded away at a width where it is a column: its button stays, as
    the way back. Not for a rail with nothing in it. */
-:root[data-rail="0"] #chrome #btn-rail, :root[data-side="0"] #chrome #btn-side { display: inline-grid; }
+:root[data-rail="0"] #chrome #btn-rail { display: inline-grid; }
 #app:has(#rail.empty) #btn-rail { display: none; }
 /* Each pane carries the way to put it away, at its top edge: the sidebar's
    at the end of the brand row, the rail's in the corner over the grip. The
@@ -292,6 +285,44 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    pane's third filled while it is here and outlined once it is gone, so
    the two read as one control that flips. */
 #btn-side-hide { margin-left: 2px; }
+/* ---------- the rail ----------
+   The sidebar folded (`\`, or the button at its top) is a 44 px column of
+   its sections' icons, at every width; under 760 px it is only ever that
+   (app.js sets data-side there). An icon opens its section in a popover
+   beside it, #pop, which is the section's own element moved in (app.js,
+   openPop): nothing is drawn twice, and every listener on #trees still
+   hears it, since #pop is inside #trees. */
+#rail-nav, #pop[hidden] { display: none; }
+:root[data-side="0"] #rail-nav { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; min-height: 0; padding: 6px 0; }
+:root[data-side="0"] :is(.brand-name, .bm-say, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
+:root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
+:root[data-side="0"] #btn-side-hide { margin: 0; }
+:root[data-side="0"] #btn-side-hide .pane { fill: none; }
+:root[data-side="0"] #trees { flex: none; padding: 0; overflow: visible; }
+:root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
+:root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
+#rail-nav .icon { position: relative; flex: none; }
+#rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
+#rail-search { margin-top: auto; }
+.badge { position: absolute; top: -4px; right: -6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  font: 700 10px/15px var(--sans); text-align: center; color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 2px var(--bg-side); }
+.badge:empty { display: none; }
+.badge.blk { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, var(--bg-side)); }
+#rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
+#rail-live.on { color: var(--accent); }
+#rail-live.on i, :root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
+#rail-note { display: none; }
+#side:has(#note:not([hidden])) #rail-note { display: inline-grid; }
+#pop { position: fixed; left: 50px; top: 8px; z-index: 20; width: var(--side-w); max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain;
+  padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow);
+  animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
+#pop > #note { margin: 6px 0 0; }
+#pop > :first-child .s-head { margin-top: 4px; }
+@media (max-width: 760px) {
+  #btn-side-hide { display: none; }
+  #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; }
+  :root[data-pop] #scrim { display: block; }
+}
 #btn-rail-hide { position: absolute; top: 14px; left: 8px; z-index: 1; }
 .icon .pane { fill: var(--fg-2); }
 .icon:hover .pane { fill: var(--fg); }
@@ -488,13 +519,13 @@ html[data-link="off"] .live { visibility: hidden; }
    `aria-label` is what a screen reader was using all along; only the drawing
    of it has changed. */
 .foot-rail > button { position: relative; }
-.foot-rail > button::after { content: attr(data-label);
+.foot-rail > button::after, #rail-nav > .icon::after { content: attr(data-label);
   position: absolute; left: calc(100% + 9px); top: 50%; transform: translate(-3px, -50%); z-index: 32;
   padding: 3px 8px; border-radius: 7px; background: var(--bg-raise); border: 1px solid var(--rule);
   font-family: var(--sans); font-size: 11px; line-height: 1.35; font-weight: 500; color: var(--fg-2);
   white-space: nowrap; pointer-events: none; opacity: 0;
   transition: opacity .12s ease, transform .18s ease; }
-.foot-rail > button:hover::after, .foot-rail > button:focus-visible::after { opacity: 1; transform: translateY(-50%); }
+.foot-rail > button:hover::after, .foot-rail > button:focus-visible::after, #rail-nav > .icon:not(.on):is(:hover, :focus-visible)::after { opacity: 1; transform: translateY(-50%); }
 /* snyvi answers a press in that same strip of space to the right, which is
    the point of answering there -- so while it is talking, the label steps
    aside rather than being talked over. */
@@ -536,7 +567,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .s-head:hover .s-add, .s-add:focus-visible, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
 .s-add:hover { background: var(--rule); color: var(--fg); }
 .s-blk { flex: none; margin-right: 4px; color: var(--warn); font-size: 11px; font-weight: 700; }
-#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body { display: none; }
+:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: 12px; color: var(--fg-3); }
 

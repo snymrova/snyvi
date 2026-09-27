@@ -218,6 +218,7 @@ async function main() {
     const sections = [];
     sections.push(["the rail, 1280 px wide", await railRows(p, url, md, send)]);
     sections.push(["narrow windows", await narrowRows(p, url)]);
+    sections.push(["the sidebar, folded to its rail", await sideRailRows(p, url, arrive)]);
     sections.push(["by keyboard", await keyboardRows(p, url)]);
     sections.push(["the panes' edges", await widthRows(p, url)]);
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
@@ -280,6 +281,8 @@ const KEYS = {
   Enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
   ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", vk: 37 },
   ArrowRight: { key: "ArrowRight", code: "ArrowRight", vk: 39 },
+  ArrowDown: { key: "ArrowDown", code: "ArrowDown", vk: 40 },
+  ArrowUp: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
   Delete: { key: "Delete", code: "Delete", vk: 46 },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
@@ -571,36 +574,44 @@ async function narrowRows(p, url) {
   rows.push(["an entry in the sheet", viaEntry.sheet === undefined && within(viaEntry.off, 4, 28),
     viaEntry.sheet ? "the sheet stayed open over the section it went to" : `jumps to the section (${viaEntry.off} px in) and closes`]);
 
+  // 1.7.1: under 760 px the sidebar is its rail, and a section opens in a
+  // popover beside it, full height, over a scrim. The sheet it was is gone.
   await p.width(700);
-  const narrow = await p.ev(`({ side: window.__ui.vis("#side"), button: window.__ui.vis("#btn-side") })`);
+  const narrow = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), icons: window.__ui.vis("#rail-nav"), fold: window.__ui.vis("#btn-side-hide") })`);
   await p.press("\\");
-  const sideOpen = await p.ev(`({ sheet: document.documentElement.dataset.sheet, side: window.__ui.vis("#side"), focus: window.__ui.focus() })`);
+  const still = await p.ev(`({ side: document.documentElement.dataset.side, pop: document.documentElement.dataset.pop })`);
+  await p.clickOn('#rail-nav [data-pop="tree"]');
+  const popped = await p.ev(`(() => { const r = document.querySelector("#pop").getBoundingClientRect();
+    return { pop: document.documentElement.dataset.pop, tree: !!document.querySelector("#pop > #tree"), top: Math.round(r.top), h: Math.round(r.height), full: Math.round(r.height) >= innerHeight - 1, scrim: window.__ui.vis("#scrim"), focus: window.__ui.focus() }; })()`);
   await p.press("Escape");
-  const sideClosed = await p.ev(`({ sheet: document.documentElement.dataset.sheet, side: window.__ui.vis("#side") })`);
-  rows.push(["at 700 px, \\ opens the sidebar", !narrow.side && narrow.button && sideOpen.sheet === "side" && sideOpen.side && sideOpen.focus.inSide && !sideClosed.side && sideClosed.sheet === undefined,
-    narrow.side ? "the sidebar is still beside the document" : !narrow.button ? "no button offers the sidebar"
-      : !sideOpen.side ? "\\ opened nothing" : !sideOpen.focus.inSide ? "focus stayed outside the sheet" : sideClosed.side ? "Escape did not close it"
-        : "a sheet, focus inside, Escape closes it"]);
+  const unpopped = await p.ev(`({ pop: document.documentElement.dataset.pop, home: document.querySelector("#tree").parentElement.id, focus: window.__ui.focus() })`);
+  rows.push(["at 700 px, the sidebar is its rail", narrow.side && narrow.width === 44 && narrow.icons && !narrow.fold && still.side === "0" && !still.pop
+    && popped.pop === "tree" && popped.tree && popped.top === 0 && popped.full && popped.scrim && popped.focus.inSide && !unpopped.pop && unpopped.home === "trees" && unpopped.focus.cls.includes("icon"),
+    !narrow.side || narrow.width !== 44 || !narrow.icons ? `the sidebar is ${narrow.side ? narrow.width + " px" : "gone"}${narrow.icons ? "" : ", with no icons"}` : narrow.fold ? "it offers to open, which it cannot at this width"
+      : still.side !== "0" || still.pop ? "\\ did something where there is nothing to fold" : popped.pop !== "tree" || !popped.tree ? "the projects icon opened nothing"
+        : popped.top !== 0 || !popped.full ? `the popover is ${popped.h} px from ${popped.top}, not the window's height` : !popped.scrim ? "nothing behind it to tap" : !popped.focus.inSide ? "focus stayed outside it"
+          : unpopped.pop || unpopped.home !== "trees" ? "Escape did not put the projects back" : !unpopped.focus.cls.includes("icon") ? `focus went to ${unpopped.focus.tag}.${unpopped.focus.cls}, not the icon`
+            : "44 px of icons; a section opens full height over a scrim, Escape puts it back and focus on its icon"]);
 
   const titleBefore = await p.ev("document.title");
-  await p.clickOn("#btn-side");
-  const rowsShown = await p.ev(`({ all: document.querySelectorAll(".t-doc a").length, other: document.querySelectorAll(".t-doc a:not([aria-current])").length })`);
-  if (rowsShown.other) await p.clickOn(`.t-doc a:not([aria-current])`);
+  await p.clickOn('#rail-nav [data-pop="tree"]');
+  const rowsShown = await p.ev(`({ all: document.querySelectorAll("#pop .t-doc a").length, other: document.querySelectorAll("#pop .t-doc a:not([aria-current])").length })`);
+  if (rowsShown.other) await p.clickOn(`#pop .t-doc a:not([aria-current])`);
   await sleep(600);
-  const navigated = await p.ev(`({ sheet: document.documentElement.dataset.sheet, title: document.title })`);
+  const navigated = await p.ev(`({ pop: document.documentElement.dataset.pop, title: document.title })`);
   await p.wide();
-  const widened = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), rail: window.__ui.vis("#rail"), sheet: document.documentElement.dataset.sheet })`);
+  const widened = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), rail: window.__ui.vis("#rail"), icons: window.__ui.vis("#rail-nav") })`);
   await p.pointerAway();
-  rows.push(["a row in the sheet, then a wider window", navigated.title !== titleBefore && navigated.sheet === undefined && widened.side && widened.width > 200 && widened.rail && widened.sheet === undefined,
-    navigated.title === titleBefore ? `the row opened nothing (${rowsShown.all} rows, ${rowsShown.other} not current)` : navigated.sheet ? "the sheet stayed open over the document it opened"
-      : !widened.side || widened.width <= 200 ? `back at 1280 px the sidebar is ${widened.side ? widened.width + " px" : "gone"}` : !widened.rail ? "back at 1280 px the rail is gone"
-        : "opens the document and closes; both panes are back at 1280 px"]);
+  rows.push(["a row in the popover, then a wider window", navigated.title !== titleBefore && !navigated.pop && widened.side && widened.width > 200 && !widened.icons && widened.rail,
+    navigated.title === titleBefore ? `the row opened nothing (${rowsShown.all} rows, ${rowsShown.other} not current)` : navigated.pop ? "the popover stayed open over the document it opened"
+      : !widened.side || widened.width <= 200 || widened.icons ? `back at 1280 px the sidebar is ${widened.side ? widened.width + " px" : "gone"}` : !widened.rail ? "back at 1280 px the rail is gone"
+        : "opens the document and closes; the sidebar is back open at 1280 px"]);
 
   for (const w of [1000, 700]) {
     await p.width(w);
     // Clear anything left over; with nothing over the page, Esc would take
     // the reader off the document (backRows), which is not this row's to do.
-    if (await p.ev(`!!document.documentElement.dataset.sheet || document.body.classList.contains("keys")`)) await p.press("Escape");
+    if (await p.ev(`!!document.documentElement.dataset.sheet || !!document.documentElement.dataset.pop || document.body.classList.contains("keys")`)) await p.press("Escape");
     const worked = [], broke = [];
     const check = (name, ok) => (ok ? worked : broke).push(name);
     await p.press("?"); check("?", await p.ui("vis", "#help")); await p.press("Escape");
@@ -611,7 +622,8 @@ async function narrowRows(p, url) {
     const wrapBefore = await p.ev(`document.documentElement.dataset.wrap || ""`);
     await p.press("z"); check("z", (await p.ev(`document.documentElement.dataset.wrap || ""`)) !== wrapBefore); await p.press("z");
     await p.press("t"); check("t", (await p.ev(`document.documentElement.dataset.sheet`)) === "rail"); await p.press("Escape");
-    await p.press("\\"); check("\\", (await p.ev(`document.documentElement.dataset.sheet`)) === (w <= 760 ? "side" : undefined) && (w <= 760 || await p.ev(`document.documentElement.dataset.side === "0"`))); await p.press("Escape");
+    // Narrow, the sidebar is only ever its rail, so \\ has nothing to fold.
+    await p.press("\\"); check("\\", await p.ev(`document.documentElement.dataset.side === "0"`)); await p.press("Escape");
     if (w > 760) await p.press("\\");   // put the pane back
     await p.press("i"); await sleep(400); check("i", await p.ev(`document.querySelector("#rail").classList.contains("empty")`));
     await p.press("j"); await sleep(600); check("j", await p.ev(`!document.querySelector("#rail").classList.contains("empty")`));
@@ -634,6 +646,79 @@ async function narrowRows(p, url) {
   await p.press("Escape");
   rows.push(["the palette's rows, in ink", inks.rows > 0 && inks.title === inks.page && inks.sub !== inks.title,
     !inks.rows ? "the palette found nothing to list" : inks.title !== inks.page ? `a title is ${inks.title}, the page ${inks.page} (a type is ${inks.type})` : inks.sub === inks.title ? "the subtitle is in the title's colour" : "titles in the page's colour, subtitles quieter, nothing from the syntax theme"]);
+  return rows;
+}
+
+/** 1.7.1: `\\` folds the sidebar to a 44 px rail of its sections' icons, and
+ *  each icon opens its section beside it -- the same element, moved, and moved
+ *  back. (`railRows` above is the contents rail on the right.) */
+async function sideRailRows(p, url, arrive) {
+  const rows = [];
+  await p.goto(url);
+  await p.pointerAway();
+  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "pop"];
+  await p.press("\\");
+  const folded = await p.ev(`({ side: document.documentElement.dataset.side, width: Math.round(document.querySelector("#side").getBoundingClientRect().width), icons: window.__ui.vis("#rail-nav"), tree: window.__ui.vis("#tree") })`);
+  rows.push(["\\ folds the sidebar to its rail", folded.side === "0" && folded.width === 44 && folded.icons && !folded.tree,
+    folded.side !== "0" ? "\\ did not fold it" : folded.width !== 44 ? `the rail is ${folded.width} px` : !folded.icons ? "no icons on it" : folded.tree ? "the tree is still drawn in 44 px" : "44 px, icons only"]);
+
+  const opened = [], broke = [];
+  for (const [sec, id] of [["inbox", "queue"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"], ["note", "note"]]) {
+    if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { if (sec !== "note") broke.push(`${sec}: no icon`); continue; }
+    await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
+    const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
+    await p.press("Escape");
+    const back = await p.ev(`({ pop: document.documentElement.dataset.pop, on: document.activeElement?.dataset.pop })`);
+    if (!m.in || !m.shown) broke.push(`${sec}: #${id} not in the popover`);
+    else if (m.left < 44) broke.push(`${sec}: the popover is over the rail (${m.left} px)`);
+    else if (!m.focus.inSide) broke.push(`${sec}: focus stayed outside`);
+    else if (back.pop || back.on !== sec) broke.push(`${sec}: Escape left ${back.pop ? "it open" : `focus on ${back.on}`}`);
+    else opened.push(sec);
+  }
+  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 4, broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
+
+  // One at a time: a second icon closes the first.
+  await p.clickOn('#rail-nav [data-pop="tree"]');
+  await p.clickOn('#rail-nav [data-pop="browse"]');
+  const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, browse: document.querySelector("#browse-nav").parentElement.id })`);
+  await p.click(640, 400);
+  const outside = await p.ev(`document.documentElement.dataset.pop || ""`);
+  rows.push(["one popover at a time, a click outside closes it", one.pop === "browse" && one.tree === "trees" && one.browse === "pop" && outside === "",
+    one.pop !== "browse" || one.browse !== "pop" ? "the second icon opened nothing" : one.tree !== "trees" ? "the first section stayed in the popover" : outside ? "a click outside left it open" : "the second replaces the first; a click beside it closes it"]);
+
+  // The number on the inbox is the number waiting.
+  await arrive();
+  await sleep(700);
+  const count = await p.ev(`({ badge: document.querySelector('#rail-nav [data-pop="inbox"] .badge').textContent, label: document.querySelector("#queue .t-label .n")?.textContent || "" })`);
+  rows.push(["the inbox icon says how many wait", count.badge !== "" && count.badge === count.label,
+    count.badge === "" ? `nothing on the icon (the queue says ${count.label || "nothing"})` : count.badge !== count.label ? `the icon says ${count.badge}, the queue ${count.label}` : `${count.badge}, as the queue says`]);
+
+  // Tab reaches every icon, and the arrows walk them.
+  await p.ev(`document.querySelector(".brand").focus()`);
+  const tabbed = new Set();
+  for (let i = 0; i < 16; i++) {
+    await p.press("Tab");
+    const f = await p.ev(`(() => { const a = document.activeElement; return a.closest("#rail-nav") ? (a.dataset.pop || a.id) : ""; })()`);
+    if (f) tabbed.add(f);
+  }
+  await p.ev(`document.querySelector('#rail-nav [data-pop="inbox"]').focus()`);
+  await p.press("ArrowDown");
+  const walked = await p.ev(`document.activeElement?.dataset.pop || ""`);
+  const want = ["inbox", "tree", "desks", "browse", "rail-live", "rail-search"];
+  const missed = want.filter(k => !tabbed.has(k));
+  rows.push(["Tab reaches every icon, the arrows walk them", missed.length === 0 && walked === "tree",
+    missed.length ? `never reached ${missed.join(", ")}` : walked !== "tree" ? `↓ from the inbox went to ${walked || "nothing"}` : "every icon a stop, ↓ to the next"]);
+
+  // Unfolded, every section is back in #trees, in its order.
+  // With one open, \\ closes it; the next one unfolds.
+  await p.clickOn('#rail-nav [data-pop="desks"]');
+  await p.press("\\");
+  const shut = await p.ev(`({ pop: document.documentElement.dataset.pop || "", side: document.documentElement.dataset.side })`);
+  await p.press("\\");
+  const order = await p.ev(`[...document.querySelector("#trees").children].map(e => e.id)`);
+  const width = await p.ev(`Math.round(document.querySelector("#side").getBoundingClientRect().width)`);
+  rows.push(["\\ closes a popover, then unfolds, the sections in their order", !shut.pop && shut.side === "0" && JSON.stringify(order) === JSON.stringify(HOME) && width > 200,
+    shut.pop ? "\\ left the popover open" : shut.side !== "0" ? "\\ unfolded with a popover open" : width <= 200 ? `the sidebar is ${width} px` : `#trees holds ${order.join(", ")}`]);
   return rows;
 }
 
