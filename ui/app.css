@@ -303,8 +303,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] #btn-side-hide .pane { fill: none; }
 :root[data-side="0"] #trees { flex: none; padding: 0; overflow: visible; }
 :root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
-:root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
-:root[data-side="0"] #upd.quiet { display: none; }
 #rail-nav .icon { position: relative; flex: none; }
 #rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
 #rail-search { margin-top: auto; }
@@ -431,18 +429,7 @@ html[data-say] .brand-name { opacity: 0; }
 .live:hover { color: var(--fg); text-decoration: none; }
 .live.on { color: var(--accent); background: var(--accent-bg); }
 .live.on::before { opacity: 1; }
-/* The update pill, beside the agents count: drawn from the daemon's `update`
-   event, shown only once the day's slot is open or the reader asked, quiet
-   for a day and amber after. A click restarts onto the staged version when
-   the panels are quiet; a told-only install's pill opens About instead. */
-.upd { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 8px; border: 0; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font: inherit; font-size: 11px; font-weight: 600; line-height: 16px; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
-.upd[hidden] { display: none; }
-.upd:hover { color: var(--fg); }
-.upd.amber { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-.upd.failed { background: var(--del); color: var(--del-fg); }
-.upd.waiting { opacity: .7; }
-.upd.waiting[tabindex="-1"] { cursor: default; }
-.upd.quiet { background: none; color: var(--fg-3); font-weight: 500; }
+/* The update pill's look is about.js's, which draws it (1.7.2). */
 /* The page cannot hear the daemon; a stale count is worse than none. */
 html[data-link="off"] .live { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }

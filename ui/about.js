@@ -21,6 +21,67 @@
 
 let wired = false;
 
+/* ---------- the update pill ----------
+ * The pill in the sidebar's foot (#upd), from the daemon's `update` block.
+ * Shown when the daemon says so -- the day's slot is open or the reader
+ * asked, a version failed to start, the file on disk is newer than the
+ * daemon -- while a restart waits for the panels to be quiet, and for one
+ * session after an update landed, so a desk that came back is explained. A
+ * click restarts onto the staged version once the panels are quiet; in a
+ * tab, which holds no capability, on an install that is only told, or while
+ * a restart waits, it opens About, which says what to run and holds Now and
+ * Cancel. It was app.js's until 1.7.2; app.js fetches this file for it only
+ * when there is something to say. */
+let upd = null, updWaiting = false, updFresh = null, updEl = null, uc = null;
+function renderUpd() {
+  const u = upd, { capability, plural, version } = uc;
+  let text = "", cls = "", title = "";
+  const r = u && u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
+  if (u && (u.restarting || updWaiting)) { text = "Restarting…"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
+  else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting…"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
+  else if (u && u.show) {
+    if (u.ready) { text = capability ? `Restart to update · ${u.ready}` : `Update ready · ${u.ready}`; cls = u.amber ? "amber" : ""; title = capability ? "Restarts once no panel is busy; Claude panels come back with their conversation" : "The window restarts it; About says more"; }
+    else if (u.failed_recent) { text = `${u.failed} did not start · kept ${version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
+    else if (u.available) { text = `${u.available} is out · how`; title = "This install is updated by hand; About says how"; }
+    else if (u.stale) { text = capability ? "Restart to update" : "Update ready"; title = "The snyvi on disk is newer than the one running"; }
+  }
+  // Updated: once per landing, kept for the page it was first shown on.
+  const at = u && u.last_applied;
+  if (!text && at && Date.now() / 1000 - at < 86400 && updFresh !== -1) {
+    let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
+    if (updFresh === at || seen !== String(at)) {
+      updFresh = at; try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
+      text = `Updated to ${version} · what's new`; cls = "quiet updated"; title = "About has the release notes";
+    }
+  }
+  updEl.hidden = !text;
+  if (!text) return;
+  updEl.textContent = text; updEl.className = `upd ${cls}`.trim(); updEl.title = title;
+  updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
+  updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
+}
+/** The daemon's word, whichever came first -- it or the reply to the click:
+ *  from here the pill says what it says. */
+export function pill(el, u, c) {
+  uc = c; upd = u; updWaiting = false;
+  if (!updEl) { updEl = el; el.addEventListener("click", clickUpd); }
+  renderUpd();
+}
+async function clickUpd() {
+  const u = upd, { capability, deskApi, toast, panel } = uc;
+  if (!u || u.restarting || updWaiting) return;
+  if (!u.restart && (u.ready || (u.stale && !u.failed_recent)) && capability) {
+    updWaiting = true; renderUpd();
+    // The daemon's `update` event says what the restart waits on; until
+    // it comes, this pill says Restarting.
+    try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
+    catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", String(e)); }
+    return;
+  }
+  if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }
+  panel("about");
+}
+
 /** Open a panel, building and wiring the boxes the first time. `which` is
  *  "about", "reset", or "help" for the shortcuts card's rows. The listeners
  *  go on once: a panel opened twice is the same dialog. */
@@ -632,6 +693,17 @@ button.start-sample.dk-put { color: var(--accent); }
 /* The about and reset boxes, which this file builds -- in app.css until 1.7.1, and nothing on screen used them before
  * this file was loaded, so they came here to leave first paint. */
 const CSS_MOVED = `
+/* The update pill, which this file draws (pill). */
+:root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
+:root[data-side="0"] #upd.quiet { display: none; }
+.upd { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 8px; border: 0; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font: inherit; font-size: 11px; font-weight: 600; line-height: 16px; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
+.upd[hidden] { display: none; }
+.upd:hover { color: var(--fg); }
+.upd.amber { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.upd.failed { background: var(--del); color: var(--del-fg); }
+.upd.waiting { opacity: .7; }
+.upd.waiting[tabindex="-1"] { cursor: default; }
+.upd.quiet { background: none; color: var(--fg-3); font-weight: 500; }
 .about-box { width: min(560px, 92vw); }
 .about-box p { margin: 0 0 14px; font-size: 14px; color: var(--fg-2); }
 .about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }
