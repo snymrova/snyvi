@@ -1024,8 +1024,14 @@ function tabs(d, all, shown) {
   // is what ties the greyed + to the panes on the desk.
   const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d), j = ctx.desks;
   if (plus) {
-    plus.disabled = !!why;
+    // Quiet rather than disabled, so the keyboard still reaches it and can
+    // hear why: the reason is a hidden line it points to (A4 draws it).
+    plus.classList.toggle("dim", !!why);
+    why ? plus.setAttribute("aria-disabled", "true") : plus.removeAttribute("aria-disabled");
     plus.title = why ? `New panel · ${why}` : "New panel";
+    let say = plus.nextElementSibling?.id === "dk-plus-why" ? plus.nextElementSibling : null;
+    if (!say) { say = Object.assign(document.createElement("span"), { id: "dk-plus-why", className: "vh" }); plus.after(say); plus.setAttribute("aria-describedby", say.id); }
+    say.textContent = why || "";
     let n = plus.previousElementSibling?.classList.contains("dk-cap") ? plus.previousElementSibling : null;
     const atCap = d.panes.length >= j.per_desk;
     if (atCap && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
@@ -1045,7 +1051,7 @@ function draw() {
   }
   document.title = `${d.name} · desk`;
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon" data-a="new" title="New panel  ⌃⌥N" aria-label="New panel">${head("plus")}</button>` +
+    `<button type="button" class="icon" data-a="new" title="New panel  ⌃⌥N" aria-label="New panel · ⌃⌥N">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" title="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
@@ -1382,7 +1388,7 @@ function rail() {
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
+    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" title="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
@@ -1839,6 +1845,9 @@ async function act(b, byKey) {
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
+      // Pressed while it cannot: it says why, as ⌃⌥N does.
+      const why = noNew(d);
+      if (why) return ctx.toast("New panel", why);
       const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
       focused = j.pane.id;
       await ctx.refresh();
@@ -2614,8 +2623,10 @@ const CSS = `
 .dk-panes .on .slot { color: inherit; }
 .dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
 .dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: 12px; border-radius: 6px; }
-.dk-new:hover:not(:disabled) { color: var(--accent); }
-.dk-new:disabled { opacity: .5; cursor: default; }
+.dk-new:hover:not(:disabled, .dim) { color: var(--accent); }
+.dk-new:is(:disabled, .dim) { opacity: .5; cursor: default; }
+/* Said to a screen reader, not drawn: why a quiet control is quiet. */
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* The rest of the documents, as one row under the latest: the count is the
  * number the rail is not showing, so it changes as they arrive. */
 .dk-more { margin-top: 2px; font-variant-numeric: tabular-nums; }
