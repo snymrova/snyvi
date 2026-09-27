@@ -1,7 +1,8 @@
 //! A stdio MCP server exposing send_document, send_aside for the rare line
 //! beside the work, and -- only to an agent running in a desk's pane --
-//! read_desk_notes, which reads that desk's list, and tick_desk_note, the one
-//! change an agent can make to it: marking a line done.
+//! read_desk_notes, which reads that desk's list, tick_desk_note, the one
+//! change an agent can make to it: marking a line done, and name_panel, which
+//! names the panel the agent runs in.
 //! Newline-delimited JSON-RPC 2.0, as the MCP stdio transport specifies.
 
 use crate::client;
@@ -39,8 +40,16 @@ const TICK_DESCRIPTION: &str = "Tick one of the user's notes on this snyvi desk:
 read_desk_notes. Tick a note only when the work it names is finished in this session and you have checked it -- \
 built, tested, merged or whatever finished means for it -- or when the user asks you to. Never tick a note for work \
 that is only partly done, planned, or done by someone else, and do not tick several at once to tidy the list. The \
-tick shows your name beside the line, and the user can untick it. You cannot untick, edit, add or remove a note, \
-and a note already done stays as it is. After ticking, say in your reply which notes you ticked.";
+tick shows your name beside the line, and the user can untick it. If the work went into a commit, pass its hash as \
+`commit` (as git log prints it), and if you sent a document about it with send_document, pass its id as `about`: \
+the line then shows the commit and opens the document. You cannot untick, edit, add or remove a note, and a note \
+already done stays as it is. After ticking, say in your reply which notes you ticked.";
+
+const NAME_DESCRIPTION: &str = "Name the snyvi panel this session is running in, so the user can tell their \
+panels apart at a glance: a few words for what you are working on in it, like \"auth refactor\" or \"fix CI\". \
+Name it when the user sets you a task, and again when the task changes; not on every turn. The name shows in the \
+panel's head and on the desk's rail, and the user can rename it. An empty name gives the panel back to its \
+program's title.";
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()
@@ -101,6 +110,7 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 if pane.is_some() {
                     tools.push(desk_notes_spec());
                     tools.push(tick_spec());
+                    tools.push(name_spec());
                 }
                 json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })
             }
@@ -139,12 +149,39 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 } else if name == "tick_desk_note" {
                     let note = args.get("id").and_then(Value::as_i64);
                     let by = sender.as_deref().unwrap_or("");
+                    let arg = |k: &str| {
+                        args.get(k)
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .trim()
+                            .to_string()
+                    };
+                    let (commit, about) = (arg("commit"), arg("about"));
                     let (text, bad) = match (pane.as_deref(), note) {
                         (None, _) => ("This session is not running in a snyvi desk, so there is no desk list to tick.".to_string(), true),
                         (_, None) => ("tick_desk_note needs the note's id, a number from read_desk_notes.".to_string(), true),
-                        (Some(p), Some(n)) => match client::tick_desk_note(&paths, p, n, by) {
+                        (Some(p), Some(n)) => match client::tick_desk_note(&paths, p, n, by, &commit, &about) {
                             Ok(v) => (format!("Ticked note {n} on the desk \"{}\". Tell the user which note you ticked.", v.get("desk").and_then(Value::as_str).unwrap_or("this desk")), false),
                             Err(e) => (format!("snyvi did not tick the note: {e}"), true),
+                        },
+                    };
+                    json!({ "jsonrpc": "2.0", "id": id, "result": {
+                        "content": [{ "type": "text", "text": text }],
+                        "isError": bad
+                    }})
+                } else if name == "name_panel" {
+                    let to = args
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let (text, bad) = match pane.as_deref() {
+                        None => ("This session is not running in a snyvi desk, so there is no panel to name.".to_string(), true),
+                        Some(p) => match client::name_panel(&paths, p, &to) {
+                            Ok(()) if to.is_empty() => ("The panel is back to its program's title.".to_string(), false),
+                            Ok(()) => (format!("The panel is named \"{to}\"."), false),
+                            Err(e) => (format!("snyvi did not name the panel: {e}"), true),
                         },
                     };
                     json!({ "jsonrpc": "2.0", "id": id, "result": {
@@ -231,8 +268,27 @@ fn tick_spec() -> Value {
         "description": TICK_DESCRIPTION,
         "inputSchema": {
             "type": "object",
-            "properties": { "id": { "type": "integer", "description": "The note's id, from read_desk_notes." } },
+            "properties": {
+                "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "commit": { "type": "string", "description": "Optional hash of the commit the work went into, as git log prints it (7 to 40 hex digits)." },
+                "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) about the work; the line opens it." }
+            },
             "required": ["id"],
+            "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+    })
+}
+
+fn name_spec() -> Value {
+    json!({
+        "name": "name_panel",
+        "title": "Name this panel",
+        "description": NAME_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": { "name": { "type": "string", "description": "A few words, at most 80 characters. Empty gives the panel back to its program's title." } },
+            "required": ["name"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
@@ -262,14 +318,15 @@ fn say_notes(v: &Value) -> String {
         let done = n.get("done") == Some(&Value::Bool(true));
         let text = n.get("text").and_then(Value::as_str).unwrap_or("");
         let id = n.get("id").and_then(Value::as_i64).unwrap_or(0);
-        let by = n
-            .get("done_by")
-            .and_then(Value::as_str)
-            .filter(|b| !b.is_empty());
+        let field = |k: &str| n.get(k).and_then(Value::as_str).filter(|b| !b.is_empty());
+        let by = match (field("done_by"), field("done_commit")) {
+            (Some(b), Some(c)) => format!(" (ticked by {b}, in {c})"),
+            (Some(b), None) => format!(" (ticked by {b})"),
+            _ => String::new(),
+        };
         out.push_str(&format!(
-            "- [{}] #{id} {text}{}\n",
-            if done { "x" } else { " " },
-            by.map(|b| format!(" (ticked by {b})")).unwrap_or_default()
+            "- [{}] #{id} {text}{by}\n",
+            if done { "x" } else { " " }
         ));
     }
     out
@@ -423,16 +480,34 @@ mod tests {
     }
 
     #[test]
-    fn the_tick_tool_takes_an_id_and_nothing_else() {
+    fn the_tick_tool_takes_an_id_and_says_where_the_work_went() {
         let spec = tick_spec();
         assert_eq!(spec["annotations"]["readOnlyHint"], false);
         assert_eq!(spec["annotations"]["destructiveHint"], false);
         assert_eq!(spec["inputSchema"]["required"], json!(["id"]));
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
+        let mut props: Vec<_> = spec["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        props.sort();
+        assert_eq!(props, ["about", "commit", "id"]);
         let v = json!({ "desk": "alpha", "notes": [
-            { "id": 3, "text": "ship it", "done": true, "done_by": "claude-code" }
+            { "id": 3, "text": "ship it", "done": true, "done_by": "claude-code" },
+            { "id": 4, "text": "fix hover", "done": true, "done_by": "claude-code", "done_commit": "90f09d6" }
         ]});
-        assert!(say_notes(&v).contains("- [x] #3 ship it (ticked by claude-code)"));
+        assert!(say_notes(&v).contains("- [x] #3 ship it (ticked by claude-code)\n"));
+        assert!(say_notes(&v).contains("- [x] #4 fix hover (ticked by claude-code, in 90f09d6)\n"));
+    }
+
+    #[test]
+    fn the_name_tool_takes_a_name_and_nothing_else() {
+        let spec = name_spec();
+        assert_eq!(spec["annotations"]["destructiveHint"], false);
+        assert_eq!(spec["inputSchema"]["required"], json!(["name"]));
+        assert_eq!(spec["inputSchema"]["additionalProperties"], false);
     }
 
     #[test]

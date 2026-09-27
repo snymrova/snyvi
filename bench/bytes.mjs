@@ -57,7 +57,10 @@ const KB = 1024;
 // removed row's Undo and the ✕ that goes back have to answer in the same
 // frame as the click, so they cannot wait for a chunk; the menus and their
 // look already went to menu.js. docs/BRAINSTORM.md:35 says the same.
-const BUDGET = 53 * KB;   // docs/BRAINSTORM.md:35
+// 1.7.1 took it back down to 52 KB, and paid for the sidebar's rail on the
+// way: look.js, note.js and the letter keys in keys.js left first paint, and
+// the diagram, game and about/reset styles went to the chunks that draw them.
+const BUDGET = 52 * KB;   // docs/BRAINSTORM.md:35
 
 /* The four the page cannot start without: the document it is served, the
  * script that boots it, and the two the boot pulls in. Fonts are woff2 and
@@ -70,7 +73,7 @@ const FIRST = [["index.html", "/"], ["boot.js", "/assets/boot.js"], ["app.css", 
  * measured the way the four above are. desk.js is the second chunk, and the
  * one the measurement below was taken to make the case for: the pane view,
  * paid when a desk is opened in the window and never in a tab. */
-const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"], ["palette.js", "/assets/palette.js", "⌘K is pressed"]];
+const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"], ["palette.js", "/assets/palette.js", "⌘K is pressed"], ["look.js", "/assets/look.js", "the page is idle, or the foot column is reached"], ["note.js", "/assets/note.js", "an aside is there to show"]];
 
 const kb = n => (n / KB).toFixed(1) + " KB";
 

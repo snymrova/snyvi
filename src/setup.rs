@@ -166,6 +166,12 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
     } else {
         println!("  `snyvi init-claude --auto` adds a PostToolUse hook that sends every Markdown file Claude writes.");
     }
+    println!("Status line in {file}: `snyvi statusline`, which prints nothing and tells a desk panel which model it runs and how full its context window is.");
+    if crate::statusline::saved_command(&crate::statusline::before_path(&crate::config::paths()))
+        .is_some()
+    {
+        println!("  Your own status line is kept and still shows: snyvi runs it, and `snyvi uninstall-claude` puts it back.");
+    }
     if !on_path {
         println!("  Written with the binary's full path, since `snyvi` is not on PATH; run this again if it moves.");
     }
@@ -188,7 +194,10 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
         println!("  `snyvi init-claude --claude-md` adds one line to ~/.claude/CLAUDE.md asking Claude to send you what it writes.");
     }
 
-    println!("\nTry it: in Claude Code, ask for a plan. It arrives at {base}, or in the window when one is open.");
+    println!("\nTry it: open the window (`snyvi app`), give a project a desk, and run claude there. What it writes lands beside it, or at {base} without the window.");
+    // The stall every first run hit: a session open before the MCP entry
+    // existed never loads it, and nothing says so.
+    println!("Restart any Claude Code session that is already open: one that was running before this does not see snyvi.");
     println!("`snyvi status` shows all of this; `snyvi uninstall-claude` takes it back out.");
     Ok(())
 }
@@ -313,6 +322,24 @@ pub fn claude_code_status() -> String {
             "hooks: {}",
             hooks.iter().map(|(e, _)| *e).collect::<Vec<_>>().join(", ")
         ));
+    }
+    let settings = hook::settings_path()
+        .and_then(|p| hook::read_settings(&p))
+        .ok();
+    match settings.as_ref().and_then(|s| s.get("statusLine")) {
+        Some(e) if crate::statusline::ours(e) => parts.push(
+            if crate::statusline::saved_command(&crate::statusline::before_path(
+                &crate::config::paths(),
+            ))
+            .is_some()
+            {
+                "status line: snyvi, running yours".to_string()
+            } else {
+                "status line: snyvi".to_string()
+            },
+        ),
+        Some(_) => parts.push("status line: another".to_string()),
+        None => parts.push("no status line".to_string()),
     }
     let mut line = format!("Claude Code: {}", parts.join("; "));
     if stale {

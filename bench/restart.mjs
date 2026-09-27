@@ -17,9 +17,13 @@
  * only the agent; the agent's turn ending lets the restart through, and a
  * new process answers with the same version; the desks' list says the Claude
  * panel resumes and the shell does not; a page that opens on the desk asks
- * for exactly that, and `snyvi restart --now` skips the wait. Nothing here is
- * a clock: `SNYVI_QUIET_S` shortens the quiet window to two seconds for the
- * daemon under test, so the rows read state, not timing.
+ * for exactly that, and `snyvi restart --now` skips the wait. Since 1.7.1: a
+ * panel waiting on its reader's approval holds a restart as a turn does; the
+ * marks wait for someone to look, however long that takes; and a restart
+ * waiting for quiet can be called off. Nothing here is a clock:
+ * `SNYVI_QUIET_S` shortens the quiet window to two seconds for the daemon
+ * under test, and `SNYVI_RESUME_S` the marks' window once looked at, so the
+ * rows read state, not timing.
  */
 
 import { execFileSync } from "node:child_process";
@@ -34,6 +38,7 @@ const NO_BROWSER = args.includes("--no-browser");
 const BIN_SRC = resolve(flag("--bin") || "./target/release/snyvi");
 const PORT = flag("--port") || "7816";   // 7797 is ui.mjs, 7796 browser.mjs; see the list in ui.mjs
 const QUIET_S = 2;
+const RESUME_S = 5;
 
 function flag(name) {
   const i = args.indexOf(name);
@@ -54,7 +59,7 @@ async function main() {
   copyFileSync(BIN_SRC, BIN);
   const env = {
     ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT,
-    SNYVI_QUIET_S: String(QUIET_S), SNYVI_NOTIFY: "0",
+    SNYVI_QUIET_S: String(QUIET_S), SNYVI_RESUME_S: String(RESUME_S), SNYVI_NOTIFY: "0",
     // A copy outside target/ is a tarball install, which checks GitHub for
     // updates; not this one. bench/update.mjs is where that is read.
     SNYVI_UPDATES: "off",
@@ -103,6 +108,15 @@ async function main() {
     row("a panel at its prompt is quiet; an agent mid-turn is not", !!only && h1.pid === h0.pid,
       !h1 ? "no health" : !h1.restart ? "health says no restart is pending" : `waiting on ${JSON.stringify(h1.restart.waiting_on)}, pid ${h1.pid === h0.pid ? "unchanged" : "changed"}`);
 
+    // The turn stops on an approval: a restart now would take the question
+    // away unanswered, so it still waits, however long the reader takes.
+    await postT(`/api/panes/${claude}/agent`, { state: "needs_you", session });
+    await sleep((QUIET_S + 1) * 1000);
+    const hq = await health();
+    const held = hq && hq.restart && hq.restart.pending && JSON.stringify(hq.restart.waiting_on) === JSON.stringify([claude]) && hq.pid === h0.pid;
+    row("a panel waiting on an approval holds the restart", !!held,
+      !hq ? "no health" : !hq.restart ? "the restart went, or was dropped" : `waiting on ${JSON.stringify(hq.restart.waiting_on)}`);
+
     // The turn ends. The daemon goes, on purpose, and another answers.
     await postT(`/api/panes/${claude}/agent`, { state: "done", session });
     const h2 = await until(async () => { const h = await health(); return h && h.pid !== h0.pid ? h : null; }, 80);
@@ -115,6 +129,15 @@ async function main() {
     const st = id => (list.panes.find(p => p.id === id) || {}).status || {};
     row("the desks' list says which panel comes back as a conversation", st(claude).resume === true && st(shell).resume === false && !st(claude).running && !st(shell).running,
       `claude: resume ${st(claude).resume}, running ${st(claude).running}; shell: resume ${st(shell).resume}, running ${st(shell).running}`);
+
+    // Nobody looks for longer than the marks last once looked at: an update
+    // applied while the window was away. The clock has not started, so the
+    // conversation is still coming back.
+    await sleep((RESUME_S + 2) * 1000);
+    const late = (await desks()).find(d => d.id === desk);
+    const lst = (late.panes.find(p => p.id === claude) || {}).status || {};
+    row("the marks wait for someone to look", lst.resume === true && !lst.offer,
+      `after ${RESUME_S + 2} s with no desk shown: resume ${lst.resume}, offer ${!!lst.offer}`);
 
     // A page opens on the desk and brings the panels back: the shell as the
     // shell, the other as `claude --resume <id>`. Whether claude is on this
@@ -154,6 +177,58 @@ async function main() {
     // a kept-alive connection to the process that has just left.
     const h4 = await until(async () => { const h = await health(); return h && h.pid !== h3.pid ? h : null; }, 20);
     row("snyvi restart --now skips the wait", !!h4 && h4.pid !== h3.pid && /running on/.test(out), `${out.trim().split("\n").pop()}; pid ${h3 && h3.pid} → ${h4 && h4.pid}`);
+
+    // 1.7.1: a shell that moved comes back where it moved to, and a stop
+    // nobody planned -- `snyvi stop`, a signal, a reboot -- offers the Claude
+    // panels' conversations back rather than starting them.
+    const root = (await desks()).find(x => x.id === desk).root;
+    const moved = join(root, "moved-here");
+    mkdirSync(moved, { recursive: true });
+    const wander = (await postC(`/api/desks/${desk}/panes`)).pane.id;
+    await postC(`/api/panes/${wander}/start`, { cmd: `cd '${moved}' && exec sleep 300` });
+    await postT(`/api/panes/${wander}/agent`, { state: "working", session });
+    const followed = await until(async () => { const d = (await desks()).find(x => x.id === desk); const s = (d.panes.find(p => p.id === wander) || {}).status || {}; return s.cwd === moved ? s : null; }, 40);
+    row("a shell's folder is followed as it moves", !!followed, followed ? `status says ${followed.cwd}` : "the status never named the folder it moved to");
+
+    // A restart waiting on the working panel is called off, by the route
+    // the pill's Cancel and Ctrl-C use; the turn ending then restarts
+    // nothing, and `--cancel` finds nothing left to call off.
+    const hc = await health();
+    const pend = await postT("/api/restart", { when: "idle" });
+    const del = await fetch(`${base}/api/restart`, { method: "DELETE", headers: T }).then(r => r.json()).catch(() => ({}));
+    await postT(`/api/panes/${wander}/agent`, { state: "done", session });
+    await sleep((QUIET_S + 2) * 1000);
+    const hd = await health();
+    let said = "";
+    try { said = cli("restart", "--cancel"); } catch (e) { said = `exit ${e.status}: ${e.stderr}`; }
+    row("a restart waiting for quiet can be called off", pend.status === 200 && del.cancelled === true && !!hd && hd.pid === hc.pid && hd.restart == null && /no restart was waiting/.test(said),
+      `asked ${pend.status}, cancelled ${del.cancelled}, pid ${hc && hc.pid} → ${hd && hd.pid}, then: ${said.trim()}`);
+    const h5 = await health();
+    try { cli("stop"); } catch {}
+    await until(async () => !(await health()), 40);
+    cli("send", md);
+    const h6 = await until(health, 40);
+    const offered = (await desks()).find(x => x.id === desk);
+    const w = offered && offered.panes.find(p => p.id === wander);
+    const ws = (w && w.status) || {};
+    row("an unplanned stop offers the conversation, in the folder the shell was in", !!h6 && h6.pid !== (h5 && h5.pid) && !!w && w.cwd === moved && ws.offer === true && !ws.resume,
+      !h6 ? "no daemon came back" : !w ? "the panel is gone" : `cwd ${w.cwd}, offer ${ws.offer}, resume ${ws.resume}`);
+    if (chrome && w) {
+      const browser2 = await launch(join(tmp, "chrome2"));
+      const { sessionId: s2 } = await tab(browser2.cdp);
+      const url2 = `${base}/desk/${desk}#cap=${cap}`;
+      const loaded2 = pageLoad(browser2.cdp, s2, url2);
+      await browser2.cdp.send("Page.navigate", { url: url2 }, s2);
+      await loaded2;
+      const ev = async expr => (await browser2.cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true }, s2)).result.value;
+      const strip = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer:not([hidden])')`), 60);
+      const cmdNow = ((((await desks()).find(x => x.id === desk) || {}).panes || []).find(p => p.id === wander) || {}).status?.cmd || "";
+      await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="x"]')?.click(); 1`);
+      const away = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer[hidden]')`), 20);
+      row("the window offers it with a strip, and runs nothing it was not asked to", !!strip && !!away && !/--resume/.test(cmdNow),
+        !strip ? "no strip on the panel" : /--resume/.test(cmdNow) ? `the panel started ${cmdNow}` : !away ? "✕ did not put it away" : `the shell came back (${JSON.stringify(cmdNow)}), the strip offered, ✕ put it away`);
+      killTree(browser2.proc);
+    }
   } finally {
     if (chromeProc) killTree(chromeProc);
     try { cli("stop"); } catch {}

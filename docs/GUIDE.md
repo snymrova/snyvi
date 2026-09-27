@@ -271,18 +271,30 @@ Which installs are swapped, and which are only told:
 | the tarball in a folder you cannot write (`/usr/local/bin` with `sudo`) | told: About shows the two lines to run |
 | macOS, `snyvi.app` in Applications, the cask too | swapped (the cask says `auto_updates`, so `brew upgrade` leaves it alone unless `--greedy`) |
 | Windows, the installer's folder or Scoop's | swapped (`scoop update` later reinstalls over it harmlessly) |
-| the `.deb` | told: root owns `/usr/bin/snyvi`, so About and `snyvi status` show the two lines to run |
+| the `.deb` | told: root owns `/usr/bin/snyvi`, so About and `snyvi status` show the lines to run — with `snyvi-app` installed, both packages in one `apt install`, since the window's package wants the daemon's exact version |
 | `cargo install` | told: `cargo install snyvi` |
 | a build under `target/` | never checked |
 
-When the window is in front at the moment an update could go, a pill
-appears beside the agents count: `Restart to update · 1.6.3`. A click
-applies it as soon as the panels are quiet, and the page comes back on the
-new build with every Claude panel resumed (`claude --resume`, the same as
-the ↻ button) and every shell restarted with its old screen greyed above.
-Left alone, the pill stays quiet for a day and turns amber after — a panel
-whose agent is stuck at "working" because Claude died without saying so
-is the usual reason, and `snyvi restart --now` is the way through.
+Once the day's slot has opened with a version staged — at once, when
+`Check now` or `snyvi update` found it — a pill appears beside the agents
+count: `Restart to update · 1.6.3` (`Update ready` in a browser tab, which
+cannot restart anything). A click applies it as soon as the panels are
+quiet; while it waits the pill says how many it is waiting on, and About
+has `Now` and `Cancel`. Left alone, the pill turns amber after a day.
+
+Busy, for a restart: an agent mid-turn, or one waiting on you for an
+answer or a permission — an update never cuts off an approval. An agent
+that says it is working but has printed nothing for ten minutes (Claude
+stopped with Esc) is taken as quiet, and so is a panel that has only been
+printing for two hours straight, a log tail or a dev server.
+
+After the restart, every shell comes back with its old screen greyed
+above, and every Claude panel comes back with its conversation
+(`claude --resume`) the first time you look at its desk — not while
+nobody is there to see it. A panel you have not opened within five
+minutes of that first look shows the ↻ offer instead, for a day. The
+pill says `Updated to 1.6.3 · what's new` for the rest of that session,
+and a click opens About.
 
 Sooner than the daily slot, when you want it:
 
@@ -295,9 +307,12 @@ snyvi update --back     the version the last update replaced (kept as .prev)
 snyvi update off | on   the automatic path; `snyvi update` still works when off
 ```
 
-About has the same: `You're on 1.6.2 · checked 40 min ago · next update
-tomorrow`, with `Check now`, `Restart to update` when one is ready, and the
-on/off switch. A release marked as a hotfix (`hotfix_below` in the
+About has the same: `1.6.3 is ready · applies tomorrow, when the desks
+are quiet`, or `You're on the latest · checked 40 min ago`, with
+`Check now`, `Restart to update` when one is ready, and the on/off switch.
+A download that failed says so there, and the next check tries it again.
+`snyvi update check` only says; `Check now` and `snyvi update` also let
+what they find past the daily slot. A release marked as a hotfix (`hotfix_below` in the
 manifest, set by hand in the release job) is applied at the next quiet
 moment rather than the next day.
 
@@ -306,9 +321,16 @@ for CI, packagers and the dev loop, and wins over the switch. What is
 trusted: the manifest's minisign signature, against the key compiled in
 (`packaging/minisign.pub`); the sha256 of every download, at staging and
 again on the file just placed; a new daemon that does not answer within
-ten seconds is rolled back to `.prev` and health says `failed`. Under
+thirty seconds is rolled back to `.prev` and health says `failed`. Under
 systemd the unit does the restart (the daemon exits 75 and
-`Restart=on-failure` starts the new file); `.prev` stays for `--back`.
+`Restart=on-failure` starts the new file), and a new file that has
+started twice without taking the port is put back by its own third
+start. `.prev` stays for a day, and for `--back`; a version gone back
+from, with `--back` or `--to` a lower one, is not taken again on its own.
+
+A daemon snyvi started itself writes what it says to `daemon.log` beside
+the documents (`snyvi status` prints the path), kept to about a
+megabyte; under systemd it is in `journalctl --user -u snyvi`.
 
 Installed by hand over the old one — the one-liner again, `brew upgrade`,
 `sudo dpkg -i` — the daemon notices the file changed under it and any
@@ -320,8 +342,8 @@ Run `snyvi restart` to pick up the new version.
 ```
 
 A restart waits for the desks to be quiet the same way, says which panels
-it is waiting on, and `--now` skips the wait; Ctrl-C leaves it to happen
-on its own. Your documents, database and token are kept across every
+it is waiting on, and `--now` skips the wait; Ctrl-C while it waits, or
+`snyvi restart --cancel` from anywhere, calls it off. Your documents, database and token are kept across every
 kind of update, and the schema migrates itself. `snyvi status` shows both
 versions and one line about updates; `snyvi stop` shuts the daemon down.
 
@@ -331,7 +353,7 @@ versions and one line about updates; `snyvi stop` shuts the daemon down.
 snyvi uninstall-claude        # the MCP server, the hooks, the CLAUDE.md line
 snyvi uninstall-desktop       # Linux: the menu entry, icons and unit it wrote
 snyvi stop                    # the daemon
-rm ~/.local/bin/snyvi ~/.local/bin/snyvi-app   # or: sudo apt remove snyvi-app snyvi
+rm ~/.local/bin/snyvi ~/.local/bin/snyvi-app ~/.local/bin/*.prev   # or: sudo apt remove snyvi-app snyvi
 ```
 
 That leaves your documents and index in `~/.local/share/snyvi` and the
@@ -397,6 +419,22 @@ The first `send` starts the daemon in the background; it stays resident
 (about 25 MB) so every later send and every page open is instant. It
 listens on `127.0.0.1:7777` only. Set `SNYVI_PORT` to change the port.
 
+A new window opens on *Welcome* (`/welcome`, also in the `?` box and ⌘K
+`>`): what snyvi is, and one question -- *What are you working on?* The
+answer is a folder, chosen in the desktop's own dialog or from the
+projects snyvi already knows; snyvi never looks through your folders on
+its own. That folder becomes a desk, named after it, whose first panel
+holds `claude` in its Start field for your Enter. If Claude Code is not
+set up for snyvi yet, the panel offers to connect it first, and says what
+that writes before it writes anything. The desk's rail then waits for the
+first document, with the sentence to ask Claude for one, and once an
+agent has worked there the sidebar asks for a second project.
+
+*How snyvi works* (`/start`, from the `?` box, Agents, or ⌘K `>`) is six
+short sections, in the order the story goes -- a desk for each project,
+notes, documents arriving, what waits, versions, keys -- each with a
+*Show me* that lights the real thing in the window.
+
 ### Connecting an agent
 
 `snyvi mcp` is a plain stdio MCP server, so any agent that speaks MCP can
@@ -412,27 +450,29 @@ cannot parse, is left alone and the snippet printed instead).
 it has one, asking it to send what it writes; `snyvi uninstall <agent>`
 takes the entry and the line back out.
 
-The viewer says the same thing. When the library is empty the page is
-*Connect an agent*: one row per agent, read by the daemon from the
-agent's own file, saying whether it is connected, not set up, or
+The viewer says the same thing, on *Agents* (`/connect`): one row per agent, read by the daemon from the
+agent's own file, saying whether it is set up, not set up, or
 registered under a path that no longer exists, with the command or the
 snippet that fixes it and, once a document has come from it, when. An
-agent whose session is open this moment says *online* instead -- the
+agent whose session is open this moment says *running now* instead -- the
 MCP server holds a connection to the daemon from the agent's first
 message until its process ends, so the row is as live as the session
 -- and the count beside the mark in the sidebar says how many are, on
-every page. It is reachable at any time from the foot of the `?` box
-and from that count, and `snyvi init` with no agent prints the same rows.
+every page. Claude Code is always listed first, with a *Connect Claude
+Code* button in the window; the other agents wait under *Using a different
+agent?* until one is set up. It is reachable at any time from the foot of
+the `?` box and from that count, and `snyvi init` with no agent prints
+the same rows.
 
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and two more inside a desk. `send_document` is
+That exposes two MCP tools, and three more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
 URL. `send_aside` is the small one, and [Asides](#asides) below says what it
-is for. `read_desk_notes` and `tick_desk_note` are offered only to a Claude
-running in a desk's panel: one reads that desk's notes, the other ticks one
-done. The tool
+is for. `read_desk_notes`, `tick_desk_note` and `name_panel` are offered
+only to a Claude running in a desk's panel: one reads that desk's notes,
+one ticks one done, and one names the panel it runs in. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -448,6 +488,13 @@ hooks at the new place rather than leaving them failing quietly on
 every tool call. `snyvi status` ends with a line saying what is
 registered and whether it still points at a binary that exists, and
 `snyvi uninstall-claude` takes all of it back out.
+
+It also sets Claude Code's status line to `snyvi statusline`, which prints
+nothing and tells a desk panel which model it runs and how full its context
+window is. A status line you already had is kept and still shows -- snyvi
+runs it for you -- and `uninstall-claude` puts it back. Restart any Claude
+Code session that was already open: one started before this does not see
+snyvi.
 
 `snyvi init-claude --auto` additionally installs a `PostToolUse` hook in
 `~/.claude/settings.json`, so every Markdown file Claude writes or edits
@@ -603,19 +650,37 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
 | t     | toggle contents                             |
-| \     | toggle sidebar                              |
+| \     | fold the sidebar to its rail / open it      |
 | o     | open source                                 |
 | ?     | show keys                                   |
 | Esc   | back to where the document was opened from  |
 | alt ← / → | back / forward                          |
 | ☰ / ⇧F10 | the menu for what has the focus           |
-| F2    | rename the project or desk row you are on   |
+| F2    | rename the project, desk or panel row you are on |
+| ⌘K `>` | what snyvi can do: a theme, a desk, a folder, an agent, the keys |
+
+`?` works with the letters asleep: it is how you find out they sleep.
+
+**The rail.** `\` or the button at the top of the sidebar folds it to a
+44 px column of icons -- the inbox, projects, desks, folders, agents, an
+aside when there is one, and search -- and each opens its section beside
+the rail; Esc, a click outside, or following a link closes it. The inbox
+icon counts what waits, the desks icon the panels waiting on you. A window
+narrower than 760 px always shows the sidebar this way.
+
+**On a desk**, with any key going to the panel otherwise: `⌃⌥1`–`⌃⌥4` a
+panel, `⌃⌥]` / `⌃⌥[` the next and the previous, `⌃⌥N` a new panel, `⌃⌥W`
+close it (its row keeps Undo for 8 s), `⌃⌥R` stop or start it, `⌃⌥Z` it
+alone, and `⌃⌥⇧` with an arrow moves it. The ✎ in a panel's head, F2 on its
+row or Rename… in its menu names it; the ⋯ at the end of the desk's head
+is the desk's own menu. A panel running Claude shows its model and how full
+its context window is, amber from 85%.
 
 **Right-click** anything in the sidebar, the rail or a desk for what it can
 do: a folder, a file, a project, a document, a desk, a panel's head or its
 terminal, a document in a desk's rail, a note, a point. The top line names
 what the menu is for; what removes or closes comes last, in red, and Close
-panel and Close desk ask a second time. Each entry does what the row's own
+desk asks a second time (Close panel does not: it keeps Undo). Each entry does what the row's own
 button does -- Remove from inbox leaves the same Undo in the row as its ✕.
 The menu key or ⇧F10 opens it from the keyboard for whatever has the focus
 (inside a panel, only the menu key: ⇧F10 is the program's), arrow keys and
@@ -952,7 +1017,11 @@ snyvi's. A Claude running in one of a desk's panels is offered
 `read_desk_notes`, which returns that desk's notes, open and done, each
 with its number, and `tick_desk_note`, which marks one open line done when
 the work it names is finished. A line an agent ticked carries the agent's
-name at its end; untick it and it is yours again. There is no way for an
+name at its end, and, when the agent passed them, the commit the work went
+into (click it to copy the hash) and a ↗ that opens the document it sent
+about the work; untick it and it is yours again, with none of those. The
+same Claude can name its panel with `name_panel`, a few words for what it
+is doing there, which you can rename like any other. There is no way for an
 agent to add, untick, change or remove a line. It is found by the pane: the panel puts its id in
 the shell's environment as `SNYVI_SESSION`, and the daemon answers only
 while that panel is running, and only with its own desk's list -- never
@@ -1135,6 +1204,8 @@ pack after adding a `.sublime-syntax` file there.
 | index     | `~/.local/share/snyvi/snyvi.db` (SQLite, FTS5) |
 | token     | `~/.config/snyvi/token` (required for every write) |
 | folders   | `~/.config/snyvi/folders.json` (the open folders, by path) |
+| log       | `~/.local/share/snyvi/daemon.log` (a daemon snyvi started; not on Windows) |
+| updates   | `~/.local/share/snyvi/updates/` (what is staged, and `state.json`) |
 
 On Windows, `%LOCALAPPDATA%\snyvi` and `%APPDATA%\snyvi\token`.
 

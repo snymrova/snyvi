@@ -75,6 +75,12 @@ const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js"));
 /// ⌘K, fetched the first time it is pressed: the one box a reader summons
 /// rather than meets, so first paint does not carry it.
 const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/palette.js"));
+/// The theme, accent and font steppers, fetched once the page is idle or the
+/// foot column is reached: nothing on screen needs them until a click there.
+const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
+/// The aside card at the sidebar's foot, fetched when there is an aside to
+/// show: a reader no agent has spoken to never pays for it.
+const NOTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/note.js"));
 /// Every theme but Paper and Ink, fetched once the page is idle: first paint
 /// carries only the two defaults, and boot.js paints a returning reader's
 /// own theme from a copy it kept, so the window opens as fast as it can.
@@ -197,6 +203,8 @@ impl Ui {
             ("menu.js", MENU_JS),
             ("themes.css", THEMES_CSS),
             ("palette.js", PALETTE_JS),
+            ("look.js", LOOK_JS),
+            ("note.js", NOTE_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -283,6 +291,13 @@ pub struct App {
     /// Set when the window has been asked to quit so a newer one can be
     /// started in its place; acted on when its stream ends.
     pub relaunch_window: std::sync::atomic::AtomicBool,
+    /// Set once this daemon has decided to leave for a restart: what the
+    /// pill says in the seconds before the stream drops, rather than
+    /// going back to "Restart to update".
+    pub restarting: std::sync::atomic::AtomicBool,
+    /// The `update` block last sent, so the watcher's tick sends it again
+    /// only when something in it moved. See `emit_update_if_changed`.
+    update_sent: std::sync::Mutex<String>,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -389,6 +404,19 @@ const RESTART_MARKER: &str = "restart.json";
 /// restart costs exactly what a stop does, and the window's reconnect is
 /// what brings the panes back.
 fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
+    // On its way out from the moment the pending restart is taken: the
+    // apply can take a while, and `snyvi restart` reads "nothing pending and
+    // not restarting" as given up. Given up it is, if this returns false.
+    app.restarting.store(true, Ordering::Relaxed);
+    let left = leave(app, apply, back);
+    if !left {
+        app.restarting.store(false, Ordering::Relaxed);
+        emit_update(app);
+    }
+    left
+}
+
+fn leave(app: &App, apply: bool, back: bool) -> bool {
     if apply || back {
         let Some(u) = &app.update else {
             eprintln!("snyvi: no updater on this daemon; not restarting");
@@ -424,16 +452,22 @@ fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
                 }
             }
         }
-        emit_update(app);
     }
-    let with_agent = app.panes.with_agent();
-    match app.store.mark_panes_resume(&with_agent) {
+    app.restarting.store(true, Ordering::Relaxed);
+    emit_update(app);
+    // The panes an agent is in, and the marks this daemon was given and
+    // nobody has spent yet -- an update applied while nobody was here must
+    // not lose the last one's.
+    let (mut resume, offer) = app.panes.unspent();
+    resume.extend(app.panes.with_agent());
+    match app.store.mark_panes_resume(&resume) {
         Ok(n) if n > 0 => {
             eprintln!("snyvi: restarting; {n} panel(s) will resume their conversation")
         }
         Ok(_) => eprintln!("snyvi: restarting"),
         Err(e) => eprintln!("snyvi: restarting; could not mark panels to resume: {e}"),
     }
+    let _ = app.store.offer_panes_resume(&offer);
     let marker = json!({ "apply": apply, "from": VERSION, "at": crate::store::now() });
     let _ = std::fs::write(app.paths.data_dir.join(RESTART_MARKER), marker.to_string());
     *app.leaving.lock().unwrap() = Leaving::Restart {
@@ -444,14 +478,42 @@ fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
     true
 }
 
-/// A planned restart's marker, if the last exit left one: taken, so a crash
-/// later does not find it. `Some(apply)` when the last exit was planned.
-fn take_restart_marker(paths: &Paths) -> Option<bool> {
-    let path = paths.data_dir.join(RESTART_MARKER);
-    let text = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
+/// How old a marker may be and still describe this start. A planned exit
+/// is followed by a start within seconds -- two under systemd, a few more
+/// for a successor that crashed and was started again -- so a marker older
+/// than this was left by an exit whose start never came.
+const RESTART_MARKER_FOR: i64 = 10 * 60;
+
+/// A planned restart's marker, if the last exit left one and it is recent.
+/// `Some(apply)` when the last exit was planned. Read here and taken only
+/// once this daemon holds the port (`drop_restart_marker`): a successor
+/// that dies before then is started again, and must find it again.
+fn read_restart_marker(paths: &Paths) -> Option<bool> {
+    let text = std::fs::read_to_string(paths.data_dir.join(RESTART_MARKER)).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let at = v["at"].as_i64()?;
+    if (crate::store::now() - at).abs() > RESTART_MARKER_FOR {
+        return None;
+    }
     Some(v["apply"].as_bool().unwrap_or(false))
+}
+
+fn drop_restart_marker(paths: &Paths) {
+    let _ = std::fs::remove_file(paths.data_dir.join(RESTART_MARKER));
+}
+
+/// The pending restart as the pill and About see it: `restart_json`
+/// without its clock, so the block only changes when what it says does.
+fn pending_json(app: &App) -> serde_json::Value {
+    match *app.restart.lock().unwrap() {
+        Some(p) => json!({
+            "apply": p.apply,
+            "back": p.back,
+            "now": p.now,
+            "waiting_on": if p.now { vec![] } else { app.panes.busy() },
+        }),
+        None => serde_json::Value::Null,
+    }
 }
 
 /// The pending restart, as health and `snyvi restart` see it.
@@ -506,10 +568,16 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let store = Store::open(&paths)?;
     // A planned restart left a marker and marks; a crash left neither. Both
-    // are taken now, before anything can ask, so they describe this start
-    // and no later one.
-    let planned = take_restart_marker(&paths);
-    let resume = store.take_panes_resume().unwrap_or_default();
+    // are read now, before anything can ask, and cleared once the port is
+    // held: a successor that dies before then is started again, and must
+    // find them again. A mark to resume with no marker behind it -- the
+    // restart it was for never came, or came long ago -- is only an offer:
+    // nothing types a conversation back on its own the next day.
+    let planned = read_restart_marker(&paths);
+    let (mut resume, mut offer) = store.panes_resume().unwrap_or_default();
+    if planned.is_none() {
+        offer.append(&mut resume);
+    }
     if let Some(apply) = planned {
         eprintln!(
             "snyvi: back from a planned restart{}; {} panel(s) to resume",
@@ -543,6 +611,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         h.update(MENU_JS.as_bytes());
         h.update(THEMES_CSS.as_bytes());
         h.update(PALETTE_JS.as_bytes());
+        h.update(LOOK_JS.as_bytes());
+        h.update(NOTE_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -581,20 +651,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         leaving: std::sync::Mutex::new(Leaving::Stopped),
         update,
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
+        restarting: std::sync::atomic::AtomicBool::new(false),
+        update_sent: Default::default(),
     });
-    // What the last exit did, told by its marker: only a planned exit that
-    // applied something opens the next day's slot. Said before anything can
-    // ask, so health never shows a version as ready that is now running.
     if let Some(u) = &app.update {
-        match u.note_started(planned.unwrap_or(false), crate::store::now()) {
-            Some(crate::update::Started::Applied(v)) => {
-                eprintln!("snyvi: now {v}, updated; the next automatic update is a day or so away")
-            }
-            Some(crate::update::Started::Failed(v)) => eprintln!(
-                "snyvi: {v} was put in place but this is {VERSION} running from the same path; {v} is marked failed and not tried again on its own"
-            ),
-            None => {}
-        }
         if u.channel == crate::update::Channel::Dev {
             eprintln!("snyvi: a development build; it will not check for updates");
         } else if !u.auto() {
@@ -604,18 +664,26 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // Before the listener: a window's first status frame must already say
     // which panes come back as a conversation.
     app.panes.mark_resume(resume);
+    app.panes.mark_offer(offer);
+    // Where a shell moves to is where it starts next (`pane::follow_folders`).
+    let weak = Arc::downgrade(&app);
+    app.panes.on_cwd(Box::new(move |id, cwd| {
+        if let Some(app) = weak.upgrade() {
+            let _ = app.store.set_pane_cwd(id, cwd);
+        }
+    }));
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
     let leaving = app.clone();
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
-    spawn_restart_watcher(app.clone());
-    spawn_update_checker(app.clone());
 
     let router = Router::new()
         .route("/", get(shell_home))
         .route("/connect", get(shell_connect))
+        .route("/start", get(shell_start))
+        .route("/welcome", get(shell_welcome))
         .route("/d/{id}", get(shell_doc))
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
@@ -629,6 +697,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/health", get(health))
         .route("/api/about", get(about))
         .route("/api/agents", get(agents))
+        .route("/api/agents/claude/connect", post(connect_claude))
         .route("/api/tree", get(tree))
         .route("/api/projects/{id}/tree", get(project_tree))
         .route("/api/workflows/{id}/tree", get(workflow_tree))
@@ -655,7 +724,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/notes/restore", post(restore_asides))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
-        .route("/api/restart", post(restart))
+        .route("/api/restart", post(restart).delete(cancel_restart))
         .route("/api/update/check", post(update_check))
         .route("/api/update/auto", post(update_auto))
         .route("/api/reset", get(reset_census).post(reset))
@@ -694,11 +763,14 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
             post(restore_desk_note),
         )
         .route("/api/panes/{id}/delete", post(close_pane))
+        .route("/api/panes/{id}/restore", post(restore_pane))
+        .route("/api/panes/{id}/rename", post(rename_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
         .route("/api/panes/{id}/agent", post(pane_agent))
         .route("/api/panes/{id}/notes", get(pane_notes))
         .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
+        .route("/api/panes/{id}/name", post(pane_name))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -714,10 +786,35 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/assets/menu.js", get(asset_menu))
         .route("/assets/themes.css", get(asset_themes))
         .route("/assets/palette.js", get(asset_palette))
+        .route("/assets/look.js", get(asset_look))
+        .route("/assets/note.js", get(asset_note))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    // What the last exit did, told by its marker: only a planned exit that
+    // applied something opens the next day's slot. Said once this daemon
+    // holds the port -- one that panicked on the way here has not started,
+    // and `update::first_start` is still counting it -- and before it
+    // answers anything, so health never shows a version as ready that is
+    // now running.
+    if let Some(u) = &leaving.update {
+        match u.note_started(planned.unwrap_or(false), crate::store::now()) {
+            Some(crate::update::Started::Applied(v)) => {
+                eprintln!("snyvi: now {v}, updated; the next automatic update is a day or so away")
+            }
+            Some(crate::update::Started::Failed(v)) => eprintln!(
+                "snyvi: {v} was put in place but this is {VERSION} running from the same path; {v} is marked failed and not tried again on its own"
+            ),
+            None => {}
+        }
+    }
+    drop_restart_marker(&paths);
+    let _ = leaving.store.clear_panes_resume();
+    // After it: until then `ready` may still name the version now running,
+    // and the watcher would apply it again.
+    spawn_restart_watcher(leaving.clone());
+    spawn_update_checker(leaving.clone());
     // An install from an older snyvi gets the hooks that tell a panel what
     // Claude is doing, without the reader running `init-claude` again. Only
     // where our hook already is and names this binary, and only once this
@@ -758,8 +855,23 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // daemon that is going takes its shells with it, and they do not come
     // back with the next one. What comes back is the text, greyed -- and,
     // after a planned restart, the conversation, which the window asks for.
-    leaving.panes.shutdown();
     let why = leaving.leaving.lock().unwrap().clone();
+    // Not planned -- `snyvi stop`, a signal, a reboot: the panes with Claude
+    // in them are marked to be offered back, which the next window does with
+    // one click and not on its own. A planned restart marked them already.
+    if matches!(why, Leaving::Stopped) {
+        // With the marks still unspent, as offers: this exit was not planned.
+        let (resume, offer) = leaving.panes.unspent();
+        let mut with_agent = leaving.panes.with_agent();
+        with_agent.extend(resume);
+        with_agent.extend(offer);
+        if let Ok(n) = leaving.store.offer_panes_resume(&with_agent) {
+            if n > 0 {
+                eprintln!("snyvi: {n} panel(s) had Claude open; the window will offer each conversation back");
+            }
+        }
+    }
+    leaving.panes.shutdown();
     Ok(why)
 }
 
@@ -781,10 +893,19 @@ fn spawn_restart_watcher(app: Arc<App>) {
                     if !matches!(&m, Ok(s) if s.starts_with("panes\n")) { continue }
                 }
             }
+            // The block moves with the clock too -- the day's slot opening,
+            // amber at a day, a failure ageing out -- and with the panels a
+            // pending restart waits on; nothing else would say so.
+            emit_update_if_changed(&app);
             let pending = *app.restart.lock().unwrap();
             match pending {
                 Some(p) => {
                     if !p.now && !app.panes.busy().is_empty() {
+                        continue;
+                    }
+                    // A check is downloading or an apply is swapping: wait
+                    // it out rather than block this task on the lock.
+                    if (p.apply || p.back) && app.update.as_ref().is_some_and(|u| u.busy()) {
                         continue;
                     }
                     app.restart.lock().unwrap().take();
@@ -859,7 +980,9 @@ fn spawn_update_checker(app: Arc<App>) {
             }
             let checker = u.clone();
             let before = checker.state().ready;
-            let r = tokio::task::spawn_blocking(move || checker.check(false, None)).await;
+            let r =
+                tokio::task::spawn_blocking(move || checker.check(crate::update::Ask::TIMER, None))
+                    .await;
             match r {
                 Ok(Ok(c)) if c.ready.is_some() && c.ready != before => {
                     eprintln!(
@@ -881,25 +1004,50 @@ fn spawn_update_checker(app: Arc<App>) {
     });
 }
 
-/// The `update` block of health and About, and the `update` event's body.
+/// The `update` block of health and About, and the `update` event's body:
+/// the updater's word, the restart waiting for quiet if one is, and whether
+/// this daemon is on its way out.
 fn update_json(app: &App) -> serde_json::Value {
     let stale = app.exe.as_ref().is_some_and(Exe::stale);
-    match &app.update {
+    let mut j = match &app.update {
         Some(u) => u.json(crate::store::now(), stale),
         None => json!({ "channel": "unknown", "auto": false, "show": stale, "stale": stale }),
-    }
+    };
+    j["restart"] = pending_json(app);
+    j["restarting"] = json!(app.restarting.load(Ordering::Relaxed));
+    j
 }
 
 pub(crate) fn emit_update(app: &App) {
-    emit(app, "update", update_json(app));
+    let j = update_json(app);
+    *app.update_sent.lock().unwrap_or_else(|e| e.into_inner()) = j.to_string();
+    emit(app, "update", j);
+}
+
+/// `emit_update`, only when the block differs from the one last sent.
+fn emit_update_if_changed(app: &App) {
+    let j = update_json(app);
+    let text = j.to_string();
+    {
+        let mut sent = app.update_sent.lock().unwrap_or_else(|e| e.into_inner());
+        if *sent == text {
+            return;
+        }
+        *sent = text;
+    }
+    emit(app, "update", j);
 }
 
 /// After `run` has returned `Leaving::Restart`: the successor, by the path
 /// recorded at start. Under systemd the unit does it -- this process exits
 /// with `PLANNED_RESTART_EXIT` and `Restart=on-failure` brings the new file
-/// up inside the unit. Otherwise the successor is spawned detached and
-/// watched for up to ten seconds; a daemon that does not answer is said so
-/// in the log, which the updater's rollback will act on later. Never returns.
+/// up inside the unit, where `update::first_start` takes a bad one back out.
+/// Otherwise the successor is spawned detached, with its output in
+/// `daemon.log`, and watched for up to `CAME_UP_WITHIN`: when nothing at all
+/// answers after an apply, the previous version is put back and started.
+/// Something else answering -- an older snyvi from another path holding the
+/// port -- is not the successor, and not a reason to take the update back
+/// out either. Never returns.
 pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
     if under_systemd() {
         eprintln!("snyvi: planned restart under systemd; exiting {PLANNED_RESTART_EXIT} for the unit to start the new file");
@@ -917,16 +1065,29 @@ pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
         );
         std::process::exit(1);
     }
-    if let Some(v) = came_up(me) {
-        eprintln!(
-            "snyvi: {v} is up on {}; this one is done",
-            config::base_url()
-        );
-        std::process::exit(0);
+    match came_up(me, &exe) {
+        CameUp::Ours(v) => {
+            eprintln!(
+                "snyvi: {v} is up on {}; this one is done",
+                config::base_url()
+            );
+            std::process::exit(0);
+        }
+        CameUp::Other(what) => {
+            eprintln!(
+                "snyvi: something else answered on {} after the restart ({what}), not {}; stop it and run `snyvi restart`",
+                config::base_url(),
+                exe.display()
+            );
+            std::process::exit(1);
+        }
+        CameUp::Nothing => {}
     }
     eprintln!(
-        "snyvi: {} did not answer within 10 s of a planned restart",
-        exe.display()
+        "snyvi: {} did not answer within {} s of a planned restart; see {}",
+        exe.display(),
+        CAME_UP_WITHIN.as_secs(),
+        platform::daemon_log(&paths.data_dir).display()
     );
     if apply {
         // The file just placed does not run. The one that did is beside it
@@ -941,7 +1102,7 @@ pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
             eprintln!("snyvi: starting {} again failed: {e}", exe.display());
             std::process::exit(1);
         }
-        if let Some(v) = came_up(me) {
+        if let CameUp::Ours(v) = came_up(me, &exe) {
             eprintln!("snyvi: {v} is back up on {}", config::base_url());
             std::process::exit(0);
         }
@@ -953,26 +1114,47 @@ pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
     std::process::exit(1);
 }
 
-/// Health answered by a process other than `me`, within ten seconds: its
-/// version.
-fn came_up(me: u32) -> Option<String> {
-    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+/// How long a successor has to answer. A daemon still migrating its store
+/// is not a failed one, and a rollback under it would be.
+const CAME_UP_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+enum CameUp {
+    /// Our successor: another process, from the recorded path. Its version.
+    Ours(String),
+    /// Another process answered, from another file.
+    Other(String),
+    Nothing,
+}
+
+/// Who answered health, within `CAME_UP_WITHIN`: a process other than `me`
+/// and from `exe` is the successor. A daemon from before health said its
+/// file (1.7.0 and older, what `--to` may go down to) is taken on its pid.
+fn came_up(me: u32, exe: &std::path::Path) -> CameUp {
+    let deadline = Instant::now() + CAME_UP_WITHIN;
     let mut wait = std::time::Duration::from_millis(20);
+    let mut other = None;
     while Instant::now() < deadline {
         if let Some(h) = crate::client::health() {
-            if h.get("pid").and_then(serde_json::Value::as_u64) != Some(u64::from(me)) {
-                return Some(
-                    h.get("version")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("?")
-                        .to_string(),
-                );
+            let version = h["version"].as_str().unwrap_or("?").to_string();
+            if h["pid"].as_u64() != Some(u64::from(me)) {
+                match h["exe"].as_str() {
+                    Some(e) if std::path::Path::new(e) != exe => {
+                        // Maybe the old one is still letting go of the port
+                        // and this is a third party that just took it; keep
+                        // looking until the deadline, and say so then.
+                        other = Some(format!("snyvi {version} from {e}"));
+                    }
+                    _ => return CameUp::Ours(version),
+                }
             }
         }
         std::thread::sleep(wait);
         wait = (wait * 2).min(std::time::Duration::from_millis(250));
     }
-    None
+    match other {
+        Some(what) => CameUp::Other(what),
+        None => CameUp::Nothing,
+    }
 }
 
 // ---------- shell ----------
@@ -1130,7 +1312,23 @@ async fn shell_home(State(app): S) -> Response {
 async fn shell_connect(State(app): S) -> Response {
     let tree = app.store.projects().unwrap_or_default();
     let boot = json!({ "view": "connect", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION, "agents": agents_json(&app) });
-    shell(&app, boot, "", "Connect an agent · snyvi")
+    shell(&app, boot, "", "Agents · snyvi")
+}
+
+/// The first ten minutes: a page the client draws (`ui/about.js`), asked for
+/// from `?`, the connect page, ⌘K `>`, or an aside's link.
+async fn shell_start(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "start", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "How snyvi works · snyvi")
+}
+
+/// Welcome: what snyvi is, and one question -- which project first. The page
+/// an empty window opens on, drawn by `ui/about.js`; reopened from Help.
+async fn shell_welcome(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "welcome", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "Welcome · snyvi")
 }
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
@@ -1298,6 +1496,24 @@ async fn asset_palette(State(app): S) -> Response {
         PALETTE_JS,
     )
 }
+/// The look steppers, on the same terms: the page asks once it is idle.
+async fn asset_look(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "look.js",
+        LOOK_JS,
+    )
+}
+/// The aside card, on the same terms: asked for when there is an aside.
+async fn asset_note(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "note.js",
+        NOTE_JS,
+    )
+}
 /// The other themes, on the same terms: the page asks once it is idle.
 async fn asset_themes(State(app): S) -> Response {
     asset(&app, "text/css; charset=utf-8", "themes.css", THEMES_CSS)
@@ -1391,6 +1607,9 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // So `snyvi stop` can end this exact process if it ignores the
         // shutdown endpoint, without having to guess which snyvi it is.
         "pid": std::process::id(),
+        // The file it runs from, so a restart can tell its successor from
+        // another snyvi that happens to hold the port.
+        "exe": app.exe.as_ref().map(|e| e.path.display().to_string()),
         "docs": app.store.count().unwrap_or(0),
         // Whether a link should be handed to a window or opened in a browser.
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
@@ -1459,11 +1678,57 @@ async fn agents(State(app): S) -> Response {
     Json(agents_json(&app)).into_response()
 }
 
+/// Connect Claude Code from the window: what `snyvi init-claude --auto` does
+/// in a terminal, run by this binary for this binary -- never for another
+/// one -- after the reader said yes to what it writes. The window's gate,
+/// as a desk is: a tab cannot change what Claude Code runs. It answers with
+/// what init printed and the agents as they are now.
+async fn connect_claude(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    // The path this daemon was started from, as the updater keeps it: once an
+    // update has renamed a new file over it, `current_exe` names the old one,
+    // gone (`… (deleted)` on Linux), and the same program is at the path.
+    let recorded = app.exe.as_ref().map(|e| e.path.clone());
+    let ran = tokio::task::spawn_blocking(move || {
+        let exe = match recorded {
+            Some(p) => p,
+            None => std::env::current_exe()?,
+        };
+        std::process::Command::new(exe)
+            .args(["init-claude", "--auto"])
+            .stdin(std::process::Stdio::null())
+            .output()
+    })
+    .await;
+    match ran {
+        Ok(Ok(out)) => {
+            let said = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Json(json!({ "ok": out.status.success(), "said": said.trim(), "agents": agents_json(&app) }))
+                .into_response()
+        }
+        Ok(Err(e)) => err(e.into()),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
 fn agents_json(app: &App) -> serde_json::Value {
     let senders = app.store.senders().unwrap_or_default();
     let online = app.online.lock().unwrap_or_else(|e| e.into_inner()).clone();
     json!({
         "program": crate::setup::program().0,
+        // Whether a new desk's first panel can offer `claude`: on the
+        // daemon's PATH, or registered (which it would not be without it).
+        "claude_on_path": crate::platform::find_on_path("claude").is_some(),
         "rows": crate::agents::rows(&senders, &online),
         "online": online,
         "now": crate::store::now(),
@@ -1727,8 +1992,9 @@ struct RestartBody {
 /// back as `claude --resume`; the rest as shells with their old screen
 /// greyed above, which is what any restart already does. Answers to the
 /// token (`snyvi restart`) or the window's capability (a click on the
-/// update pill, later); a tab holds neither. Asking again changes `when`
-/// and `apply` on the restart already pending rather than queueing another.
+/// update pill); a tab holds neither. Asking again adds to the restart
+/// already pending rather than queueing another: `snyvi restart` while the
+/// pill's update waits still takes the update, and `--now` hurries both.
 async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) -> Response {
     let cap = headers
         .get(CAPABILITY_HEADER)
@@ -1768,31 +2034,62 @@ async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) 
         )
             .into_response();
     }
-    {
+    let now = {
         let mut slot = app.restart.lock().unwrap();
-        let since = slot.map(|p| p.since).unwrap_or_else(Instant::now);
-        *slot = Some(Pending {
-            since,
-            apply: b.apply,
-            back: b.back,
-            now,
-        });
-    }
+        let was = *slot;
+        let p = Pending {
+            since: was.map(|p| p.since).unwrap_or_else(Instant::now),
+            apply: b.apply || was.is_some_and(|p| p.apply),
+            back: b.back || was.is_some_and(|p| p.back),
+            now: now || was.is_some_and(|p| p.now),
+        };
+        *slot = Some(p);
+        p.now
+    };
     let waiting_on = if now { vec![] } else { app.panes.busy() };
     app.restart_wake.notify_one();
+    emit_update(&app);
     Json(json!({ "ok": true, "waiting_on": waiting_on, "version": VERSION })).into_response()
 }
 
-#[derive(Deserialize, Default)]
+/// Call off a restart that is waiting for quiet: `snyvi restart --cancel`,
+/// Ctrl-C under `snyvi restart`, and the pill's Cancel. The same who as
+/// asking. One already under way is past calling off, and says so.
+async fn cancel_restart(State(app): S, headers: HeaderMap) -> Response {
+    if !capable(&app, &headers) && !authorized(&app, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
+    }
+    let cancelled = app.restart.lock().unwrap().take().is_some();
+    if cancelled {
+        eprintln!("snyvi: the restart that was waiting is called off");
+    }
+    emit_update(&app);
+    Json(json!({ "ok": true, "cancelled": cancelled })).into_response()
+}
+
+#[derive(Deserialize)]
 struct UpdateCheckBody {
     /// One release by number, for `snyvi update --to`; may go down.
     #[serde(default)]
     to: Option<String>,
+    /// Whether what is found goes past the daily floor: Check now and
+    /// `snyvi update` (and every client from before this field); not
+    /// `snyvi update check`, which a script may run every hour.
+    #[serde(default = "yes")]
+    lift: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// `Check now` in About, and `snyvi update`: read the manifest, stage what
-/// it names, and say. Sets `asked`, so the daily floor does not apply to
-/// what was found. Token or capability; a bare tab has neither.
+/// it names, and say. What it finds newer goes past the daily floor unless
+/// `lift` is false. Token or capability; a bare tab has neither.
 async fn update_check(
     State(app): S,
     headers: HeaderMap,
@@ -1825,7 +2122,11 @@ async fn update_check(
         }
     }
     let to = b.to.clone();
-    let r = tokio::task::spawn_blocking(move || u.check(true, to.as_deref())).await;
+    let ask = crate::update::Ask {
+        fresh: true,
+        lift: b.lift,
+    };
+    let r = tokio::task::spawn_blocking(move || u.check(ask, to.as_deref())).await;
     emit_update(&app);
     app.restart_wake.notify_one();
     match r {
@@ -2074,12 +2375,11 @@ impl EventsQ {
             .is_some_and(|v| !matches!(v, "" | "0" | "false" | "False"))
     }
 
-    /// The window's version, when the page says one: a window from 1.7 on
-    /// stamps its own number on the mark, and the page passes it along. An
-    /// older window says `1`, and is not known.
+    /// What the window says of itself: a window from 1.7 on stamps its own
+    /// number on the mark, and the page passes it along; an older one says
+    /// `1`, which the updater reads as older than any.
     fn window_version(&self) -> Option<String> {
-        let v = self.window.as_deref()?;
-        semver::Version::parse(v).ok().map(|_| v.to_string())
+        self.window.clone().filter(|_| self.is_window())
     }
 
     /// The agent's name, trimmed and cut to a length the header can hold.
@@ -2152,12 +2452,8 @@ impl Drop for StreamMark {
                 .windows
                 .fetch_sub(1, Ordering::Relaxed)
                 .saturating_sub(1);
-            if left == 0 && self.app.relaunch_window.swap(false, Ordering::Relaxed) {
-                if let Some(exe) = self.app.exe.as_ref().map(|e| e.path.clone()) {
-                    if let Err(e) = platform::spawn_detached(&exe, &["app"]) {
-                        eprintln!("snyvi: could not start the window again: {e}");
-                    }
-                }
+            if left == 0 && self.app.relaunch_window.load(Ordering::Relaxed) {
+                relaunch_window_when_gone(self.app.clone());
             }
         }
         // The last window closing is one of the updater's doors, and a page
@@ -2178,6 +2474,32 @@ impl Drop for StreamMark {
         }
     }
 }
+
+/// The window that was asked to quit has closed its stream: once no window
+/// has come back for `WINDOW_GONE_FOR` -- a page that reloads itself closes
+/// its stream too, and is back in a moment -- the new one is started. A
+/// window that did come back is still the old one, and its stream ending
+/// later is looked at again.
+fn relaunch_window_when_gone(app: Arc<App>) {
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    rt.spawn(async move {
+        tokio::time::sleep(WINDOW_GONE_FOR).await;
+        if app.windows.load(Ordering::Relaxed) != 0
+            || !app.relaunch_window.swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+        if let Some(exe) = app.exe.as_ref().map(|e| e.path.clone()) {
+            if let Err(e) = platform::spawn_detached(&exe, &["app"]) {
+                eprintln!("snyvi: could not start the window again: {e}");
+            }
+        }
+    });
+}
+
+const WINDOW_GONE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Broadcast payloads are "<event name>\n<json>".
 ///
@@ -2745,6 +3067,9 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
     let _ = socket
         .send(Message::Text(json!({ "ok": true }).to_string().into()))
         .await;
+    // A window is showing a desk: someone can see the panes a restart
+    // marked, so their clock starts now. See `pane::RESUME_FOR`.
+    app.panes.arm_marks();
     // Bounded, so a page that cannot keep up makes its forwarders wait, and a
     // forwarder that waits long enough is resynced rather than buffered.
     let (out, mut frames) = tokio::sync::mpsc::channel::<Arc<str>>(64);
@@ -2930,6 +3255,10 @@ struct NewDeskBody {
     root: Option<String>,
     #[serde(default)]
     path: String,
+    /// Or a project, by id: the folder its agents wrote from, which the store
+    /// holds. The page names the project, never the path.
+    #[serde(default)]
+    project: Option<i64>,
     #[serde(default)]
     name: Option<String>,
 }
@@ -2938,6 +3267,9 @@ struct NewDeskBody {
 struct LayoutBody {
     col: f64,
     row: f64,
+    /// The slot in full view, 0 for the grid; left out keeps what is there.
+    #[serde(default)]
+    full: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -2989,12 +3321,13 @@ fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
     v
 }
 
-/// A new desk, on a folder or on none.
+/// A new desk, on a folder, on a project's folder, or on none.
 ///
 /// The folder arrives as a root id and a relative path rather than as an
 /// absolute one, so it goes through `resolve` -- the same guard the terminal
 /// button and every byte `browse_file` reads go through, which is what keeps a
-/// path from the page inside the root it names.
+/// path from the page inside the root it names. A project arrives as its id,
+/// and its folder is the one the store recorded, as the terminal button's is.
 async fn create_desk(
     State(app): S,
     headers: HeaderMap,
@@ -3013,6 +3346,16 @@ async fn create_desk(
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": "no such folder" })),
+                )
+                    .into_response()
+            }
+        },
+        None if b.project.is_some() => match b.project.and_then(|id| app.store.project_root(id)) {
+            Some(root) => (std::path::PathBuf::from(root), None),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "no such project" })),
                 )
                     .into_response()
             }
@@ -3212,7 +3555,7 @@ async fn desk_layout(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.set_desk_layout(id, b.col, b.row) {
+    match app.store.set_desk_layout(id, b.col, b.row, b.full) {
         // Silent: a drag ends hundreds of times an hour and no other window
         // needs to be told where this one's divider came to rest.
         Ok(true) => Json(json!({ "ok": true })).into_response(),
@@ -3252,17 +3595,19 @@ async fn delete_desk(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let panes: Vec<String> = app
+    let mut panes: Vec<String> = app
         .store
         .desk(id)
         .ok()
         .flatten()
         .map(|d| d.panes.into_iter().map(|p| p.id).collect())
         .unwrap_or_default();
+    // Its closed panes go with it, before the cascade forgets which they were.
+    panes.extend(app.store.closed_panes(id).unwrap_or_default());
     match app.store.delete_desk(id) {
         Ok(true) => {
             for p in &panes {
-                app.panes.close(p);
+                app.panes.discard(p);
             }
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
@@ -3317,8 +3662,57 @@ async fn close_pane(
         return no;
     }
     match app.store.close_pane(&id) {
+        // Stopped and kept: the row waits in `panes_closed` and the text on
+        // disk, for Undo, until `prune`.
         Ok(true) => {
-            app.panes.close(&id);
+            app.panes.forget(&id);
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A closed pane back on its desk, stopped, in the lowest free slot: the
+/// Undo on a close. 409 when the desk filled up in the meantime.
+async fn restore_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.restore_pane(&id) {
+        Ok(crate::desk::Restored::Pane(pane)) => {
+            desks_moved(&app);
+            Json(json!({ "pane": pane })).into_response()
+        }
+        Ok(crate::desk::Restored::DeskFull) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
+        )
+            .into_response(),
+        Ok(crate::desk::Restored::Gone) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Call a pane something; empty gives it back to its program's title.
+async fn rename_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.rename_pane(&id, &b.name) {
+        Ok(true) => {
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
@@ -3347,6 +3741,11 @@ struct StartBody {
     /// command is built here, from the id the pane kept, never from the page.
     #[serde(default)]
     resume: bool,
+    /// The resume is the page's own, after a restart, not a click: honoured
+    /// only while this daemon still holds the pane's mark. A mark that lapsed
+    /// while its panel sat unshown starts `cmd`, with the conversation offered.
+    #[serde(default)]
+    marked: bool,
     #[serde(default = "default_cols")]
     cols: u16,
     #[serde(default = "default_rows")]
@@ -3379,8 +3778,10 @@ async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let lapsed = b.resume && b.marked && !app.panes.marked(&id);
+    let offer = lapsed && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
-    let cmd = if b.resume {
+    let cmd = if b.resume && !lapsed {
         let session = &placed.pane.agent_session;
         if !crate::desk::valid_session(session) {
             return (
@@ -3398,14 +3799,22 @@ async fn start_pane(
         cmd
     };
     let live = app.panes.get(&id);
+    // Where the shell last was; the desk's own folder if that one is gone.
+    let cwd = if std::path::Path::new(&placed.pane.cwd).is_dir() {
+        placed.pane.cwd.as_str()
+    } else {
+        placed.root.as_str()
+    };
     let start = crate::pane::Start {
-        cwd: &placed.pane.cwd,
+        cwd,
+        root: &placed.root,
         cmd: &cmd,
         desk: &placed.desk_name,
         slot: placed.pane.slot,
         cols: b.cols,
         rows: b.rows,
         accent: &b.accent,
+        offer,
     };
     match live.start(start, &app.panes) {
         Ok(status) => Json(json!({ "status": status })).into_response(),
@@ -3443,6 +3852,22 @@ struct AgentBody {
     /// The Claude Code session id, a UUID, when the event carried one.
     #[serde(default)]
     session: Option<String>,
+    /// From the status line (`snyvi statusline`): the model's name, and how
+    /// full its context window is.
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    ctx: Option<CtxBody>,
+}
+
+#[derive(Deserialize, Default)]
+struct CtxBody {
+    #[serde(default)]
+    pct: Option<f64>,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default)]
+    input: Option<u64>,
 }
 
 /// What the agent in a pane is doing, told by its hook (`snyvi hook`, run by
@@ -3472,10 +3897,24 @@ async fn pane_agent(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let live = match &b.state {
+    let mut live = match &b.state {
         Some(state) => app.panes.set_agent(&id, state),
         None => app.panes.is_running(&id),
     };
+    if live && (b.model.is_some() || b.ctx.is_some()) {
+        let c = b.ctx.unwrap_or_default();
+        let pct = c
+            .pct
+            .filter(|p| p.is_finite())
+            .map(|p| p.clamp(0.0, 100.0).round() as u8);
+        live = app.panes.set_context(
+            &id,
+            &crate::statusline::clean(b.model.as_deref().unwrap_or("")),
+            pct,
+            c.size.filter(|s| *s > 0),
+            c.input,
+        );
+    }
     if !live {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -3525,6 +3964,12 @@ struct TickBody {
     /// The agent's name, as its MCP client gave it in `initialize`.
     #[serde(default)]
     by: String,
+    /// The commit the work is in, if the agent made one.
+    #[serde(default)]
+    commit: String,
+    /// A document the agent sent about the work, by its id.
+    #[serde(default)]
+    about: String,
 }
 
 /// An agent ticks a line on its own desk's list: `tick_desk_note`. The same
@@ -3551,8 +3996,32 @@ async fn pane_tick_note(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return err(e),
     };
-    let by = body.map(|Json(b)| b.by).unwrap_or_default();
-    match app.store.tick_desk_note(placed.desk_id, note, &by) {
+    let b = body.map(|Json(b)| b).unwrap_or_default();
+    let (commit, doc) = (b.commit.trim(), b.about.trim());
+    // Said wrong, it is said back rather than dropped: the agent can tick
+    // again with the hash `git log` printed, and the line is still open.
+    if !commit.is_empty() && !crate::desk::commit_ok(commit) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "commit must be a hash as git log prints it: 7 to 40 hex digits" })),
+        )
+            .into_response();
+    }
+    if !doc.is_empty() && !crate::desk::doc_ok(doc) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": "about must be a document id from send_document: 10 hex digits" }),
+            ),
+        )
+            .into_response();
+    }
+    let tick = crate::desk::Tick {
+        by: b.by,
+        commit: commit.into(),
+        doc: doc.into(),
+    };
+    match app.store.tick_desk_note(placed.desk_id, note, &tick) {
         Ok(true) => {
             emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
             Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
@@ -3564,6 +4033,35 @@ async fn pane_tick_note(
             Json(json!({ "error": "no open note by that id on this desk" })),
         )
             .into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// An agent names the panel it runs in: `name_panel`. The gate the list has
+/// -- the token, then a running pane -- and the one thing it touches is that
+/// pane's own name, the one the reader sets with ✎. Empty gives the panel
+/// back to its program's title.
+async fn pane_name(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !app.panes.is_running(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match app.store.rename_pane(&id, &b.name) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }
@@ -4211,8 +4709,8 @@ fn err(e: anyhow::Error) -> Response {
 mod tests {
     use super::{
         desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-        BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, MENU_JS, MMD_JS,
-        PALETTE_JS,
+        BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS,
+        MMD_JS, NOTE_JS, PALETTE_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -4454,9 +4952,12 @@ mod tests {
             "async fn restore_desk_note(",
             "async fn open_pane(",
             "async fn close_pane(",
+            "async fn restore_pane(",
+            "async fn rename_pane(",
             "async fn start_pane(",
             "async fn stop_pane(",
             "async fn paste_image(",
+            "async fn connect_claude(",
         ] {
             let from = src
                 .find(handler)
@@ -4493,6 +4994,8 @@ mod tests {
             r#".route("/api/desks/{id}/notes/{note}/remove", post(remove_desk_note))"#,
             r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
+            r#".route("/api/panes/{id}/restore", post(restore_pane))"#,
+            r#".route("/api/panes/{id}/rename", post(rename_pane))"#,
             r#".route("/api/panes/{id}/start", post(start_pane))"#,
             r#".route("/api/panes/{id}/stop", post(stop_pane))"#,
             r#""/api/panes/{id}/paste""#,
@@ -4542,6 +5045,17 @@ mod tests {
         assert!(
             src.contains(r#".route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))"#)
         );
+        // And naming its panel: token, running pane, then only that pane's name.
+        let name = &src[src.find("async fn pane_name(").unwrap()..];
+        let name = &name[..name.find("\n}\n").unwrap()];
+        assert!(name.find("authorized(").unwrap() < name.find("app.panes").unwrap());
+        assert!(name.find("app.panes.is_running(").unwrap() < name.find("app.store").unwrap());
+        assert_eq!(
+            name.matches("app.store").count(),
+            name.matches("app.store.rename_pane(&id,").count(),
+            "pane_name reaches the store for more than its own pane's name"
+        );
+        assert!(src.contains(r#".route("/api/panes/{id}/name", post(pane_name))"#));
     }
 
     /// The capability is read off the fragment and presented in a frame. If it
@@ -4730,6 +5244,8 @@ mod tests {
             ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
             ("palette.js", PALETTE_JS),
+            ("look.js", LOOK_JS),
+            ("note.js", NOTE_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
@@ -4771,6 +5287,8 @@ mod tests {
             "MENU_JS",
             "THEMES_CSS",
             "PALETTE_JS",
+            "LOOK_JS",
+            "NOTE_JS",
         ] {
             assert!(
                 block.contains(chunk),
@@ -4795,9 +5313,10 @@ mod tests {
     }
 
     /// The pre-paint script and the app must agree on the keys, or a saved setting is
-    /// written by one and never read by the other. The three theme keys are spelled
-    /// out in full: this is a substring check, and `snyvi.theme` would go on passing
-    /// on the strength of `snyvi.theme.light` alone.
+    /// written by one and never read by the other. The app's half is app.js, or
+    /// look.js for the theme and font, which it fetches once the page is idle. The
+    /// three theme keys are spelled out in full: this is a substring check, and
+    /// `snyvi.theme` would go on passing on the strength of `snyvi.theme.light` alone.
     #[test]
     fn settings_written_by_the_app_are_applied_before_first_paint() {
         for key in [
@@ -4810,7 +5329,10 @@ mod tests {
             "wrap",
         ] {
             let k = format!("snyvi.{key}");
-            assert!(APP_JS.contains(&k), "{k} is not used by app.js");
+            assert!(
+                APP_JS.contains(&k) || LOOK_JS.contains(&k),
+                "{k} is not used by app.js or look.js"
+            );
             assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
         }
     }

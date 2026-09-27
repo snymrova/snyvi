@@ -876,3 +876,79 @@ export function key(which) {
   (which === "f" ? mmdFull : mmdFit)(fig);
   mmdTouched = fig;
 }
+
+/* The figure a diagram is drawn in, its tools and its full screen -- in app.css until 1.7.1, and nothing on screen used them before
+ * this file was loaded, so they came here to leave first paint. */
+const CSS_MOVED = `
+/* A drawn diagram is not prose, so it takes what the reading measure is not
+   using: the column's own padding, which is as much as can be given without
+   reflowing the text around it. The pane itself is one keystroke away (\`w\`) and
+   the screen is another (\`f\`). */
+.mmd { margin: 1.5em 0; position: relative; }
+.mmd[data-state="done"] { margin-inline: calc(-1 * var(--doc-pad, 0px)); }
+.mmd-frame { display: flex; align-items: center; justify-content: center; }
+.mmd-frame svg { max-width: 100%; height: auto; }
+/* Once it has a viewport the frame owns the box and the SVG fills it, so the
+   viewBox is the only thing that decides what is shown. */
+.mmd[data-zoom] .mmd-frame { overflow: hidden; border-radius: var(--radius); }
+.mmd[data-zoom] .mmd-frame svg { width: 100%; height: 100%; max-width: none; display: block; }
+.mmd[data-zoom="in"] .mmd-frame { cursor: grab; }
+.mmd[data-grab] .mmd-frame { cursor: grabbing; }
+/* The controls: present when the diagram is under the cursor or holds the
+   focus, absent from a page being read -- the bargain the rename pencils in the
+   tree make. Always there for a reader on a touch screen, which has no hover. */
+.mmd-tools {
+  position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px;
+  border-radius: var(--radius); background: var(--bg-raise); box-shadow: 0 1px 3px rgba(0,0,0,.18);
+  opacity: 0; transition: opacity .12s ease; pointer-events: none;
+}
+.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd[data-full] .mmd-tools { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .mmd-tools { opacity: 1; pointer-events: auto; } }
+.mmd-tools button {
+  font-family: var(--sans); font-size: 12px; line-height: 1; color: var(--fg-2);
+  min-width: 26px; height: 24px; padding: 0 6px; border-radius: 5px; background: none;
+}
+.mmd-tools button:hover { background: var(--rule); color: var(--fg); }
+.mmd-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Filling the screen is the one place a 4738 px graph is legible. The figure
+   is laid over the page from where it is, and the document -- not the figure
+   -- is what asks the browser for fullscreen. A figure of its own in the top
+   layer is what WebKitGTK, the Linux window's engine, drew every glyph of as
+   nothing: the boxes and arrows stayed and the labels, the tool bar and an
+   SVG's own text went; and on the way back it kept the figure at the size
+   its placeholder had until the next scroll. A fixed box has neither fault in
+   any engine. mmdFull in app.js. */
+.mmd[data-full] { position: fixed; inset: 0; z-index: 30; margin: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.mmd[data-full] .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
+/* Until the diagram lands the figure holds about the space it will want, so the
+   text below it does not jump when it does. An estimate from the source, set by
+   the client -- see mmdWeight in app.js. */
+.mmd:not([data-state="done"]) .mmd-frame {
+  min-height: var(--mmd-reserve, 200px);
+  border-radius: var(--radius);
+  background: linear-gradient(var(--code-bg), var(--code-bg));
+}
+.mmd[data-state="error"] .mmd-frame { min-height: 0; display: block; background: none; }
+.mmd-fail { padding: 2px 0; }
+.mmd-note { font-family: var(--sans); font-size: 12px; letter-spacing: .04em; color: var(--fg-3); text-align: center; padding: 10px; }
+/* The label is for a diagram that is about to appear; a reader who waits long
+   enough to wonder gets a spinner instead of a word that never changes. */
+.mmd-slow .mmd-note::before {
+  content: ""; display: block; width: 18px; height: 18px; margin: 0 auto 8px;
+  border: 2px solid var(--rule-2); border-top-color: var(--fg-3); border-radius: 50%;
+  animation: mmd-spin .7s linear infinite;
+}
+@keyframes mmd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mmd-slow .mmd-note::before { animation-duration: 2.4s; } }
+/* Over the cap: offered, not spent. */
+.mmd-ask { display: block; margin: 0 auto 8px; font-family: var(--sans); font-size: 13px; padding: 7px 14px; border-radius: var(--radius); background: var(--bg-raise); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.mmd-ask:hover { color: var(--accent); }
+.mmd-why { display: block; }
+/* A source Mermaid could not parse is the one the reader most wants to read. */
+.mmd-err { font-family: var(--sans); font-size: 13px; color: var(--del-fg); margin: 0 0 8px; text-align: left; }
+/* Ligatures off, like every other code block: this is shown so the reader can
+   see the characters the agent actually wrote, and JetBrains Mono draws \`-->\`
+   as a single arrow, which is the one thing it must not do here. */
+.mmd-src { font-feature-settings: "calt" 0, "liga" 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; text-align: left; white-space: pre-wrap; background: var(--code-bg); border-radius: var(--radius); padding: 12px 14px; margin: 0; color: var(--fg-2); overflow-x: auto; }
+`;
+{ const s = document.createElement("style"); s.textContent = CSS_MOVED; document.head.append(s); }

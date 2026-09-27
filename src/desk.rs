@@ -8,12 +8,15 @@
 //! everything an agent sent you" stops being a sentence anyone can say.
 //!
 //! Two things are persisted and one is not. The workspace -- which folder,
-//! which slots, what to re-run -- is here, because that is what a restore needs
-//! and a restore is the point. The process is not: a pane comes back stopped,
-//! with `Start` offered, and nothing on this machine ever spawns a shell
-//! because a daemon woke up. The screen and the PTY that Phase 3 adds are
-//! in-memory beside these rows and die with the daemon, which is why a pane row
-//! carries no state column at all.
+//! which slots, what to re-run, the folder each shell had moved to -- is here,
+//! because that is what a restore needs and a restore is the point. The
+//! process is not: a pane comes back stopped, and the daemon never spawns a
+//! shell because it woke up. The window does: a pane that lost its process to
+//! a daemon going away is started again by the page when it is drawn
+//! (`resume()` in ui/desk.js), since that is the reader's window asking, not a
+//! timer. The screen and the PTY are in-memory beside these rows and die with
+//! the daemon, which is why a pane row carries no state column at all --
+//! `resume_next` is a mark for the next start, not a state.
 //!
 //! A desk holds four panes and there is no cap across desks. There was one,
 //! eight, written against the memory budget: a truecolor cell is about 11
@@ -52,7 +55,8 @@ CREATE TABLE IF NOT EXISTS desks (
   root TEXT NOT NULL,
   col REAL NOT NULL DEFAULT 0.5,
   row REAL NOT NULL DEFAULT 0.5,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  full_slot INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS panes (
   id TEXT PRIMARY KEY,
@@ -63,9 +67,20 @@ CREATE TABLE IF NOT EXISTS panes (
   created_at INTEGER NOT NULL,
   agent_session TEXT NOT NULL DEFAULT '',
   resume_next INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL DEFAULT '',
   UNIQUE(desk_id, slot)
 );
 CREATE INDEX IF NOT EXISTS panes_desk ON panes(desk_id, slot);
+CREATE TABLE IF NOT EXISTS panes_closed (
+  id TEXT PRIMARY KEY,
+  desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
+  cwd TEXT NOT NULL,
+  cmd TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  agent_session TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  closed_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS desk_notes (
   id INTEGER PRIMARY KEY,
   desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
@@ -73,7 +88,9 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   done_at INTEGER NOT NULL DEFAULT 0,
   removed_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  done_by TEXT NOT NULL DEFAULT ''
+  done_by TEXT NOT NULL DEFAULT '',
+  done_commit TEXT NOT NULL DEFAULT '',
+  done_doc TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
@@ -91,6 +108,9 @@ pub struct Desk {
     /// Where the horizontal divider sits, as a fraction of the height.
     pub row: f64,
     pub created_at: i64,
+    /// The slot shown alone, full view, or 0 for the grid. Kept, so a desk
+    /// comes back the way it was left; a close renumbers it with the slots.
+    pub full_slot: i64,
     pub panes: Vec<Pane>,
 }
 
@@ -112,6 +132,13 @@ pub struct DeskNote {
     /// not done.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub done_by: String,
+    /// The commit the agent said the work is in, when it ticked the line: a
+    /// hash, so the reader can find it in `git log`. Only ever beside `done_by`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub done_commit: String,
+    /// A document the agent sent about the work (its id), which the row opens.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub done_doc: String,
 }
 
 /// A pane, which in this phase is a workspace row and no process.
@@ -133,6 +160,8 @@ pub struct Pane {
     /// reported it, so the pane can offer to resume it after Claude or the
     /// daemon has gone. Empty when none has. Always a `valid_session`.
     pub agent_session: String,
+    /// What the reader called it, or empty for the title its program sets.
+    pub name: String,
 }
 
 /// Where a document came from, when it came from a pane: the desk and the
@@ -166,19 +195,22 @@ pub enum Opened {
     NoSuchDesk,
 }
 
+/// How long a panel's name is, at most: a head's worth, like a desk's.
+pub const NAME_CHARS: usize = 80;
+
 /// Every desk, oldest first, each with its panes in slot order.
 ///
 /// Two queries rather than a join with a row per pane: a desk with no panes is
 /// a real and common state -- it is what every desk is for the moment after it
 /// is made -- and it should not need a left join to survive the trip.
 pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, root, col, row, created_at FROM desks ORDER BY id")?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, root, col, row, created_at, full_slot FROM desks ORDER BY id")?;
     let mut desks: Vec<Desk> = stmt
         .query_map([], row_to_desk)?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
-        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session FROM panes ORDER BY desk_id, slot",
+        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name FROM panes ORDER BY desk_id, slot",
     )?;
     let panes: Vec<(i64, Pane)> = stmt
         .query_map([], |r| Ok((r.get(0)?, row_to_pane(r, 1)?)))?
@@ -195,7 +227,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
 pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
     let Some(mut desk) = conn
         .query_row(
-            "SELECT id, name, root, col, row, created_at FROM desks WHERE id = ?1",
+            "SELECT id, name, root, col, row, created_at, full_slot FROM desks WHERE id = ?1",
             params![id],
             row_to_desk,
         )
@@ -204,7 +236,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session FROM panes WHERE desk_id = ?1 ORDER BY slot",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name FROM panes WHERE desk_id = ?1 ORDER BY slot",
     )?;
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
@@ -238,6 +270,7 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         col: 0.5,
         row: 0.5,
         created_at: now,
+        full_slot: 0,
         panes: Vec::new(),
     })
 }
@@ -255,9 +288,11 @@ pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<bool> {
     )? > 0)
 }
 
-/// Where the two dividers sit. Clamped, because a fraction that came from a
-/// drag can arrive as anything and a pane no one can see is not a pane.
-pub fn layout(conn: &Connection, id: i64, col: f64, row: f64) -> Result<bool> {
+/// Where the two dividers sit, and which slot is in full view. Clamped,
+/// because a fraction that came from a drag can arrive as anything and a pane
+/// no one can see is not a pane. `full` left out keeps what is there; a slot
+/// out of range is the grid.
+pub fn layout(conn: &Connection, id: i64, col: f64, row: f64, full: Option<i64>) -> Result<bool> {
     let clamp = |f: f64| {
         if f.is_finite() {
             f.clamp(MIN_FRACTION, MAX_FRACTION)
@@ -265,26 +300,27 @@ pub fn layout(conn: &Connection, id: i64, col: f64, row: f64) -> Result<bool> {
             0.5
         }
     };
+    let full = full.map(|s| if (1..=PER_DESK).contains(&s) { s } else { 0 });
     Ok(conn.execute(
-        "UPDATE desks SET col = ?2, row = ?3 WHERE id = ?1",
-        params![id, clamp(col), clamp(row)],
+        "UPDATE desks SET col = ?2, row = ?3, full_slot = COALESCE(?4, full_slot) WHERE id = ?1",
+        params![id, clamp(col), clamp(row), full],
     )? > 0)
 }
 
 /// Close a desk, and its panes with it.
 ///
 /// `ON DELETE CASCADE` does the second half, which is why `PRAGMA foreign_keys`
-/// is on for this connection: without it the panes would stay, hold their share
-/// of the global cap, and belong to nothing.
+/// is on for this connection: without it the panes would stay, fill slots on
+/// no desk, and belong to nothing. Its closed panes go the same way.
 pub fn delete(conn: &Connection, id: i64) -> Result<bool> {
     Ok(conn.execute("DELETE FROM desks WHERE id = ?1", params![id])? > 0)
 }
 
 /// Open a pane on a desk, in the lowest free slot.
 ///
-/// Both caps are read inside the same transaction that writes the row, so two
-/// requests that arrive together cannot each see seven panes and both make an
-/// eighth.
+/// The desk's four is read inside the same transaction that writes the row,
+/// so two requests that arrive together cannot each see three panes and both
+/// make a fourth.
 pub fn open_pane(
     conn: &mut Connection,
     desk_id: i64,
@@ -324,6 +360,7 @@ pub fn open_pane(
         cmd: cmd.to_string(),
         created_at: now,
         agent_session: String::new(),
+        name: String::new(),
     }))
 }
 
@@ -361,27 +398,162 @@ pub fn move_pane(tx: &rusqlite::Transaction, desk_id: i64, from: i64, to: i64) -
         "UPDATE panes SET slot = ?2 WHERE id = ?1",
         params![moving, to],
     )?;
+    // Full view is on a pane, not a position: it goes where that pane went.
+    tx.execute(
+        "UPDATE desks SET full_slot = CASE full_slot WHEN ?2 THEN ?3 WHEN ?3 THEN ?2 ELSE full_slot END WHERE id = ?1",
+        params![desk_id, from, to],
+    )?;
     Ok(true)
 }
 
-/// Close one pane. Its slot is free immediately.
-pub fn close_pane(conn: &Connection, id: &str) -> Result<bool> {
-    Ok(conn.execute("DELETE FROM panes WHERE id = ?1", params![id])? > 0)
+/// Close one pane: its row goes to `panes_closed`, where Undo finds it and
+/// `prune` ends it, and the panes after it close up, so the slots stay 1 to n
+/// and `⌃⌥3` is always the third one on screen. The desk's full view follows
+/// its slot, or goes back to the grid if it was this one. Returns the desk and
+/// the slot it held, for the caller to renumber what the panes sent in the
+/// same transaction (`Store::close_pane`); `None` if the id is not a pane's.
+///
+/// Each shift moves a pane into the slot just vacated, so `UNIQUE(desk_id,
+/// slot)` holds row by row, the reasoning `move_pane` gives.
+pub fn close_pane(tx: &rusqlite::Transaction, id: &str, now: i64) -> Result<Option<(i64, i64)>> {
+    let Some((desk_id, slot)) = tx
+        .query_row(
+            "SELECT desk_id, slot FROM panes WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    tx.execute(
+        "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, created_at, closed_at)
+         SELECT id, desk_id, cwd, cmd, name, agent_session, created_at, ?2 FROM panes WHERE id = ?1",
+        params![id, now],
+    )?;
+    tx.execute("DELETE FROM panes WHERE id = ?1", params![id])?;
+    for s in slot + 1..=PER_DESK {
+        tx.execute(
+            "UPDATE panes SET slot = ?3 WHERE desk_id = ?1 AND slot = ?2",
+            params![desk_id, s, s - 1],
+        )?;
+    }
+    tx.execute(
+        "UPDATE desks SET full_slot = CASE WHEN full_slot = ?2 THEN 0 WHEN full_slot > ?2 THEN full_slot - 1 ELSE full_slot END WHERE id = ?1",
+        params![desk_id, slot],
+    )?;
+    Ok(Some((desk_id, slot)))
+}
+
+/// What came of asking for a closed pane back.
+#[derive(Debug)]
+pub enum Restored {
+    Pane(Pane),
+    /// Its desk filled up while it was closed.
+    DeskFull,
+    /// Not a closed pane: pruned, already back, or never one.
+    Gone,
+}
+
+/// A closed pane back on its desk, in the lowest free slot, as `open_pane`
+/// picks one. Stopped: it comes back the way a restart brings a pane back,
+/// its saved text greyed and Start offered.
+pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
+    let tx = conn.transaction()?;
+    let Some(desk_id) = tx
+        .query_row(
+            "SELECT desk_id FROM panes_closed WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    else {
+        return Ok(Restored::Gone);
+    };
+    let taken: Vec<i64> = tx
+        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
+        .query_map(params![desk_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let Some(slot) = (1..=PER_DESK).find(|s| !taken.contains(s)) else {
+        return Ok(Restored::DeskFull);
+    };
+    tx.execute(
+        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, created_at)
+         SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, created_at FROM panes_closed WHERE id = ?1",
+        params![id, slot],
+    )?;
+    tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![id])?;
+    let pane = tx.query_row(
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name FROM panes WHERE id = ?1",
+        params![id],
+        |r| row_to_pane(r, 0),
+    )?;
+    tx.commit()?;
+    Ok(Restored::Pane(pane))
+}
+
+/// The closed panes of one desk, for closing the desk: their text files go
+/// with it.
+pub fn closed_on(conn: &Connection, desk_id: i64) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT id FROM panes_closed WHERE desk_id = ?1")?;
+    let ids = stmt
+        .query_map(params![desk_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
+/// Closed panes older than `before`, ended for good unless `dry_run`: their
+/// ids, for the caller to remove their text, and a name to print.
+pub fn prune_closed(
+    conn: &Connection,
+    before: i64,
+    dry_run: bool,
+) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, COALESCE(NULLIF(c.name, ''), NULLIF(c.cmd, ''), 'shell') || ' on ' || d.name
+         FROM panes_closed c JOIN desks d ON d.id = c.desk_id WHERE c.closed_at < ?1 ORDER BY c.closed_at",
+    )?;
+    let gone: Vec<(String, String)> = stmt
+        .query_map(params![before], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if !dry_run {
+        conn.execute(
+            "DELETE FROM panes_closed WHERE closed_at < ?1",
+            params![before],
+        )?;
+    }
+    Ok(gone)
+}
+
+/// Call a pane something. Trimmed, one line, cut at `NAME_CHARS`; empty goes
+/// back to the title its program sets.
+pub fn rename_pane(conn: &Connection, id: &str, name: &str) -> Result<bool> {
+    let name: String = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(NAME_CHARS)
+        .collect();
+    Ok(conn.execute(
+        "UPDATE panes SET name = ?2 WHERE id = ?1",
+        params![id, name],
+    )? > 0)
 }
 
 /// One pane and where it is, or nothing if that id is not a pane's.
 pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
     Ok(conn
         .query_row(
-            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, d.id, d.name, d.root
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, d.id, d.name, d.root
              FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
             params![id],
             |r| {
                 Ok(Placed {
                     pane: row_to_pane(r, 0)?,
-                    desk_id: r.get(6)?,
-                    desk_name: r.get(7)?,
-                    root: r.get(8)?,
+                    desk_id: r.get(7)?,
+                    desk_name: r.get(8)?,
+                    root: r.get(9)?,
                 })
             },
         )
@@ -431,22 +603,63 @@ pub fn mark_resume(conn: &Connection, ids: &[String]) -> Result<usize> {
     Ok(n)
 }
 
-/// The marks the last daemon left, taken: read once by the daemon that comes
-/// up after a planned restart, and cleared in the same breath, so a daemon
-/// that crashes later does not find them again a day on. The runtime keeps
-/// them from here (`pane::Panes::mark_resume`), for as long as they hold.
-pub fn take_resume(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT id FROM panes WHERE resume_next <> 0 ORDER BY id")?;
-    let ids: Vec<String> = stmt
-        .query_map([], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    if !ids.is_empty() {
-        conn.execute(
-            "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
-            [],
+/// Mark the panes that had Claude open when the daemon stopped without
+/// planning to -- `snyvi stop`, a signal, a reboot -- as ones to *offer* back
+/// (`resume_next = 2`), where a planned restart's mark (1) starts them as the
+/// conversation. A pane already marked either way keeps its mark.
+pub fn mark_offer(conn: &Connection, ids: &[String]) -> Result<usize> {
+    let mut n = 0;
+    for id in ids {
+        n += conn.execute(
+            "UPDATE panes SET resume_next = 2 WHERE id = ?1 AND resume_next = 0 AND agent_session <> ''",
+            params![id],
         )?;
     }
-    Ok(ids)
+    Ok(n)
+}
+
+/// The marks the last daemon left: the planned restart's panes, then the ones
+/// to offer. Read once by the daemon that comes up, which keeps them in the
+/// runtime from there (`pane::Panes::mark_resume`, `mark_offer`) and clears
+/// them here (`clear_resume`) only once it holds the port: a successor that
+/// dies before then is started again, and must find them again.
+pub fn read_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
+    let mut stmt =
+        conn.prepare("SELECT id, resume_next FROM panes WHERE resume_next <> 0 ORDER BY id")?;
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let (planned, offered): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, k)| *k == 1);
+    Ok((
+        planned.into_iter().map(|(id, _)| id).collect(),
+        offered.into_iter().map(|(id, _)| id).collect(),
+    ))
+}
+
+/// Every mark cleared, so a daemon that crashes later does not find them
+/// again a day on. What is still unspent at the next exit is written back.
+pub fn clear_resume(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
+        [],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn take_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
+    let marks = read_resume(conn)?;
+    clear_resume(conn)?;
+    Ok(marks)
+}
+
+/// Where a pane's shell has gone, so its next start is there: the folder the
+/// kernel reported on the git tick, or at shutdown. True only when it moved.
+pub fn set_cwd(conn: &Connection, id: &str, cwd: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE panes SET cwd = ?2 WHERE id = ?1 AND cwd <> ?2",
+        params![id, cwd],
+    )? > 0)
 }
 
 /// A Claude Code session id: a UUID, lowercase hex and four dashes. Nothing
@@ -468,7 +681,9 @@ pub fn panes_open(conn: &Connection) -> Result<i64> {
 /// Every desk and every pane, gone. Called by a reset, which says the store is
 /// what a machine that has never seen snyvi would have.
 pub fn clear(conn: &Connection) -> Result<()> {
-    conn.execute_batch("DELETE FROM desk_notes; DELETE FROM panes; DELETE FROM desks;")?;
+    conn.execute_batch(
+        "DELETE FROM desk_notes; DELETE FROM panes_closed; DELETE FROM panes; DELETE FROM desks;",
+    )?;
     Ok(())
 }
 
@@ -480,7 +695,7 @@ pub fn clear(conn: &Connection) -> Result<()> {
 /// the row under the reader's cursor on every keystroke they finished.
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
-        "SELECT id, text, done_at, created_at, done_by FROM desk_notes
+        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at = 0 THEN 0 ELSE 1 END, done_at, id",
     )?;
@@ -538,6 +753,8 @@ pub fn add_note(
         done: false,
         created_at: now,
         done_by: String::new(),
+        done_commit: String::new(),
+        done_doc: String::new(),
     }))
 }
 
@@ -578,26 +795,60 @@ pub fn set_note(
     // A tick from the page is the reader's own: whoever ticked it before, it
     // is theirs now, and an untick clears it.
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = '' WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = '', done_doc = ''
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
         params![desk_id, id, if done { now } else { 0 }],
     )? > 0)
 }
 
-/// An agent ticks a line on its own desk's list: done, and by whom. Only
-/// ever done -- an agent cannot untick, write, add or take a line off -- and
-/// only an open line: one the reader already ticked stays theirs. False when
-/// the line is not on this desk's list, or is already done.
-pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, by: &str, now: i64) -> Result<bool> {
-    let by = if by.trim().is_empty() {
+/// What an agent says with its tick: who it is, and, if it has them, the
+/// commit the work went into and a document it sent about it.
+#[derive(Clone, Debug, Default)]
+pub struct Tick {
+    pub by: String,
+    /// Checked by `commit_ok` before it gets here; kept as given, lowercased.
+    pub commit: String,
+    /// Checked by `doc_ok`.
+    pub doc: String,
+}
+
+/// A commit hash as `git log` prints one, short or full: 7 to 40 hex digits
+/// and nothing else. A branch name or a sentence is not a commit, and the row
+/// that shows it would be showing something no one can look up.
+pub fn commit_ok(commit: &str) -> bool {
+    (7..=40).contains(&commit.len()) && commit.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A document's id as `store::new_id` makes one: ten hex digits.
+pub fn doc_ok(doc: &str) -> bool {
+    doc.len() == 10 && doc.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// An agent ticks a line on its own desk's list: done, by whom, and where the
+/// work is. Only ever done -- an agent cannot untick, write, add or take a
+/// line off -- and only an open line: one the reader already ticked stays
+/// theirs. False when the line is not on this desk's list, or is already done.
+pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64) -> Result<bool> {
+    let by = if tick.by.trim().is_empty() {
         "an agent"
     } else {
-        by.trim()
+        tick.by.trim()
     };
     let by: String = by.chars().take(60).collect();
+    let commit = if commit_ok(&tick.commit) {
+        tick.commit.to_ascii_lowercase()
+    } else {
+        String::new()
+    };
+    let doc = if doc_ok(&tick.doc) {
+        tick.doc.to_ascii_lowercase()
+    } else {
+        String::new()
+    };
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = ?4
+        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0",
-        params![desk_id, id, now, by],
+        params![desk_id, id, now, by, commit, doc],
     )? > 0)
 }
 
@@ -635,6 +886,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done: r.get::<_, i64>(2)? != 0,
         created_at: r.get(3)?,
         done_by: r.get(4)?,
+        done_commit: r.get(5)?,
+        done_doc: r.get(6)?,
     })
 }
 
@@ -692,6 +945,7 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
         col: r.get(3)?,
         row: r.get(4)?,
         created_at: r.get(5)?,
+        full_slot: r.get(6)?,
         panes: Vec::new(),
     })
 }
@@ -704,6 +958,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
         cmd: r.get(at + 3)?,
         created_at: r.get(at + 4)?,
         agent_session: r.get(at + 5)?,
+        name: r.get(at + 6)?,
     })
 }
 
@@ -795,15 +1050,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            !tick_note(&conn, yours, n.id, "claude-code", 1).unwrap(),
+            !tick_note(&conn, yours, n.id, &by("claude-code"), 1).unwrap(),
             "not across desks"
         );
-        assert!(tick_note(&conn, mine, n.id, "claude-code", 1).unwrap());
+        assert!(tick_note(&conn, mine, n.id, &by("claude-code"), 1).unwrap());
         let got = &notes(&conn, mine).unwrap()[0];
         assert!(got.done);
         assert_eq!(got.done_by, "claude-code");
         assert!(
-            !tick_note(&conn, mine, n.id, "claude-code", 2).unwrap(),
+            !tick_note(&conn, mine, n.id, &by("claude-code"), 2).unwrap(),
             "a done line stays as it is"
         );
 
@@ -813,12 +1068,63 @@ mod tests {
         assert!(!got.done);
         assert_eq!(got.done_by, "");
         // A tick from nobody in particular still says an agent did it.
-        assert!(tick_note(&conn, mine, n.id, "  ", 4).unwrap());
+        assert!(tick_note(&conn, mine, n.id, &by("  "), 4).unwrap());
         assert_eq!(notes(&conn, mine).unwrap()[0].done_by, "an agent");
         // A line taken off the list cannot be ticked.
         assert!(set_note(&conn, mine, n.id, None, Some(false), 5).unwrap());
         assert!(remove_note(&conn, mine, n.id, 6).unwrap());
-        assert!(!tick_note(&conn, mine, n.id, "claude-code", 7).unwrap());
+        assert!(!tick_note(&conn, mine, n.id, &by("claude-code"), 7).unwrap());
+    }
+
+    fn by(name: &str) -> Tick {
+        Tick {
+            by: name.into(),
+            ..Tick::default()
+        }
+    }
+
+    /// A tick can say where the work went: a commit hash, and a document the
+    /// agent sent. Anything that is not one is dropped, not stored, and the
+    /// reader's untick takes both off with the name.
+    #[test]
+    fn a_tick_carries_its_commit_and_document_and_an_untick_clears_them() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "fix the hover", 0)
+            .unwrap()
+            .unwrap();
+        let tick = Tick {
+            by: "claude-code".into(),
+            commit: "90F09D6".into(),
+            doc: "82cc8f2d3c".into(),
+        };
+        assert!(tick_note(&conn, mine, n.id, &tick, 1).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert_eq!(
+            (got.done_commit.as_str(), got.done_doc.as_str()),
+            ("90f09d6", "82cc8f2d3c")
+        );
+        assert!(set_note(&conn, mine, n.id, None, Some(false), 2).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert_eq!(
+            (
+                got.done_by.as_str(),
+                got.done_commit.as_str(),
+                got.done_doc.as_str()
+            ),
+            ("", "", "")
+        );
+        let junk = Tick {
+            by: "claude-code".into(),
+            commit: "main; rm -rf".into(),
+            doc: "../etc".into(),
+        };
+        assert!(tick_note(&conn, mine, n.id, &junk, 3).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert_eq!((got.done_commit.as_str(), got.done_doc.as_str()), ("", ""));
+        assert!(commit_ok("90f09d6") && commit_ok(&"a".repeat(40)));
+        assert!(!commit_ok("90f09d") && !commit_ok(&"a".repeat(41)) && !commit_ok("main"));
+        assert!(doc_ok("82cc8f2d3c") && !doc_ok("82cc8f2d3") && !doc_ok("82cc8f2d3z"));
     }
 
     /// An emptied line is not a blank row: rewriting a note to nothing takes
@@ -935,8 +1241,11 @@ mod tests {
             assert!(!set_agent_session(&conn, &p.id, bad).unwrap());
         }
         assert!(!set_agent_session(&conn, "nope", a).unwrap());
-        // Closing the pane takes its conversation with it.
-        assert!(close_pane(&conn, &p.id).unwrap());
+        // A closed pane is no longer a pane; its conversation waits with it
+        // in `panes_closed`, for Undo.
+        let tx = conn.transaction().unwrap();
+        assert!(close_pane(&tx, &p.id, 1).unwrap().is_some());
+        tx.commit().unwrap();
         assert!(super::pane(&conn, &p.id).unwrap().is_none());
     }
 
@@ -959,24 +1268,55 @@ mod tests {
         let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
         assert!(set_agent_session(&conn, &talked.id, a).unwrap());
         assert!(set_agent_session(&conn, &other.id, a).unwrap());
-        assert_eq!(take_resume(&conn).unwrap(), Vec::<String>::new());
+        let none = (Vec::<String>::new(), Vec::<String>::new());
+        assert_eq!(take_resume(&conn).unwrap(), none);
         // Two asked for, one with a conversation: one mark. The third pane
         // knows a conversation but was not asked for, and stays unmarked.
         assert_eq!(
             mark_resume(&conn, &[talked.id.clone(), silent.id.clone()]).unwrap(),
             1
         );
-        assert_eq!(take_resume(&conn).unwrap(), vec![talked.id.clone()]);
-        assert_eq!(
-            take_resume(&conn).unwrap(),
-            Vec::<String>::new(),
-            "taken once"
-        );
+        assert_eq!(take_resume(&conn).unwrap().0, vec![talked.id.clone()]);
+        assert_eq!(take_resume(&conn).unwrap(), none, "taken once");
         // A new set replaces the old, so a mark cannot outlive the restart
         // that made it.
         mark_resume(&conn, std::slice::from_ref(&talked.id)).unwrap();
         mark_resume(&conn, std::slice::from_ref(&other.id)).unwrap();
-        assert_eq!(take_resume(&conn).unwrap(), vec![other.id.clone()]);
+        assert_eq!(take_resume(&conn).unwrap().0, vec![other.id.clone()]);
+
+        // 1.7.1: an unplanned stop offers instead, only where a conversation
+        // is known, and never over a planned mark.
+        mark_resume(&conn, std::slice::from_ref(&talked.id)).unwrap();
+        assert_eq!(
+            mark_offer(
+                &conn,
+                &[talked.id.clone(), other.id.clone(), silent.id.clone()]
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            take_resume(&conn).unwrap(),
+            (vec![talked.id.clone()], vec![other.id.clone()])
+        );
+    }
+
+    /// Where the shell went is where it starts next, and saying the same
+    /// folder twice is no change.
+    #[test]
+    fn a_pane_keeps_the_folder_its_shell_moved_to() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap();
+        let Opened::Pane(p) = pane(&mut conn, d.id) else {
+            panic!()
+        };
+        assert!(set_cwd(&conn, &p.id, "/p/sub").unwrap());
+        assert!(!set_cwd(&conn, &p.id, "/p/sub").unwrap());
+        assert_eq!(
+            super::pane(&conn, &p.id).unwrap().unwrap().pane.cwd,
+            "/p/sub"
+        );
+        assert!(!set_cwd(&conn, "nope", "/x").unwrap());
     }
 
     /// The gesture is a right-click on a folder, so the folder's name is the
@@ -1020,8 +1360,12 @@ mod tests {
         assert!(matches!(pane(&mut conn, d), Opened::DeskFull));
 
         let first = get(&conn, d).unwrap().unwrap().panes[0].id.clone();
-        assert!(close_pane(&conn, &first).unwrap());
-        assert!(matches!(pane(&mut conn, d), Opened::Pane(p) if p.slot == 1));
+        let tx = conn.transaction().unwrap();
+        assert_eq!(close_pane(&tx, &first, 1).unwrap(), Some((d, 1)));
+        tx.commit().unwrap();
+        // The rest closed up; the next one takes the end.
+        assert_eq!(slots(&conn, d), vec![1, 2, 3]);
+        assert!(matches!(pane(&mut conn, d), Opened::Pane(p) if p.slot == 4));
         assert_eq!(slots(&conn, d), vec![1, 2, 3, 4]);
     }
 
@@ -1046,6 +1390,8 @@ mod tests {
                 .collect()
         };
         let before = ids(&conn, d);
+        assert!(layout(&conn, d, 0.5, 0.5, Some(1)).unwrap());
+        assert!(layout(&conn, other, 0.5, 0.5, Some(1)).unwrap());
         let tx = conn.transaction().unwrap();
         assert!(move_pane(&tx, d, 1, 3).unwrap());
         tx.commit().unwrap();
@@ -1053,6 +1399,12 @@ mod tests {
             ids(&conn, d),
             [before[2].clone(), before[1].clone(), before[0].clone()]
         );
+        assert_eq!(
+            get(&conn, d).unwrap().unwrap().full_slot,
+            3,
+            "full view went with its pane"
+        );
+        assert_eq!(get(&conn, other).unwrap().unwrap().full_slot, 1);
 
         // Into the empty slot 4: nothing comes back the other way.
         let tx = conn.transaction().unwrap();
@@ -1118,12 +1470,19 @@ mod tests {
     fn divider_fractions_are_clamped_and_a_missing_desk_says_so() {
         let conn = db();
         let d = create(&conn, "/p", None, 0).unwrap().id;
-        assert!(layout(&conn, d, 0.0, 2.5).unwrap());
+        assert!(layout(&conn, d, 0.0, 2.5, None).unwrap());
         let after = get(&conn, d).unwrap().unwrap();
         assert_eq!((after.col, after.row), (MIN_FRACTION, MAX_FRACTION));
-        assert!(layout(&conn, d, f64::NAN, 0.4).unwrap());
+        assert!(layout(&conn, d, f64::NAN, 0.4, None).unwrap());
         assert_eq!(get(&conn, d).unwrap().unwrap().col, 0.5);
-        assert!(!layout(&conn, d + 99, 0.5, 0.5).unwrap());
+        assert!(!layout(&conn, d + 99, 0.5, 0.5, None).unwrap());
+        // Full view is kept, left alone when not sent, and a slot out of
+        // range is the grid.
+        assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
+        assert!(layout(&conn, d, 0.5, 0.5, None).unwrap());
+        assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 3);
+        assert!(layout(&conn, d, 0.5, 0.5, Some(9)).unwrap());
+        assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 0);
         assert!(!rename(&conn, d, "  ").unwrap(), "a name is not whitespace");
         assert!(rename(&conn, d, "chores").unwrap());
         assert_eq!(get(&conn, d).unwrap().unwrap().name, "chores");
@@ -1156,5 +1515,108 @@ mod tests {
             vec![1, 2]
         );
         assert_eq!(listed[1].panes[0].cwd, "/p");
+    }
+
+    /// 1.7.1: a close keeps the pane for Undo and closes the gap it leaves,
+    /// so the slots are always 1 to n; full view follows its slot.
+    #[test]
+    fn a_closed_pane_leaves_no_gap_and_comes_back_at_the_end() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap().id;
+        for _ in 0..3 {
+            pane(&mut conn, d);
+        }
+        let ids: Vec<String> = get(&conn, d)
+            .unwrap()
+            .unwrap()
+            .panes
+            .iter()
+            .map(|p| p.id.clone())
+            .collect();
+        assert!(rename_pane(&conn, &ids[1], "  the   tests \n").unwrap());
+        assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
+        let tx = conn.transaction().unwrap();
+        assert_eq!(close_pane(&tx, &ids[1], 5).unwrap(), Some((d, 2)));
+        assert_eq!(close_pane(&tx, "nope", 5).unwrap(), None);
+        tx.commit().unwrap();
+        let after = get(&conn, d).unwrap().unwrap();
+        assert_eq!(
+            after
+                .panes
+                .iter()
+                .map(|p| (p.id.clone(), p.slot))
+                .collect::<Vec<_>>(),
+            [(ids[0].clone(), 1), (ids[2].clone(), 2)]
+        );
+        assert_eq!(after.full_slot, 2, "full view follows the pane it was on");
+
+        // Back, stopped, at the lowest free slot, with its name.
+        let Restored::Pane(p) = restore_pane(&mut conn, &ids[1]).unwrap() else {
+            panic!("not restored")
+        };
+        assert_eq!((p.slot, p.name.as_str()), (3, "the tests"));
+        assert!(
+            matches!(restore_pane(&mut conn, &ids[1]).unwrap(), Restored::Gone),
+            "twice is not twice"
+        );
+
+        // Closing the one in full view puts the grid back.
+        let tx = conn.transaction().unwrap();
+        close_pane(&tx, &ids[2], 6).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 0);
+    }
+
+    /// The desk filled while the pane was closed: it says so and stays closed.
+    #[test]
+    fn a_closed_pane_does_not_come_back_to_a_full_desk() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap().id;
+        let Opened::Pane(first) = pane(&mut conn, d) else {
+            panic!()
+        };
+        let tx = conn.transaction().unwrap();
+        close_pane(&tx, &first.id, 1).unwrap();
+        tx.commit().unwrap();
+        for _ in 0..PER_DESK {
+            pane(&mut conn, d);
+        }
+        assert!(matches!(
+            restore_pane(&mut conn, &first.id).unwrap(),
+            Restored::DeskFull
+        ));
+        assert_eq!(closed_on(&conn, d).unwrap(), vec![first.id.clone()]);
+    }
+
+    /// Kept until `prune`, like a deleted document: only what was closed
+    /// before the cut goes, and closing the desk takes the rest.
+    #[test]
+    fn closed_panes_last_until_prune_or_their_desk() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap().id;
+        let (Opened::Pane(a), Opened::Pane(b)) = (pane(&mut conn, d), pane(&mut conn, d)) else {
+            panic!()
+        };
+        let tx = conn.transaction().unwrap();
+        close_pane(&tx, &a.id, 10).unwrap();
+        close_pane(&tx, &b.id, 20).unwrap();
+        tx.commit().unwrap();
+        let would = prune_closed(&conn, 15, true).unwrap();
+        assert_eq!(
+            would.iter().map(|g| g.0.clone()).collect::<Vec<_>>(),
+            vec![a.id.clone()]
+        );
+        assert_eq!(
+            closed_on(&conn, d).unwrap().len(),
+            2,
+            "a dry run removes nothing"
+        );
+        assert_eq!(prune_closed(&conn, 15, false).unwrap().len(), 1);
+        assert_eq!(closed_on(&conn, d).unwrap(), vec![b.id.clone()]);
+        assert!(delete(&conn, d).unwrap());
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM panes_closed", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "the desk's delete cascades");
     }
 }

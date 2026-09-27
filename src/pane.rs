@@ -61,11 +61,26 @@ const GIT_AT_MOST: Duration = Duration::from_secs(60);
 /// that waits for quiet. A build that prints a line a minute is not done; a
 /// shell at its prompt has printed nothing for longer than this.
 pub const BUSY_OUTPUT: Duration = Duration::from_secs(90);
-/// How long a resume mark is honoured after the daemon that set it went. A
-/// window that comes back sooner starts `claude --resume` in the marked
-/// panes; one that comes back a morning later gets a shell, because a
-/// conversation that old is the reader's to pick up, not a restart's to assume.
+/// How long a resume mark is honoured once someone looks: the clock starts
+/// at the first desk a window shows after the daemon came up, not at the
+/// start -- an update applied while nobody was here must not have spent the
+/// marks before anyone could see them. A window that shows a desk within
+/// this starts `claude --resume` in the marked panes; after it, an unspent
+/// mark becomes an offer (`Status::offer`), because a conversation left that
+/// long is the reader's to pick up, not a restart's to assume. See
+/// `Panes::arm_marks`.
 const RESUME_FOR: Duration = Duration::from_secs(5 * 60);
+/// However long nobody looks, the marks and offers go this long after the
+/// daemon came up: a conversation a day old is not coming back by itself.
+const MARKS_AT_MOST: Duration = Duration::from_secs(24 * 3600);
+/// An agent that says `working` and has printed nothing this long is not
+/// working: a Claude stopped with Esc says nothing more, while one that is
+/// working repaints its spinner every second.
+const WORKING_SILENT: Duration = Duration::from_secs(10 * 60);
+/// A pane busy only because its program keeps printing -- a log tail, a
+/// watcher, a dev server -- counts for at most this long, or an update
+/// would wait on it forever.
+const PRINTING_AT_MOST: Duration = Duration::from_secs(2 * 3600);
 
 /// What the rail and the sidebar say about a pane, sent whenever it changes.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -101,9 +116,44 @@ pub struct Status {
     /// a planned restart -- so the window's next start of it should be
     /// `claude --resume` rather than the shell. Set by `mark_resume` for a
     /// pane that has not run since, cleared by its first start, and honoured
-    /// for `RESUME_FOR` after the daemon came up. The page reads it off the
-    /// same status frame that tells it the pane lost its process.
+    /// for `RESUME_FOR` after a window first shows a desk. The page reads it
+    /// off the same status frame that tells it the pane lost its process.
     pub resume: bool,
+    /// Claude was open in this pane when the last daemon stopped without
+    /// planning to (`snyvi stop`, a signal, a reboot), or it was marked to
+    /// resume and nobody looked in time: nothing starts it again, but the
+    /// page offers the conversation back with one click. Cleared by the
+    /// pane's first start, like `resume`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub offer: bool,
+    /// The folder the shell is in now, as the kernel says -- not where it was
+    /// started. Empty until it has been asked, and on Windows, which has no
+    /// cheap answer.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub cwd: String,
+    /// Which model the agent in this pane is, and how full its context window
+    /// is, as Claude Code's status line said after its last reply
+    /// (`crate::statusline`). Empty for a shell or another agent, and cleared
+    /// with `agent` when the session ends.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_in: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_at: Option<i64>,
+}
+
+/// The session is over: what it said about its model goes with it.
+fn clear_context(s: &mut Status) {
+    s.model.clear();
+    s.ctx_pct = None;
+    s.ctx_size = None;
+    s.ctx_in = None;
+    s.ctx_at = None;
 }
 
 /// The states an agent reports through its hooks. `needs_you` is Claude's
@@ -131,9 +181,16 @@ struct Inner {
     run: u64,
     /// The folder the running process was started in, for the git tick.
     cwd: String,
+    /// The desk's own folder. git's `status` is asked only inside it: a
+    /// repository's own config can name commands that `status` runs (a
+    /// filter driver), and a shell can `cd` into any repository at all.
+    root: String,
     /// When the process last printed anything, for `busy`: a pane whose
     /// program is still writing is not one to restart the daemon under.
     wrote: Instant,
+    /// When the present run of output began: the first print after
+    /// `busy_output` of quiet. See `PRINTING_AT_MOST`.
+    printing_since: Instant,
 }
 
 impl Inner {
@@ -167,6 +224,8 @@ pub struct Live {
 /// What `start` needs to know that is not the pane's own.
 pub struct Start<'a> {
     pub cwd: &'a str,
+    /// The desk's folder: see `Inner.root`.
+    pub root: &'a str,
     pub cmd: &'a str,
     pub desk: &'a str,
     pub slot: i64,
@@ -175,7 +234,13 @@ pub struct Start<'a> {
     /// The accent the window is wearing, `#rrggbb`, for the prompt snyvi
     /// dresses the shell in. Empty when the page did not say.
     pub accent: &'a str,
+    /// The pane comes back as its shell while its conversation is still on
+    /// offer: the page's own resume found the mark lapsed (`start_pane`).
+    pub offer: bool,
 }
+
+/// Told a panel's id and the folder its shell is now in.
+type CwdSink = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 pub struct Panes {
     live: Mutex<HashMap<String, Arc<Live>>>,
@@ -190,9 +255,12 @@ pub struct Panes {
     /// What each pane last said on that stream: `(running, blocked, agent)`.
     /// Forgotten with the pane.
     told: Mutex<HashMap<String, (bool, bool, &'static str)>>,
-    /// The panes the last daemon marked on its planned way out, and until
-    /// when the mark holds. See `Status::resume`.
-    resume: Mutex<(std::collections::HashSet<String>, Instant)>,
+    /// The panes the last daemon marked to resume or to offer, and the
+    /// clocks on them. See `Marks`.
+    marks: Mutex<Marks>,
+    /// Where a pane's shell has moved to is written down through this -- the
+    /// store's `set_pane_cwd`, given by the server, since panes have no store.
+    cwd_sink: Mutex<Option<CwdSink>>,
 }
 
 impl Panes {
@@ -203,7 +271,8 @@ impl Panes {
             git: Mutex::new(HashMap::new()),
             events,
             told: Mutex::new(HashMap::new()),
-            resume: Mutex::new((Default::default(), Instant::now())),
+            marks: Mutex::new(Marks::default()),
+            cwd_sink: Mutex::new(None),
         });
         // A daemon killed rather than stopped keeps what it had up to the
         // last of these.
@@ -247,13 +316,16 @@ impl Panes {
                 proc: None,
                 status: Status {
                     resume: self.marked(id),
+                    offer: self.offered(id),
                     ..Status::default()
                 },
                 old,
                 unsaved: false,
                 run: 0,
                 cwd: String::new(),
+                root: String::new(),
                 wrote: Instant::now(),
+                printing_since: Instant::now(),
             }),
             tx,
             wake: Notify::new(),
@@ -269,11 +341,16 @@ impl Panes {
     /// pages that are watching. One question per folder per tick, and a folder
     /// that answers slowly is asked less often: see `GIT_BACKOFF`.
     async fn git_tick(self: &Arc<Self>) {
+        self.follow_folders();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
-        let mut by_dir: HashMap<String, Vec<Arc<Live>>> = HashMap::new();
+        // Each folder, whether a pane in it is inside its desk's folder, and
+        // the panes in it.
+        let mut by_dir: HashMap<String, (bool, Vec<Arc<Live>>)> = HashMap::new();
         for l in live {
-            if let Some(cwd) = l.running_in() {
-                by_dir.entry(cwd).or_default().push(l);
+            if let Some((cwd, home)) = l.running_in() {
+                let e = by_dir.entry(cwd).or_default();
+                e.0 |= home;
+                e.1.push(l);
             }
         }
         // A folder nothing runs in any more is not worth remembering.
@@ -281,7 +358,7 @@ impl Panes {
             .lock()
             .unwrap()
             .retain(|d, _| by_dir.contains_key(d));
-        for (dir, panes) in by_dir {
+        for (dir, (home, panes)) in by_dir {
             let now = Instant::now();
             if self
                 .git
@@ -295,7 +372,14 @@ impl Panes {
             let d = dir.clone();
             let Ok((branch, dirty)) = tokio::task::spawn_blocking(move || {
                 let p = std::path::Path::new(&d);
-                (crate::project::head_of(p), crate::project::modified(p))
+                // The branch is read from files; whether the tree has changes
+                // runs git, which only the desk's own folder gets to steer.
+                let dirty = if home {
+                    crate::project::modified(p)
+                } else {
+                    None
+                };
+                (crate::project::head_of(p), dirty)
             })
             .await
             else {
@@ -321,14 +405,12 @@ impl Panes {
             .map(|l| l.inner.lock().unwrap().status.clone())
             .unwrap_or_else(|| Status {
                 resume: self.marked(id),
+                offer: self.offered(id),
                 ..Status::default()
             })
     }
 
-    /// The panes a restart should wait for: a process is running and its
-    /// agent says `working`, or it printed something in the last
-    /// `BUSY_OUTPUT`. A pane that `needs_you`, is `done`, or sits at a prompt
-    /// is quiet, and so is a stopped one.
+    /// The panes a restart should wait for, and an update: see `is_busy`.
     pub fn busy(&self) -> Vec<String> {
         let now = Instant::now();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
@@ -336,7 +418,11 @@ impl Panes {
             .iter()
             .filter(|l| {
                 let i = l.inner.lock().unwrap();
-                is_busy(&i.status, now.saturating_duration_since(i.wrote))
+                is_busy(
+                    &i.status,
+                    now.saturating_duration_since(i.wrote),
+                    now.saturating_duration_since(i.printing_since),
+                )
             })
             .map(|l| l.id.clone())
             .collect();
@@ -359,34 +445,134 @@ impl Panes {
     }
 
     /// The panes the last daemon marked on its planned way out. Read from
-    /// the store once at start and held here for `RESUME_FOR`; a window that
-    /// asks for one of them back in that time gets `claude --resume`.
+    /// the store once at start and held until someone looks, and then for
+    /// `RESUME_FOR` (see `arm_marks`); a window that asks for one of them
+    /// back in that time gets `claude --resume`, and after it the offer.
     pub fn mark_resume(&self, ids: Vec<String>) {
-        self.mark_resume_for(ids, RESUME_FOR);
+        {
+            let mut m = self.marks.lock().unwrap();
+            m.resume = ids.into_iter().collect();
+            m.resume_until = None;
+            m.cap = Instant::now() + MARKS_AT_MOST;
+        }
+        self.refresh_marks();
     }
 
-    fn mark_resume_for(&self, ids: Vec<String>, ttl: Duration) {
-        let until = Instant::now() + ttl;
-        *self.resume.lock().unwrap() = (ids.into_iter().collect(), until);
-        // A pane already woken -- a page arrived before the marks were read,
-        // which the order in `server::run` rules out, but cheap to hold to.
+    /// The first desk a window shows after the daemon came up starts the
+    /// resume marks' clock. Once per daemon: a later look is not a first.
+    pub fn arm_marks(&self) {
+        {
+            let mut m = self.marks.lock().unwrap();
+            if m.resume_until.is_some() {
+                return;
+            }
+            m.resume_until = Some(Instant::now() + resume_for());
+        }
+        self.refresh_marks();
+    }
+
+    /// A pane already woken says what the marks say now -- a page arrived
+    /// before the marks were read, which the order in `server::run` rules
+    /// out, or a mark lapsed into an offer. Cheap to hold to.
+    fn refresh_marks(&self) {
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in live {
-            let marked = self.marked(&l.id);
+            let (marked, offered) = (self.marked(&l.id), self.offered(&l.id));
             let mut i = l.inner.lock().unwrap();
             if !i.status.running {
                 i.status.resume = marked;
+                i.status.offer = offered;
             }
         }
     }
 
-    fn marked(&self, id: &str) -> bool {
-        let r = self.resume.lock().unwrap();
-        Instant::now() < r.1 && r.0.contains(id)
+    /// The marks still unspent, as they stand now -- to resume, then to
+    /// offer -- for an exit to write back: a daemon that goes before anyone
+    /// looked must not take the last one's marks with it. A pane started
+    /// since has spent its mark (`unmark`).
+    pub fn unspent(&self) -> (Vec<String>, Vec<String>) {
+        let now = Instant::now();
+        let m = self.marks.lock().unwrap();
+        let mut resume: Vec<String> = m
+            .resume
+            .iter()
+            .filter(|id| m.resume(id, now))
+            .cloned()
+            .collect();
+        let mut offer: Vec<String> = m
+            .resume
+            .union(&m.offer)
+            .filter(|id| m.offer(id, now))
+            .cloned()
+            .collect();
+        resume.sort();
+        offer.sort();
+        (resume, offer)
+    }
+
+    /// Whether a pane is marked to come back as its conversation, now.
+    pub fn marked(&self, id: &str) -> bool {
+        self.marks.lock().unwrap().resume(id, Instant::now())
     }
 
     fn unmark(&self, id: &str) {
-        self.resume.lock().unwrap().0.remove(id);
+        let mut m = self.marks.lock().unwrap();
+        m.resume.remove(id);
+        m.offer.remove(id);
+    }
+
+    /// The panes that had Claude open when the last daemon stopped unplanned:
+    /// read once at start, like `mark_resume`, and held as long as a mark
+    /// can be.
+    pub fn mark_offer(&self, ids: Vec<String>) {
+        {
+            let mut m = self.marks.lock().unwrap();
+            m.offer = ids.into_iter().collect();
+            m.cap = Instant::now() + MARKS_AT_MOST;
+        }
+        self.refresh_marks();
+    }
+
+    /// Whether a pane's conversation is offered back, now.
+    pub fn offered(&self, id: &str) -> bool {
+        self.marks.lock().unwrap().offer(id, Instant::now())
+    }
+
+    /// How a moved shell's folder is written down. Set once, by the server.
+    pub fn on_cwd(&self, sink: CwdSink) {
+        *self.cwd_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// Ask the kernel where each running shell is, and when one has moved, say
+    /// so: in its status, for the page; in `Inner.cwd`, for the git tick; and
+    /// through the sink, so the next start is there too. The kernel and not
+    /// the terminal's folder report (OSC 7): that is text any program in the
+    /// panel can print, and this folder decides where the daemon runs git.
+    fn follow_folders(&self) {
+        let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
+        for l in live {
+            let Some(now) = l.shell_cwd() else { continue };
+            // The kernel answers with the folder resolved -- macOS's /var is
+            // /private/var, and any folder reached through a link -- so the
+            // one the pane was started in is not a move to where it is.
+            let was = l.inner.lock().unwrap().cwd.clone();
+            if was == now || same_folder(&was, &now) {
+                continue;
+            }
+            let s = {
+                let mut i = l.inner.lock().unwrap();
+                if i.cwd != was || !i.status.running {
+                    continue;
+                }
+                i.cwd = now.clone();
+                i.status.cwd = now.clone();
+                i.status.clone()
+            };
+            let _ = l.tx.send(status_frame(&l.id, &s).into());
+            if let Some(sink) = self.cwd_sink.lock().unwrap().as_ref() {
+                sink(&l.id, &now);
+            }
+        }
     }
 
     /// An agent in a running pane says what it is doing. Only a pane this
@@ -417,6 +603,45 @@ impl Panes {
         }
         i.status.agent = state;
         i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        if state.is_empty() {
+            clear_context(&mut i.status);
+        }
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        self.changed(&l.id, &s);
+        true
+    }
+
+    /// The model and the context window, as the status line in this pane last
+    /// said them. False when the pane is not running. Only a change is sent
+    /// on: the line runs after every reply, and most replies move the
+    /// percentage by less than one.
+    pub fn set_context(
+        &self,
+        id: &str,
+        model: &str,
+        pct: Option<u8>,
+        size: Option<u64>,
+        input: Option<u64>,
+    ) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return false;
+        }
+        let st = &i.status;
+        if st.model == model && st.ctx_pct == pct && st.ctx_size == size {
+            i.status.ctx_in = input;
+            return true;
+        }
+        i.status.model = model.to_string();
+        i.status.ctx_pct = pct;
+        i.status.ctx_size = size;
+        i.status.ctx_in = input;
+        i.status.ctx_at = Some(crate::store::now());
         let s = i.status.clone();
         drop(i);
         let _ = l.tx.send(status_frame(&l.id, &s).into());
@@ -443,15 +668,32 @@ impl Panes {
             .count()
     }
 
-    /// The process on a pane is stopped, its text is deleted, and the pane is
-    /// forgotten here -- which is what closing a pane or a desk does, after
-    /// the store has let go of the row.
-    pub fn close(&self, id: &str) {
+    /// The process on a pane is stopped and the pane is forgotten here, its
+    /// text written down and kept -- which is what closing a pane does: the
+    /// store keeps the row for Undo, and a pane brought back shows its last
+    /// screen, greyed, as after a restart.
+    pub fn forget(&self, id: &str) {
         let l = self.live.lock().unwrap().remove(id);
         if let Some(l) = l {
+            let text = {
+                let mut i = l.inner.lock().unwrap();
+                i.unsaved.then(|| {
+                    i.unsaved = false;
+                    keep_text(&i.old, i.screen.text())
+                })
+            };
+            if let Some(text) = text {
+                self.write_text(&l.id, &text);
+            }
             l.stop();
         }
         self.told.lock().unwrap().remove(id);
+    }
+
+    /// Forgotten, and its text deleted: closing a desk, or a closed pane
+    /// ended by `prune` or by its desk going.
+    pub fn discard(&self, id: &str) {
+        self.forget(id);
         let _ = std::fs::remove_file(self.text_path(id));
     }
 
@@ -467,6 +709,8 @@ impl Panes {
 
     /// Stop everything and write it down: the daemon is going.
     pub fn shutdown(&self) {
+        // Where each shell is, one last time, so each comes back there.
+        self.follow_folders();
         self.persist_all();
         let all: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in all {
@@ -533,11 +777,68 @@ impl Panes {
     }
 }
 
-/// Whether a pane is one a restart should wait for. The rule on its own,
-/// so it can be read and tested without a process: a running pane whose
-/// agent is mid-turn, or that printed something less than `BUSY_OUTPUT` ago.
-pub fn is_busy(s: &Status, since_output: Duration) -> bool {
-    s.running && (s.agent == "working" || since_output < busy_output())
+/// Whether a pane is one a restart should wait for, and an update. The
+/// rule on its own, so it can be read and tested without a process. A
+/// running pane is busy while its agent waits on the reader (`needs_you`:
+/// a restart would take the question away unanswered), while it is mid-turn
+/// and printing (`WORKING_SILENT`), or while its program printed something
+/// less than `BUSY_OUTPUT` ago, for at most `PRINTING_AT_MOST` of unbroken
+/// printing. `since_output` is how long since it last printed, and
+/// `printing_for` how long the present run of printing has gone on.
+pub fn is_busy(s: &Status, since_output: Duration, printing_for: Duration) -> bool {
+    if !s.running {
+        return false;
+    }
+    match s.agent {
+        "needs_you" => true,
+        "working" => since_output < WORKING_SILENT,
+        _ => since_output < busy_output() && printing_for < PRINTING_AT_MOST,
+    }
+}
+
+/// The panes the last daemon marked, and their clocks. A resume mark holds
+/// from the start until `resume_until`, which is unset until someone looks;
+/// past it, an unspent mark is an offer. Everything goes at `cap`.
+struct Marks {
+    resume: std::collections::HashSet<String>,
+    offer: std::collections::HashSet<String>,
+    resume_until: Option<Instant>,
+    cap: Instant,
+}
+
+impl Default for Marks {
+    fn default() -> Marks {
+        Marks {
+            resume: Default::default(),
+            offer: Default::default(),
+            resume_until: None,
+            cap: Instant::now(),
+        }
+    }
+}
+
+impl Marks {
+    fn resume(&self, id: &str, now: Instant) -> bool {
+        now < self.cap && self.resume_until.is_none_or(|t| now < t) && self.resume.contains(id)
+    }
+    fn offer(&self, id: &str, now: Instant) -> bool {
+        now < self.cap
+            && (self.offer.contains(id)
+                || (self.resume.contains(id) && self.resume_until.is_some_and(|t| now >= t)))
+    }
+}
+
+/// `RESUME_FOR`, unless `SNYVI_RESUME_S` says otherwise, for
+/// bench/restart.mjs, which cannot wait five minutes. Read once.
+fn resume_for() -> Duration {
+    static FOR: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *FOR.get_or_init(|| {
+        std::env::var("SNYVI_RESUME_S")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(RESUME_FOR)
+    })
 }
 
 /// `BUSY_OUTPUT`, unless `SNYVI_QUIET_S` says otherwise: bench/restart.mjs
@@ -662,6 +963,7 @@ impl Live {
         let (mut cmd, born) = command(s.cmd, s.accent);
         cmd.cwd(s.cwd);
         i.cwd = s.cwd.to_string();
+        i.root = s.root.to_string();
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "snyvi");
@@ -724,8 +1026,13 @@ impl Live {
             // Whatever this start is, the mark is spent: a window that chose
             // the shell over the conversation has chosen.
             resume: false,
+            offer: s.offer,
+            cwd: s.cwd.to_string(),
+            // A new process has told nothing yet about any model.
+            ..Status::default()
         };
         i.wrote = Instant::now();
+        i.printing_since = i.wrote;
         i.unsaved = true;
         panes.unmark(&self.id);
         let status = i.status.clone();
@@ -822,11 +1129,16 @@ fn read_loop(me: std::sync::Weak<Live>, mut reader: Box<dyn Read + Send>, run: u
                 proc,
                 unsaved,
                 wrote,
+                printing_since,
                 ..
             } = &mut *i;
             screen.feed(parser, &buf[..n]);
             *unsaved = true;
-            *wrote = Instant::now();
+            let now = Instant::now();
+            if now.saturating_duration_since(*wrote) >= busy_output() {
+                *printing_since = now;
+            }
+            *wrote = now;
             if !screen.replies.is_empty() {
                 let replies = std::mem::take(&mut screen.replies);
                 if let Some(p) = proc.as_mut() {
@@ -916,12 +1228,33 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
 impl Live {
     /// The folder a running process was started in, or nothing when the pane
     /// is stopped: a stopped pane has no tree worth asking about.
-    fn running_in(&self) -> Option<String> {
-        let i = self.inner.lock().unwrap();
-        i.status
-            .running
-            .then(|| i.cwd.clone())
-            .filter(|c| !c.is_empty())
+    /// The folder this pane's process is in now, as the kernel reports it.
+    fn shell_cwd(&self) -> Option<String> {
+        let pid = {
+            let i = self.inner.lock().unwrap();
+            if !i.status.running {
+                return None;
+            }
+            i.status.pid?
+        };
+        folder_of(pid)
+    }
+
+    /// The folder the running process is in, and whether that is inside the
+    /// desk's own folder (see `Inner.root`).
+    fn running_in(&self) -> Option<(String, bool)> {
+        let (cwd, root) = {
+            let i = self.inner.lock().unwrap();
+            if !i.status.running || i.cwd.is_empty() {
+                return None;
+            }
+            (i.cwd.clone(), i.root.clone())
+        };
+        // Both resolved: the folder may be the kernel's answer (see
+        // `follow_folders`) and the root as the desk was made.
+        let real = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
+        let home = !root.is_empty() && real(&cwd).starts_with(real(&root));
+        Some((cwd, home))
     }
 
     /// What git said, kept and sent on only when it is news. A header that
@@ -936,6 +1269,61 @@ impl Live {
         let s = i.status.clone();
         drop(i);
         let _ = self.tx.send(status_frame(&self.id, &s).into());
+    }
+}
+
+/// A process's working folder. Linux reads `/proc/<pid>/cwd`; macOS asks
+/// `proc_pidinfo`; anywhere else there is no answer, and a pane's folder
+/// stays the one it started in.
+#[cfg(target_os = "linux")]
+pub fn folder_of(pid: u32) -> Option<String> {
+    let p = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    p.is_dir().then(|| p.to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "macos")]
+pub fn folder_of(pid: u32) -> Option<String> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    // SAFETY: the buffer is a zeroed struct of exactly the size passed, the
+    // layout the kernel fills for this flavour.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    let raw: &[libc::c_char] = unsafe {
+        std::slice::from_raw_parts(
+            info.pvi_cdir.vip_path.as_ptr() as *const libc::c_char,
+            std::mem::size_of_val(&info.pvi_cdir.vip_path),
+        )
+    };
+    let bytes: Vec<u8> = raw
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect();
+    let p = String::from_utf8(bytes).ok()?;
+    std::path::Path::new(&p).is_dir().then_some(p)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn folder_of(_pid: u32) -> Option<String> {
+    None
+}
+
+/// Two spellings of one folder: through a link, or with /private in front.
+fn same_folder(a: &str, b: &str) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
     }
 }
 
@@ -1052,12 +1440,14 @@ mod tests {
         assert_eq!(kept[10], "new");
     }
 
-    /// The quiet predicate, over what a restart looks at: an agent mid-turn
-    /// or a program still printing is busy; a stopped pane, a pane waiting
-    /// on its reader, one that finished a turn, and one at its prompt for a
-    /// while are not.
+    /// The quiet predicate, over what a restart and an update look at: an
+    /// agent waiting on its reader, one mid-turn, or a program still
+    /// printing is busy; a stopped pane, one that finished a turn, and one
+    /// at its prompt for a while are not -- and neither is an agent silent
+    /// past `WORKING_SILENT`, nor a program that has printed without a
+    /// break for `PRINTING_AT_MOST`.
     #[test]
-    fn a_restart_waits_for_working_agents_and_recent_output_only() {
+    fn a_restart_waits_for_agents_and_recent_output_but_not_forever() {
         let s = |running: bool, agent: &'static str| Status {
             running,
             agent,
@@ -1065,21 +1455,63 @@ mod tests {
         };
         let long_ago = BUSY_OUTPUT + Duration::from_secs(1);
         let just_now = Duration::from_secs(1);
-        assert!(is_busy(&s(true, "working"), long_ago));
-        assert!(is_busy(&s(true, ""), just_now));
-        assert!(is_busy(&s(true, "done"), just_now));
-        assert!(!is_busy(&s(true, ""), long_ago));
-        assert!(!is_busy(&s(true, "needs_you"), long_ago));
-        assert!(!is_busy(&s(true, "done"), long_ago));
-        assert!(!is_busy(&s(false, "working"), just_now));
-        assert!(!is_busy(&s(false, ""), just_now));
+        let a_while = Duration::from_secs(60);
+        let silent = WORKING_SILENT + Duration::from_secs(1);
+        let for_ever = PRINTING_AT_MOST + Duration::from_secs(1);
+        assert!(is_busy(&s(true, "working"), long_ago, a_while));
+        assert!(is_busy(&s(true, ""), just_now, a_while));
+        assert!(is_busy(&s(true, "done"), just_now, a_while));
+        assert!(!is_busy(&s(true, ""), long_ago, a_while));
+        assert!(!is_busy(&s(true, "done"), long_ago, a_while));
+        // An approval waiting is never cut off, however long it waits.
+        assert!(is_busy(&s(true, "needs_you"), long_ago, a_while));
+        assert!(is_busy(&s(true, "needs_you"), silent, for_ever));
+        // A turn stopped with Esc says `working` and nothing more.
+        assert!(!is_busy(&s(true, "working"), silent, a_while));
+        // A log tail is busy for two hours, and then it is not.
+        assert!(is_busy(&s(true, ""), just_now, PRINTING_AT_MOST - a_while));
+        assert!(!is_busy(&s(true, ""), just_now, for_ever));
+        assert!(!is_busy(&s(true, "done"), just_now, for_ever));
+        assert!(!is_busy(&s(false, "working"), just_now, a_while));
+        assert!(!is_busy(&s(false, "needs_you"), just_now, a_while));
+        assert!(!is_busy(&s(false, ""), just_now, a_while));
+    }
+
+    /// The marks wait for someone to look: ten minutes with nobody here
+    /// spends nothing. The first look starts `RESUME_FOR`; past it, an
+    /// unspent resume is an offer; past the cap, nothing is either.
+    #[test]
+    fn a_mark_waits_for_a_look_then_lapses_into_an_offer() {
+        let t0 = Instant::now();
+        let m = |until: Option<Instant>| Marks {
+            resume: ["r".to_string()].into(),
+            offer: ["o".to_string()].into(),
+            resume_until: until,
+            cap: t0 + MARKS_AT_MOST,
+        };
+        let later = t0 + Duration::from_secs(10 * 60);
+        // Nobody has looked: a resume holds, however long.
+        assert!(m(None).resume("r", later));
+        assert!(!m(None).offer("r", later));
+        assert!(m(None).offer("o", later));
+        // Looked at ten minutes: it holds five more, then is an offer.
+        let armed = m(Some(later + RESUME_FOR));
+        assert!(armed.resume("r", later + Duration::from_secs(60)));
+        assert!(!armed.resume("r", later + RESUME_FOR));
+        assert!(armed.offer("r", later + RESUME_FOR));
+        assert!(!armed.resume("o", later), "an offer is never a resume");
+        // A day on, nothing is anything.
+        let day = t0 + MARKS_AT_MOST;
+        assert!(!m(None).resume("r", day));
+        assert!(!armed.offer("r", day));
+        assert!(!armed.offer("o", day));
     }
 
     /// A mark is carried on the pane's status until its first start, whether
-    /// the pane was woken before or after the marks were read, and it is not
-    /// honoured past its time.
+    /// the pane was woken before or after the marks were read, and past its
+    /// time it is an offer.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_expires() {
+    async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_lapses() {
         let dir = crate::store::tempdir::Dir::new("snyvi-pane-mark");
         let (events, _) = broadcast::channel(16);
         let panes = Panes::new(&dir.path, events);
@@ -1102,12 +1534,14 @@ mod tests {
             let cwd = dir.path.to_string_lossy().to_string();
             let s = Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "sleep 30",
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             };
             let status = panes.get(late).start(s, &panes).unwrap();
             assert!(!status.resume);
@@ -1118,9 +1552,25 @@ mod tests {
             panes.get(late).stop();
         }
         assert!(panes.status(early).resume, "the other mark is untouched");
-        // Past its time, a mark is a mark no more.
-        panes.mark_resume_for(vec![early.into()], Duration::ZERO);
+        // What an exit writes back: the mark nobody has spent.
+        assert!(panes.unspent().0.contains(&early.to_string()));
+        #[cfg(unix)]
+        assert!(
+            !panes.unspent().0.contains(&late.to_string()),
+            "spent by its start"
+        );
+        // Past its time, a mark is an offer: the woken pane says so too.
+        panes.arm_marks();
+        panes.marks.lock().unwrap().resume_until = Some(Instant::now());
+        panes.refresh_marks();
         assert!(!panes.status(early).resume);
+        assert!(panes.status(early).offer);
+        assert!(!panes.marked(early), "the page's own resume is refused now");
+        assert!(panes.unspent().0.is_empty());
+        assert!(
+            panes.unspent().1.contains(&early.to_string()),
+            "and written back as an offer"
+        );
         assert!(!panes.get(never).attach().0[0].contains("\"resume\":true"));
     }
 
@@ -1149,6 +1599,7 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "printf 'pane=%s\\n' \"$SNYVI_SESSION\"; pwd; exit 3",
                 desk: "d",
                 slot: 1,
@@ -1157,6 +1608,7 @@ mod tests {
                 cols: 400,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1210,12 +1662,14 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: &cmd,
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1235,6 +1689,53 @@ mod tests {
         assert!(snap.contains("late"), "{snap}");
     }
 
+    /// A pane started in a folder reached through a link has not moved when
+    /// the kernel names the folder resolved: macOS's /var is /private/var.
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_folder_through_a_link_is_not_a_move() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-link");
+        std::fs::create_dir_all(dir.path.join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.path.join("real"), dir.path.join("link")).unwrap();
+        let (events, _ev) = broadcast::channel(64);
+        let panes = Panes::new(&dir.path, events);
+        let id = "00112233445566778899aabbccddeeff";
+        let live = panes.get(id);
+        let link = dir.path.join("link").to_string_lossy().to_string();
+        live.start(
+            Start {
+                cwd: &link,
+                root: &link,
+                cmd: "sleep 30",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+                offer: false,
+            },
+            &panes,
+        )
+        .unwrap();
+        for _ in 0..50 {
+            if live.shell_cwd().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            live.shell_cwd().is_some_and(|c| c.ends_with("/real")),
+            "the kernel names it resolved"
+        );
+        panes.follow_folders();
+        assert_eq!(live.inner.lock().unwrap().cwd, link, "not a move");
+        assert!(
+            live.running_in().is_some_and(|(_, home)| home),
+            "and still inside the desk's folder"
+        );
+        live.stop();
+    }
+
     /// The agent's word reaches only a pane that is running, is sent once per
     /// change, and goes with the process.
     #[cfg(unix)]
@@ -1252,12 +1753,14 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "read x",
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1317,12 +1820,14 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "for t in a b c d e; do printf '\\033]0;%s\\007' $t; sleep 0.05; done; printf '\\a'; read x",
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1357,5 +1862,32 @@ mod tests {
         );
         assert!(dots[1].contains("\"blocked\":true"), "{dots:?}");
         live.stop();
+    }
+
+    /// 1.7.1: a shell that `cd`s is found where it went, by asking the
+    /// kernel -- which is what brings a panel back in that folder.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_shell_that_moved_is_found_where_it_went() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-cwd");
+        std::fs::create_dir(dir.path.join("sub")).unwrap();
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "cd sub && exec sleep 5"])
+            .current_dir(&dir.path)
+            .spawn()
+            .unwrap();
+        let want = std::fs::canonicalize(dir.path.join("sub")).unwrap();
+        let mut seen = None;
+        for _ in 0..50 {
+            seen = folder_of(child.id()).map(std::path::PathBuf::from);
+            if seen.as_deref() == Some(want.as_path()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(seen.as_deref(), Some(want.as_path()));
+        assert_eq!(folder_of(u32::MAX), None, "no such process, no folder");
     }
 }

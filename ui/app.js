@@ -196,7 +196,7 @@
     browseEl.innerHTML = head + `<div class="b-body s-body">` + state.browse.map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
       return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
-    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Read a folder as it is on disk"}</button></div>`;
+    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
 
@@ -228,6 +228,18 @@
    *  row under the tree is the way back after that. */
   const awayBtn = p =>
     `<button type="button" class="row-x" data-away="${p.id}" title="Remove from the sidebar · the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">✕</button>`;
+  /** A project's desk, from its row: the glyph stays lit while the project
+   *  has one and goes to it, and waits for the pointer, as a folder's does,
+   *  while it has none. The Inbox's project and the desk on its folder are
+   *  the same project, and this is where the sidebar says so. */
+  /** One folder however it was spelled: a trailing slash is not another place. */
+  const sameRoot = (a, b) => !!a && !!b && a.replace(/(.)\/+$/, "$1") === b.replace(/(.)\/+$/, "$1");
+  const projDeskBtn = p => {
+    if (!capability || !p.root) return "";
+    const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));
+    return d ? `<button type="button" class="b-new has" data-projdesk="${p.id}" title="Show desk ${esc(d.name)}" aria-label="Show desk ${esc(d.name)}">${icon("desk")}</button>`
+      : `<button type="button" class="b-new" data-projdesk="${p.id}" title="New desk for ${esc(p.name)}" aria-label="New desk for ${esc(p.name)}">${icon("desk")}</button>`;
+  };
 
   /** A project is drawn expanded when the reader left it that way, when the
    *  document on screen is in it, or when it is the only one there is. Not
@@ -362,6 +374,7 @@
     for (const [id, t] of washes) if (now - t >= WASH_MS) washes.delete(id);
     for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
     const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
+    badge('[data-pop="inbox"]', n);
     // The rows state says, with the ones still closing put back where they
     // were, so a read takes its row out rather than the list snapping up.
     const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
@@ -504,18 +517,29 @@
   const SHOW_DOCS = 5, SHOW_ROWS = 8;
   const wholeWf = w => liftedWorkflows.has(w.id) || (state.doc && state.doc.workflow_id === w.id);
   function projectRows(p) {
-    const pid = String(p.id), wfs = state.sub.get(pid);
+    const pid = String(p.id);
+    let wfs = state.sub.get(pid);
     if (!wfs) return `<li class="t-wait">…</li>`;
     const allWfs = liftedCaps.has(pid);
     // A removed document's row stands in its session until the offer goes.
     // Its session may have gone with it, when it was the only document there:
     // then the row stands alone where the session was.
     const g = gone && gone.where === "proj" && gone.pid === pid ? gone : null;
-    const lostWf = g && !wfs.some(w => w.id === g.wf);
+    // And the sessions keep the order they were drawn in: a session that lost
+    // its newest document can sort below another, and move the Undo with it.
+    // One that came since goes on top, where it would have anyway.
+    let fresh = 0;
+    if (g && g.order) {
+      const was = new Map(g.order.map((id, i) => [id, i]));
+      const kept = wfs.filter(w => was.has(w.id)).sort((a, b) => was.get(a.id) - was.get(b.id));
+      fresh = wfs.length - kept.length;
+      wfs = [...wfs.filter(w => !was.has(w.id)), ...kept];
+    }
+    const lostWf = g && !wfs.some(w => w.id === g.wf), lostAt = g ? g.wfAt + fresh : -1;
     const lone = () => `<li class="t-wf solo"><ul>${ghostRow()}</ul></li>`;
     let h = "", shownWfs = 0, rows = 0;
     for (const [wi, w] of wfs.entries()) {
-      if (lostWf && wi === g.wfAt) h += lone();
+      if (lostWf && wi === lostAt) h += lone();
       // Past the budget, only the session being read is drawn.
       if (!allWfs && rows >= SHOW_ROWS && !(state.doc && state.doc.workflow_id === w.id)) continue;
       shownWfs++;
@@ -537,7 +561,7 @@
       else if (liftedWorkflows.has(w.id) && w.total > SHOW_DOCS) h += `<li class="t-more"><button type="button" data-less-docs="${w.id}">less</button></li>`;
       h += `</ul></li>`;
     }
-    if (lostWf && g.wfAt >= wfs.length) h += lone();
+    if (lostWf && lostAt >= wfs.length) h += lone();
     if (p.workflows > shownWfs) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - shownWfs} more sessions</button></li>`;
     else if (allWfs && wfs.length > 1 && liftedCaps.has(pid)) h += `<li class="t-more"><button type="button" data-less-wf="${p.id}">fewer sessions</button></li>`;
     return h;
@@ -572,7 +596,7 @@
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: the row under <b>Folders</b>, below.</div>`;
+      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -615,7 +639,7 @@
       const open = projOpen(p);
       // The one held for a ghost closes with it.
       const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
-      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${awayBtn(p)}</summary><ul>`;
+      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -835,8 +859,18 @@
     if (nd) {
       // Inside a <summary> too: a click on the + is not a click on the folder.
       e.preventDefault(); e.stopPropagation();
-      // In a folder's row, a desk on that folder; in the Desks head, one on no folder.
-      act("make", folderOf(nd));
+      // In a folder's row, a desk on that folder; in the Desks head, the
+      // question of where.
+      const f = folderOf(nd);
+      // With no project known yet the only real answer is a folder: the
+      // dialog, at once, rather than a menu of one row.
+      if (f) act("make", f); else if (capability && !deskPlaces().length) act("pick", true); else askWhere(nd, e.detail === 0);
+      return;
+    }
+    const pd = e.target.closest("[data-projdesk]");
+    if (pd) {
+      e.preventDefault(); e.stopPropagation();
+      act("projectDesk", +pd.dataset.projdesk);
       return;
     }
     const dx = e.target.closest("[data-deldoc]");
@@ -1186,21 +1220,20 @@
     if (!items || push) {
       try { items = await (await fetch("/api/inbox?limit=60")).json(); } catch { items = []; }
     }
-    boot.inbox = null;
-    // Nothing to read: the page is the connect page, with the rows the shell
-    // came with or, on a later visit, fetched now.
-    let agents = null;
+    boot.inbox = null; boot.agents = null;
+    // Nothing to read, and no desk yet: the page is Welcome -- which project
+    // first -- at the inbox's own address. A window that has desks and no
+    // documents yet says where they will land.
+    let welcomeHtml = null;
     if (!items.length) {
-      agents = boot.agents; boot.agents = null;
-      if (!agents) { try { agents = await (await fetch("/api/agents")).json(); } catch {} }
-      await connectReady();
+      if (capability && !state.desks) await loadDesks();
+      if (!capability || !(state.desks && state.desks.desks.length)) welcomeHtml = await welcomePage();
     }
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
-    docEl.innerHTML = inboxHtml(items, agents);
+    docEl.innerHTML = welcomeHtml != null ? welcomeHtml : inboxHtml(items);
     if (push) swapIn();
     afterRender();
-    if (!items.length) watchAgents();
     // The inbox lists every waiting row, and the page opened with the oldest
     // few: the rest come after the page is on screen, not before the sidebar is.
     if (state.waiting > state.queue.length) {
@@ -1211,9 +1244,9 @@
     }
   }
 
-  function inboxHtml(items, agents) {
+  function inboxHtml(items) {
     const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
-    if (!items.length) return connectHtml ? connectHtml(agents) : "";
+    if (!items.length) return `<div class="inbox-head"><h1>Inbox</h1><p>What your agents write lands here, filed by project. Ask one in a desk for a plan.</p></div>`;
     // What is waiting comes first, oldest first, so the landing page answers
     // "what is new" before "what is there".
     const n = state.waiting;
@@ -1238,14 +1271,14 @@
   const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
   async function connectReady() {
     if (connectHtml) return;
-    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel })); }
+    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel, cap: !!capability })); }
     catch (e) { panelLoading = null; toast("Could not open that page", String(e)); }
   }
   async function showConnect(push = true) {
     if (push) leave();
     offDesk();
     state.view = "connect"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
-    document.title = "Connect an agent · snyvi";
+    document.title = "Agents · snyvi";
     if (push) history.pushState({ connect: true }, "", "/connect");
     let a = boot.agents; boot.agents = null;
     if (!a) { try { a = await (await fetch("/api/agents")).json(); } catch { a = null; } }
@@ -1256,18 +1289,81 @@
     afterRender();
     watchAgents();
   }
+  /** The first ten minutes: a page about.js draws, like the connect page.
+   *  `at` is a section to land on (`#desks`), as an aside's link names one. */
+  async function showStart(push = true, at = location.hash) {
+    if (push) leave();
+    offDesk();
+    state.view = "start"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "How snyvi works · snyvi";
+    if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
+    let m;
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return; }
+    // The first fetch of the chunk is a wait, and a click in it went elsewhere.
+    if (state.view !== "start") return;
+    docEl.innerHTML = m.start({ cap: !!capability });
+    m.startReady(boot.v);
+    if (push) swapIn();
+    const sec = at && document.getElementById(at.slice(1));
+    if (sec) sec.scrollIntoView({ block: "start" }); else main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
+  /** Welcome: what snyvi is, and which project first. Its own address to
+   *  come back to from Help; the empty library draws the same page at `/`. */
+  let welcomePlaces = [];
+  async function welcomePage() {
+    let m;
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return ""; }
+    welcomePlaces = capability ? deskPlaces() : [];
+    return m.welcome({ cap: !!capability, places: welcomePlaces, home: state.desks && state.desks.home, mascot: mascotHead("plain"), esc });
+  }
+  async function showWelcome(push = true) {
+    if (push) leave();
+    offDesk();
+    state.view = "welcome"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "Welcome · snyvi";
+    if (push) history.pushState({ welcome: true }, "", "/welcome");
+    if (capability && !state.desks) await loadDesks();
+    const html = await welcomePage();
+    if (state.view !== "welcome") return;
+    docEl.innerHTML = html;
+    if (push) swapIn();
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
+  // Welcome's question, and Connect wherever it is offered.
+  docEl.addEventListener("click", async e => {
+    const b = e.target.closest("[data-w]");
+    if (!b || !docEl.contains(b)) return;
+    const w = b.dataset.w;
+    if (w === "pick") act("pick", true);
+    else if (w === "place") { const f = welcomePlaces[+b.dataset.i]; if (f) act("make", f); }
+    else if (w === "connect") connectClaude(b);
+  });
+  /** Connect Claude Code, from the Agents page or a desk's panel: it asks,
+   *  in place, then runs `init-claude` in the daemon. */
+  async function connectClaude(b, done) {
+    const m = await panelMod();
+    m.connectAsk(b, { api: (path, body) => deskApi(path, body), done: (a, ok) => {
+      if (a && state.view === "connect" && connectHtml) setTimeout(() => { if (state.view === "connect") docEl.innerHTML = connectHtml(a); }, 1600);
+      done && done(a, ok);
+    } });
+  }
   /** Ask again while the page is on screen; redraw only when something changed. */
   function watchAgents() {
     clearInterval(agentsTimer);
     agentsTimer = setInterval(refreshAgents, 2500);
   }
   async function refreshAgents() {
-    if (!docEl.querySelector(".connect") || document.hidden) return;
+    if (state.view !== "connect" || !docEl.querySelector(".connect") || document.hidden) return;
     let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
     if (JSON.stringify(a.rows) === agentsSeen) return;
     const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
+    // And the fold of the other agents: a row turning is no reason to shut it.
+    const more = !!docEl.querySelector(".agents-more[open]");
     docEl.innerHTML = connectHtml(a);
     for (const id of open) docEl.querySelector(`.agent[data-agent="${CSS.escape(id)}"] details`)?.setAttribute("open", "");
+    if (more) docEl.querySelector(".agents-more")?.setAttribute("open", "");
   }
 
   /** The count beside the brand mark: how many agents hold a stream on the
@@ -1280,6 +1376,8 @@
     liveEl.textContent = String(n);
     liveEl.classList.toggle("on", n > 0);
     liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
+    const rl = $("#rail-live");
+    rl.classList.toggle("on", n > 0); rl.dataset.label = liveEl.title; badge("#rail-live", n);
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};
@@ -1289,36 +1387,63 @@
   renderLive();
 
   /** The update pill beside it, from the daemon's `update` block. Shown
-   *  only when the daemon says so: the day's slot is open or the reader
-   *  asked, a version failed to start, or the file on disk is newer than
-   *  the daemon. A click restarts onto the staged version once the panels
-   *  are quiet; in a tab, which holds no capability, or on an install that
-   *  is only told, it opens About, which says what to run. */
+   *  when the daemon says so -- the day's slot is open or the reader asked,
+   *  a version failed to start, the file on disk is newer than the daemon --
+   *  while a restart waits for the panels to be quiet, and for one session
+   *  after an update landed, so a desk that came back is explained. A click
+   *  restarts onto the staged version once the panels are quiet; in a tab,
+   *  which holds no capability, on an install that is only told, or while a
+   *  restart waits, it opens About, which says what to run and holds Now
+   *  and Cancel. */
   const updEl = $("#upd");
-  let upd = null, updWaiting = false;
+  let upd = null, updWaiting = false, updFresh = null;
+  const DAY = 86400;
   function renderUpd() {
     const u = upd;
     let text = "", cls = "", title = "";
-    if (u && u.show) {
-      if (u.ready) { text = updWaiting ? "Restarting…" : `Restart to update · ${u.ready}`; cls = (u.amber ? "amber " : "") + (updWaiting ? "waiting" : ""); title = "Restarts once no panel is busy; Claude panels come back with their conversation"; }
+    const r = u && u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
+    if (u && (u.restarting || updWaiting)) { text = "Restarting…"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
+    else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting…"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
+    else if (u && u.show) {
+      if (u.ready) { text = capability ? `Restart to update · ${u.ready}` : `Update ready · ${u.ready}`; cls = u.amber ? "amber" : ""; title = capability ? "Restarts once no panel is busy; Claude panels come back with their conversation" : "The window restarts it; About says more"; }
       else if (u.failed_recent) { text = `${u.failed} did not start · kept ${boot.version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
       else if (u.available) { text = `${u.available} is out · how`; title = "This install is updated by hand; About says how"; }
-      else if (u.stale) { text = updWaiting ? "Restarting…" : "Restart to update"; cls = updWaiting ? "waiting" : ""; title = "The snyvi on disk is newer than the one running"; }
+      else if (u.stale) { text = capability ? "Restart to update" : "Update ready"; title = "The snyvi on disk is newer than the one running"; }
+    }
+    // Updated: once per landing, kept for the page it was first shown on.
+    const at = u && u.last_applied;
+    if (!text && at && Date.now() / 1000 - at < DAY && updFresh !== -1) {
+      let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
+      if (updFresh === at || seen !== String(at)) {
+        updFresh = at; try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
+        text = `Updated to ${boot.version} · what's new`; cls = "quiet updated"; title = "About has the release notes";
+      }
     }
     updEl.hidden = !text;
     if (!text) return;
     updEl.textContent = text; updEl.className = `upd ${cls}`.trim(); updEl.title = title;
+    updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
+    updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
   }
-  function setUpd(u) { upd = u && typeof u === "object" ? u : null; renderUpd(); }
+  function setUpd(u) {
+    upd = u && typeof u === "object" ? u : null;
+    // The daemon's word has come, whichever came first -- it or the reply to
+    // the click: from here the pill says what it says.
+    if (upd && (upd.restart || upd.restarting)) updWaiting = false;
+    renderUpd();
+  }
   updEl.addEventListener("click", async () => {
     const u = upd;
-    if (!u) return;
-    if ((u.ready || (u.stale && !u.failed_recent)) && capability && !updWaiting) {
+    if (!u || u.restarting || updWaiting) return;
+    if (!u.restart && (u.ready || (u.stale && !u.failed_recent)) && capability) {
       updWaiting = true; renderUpd();
-      try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); }
+      // The daemon's `update` event says what the restart waits on; until
+      // it comes, this pill says Restarting.
+      try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
       catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", String(e)); }
       return;
     }
+    if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }
     panel("about");
   });
 
@@ -1382,7 +1507,7 @@
     if (!from && !treeEl.querySelector(sel)) return null;
     for (const [pid, wfs] of state.sub) for (const [wfAt, w] of wfs.entries()) {
       const at = w.docs.findIndex(x => x.id === id);
-      if (at >= 0) return { where: "proj", pid, wf: w.id, wfAt, at, solo: w.total === 1 && w.docs.length === 1, doc: w.docs[at] };
+      if (at >= 0) return { where: "proj", pid, wf: w.id, wfAt, at, solo: w.total === 1 && w.docs.length === 1, doc: w.docs[at], order: wfs.map(x => x.id) };
     }
     return null;
   }
@@ -1567,172 +1692,70 @@
   }
 
   // ---------- the note: a line an agent leaves beside the work ----------
-  /** It sits above the theme bar and is nothing at all until an agent says
-   *  something. A new note glows until a reader rests on it; after that it is
-   *  one quiet line. The ones before it wait in a trail a hover away. Seen is
-   *  the daemon's, so a glance in one window puts the glow out in all. */
-  const noteEl = $("#note");
-  let noteLook = 0, notePeek = 0, noteShown = (state.notes.find(n => !n.dismissed) || {}).id || 0;
+  /* The card is ui/note.js, fetched the first time there is an aside to show.
+   * Until then the page keeps only the mark: `data-note` on the root, which
+   * makes the logo blink and the rail's aside dot glow. */
   /** The asides on the card: the daemon keeps a closed one, flagged, for Undo. */
   const liveNotes = () => state.notes.filter(n => !n.dismissed);
-  /** An aside a reader just closed: the card stands where it was as one line
-   *  holding the Undo, on the same drain as a removed document's row, and
-   *  only when that ends does the next aside take the card. */
-  let noteGone = null;
-  /** There is one snyvi on screen, the logo, and the note is its voice: a
-   *  waiting note perks it up, a new one makes it hop, and a reader resting on
-   *  the note gets a smile and a heart. The card itself carries no face. */
-  const markEl = $(".brand-mark");
-  /** Behind the note, when a reader comes over: snyvi large and tilted,
-   *  peeking up from the corner with a feeling. Each note keeps its own --
-   *  glad, a wink, heart eyes -- chosen by its id, so a redraw never
-   *  changes its mind. */
-  const HEART = (x, y) => `<path class="nb-love" transform="translate(${x} ${y}) scale(.8)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/>`;
-  const FEELINGS = [
-    `<path class="nb-line" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="nb-ink" d="M12.6 21.6q3.4 4.6 6.8 0z"/>`,
-    `<ellipse class="nb-ink" cx="11" cy="16.5" rx="2.6" ry="3.3"/><circle class="nb-shine" cx="11.9" cy="15.2" r="1"/><path class="nb-line" d="M18.6 17.6q2.4-2.8 4.8 0M13.5 22.6q3 2.8 6 0"/>`,
-    HEART(11, 16.5) + HEART(21, 16.5) + `<path class="nb-line" d="M13.5 22.6q2.5 2.4 5 0"/>`,
-  ];
-  const noteBg = id => `<svg class="note-bg" viewBox="0 0 32 32" aria-hidden="true">` +
-    `<rect class="nb-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="nb-body" x="1" y="4" width="30" height="27" rx="9"/>` +
-    `<ellipse class="nb-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="nb-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
-    FEELINGS[id % FEELINGS.length] + `</svg>`;
-  /** The byline says whose work it came through: "via claude-code on api". */
-  function noteBy(n) {
-    return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
+  /* snyvi's own asides: five lines at five first moments, each once, each
+   * pointing into /start. Not a tour and not a checklist: it waits while an
+   * agent's aside is unread, says at most one thing in ten minutes (the
+   * daemon's own quiet for agents, aside.rs), and remembers what it said in
+   * this browser (`snyvi.seen.*`, which Reset clears). Kept on the card's
+   * list with ids `snyvi:*`, which note.js never tells the daemon about. */
+  const cmdK = /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K";
+  const OWN = {
+    "first-doc": ["Your first document. What arrives stays, filed with its project: nothing scrolls away.", "arrives"],
+    "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
+    "second-desk": [`Got another project? Give it a desk too. ${cmdK} and its name goes between them.`, "desks"],
+    "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one waiting on you.", "desks"],
+    "blocked": ["A panel is waiting on you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
+    "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
+  };
+  const isOwn = n => String(n.id).startsWith("snyvi:");
+  // By when each was said, newest first, as the daemon's list is: an agent's
+  // aside after snyvi's line is the one the card shows, not a line behind it.
+  const withOwn = list => list.concat(state.notes.filter(isOwn)).sort((a, b) => (b.at || 0) - (a.at || 0));
+  /* Held, not dropped: a moment that comes while an agent's aside is unread,
+   * or inside the ten quiet minutes, waits in `snyvi.own.held` and is said
+   * when the way is clear -- once, as ever. */
+  let ownTimer = 0;
+  const heldOwn = () => { try { return JSON.parse(store.get("snyvi.own.held") || "[]"); } catch { return []; } };
+  function snyviSays(key) {
+    if (!OWN[key] || store.get(`snyvi.seen.${key}`)) return;
+    const quiet = 600e3 - (Date.now() - (+store.get("snyvi.seen.at") || 0));
+    if (quiet > 0 || state.notes.some(n => !n.dismissed && !n.seen)) {
+      const held = heldOwn();
+      if (!held.includes(key)) store.set("snyvi.own.held", JSON.stringify(held.concat(key)));
+      clearTimeout(ownTimer);
+      ownTimer = setTimeout(sayHeld, Math.max(quiet, 30e3));
+      return;
+    }
+    store.set("snyvi.own.held", JSON.stringify(heldOwn().filter(k => k !== key)));
+    store.set(`snyvi.seen.${key}`, "1"); store.set("snyvi.seen.at", String(Date.now()));
+    const [text, sec] = OWN[key];
+    state.notes = [{ id: `snyvi:${key}`, text, sender: "", at: Date.now() / 1000, href: `/start#${sec}` }, ...state.notes.filter(n => !isOwn(n))];
+    renderNote();
   }
+  /** The first held moment, if the way is clear now; the rest keep waiting. */
+  function sayHeld() {
+    const k = heldOwn().find(k => !store.get(`snyvi.seen.${k}`));
+    if (k) snyviSays(k); else store.set("snyvi.own.held", "[]");
+  }
+  // A moment held when the last page closed is still owed.
+  if (heldOwn().length) ownTimer = setTimeout(sayHeld, 30e3);
+  let noteMod = null, noteLoading = null;
   function renderNote() {
-    const [n, ...trail] = noteGone ? [] : liveNotes();
-    // Removed rather than emptied: `html[data-note]` matches an empty value
-    // too, so writing "" left the mark blinking on every page from boot, note
-    // or no note -- a perpetual animation for a state the page was not in.
-    // It blinks while a note waits and stops when the reader rests on it.
+    if (noteMod) return noteMod.render();
+    const n = liveNotes()[0];
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
-    if (noteGone) {
-      // The daemon's word on the close arrives while the ghost stands; the
-      // ghost it would redraw is this one, and redrawing it drops the
-      // keyboard off its Undo.
-      if (noteEl.querySelector(".note-ghost")?.dataset.ids === noteGone.ids.join(",")) return;
-      const g = noteGone, t = ghostSpent(g, noteEl.querySelector(".t-ghost"));
-      noteEl.hidden = false; noteEl.dataset.lit = ""; noteEl.dataset.seen = "";
-      noteEl.innerHTML = `<div class="t-ghost note-ghost" data-ids="${g.ids.join(",")}" style="--t:-${t}ms"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
-      return;
-    }
-    if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }
-    noteEl.hidden = false;
-    noteEl.dataset.lit = n.lit && !n.seen ? "1" : "";
-    noteEl.dataset.seen = n.seen ? "1" : "";
-    // A note newer than the one on screen makes snyvi hop; a reload or a redraw does not.
-    const arrived = n.id !== noteShown && !n.seen;
-    if (arrived && markEl) {
-      markEl.classList.remove("hop"); void markEl.offsetWidth; markEl.classList.add("hop");
-      // Whatever snyvi was saying to a reader on the face, the line that just
-      // arrived outranks it: the agent takes the floor, and the hop is the
-      // mark's answer rather than the nod. Asked only of a bubble that is
-      // open, which is also the only time `closeSay` is in scope: the first
-      // render runs before the block below it is reached.
-      if ("say" in root.dataset) closeSay();
-    }
-    noteShown = n.id;
-    const by = noteBy(n);
-    noteEl.innerHTML =
-      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}` +
-        `<li class="note-all"><button type="button" data-note-all title="Close every aside · Undo for 4 s">Close all</button></li></ol>` : "") +
-      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : ""}>` +
-      noteBg(n.id) + `<button type="button" class="note-x" data-note-x title="Close · Undo for 4 s  Esc" aria-label="Close this aside">✕</button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
-    // A new note brings snyvi up from behind it for a moment, as a hover does.
-    // A window in the background would play that to nobody, so it waits.
-    if (arrived) { if (document.hidden) peekOwed = true; else peekNote(); }
+    if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
+      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, ghostSpent, stillMotion, GHOST_MS,
+        holdUndo: f => (undoing = f), dropUndo: f => { if (undoing === f) undoing = null; } });
+      noteMod.render();
+    }, () => { noteLoading = null; });
   }
-  let peekOwed = false;
-  function peekNote() {
-    peekOwed = false;
-    clearTimeout(notePeek);
-    void noteEl.offsetWidth;   // the new card's resting state first, so the rise transitions
-    noteEl.classList.add("peek");
-    notePeek = setTimeout(() => noteEl.classList.remove("peek"), 4200);
-  }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && peekOwed) peekNote(); });
-  function seeNotes() {
-    if (!liveNotes().some(n => !n.seen)) return;
-    state.notes = state.notes.map(n => ({ ...n, seen: true }));
-    // Only the card's marks change, not what is in it: a rebuild here, on
-    // the focus a press on its ✕ brings, swapped the button out between the
-    // press and the release, and the click never happened.
-    if (!noteGone) { noteEl.dataset.lit = ""; noteEl.dataset.seen = "1"; delete root.dataset.note; }
-    fetch("/api/notes/seen", { method: "POST" }).catch(() => {});
-  }
-  // Resting on it is reading it; passing over on the way to the theme button is not.
-  // The logo looks down at whoever comes over to the note.
-  const noteNear = on => { if (on) root.dataset.noteNear = "1"; else delete root.dataset.noteNear; };
-  noteEl.addEventListener("mouseenter", () => { noteNear(true); clearTimeout(noteLook); noteLook = setTimeout(seeNotes, 700); });
-  noteEl.addEventListener("mouseleave", () => { noteNear(false); clearTimeout(noteLook); });
-  noteEl.addEventListener("focusin", () => { noteNear(true); seeNotes(); });
-  noteEl.addEventListener("focusout", () => noteNear(false));
-  markEl?.addEventListener("animationend", e => { if (e.animationName === "bm-hop") markEl.classList.remove("hop"); });
-  noteEl.addEventListener("click", e => {
-    if (e.target.closest("[data-note-undo]")) { if (noteGone) noteGone.undo(); return; }
-    // `detail` is 0 for a click a key made, and only a keyboard is handed on to Undo.
-    if (e.target.closest("[data-note-x]")) { closeNotes(liveNotes().slice(0, 1).map(n => n.id), !e.detail); return; }
-    if (e.target.closest("[data-note-all]")) { closeNotes(liveNotes().map(n => n.id), !e.detail); return; }
-    seeNotes();
-    const a = e.target.closest("[data-about]");
-    if (a) showDoc(a.dataset.about, true);
-  });
-  noteEl.addEventListener("keydown", e => {
-    // Esc closes the aside the hand is on, and goes no further: not back a
-    // page, which is what it does with nothing over the page.
-    if (e.key === "Escape") {
-      e.preventDefault(); e.stopPropagation();
-      if (e.target.closest(".note-now")) closeNotes(liveNotes().slice(0, 1).map(n => n.id), true);
-      return;
-    }
-    if (e.target.closest("button")) return;
-    const a = e.target.closest(".note-now[data-about]");
-    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDoc(a.dataset.about, true); }
-  });
-  noteEl.addEventListener("animationend", e => {
-    if (e.animationName === "drain" && noteGone) noteSettle(noteGone);
-  });
-  /** Close asides: off the card at once, in every page once the daemon has
-   *  it, and the card holds the way back for GHOST_MS. Nothing is deleted. */
-  function closeNotes(ids, byKey = false) {
-    if (!ids.length) return;
-    if (noteGone) noteSettle(noteGone);
-    const g = { ids, spent: 0, timer: 0 };
-    g.undo = () => undoNotes(g);
-    state.notes = state.notes.map(n => ids.includes(n.id) ? { ...n, dismissed: true, seen: true } : n);
-    noteGone = g; undoing = g.undo;
-    renderNote();
-    if (stillMotion.matches) g.timer = setTimeout(() => noteSettle(g), GHOST_MS);
-    // A keyboard that closed it lands on the Undo, not on the page's start.
-    // A pointer does not: a focus resting there would hold the clock.
-    if (byKey) noteEl.querySelector("[data-note-undo]")?.focus({ preventScroll: true });
-    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", String(e)); });
-  }
-  function noteSettle(g) {
-    if (noteGone !== g) return;
-    clearTimeout(g.timer);
-    if (undoing === g.undo) undoing = null;
-    noteGone = null;
-    renderNote();
-  }
-  function undoNotes(g, tell = true) {
-    if (noteGone !== g) return;
-    clearTimeout(g.timer);
-    if (undoing === g.undo) undoing = null;
-    noteGone = null;
-    state.notes = state.notes.map(n => g.ids.includes(n.id) ? { ...n, dismissed: false } : n);
-    renderNote();
-    if (tell) notesSay("restore", g.ids).catch(e => toast("Could not bring the aside back", String(e)));
-  }
-  async function notesSay(what, ids) {
-    const r = await fetch(`/api/notes/${what}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
-    if (!r.ok) throw new Error(`${r.status}`);
-  }
-  // "3 min ago" stays true without anything arriving.
-  setInterval(() => { if (liveNotes().length && !noteGone && !noteEl.matches(":hover")) renderNote(); }, 60000);
   renderNote();
 
   // ---------- snyvi answers ----------
@@ -2036,7 +2059,7 @@
         markCur(links, cur);
       });
     }
-    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect");
+    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect" || state.view === "start" || state.view === "welcome");
   }
 
   /* A contents entry is a hash link, and the browser's own handling of one
@@ -2452,6 +2475,8 @@
     e.preventDefault();
     if (a.dataset.nav === "inbox") showInbox(true);
     else if (a.dataset.nav === "connect") showConnect(true);
+    else if (a.dataset.nav === "start") showStart(true, a.hash || "");
+    else if (a.dataset.nav === "welcome") showWelcome(true);
     else if (a.dataset.nav === "desks") showDesk(null, true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else if (a.dataset.desk !== undefined) showDesk(+a.dataset.desk, true, +a.dataset.slot || 0);
@@ -2517,6 +2542,8 @@
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     if (location.pathname === "/connect") return showConnect(false);
+    if (location.pathname === "/start") return showStart(false);
+    if (location.pathname === "/welcome") return showWelcome(false);
     const k = location.pathname.match(/^\/desk\/(\d+)$/);
     if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
     showInbox(false);
@@ -2662,7 +2689,26 @@
     knownDocs,
     putAway: pid => putAway(String(pid)),
     applyRename: (what, id) => applyRename(what, id),
+    places: () => deskPlaces(),
+    hold: id => heldPanes.add(id),
   };
+  /** Panels made to wait for the reader's Enter: a new project desk's first,
+   *  holding `claude`. The desk view takes each once, as it draws it. */
+  const heldPanes = new Set();
+  /** Where a new desk could go besides the home folder: the folders the
+   *  Inbox's projects were written from, then the folders open under Folders,
+   *  one row a folder, less any that already has a desk -- that one is a
+   *  click on its row away, and a second desk on it is its menu's to offer. */
+  function deskPlaces() {
+    const trim = p => p && p.replace(/(.)\/+$/, "$1");
+    const home = trim(state.desks && state.desks.home), taken = new Set(state.desks ? state.desks.desks.map(d => trim(d.root)) : []), out = [];
+    const put = (abs, f) => { const k = trim(abs); if (k && k !== home && !taken.has(k)) { taken.add(k); out.push({ abs, ...f }); } };
+    for (const p of state.tree) if (!away.has(String(p.id))) put(p.root, { project: p.id, name: p.name });
+    for (const r of state.browse) put(r.path, { root: r.id, path: "", name: r.name });
+    return out;
+  }
+  /** `+ New desk` asks where, under the button that asked. */
+  const askWhere = (el, byKey) => { const r = el.getBoundingClientRect(); return menuFor(el, r.left, r.bottom + 4, byKey); };
   /** Wait for the chunk, then do the thing that was clicked. A failure is the
    *  reader's to see: they pressed something and nothing happened otherwise. */
   async function act(what, ...args) {
@@ -2670,21 +2716,39 @@
     catch (e) { actsLoading = null; toast("Could not do that", String(e)); }
   }
 
+  let deskRoots = "";
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
-    renderDesks();
+    // A project's row says whether it has a desk; only a desk made, closed
+    // or moved changes that, not the panes' dots, which change all day. The
+    // tree draws the desks as it goes.
+    const roots = state.desks ? state.desks.desks.map(d => d.root).join("\n") : "";
+    if (roots !== deskRoots) { deskRoots = roots; renderTree(); markActive(); } else renderDesks();
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
   const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
+  /** The fullest context window among a desk's panels, as their status lines said. */
+  const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
+  let desksSeen = null;
   function renderDesks() {
     const list = state.desks ? state.desks.desks : [];
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
+    badge('[data-pop="desks"]', blocked, " blk");
+    // snyvi's own moments on the way to a second project: one desk, asked
+    // for another once an agent has worked in it; two, and what that gives.
+    if (list.length === 1 && list[0].panes.some(p => p.status && p.status.agent)) snyviSays("second-desk");
+    if (desksSeen === 1 && list.length === 2) snyviSays("two-desks");
+    if (state.desks) desksSeen = list.length;
+    if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Start a shell on a desk</button></li>` : "");
+        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
+    // One desk is one project; the second is when snyvi starts to earn its
+    // place, so it is asked for, under the first, until there is one.
+    const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ Another project</button></li>` : "";
     const rows = list.map(d => {
       const m = mark3(d.panes), has = d.panes.length > 0;
       const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
@@ -2694,7 +2758,7 @@
       // whether or not there is anything to say, so every row's line up.
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
-        `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
+        `<span class="end">${fullest(d) == null ? "" : `<span class="ctx${fullest(d) >= 85 ? " hot" : ""}" title="The fullest context window on this desk">${fullest(d)}%</span>`}<span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
@@ -2703,10 +2767,10 @@
     // row and let go on the new one would not be a click. So what changed
     // is written, and only that -- the mark column, the head -- and the list
     // is drawn whole only when a row itself is different.
-    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
+    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top + more && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
-      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
-      deskNav.$top = top; deskNav.$head = head;
+      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + more + `</ul>`;
+      deskNav.$top = top + more; deskNav.$head = head;
       deskNav.querySelectorAll(".t-desk").forEach((li, i) => { li.$r = rows[i][0] + rows[i][2]; li.$e = rows[i][1]; });
       return;
     }
@@ -2734,7 +2798,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: el => el ? askWhere(el, false) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -2766,6 +2830,8 @@
     if (state.view === "inbox") return { inbox: true };
     if (state.view === "browse" && state.browseRoot) return { browse: state.browseRoot.id, path: "" };
     if (state.view === "connect") return { connect: true };
+    if (state.view === "start") return { start: true };
+    if (state.view === "welcome") return { welcome: true };
     if (state.view === "desk") return { desk: state.deskId };
     return null;
   }
@@ -2784,7 +2850,9 @@
       const r = state.browse.find(x => x.id === b.browse);
       return { name: r ? r.name : "the folder", go: () => showBrowse(b.browse, "", true) };
     }
-    if (b && b.connect) return { name: "Connect an agent", go: () => showConnect(true) };
+    if (b && b.connect) return { name: "Agents", go: () => showConnect(true) };
+    if (b && b.start) return { name: "How snyvi works", go: () => showStart(true, "") };
+    if (b && b.welcome) return { name: "Welcome", go: () => showWelcome(true) };
     if (b && "desk" in b) {
       const d = b.desk != null && state.desks && state.desks.desks.find(x => x.id === b.desk);
       return { name: d ? d.name : "Desks", go: () => showDesk(b.desk, true) };
@@ -2904,7 +2972,7 @@
     } catch {}
     try {
       const n = await (await fetch("/api/notes")).json();
-      if (Array.isArray(n.notes)) { state.notes = n.notes; renderNote(); }
+      if (Array.isArray(n.notes)) { state.notes = withOwn(n.notes); renderNote(); }
     } catch {}
     await refreshTree();
     if (state.view === "inbox") showInbox(false);
@@ -2958,7 +3026,7 @@
     // An agent left a note, or a reader looked at one somewhere.
     es.addEventListener("notes", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
-      if (Array.isArray(j.notes)) { state.notes = j.notes; renderNote(); }
+      if (Array.isArray(j.notes)) { state.notes = withOwn(j.notes); renderNote(); }
     });
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -2990,6 +3058,12 @@
       // it is -- a reader mid-paragraph did not ask to be moved -- and the
       // arrival is offered instead of taken.
       const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
+      // A newer version of a file already waiting takes that row's place:
+      // the daemon marked the older ones read when this one landed, and
+      // counts one. By file and not by `supersedes`, which names only the
+      // version just before -- a page that missed an event kept the rest.
+      const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
+      if (older.length) dropFromQueue(older, state.waiting - older.length);
       // Held in order only while everything waiting is held: past that the
       // arrival is the newest, and belongs after rows this page never had.
       if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
@@ -3000,6 +3074,12 @@
       renderTree(); markActive();
       await refreshTree(d.project_id);
       deskDocs();
+      // First in the library, wherever the reader is -- on a desk, most
+      // often -- and not just first into an empty inbox: a reader with a
+      // year of documents is not told this one is their first.
+      if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
+      else if (state.waiting > 1) snyviSays("two-waiting");
+      else if (j.supersedes) snyviSays("version");
       if (opens) {
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
@@ -3061,7 +3141,7 @@
       if (state.view === "inbox") showInbox(false);
     });
     // The library is gone, from this tab or another: every page starts over.
-    es.addEventListener("reset", () => afterReset());
+    es.addEventListener("reset", () => panelMod().then(m => m.afterReset(), () => location.replace("/")));
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
@@ -3277,114 +3357,27 @@
     // would otherwise lose the word to a box that was not there yet.
     const input = $("#palette-input");
     if (pal.hidden) { input.value = ""; openDialog(pal, input); }
-    try { palMod = await (palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    let lk;
+    try { [palMod, lk] = await Promise.all([palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`), useLook()]); }
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
+    const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc });
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, openHelp, places: deskPlaces });
   }
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
   $("#btn-search").addEventListener("click", openPalette);
 
-  // ---------- theme / font / panes ----------
-  /* One click always changes what you see: the button steps to the next of
-   * the eight, as the swatch steps to the next accent. The one it lands on is
-   * kept exactly as a palette pick is -- in the slot of its side, and
-   * dropped to "the system" when that side is what the system shows, so the
-   * OS switching light and dark still moves between your two.
-   *
-   * Which theme is in each slot, and whether the system or the button picks
-   * the slot, are the three `snyvi.theme.*` keys; boot.js owns resolving them
-   * into `data-theme` and "is it dark?". */
-  const { system: sysDark } = snyviTheme;
-  /* The eight, each with the side it is: which slot it lives in, and which
-   * side the button lands on when it is kept. Four light and four dark, one
-   * of each for every pair of accents. */
-  const THEMES = { paper: ["Paper", "light"], snow: ["Snow", "light"], sage: ["Sage", "light"], parchment: ["Parchment", "light"],
-    ink: ["Ink", "dark"], midnight: ["Midnight", "dark"], espresso: ["Espresso", "dark"], contrast: ["Contrast", "dark"] };
-  const sysSide = () => (sysDark.matches ? "dark" : "light");
-  const slot = k => store.get(k === "light" ? "snyvi.theme.light" : "snyvi.theme.dark") || (k === "light" ? "paper" : (matchMedia("(prefers-contrast: more)").matches ? "contrast" : "ink"));
-  // The button steps through the eight like the swatch steps through the
-  // accents: one click, the next one, the whole window in it.
-  const ORDER = Object.keys(THEMES);
-  const nextTheme = () => ORDER[(ORDER.indexOf(root.dataset.theme) + 1) % ORDER.length];
-  const SUN = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10" cy="10" r="3.5"/><path d="M10 2.5v1.5M10 16v1.5M2.5 10H4M16 10h1.5M4.7 4.7l1.06 1.06M14.24 14.24l1.06 1.06M4.7 15.3l1.06-1.06M14.24 5.76l1.06-1.06"/></svg>';
-  const MOON = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M16.5 12.2A6.8 6.8 0 0 1 7.8 3.5a6.8 6.8 0 1 0 8.7 8.7z"/></svg>';
-  function paintThemeBtn() {
-    const b = $("#btn-theme"), n = nextTheme();
-    // The icon is the side a click will land on.
-    b.innerHTML = THEMES[n][1] === "dark" ? MOON : SUN;
-    b.dataset.label = `Theme: ${(THEMES[root.dataset.theme] || [root.dataset.theme])[0]} · click for ${THEMES[n][0]}`;
-  }
-  $("#btn-theme").addEventListener("click", async () => { await loadThemes(); setTheme(nextTheme()); });
-  paintThemeBtn();
-  /* Every theme but Paper and Ink, fetched once the page is idle rather than
-   * carried by first paint. The button and ⌘K theme wait on the same promise,
-   * so a click that beats it -- a few milliseconds from the local daemon --
-   * lands anyway. When it is in, the theme boot.js stood in for is drawn,
-   * and the copies it will stand in with next time are brought up to date. */
-  let themesP = null;
-  const loadThemes = () => themesP ||= new Promise(done => {
-    const l = document.createElement("link");
-    l.rel = "stylesheet"; l.href = `/assets/themes.css${boot.v ? `?v=${boot.v}` : ""}`;
-    l.onload = () => {
-      const was = root.dataset.theme;
-      snyviTheme.ready();
-      keepCopies();
-      paintThemeBtn();
-      if (mmd && root.dataset.theme !== was) mmd.retheme();
-      done(true);
-    };
-    l.onerror = () => { l.remove(); themesP = null; done(false); };
-    document.head.append(l);
-  });
-  (window.requestIdleCallback || setTimeout)(() => loadThemes(), { timeout: 1500 });
-  /** The copies boot.js paints the first frame from: the block of the theme
-   *  in each slot, as the sheet has it now, so a copy lasts exactly as long
-   *  as that theme's colours do. Paper and Ink are in first paint and need
-   *  none; a slot naming a theme that no longer exists goes back to its
-   *  default. */
-  function keepCopies() {
-    const sheet = [...document.styleSheets].find(x => /\/assets\/themes\.css/.test(x.href || ""));
-    if (!sheet) return;
-    for (const side of ["light", "dark"]) {
-      const t = slot(side), key = `snyvi.theme.css.${side}`;
-      if (t === "paper" || t === "ink") { store.del(key); continue; }
-      const rule = [...sheet.cssRules].find(r => r.selectorText === `[data-theme="${t}"]`);
-      if (rule) store.set(key, ":root" + rule.cssText);
-      else { store.del(key); store.del(`snyvi.theme.${side}`); }
-    }
-  }
-  /** Keep a theme picked in the palette: it goes in the slot of its side, and
-   *  the button lands on that side -- dropped to "the system" when that is
-   *  what the system shows, the same rule as a click on the button. */
-  function setTheme(name) {
-    const [label, side] = THEMES[name] || [];
-    if (!side) return;
-    store.set(side === "light" ? "snyvi.theme.light" : "snyvi.theme.dark", name);
-    store.set("snyvi.theme.follow", side === sysSide() ? "" : side);
-    keepCopies();
-    previewTheme(null);
-    paintThemeBtn();
-    toast("Theme", label, null, null, { face: "glad", at: $("#btn-theme") });
-  }
-  /** Draw a theme without keeping it, or, with no name, the one that is
-   *  kept. Diagrams already drawn in it come back from their cache. */
-  function previewTheme(name) {
-    const was = root.dataset.theme;
-    name ? (root.dataset.theme = name) : snyviTheme.apply();
-    if (mmd && root.dataset.theme !== was) mmd.retheme();
-  }
-  // The same fault by a different route: following the system, the page
-  // moves when the system does, and the diagrams on it were drawn before it
-  // moved. boot.js has already re-resolved `data-theme` by the time this runs;
-  // applying again is free and keeps this from depending on that order.
-  sysDark.addEventListener("change", () => {
-    const was = root.dataset.theme;
-    snyviTheme.apply();
-    paintThemeBtn();
-    if (mmd && root.dataset.theme !== was) mmd.retheme();
-  });
+  // ---------- the look: theme, accent, font ----------
+  /* The three steppers in the foot column and the loader for the themes
+   * that are not in first paint are ui/look.js, fetched once the page is
+   * idle, or sooner if the hand reaches the column or ⌘K opens. Until it is
+   * in, the page wears what boot.js resolved, which is all first paint needs. */
+  let look = null, lookLoading = null;
+  const useLook = () => (lookLoading ||= import(`/assets/look.js${boot.v ? `?v=${boot.v}` : ""}`)
+    .then(m => (look = m.init({ root, $, store, boot, toast, control, onDesk, desk: () => desk, mmd: () => mmd, sayTermSize })), e => { lookLoading = null; throw e; }));
+  (window.requestIdleCallback || setTimeout)(() => useLook().catch(() => {}), { timeout: 1500 });
+  for (const ev of ["pointerenter", "focusin"]) $(".foot-set").addEventListener(ev, () => useLook().catch(() => {}));
   /* Which controls mean something where the reader is, in one place: the
    * column paints from it and `w` and `z` ask it, so the two cannot
    * disagree. A control that does nothing here is dimmed, not hidden -- it
@@ -3399,7 +3392,7 @@
   const NAMES = { wide: "Width", wrap: "Wrap", font: "Font" };
   function why(c) {
     const w = where();
-    if (c === "wide") return w === "code" ? "already full width" : w === "desk" && desk.panels() < 2 ? "one panel already fills the desk" : "";
+    if (c === "wide") return w === "code" ? "already full width" : "";
     if (c === "wrap") return w === "desk" ? "not for desks, terminals always wrap" : docEl.querySelector("pre.code") ? "" : "no code on this page";
     return w === "code" ? "code is always monospace" : w === "list" ? "for documents" : "";
   }
@@ -3413,7 +3406,7 @@
     }
     if (!why("wide")) $("#btn-wide").dataset.label = onDesk() ? "Focused panel in full view · w" : "Maximise width · w";
     if (!why("wrap")) $("#btn-wrap").dataset.label = "Wrap long lines · z";
-    if (!why("font")) paintFontBtn();
+    if (!why("font")) look?.paintFontBtn();
   }
   /** Run a control, or say why it does nothing here, beside its button. */
   const control = (c, run) => () => {
@@ -3443,70 +3436,9 @@
   $("#btn-wrap").addEventListener("click", control("wrap", toggleWrap));
   $("#btn-wrap").classList.toggle("on", root.dataset.wrap === "1");
 
-  // The reading faces, in the order Aa steps through them. "" is Inter.
-  const FONTS = [["", "Inter"], ["serif", "Source Serif"], ["literata", "Literata"], ["atkinson", "Atkinson Hyperlegible"], ["mono", "JetBrains Mono"]];
-  function paintFontBtn() {
-    const f = FONTS.find(([k]) => k === (root.dataset.font || "")) || FONTS[0];
-    // On a desk, Aa is the terminal's text size; the face there is always mono.
-    if (onDesk()) { const t = desk.textSize(); $("#btn-font").dataset.label = `Text size: ${t.name} · click for ${t.next}`; return; }
-    $("#btn-font").dataset.label = `Font: ${f[1]} · click for the next`;
-  }
   /** The terminal's text size, said beside Aa: after a click, or ⌃= ⌃- ⌃0 in
    *  a panel. */
   const sayTermSize = () => { paintControls(); toast("Text size", desk.textSize().name, null, null, { face: "glad", at: $("#btn-font") }); };
-  $("#btn-font").addEventListener("click", control("font", () => {
-    if (onDesk()) { const t = desk.textSize(); desk.textSize(t.at === t.of - 1 ? -(t.of - 1) : 1); sayTermSize(); return; }
-    const i = FONTS.findIndex(([k]) => k === (root.dataset.font || ""));
-    const [next, name] = FONTS[(i + 1) % FONTS.length];
-    next ? (root.dataset.font = next) : delete root.dataset.font;
-    store.set("snyvi.font", next);
-    paintFontBtn();
-    toast("Font", name, null, null, { face: "glad", at: $("#btn-font") });
-  }));
-  paintFontBtn();
-  /* The accent colours, in the order a click steps through them. "" is
-   * passion, the default: the red the mark itself wears. They were a popover of eight swatches, which is a
-   * menu to read for a setting with no wrong answer: every one of them is
-   * simply a colour, and the only way to know which you want is to see it on
-   * the page. So the button is the setting now -- one click, the next colour,
-   * the whole window in it before the finger is off the mouse -- and the
-   * swatch on the button is where you are. snyvi wears the accent too, so the
-   * face that says which one it is arrives in that colour. */
-  const ACCENTS = [["", "Passion"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
-  const accBtn = $("#btn-accent");
-  const accName = k => (ACCENTS.find(([a]) => a === k) || ACCENTS[0])[1];
-  function paintAccent() {
-    const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
-    accBtn.dataset.label = `Accent: ${accName(ACCENTS[i][0])} · click for ${accName(ACCENTS[(i + 1) % ACCENTS.length][0])}`;
-  }
-  /* The tab's icon wears the accent too: snyvi's face drawn in the mascot
-   * colours the stylesheet resolved, each a plain hex the SVG can hold,
-   * which is how boot.js hands a token back. */
-  function paintFavicon() {
-    const [body, nub, ink] = ["--mascot", "--mascot-nub", "--mascot-ink"].map(v => snyviTheme.colour(v));
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><rect x="14" y="0.5" width="4" height="5" rx="2" fill="${nub}"/><rect x="1" y="4" width="30" height="27" rx="9" fill="${body}"/><ellipse cx="11" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><path d="M13.5 23Q16 25.2 18.5 23" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/></svg>`;
-    const link = $("#favicon");
-    if (link) link.href = "data:image/svg+xml," + encodeURIComponent(svg);
-  }
-  function setAccent(k) {
-    k ? (root.dataset.accent = k) : delete root.dataset.accent;
-    store.set("snyvi.accent", k);
-    paintAccent();
-    paintFavicon();
-    if (mmd) mmd.retheme();
-  }
-  accBtn.addEventListener("click", () => {
-    const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
-    const [next, name] = ACCENTS[(i + 1) % ACCENTS.length];
-    setAccent(next);
-    // The swatch is the same shape in every colour, so the change is quiet
-    // where the click was. It flicks once, and snyvi says the name beside it.
-    accBtn.classList.remove("flick"); void accBtn.offsetWidth; accBtn.classList.add("flick");
-    toast("Accent", name, null, null, { face: "glad", at: accBtn });
-  });
-  accBtn.addEventListener("animationend", () => accBtn.classList.remove("flick"));
-  paintAccent();
-  paintFavicon();
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
   const appEl = $("#app"), help = $("#help"), aboutDlg = $("#about"), resetDlg = $("#reset");
   const dialogs = [pal, help, aboutDlg, resetDlg];
@@ -3557,6 +3489,8 @@
   const gameBtn = $("#btn-game");
   gameBtn.addEventListener("click", async () => {
     if (game?.isOpen()) { game.close(); return; }
+    // The sky is the sidebar, and a rail is 44 px of it.
+    if (root.dataset.side === "0") { toast("Asteroids", sideNarrow.matches ? "needs a wider window" : "needs the sidebar open · \\", null, null, { at: gameBtn }); return; }
     try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
     catch (e) { gameLoading = null; toast("Could not start the game", String(e)); return; }
     gameBtn.classList.add("on");
@@ -3577,14 +3511,16 @@
   $("#btn-about").addEventListener("click", () => panel("about"));
   $("#btn-reset").addEventListener("click", () => panel("reset"));
   $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
+  $("#btn-start").addEventListener("click", () => { closeDialog(help); showStart(true, ""); });
+  $("#btn-welcome").addEventListener("click", () => { closeDialog(help); showWelcome(true); });
 
-  // ---------- the panes on a narrow window ----------
-  /* Past the widths in app.css the rail and then the sidebar stop fitting
-   * beside the document, and each becomes a sheet over it: `t` and `\`
-   * open the sheet rather than changing the setting the wide layout keeps,
-   * the two buttons in #chrome do the same for a finger, and Escape or a
-   * tap on the scrim closes it. The contents inside the sheet open on the
-   * current section, which the hidden pane could not scroll to. */
+  // ---------- the contents on a narrow window ----------
+  /* Past 1100 px the rail stops fitting beside the document and becomes a
+   * sheet over it: `t` opens the sheet rather than changing the setting the
+   * wide layout keeps, the button in #chrome does the same for a finger, and
+   * Escape or a tap on the scrim closes it. The contents inside the sheet
+   * open on the current section, which the hidden pane could not scroll to.
+   * The sidebar has no sheet: narrow, it is its rail (below). */
   const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
   const sideEl = $("#side");
   let sheetOpener = null;
@@ -3592,11 +3528,8 @@
     if (root.dataset.sheet === which) return;
     sheetOpener = opener || document.activeElement;
     root.dataset.sheet = which;
-    if (which === "rail") keepCurInView(true);
-    const first = which === "rail"
-      ? tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a")
-      : sideEl.querySelector("#trees a[aria-current], #trees a, #trees summary");
-    (first || (which === "rail" ? rail : sideEl)).focus({ preventScroll: true });
+    keepCurInView(true);
+    (tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a") || rail).focus({ preventScroll: true });
   }
   function closeSheet() {
     if (!root.dataset.sheet) return false;
@@ -3606,23 +3539,120 @@
     return true;
   }
   const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
-  $("#scrim").addEventListener("click", closeSheet);
-  /** A pane folded away (`t`, `\`, or the button at its top) at a width
-   *  where it is a column, not a sheet. Remembered, so the one visible way
-   *  back is the same button that opens the sheet when the window is
-   *  narrow: it stays on screen while the pane is folded, and unfolds it.
-   *  Without that a rail put away by a stray `t` was gone for good as far
-   *  as the reader could see. */
-  const fold = which => { const off = root.dataset[which] !== "0"; root.dataset[which] = off ? "0" : "1"; store.set(`snyvi.${which}`, off ? "0" : "1"); };
+  $("#scrim").addEventListener("click", () => { closeSheet(); closePop(); });
+  /** A pane folded (`t`, `\`, or the button at its top) at a width where it
+   *  is a column, not a sheet. Remembered. The rail folds away and its
+   *  button in #chrome is the way back; the sidebar folds to its rail, which
+   *  is its own way back. Under 760 px the sidebar is only ever its rail,
+   *  so there `\` has nothing to fold. */
+  const fold = which => {
+    if (which === "side") { closePop(false); if (sideNarrow.matches) return; if (game?.isOpen()) game.close(); }
+    const off = root.dataset[which] !== "0";
+    root.dataset[which] = off ? "0" : "1";
+    store.set(`snyvi.${which}`, off ? "0" : "1");
+    if (which === "side") paintSideBtn();
+  };
   $("#btn-rail").addEventListener("click", e => railNarrow.matches ? toggleSheet("rail", e.currentTarget) : fold("rail"));
-  $("#btn-side").addEventListener("click", e => sideNarrow.matches ? toggleSheet("side", e.currentTarget) : fold("side"));
   // The button on the pane itself: puts it away, or, when the pane is a
   // sheet, closes the sheet and gives focus back to what opened it.
   $("#btn-rail-hide").addEventListener("click", () => railNarrow.matches ? closeSheet() : fold("rail"));
-  $("#btn-side-hide").addEventListener("click", () => sideNarrow.matches ? closeSheet() : fold("side"));
+  $("#btn-side-hide").addEventListener("click", () => fold("side"));
   // The window grew past the width that made it a sheet: it is a pane again.
-  const sheetFits = () => root.dataset.sheet === "rail" ? railNarrow.matches : root.dataset.sheet === "side" ? sideNarrow.matches : true;
-  for (const mq of [railNarrow, sideNarrow]) mq.addEventListener("change", () => { if (!sheetFits()) closeSheet(); });
+  railNarrow.addEventListener("change", () => { if (!railNarrow.matches) closeSheet(); });
+
+  // ---------- the rail: the sidebar folded to its icons ----------
+  /* Each icon opens its section in #pop, beside the rail: the section's own
+   * element, moved in, and moved back to its place when the popover closes.
+   * Every renderer writes by id, so what arrives while it is open lands in
+   * the popover; #pop is inside #trees, so the clicks the tree delegates
+   * still reach it. One at a time; Esc, a click outside it, a link followed
+   * in it and `\` close it. The numbers on the icons are the ones the
+   * sections say: waiting, panels waiting on you, agents connected. */
+  const railNav = $("#rail-nav"), popEl = $("#pop");
+  const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
+  const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+  ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
+  for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
+  /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
+  function badge(sel, n, cls = "") {
+    const b = document.querySelector(`#rail-nav ${sel} .badge`);
+    if (b) { b.textContent = n ? String(n) : ""; b.className = "badge" + cls; }
+  }
+  let popBtn = null;
+  function openPop(sec, btn) {
+    if (root.dataset.pop === sec) { closePop(); return; }
+    closePop(false);
+    root.dataset.pop = sec; popBtn = btn;
+    btn.classList.add("on"); btn.setAttribute("aria-expanded", "true");
+    popEl.setAttribute("aria-label", btn.getAttribute("aria-label"));
+    popEl.append(...POPS[sec].map(id => $(id)));
+    popEl.hidden = false;
+    // Drawn while folded, the titles were cut to a column that was not there.
+    if (sec === "tree") renderTree();
+    // Level with the icon, and moved only as far as it takes to stay on the
+    // window, the way a toast answers a control in the rail.
+    const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
+    popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
+    (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
+  }
+  /** Put the section back where it lives. `back` gives the focus to its icon. */
+  function closePop(back = true) {
+    const sec = root.dataset.pop;
+    if (!sec) return false;
+    delete root.dataset.pop;
+    popEl.hidden = true;
+    // Each back before the first section that follows it in #trees' order,
+    // whatever else is still at home: the end is not its place.
+    for (const id of POPS[sec]) {
+      if (id === "#note") { sideEl.insertBefore($(id), $(".side-foot")); continue; }
+      const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
+      treesEl.insertBefore($(id), after || popEl);
+    }
+    const b = popBtn; popBtn = null;
+    b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
+    if (back && b?.isConnected) b.focus({ preventScroll: true });
+    return true;
+  }
+  // The aside's section empties when its last line goes, and its icon with
+  // it: the popover goes too, and a keyboard that was in it lands on the
+  // rail rather than on nothing.
+  new MutationObserver(() => {
+    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
+    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
+    closePop(false);
+    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
+  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
+  railNav.addEventListener("click", e => {
+    const b = e.target.closest("[data-pop]");
+    if (b) openPop(b.dataset.pop, b);
+    else if (e.target.closest("#rail-search")) openPalette();
+  });
+  // A toolbar: the arrows walk it, Tab leaves it.
+  railNav.addEventListener("keydown", e => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const all = [...railNav.querySelectorAll(".icon")].filter(x => x.offsetParent), i = all.indexOf(document.activeElement);
+    all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
+    e.preventDefault();
+  });
+  // Following a link in it is being done with it; opening a row's fold is not.
+  popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => closePop()); });
+  // The context menu is on <body>, but a row's menu is the popover's own: an
+  // action there (Rename, Remove with its Undo) happens in the row, in here.
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) closePop(false); }, true);
+  function paintSideBtn() {
+    const b = $("#btn-side-hide"), slim = root.dataset.side === "0";
+    b.title = slim ? "Show sidebar  \\" : "Hide sidebar  \\";
+    b.setAttribute("aria-label", slim ? "Show sidebar" : "Hide sidebar");
+  }
+  // Narrow, the sidebar is its rail; wide again, it is what the reader left it.
+  const sideFits = () => {
+    closePop(false);
+    if (sideNarrow.matches) root.dataset.side = "0";
+    else if (store.get("snyvi.side") !== "0") delete root.dataset.side;
+    paintSideBtn();
+  };
+  sideNarrow.addEventListener("change", sideFits);
+  sideFits();
 
   // ---------- the panes' widths ----------
   /* Each pane's edge drags, between a floor where its rows stop being
@@ -3676,7 +3706,11 @@
         : e.key === "ArrowLeft" ? width() - pane.sign * step
           : e.key === "Home" ? pane.min : e.key === "End" ? pane.max : null;
       if (to === null) return;
+      // At once, as a drag is: the fold's easing would trail a held key.
+      root.dataset.resizing = "1";
       store.set(pane.key, String(set(to)));
+      void $("#app").offsetWidth;
+      delete root.dataset.resizing;
       e.preventDefault();
       e.stopPropagation();
     });
@@ -3704,6 +3738,13 @@
     else keyMode?.off();
   }
 
+  /* What the letters act on, handed to keys.js with each one. */
+  const keyCtx = { state, browsing, browseEl, showBrowse, order, siblings, showDoc, showCompare, togglePin, toggleSplit, togglePreview,
+    openFind, deleteCurrent, openNext, showInbox, rawUrl, mmd: () => mmd,
+    wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
+    rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
+    side: () => closePop() || fold("side") };
+
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
@@ -3712,10 +3753,10 @@
       // Esc takes down whatever is over the page, one press for all of it;
       // only with nothing over it, and the hand in no field and no panel,
       // does it leave the page, the way its ✕ does.
-      const over = keysOn || anyDialogOpen() || !!root.dataset.sheet || !findBar.hidden || !!docEl.querySelector(".mmd[data-full]") || !!document.querySelector("#ctx:not([hidden])");
+      const over = keysOn || anyDialogOpen() || !!root.dataset.sheet || !!root.dataset.pop || !findBar.hidden || !!docEl.querySelector(".mmd[data-full]") || !!document.querySelector("#ctx:not([hidden])");
       keys(false);
       if (mmd) mmd.escape();
-      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
+      closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closePop(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       if (!over && !inField && !e.target.closest(".pn") && !overEl.hidden) { e.preventDefault(); goBack(); }
       return;
     }
@@ -3744,58 +3785,13 @@
       return;
     }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+    // `?` answers asleep too: the help box is where a reader finds out the
+    // letters sleep at all, so the key that opens it cannot be one of them.
+    if (e.key === "?") { e.preventDefault(); help.hidden ? openHelp() : closeDialog(help); return; }
     if (!keysOn) { if (e.key.length === 1 || e.key === "Delete") useKeys().then(m => m.hint(), () => {}); return; }
-    if (browsing() && (e.key === "j" || e.key === "k")) {
-      keyMode?.hit();
-      const links = [...browseEl.querySelectorAll(".b-file a")];
-      const at = links.findIndex(a => a.dataset.path === state.browsePath);
-      const next = links[at + (e.key === "j" ? 1 : -1)] || (at < 0 ? links[0] : null);
-      if (next) showBrowse(next.dataset.browse, next.dataset.path, true);
-      e.preventDefault();
-      return;
-    }
-    const ids = order(), i = state.doc ? ids.indexOf(state.doc.id) : -1;
-    const sib = siblings(), si = state.doc ? sib.indexOf(state.doc.id) : -1;
-    switch (e.key) {
-      case "j": if (ids[i + 1]) showDoc(ids[i + 1], true); else if (i < 0 && ids[0]) showDoc(ids[0], true); break;
-      case "k": if (i > 0) showDoc(ids[i - 1], true); break;
-      case "[": if (sib[si + 1]) showDoc(sib[si + 1], true); break;   // sidebar is newest-first, so older is +1
-      case "]": if (si > 0) showDoc(sib[si - 1], true); break;
-      // A second `c` leaves the comparison: over a desk, the meta's Back button
-      // is not drawn, and the key that opened it is the natural way out.
-      case "c": if (state.comparing) { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); } else showCompare(); break;
-      case "p": togglePin(); break;
-      case "s": toggleSplit(); break;
-      case "v": togglePreview(); break;
-      case "/": openFind(); break;
-      // Delete and not Backspace: a key a reader leans on while thinking is
-      // not a key to lose a document to.
-      case "Delete": deleteCurrent(); break;
-      case "n": openNext(); break;
-      case "i": showInbox(true); break;
-      case "w": control("wide", toggleWide)(); break;
-      case "z": control("wrap", toggleWrap)(); break;
-      case "t":
-        if (railNarrow.matches) { if (!rail.classList.contains("empty")) toggleSheet("rail"); }
-        else fold("rail");
-        break;
-      // The diagram under the cursor, or the last one used: fit it, or fill the
-      // screen with it. Both are no-ops on a page with no diagram on it.
-      case "0": if (mmd) mmd.key("0"); break;
-      case "f": if (mmd) mmd.key("f"); break;
-      case "\\":
-        if (sideNarrow.matches) toggleSheet("side");
-        else fold("side");
-        break;
-      case "o":
-        if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
-        else if (browsing() && state.browsePath) window.open(rawUrl(state.browseRoot.id, state.browsePath), "_blank");
-        break;
-      case "?": help.hidden ? openHelp() : closeDialog(help); break;
-      default: return;
-    }
-    keyMode?.hit();
-    e.preventDefault();
+    // The letters themselves are keys.js's, which ⌃B fetched before any of
+    // them could act; one pressed in the milliseconds before it landed is dropped.
+    if (keyMode?.letter(e, keyCtx)) { keyMode.hit(); e.preventDefault(); }
   });
 
   // ---------- boot ----------
@@ -3809,6 +3805,8 @@
   }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
+  else if (state.view === "start") { history.replaceState({ start: true }, "", "/start" + location.hash); showStart(false); }
+  else if (state.view === "welcome") { history.replaceState({ welcome: true }, "", "/welcome"); showWelcome(false); }
   else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();

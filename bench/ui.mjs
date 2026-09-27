@@ -175,13 +175,15 @@ async function main() {
     // A new document, the way an agent's send makes one: its own file, its
     // own content, through the API. What the queue rows send while reading.
     let arrivals = 0;
-    const arrive = async () => {
-      const n = ++arrivals, path = join(tmp, `arrival-${n}.md`);
-      writeFileSync(path, `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
+    // `o` sends a named file (`name`, `body`), again if it was sent before,
+    // under a `workflow` of its own.
+    const arrive = async (o = {}) => {
+      const n = ++arrivals, path = join(tmp, o.name || `arrival-${n}.md`);
+      writeFileSync(path, o.body || `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
       const r = await fetch(`${base}/api/docs`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ path, cwd: tmp }),
+        body: JSON.stringify({ path, cwd: tmp, ...(o.workflow ? { workflow: o.workflow } : {}) }),
       });
       if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
       return (await r.json()).doc;
@@ -218,6 +220,7 @@ async function main() {
     const sections = [];
     sections.push(["the rail, 1280 px wide", await railRows(p, url, md, send)]);
     sections.push(["narrow windows", await narrowRows(p, url)]);
+    sections.push(["the sidebar, folded to its rail", await sideRailRows(p, url, arrive)]);
     sections.push(["by keyboard", await keyboardRows(p, url)]);
     sections.push(["the panes' edges", await widthRows(p, url)]);
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
@@ -233,11 +236,13 @@ async function main() {
     sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
+    sections.push(["a desk for each project", await projectDeskRows(cdp, base, token, tmp)]);
     sections.push(["panels: full view, moved, linked, and their menus", await panelRows(cdp, base, token)]);
     sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
     sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
     sections.push(["the first frame, in the reader's theme", await firstFrameRows(p, url)]);
     sections.push(["the about box", await aboutRows(p, url)]);
+    sections.push(["the first ten minutes", await startRows(p, url, arrive, base)]);
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
     sections.push(["an agent that is here", await presenceRows(p, url, base, env, tmp)]);
     // Last, because it takes the library with it.
@@ -280,6 +285,8 @@ const KEYS = {
   Enter: { key: "Enter", code: "Enter", vk: 13, text: "\r" },
   ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", vk: 37 },
   ArrowRight: { key: "ArrowRight", code: "ArrowRight", vk: 39 },
+  ArrowDown: { key: "ArrowDown", code: "ArrowDown", vk: 40 },
+  ArrowUp: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
   Delete: { key: "Delete", code: "Delete", vk: 46 },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
@@ -571,36 +578,47 @@ async function narrowRows(p, url) {
   rows.push(["an entry in the sheet", viaEntry.sheet === undefined && within(viaEntry.off, 4, 28),
     viaEntry.sheet ? "the sheet stayed open over the section it went to" : `jumps to the section (${viaEntry.off} px in) and closes`]);
 
+  // 1.7.1: under 760 px the sidebar is its rail, and a section opens in a
+  // popover beside it, full height, over a scrim. The sheet it was is gone.
   await p.width(700);
-  const narrow = await p.ev(`({ side: window.__ui.vis("#side"), button: window.__ui.vis("#btn-side") })`);
+  const narrow = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), icons: window.__ui.vis("#rail-nav"), fold: window.__ui.vis("#btn-side-hide") })`);
   await p.press("\\");
-  const sideOpen = await p.ev(`({ sheet: document.documentElement.dataset.sheet, side: window.__ui.vis("#side"), focus: window.__ui.focus() })`);
+  const still = await p.ev(`({ side: document.documentElement.dataset.side, pop: document.documentElement.dataset.pop })`);
+  await p.clickOn('#rail-nav [data-pop="tree"]');
+  const popped = await p.ev(`(() => { const r = document.querySelector("#pop").getBoundingClientRect();
+    return { pop: document.documentElement.dataset.pop, tree: !!document.querySelector("#pop > #tree"), top: Math.round(r.top), h: Math.round(r.height), full: Math.round(r.height) >= innerHeight - 1, scrim: window.__ui.vis("#scrim"), focus: window.__ui.focus() }; })()`);
   await p.press("Escape");
-  const sideClosed = await p.ev(`({ sheet: document.documentElement.dataset.sheet, side: window.__ui.vis("#side") })`);
-  rows.push(["at 700 px, \\ opens the sidebar", !narrow.side && narrow.button && sideOpen.sheet === "side" && sideOpen.side && sideOpen.focus.inSide && !sideClosed.side && sideClosed.sheet === undefined,
-    narrow.side ? "the sidebar is still beside the document" : !narrow.button ? "no button offers the sidebar"
-      : !sideOpen.side ? "\\ opened nothing" : !sideOpen.focus.inSide ? "focus stayed outside the sheet" : sideClosed.side ? "Escape did not close it"
-        : "a sheet, focus inside, Escape closes it"]);
+  const unpopped = await p.ev(`({ pop: document.documentElement.dataset.pop, home: document.querySelector("#tree").parentElement.id, focus: window.__ui.focus() })`);
+  rows.push(["at 700 px, the sidebar is its rail", narrow.side && narrow.width === 44 && narrow.icons && !narrow.fold && still.side === "0" && !still.pop
+    && popped.pop === "tree" && popped.tree && popped.top === 0 && popped.full && popped.scrim && popped.focus.inSide && !unpopped.pop && unpopped.home === "trees" && unpopped.focus.cls.includes("icon"),
+    !narrow.side || narrow.width !== 44 || !narrow.icons ? `the sidebar is ${narrow.side ? narrow.width + " px" : "gone"}${narrow.icons ? "" : ", with no icons"}` : narrow.fold ? "it offers to open, which it cannot at this width"
+      : still.side !== "0" || still.pop ? "\\ did something where there is nothing to fold" : popped.pop !== "tree" || !popped.tree ? "the projects icon opened nothing"
+        : popped.top !== 0 || !popped.full ? `the popover is ${popped.h} px from ${popped.top}, not the window's height` : !popped.scrim ? "nothing behind it to tap" : !popped.focus.inSide ? "focus stayed outside it"
+          : unpopped.pop || unpopped.home !== "trees" ? "Escape did not put the projects back" : !unpopped.focus.cls.includes("icon") ? `focus went to ${unpopped.focus.tag}.${unpopped.focus.cls}, not the icon`
+            : "44 px of icons; a section opens full height over a scrim, Escape puts it back and focus on its icon"]);
 
   const titleBefore = await p.ev("document.title");
-  await p.clickOn("#btn-side");
-  const rowsShown = await p.ev(`({ all: document.querySelectorAll(".t-doc a").length, other: document.querySelectorAll(".t-doc a:not([aria-current])").length })`);
-  if (rowsShown.other) await p.clickOn(`.t-doc a:not([aria-current])`);
+  await p.clickOn('#rail-nav [data-pop="tree"]');
+  const rowsShown = await p.ev(`({ all: document.querySelectorAll("#pop .t-doc a").length, other: document.querySelectorAll("#pop .t-doc a:not([aria-current])").length })`);
+  if (rowsShown.other) await p.clickOn(`#pop .t-doc a:not([aria-current])`);
   await sleep(600);
-  const navigated = await p.ev(`({ sheet: document.documentElement.dataset.sheet, title: document.title })`);
+  const navigated = await p.ev(`({ pop: document.documentElement.dataset.pop, title: document.title })`);
   await p.wide();
-  const widened = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), rail: window.__ui.vis("#rail"), sheet: document.documentElement.dataset.sheet })`);
+  const widened = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), rail: window.__ui.vis("#rail"), icons: window.__ui.vis("#rail-nav") })`);
   await p.pointerAway();
-  rows.push(["a row in the sheet, then a wider window", navigated.title !== titleBefore && navigated.sheet === undefined && widened.side && widened.width > 200 && widened.rail && widened.sheet === undefined,
-    navigated.title === titleBefore ? `the row opened nothing (${rowsShown.all} rows, ${rowsShown.other} not current)` : navigated.sheet ? "the sheet stayed open over the document it opened"
-      : !widened.side || widened.width <= 200 ? `back at 1280 px the sidebar is ${widened.side ? widened.width + " px" : "gone"}` : !widened.rail ? "back at 1280 px the rail is gone"
-        : "opens the document and closes; both panes are back at 1280 px"]);
+  rows.push(["a row in the popover, then a wider window", navigated.title !== titleBefore && !navigated.pop && widened.side && widened.width > 200 && !widened.icons && widened.rail,
+    navigated.title === titleBefore ? `the row opened nothing (${rowsShown.all} rows, ${rowsShown.other} not current)` : navigated.pop ? "the popover stayed open over the document it opened"
+      : !widened.side || widened.width <= 200 || widened.icons ? `back at 1280 px the sidebar is ${widened.side ? widened.width + " px" : "gone"}` : !widened.rail ? "back at 1280 px the rail is gone"
+        : "opens the document and closes; the sidebar is back open at 1280 px"]);
+  // Back to the page with code on it: `z` below says "no code on this page"
+  // on the one the popover opened, and it would be right to.
+  if (navigated.title !== titleBefore) { await p.press("ArrowLeft", { alt: true }); await sleep(600); }
 
   for (const w of [1000, 700]) {
     await p.width(w);
     // Clear anything left over; with nothing over the page, Esc would take
     // the reader off the document (backRows), which is not this row's to do.
-    if (await p.ev(`!!document.documentElement.dataset.sheet || document.body.classList.contains("keys")`)) await p.press("Escape");
+    if (await p.ev(`!!document.documentElement.dataset.sheet || !!document.documentElement.dataset.pop || document.body.classList.contains("keys")`)) await p.press("Escape");
     const worked = [], broke = [];
     const check = (name, ok) => (ok ? worked : broke).push(name);
     await p.press("?"); check("?", await p.ui("vis", "#help")); await p.press("Escape");
@@ -611,7 +629,8 @@ async function narrowRows(p, url) {
     const wrapBefore = await p.ev(`document.documentElement.dataset.wrap || ""`);
     await p.press("z"); check("z", (await p.ev(`document.documentElement.dataset.wrap || ""`)) !== wrapBefore); await p.press("z");
     await p.press("t"); check("t", (await p.ev(`document.documentElement.dataset.sheet`)) === "rail"); await p.press("Escape");
-    await p.press("\\"); check("\\", (await p.ev(`document.documentElement.dataset.sheet`)) === (w <= 760 ? "side" : undefined) && (w <= 760 || await p.ev(`document.documentElement.dataset.side === "0"`))); await p.press("Escape");
+    // Narrow, the sidebar is only ever its rail, so \\ has nothing to fold.
+    await p.press("\\"); check("\\", await p.ev(`document.documentElement.dataset.side === "0"`)); await p.press("Escape");
     if (w > 760) await p.press("\\");   // put the pane back
     await p.press("i"); await sleep(400); check("i", await p.ev(`document.querySelector("#rail").classList.contains("empty")`));
     await p.press("j"); await sleep(600); check("j", await p.ev(`!document.querySelector("#rail").classList.contains("empty")`));
@@ -634,6 +653,83 @@ async function narrowRows(p, url) {
   await p.press("Escape");
   rows.push(["the palette's rows, in ink", inks.rows > 0 && inks.title === inks.page && inks.sub !== inks.title,
     !inks.rows ? "the palette found nothing to list" : inks.title !== inks.page ? `a title is ${inks.title}, the page ${inks.page} (a type is ${inks.type})` : inks.sub === inks.title ? "the subtitle is in the title's colour" : "titles in the page's colour, subtitles quieter, nothing from the syntax theme"]);
+  return rows;
+}
+
+/** 1.7.1: `\\` folds the sidebar to a 44 px rail of its sections' icons, and
+ *  each icon opens its section beside it -- the same element, moved, and moved
+ *  back. (`railRows` above is the contents rail on the right.) */
+async function sideRailRows(p, url, arrive) {
+  const rows = [];
+  await p.goto(url);
+  await p.pointerAway();
+  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "pop"];
+  // The fold eases over 160 ms; the widths below are read where it lands.
+  const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
+  await p.press("\\");
+  await eased();
+  const folded = await p.ev(`({ side: document.documentElement.dataset.side, width: Math.round(document.querySelector("#side").getBoundingClientRect().width), icons: window.__ui.vis("#rail-nav"), tree: window.__ui.vis("#tree") })`);
+  rows.push(["\\ folds the sidebar to its rail", folded.side === "0" && folded.width === 44 && folded.icons && !folded.tree,
+    folded.side !== "0" ? "\\ did not fold it" : folded.width !== 44 ? `the rail is ${folded.width} px` : !folded.icons ? "no icons on it" : folded.tree ? "the tree is still drawn in 44 px" : "44 px, icons only"]);
+
+  const opened = [], broke = [];
+  for (const [sec, id] of [["inbox", "queue"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"], ["note", "note"]]) {
+    if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { if (sec !== "note") broke.push(`${sec}: no icon`); continue; }
+    await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
+    const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
+    await p.press("Escape");
+    const back = await p.ev(`({ pop: document.documentElement.dataset.pop, on: document.activeElement?.dataset.pop })`);
+    if (!m.in || !m.shown) broke.push(`${sec}: #${id} not in the popover`);
+    else if (m.left < 44) broke.push(`${sec}: the popover is over the rail (${m.left} px)`);
+    else if (!m.focus.inSide) broke.push(`${sec}: focus stayed outside`);
+    else if (back.pop || back.on !== sec) broke.push(`${sec}: Escape left ${back.pop ? "it open" : `focus on ${back.on}`}`);
+    else opened.push(sec);
+  }
+  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 4, broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
+
+  // One at a time: a second icon closes the first.
+  await p.clickOn('#rail-nav [data-pop="tree"]');
+  await p.clickOn('#rail-nav [data-pop="browse"]');
+  const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, browse: document.querySelector("#browse-nav").parentElement.id })`);
+  await p.click(640, 400);
+  const outside = await p.ev(`document.documentElement.dataset.pop || ""`);
+  rows.push(["one popover at a time, a click outside closes it", one.pop === "browse" && one.tree === "trees" && one.browse === "pop" && outside === "",
+    one.pop !== "browse" || one.browse !== "pop" ? "the second icon opened nothing" : one.tree !== "trees" ? "the first section stayed in the popover" : outside ? "a click outside left it open" : "the second replaces the first; a click beside it closes it"]);
+
+  // The number on the inbox is the number waiting.
+  await arrive();
+  await sleep(700);
+  const count = await p.ev(`({ badge: document.querySelector('#rail-nav [data-pop="inbox"] .badge').textContent, label: document.querySelector("#queue .t-label .n")?.textContent || "" })`);
+  rows.push(["the inbox icon says how many wait", count.badge !== "" && count.badge === count.label,
+    count.badge === "" ? `nothing on the icon (the queue says ${count.label || "nothing"})` : count.badge !== count.label ? `the icon says ${count.badge}, the queue ${count.label}` : `${count.badge}, as the queue says`]);
+
+  // Tab reaches every icon, and the arrows walk them.
+  await p.ev(`document.querySelector(".brand").focus()`);
+  const tabbed = new Set();
+  for (let i = 0; i < 16; i++) {
+    await p.press("Tab");
+    const f = await p.ev(`(() => { const a = document.activeElement; return a.closest("#rail-nav") ? (a.dataset.pop || a.id) : ""; })()`);
+    if (f) tabbed.add(f);
+  }
+  await p.ev(`document.querySelector('#rail-nav [data-pop="inbox"]').focus()`);
+  await p.press("ArrowDown");
+  const walked = await p.ev(`document.activeElement?.dataset.pop || ""`);
+  const want = ["inbox", "tree", "desks", "browse", "rail-live", "rail-search"];
+  const missed = want.filter(k => !tabbed.has(k));
+  rows.push(["Tab reaches every icon, the arrows walk them", missed.length === 0 && walked === "tree",
+    missed.length ? `never reached ${missed.join(", ")}` : walked !== "tree" ? `↓ from the inbox went to ${walked || "nothing"}` : "every icon a stop, ↓ to the next"]);
+
+  // Unfolded, every section is back in #trees, in its order.
+  // With one open, \\ closes it; the next one unfolds.
+  await p.clickOn('#rail-nav [data-pop="desks"]');
+  await p.press("\\");
+  const shut = await p.ev(`({ pop: document.documentElement.dataset.pop || "", side: document.documentElement.dataset.side })`);
+  await p.press("\\");
+  await eased();
+  const order = await p.ev(`[...document.querySelector("#trees").children].map(e => e.id)`);
+  const width = await p.ev(`Math.round(document.querySelector("#side").getBoundingClientRect().width)`);
+  rows.push(["\\ closes a popover, then unfolds, the sections in their order", !shut.pop && shut.side === "0" && JSON.stringify(order) === JSON.stringify(HOME) && width > 200,
+    shut.pop ? "\\ left the popover open" : shut.side !== "0" ? "\\ unfolded with a popover open" : width <= 200 ? `the sidebar is ${width} px` : `#trees holds ${order.join(", ")}`]);
   return rows;
 }
 
@@ -837,6 +933,10 @@ async function queueRows(p, url, arrive) {
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
 
   await p.goto(url);
+  // Nothing waiting to start with, whatever the sections above left unread:
+  // every count below is counted from here. Mark all read, as the inbox does.
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
+  await p.reload();
   await p.pointerAway();
   await p.ui("scrollMain", 12000); await sleep(700);
   const before = await read();
@@ -905,6 +1005,27 @@ async function queueRows(p, url, arrive) {
   const empty = await read();
   rows.push(["an arrival on an empty inbox", openedItself && empty.bar === null && empty.marked === 0,
     !openedItself ? `stayed on "${empty.title}"` : empty.bar !== null ? "opened, but the bar counts it" : "opened itself, and is read"]);
+
+  // 1.7.1: one file sent three times, twice from one session and once from
+  // another workflow, unread, is one row waiting: the newest. The daemon
+  // counted one all along; the page kept the older rows until a reload.
+  await p.goto(url);
+  const plan = "the-plan.md";
+  await arrive({ name: plan, body: "# The plan\n\nFirst draft.\n" });
+  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan")`);
+  await arrive({ name: plan, body: "# The plan, revised\n\nSecond draft.\n" });
+  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan, revised")`);
+  await sleep(300);
+  const twice = await p.ev(`({ rows: [...document.querySelectorAll("#queue .title")].map(t => t.textContent).filter(t => t.startsWith("The plan")), n: document.querySelector("#queue .t-label .n")?.textContent })`);
+  await arrive({ name: plan, body: "# The plan, third\n\nFrom elsewhere.\n", workflow: "ui audit" });
+  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan, third")`);
+  await sleep(300);
+  const thrice = await p.ev(`({ rows: [...document.querySelectorAll("#queue .title")].map(t => t.textContent).filter(t => t.startsWith("The plan")), n: document.querySelector("#queue .t-label .n")?.textContent })`);
+  await p.press("i"); await sleep(600);
+  const listed = await p.ev(`[...document.querySelectorAll(".inbox.waiting .title")].map(a => a.textContent).filter(t => t.startsWith("The plan"))`);
+  rows.push(["one file sent three times waits once", twice.rows.join("|") === "The plan, revised" && thrice.rows.join("|") === "The plan, third" && listed.join("|") === "The plan, third" && thrice.n === "1",
+    twice.rows.length !== 1 ? `after two sends the sidebar lists ${twice.rows.join(", ")}` : thrice.rows.length !== 1 ? `after a third from another workflow it lists ${thrice.rows.join(", ")}`
+      : listed.length !== 1 ? `the inbox lists ${listed.join(", ")}` : thrice.n !== "1" ? `the count says ${thrice.n}` : "one row, the newest, in the sidebar and the inbox; the count says 1"]);
   void late;
   return rows;
 }
@@ -1516,6 +1637,60 @@ async function deskRows(cdp, base, token) {
   return rows;
 }
 
+/** A desk is for a project. `+ New desk` asks where before it makes anything,
+ *  the Inbox's project is among the answers and the home folder is the last;
+ *  the project, chosen, is a desk on its folder named for it; and its row in
+ *  the Inbox then carries the desk glyph lit, which goes back to that desk
+ *  rather than making another. In a tab of its own, with the capability, as
+ *  `deskRows` is. */
+async function projectDeskRows(cdp, base, token, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const desks = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks;
+  // The project the probe's sends made: their working folder is `tmp`.
+  const proj = (await (await fetch(`${base}/api/tree`)).json()).find(x => x.root && (x.root === tmp || x.root.endsWith(basename(tmp))));
+  const before = (await desks()).length;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  let made = null;
+  try {
+    await p.goto(`${base}/#cap=${cap}`);
+    await until(`!!document.querySelector("#desk-nav .s-add")`);
+    await p.clickOn("#desk-nav .s-add");
+    const asked = await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
+    const menu = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`) : [];
+    const none = (await desks()).length === before, at = proj ? menu.indexOf(proj.name) : -1;
+    rows.push(["+ New desk asks where first", asked && none && at >= 0 && /home folder/.test(menu[menu.length - 1] || ""),
+      !proj ? "the probe's sends made no project on its folder" : !asked ? "no menu under the +" : !none ? "a desk was made before anything was chosen"
+        : at < 0 ? `the project is not offered: ${menu.join(" · ")}` : !/home folder/.test(menu[menu.length - 1] || "") ? `the home folder is not last: ${menu.join(" · ")}` : `${menu.join(" · ")}, and no desk yet`]);
+
+    if (at >= 0) {
+      await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.trim() === ${JSON.stringify(proj.name)})`)}"]`);
+      const on = await until(`location.pathname.startsWith("/desk/")`);
+      made = (await desks()).find(d => d.root === proj.root) || null;
+      rows.push(["the project, chosen, is a desk on its folder", on && !!made && made.name === proj.name,
+        !on ? "the page did not go to a desk" : !made ? "no desk on the project's folder" : made.name !== proj.name ? `the desk is named ${made.name}` : `desk ${made.name} on ${made.root}`]);
+
+      const glyph = `.t-proj[data-pid="${proj.id}"] > summary > .b-new.has`;
+      await p.clickOn(".t-inbox");
+      const lit = await until(`!!document.querySelector(${JSON.stringify(glyph)})`);
+      if (lit) await p.clickOn(glyph);
+      const back = lit && made && await until(`location.pathname === "/desk/${made.id}"`), one = (await desks()).length === before + 1;
+      rows.push(["its row's glyph goes back to that desk", !!back && one,
+        !lit ? "the project's row shows no lit desk glyph" : !back ? "the glyph did not open the project's desk" : !one ? "the glyph made a second desk" : "the glyph is lit, and a click on it is the same desk"]);
+    }
+  } finally {
+    if (made) await post(`/api/desks/${made.id}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** 1.6's desk: a panel in full view fills the window and comes back; a head
  *  dragged onto another panel trades their places, and so does ⌃⌥⇧ and an
  *  arrow, the daemon renumbering them; a link a program printed opens on a
@@ -1550,6 +1725,15 @@ async function panelRows(cdp, base, token) {
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
     await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && /snyvi-bench/.test(document.querySelector('${P(pa)} .pn-scr')?.textContent || "")`);
+
+    // 1.7.1: what `snyvi statusline` tells a panel -- its model and how full
+    // its context window is -- is in the panel's head, amber from 85%.
+    const told = await fetch(`${base}/api/panes/${pa}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: 87.4, size: 200000, input: 174800 } }) });
+    const ctxShown = await until(`document.querySelector('${P(pa)} .pn-ctx')?.textContent === "87%"`, 30);
+    const ctxLook = await q.ev(`({ hot: !!document.querySelector('${P(pa)} .pn-ctx.hot'), title: document.querySelector('${P(pa)} .pn-ctx')?.title || "", row: document.querySelector('.dk-pane:has([data-focus="${pa}"]) .ctx')?.textContent || "" })`);
+    rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && ctxLook.row === "87%",
+      told.status !== 204 ? `the route answered ${told.status}` : !ctxShown ? "the head never showed it" : !ctxLook.hot ? "87% is not amber" : !ctxLook.row ? "the rail's row does not show it" : `"${ctxLook.title}", amber, and in the rail`]);
 
     // Full view, from the head's button, and back by the key.
     await q.hoverOn(`${P(pa)} .pn-head`);
@@ -1615,9 +1799,6 @@ async function panelRows(cdp, base, token) {
     const pm = await q.ev(menu);
     rows.push(["a right-click on a panel's head opens its menu", !!pm && /^Panel 1/.test(pm.head) && pm.items.some(t => t.startsWith("Full view")) && pm.items.some(t => t.startsWith("Close panel")),
       pm ? `"${pm.head}": ${pm.items.join(" · ")}` : "no menu"]);
-    await pick("Close panel");
-    const armed = await q.ev(`({ still: document.querySelector("#ctx") && !document.querySelector("#ctx").hidden, says: [...document.querySelectorAll("#ctx button")].map(b => b.textContent).find(t => /click again/.test(t)) || "" })`);
-    rows.push(["and Close panel asks twice", armed.still && !!armed.says && !!(await slotOf(desk, pa)), armed.says ? `"${armed.says}", and the panel is still open` : "it closed on the first click"]);
     await q.press("Escape", { raw: true });
     const shut = await q.ev(`!document.querySelector("#ctx") || document.querySelector("#ctx").hidden`);
     rows.push(["Esc closes the menu", shut, shut ? "closed" : "still open"]);
@@ -1628,9 +1809,20 @@ async function panelRows(cdp, base, token) {
     await pick("Tick");
     const ticked = await until(`!!document.querySelector('.dk-note.done [data-n="${n1}"]')`, 30);
     rows.push(["a note's menu ticks it", !!nm && ticked, !nm ? "no menu on the note" : ticked ? `"${nm.head}": ${nm.items.join(" · ")}` : "the note is still open"]);
-    const tk = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
-    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by')?.textContent === "bench-agent"`, 40);
-    const again = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
+    const tickBy = body => fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const wrong = await tickBy({ by: "bench-agent", commit: "main" });
+    const tk = await tickBy({ by: "bench-agent", commit: "90F09D6aa" });
+    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by > span')?.textContent === "bench-agent"`, 40);
+    const sha = await q.ev(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-sha')?.textContent || ""`);
+    rows.push(["an agent's tick carries its commit, and a branch name is refused", wrong.status === 400 && sha === "90f09d6",
+      wrong.status !== 400 ? `"main" as a commit answered ${wrong.status}` : `the row shows "${sha}"`]);
+    const named = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "bench named" }) });
+    const headSays = named.ok && await until(`document.querySelector('${P(pa)} .pn-head')?.textContent.includes("bench named")`, 40);
+    const unnamed = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "" }) });
+    const noToken = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) });
+    rows.push(["an agent names its panel, and only with the token", headSays && unnamed.ok && noToken.status === 401,
+      !named.ok ? `name answered ${named.status}` : !headSays ? "the head never showed it" : noToken.status !== 401 ? `no token answered ${noToken.status}` : "the head shows it, empty gives it back"]);
+    const again = await tickBy({ by: "bench-agent" });
     rows.push(["an agent's tick shows in the rail, with its name", byAgent && again.status === 409,
       !tk.ok ? `the tick answered ${tk.status}` : !byAgent ? "the rail never showed it" : again.status !== 409 ? `a second tick answered ${again.status}` : "done, \"bench-agent\" at its end, and a second tick refused"]);
 
@@ -1653,6 +1845,33 @@ async function panelRows(cdp, base, token) {
     await cdp.send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
     rows.push(["600 px wide: one panel shown, and + still offered", narrow.plus === false && narrow.shown === 1 && narrow.tabs === 2,
       narrow.plus ? "the + is refused at this width" : `${narrow.shown} shown, ${narrow.tabs} tabs, and + offered`]);
+
+    // 1.7.1: ✕ closes at once, the row holds Undo for 8 s, and the panels
+    // after it close up, so ⌃⌥2 is the one now second.
+    const pc = (await post(`/api/desks/${desk}/panes`)).pane.id;
+    await until(`document.querySelectorAll(".dk-pane").length === 3`);
+    const slotsBefore = [await slotOf(desk, pa), await slotOf(desk, pb), await slotOf(desk, pc)];
+    const first = [pa, pb, pc][slotsBefore.indexOf(1)], second = [pa, pb, pc][slotsBefore.indexOf(2)], third = [pa, pb, pc][slotsBefore.indexOf(3)];
+    await q.hoverOn(`.dk-pane:has([data-focus="${first}"])`);
+    await q.clickOn(`.dk-pane [data-a="close"][data-p="${first}"]`);
+    const offered = await until(`!!document.querySelector('.dk-note.gone [data-a="pane-back"][data-p="${first}"]')`, 30);
+    const after = { gone: !(await slotOf(desk, first)), a: await slotOf(desk, second), b: await slotOf(desk, third) };
+    rows.push(["✕ closes a panel at once, and the rest close up", offered && after.gone && after.a === 1 && after.b === 2,
+      !after.gone ? "the panel is still open" : !offered ? "no Undo in the rail" : `the others are at ${after.a} and ${after.b}`]);
+    await q.ev(`document.querySelector('${P(second)} .pn-body')?.focus(); 1`);
+    for (const type of ["rawKeyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "2", code: "Digit2", windowsVirtualKeyCode: 50, modifiers: 3 }, sessionId);
+    await sleep(200);
+    const on2 = await q.ev(`document.activeElement?.closest(".pn")?.dataset.id || ""`);
+    rows.push(["⌃⌥2 is the panel now second", on2 === third, on2 === third ? "the former third" : `focus went to ${on2 === second ? "the first" : on2 || "nothing"}`]);
+    await q.clickOn(`[data-a="pane-back"][data-p="${first}"]`);
+    const stopped = await until(`!!document.querySelector('${P(first)} .pn-start:not([hidden])') || !!document.querySelector('.dk-pane:has([data-focus="${first}"]) [data-a="start"]')`, 40);
+    const at3 = await slotOf(desk, first);
+    rows.push(["Undo brings it back, stopped, Start offered", stopped && at3 === 3, !at3 ? "it did not come back" : at3 !== 3 ? `it came back at ${at3}` : !stopped ? "it started itself" : "at the end, with Start"]);
+    await q.hoverOn(`.dk-pane:has([data-focus="${first}"])`);
+    await q.clickOn(`.dk-pane [data-a="close"][data-p="${first}"]`);
+    await sleep(8600);
+    const spent = await q.ev(`!document.querySelector('[data-a="pane-back"]')`);
+    rows.push(["the offer ends after 8 s", spent, spent ? "gone, and the panel stays closed" : "Undo is still offered"]);
   } finally {
     for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
@@ -1770,7 +1989,11 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   const size = `(() => { const t = document.querySelector(".dk .pn-scr")?.innerText || ""; const m = /(\\d+) (\\d+)/.exec(t); return m ? m[2] + "x" + m[1] : ""; })()`;
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    // The panes were started at 80x24 before the page fitted them: the size to
+    // come back to is the one they settle at.
     await until(`(${size}) !== ""`);
+    await until(`(${size}) !== "80x24"`, 30);
+    await sleep(300);
     const was = await q.ev(size);
     await walk(q, "a desk");
     await q.ev(`document.querySelector(".dk .pn-body").focus(); 1`);
@@ -1879,7 +2102,9 @@ async function motionRows(p, url, arrive) {
   const resumed = await p.ev(`(() => { const li = document.querySelector('#queue li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
   rows.push(["once, whatever the tree does under it", resumed >= 250 && resumed < 700, resumed < 0 ? "the wash is gone or was never there" : `the wash is ${resumed} ms in, on a row rebuilt by the next arrival`]);
   const bar = await p.ev(`(() => { const qb = document.querySelector("#queue-bar .qb"); const n = qb && qb.querySelector(".qb-n");
-    return { kept: qb === window.__bar, rise: qb ? qb.getAnimations().some(a => a.animationName === "rise") : null, tick: n ? n.getAnimations().some(a => a.animationName === "tick") : null }; })()`);
+    return { kept: qb === window.__bar, rise: qb ? qb.getAnimations().some(a => a.animationName === "rise") : null, tick: n ? n.classList.contains("tick") || n.getAnimations().some(a => a.animationName === "tick") : null }; })()`);
+  // The tick is 180 ms, over before a slow machine gets here; the class the
+  // page put on the new count says it ran.
   rows.push(["the bar stays put and the count ticks", bar.kept && !bar.rise && bar.tick,
     !bar.kept ? "the bar was rebuilt for the second arrival" : bar.rise ? "the bar rose again" : !bar.tick ? "the count changed with nothing to say so" : "the same bar, and the new count settled in"]);
 
@@ -1928,6 +2153,76 @@ main().catch(e => { console.error(e.message); process.exit(1); });
  *  nothing remembered for the reader who was here before. */
 /** One panel inside `?`, and everything on it read from the daemon when it
  *  opens, so the version it names is the one answering. */
+/** 1.7.1: the first ten minutes. `?` answers with the letters asleep, the
+ *  page has its six sections, each Show me lights exactly its element and
+ *  moves nothing, the samples wear the real rules, and snyvi's own aside
+ *  says its line once. */
+async function startRows(p, url, arrive, base) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  await p.goto(url);
+  await p.pointerAway();
+  await p.press("?", { raw: true });
+  const asleep = await p.ev(`!document.body.classList.contains("keys")`);
+  const help = await p.ui("vis", "#help");
+  rows.push(["? opens the keys with the letters asleep", asleep && help, !asleep ? "the letters were awake" : help ? "the box is up" : "nothing opened"]);
+  await p.clickOn("#btn-start");
+  const drawn = await until(`document.querySelectorAll(".start .start-sec").length === 6`);
+  const ids = await p.ev(`[...document.querySelectorAll(".start .start-sec")].map(s => s.id).join(" ")`);
+  rows.push(["/start has its six sections", drawn && ids === "desks notes arrives waiting versions keys" && (await p.ev("location.pathname")) === "/start",
+    drawn ? ids : "the page did not draw"]);
+
+  // Each Show me: exactly one element lit, nothing else moved.
+  const before = await p.ev(`({ url: location.href, focus: document.activeElement?.id || document.activeElement?.tagName })`);
+  const lit = [], broke = [];
+  for (const k of ["arrives", "waiting", "desks", "notes", "keys"]) {
+    const has = await p.ev(`!!document.querySelector('.start .show-me[data-show="${k}"]')`);
+    if (!has) { const why = await p.ev(`document.querySelector("#${k} .show-none")?.textContent || ""`); if (!why && k !== "keys") broke.push(`${k}: no link and no reason`); continue; }
+    await p.ev(`document.querySelector('.start .show-me[data-show="${k}"]').click(); 1`);
+    const n = await p.ev(`document.querySelectorAll(".show-lit").length`);
+    if (n !== 1) broke.push(`${k}: ${n} lit`); else lit.push(k);
+    await sleep(1600);
+  }
+  const after = await p.ev(`({ url: location.href, focus: document.activeElement?.id || document.activeElement?.tagName })`);
+  rows.push(["each Show me lights one thing and moves nothing", broke.length === 0 && lit.length >= 2 && after.url === before.url && after.focus === before.focus,
+    broke.length ? broke.join("; ") : after.url !== before.url ? `went to ${after.url}` : after.focus !== before.focus ? `focus moved to ${after.focus}` : `lit ${lit.join(", ")}; the rest say why not`]);
+
+  // The samples wear the page's own rules: a real diff's colours, the pill's.
+  const sample = await p.ev(`(() => { const c = s => { const e = document.querySelector(s); return e ? getComputedStyle(e).backgroundColor : ""; };
+    const pill = document.querySelector(".keymode-sample");
+    return { add: c(".start-sample .add"), del: c(".start-sample .del"), pill: c(".keymode-sample"), pos: pill ? getComputedStyle(pill).position : "", inert: document.querySelectorAll(".start [inert]").length }; })()`);
+  const want = await p.ev(`(() => { const pre = document.createElement("pre"); pre.className = "diff"; pre.innerHTML = '<code><span class="ln add">+</span><span class="ln del">-</span></code>'; document.body.append(pre);
+    const r = { add: getComputedStyle(pre.querySelector(".add")).backgroundColor, del: getComputedStyle(pre.querySelector(".del")).backgroundColor, raise: getComputedStyle(document.body).getPropertyValue("--bg-raise") }; pre.remove(); return r; })()`);
+  rows.push(["the samples are drawn with the page's rules, inert", sample.add === want.add && sample.del === want.del && !!sample.pill && sample.pos === "static" && sample.inert >= 3,
+    sample.add !== want.add || sample.del !== want.del ? `the hunk is ${sample.add}/${sample.del}, a diff ${want.add}/${want.del}` : !sample.pill ? "the pill sample has no look"
+      : sample.pos !== "static" ? `the pill sample is ${sample.pos}, not in the page's flow` : `${sample.inert} inert samples, in the reader's colours`]);
+
+  // about.js's sheet stays once fetched: a danger row in the context menu
+  // must still read, red on its own background and not on red.
+  await p.ev(`(() => { const a = document.querySelector("#tree a[data-id]"), r = a.getBoundingClientRect();
+    a.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.x + 8, clientY: r.y + 4 })); return 1; })()`);
+  await until(`!!document.querySelector("#ctx:not([hidden]) button.danger")`, 30);
+  const danger = await p.ev(`(() => { const b = document.querySelector("#ctx:not([hidden]) button.danger"); if (!b) return null; const s = getComputedStyle(b); return { label: b.textContent, fg: s.color, bg: s.backgroundColor }; })()`);
+  await p.press("Escape");
+  rows.push(["a menu's danger row reads after about.js has loaded", !!danger && danger.fg !== danger.bg && !/^rgb\(/.test(danger.bg),
+    !danger ? "no danger row in a document's menu" : danger.fg === danger.bg || /^rgb\(/.test(danger.bg) ? `"${danger.label}" is ${danger.fg} on ${danger.bg}` : `"${danger.label}" in ${danger.fg}, on no fill`]);
+
+  // snyvi's own aside: said once, when two are waiting, and never over an
+  // agent's that is still unread.
+  await fetch(`${base}/api/notes/seen`, { method: "POST" }).catch(() => {});
+  await p.ev(`Object.keys(localStorage).filter(k => k.startsWith("snyvi.seen.")).forEach(k => localStorage.removeItem(k)); 1`);
+  await p.goto(url);
+  await arrive(); await arrive();
+  const said = await until(`/^Two are waiting/.test(document.querySelector("#note .note-now p")?.textContent || "")`, 40);
+  await p.ev(`document.querySelector("#note [data-note-x]")?.click(); 1`);
+  await sleep(4500);
+  await arrive();
+  await sleep(800);
+  const again = await p.ev(`/^Two are waiting/.test(document.querySelector("#note .note-now p")?.textContent || "")`);
+  rows.push(["snyvi says its own line once", said && !again, !said ? "no aside when two were waiting" : again ? "it said it again" : "once, pointing at the first ten minutes"]);
+  return rows;
+}
+
 async function aboutRows(p, url) {
   const rows = [];
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
@@ -1945,7 +2240,7 @@ async function aboutRows(p, url) {
   const version = (facts.Version || "").startsWith(served.version) && (!served.commit || facts.Version.includes(served.commit));
   const dirs = facts.Documents === served.data_dir && facts.Settings === served.config_dir;
   const agents = facts.Agents === served.agents && /^Claude Code:/.test(facts.Agents);
-  const source = await p.ev(`(() => { const a = document.querySelector("#about-facts a"); return a && a.href === ${JSON.stringify(served.repository)} && a.target === "_blank"; })()`);
+  const source = await p.ev(`(() => { const a = [...document.querySelectorAll("#about-facts dt")].find(dt => dt.textContent === "Source")?.nextElementSibling.querySelector("a"); return a && a.href === ${JSON.stringify(served.repository)} && a.target === "_blank"; })()`);
   rows.push(["and it says what the daemon says", version && dirs && agents && source && facts.License === "MIT",
     !version ? `version "${facts.Version}" for a daemon serving ${served.version} ${served.commit}` : !dirs ? "the directories are not the daemon's" : !agents ? `agents line "${facts.Agents}"` : !source ? "the source link is wrong or missing" : `${facts.Version}, both directories, the agents line, MIT, the repository`]);
 
@@ -1970,10 +2265,14 @@ async function connectRows(p, url, home, env) {
   const opened = await until(`location.pathname === "/connect" && document.querySelectorAll(".connect .agent").length >= 8`);
   const served = await p.ev(`fetch("/api/agents").then(r => r.json())`);
   const names = await p.ev(`[...document.querySelectorAll(".agent-name")].map(e => e.textContent)`);
-  const same = opened && JSON.stringify(names) === JSON.stringify(served.rows.map(r => r.name));
+  // Claude Code and whatever has been set up or has sent first; the rest in
+  // the daemon's order under "Using a different agent?".
+  const first = r => r.id === "claude" || r.id.startsWith("sender:") || (r.state && r.state !== "not_set_up") || r.live;
+  const order = [...served.rows.filter(first), ...served.rows.filter(r => !first(r))].map(r => r.name);
+  const same = opened && names[0] === "Claude Code" && JSON.stringify(names) === JSON.stringify(order);
   const allOff = same && (await p.ev(`[...document.querySelectorAll(".agent:not([data-agent^='sender:'])")].every(e => e.classList.contains("is-off"))`));
   rows.push(["? reaches it, one row per agent", offered && same && allOff,
-    !offered ? "no Connect an agent in the help box" : !opened ? "the page did not open" : !same ? `rows ${JSON.stringify(names)}` : !allOff ? "a row is not 'not set up' in a home that has never seen an agent" : `${names.length} rows, in the daemon's order, every agent not set up`]);
+    !offered ? "no Connect an agent in the help box" : !opened ? "the page did not open" : !same ? `rows ${JSON.stringify(names)}` : !allOff ? "a row is not 'not set up' in a home that has never seen an agent" : `${names.length} rows, Claude Code first, every agent not set up`]);
 
   const sender = await p.ev(`(() => { const e = document.querySelector('.agent[data-agent="sender:bench-agent"]'); return e && e.classList.contains("is-connected") && /sent/.test(e.querySelector(".agent-state").textContent); })()`);
   rows.push(["a sender it never heard of has a row", !!sender, sender ? "bench-agent, connected, with when it sent" : "no row for the MCP client that sent under its own name"]);
@@ -1991,6 +2290,8 @@ async function connectRows(p, url, home, env) {
   rows.push(["a row turns as its file does", stale && fixShown && connected && kept,
     !stale ? `Cursor stayed "${await stateOf("cursor")}" after its file named a path that is gone` : !fixShown ? "the fix is not the init command" : !connected ? "init cursor ran and the row did not turn" : !kept ? "the other server in the file was lost" : `needs fixing — "${says}" — then connected, the other entry kept`]);
 
+  // Codex is under "Using a different agent?", folded: opened as a reader would.
+  if (!(await p.ev(`!!document.querySelector(".agents-more")?.open`))) await p.clickOn(".agents-more > summary");
   const copyThere = await p.ui("vis", '.agent[data-agent="codex"] .agent-fix .copy');
   if (copyThere) await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
   const copied = copyThere && await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy')?.textContent === "Copied"`, 10);
@@ -2028,9 +2329,9 @@ async function presenceRows(p, url, base, env, tmp) {
     !lit ? `the count reads "${one.n}" 4 s after an agent initialized` : h.agents["bench-agent"] !== 1 ? `health says ${JSON.stringify(h.agents)}` : `"1", lit, "${one.title}", and health agrees`]);
 
   await p.clickOn("#live");
-  const row = await until(`location.pathname === "/connect" && document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live") && /^online/.test(document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent)`, 40);
+  const row = await until(`location.pathname === "/connect" && document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live") && /^running now/.test(document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent)`, 40);
   const said = row && await p.ev(`document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent`);
-  rows.push(["the count opens the rows, and its row says online", row, row ? `the connect page, bench-agent "${said}"` : `at ${await p.ev("location.pathname")}, the row does not say online`]);
+  rows.push(["the count opens the rows, and its row says running now", row, row ? `the connect page, bench-agent "${said}"` : `at ${await p.ev("location.pathname")}, the row does not say running now`]);
 
   agent.stdin.end();
   const fell = await until(`document.querySelector("#live").textContent === "0" && !document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live")`, 40);
@@ -2080,15 +2381,16 @@ async function resetRows(p, url, arrive) {
 
   await p.type(String(census.documents + 1));
   await p.press("Enter");
-  const landed = await until(`location.pathname === "/" && !!document.querySelector(".connect .agent")`, 80);
+  // A newcomer's window, with no desk: Welcome, at the inbox's address.
+  const landed = await until(`location.pathname === "/" && !!document.querySelector(".welcome")`, 80);
   const left = landed ? await p.ev(`(() => { try { return Object.keys(localStorage).filter(k => k.startsWith("snyvi.")); } catch { return []; } })()`) : [];
   const forgotten = landed && left.length === 0;
   const wideOff = landed && !(await p.ev(`document.documentElement.dataset.wide`));
   const empty = (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === 0;
   // The agents were not touched: the row the connect rows turned is still connected.
-  const stillConnected = landed && await p.ev(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`);
+  const stillConnected = landed && await p.ev(`fetch("/api/agents").then(r => r.json()).then(a => a.rows.find(r => r.id === "cursor")?.state === "connected")`);
   rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty && stillConnected,
-    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
+    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "Welcome, the width forgotten, nothing in storage, Cursor still connected"]);
   return rows;
 }
 

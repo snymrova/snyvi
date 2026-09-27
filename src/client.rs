@@ -158,10 +158,9 @@ fn warn_if_stale(h: &Value) {
 
 /// `snyvi restart`: ask the daemon to restart itself and wait for it to come
 /// back. The daemon waits for its panes to be quiet unless `now`; while it
-/// waits, this says which panels it is waiting on, and Ctrl-C leaves the
-/// restart pending in the daemon rather than cancelling it. A daemon too old
-/// to have the route is stopped and started the old way, and no daemon at
-/// all is simply started.
+/// waits, this says which panels it is waiting on, and Ctrl-C calls the
+/// restart off. A daemon too old to have the route is stopped and started
+/// the old way, and no daemon at all is simply started.
 pub fn restart(paths: &Paths, now: bool) -> Result<()> {
     let Some(h) = health() else {
         ensure_daemon()?;
@@ -197,15 +196,91 @@ pub fn restart(paths: &Paths, now: bool) -> Result<()> {
         ),
         Err(e) => bail!("asking the daemon to restart: {e}"),
     }
-    wait_for_another(was)
+    wait_for_another(paths, was)
+}
+
+/// `snyvi restart --cancel`, and Ctrl-C while a restart waits: the restart
+/// the daemon is holding for quiet panels is called off. True when there
+/// was one.
+fn send_cancel(paths: &Paths) -> Result<bool> {
+    let Some(token) = config::read_token(paths) else {
+        bail!(
+            "no token in {}; is this the same user the daemon runs as?",
+            paths.config_dir.display()
+        );
+    };
+    let r = ureq::delete(&format!("{}/api/restart", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .call();
+    match r {
+        Ok(mut r) if r.status().is_success() => Ok(r
+            .body_mut()
+            .read_json::<Value>()
+            .ok()
+            .and_then(|j| j["cancelled"].as_bool())
+            .unwrap_or(false)),
+        Ok(r) if r.status() == 404 || r.status() == 405 => bail!(
+            "this daemon is too old to call a restart off; it restarts when the panels are quiet"
+        ),
+        Ok(mut r) => bail!(
+            "the daemon refused: {} {}",
+            r.status(),
+            r.body_mut().read_to_string().unwrap_or_default().trim()
+        ),
+        Err(e) => bail!("asking the daemon: {e}"),
+    }
+}
+
+pub fn cancel_restart(paths: &Paths) -> Result<()> {
+    if health().is_none() {
+        println!("not running");
+        return Ok(());
+    }
+    if send_cancel(paths)? {
+        println!("the restart is called off");
+    } else {
+        println!("no restart was waiting");
+    }
+    Ok(())
+}
+
+/// While this waits on a restart, Ctrl-C calls it off rather than leaving
+/// it to happen behind the reader's back. Once the old daemon has gone
+/// there is nothing to call off, and Ctrl-C only stops the waiting.
+fn cancel_on_ctrl_c(paths: &Paths) {
+    let paths = paths.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        if rt.block_on(tokio::signal::ctrl_c()).is_err() {
+            return;
+        }
+        eprintln!();
+        match send_cancel(&paths) {
+            Ok(true) => eprintln!("the restart is called off"),
+            Ok(false) => eprintln!("the restart is already under way"),
+            Err(e) => eprintln!("{e:#}"),
+        }
+        std::process::exit(130);
+    });
 }
 
 /// Watch health until a process other than `was` answers, saying which
 /// panels are holding it up while it waits. By pid rather than version: the
 /// point of a restart may be a file that says the same number.
-fn wait_for_another(was: Option<u64>) -> Result<()> {
+fn wait_for_another(paths: &Paths, was: Option<u64>) -> Result<()> {
+    cancel_on_ctrl_c(paths);
     let mut said: Option<usize> = None;
     let mut gone_since: Option<Instant> = None;
+    let mut given_up = 0;
     loop {
         match health() {
             Some(h) if h.get("pid").and_then(Value::as_u64) != was => {
@@ -216,13 +291,34 @@ fn wait_for_another(was: Option<u64>) -> Result<()> {
             }
             Some(h) => {
                 gone_since = None;
+                // Nothing pending and not on its way out, and still the same
+                // process: the daemon took the restart and gave it up -- an
+                // update that would not go in, nothing to go back to. Twice,
+                // a quarter of a second apart, so a look between the two
+                // flags is not taken for it. Only a daemon that says
+                // `restarting` at all (1.7.1 on) can be read this way.
+                let restarting = h["update"].get("restarting").and_then(Value::as_bool);
+                given_up = if h["restart"].is_null() && restarting == Some(false) {
+                    given_up + 1
+                } else {
+                    0
+                };
+                if given_up >= 2 {
+                    if said.is_some() {
+                        eprintln!();
+                    }
+                    match h["update"]["error"].as_str().filter(|e| !e.is_empty()) {
+                        Some(e) => bail!("the daemon did not restart: {e}"),
+                        None => bail!("the daemon did not restart; its log says why"),
+                    }
+                }
                 let waiting = h["restart"]["waiting_on"]
                     .as_array()
                     .map(Vec::len)
                     .unwrap_or(0);
                 if waiting > 0 && said != Some(waiting) {
                     eprintln!(
-                        "waiting on {waiting} panel{} still busy (an agent mid-turn, or a program printing)… --now skips the wait; Ctrl-C leaves the restart to happen when they are quiet",
+                        "waiting on {waiting} panel{} still busy (an agent mid-turn or waiting on you, or a program printing)… --now skips the wait; Ctrl-C calls the restart off",
                         if waiting == 1 { "" } else { "s" }
                     );
                     said = Some(waiting);
@@ -296,7 +392,7 @@ pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
                         " when the panels are quiet"
                     }
                 );
-                return wait_for_another(was);
+                return wait_for_another(paths, was);
             }
             404 | 405 => bail!("the daemon is too old to go back; `snyvi restart` first"),
             _ => bail!("{}", j["error"].as_str().unwrap_or("the daemon refused")),
@@ -337,11 +433,19 @@ pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
         if j["update"]["failed"].as_str() == Some(latest) {
             bail!("{latest} is out, but it was applied here before and did not start, so it is not staged again on its own; `snyvi update --to {latest}` tries it again");
         }
+        if j["update"]["skipped"].as_str() == Some(latest) {
+            bail!("{latest} is out, but you went back from it, so it is not staged again on its own; `snyvi update --to {latest}` takes it again");
+        }
         bail!(
             "{latest} is out but nothing was staged: {}",
             j["update"]["error"].as_str().unwrap_or("no reason given")
         );
     };
+    if let (Some(to), Some(skipped)) = (&o.to, j["update"]["skipped"].as_str()) {
+        if semver::Version::parse(to).ok() < semver::Version::parse(running).ok() {
+            eprintln!("{skipped} will not come back on its own; `snyvi update` takes it, or whatever is newest, again");
+        }
+    }
     eprintln!(
         "{ready} is staged and verified; restarting onto it{}",
         if o.now {
@@ -364,17 +468,19 @@ pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
                 .unwrap_or("the daemon refused the restart")
         );
     }
-    wait_for_another(was)
+    wait_for_another(paths, was)
 }
 
 /// `snyvi update check`: true when a newer version is out, and nothing is
 /// restarted. The daemon stages what it finds, as it would on its own timer.
 pub fn update_check(paths: &Paths) -> Result<bool> {
     ensure_daemon()?;
+    // Read fresh, and found without lifting the daily floor: a script
+    // asking every hour must not turn a day's pace into an hour's.
     let (status, j) = post(
         paths,
         "/api/update/check",
-        serde_json::json!({}),
+        serde_json::json!({ "lift": false }),
         Duration::from_secs(600),
     )?;
     match status {
@@ -450,6 +556,8 @@ pub fn update_line(u: &Value) -> Option<String> {
         } else {
             format!("update: {v} is ready; it applies in the next day when the desks are quiet, or now: snyvi update")
         }
+    } else if let Some(v) = s("skipped").filter(|v| s("available").is_none_or(|a| a == *v)) {
+        format!("update: you went back from {v}; it is not taken again on its own. `snyvi update --to {v}` takes it")
     } else if let Some(v) = s("available") {
         let how = u["how"]
             .as_array()
@@ -486,6 +594,19 @@ fn print_running() -> Result<()> {
 }
 
 /// Make sure a daemon is listening; spawn one detached if not.
+/// A planned restart's marker, written moments ago: the daemon went on
+/// purpose and its successor has not taken the port yet (it drops the
+/// marker once it has). See `server::leave_for_restart`.
+fn restart_under_way() -> bool {
+    let Ok(text) = std::fs::read_to_string(config::paths().data_dir.join("restart.json")) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["at"].as_i64())
+        .is_some_and(|at| (crate::store::now() - at).abs() < 30)
+}
+
 pub fn ensure_daemon() -> Result<()> {
     if let Some(h) = health() {
         warn_if_stale(&h);
@@ -498,7 +619,25 @@ pub fn ensure_daemon() -> Result<()> {
             config::port()
         );
     }
+    // A planned restart is under way: the successor is on its way, and a
+    // second `snyvi serve` started now would race it for the port -- and
+    // count as one of its tries to come up (`update::first_start`).
+    if restart_under_way() {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            if health().is_some() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
     let exe = std::env::current_exe().context("locating snyvi binary")?;
+    // A file an update renamed over, under a process still running from it,
+    // reads as `… (deleted)` on Linux; the name holds the new file now.
+    let exe = match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(live) if !exe.exists() => std::path::PathBuf::from(live),
+        _ => exe,
+    };
     crate::platform::spawn_daemon(&exe).context("starting snyvi daemon")?;
     // A daemon is listening about 25 ms after it is started -- it reads a
     // 438 KB grammar dump and opens the database first -- and this used to ask
@@ -608,6 +747,27 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
         .send_json(serde_json::json!({ "state": state, "session": session }));
 }
 
+/// What Claude's status line said, for the panel it runs in: the model, how
+/// full the context window is, and the conversation, which keeps the pane's
+/// saved id current after a `/resume` inside one Claude. The same route and
+/// the same short wait as `agent_state`: it runs after every reply.
+pub fn agent_context(paths: &Paths, pane: &str, seen: &crate::statusline::Seen) {
+    let Some(token) = config::read_token(paths) else {
+        return;
+    };
+    let _ = ureq::post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(500)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({
+            "session": seen.session,
+            "model": seen.model,
+            "ctx": { "pct": seen.pct, "size": seen.size, "input": seen.input },
+        }));
+}
+
 /// The notes of the desk `pane` is on, read and never written. It never starts
 /// a daemon: a pane only runs while one does, so none answering means the
 /// shell this came from is already gone.
@@ -635,33 +795,74 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
     }
 }
 
-/// Tick a line on the list of the desk this pane is on, as `by`.
-pub fn tick_desk_note(paths: &Paths, pane: &str, note: i64, by: &str) -> Result<Value> {
+/// Tick a line on the list of the desk this pane is on, as `by`, with the
+/// commit the work went into and a document about it when there are those.
+pub fn tick_desk_note(
+    paths: &Paths,
+    pane: &str,
+    note: i64,
+    by: &str,
+    commit: &str,
+    about: &str,
+) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/notes/{note}/tick"),
+        serde_json::json!({ "by": by, "commit": commit, "about": about }),
+    )?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
+        400 => bail!("{}", said(&mut resp)),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// Name the panel this pane is: what the reader sees in its head and on the
+/// desk's rail. Empty gives it back to its program's title.
+pub fn name_panel(paths: &Paths, pane: &str, name: &str) -> Result<()> {
+    let resp = pane_post(
+        paths,
+        &format!("{pane}/name"),
+        serde_json::json!({ "name": name }),
+    )?;
+    match resp.status().as_u16() {
+        200 => Ok(()),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// A write an agent makes on its own pane, `/api/panes/{path}`, with the token.
+fn pane_post(paths: &Paths, path: &str, body: Value) -> Result<ureq::http::Response<ureq::Body>> {
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
             "no token at {}; is the daemon running as this user?",
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::post(&format!(
-        "{}/api/panes/{pane}/notes/{note}/tick",
-        config::base_url()
-    ))
-    .header("Authorization", &format!("Bearer {token}"))
-    .config()
-    .timeout_global(Some(Duration::from_secs(5)))
-    .http_status_as_error(false)
-    .build()
-    .send_json(serde_json::json!({ "by": by }))
-    .context("asking snyvi")?;
-    match resp.status().as_u16() {
-        200 => Ok(resp.body_mut().read_json()?),
-        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
-        404 => {
-            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
-        }
-        s => bail!("snyvi answered {s}"),
-    }
+    ureq::post(&format!("{}/api/panes/{path}", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(body)
+        .context("asking snyvi")
+}
+
+/// The `error` a refusal carries, or a word for one that carries none.
+fn said(resp: &mut ureq::http::Response<ureq::Body>) -> String {
+    resp.body_mut()
+        .read_json::<Value>()
+        .ok()
+        .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| "snyvi refused it".to_string())
 }
 
 /// Leave an aside at the foot of the sidebar.

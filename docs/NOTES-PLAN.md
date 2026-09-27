@@ -2,8 +2,9 @@
 
 Plans for the open notes on the snyvi desk, one section each. The context
 menu (notes #10 and #18) has its own plan in `docs/CONTEXT-MENU.md`, and
-several sections here link into it. Nothing here is built. Branch point:
-`claude/desk-paint` @ 6619993 (1.5.0).
+several sections here link into it. Built in 1.6.0 (PR #39), except the
+scrollback warning of #14 item 2, which was struck on 2026-09-26. Branch
+point was `claude/desk-paint` @ 6619993 (1.5.0).
 
 ## Suggested order
 
@@ -503,10 +504,10 @@ a one-line change (`desk.js:22`).
    - Output still reaches the `Screen`; only the 16 ms diff and broadcast stop.
    - Measure with `snyvi bench`: idle CPU with 12 running panels on 3 desks,
      none watched, should be about 0.
-2. **Memory, with a warning and no limit.**
+2. **Memory, with no limit.**
    - Scrollback stays at 2 MB per panel.
-   - When the total scrollback held passes about 64 MB, the Desks section says
-     so once ("Panels are holding 70 MB of scrollback"). It never refuses.
+   - ~~When the total scrollback held passes about 64 MB, the Desks section
+     says so once. It never refuses.~~ Struck 2026-09-26: no warning.
    - The resident row in the bench gets a panel count, so growth shows up
      there (see the `malloc_trim` note).
 3. **`desk.rs`:**

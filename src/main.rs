@@ -20,6 +20,7 @@ mod screen;
 mod server;
 mod session;
 mod setup;
+mod statusline;
 mod store;
 /// `build.rs` compiles this one for itself -- it is what strips `ui/` on the
 /// way into the binary -- so the daemon never calls it and it is here only to
@@ -112,6 +113,8 @@ enum Cmd {
     Mcp,
     /// Claude Code hook (reads hook JSON on stdin): sends Markdown files Claude writes, and tells a desk panel what Claude in it is doing.
     Hook,
+    /// Claude Code status line (reads its JSON on stdin): tells a desk panel which model it is and how full its context window is. Prints nothing, or the status line you had before.
+    Statusline,
     /// Register snyvi with an agent: claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed. Safe to run again.
     Init {
         /// Which agent. Alone, lists every agent and what each has of snyvi.
@@ -181,6 +184,9 @@ enum Cmd {
         /// Do not wait for the panels to be quiet.
         #[arg(long)]
         now: bool,
+        /// Call off a restart that is waiting for the panels to be quiet.
+        #[arg(long, conflicts_with = "now")]
+        cancel: bool,
     },
     /// Check for a new version, stage it, and restart onto it when the panels are quiet. Ignores the once-a-day floor: you asked.
     Update {
@@ -220,6 +226,16 @@ fn main() -> Result<()> {
     let paths = config::paths();
     match Cli::parse().cmd {
         Cmd::Serve => {
+            // First, before anything a bad release could break: a version
+            // just applied that keeps dying before it holds the port is
+            // taken back out, and the one before it started instead.
+            if let Ok(exe) = std::env::current_exe() {
+                let exe = exe.canonicalize().unwrap_or(exe);
+                if let update::FirstStart::RolledBack(v) = update::first_start(&paths, &exe) {
+                    eprintln!("snyvi: {v} was started and never came up, twice; the previous version is back in its place, and starting");
+                    return restart_self(&exe);
+                }
+            }
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 // Renders run on blocking threads, and a thread's freed memory
@@ -356,6 +372,7 @@ fn main() -> Result<()> {
         }
         Cmd::Mcp => mcp::run(paths),
         Cmd::Hook => hook::run(&paths),
+        Cmd::Statusline => statusline::run(&paths),
         Cmd::Init {
             agent: None,
             auto: _,
@@ -412,6 +429,31 @@ fn main() -> Result<()> {
                     " deleted"
                 }
             );
+            // Closed panels, on the same terms as a deleted document: kept
+            // for Undo until a prune, and their saved text goes with them.
+            let panels = store.prune_panes(before, dry_run)?;
+            for (id, what) in &panels {
+                if !dry_run {
+                    let _ = std::fs::remove_file(
+                        paths.data_dir.join("panes").join(format!("{id}.txt")),
+                    );
+                }
+                println!(
+                    "{} panel {id}  {what}",
+                    if dry_run { "would delete" } else { "deleted" }
+                );
+            }
+            if !panels.is_empty() {
+                println!(
+                    "{} closed panel(s){}",
+                    panels.len(),
+                    if dry_run {
+                        " would be deleted"
+                    } else {
+                        " deleted"
+                    }
+                );
+            }
             Ok(())
         }
         Cmd::Reset {
@@ -434,7 +476,8 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Restart { now } => client::restart(&paths, now),
+        Cmd::Restart { cancel: true, .. } => client::cancel_restart(&paths),
+        Cmd::Restart { now, .. } => client::restart(&paths, now),
         Cmd::Update {
             what,
             now,
@@ -465,6 +508,10 @@ fn main() -> Result<()> {
                     if let Some(line) = client::update_line(&h["update"]) {
                         println!("{line}");
                     }
+                    let log = platform::daemon_log(&paths.data_dir);
+                    if log.exists() {
+                        println!("log: {}", log.display());
+                    }
                 }
                 None => println!("not running (would listen on {})", config::base_url()),
             }
@@ -475,5 +522,22 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Bench { check } => bench::run(check),
+    }
+}
+
+/// The file at `exe`, which `update::first_start` has just put the previous
+/// version back into, in place of this process: the same pid under
+/// systemd, so the unit carries on as if nothing happened.
+fn restart_self(exe: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = std::process::Command::new(exe).arg("serve").exec();
+        anyhow::bail!("starting {} again: {e}", exe.display());
+    }
+    #[cfg(not(unix))]
+    {
+        platform::spawn_daemon(exe)?;
+        Ok(())
     }
 }

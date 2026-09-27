@@ -26,7 +26,7 @@ export function open(deps) {
   if (!d) { d = deps; wire(); }
   const { input, browsing, codePre, state } = d;
   input.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
-    : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff)";
+    : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff  > commands)";
   search(input.value);
 }
 
@@ -85,10 +85,40 @@ function deskItems(q) {
   if (browsing() && "new desk here".startsWith(l || "n")) {
     const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
     out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
-  } else if (l && "new desk".startsWith(l)) out.push({ newdesk: "home", t: "New desk", s: state.desks.home || "~" });
+  } else if (l && ("new desk".startsWith(l) || l.startsWith("new desk "))) {
+    // Where, as the + asks: each project and folder with no desk yet, then
+    // the home folder last. A word after "new desk" narrows the list.
+    // Until the words are nearly typed, one row that opens the list, so an
+    // "n" is not answered with every project.
+    const w = l.slice(9).trim();
+    if (l.length < 5) out.push({ cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell" });
+    else {
+      for (const f of d.places()) if (!w || f.name.toLowerCase().includes(w)) out.push({ newdesk: f, t: `New desk · ${f.name}`, s: f.abs });
+      if (!w) out.push({ newdesk: "home", t: "New desk · a shell", s: state.desks.home || "~" });
+    }
+  }
   for (const k of state.desks.desks) if (!l || k.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: k.id, t: `Desk · ${k.name}`, s: k.root });
   return out;
 }
+/** `>` and a word: what snyvi can do, rather than what it holds. A static
+ *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
+ *  has no list of its own to read yet. */
+const COMMANDS = [
+  { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
+  { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
+  { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
+  { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
+  { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
+  { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
+  { cmd: "keys", t: "Keys", s: "Every key, and ⌃B for the letters" },
+];
+function commandItems(q) {
+  const m = /^\s*>\s*(.*)$/.exec(q);
+  if (!m) return null;
+  const l = m[1].trim().toLowerCase();
+  return COMMANDS.filter(c => (!c.window || d.capability) && (!l || c.t.toLowerCase().includes(l)));
+}
+
 /** The keyboard's way to the `+` beside Folders. */
 function folderItems(q) {
   const l = q.trim().toLowerCase();
@@ -119,6 +149,14 @@ async function search(q) {
     list.innerHTML = `<li class="sel" data-i="0"><span class="t">Go to line ${+g[1]}</span><span class="s">${esc(document.title)}</span></li>`;
     return;
   }
+  const commands = commandItems(q);
+  if (commands) {
+    items = commands; sel = 0;
+    list.innerHTML = items.length ? items.map(row).join("") : none(q);
+    pal.classList.remove("themes");
+    previewSel();
+    return;
+  }
   let found = [];
   if (browsing()) {
     try { found = (await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json()).map(p => ({ file: p })); } catch {}
@@ -135,8 +173,18 @@ async function search(q) {
 
 // Kept: the preview already drew it, so closing must not put it back first.
 function pick(it) {
+  // Theme… is a way into the theme rows, which preview as they are walked.
+  if (it.cmd === "theme") { d.input.value = "theme"; search("theme"); return; }
+  // New desk… is a way into the rows that say where, as the + asks.
+  if (it.cmd === "desk") { d.input.value = "new desk"; search("new desk"); return; }
   if (it.theme) previewing = false;
   close();
+  if (it.cmd) {
+    const c = it.cmd;
+    c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+      : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
+    return;
+  }
   const { state } = d;
   it.theme ? d.setTheme(it.theme) : it.pick ? d.act("pick") : it.line ? d.gotoLine(it.line)
     : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? d.showDesk(it.desk, true)

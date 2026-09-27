@@ -290,8 +290,14 @@ export async function readable(id) {
   // be seen to have done something.
   // Awake first: letter keys sleep until ⌃B. The drag below sleeps them
   // again, as a click does, so the second `0` wakes them too.
-  const wake = () => { if (!document.body.classList.contains("keys")) document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, bubbles: true })); };
-  wake();
+  // The letters are a chunk (keys.js) that ⌃B fetches; a letter in the same
+  // instant is dropped, as the page says, so the wake waits for it to land.
+  const wake = async () => {
+    if (document.body.classList.contains("keys")) return;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, bubbles: true }));
+    await new Promise(res => setTimeout(res, 300));
+  };
+  await wake();
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
   await new Promise(res => setTimeout(res, 50));
   const fitted = fig.dataset.zoom === "fit";
@@ -311,7 +317,7 @@ export async function readable(id) {
   const panned = box() !== before;
 
   // And back to the whole diagram, from the keyboard.
-  wake();
+  await wake();
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
   await new Promise(res => setTimeout(res, 50));
   const refits = fig.dataset.zoom === "fit" && box() === fit;

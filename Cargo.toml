@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.7.0"
+version = "1.7.1"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -147,6 +147,11 @@ tauri-build = { version = "2", optional = true }
 # resolves this at all.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# A panel's live folder: macOS answers `proc_pidinfo`, which std does not wrap.
+# Linux reads /proc and needs nothing.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 # Only to create the daemon process directly, which is the one thing std's
 # Command cannot be asked to do: start something that inherits no handles.

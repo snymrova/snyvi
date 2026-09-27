@@ -241,6 +241,12 @@ impl Store {
             // Marked by a planned restart: bring this pane back as
             // `claude --resume`. Taken by the daemon that comes up next.
             "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0",
+            // 1.7.1: what the reader called a panel, and a desk's full view.
+            "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0",
+            // 1.7.1: where an agent's tick says the work went.
+            "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1050,8 +1056,8 @@ impl Store {
         desk::rename(&self.conn.lock().unwrap(), id, name)
     }
 
-    pub fn set_desk_layout(&self, id: i64, col: f64, row: f64) -> Result<bool> {
-        desk::layout(&self.conn.lock().unwrap(), id, col, row)
+    pub fn set_desk_layout(&self, id: i64, col: f64, row: f64, full: Option<i64>) -> Result<bool> {
+        desk::layout(&self.conn.lock().unwrap(), id, col, row, full)
     }
 
     pub fn delete_desk(&self, id: i64) -> Result<bool> {
@@ -1076,9 +1082,27 @@ impl Store {
         desk::mark_resume(&self.conn.lock().unwrap(), ids)
     }
 
-    /// Those marks, taken by the daemon that comes up (`desk::take_resume`).
-    pub fn take_panes_resume(&self) -> Result<Vec<String>> {
-        desk::take_resume(&self.conn.lock().unwrap())
+    /// Those marks, as the daemon that comes up reads them
+    /// (`desk::read_resume`): the planned restart's panes, then the ones to
+    /// offer.
+    pub fn panes_resume(&self) -> Result<(Vec<String>, Vec<String>)> {
+        desk::read_resume(&self.conn.lock().unwrap())
+    }
+
+    /// And cleared, once that daemon holds the port (`desk::clear_resume`).
+    pub fn clear_panes_resume(&self) -> Result<()> {
+        desk::clear_resume(&self.conn.lock().unwrap())
+    }
+
+    /// Mark the panes that had Claude open, on an unplanned way out
+    /// (`desk::mark_offer`).
+    pub fn offer_panes_resume(&self, ids: &[String]) -> Result<usize> {
+        desk::mark_offer(&self.conn.lock().unwrap(), ids)
+    }
+
+    /// Where a pane's shell has moved to (`desk::set_cwd`).
+    pub fn set_pane_cwd(&self, id: &str, cwd: &str) -> Result<bool> {
+        desk::set_cwd(&self.conn.lock().unwrap(), id, cwd)
     }
 
     pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {
@@ -1103,8 +1127,42 @@ impl Store {
         Ok(true)
     }
 
+    /// Close a pane (`desk::close_pane`), and renumber what the panes after it
+    /// sent in the same transaction, as `move_pane` does: "From desk [3]" is
+    /// the panel now in position 3. What the closed one sent keeps its desk
+    /// and loses its slot, since no panel on screen is that one any more.
     pub fn close_pane(&self, id: &str) -> Result<bool> {
-        desk::close_pane(&self.conn.lock().unwrap(), id)
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let Some((desk_id, slot)) = desk::close_pane(&tx, id, now())? else {
+            return Ok(false);
+        };
+        tx.execute(
+            "UPDATE docs SET desk_slot = CASE WHEN desk_slot = ?2 THEN 0 ELSE desk_slot - 1 END
+             WHERE desk_id = ?1 AND desk_slot >= ?2",
+            params![desk_id, slot],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    pub fn restore_pane(&self, id: &str) -> Result<desk::Restored> {
+        desk::restore_pane(&mut self.conn.lock().unwrap(), id)
+    }
+
+    pub fn rename_pane(&self, id: &str, name: &str) -> Result<bool> {
+        desk::rename_pane(&self.conn.lock().unwrap(), id, name)
+    }
+
+    /// The closed panes of a desk (`desk::closed_on`).
+    pub fn closed_panes(&self, desk_id: i64) -> Result<Vec<String>> {
+        desk::closed_on(&self.conn.lock().unwrap(), desk_id)
+    }
+
+    /// Closed panes older than `before` (`desk::prune_closed`); what `prune`
+    /// ends beside the documents.
+    pub fn prune_panes(&self, before: i64, dry_run: bool) -> Result<Vec<(String, String)>> {
+        desk::prune_closed(&self.conn.lock().unwrap(), before, dry_run)
     }
 
     pub fn panes_open(&self) -> Result<i64> {
@@ -1131,8 +1189,8 @@ impl Store {
         desk::set_note(&self.conn.lock().unwrap(), desk_id, id, text, done, now())
     }
 
-    pub fn tick_desk_note(&self, desk_id: i64, id: i64, by: &str) -> Result<bool> {
-        desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, by, now())
+    pub fn tick_desk_note(&self, desk_id: i64, id: i64, tick: &desk::Tick) -> Result<bool> {
+        desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
     }
 
     pub fn remove_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {

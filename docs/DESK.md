@@ -15,10 +15,13 @@ the questions the design left open.
 
 | Thing | Where it lives | Survives a restart |
 |---|---|---|
-| A desk: name, root, two divider fractions | `desks` table, `src/desk.rs` | yes |
-| A pane: slot 1–4, cwd, the command it last ran | `panes` table, `src/desk.rs` | yes |
+| A desk: name, root, two divider fractions, the slot in full view | `desks` table, `src/desk.rs` | yes |
+| A pane: slot 1–4, its name, the folder its shell was last in, the command it last ran | `panes` table, `src/desk.rs` | yes |
+| A closed pane, for Undo | `panes_closed` table, until `snyvi prune` | yes |
+| That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop | once, for the next daemon |
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
+| The agent's model and context-window use | memory, from `snyvi statusline` | no |
 
 **The daemon never respawns a process; the window does.** A daemon that starts
 finds every pane stopped and leaves them so. A daemon that respawned eight
@@ -43,11 +46,19 @@ new pane wait for a Start click, and a new desk opened as a grid of empty
 boxes with nothing in them to type into. What runs is still only ever the
 reader's shell, or a command the reader typed.
 
-**A desk needs no folder.** `POST /api/desks` with no `root` makes a desk in
-the home directory, named `desk` (then `desk 2`, ...), and the Desks page and
-the palette offer it as `New desk`. The home directory is the daemon's to
-name, so no path from the page reaches the filesystem on that route. A folder
-under Folders still gives one on that folder, from its `+` or its menu.
+**A desk needs no folder, but it asks for one.** `POST /api/desks` with no
+`root` and no `project` makes a desk in the home directory, named `desk` (then
+`desk 2`, ...). The home directory is the daemon's to name, so no path from
+the page reaches the filesystem on that route. With `project` it is the folder
+the store recorded for that project, found by id as the terminal button finds
+it. A desk is for a project, so `+ New desk` (the Desks head, the empty Desks
+row, the Desks page) asks where first: the Inbox's projects and the open
+folders that have no desk yet, then *Another folder…* (the folder dialog),
+then *A shell in your home folder*, last. The palette's `New desk…` lists the
+same. A project's row has the desk glyph too: lit while the project has a
+desk, and a click goes there; otherwise it makes one, named for the project.
+A folder under Folders still gives one on that folder, from its glyph or its
+menu.
 
 **Four per desk, and no cap across desks.** Four panes per desk keeps each
 pane readable, and it is checked inside the transaction that inserts the pane.
@@ -60,9 +71,38 @@ caught up at once, and its scrollback is still capped at 2 MB. The test is
 `desk::tests::twelve_panes_on_three_desks_all_open`.
 
 **Slots, not splits.** There are two columns and four slots. An odd pane out
-spans its row, and the whole layout is two fractions. Below 1100 px a desk
-shows two panes, and below 700 px it shows one. The others stay one key away,
-as tabs, and a narrow window can still open all four.
+spans its row, and the whole layout is two fractions. The grid counts its own
+width, not the window's: above 720 px it shows four, above 560 px two, and
+below that one. The others stay one key away, as tabs, and a narrow window can
+still open all four.
+
+**A close is kept, and the slots close up (1.7.1).** The ✕ on a pane, `⌃⌥W`
+or Close panel ends its process at once and asks nothing: its row stays in the
+rail for 8 s with Undo, and the daemon keeps it in `panes_closed`, text and
+all, until `snyvi prune` -- the same terms as a deleted document. The panes
+after it move up a slot, so the numbers on screen are always 1 to n, and what
+they sent is renumbered in the same transaction (`Store::close_pane`). Undo
+(`POST /api/panes/{id}/restore`) puts it back at the lowest free slot,
+stopped, with Start offered; a desk that filled up in the meantime answers
+409 and the row says so.
+
+**A pane comes back where its shell was (1.7.1).** On the git tick the daemon
+asks the kernel which folder each pane's shell is in (`/proc/<pid>/cwd` on
+Linux, `proc_pidinfo` on macOS) and keeps it in `panes.cwd`, once per change
+and once more at shutdown, so the next start is there, and the head's branch
+is that folder's. Not the terminal's folder report (OSC 7): that is text any
+program can print, and this folder decides where the daemon runs `git`, which
+runs with `core.fsmonitor=false` for the same reason. On Windows there is no
+cheap answer, and a pane comes back in the folder it started in. A folder
+that is gone by the next start gives the desk's own.
+
+**A stop brings Claude back (1.7.1).** A planned restart (an update, `snyvi
+restart`) marks the panes Claude was in, and the window starts them as
+`claude --resume` (1.7.0). Any other stop the daemon hears -- `snyvi stop`, a
+signal, a reboot -- marks them to be *offered*: the shell comes back in its
+folder and a strip over it says Claude was open, with Resume conversation,
+which types `claude --resume <id>` at the prompt without Enter. A crash or a
+`kill -9` hears nothing and marks nothing; the rail's ↻ is still there.
 
 ## 2. The premises, and the line that enforces each
 
@@ -106,9 +146,15 @@ as tabs, and a narrow window can still open all four.
    screen or a log reads nothing once its shell is gone. An agent has one
    write, since 1.6: `tick_desk_note` marks an open line done
    (`POST /api/panes/{id}/notes/{note}/tick`), through the same checks, and
-   records the agent's name beside it (`desk_notes.done_by`). It cannot
+   records the agent's name beside it (`desk_notes.done_by`), and, since
+   1.7.1, the commit it names (`done_commit`, 7 to 40 hex digits) and a
+   document it sent (`done_doc`, a document id); anything else is refused
+   with a 400 that says what a hash looks like, so the line stays open. It cannot
    untick, write, add or take a line off; a line the reader ticked stays
-   theirs, and the reader's own untick or re-tick clears the name. Both tools
+   theirs, and the reader's own untick or re-tick clears all three. Since
+   1.7.1 it can also name its own panel: `name_panel`
+   (`POST /api/panes/{id}/name`), through the same checks, writes only that
+   pane's `name`, the one ✎ sets. The tools
    are offered only when `SNYVI_SESSION` is set. This does not widen what a
    token holder can reach -- the store is a file the reader's processes can
    already open -- it hands an agent one list through the front door.
@@ -314,12 +360,16 @@ to write to the reader's clipboard. Copy is the reader's: releasing a
 selection copies it, and so does Ctrl+Shift+C.
 
 **Reserved keys.** `⌃\`` swaps between the desk and the reading view.
-`⌃⌥1`–`⌃⌥4` focus a pane by slot. `⌃⌥Z` puts the focused pane in full
+`⌃⌥1`–`⌃⌥4` focus a pane by slot, `⌃⌥]` and `⌃⌥[` the next and the
+previous. `⌃⌥N` makes a pane, `⌃⌥W` closes the focused one (with Undo in the
+rail), `⌃⌥R` stops it or starts it again, and F2 on its row in the rail names
+it. `⌃⌥Z` puts the focused pane in full
 view and back, tmux's `prefix z`: it fills the window, with the sidebar and
 the rail folded away and the other panes as tabs in the desk's head. The ⤢
 at the right of a pane's head and a double-click on the head do the same.
 Full view is the view's, not the pane's, so `⌃⌥2` in full view shows pane 2,
-and it is kept per desk until the page reloads. A pane out of sight that is
+and it is kept per desk by the daemon (`desks.full_slot`, sent as `full` on
+`POST /api/desks/{id}/layout`), so a desk comes back as it was left. A pane out of sight that is
 waiting on the reader shows `!` on its tab. Esc is not a way out: it belongs
 to the program in the pane. `⌃⌥⇧` and an arrow move the focused pane to the
 position beside it, trading places with the pane there, and a pane's head
@@ -332,6 +382,16 @@ outside. `⌘` combinations go to the platform.
 Ctrl+Shift+C and Ctrl+Shift+V are copy and paste, as in a Linux terminal.
 Every other key goes to the pane, including the single-letter keys the
 reading view uses.
+
+**The routes 1.7.1 added**, all behind the capability: `POST
+/api/panes/{id}/restore` (Undo a close), `POST /api/panes/{id}/rename`
+`{name}` (80 characters; empty gives the head back to the program's title),
+and `full` on `POST /api/desks/{id}/layout`. And one behind the token, beside
+the hook's: `POST /api/panes/{id}/agent` takes `model` and `ctx: {pct, size,
+input}` from `snyvi statusline` for a running pane, and the pane's status
+carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. The `name_panel`
+MCP tool writes the same name through `POST /api/panes/{id}/name`, behind the
+token and a running pane.
 
 ## 7. Gaps, stated
 

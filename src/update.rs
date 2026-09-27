@@ -67,6 +67,12 @@ pub const BACKGROUND: Duration = Duration::from_secs(10 * 60);
 /// A staged update the pill has shown for a day without a click is one the
 /// reader is not going to click: the pill turns amber, and says why.
 pub const PILL_AMBER: i64 = 24 * 3600;
+/// How long an applied version runs before its `.prev` may go.
+const KEEP_PREV: i64 = 24 * 3600;
+/// Starts of a just-applied version that never bound before it is taken
+/// back out: under systemd a crash is restarted every two seconds, so three
+/// is six seconds of a daemon that will not come up. See `first_start`.
+const BOOT_TRIES: u32 = 2;
 /// A download larger than this is not one of ours.
 const DOWNLOAD_MAX: u64 = 256 << 20;
 /// A manifest larger than this is not one either.
@@ -160,12 +166,28 @@ impl Channel {
     }
 
     /// The lines a told-only channel's reader runs, for About and the CLI.
-    pub fn how(self, arch: &str) -> Vec<String> {
+    /// `app` says snyvi-app is installed beside: its package depends on
+    /// `snyvi (= version)`, so both debs go through apt in one transaction,
+    /// or the first one in refuses to leave the other behind.
+    pub fn how(self, arch: &str, app: bool) -> Vec<String> {
         match self {
-            Channel::Deb => vec![
-                format!("curl -fsSLO https://github.com/{REPO}/releases/latest/download/snyvi-linux-{arch}.deb"),
-                format!("sudo dpkg -i snyvi-linux-{arch}.deb"),
-            ],
+            Channel::Deb => {
+                let mut debs = vec![format!("snyvi-linux-{arch}.deb")];
+                if app {
+                    debs.push(format!("snyvi-app-linux-{arch}.deb"));
+                }
+                let mut lines: Vec<String> = debs
+                    .iter()
+                    .map(|d| {
+                        format!(
+                            "curl -fsSLO https://github.com/{REPO}/releases/latest/download/{d}"
+                        )
+                    })
+                    .collect();
+                let local: Vec<String> = debs.iter().map(|d| format!("./{d}")).collect();
+                lines.push(format!("sudo apt install {}", local.join(" ")));
+                lines
+            }
             Channel::Cargo => vec!["cargo install snyvi".into()],
             _ => vec![],
         }
@@ -449,12 +471,20 @@ pub struct State {
     pub last_applied: Option<i64>,
     /// When the next automatic apply may happen.
     pub slot: Option<i64>,
-    /// A manual check or `snyvi update` asked: the floor does not apply.
+    /// A manual check or `snyvi update` found something newer: the floor
+    /// does not apply to it.
     pub asked: bool,
     /// The version being applied at a planned exit, and the sha256 of the
     /// daemon file placed, so the daemon that comes up can tell the swap held.
     pub applying: Option<String>,
     pub applying_sha: Option<String>,
+    /// How many times a daemon has started while `applying` was set and
+    /// not yet bound. See `first_start`.
+    pub boot_tries: u32,
+    /// The slot and `last_applied` from before the apply, put back when it
+    /// is rolled back, so the release that fixes it is not held a day.
+    pub prev_slot: Option<i64>,
+    pub prev_last_applied: Option<i64>,
     /// The version the last apply landed and the sha256 of the file it
     /// placed: what `--back` remembers as the one not to stage again, and
     /// what `current` reads.
@@ -487,6 +517,30 @@ pub struct Staged {
     pub files: Vec<StagedFile>,
 }
 
+/// `state.json`, whole or not at all: written beside, flushed, and renamed
+/// over. A power cut mid-write used to leave half a file, which reads as
+/// no state, and a daemon that forgot `applying` could not tell a bad
+/// update from a crash.
+fn write_state(dir: &Path, s: &State) -> Result<()> {
+    use std::io::Write;
+    fs::create_dir_all(dir)?;
+    let path = dir.join("state.json");
+    let tmp = dir.join("state.json.tmp");
+    let mut f = fs::File::create(&tmp)?;
+    f.write_all(serde_json::to_string_pretty(s)?.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
+    fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+fn read_state(dir: &Path) -> State {
+    fs::read_to_string(dir.join("state.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 // ---------- the updater ----------
 
 pub struct Updater {
@@ -514,8 +568,31 @@ pub struct Updater {
     /// the file, for CI, packagers and the dev loop.
     auto: AtomicBool,
     env_off: bool,
-    /// One check at a time.
-    checking: Mutex<()>,
+    /// One of check, apply and rollback at a time: an apply must not swap in
+    /// files a check is removing, nor a rollback run under either.
+    op: Mutex<()>,
+}
+
+/// What a check was asked for. `fresh` reads the manifest even when the
+/// ETag says nothing changed; `lift` lets what it finds past the daily
+/// floor. The timer is neither, `snyvi update check` only `fresh`, and
+/// Check now and `snyvi update` both.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ask {
+    pub fresh: bool,
+    pub lift: bool,
+}
+
+impl Ask {
+    pub const TIMER: Ask = Ask {
+        fresh: false,
+        lift: false,
+    };
+    #[cfg(test)]
+    pub const PERSON: Ask = Ask {
+        fresh: true,
+        lift: true,
+    };
 }
 
 impl Updater {
@@ -566,10 +643,7 @@ impl Updater {
         };
         let dir = paths.data_dir.join("updates");
         let switch = paths.config_dir.join("updates.json");
-        let state = fs::read_to_string(dir.join("state.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let state = read_state(&dir);
         let env_off = std::env::var("SNYVI_UPDATES")
             .is_ok_and(|v| matches!(v.as_str(), "off" | "0" | "false"));
         let file_on = fs::read_to_string(&switch)
@@ -593,8 +667,21 @@ impl Updater {
             state: Mutex::new(state),
             auto: AtomicBool::new(file_on && !env_off),
             env_off,
-            checking: Mutex::new(()),
+            op: Mutex::new(()),
         }
+    }
+
+    /// The op lock, taken whatever a panic left in it: the lock guards no
+    /// data, and a check that panicked must not read as one still running
+    /// until the daemon restarts.
+    fn op(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.op.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A check, an apply or a rollback is under way. The restart watcher
+    /// waits it out rather than blocking on it.
+    pub fn busy(&self) -> bool {
+        matches!(self.op.try_lock(), Err(std::sync::TryLockError::WouldBlock))
     }
 
     /// The version at the recorded path: the one compiled into this process,
@@ -631,29 +718,14 @@ impl Updater {
     fn edit(&self, f: impl FnOnce(&mut State)) {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut s);
-        let _ = fs::create_dir_all(&self.dir);
-        if let Ok(text) = serde_json::to_string_pretty(&*s) {
-            let _ = fs::write(self.dir.join("state.json"), text);
-        }
+        let _ = write_state(&self.dir, &s);
     }
 
     /// The lines a told-only install's reader runs.
     pub fn how(&self) -> Vec<String> {
         match self.channel {
-            Channel::Locked => {
-                let dir = self
-                    .exe
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .display()
-                    .to_string();
-                let arch = self.platform.arch;
-                vec![
-                    format!("curl -fsSLO https://github.com/{REPO}/releases/latest/download/snyvi-{}-{arch}.tar.gz", self.platform.os),
-                    format!("sudo tar -xzf snyvi-{}-{arch}.tar.gz --strip-components=1 -C {dir} --wildcards '*/snyvi'", self.platform.os),
-                ]
-            }
-            ch => ch.how(self.platform.arch),
+            Channel::Locked => locked_how(&self.platform, &self.exe, self.app.is_some()),
+            ch => ch.how(self.platform.arch, self.app.is_some()),
         }
     }
 
@@ -693,7 +765,7 @@ impl Updater {
 
     /// Whether a staged version should be applied now, given who is here.
     pub fn should_apply(&self, now: i64, doors: &Doors) -> Option<Reason> {
-        if self.state().ready.is_none() || !self.auto() || self.floor_holds(now) {
+        if self.state().ready.is_none() || !self.auto() || self.busy() || self.floor_holds(now) {
             return None;
         }
         door(doors)
@@ -739,21 +811,33 @@ impl Updater {
 
     // ----- checking -----
 
-    /// Read the manifest, and stage what it names when it is newer. `asked`
-    /// is `Check now` or `snyvi update`: it ignores the floor from here on
-    /// and reads the manifest even when the ETag says nothing changed. `to`
+    /// Read the manifest, and stage what it names when it is newer. See
+    /// `Ask` for what a person's check does that the timer's does not. `to`
     /// is one release's manifest, for `--to`, and may go down.
-    pub fn check(&self, asked: bool, to: Option<&str>) -> Result<Checked> {
-        let Ok(_one) = self.checking.try_lock() else {
-            bail!("a check is already running");
+    pub fn check(&self, ask: Ask, to: Option<&str>) -> Result<Checked> {
+        // A person's check waits for one under way -- the timer's, staging
+        // the very release they asked about -- and then answers from what it
+        // left; the timer's own check just skips its turn.
+        let _one = if ask.fresh {
+            self.op()
+        } else {
+            match self.op.try_lock() {
+                Ok(g) => g,
+                Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    bail!("a check, an apply or a rollback is already running")
+                }
+            }
         };
         if self.channel == Channel::Dev {
             bail!("a development build does not update itself");
         }
         let now = crate::store::now();
-        let result = self.check_inner(asked, to, now);
+        // The last failure stays until a check reads a manifest: a 304 says
+        // nothing about whether what failed would work now.
+        let result = self.check_inner(ask, to, now);
         match &result {
-            Ok(_) => self.edit(|s| s.error = None),
+            Ok(_) => {}
             Err(e) => {
                 let text = format!("{e:#}");
                 self.edit(|s| {
@@ -765,12 +849,28 @@ impl Updater {
         result
     }
 
-    fn check_inner(&self, asked: bool, to: Option<&str>, now: i64) -> Result<Checked> {
+    /// A newer version is known and wanted here, and nothing is staged for
+    /// it: a stage failed, or an apply did and dropped what was staged. The
+    /// manifest has not changed, so its ETag would answer 304 until the next
+    /// release; the timer's check has to read it whole to try again.
+    fn stuck(&self) -> bool {
+        let s = self.state();
+        let Some(v) = s.available.as_deref() else {
+            return false;
+        };
+        self.channel.silent()
+            && s.ready.as_deref() != Some(v)
+            && s.failed.as_deref() != Some(v)
+            && s.skipped.as_deref() != Some(v)
+            && semver::Version::parse(v).is_ok_and(|v| v > self.current())
+    }
+
+    fn check_inner(&self, ask: Ask, to: Option<&str>, now: i64) -> Result<Checked> {
         let url = match to {
             Some(v) => self.source.manifest_for(v),
             None => self.source.manifest(),
         };
-        let etag = if asked || to.is_some() {
+        let etag = if ask.fresh || to.is_some() || self.stuck() {
             None
         } else {
             self.state().etag
@@ -819,25 +919,42 @@ impl Updater {
             s.failed.as_deref() == Some(m.version.as_str())
                 || s.skipped.as_deref() == Some(m.version.as_str())
         };
+        let to_stage = wanted && self.channel.silent() && !failed_before;
+        // The ETag is kept only once nothing is left to do with what it
+        // names; kept before a stage that then failed, it made every later
+        // check a 304 and the failure permanent. `--to` reads another
+        // manifest, whose ETag is not this one's.
+        let settled = to.is_none() && !to_stage;
         self.edit(|s| {
             s.checked_at = Some(now);
-            if to.is_none() {
-                s.etag = etag;
+            s.error = None;
+            if settled {
+                s.etag = etag.clone();
             }
             s.notes = Some(m.notes.clone()).filter(|n| !n.is_empty());
             s.latest_app_min = m.app_min.clone();
             s.hotfix_below = m.hotfix_below.clone();
             s.available = wanted.then(|| m.version.clone());
-            if asked {
+            if ask.lift && newer && !failed_before {
                 s.asked = true;
             }
             if !wanted {
                 s.ready = None;
                 s.since = None;
             }
+            // Another version is about to be staged, and staging removes
+            // what was: `ready` must not name a version whose files are gone.
+            if to_stage && s.ready.as_deref() != Some(m.version.as_str()) {
+                s.ready = None;
+            }
+            // Going below: the version gone below is not staged again by
+            // the next check, a day later, undoing it.
+            if to.is_some() && latest < current {
+                s.skipped = Some(current.to_string());
+            }
         });
         let mut ready = None;
-        if wanted && self.channel.silent() && !failed_before {
+        if to_stage {
             self.stage(&m)?;
             ready = Some(m.version.clone());
             self.edit(|s| {
@@ -846,13 +963,16 @@ impl Updater {
                 if s.failed.as_deref() == Some(m.version.as_str()) {
                     s.failed = None;
                 }
+                if to.is_none() {
+                    s.etag = etag;
+                }
             });
         } else if !wanted {
             // Nothing newer: what was staged is not wanted any more (an
             // apply landed, or the release was pulled), and neither is what
-            // the last apply left behind.
+            // the last apply left behind, once that has run a day.
             self.drop_staged();
-            self.clean_prev();
+            self.clean_prev(now);
         }
         Ok(Checked {
             running: current,
@@ -1038,26 +1158,43 @@ impl Updater {
                 self.channel.name()
             );
         }
+        let _one = self.op();
         let staged = self.staged().ok_or_else(|| anyhow!("nothing is staged"))?;
+        if !staged
+            .files
+            .iter()
+            .any(|f| f.role != "app" && self.targets().iter().any(|(r, _)| *r == f.role))
+        {
+            bail!("the staged files do not include the daemon");
+        }
         let targets = self.targets();
         let mut daemon_sha = None;
+        let mut placed: Vec<&Path> = Vec::new();
         for f in &staged.files {
             let Some((_, target)) = targets.iter().find(|(role, _)| *role == f.role) else {
                 // A window in the zip when none is installed here: not ours
                 // to place.
                 continue;
             };
-            if f.role == "bundle" {
-                swap_dir(&f.path, target, &f.sha256)?;
+            let swapped = if f.role == "bundle" {
+                swap_dir(&f.path, target, &f.sha256)
             } else {
-                swap_file(&f.path, target, &f.sha256)?;
+                swap_file(&f.path, target, &f.sha256)
+            };
+            if let Err(e) = swapped {
+                // All or nothing: a daemon of one version beside a window
+                // of another is not an install anyone asked for. What was
+                // placed goes back from its `.prev`.
+                for t in placed.iter().rev() {
+                    let _ = remove_any(t);
+                    let _ = fs::rename(prev_of(t), t);
+                }
+                return Err(e);
             }
+            placed.push(target.as_path());
             if f.role != "app" {
                 daemon_sha = Some(f.sha256.clone());
             }
-        }
-        if daemon_sha.is_none() {
-            bail!("the staged files do not include the daemon");
         }
         #[cfg(windows)]
         set_display_version(&staged.version);
@@ -1065,21 +1202,33 @@ impl Updater {
             s.applying = Some(staged.version.clone());
             s.applying_sha = daemon_sha;
             s.app_min = staged.app_min.clone();
+            s.boot_tries = 0;
+            s.prev_slot = s.slot;
+            s.prev_last_applied = s.last_applied;
         });
         Ok(staged.version)
     }
 
-    /// Whether `.prev` is there to go back to.
+    /// Whether the daemon's `.prev` is there to go back to. A window's
+    /// alone is not a version to go back to.
     pub fn can_go_back(&self) -> bool {
-        self.targets().iter().any(|(_, t)| prev_of(t).exists())
+        self.targets()
+            .first()
+            .is_some_and(|(_, t)| prev_of(t).exists())
     }
 
     /// Put `.prev` back, if there is one. What `snyvi update --back` asks
     /// for (`asked`), and what a successor that never answered gets. Either
     /// way the version left is not staged again on its own; only the second
-    /// is called a failure.
+    /// is called a failure. A rollback that put some files back and not
+    /// others still records it: the version left is half gone either way.
     pub fn rollback(&self, asked: bool) -> Result<bool> {
+        let _one = self.op();
+        if !self.can_go_back() {
+            return Ok(false);
+        }
         let mut any = false;
+        let mut failed = None;
         for (_, target) in self.targets() {
             let prev = prev_of(&target);
             if !prev.exists() {
@@ -1088,8 +1237,13 @@ impl Updater {
             let bad = with_suffix(&target, ".bad");
             let _ = remove_any(&bad);
             let _ = fs::rename(&target, &bad);
-            fs::rename(&prev, &target)
-                .with_context(|| format!("putting {} back", prev.display()))?;
+            if let Err(e) = fs::rename(&prev, &target) {
+                // The file that was there goes back, so the name is never
+                // left empty.
+                let _ = fs::rename(&bad, &target);
+                failed = Some(anyhow!(e).context(format!("putting {} back", prev.display())));
+                break;
+            }
             let _ = remove_any(&bad);
             any = true;
         }
@@ -1099,6 +1253,7 @@ impl Updater {
                 let v = s.applying.take().or_else(|| s.applied.take());
                 s.applying_sha = None;
                 s.applied_sha = None;
+                s.boot_tries = 0;
                 if asked {
                     s.skipped = v;
                 } else {
@@ -1107,29 +1262,55 @@ impl Updater {
                 }
                 s.ready = None;
                 s.since = None;
+                s.slot = s.prev_slot.take();
+                s.last_applied = s.prev_last_applied.take();
             });
             self.forget_current();
         }
-        Ok(any)
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(any),
+        }
     }
 
-    /// `.prev` is deleted on the next successful check, not at once: on
-    /// Windows the old window holds its file open for as long as it is up,
-    /// and a file that will not go is left for the check after.
-    fn clean_prev(&self) {
+    /// `.prev` is deleted on a successful check once the version that
+    /// replaced it has run a day, not at once: Check now straight after an
+    /// update must leave `--back` something to go back to, and on Windows
+    /// the old window holds its file open for as long as it is up, so a
+    /// file that will not go is left for the check after.
+    fn clean_prev(&self, now: i64) {
+        // What was set aside still running is no one's to go back to: it
+        // goes as soon as it can, whatever the day.
+        for (_, target) in self.targets() {
+            for old in set_aside(&prev_of(&target)) {
+                let _ = remove_any(&old);
+            }
+        }
+        if self
+            .state()
+            .last_applied
+            .is_some_and(|t| now - t < KEEP_PREV)
+        {
+            return;
+        }
         for (_, target) in self.targets() {
             let _ = remove_any(&prev_of(&target));
         }
     }
 
-    /// The daemon that comes up says what the last exit did. `planned_apply`
-    /// is the marker's word; only then can this be an update, so a crash
-    /// never writes `last_applied` and a flapping daemon never moves its
-    /// slot. Success is the file at the recorded path hashing to what was
-    /// placed; the version alone would not tell a swap that held from one
-    /// that did not when the numbers are the same, which the bench relies on.
+    /// The daemon that comes up says what the last exit did, once it holds
+    /// the port: one that panics in a migration or on bind has not started,
+    /// and `first_start` is still counting it. `planned_apply` is the
+    /// marker's word; only then can this be an update, so a crash never
+    /// writes `last_applied` and a flapping daemon never moves its slot.
+    /// Success is the file at the recorded path hashing to what was placed;
+    /// the version alone would not tell a swap that held from one that did
+    /// not when the numbers are the same, which the bench relies on.
     pub fn note_started(&self, planned_apply: bool, now: i64) -> Option<Started> {
         let s = self.state();
+        if s.boot_tries > 0 && s.applying.is_none() {
+            self.edit(|s| s.boot_tries = 0);
+        }
         let applying = s.applying.clone()?;
         let held = planned_apply
             && (s
@@ -1143,6 +1324,7 @@ impl Updater {
                 s.applied = Some(applying.clone());
                 s.applied_sha = s.applying_sha.take();
                 s.applying = None;
+                s.boot_tries = 0;
                 s.last_applied = Some(now);
                 s.slot = Some(slot);
                 s.ready = None;
@@ -1150,6 +1332,9 @@ impl Updater {
                 s.since = None;
                 s.asked = false;
                 s.failed = None;
+                if s.skipped.as_deref() == Some(applying.as_str()) {
+                    s.skipped = None;
+                }
             });
             self.drop_staged();
             self.forget_current();
@@ -1158,6 +1343,7 @@ impl Updater {
             self.edit(|s| {
                 s.applying = None;
                 s.applying_sha = None;
+                s.boot_tries = 0;
                 s.failed = Some(applying.clone());
                 s.failed_at = Some(now);
                 s.ready = None;
@@ -1170,19 +1356,20 @@ impl Updater {
     }
 
     /// Whether a window of this version is older than the update that was
-    /// applied wants, so the daemon should relaunch it. Answered once: the
-    /// wish is cleared here.
+    /// applied wants, so the daemon should relaunch it. A window that says
+    /// no number -- `window=1`, from before 1.7 -- is older than any.
+    /// Answered once: the wish is cleared here.
     pub fn window_is_too_old(&self, window: Option<&str>) -> bool {
         let Some(min) = self.state().app_min else {
-            return false;
-        };
-        let Some(v) = window.and_then(|v| semver::Version::parse(v).ok()) else {
             return false;
         };
         let Ok(min) = semver::Version::parse(&min) else {
             return false;
         };
-        let old = v < min;
+        let old = match window.and_then(|v| semver::Version::parse(v).ok()) {
+            Some(v) => v < min,
+            None => true,
+        };
         self.edit(|s| s.app_min = None);
         old
     }
@@ -1192,6 +1379,51 @@ impl Updater {
         match self.channel {
             Channel::Mac => bundle_of(&self.exe).map(|b| b.join("Contents/MacOS/snyvi-app")),
             _ => self.app.clone(),
+        }
+    }
+}
+
+/// What `first_start` found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FirstStart {
+    /// Nothing is being applied, or this start is within the tries.
+    Go,
+    /// The version being applied has started `BOOT_TRIES` times and never
+    /// bound; `.prev` is back in place, and the caller starts that instead.
+    RolledBack(String),
+}
+
+/// Run by `snyvi serve` before anything else -- before the config, the
+/// store or the port -- so it runs even when those are what a bad release
+/// breaks. A version applied and not yet bound counts its starts in
+/// `state.json`; past `BOOT_TRIES` it is taken back out. Under systemd,
+/// where the old process has exited 75 and nobody is watching, this is the
+/// only rollback there is; by spawn, `relaunch` in the old process watches
+/// as well. A binary that dies before `main` is beyond it: systemd gives up
+/// after its start limit, and the reader runs `snyvi update --back`.
+pub fn first_start(paths: &crate::config::Paths, exe: &Path) -> FirstStart {
+    let dir = paths.data_dir.join("updates");
+    let mut s = read_state(&dir);
+    let Some(applying) = s.applying.clone() else {
+        return FirstStart::Go;
+    };
+    s.boot_tries += 1;
+    if s.boot_tries <= BOOT_TRIES {
+        let _ = write_state(&dir, &s);
+        return FirstStart::Go;
+    }
+    let u = Updater::new(paths, exe, Box::new(Http));
+    match u.rollback(false) {
+        Ok(true) => FirstStart::RolledBack(applying),
+        // Some files went back and not others -- the daemon's, not the
+        // window's. `rollback` has recorded it; the daemon's own file is the
+        // previous one again, and that is what starts.
+        Err(_) if read_state(&dir).applying.is_none() => FirstStart::RolledBack(applying),
+        // Nothing to put back: this is what there is, and it goes on
+        // trying, counted, rather than stopping the only daemon there is.
+        _ => {
+            let _ = write_state(&dir, &s);
+            FirstStart::Go
         }
     }
 }
@@ -1334,6 +1566,42 @@ fn prev_of(path: &Path) -> PathBuf {
     with_suffix(path, ".prev")
 }
 
+/// A `.prev` out of the way of the next one: removed, or -- one still
+/// running, which Windows will not delete but will rename: a window started
+/// before the last update -- renamed aside, for `clean_prev` to take later.
+/// Left where it was, the swap after it would fail on every try.
+fn clear_prev(prev: &Path) {
+    if remove_any(prev).is_ok() || !prev.exists() {
+        return;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let _ = fs::rename(prev, with_suffix(prev, &format!(".{nanos}.old")));
+}
+
+/// The `.prev`s `clear_prev` set aside.
+fn set_aside(prev: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name)) = (prev.parent(), prev.file_name().and_then(|n| n.to_str())) else {
+        return vec![];
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return vec![];
+    };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix(name))
+                .and_then(|rest| rest.strip_prefix('.'))
+                .is_some_and(|rest| rest.ends_with(".old"))
+        })
+        .collect()
+}
+
 fn remove_any(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() => fs::remove_dir_all(path),
@@ -1363,6 +1631,61 @@ fn bundle_of(exe: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// What a reader runs to update an install this user cannot write, in the
+/// shape each platform's download has: the Windows installer (there is no
+/// Windows tarball), the whole bundle on a Mac (whose tar is bsdtar, with no
+/// `--wildcards`), and on Linux the one file out of each tarball, snyvi-app's
+/// too when it sits beside, so the pair never ends up a version apart.
+fn locked_how(platform: &Platform, exe: &Path, app: bool) -> Vec<String> {
+    let url = |name: &str| {
+        format!("curl -fsSLO https://github.com/{REPO}/releases/latest/download/{name}")
+    };
+    let dir = exe.parent().unwrap_or(Path::new(".")).display().to_string();
+    let arch = platform.arch;
+    match platform.os {
+        "windows" => {
+            let setup = format!("snyvi-windows-{arch}-setup.exe");
+            vec![
+                url(&setup).replacen("curl", "curl.exe", 1),
+                format!(".\\{setup}"),
+            ]
+        }
+        "macos" => {
+            let tgz = format!("snyvi-macos-{arch}.tar.gz");
+            let last = match bundle_of(exe) {
+                Some(bundle) => {
+                    let into = bundle
+                        .parent()
+                        .unwrap_or(Path::new("/Applications"))
+                        .display()
+                        .to_string();
+                    format!(
+                        "sudo rm -rf '{}' && sudo mv snyvi-*/snyvi.app '{into}/'",
+                        bundle.display()
+                    )
+                }
+                None => format!("sudo cp snyvi-*/snyvi.app/Contents/MacOS/snyvi '{dir}/'"),
+            };
+            vec![url(&tgz), format!("tar -xzf {tgz}"), last]
+        }
+        os => {
+            let mut lines = Vec::new();
+            let mut names = vec!["snyvi"];
+            if app {
+                names.push("snyvi-app");
+            }
+            for name in names {
+                let tgz = format!("{name}-{os}-{arch}.tar.gz");
+                lines.push(url(&tgz));
+                lines.push(format!(
+                    "sudo tar -xzf {tgz} --strip-components=1 -C '{dir}' --wildcards '*/{name}'"
+                ));
+            }
+            lines
+        }
+    }
+}
+
 /// Bring `staged` beside `target` (a rename on one filesystem, a copy
 /// across two), check it, move the old file to `.prev`, and move the new one
 /// in. The running process keeps its file: a rename moves the name, not the
@@ -1385,12 +1708,25 @@ fn swap_file(staged: &Path, target: &Path, sha256: &str) -> Result<()> {
         bail!("{}: not the file that was verified", incoming.display());
     }
     let prev = prev_of(target);
-    let _ = remove_any(&prev);
-    if target.exists() {
+    clear_prev(&prev);
+    // On Unix the old file is linked to `.prev` and the new one renamed over
+    // it: one rename, so there is never a moment with nothing at the name
+    // for a start to find. Windows will not rename over a running
+    // executable, so there it is two.
+    #[cfg(unix)]
+    let linked = target.exists() && fs::hard_link(target, &prev).is_ok();
+    #[cfg(not(unix))]
+    let linked = false;
+    if !linked && target.exists() {
         fs::rename(target, &prev).with_context(|| format!("moving {} aside", target.display()))?;
     }
     if let Err(e) = fs::rename(&incoming, target) {
-        let _ = fs::rename(&prev, target);
+        if linked {
+            let _ = fs::remove_file(&prev);
+        } else {
+            let _ = fs::rename(&prev, target);
+        }
+        let _ = remove_any(&incoming);
         return Err(e).with_context(|| format!("moving {} in", incoming.display()));
     }
     if sha256_file(target)? != sha256 {
@@ -1414,7 +1750,7 @@ fn swap_dir(staged: &Path, target: &Path, sha256: &str) -> Result<()> {
         bail!("{}: not the bundle that was verified", incoming.display());
     }
     let prev = prev_of(target);
-    let _ = remove_any(&prev);
+    clear_prev(&prev);
     if target.exists() {
         fs::rename(target, &prev).with_context(|| format!("moving {} aside", target.display()))?;
     }
@@ -1601,6 +1937,7 @@ use std::os::windows::process::CommandExt;
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
     fn p(s: &str) -> PathBuf {
@@ -1660,6 +1997,57 @@ mod tests {
         );
         assert!(Channel::Tar.silent() && Channel::Mac.silent() && Channel::Win.silent());
         assert!(!Channel::Deb.silent() && !Channel::Cargo.silent() && !Channel::Dev.silent());
+    }
+
+    #[test]
+    fn a_told_reader_is_given_lines_that_work_where_they_are() {
+        // Both debs in one apt transaction when the window's is installed:
+        // snyvi-app depends on `snyvi (= version)`, so dpkg -i of either
+        // alone leaves the pair broken.
+        let deb = Channel::Deb.how("x64", true);
+        assert_eq!(deb.len(), 3);
+        assert_eq!(
+            deb[2],
+            "sudo apt install ./snyvi-linux-x64.deb ./snyvi-app-linux-x64.deb"
+        );
+        assert_eq!(
+            Channel::Deb.how("arm64", false).last().unwrap(),
+            "sudo apt install ./snyvi-linux-arm64.deb"
+        );
+
+        let linux = Platform {
+            os: "linux",
+            arch: "x64",
+        };
+        let l = locked_how(&linux, &p("/usr/local/bin/snyvi"), true);
+        assert_eq!(l.len(), 4, "{l:?}");
+        assert!(l[1].contains("-C '/usr/local/bin'") && l[1].ends_with("'*/snyvi'"));
+        assert!(l[2].ends_with("snyvi-app-linux-x64.tar.gz") && l[3].ends_with("'*/snyvi-app'"));
+
+        // No --wildcards for bsdtar, and the bundle goes in whole.
+        let mac = Platform {
+            os: "macos",
+            arch: "arm64",
+        };
+        let m = locked_how(
+            &mac,
+            &p("/Applications/snyvi.app/Contents/MacOS/snyvi"),
+            false,
+        );
+        assert!(m.iter().all(|s| !s.contains("--wildcards")), "{m:?}");
+        assert_eq!(
+            m[2],
+            "sudo rm -rf '/Applications/snyvi.app' && sudo mv snyvi-*/snyvi.app '/Applications/'"
+        );
+
+        // There is no Windows tarball; the installer is what there is.
+        let win = Platform {
+            os: "windows",
+            arch: "x64",
+        };
+        let w = locked_how(&win, &p(r"C:\Program Files\snyvi\snyvi.exe"), true);
+        assert!(w[0].starts_with("curl.exe ") && w[0].ends_with("/snyvi-windows-x64-setup.exe"));
+        assert!(w.iter().all(|s| !s.contains(".tar.gz")), "{w:?}");
     }
 
     const MANIFEST: &str = r#"{
@@ -1805,10 +2193,13 @@ mod tests {
     }
 
     impl Fetch for Fake {
-        fn get(&self, url: &str, _etag: Option<&str>) -> Result<Got> {
+        fn get(&self, url: &str, etag: Option<&str>) -> Result<Got> {
             self.asked.lock().unwrap().push(url.to_string());
             let name = url.rsplit('/').next().unwrap();
             match self.files.lock().unwrap().get(name) {
+                Some(b) if etag == Some(format!("\"{}\"", b.len()).as_str()) => {
+                    Ok(Got::NotModified)
+                }
                 Some(b) => Ok(Got::Body {
                     bytes: b.clone(),
                     etag: Some(format!("\"{}\"", b.len())),
@@ -1950,15 +2341,27 @@ mod tests {
 
     /// A signed manifest is fixed by the fixture, so the stager is tested
     /// below the signature: `stage` and `apply` take the parsed manifest.
-    fn updater(dir: &Path, exe: &Path, fetch: Fake) -> Updater {
-        let paths = crate::config::Paths {
+    fn paths(dir: &Path) -> crate::config::Paths {
+        crate::config::Paths {
             data_dir: dir.join("data"),
             config_dir: dir.join("config"),
             docs_dir: dir.join("data/docs"),
             db_path: dir.join("data/snyvi.db"),
             token_path: dir.join("config/token"),
-        };
-        let mut u = Updater::new(&paths, exe, Box::new(fetch));
+        }
+    }
+
+    impl Fetch for Arc<Fake> {
+        fn get(&self, url: &str, etag: Option<&str>) -> Result<Got> {
+            self.as_ref().get(url, etag)
+        }
+        fn download(&self, url: &str, to: &Path) -> Result<u64> {
+            self.as_ref().download(url, to)
+        }
+    }
+
+    fn updater(dir: &Path, exe: &Path, fetch: impl Fetch + 'static) -> Updater {
+        let mut u = Updater::new(&paths(dir), exe, Box::new(fetch));
         u.source = Source::Flat("http://fake/".into());
         u.channel = Channel::Tar;
         u.platform = Platform {
@@ -1976,6 +2379,27 @@ mod tests {
             .as_bytes(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_prev_set_aside_is_found_and_nothing_else() {
+        let tmp = tempdir();
+        let prev = prev_of(&tmp.join("snyvi-app.exe"));
+        for n in [
+            "snyvi-app.exe.prev",
+            "snyvi-app.exe.prev.123.old",
+            "snyvi-app.exe.prevx.old",
+            "snyvi.exe.prev.1.old",
+        ] {
+            fs::write(tmp.join(n), b"x").unwrap();
+        }
+        assert_eq!(
+            set_aside(&prev),
+            vec![tmp.join("snyvi-app.exe.prev.123.old")]
+        );
+        clear_prev(&prev);
+        assert!(!prev.exists(), "a .prev nothing holds is simply removed");
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -2045,6 +2469,8 @@ mod tests {
         let s = u.state();
         assert_eq!(s.skipped.as_deref(), Some("9.9.9"));
         assert!(s.failed.is_none());
+        assert_eq!(s.slot, None, "the slot from before the apply is back");
+        assert_eq!(s.last_applied, None);
         assert!(!u.rollback(true).unwrap(), "nothing to go back to twice");
     }
 
@@ -2202,7 +2628,7 @@ mod tests {
         fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
         let mut u = updater(&tmp, &exe, fake);
         u.key = Some(minisign_verify::PublicKey::decode(TEST_PUB).unwrap());
-        let c = u.check(false, None).unwrap();
+        let c = u.check(Ask::TIMER, None).unwrap();
         assert!(c.newer());
         assert_eq!(c.ready.as_deref(), Some("1.9.9"));
         let s = u.state();
@@ -2210,18 +2636,207 @@ mod tests {
         assert_eq!(s.ready.as_deref(), Some("1.9.9"));
         assert!(s.since.is_some() && !s.asked && s.error.is_none());
         assert_eq!(s.latest_app_min.as_deref(), Some("1.6.0"));
-        // Asked: the floor no longer applies, and a check without a newer
-        // version drops what was staged.
+        // Asked, with nothing newer: what was staged goes, and the floor
+        // stays -- lifting it for a release not out yet let that release
+        // past the day's slot whenever it came.
         u.running = semver::Version::parse("1.9.9").unwrap();
         u.forget_current();
-        let c = u.check(true, None).unwrap();
+        let c = u.check(Ask::PERSON, None).unwrap();
         assert!(!c.newer() && c.ready.is_none());
         let s = u.state();
-        assert!(s.asked && s.ready.is_none() && s.available.is_none());
+        assert!(!s.asked && s.ready.is_none() && s.available.is_none());
         assert!(!tmp.join("data/updates/1.9.9").exists());
         // A dev build never checks.
         u.channel = Channel::Dev;
-        assert!(u.check(true, None).is_err());
+        assert!(u.check(Ask::PERSON, None).is_err());
+    }
+
+    /// A daemon on 1.0.0 whose manifest names 1.9.9, signed by the test
+    /// key, and the fake it reads, to change under it.
+    fn checker(tmp: &Path) -> (Updater, Arc<Fake>) {
+        let exe = tmp.join("bin/snyvi");
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::write(&exe, b"old daemon").unwrap();
+        let fake = Arc::new(Fake::new());
+        fake.put("latest.json", SIGNED.to_vec());
+        fake.put("latest.json.minisig", SIGNATURE.to_vec());
+        let mut u = updater(tmp, &exe, fake.clone());
+        u.key = Some(minisign_verify::PublicKey::decode(TEST_PUB).unwrap());
+        u.running = semver::Version::parse("1.0.0").unwrap();
+        u.forget_current();
+        (u, fake)
+    }
+
+    #[test]
+    fn a_stage_that_failed_is_tried_again_by_the_next_timer_check() {
+        let tmp = tempdir();
+        let (u, fake) = checker(&tmp);
+        // The download is not there yet: the check fails, and keeps no ETag
+        // for a manifest it has not finished with.
+        assert!(u.check(Ask::TIMER, None).is_err());
+        let s = u.state();
+        assert_eq!(s.available.as_deref(), Some("1.9.9"));
+        assert!(s.ready.is_none() && s.etag.is_none() && s.error.is_some());
+        // The next timer check reads the manifest whole and stages.
+        fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
+        let c = u.check(Ask::TIMER, None).unwrap();
+        assert_eq!(c.ready.as_deref(), Some("1.9.9"));
+        let s = u.state();
+        assert!(s.etag.is_some() && s.error.is_none());
+        // An apply that failed dropped what was staged; the ETag would say
+        // 304 until the next release, so it is not sent.
+        u.drop_staged();
+        let c = u.check(Ask::TIMER, None).unwrap();
+        assert_eq!(c.ready.as_deref(), Some("1.9.9"));
+        // Staged: the ETag is sent, the answer is 304, and an error from
+        // elsewhere is left for About to show.
+        u.fail("could not apply: no room".into());
+        fake.asked.lock().unwrap().clear();
+        let c = u.check(Ask::TIMER, None).unwrap();
+        assert_eq!(c.ready.as_deref(), Some("1.9.9"));
+        assert_eq!(
+            *fake.asked.lock().unwrap(),
+            vec!["http://fake/latest.json".to_string()],
+            "a 304, and nothing else fetched"
+        );
+        assert_eq!(u.state().error.as_deref(), Some("could not apply: no room"));
+    }
+
+    #[test]
+    fn only_a_person_who_found_something_newer_lifts_the_floor() {
+        let tmp = tempdir();
+        let (u, fake) = checker(&tmp);
+        fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
+        u.check(Ask::TIMER, None).unwrap();
+        assert!(!u.state().asked, "the timer never lifts it");
+        u.check(
+            Ask {
+                fresh: true,
+                lift: false,
+            },
+            None,
+        )
+        .unwrap();
+        assert!(!u.state().asked, "nor does `snyvi update check`");
+        u.check(Ask::PERSON, None).unwrap();
+        assert!(u.state().asked, "Check now, with 1.9.9 out, does");
+    }
+
+    #[test]
+    fn going_below_skips_the_version_gone_below() {
+        let tmp = tempdir();
+        let (mut u, fake) = checker(&tmp);
+        fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
+        u.running = semver::Version::parse("2.0.0").unwrap();
+        u.forget_current();
+        let c = u.check(Ask::PERSON, Some("1.9.9")).unwrap();
+        assert_eq!(c.ready.as_deref(), Some("1.9.9"));
+        let s = u.state();
+        assert_eq!(s.skipped.as_deref(), Some("2.0.0"));
+        assert!(s.etag.is_none(), "another release's manifest, not latest's");
+    }
+
+    #[test]
+    fn an_apply_that_cannot_place_every_file_places_none() {
+        let tmp = tempdir();
+        let bin = tmp.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let exe = bin.join("snyvi");
+        fs::write(&exe, b"old daemon").unwrap();
+        // Named as the updater looks for it beside the daemon: .exe on Windows.
+        let app = bin.join(crate::platform::exe("snyvi-app"));
+        fs::write(&app, b"old window").unwrap();
+        let u = updater(&tmp, &exe, Fake::new());
+        let vdir = tmp.join("data/updates/9.9.9");
+        fs::create_dir_all(&vdir).unwrap();
+        fs::write(vdir.join("snyvi"), b"new daemon").unwrap();
+        fs::write(vdir.join("snyvi-app"), b"new window").unwrap();
+        let staged = Staged {
+            version: "9.9.9".into(),
+            app_min: None,
+            files: vec![
+                StagedFile {
+                    role: "snyvi".into(),
+                    path: vdir.join("snyvi"),
+                    sha256: sha(b"new daemon"),
+                },
+                // Not what is on disk: the second swap refuses it.
+                StagedFile {
+                    role: "app".into(),
+                    path: vdir.join("snyvi-app"),
+                    sha256: sha(b"another window"),
+                },
+            ],
+        };
+        fs::write(
+            vdir.join("staged.json"),
+            serde_json::to_string(&staged).unwrap(),
+        )
+        .unwrap();
+        u.edit(|s| s.ready = Some("9.9.9".into()));
+        assert!(u.apply().is_err());
+        assert_eq!(
+            fs::read(&exe).unwrap(),
+            b"old daemon",
+            "the daemon went back"
+        );
+        assert_eq!(fs::read(&app).unwrap(), b"old window");
+        assert!(!bin.join("snyvi.prev").exists() && !prev_of(&app).exists());
+        assert!(u.state().applying.is_none());
+    }
+
+    #[test]
+    fn a_successor_that_never_binds_is_taken_back_out_on_its_third_start() {
+        let tmp = tempdir();
+        let exe = tmp.join("bin/snyvi");
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::write(&exe, b"new daemon").unwrap();
+        fs::write(tmp.join("bin/snyvi.prev"), b"old daemon").unwrap();
+        let p = paths(&tmp);
+        let dir = p.data_dir.join("updates");
+        let u = updater(&tmp, &exe, Fake::new());
+        u.edit(|s| {
+            s.applying = Some("9.9.9".into());
+            s.applying_sha = Some(sha(b"new daemon"));
+            s.slot = Some(7);
+            s.prev_slot = Some(3);
+        });
+        assert_eq!(first_start(&p, &exe), FirstStart::Go);
+        assert_eq!(first_start(&p, &exe), FirstStart::Go);
+        assert_eq!(read_state(&dir).boot_tries, 2);
+        assert_eq!(
+            first_start(&p, &exe),
+            FirstStart::RolledBack("9.9.9".into())
+        );
+        assert_eq!(fs::read(&exe).unwrap(), b"old daemon");
+        let s = read_state(&dir);
+        assert_eq!(s.failed.as_deref(), Some("9.9.9"));
+        assert!(s.applying.is_none() && s.boot_tries == 0);
+        assert_eq!(s.slot, Some(3), "the slot from before the apply is back");
+        // Nothing being applied: a start is only a start.
+        assert_eq!(first_start(&p, &exe), FirstStart::Go);
+        assert_eq!(read_state(&dir).boot_tries, 0);
+    }
+
+    #[test]
+    fn a_successor_that_binds_stops_being_counted() {
+        let tmp = tempdir();
+        let exe = tmp.join("bin/snyvi");
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::write(&exe, b"new daemon").unwrap();
+        let p = paths(&tmp);
+        updater(&tmp, &exe, Fake::new()).edit(|s| {
+            s.applying = Some("9.9.9".into());
+            s.applying_sha = Some(sha(b"new daemon"));
+        });
+        assert_eq!(first_start(&p, &exe), FirstStart::Go);
+        // Bound: the daemon reads the state the guard wrote.
+        let u = updater(&tmp, &exe, Fake::new());
+        assert_eq!(
+            u.note_started(true, 1_000),
+            Some(Started::Applied("9.9.9".into()))
+        );
+        assert_eq!(read_state(&p.data_dir.join("updates")).boot_tries, 0);
     }
 
     fn tempdir() -> PathBuf {
