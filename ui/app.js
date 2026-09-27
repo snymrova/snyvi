@@ -204,7 +204,7 @@
     const head = secHead("folders", "Folders");
     const rows = state.browse.filter(r => r.id !== shut?.r.id).map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder" aria-label="Close folder ${esc(r.name)}">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
     });
     // A folder just closed stands where it was, holding its Undo, as a
     // removed document's row does. A refused Undo says so in it.
@@ -1452,8 +1452,9 @@
     liveEl.textContent = String(n);
     liveEl.classList.toggle("on", n > 0);
     liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
+    liveEl.ariaLabel = n ? `${plural(n, "agent")} connected` : "No agent is connected";
     const rl = $("#rail-live");
-    rl.classList.toggle("on", n > 0); rl.dataset.label = liveEl.title; badge("#rail-live", n);
+    rl.classList.toggle("on", n > 0); rl.dataset.label = liveEl.title; rl.ariaLabel = liveEl.ariaLabel; badge("#rail-live", n);
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};

@@ -399,7 +399,8 @@ const CSS = `
 #ctx button { display: flex; align-items: baseline; gap: 16px; width: 100%; text-align: left; padding: 5px 10px; border-radius: 5px; color: var(--fg-2); }
 #ctx button > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ctx button kbd { flex: none; font-family: var(--mono); font-size: 11px; color: var(--fg-3); background: none; border: 0; padding: 0; }
-#ctx button:hover, #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
+#ctx button:hover { background: var(--rule); }
+#ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
 #ctx button.danger { color: var(--danger); }
 #ctx button.danger:hover, #ctx button.danger:focus, #ctx button[data-armed] { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 #ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
@@ -431,6 +432,9 @@ function install(ctx) {
     close(!it.moves);
     Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast("Could not do that", String(err)));
   });
+  // The item under the pointer is the one with the focus: one row lit, and
+  // Enter acts on it.
+  menu.addEventListener("pointermove", e => { const b = e.target.closest("button"); if (b && b !== document.activeElement) b.focus({ preventScroll: true }); });
   menu.addEventListener("keydown", e => {
     const bs = [...menu.querySelectorAll("button")], at = bs.indexOf(document.activeElement);
     const go = i => bs[(i + bs.length) % bs.length].focus();

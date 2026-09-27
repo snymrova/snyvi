@@ -54,6 +54,15 @@ function wire() {
       previewSel();
     } else if (e.key === "Enter" && items[sel]) pick(items[sel]);
   });
+  // The row under the pointer is the selection, so one row is lit and
+  // Enter picks the one that is.
+  list.addEventListener("pointermove", e => {
+    const li = e.target.closest("li[data-i]");
+    if (!li || +li.dataset.i === sel) return;
+    sel = +li.dataset.i;
+    list.querySelectorAll("li").forEach((x, i) => x.classList.toggle("sel", i === sel));
+    previewSel();
+  });
   list.addEventListener("click", e => {
     if (e.target.closest("[data-retry]")) { e.stopPropagation(); search(d.input.value); return; }
     const li = e.target.closest("li[data-i]"); if (li) pick(items[+li.dataset.i]);
@@ -209,14 +218,15 @@ const CSS = `
 #palette-list { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow-y: auto; }
 #palette-list:empty { display: none; }
 #palette-list li { padding: 8px 12px; border-radius: 6px; cursor: pointer; display: grid; gap: 1px; }
-#palette-list li.sel, #palette-list li:hover { background: var(--accent-bg); }
+#palette-list li:hover { background: var(--rule); }
+#palette-list li.sel { background: var(--accent-bg); }
 #palette-list .t { font-weight: 550; font-size: 14px; }
 #palette-list .s { font-size: 12px; color: var(--fg-3); }
 #palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
 #palette.themes { background: none; }
 #palette-list li.theme { background: var(--bg); color: var(--fg); border: 1px solid var(--rule-2); margin-bottom: 4px; }
-#palette-list li.theme.sel, #palette-list li.theme:hover { background: var(--accent-bg); box-shadow: inset 3px 0 var(--accent); }
+#palette-list li.theme.sel { background: var(--accent-bg); box-shadow: inset 3px 0 var(--accent); }
 .pal-none { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 13px; color: var(--fg-3); }
 .pal-none .mk { width: 22px; height: 22px; flex: none; }
 .pal-none b { font-weight: 550; color: var(--fg-2); }
