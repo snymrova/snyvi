@@ -588,6 +588,7 @@ impl Ask {
         fresh: false,
         lift: false,
     };
+    #[cfg(test)]
     pub const PERSON: Ask = Ask {
         fresh: true,
         lift: true,

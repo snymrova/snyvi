@@ -230,6 +230,9 @@ pub struct Start<'a> {
     pub accent: &'a str,
 }
 
+/// Told a panel's id and the folder its shell is now in.
+type CwdSink = Box<dyn Fn(&str, &str) + Send + Sync>;
+
 pub struct Panes {
     live: Mutex<HashMap<String, Arc<Live>>>,
     dir: PathBuf,
@@ -248,7 +251,7 @@ pub struct Panes {
     marks: Mutex<Marks>,
     /// Where a pane's shell has moved to is written down through this -- the
     /// store's `set_pane_cwd`, given by the server, since panes have no store.
-    cwd_sink: Mutex<Option<Box<dyn Fn(&str, &str) + Send + Sync>>>,
+    cwd_sink: Mutex<Option<CwdSink>>,
 }
 
 impl Panes {
@@ -489,7 +492,7 @@ impl Panes {
     }
 
     /// How a moved shell's folder is written down. Set once, by the server.
-    pub fn on_cwd(&self, sink: Box<dyn Fn(&str, &str) + Send + Sync>) {
+    pub fn on_cwd(&self, sink: CwdSink) {
         *self.cwd_sink.lock().unwrap() = Some(sink);
     }
 

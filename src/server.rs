@@ -5132,9 +5132,10 @@ mod tests {
     }
 
     /// The pre-paint script and the app must agree on the keys, or a saved setting is
-    /// written by one and never read by the other. The three theme keys are spelled
-    /// out in full: this is a substring check, and `snyvi.theme` would go on passing
-    /// on the strength of `snyvi.theme.light` alone.
+    /// written by one and never read by the other. The app's half is app.js, or
+    /// look.js for the theme and font, which it fetches once the page is idle. The
+    /// three theme keys are spelled out in full: this is a substring check, and
+    /// `snyvi.theme` would go on passing on the strength of `snyvi.theme.light` alone.
     #[test]
     fn settings_written_by_the_app_are_applied_before_first_paint() {
         for key in [
@@ -5147,7 +5148,10 @@ mod tests {
             "wrap",
         ] {
             let k = format!("snyvi.{key}");
-            assert!(APP_JS.contains(&k), "{k} is not used by app.js");
+            assert!(
+                APP_JS.contains(&k) || LOOK_JS.contains(&k),
+                "{k} is not used by app.js or look.js"
+            );
             assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
         }
     }

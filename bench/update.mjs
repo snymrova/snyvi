@@ -307,11 +307,13 @@ async function main() {
       row("a click on the pill restarts onto the staged version", !!clicked && onDisk() === sha256(stamped(v(7))),
         clicked ? `pid ${asked.pid} → ${clicked.pid}; on disk is ${onDisk() === sha256(stamped(v(7))) ? "the release" : "not the release"}` : "no new process in 20 s");
       // The page reloads onto the new build, which says what happened once.
+      // Every release here is this one binary with bytes on the end, so the
+      // number it names is the one the new daemon reports, not v(7).
       const landed = await until(async () => {
         const t = await evaluate(browser.cdp, sessionId, `(() => { const e = document.getElementById("upd"); return e && !e.hidden ? e.textContent : ""; })()`).catch(() => "");
         return t && /^Updated to/.test(t) ? t : null;
       }, 80);
-      row("the page back on the new build says it was updated", !!landed && landed.includes(v(7)),
+      row("the page back on the new build says it was updated", !!landed && !!clicked && landed.includes(clicked.version),
         landed ? `pill says ${JSON.stringify(landed)}` : "no \"Updated to\" pill in 20 s");
     } else {
       await cli("update", "on").catch(() => {});
