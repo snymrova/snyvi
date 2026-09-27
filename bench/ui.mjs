@@ -2168,7 +2168,7 @@ async function aboutRows(p, url) {
   const version = (facts.Version || "").startsWith(served.version) && (!served.commit || facts.Version.includes(served.commit));
   const dirs = facts.Documents === served.data_dir && facts.Settings === served.config_dir;
   const agents = facts.Agents === served.agents && /^Claude Code:/.test(facts.Agents);
-  const source = await p.ev(`(() => { const a = document.querySelector("#about-facts a"); return a && a.href === ${JSON.stringify(served.repository)} && a.target === "_blank"; })()`);
+  const source = await p.ev(`(() => { const a = [...document.querySelectorAll("#about-facts dt")].find(dt => dt.textContent === "Source")?.nextElementSibling.querySelector("a"); return a && a.href === ${JSON.stringify(served.repository)} && a.target === "_blank"; })()`);
   rows.push(["and it says what the daemon says", version && dirs && agents && source && facts.License === "MIT",
     !version ? `version "${facts.Version}" for a daemon serving ${served.version} ${served.commit}` : !dirs ? "the directories are not the daemon's" : !agents ? `agents line "${facts.Agents}"` : !source ? "the source link is wrong or missing" : `${facts.Version}, both directories, the agents line, MIT, the repository`]);
 

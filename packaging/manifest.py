@@ -2,7 +2,7 @@
 """Write latest.json, the manifest a running snyvi reads to learn what is out.
 
   packaging/manifest.py <version> <sums-dir> [--out FILE] [--hotfix-below V]
-                        [--app-min V] [--channel NAME] [--date ISO]
+                        [--prev FILE] [--app-min V] [--channel NAME] [--date ISO]
   packaging/manifest.py --names            the downloads a release must carry
 
 <sums-dir> holds the .sha256 files the release workflow uploaded beside each
@@ -23,7 +23,12 @@ one that fixes something every machine should have today: a machine running
 anything older applies at its next check rather than its next daily slot. It
 is the one field that moves every machine within hours, so it is only ever
 set by hand -- a workflow_dispatch input, or a `hotfix: <version>` line in the
-tag's message -- and never derived.
+tag's message -- and never derived. Nor is it dropped: an ordinary release
+cut the day after a hotfix would otherwise say null, and a machine that had
+not yet checked would lose the hotfix's hurry. So `--prev`, the manifest the
+release before this one published, carries its `hotfix_below` forward when
+none is given, unless it names a version newer than this one (a backport cut
+below the latest). An explicit `--hotfix-below` always wins.
 """
 import argparse
 import json
@@ -80,6 +85,27 @@ def read_sum(sums, name):
     return fields[0]
 
 
+def carried(prev, v):
+    """The previous manifest's hotfix_below, when it still means something here."""
+    if prev is None:
+        return None
+    try:
+        was = json.loads(prev.read_text()).get("hotfix_below")
+    except FileNotFoundError:
+        # The first release has no manifest before it.
+        return None
+    except (json.JSONDecodeError, AttributeError) as e:
+        fail(f"{prev} is not a manifest ({e})")
+    if not was:
+        return None
+    was = str(was).removeprefix("v")
+    if semver(was, "the previous hotfix_below") > v:
+        print(f"manifest.py: not carrying hotfix_below {was}: newer than this release", file=sys.stderr)
+        return None
+    print(f"manifest.py: carrying hotfix_below {was} from {prev}", file=sys.stderr)
+    return was
+
+
 def app_min_from(cargo):
     try:
         meta = tomllib.loads(cargo.read_text())["package"]["metadata"]["snyvi"]["app_min"]
@@ -93,7 +119,8 @@ def main():
     p.add_argument("version", nargs="?")
     p.add_argument("sums", nargs="?", type=Path)
     p.add_argument("--out", type=Path, default=Path("dist/latest.json"))
-    p.add_argument("--hotfix-below", default="", help="a version, or empty for null")
+    p.add_argument("--hotfix-below", default="", help="a version, or empty to carry --prev's (or null)")
+    p.add_argument("--prev", type=Path, help="the previous release's latest.json; a missing file is a first release")
     p.add_argument("--app-min", default="", help="default: package.metadata.snyvi.app_min in Cargo.toml")
     p.add_argument("--cargo", type=Path, default=Path(__file__).resolve().parent.parent / "Cargo.toml")
     p.add_argument("--channel", default="daily")
@@ -113,7 +140,7 @@ def main():
     app_min = (a.app_min or app_min_from(a.cargo)).removeprefix("v")
     if semver(app_min, "app_min") > v:
         fail(f"app_min {app_min} is newer than the release {version}")
-    hotfix = a.hotfix_below.strip().removeprefix("v") or None
+    hotfix = a.hotfix_below.strip().removeprefix("v") or carried(a.prev, v)
     if hotfix is not None and semver(hotfix, "hotfix_below") > v:
         fail(f"hotfix_below {hotfix} is newer than the release {version}: nothing could satisfy it")
 

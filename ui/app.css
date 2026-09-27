@@ -301,6 +301,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] #trees { flex: none; padding: 0; overflow: visible; }
 :root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
 :root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
+:root[data-side="0"] #upd.quiet { display: none; }
 #rail-nav .icon { position: relative; flex: none; }
 #rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
 #rail-search { margin-top: auto; }
@@ -436,7 +437,9 @@ html[data-say] .brand-name { opacity: 0; }
 .upd:hover { color: var(--fg); }
 .upd.amber { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .upd.failed { background: var(--del); color: var(--del-fg); }
-.upd.waiting { opacity: .7; cursor: default; }
+.upd.waiting { opacity: .7; }
+.upd.waiting[tabindex="-1"] { cursor: default; }
+.upd.quiet { background: none; color: var(--fg-3); font-weight: 500; }
 /* The page cannot hear the daemon; a stale count is worse than none. */
 html[data-link="off"] .live { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }

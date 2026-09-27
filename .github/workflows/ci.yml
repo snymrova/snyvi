@@ -72,6 +72,20 @@ jobs:
           done
           packaging/manifest.py 0.0.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 --hotfix-below 0.0.0
           python3 -c "import json; m=json.load(open('/tmp/latest.json')); assert m['assets']['linux-x64']['snyvi'][0]=='snyvi-linux-x64.tar.gz' and m['hotfix_below']=='0.0.0', m"
+          # hotfix_below outlives the release that set it: carried from the
+          # previous manifest when none is given, overridden by one that is,
+          # dropped when it is newer than this release (a backport), and
+          # null with no previous manifest at all (the first release).
+          hotfix() { python3 -c "import json; print(json.load(open('/tmp/latest.json'))['hotfix_below'])"; }
+          printf '{"version":"1.2.0","hotfix_below":"1.2.0"}\n' > /tmp/prev.json
+          packaging/manifest.py 1.3.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 --prev /tmp/prev.json 2>/dev/null
+          test "$(hotfix)" = 1.2.0 || { echo "hotfix_below was not carried: $(hotfix)"; exit 1; }
+          packaging/manifest.py 1.3.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 --prev /tmp/prev.json --hotfix-below 1.1.0 2>/dev/null
+          test "$(hotfix)" = 1.1.0 || { echo "an explicit hotfix_below lost to the carried one: $(hotfix)"; exit 1; }
+          packaging/manifest.py 1.1.5 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 --prev /tmp/prev.json 2>/dev/null
+          test "$(hotfix)" = None || { echo "a backport carried a hotfix_below above itself: $(hotfix)"; exit 1; }
+          packaging/manifest.py 1.3.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 --prev /tmp/no-such.json 2>/dev/null
+          test "$(hotfix)" = None || { echo "no previous manifest, yet hotfix_below is $(hotfix)"; exit 1; }
           # A release that has not got every download is not described.
           rm /tmp/sums/snyvi-windows-x64.zip.sha256
           packaging/manifest.py 0.0.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 2>/dev/null && { echo "manifest.py wrote a manifest with a download missing"; exit 1; }

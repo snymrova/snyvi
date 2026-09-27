@@ -36,8 +36,11 @@ permissions:
 
 # One run per version at a time: a tag push racing a workflow_dispatch for the
 # same version would otherwise share a draft and clobber each other's uploads.
+# One group name for both, `release-v<version>`: the dispatch input comes
+# without its v as often as with, and the tag push's ref always has one, so
+# the two used to land in different groups and race after all.
 concurrency:
-  group: release-${{ github.event.inputs.version || github.ref_name }}
+  group: ${{ github.event_name == 'workflow_dispatch' && (startsWith(inputs.version, 'v') && format('release-{0}', inputs.version) || format('release-v{0}', inputs.version)) || format('release-{0}', github.ref_name) }}
   cancel-in-progress: false
 
 jobs:
@@ -76,12 +79,23 @@ jobs:
         # the legs can upload to it and `publish` can edit it. A version that
         # is already public is not built again: a release is cut once, and a
         # re-run of a failed job after `publish` does not come through here.
+        # A draft is reused only when it was opened on this same commit: a
+        # dry run left from an earlier one would otherwise keep that commit's
+        # downloads under --clobber for any leg that did not run again, and a
+        # release would ship two builds. Deleted, then opened afresh.
         run: |
           v="v${{ steps.version.outputs.version }}"
-          if draft=$(gh release view "$v" --json isDraft -q .isDraft 2>/dev/null); then
-            test "$draft" = "true" && { echo "reusing the draft $v"; exit 0; }
-            echo "$v is already published; a release is cut once."
-            exit 1
+          if info=$(gh release view "$v" --json isDraft,targetCommitish -q '"\(.isDraft) \(.targetCommitish)"' 2>/dev/null); then
+            read -r draft target <<< "$info"
+            if [ "$draft" != "true" ]; then
+              echo "$v is already published; a release is cut once."
+              exit 1
+            fi
+            if [ "$target" = "$GITHUB_SHA" ]; then
+              echo "reusing the draft $v"; exit 0
+            fi
+            echo "the draft $v was opened on $target, not $GITHUB_SHA; deleting it"
+            gh release delete "$v" --yes
           fi
           gh release create "$v" --draft --generate-notes --title "$v" --target "$GITHUB_SHA"
 
@@ -429,9 +443,9 @@ jobs:
     # every download is on the draft and the manifest that names them is
     # written and signed. latest.json is what a running snyvi reads to learn
     # what is out (packaging/manifest.py says what is in it); its signature
-    # is what lets the daemon apply an update unasked, so a release without
-    # the signing key still ships every download but is only ever reported,
-    # never applied.
+    # is what lets the daemon take it at all, so a release without the
+    # signing key stops here, a draft, rather than publish a manifest that
+    # every daemon would refuse.
     needs: [create, build, desktop, windows, macos]
     runs-on: ubuntu-latest
     env:
@@ -454,16 +468,32 @@ jobs:
         # hotfix_below comes from the dispatch input, or from a `hotfix:
         # <version>` line in the tag's message; it is never derived, because
         # it is the one field that moves every machine within hours rather
-        # than once a day. The tag object is in the checkout on a tag push;
-        # on a dispatch there is no tag yet and the line cannot exist.
+        # than once a day. Failing both, the previous release's is carried
+        # forward (manifest.py --prev), so an ordinary release the day after
+        # a hotfix does not take the hurry away from machines still behind.
+        #
+        # The tag is fetched by hand first: actions/checkout leaves a tag
+        # that points at the commit, not at the annotated tag object, and
+        # `%(contents)` of that is the commit's message -- so a hotfix line
+        # was never read. A lightweight tag, or a dispatch with no tag yet,
+        # has no message of its own, and means no hotfix line.
         run: |
           hotfix="${{ github.event.inputs.hotfix_below }}"
-          if [ -z "$hotfix" ]; then
-            hotfix=$(git tag -l --format='%(contents)' "v$VERSION" | sed -n 's/^hotfix: *//p' | head -1)
+          if [ -z "$hotfix" ] && git fetch --force origin "+refs/tags/v$VERSION:refs/tags/v$VERSION" 2>/dev/null; then
+            if [ "$(git cat-file -t "v$VERSION")" = tag ]; then
+              hotfix=$(git tag -l --format='%(contents)' "v$VERSION" | sed -n 's/^hotfix: *//p' | head -1)
+            else
+              echo "v$VERSION is a lightweight tag: no message, so no hotfix line"
+            fi
           fi
           test -z "$hotfix" || echo "hotfix_below: $hotfix"
+          # The manifest the current latest release published, before this
+          # one takes its place. None on the first release.
+          gh release download -p latest.json -O "$RUNNER_TEMP/prev.json" 2>/dev/null \
+            || echo "no previous latest.json; nothing to carry"
           gh release download "v$VERSION" -p '*.sha256' -D "$RUNNER_TEMP/sums"
-          packaging/manifest.py "$VERSION" "$RUNNER_TEMP/sums" --out dist/latest.json --hotfix-below "$hotfix"
+          packaging/manifest.py "$VERSION" "$RUNNER_TEMP/sums" --out dist/latest.json \
+            --hotfix-below "$hotfix" --prev "$RUNNER_TEMP/prev.json"
       - name: Sign it
         # minisign over the manifest, with the public key compiled into snyvi;
         # sha256 in the manifest catches a corrupt download, the signature
@@ -478,10 +508,19 @@ jobs:
         # trusts fails here and not on every machine at once.
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        #
+        # Without the key there is no release: a daemon refuses an unsigned
+        # latest.json outright, so publishing one would stall every machine
+        # on the version it has, silently. A dry run publishes nothing, so
+        # there it is only a warning.
         run: |
           if [ -z "$MINISIGN_SECRET_KEY" ]; then
-            echo "::warning::MINISIGN_SECRET_KEY is not set; latest.json is unsigned. A daemon will report $VERSION but never apply it."
-            exit 0
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::MINISIGN_SECRET_KEY is not set; this dry run's latest.json is unsigned, and a real run would stop here."
+              exit 0
+            fi
+            echo "::error::MINISIGN_SECRET_KEY is not set; latest.json cannot be signed, and no daemon takes an unsigned one. Set the secret, then re-run this job."
+            exit 1
           fi
           sudo apt-get update -qq && sudo apt-get install -y -qq minisign
           (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key")
@@ -499,9 +538,22 @@ jobs:
         # The one moment the release becomes visible: every download, the
         # manifest and its signature are already on it. --latest so that
         # /releases/latest/download/ points here from now on, which is the
-        # URL every README link and every daemon reads.
+        # URL every README link and every daemon reads -- but only when this
+        # version is newer than the latest. A backport cut below it must not
+        # take that URL: every daemon would read an older manifest, and one
+        # that had applied the newer version would clean up its .prev for a
+        # release it had already passed.
         if: ${{ !inputs.dry_run }}
-        run: gh release edit "v$VERSION" --draft=false --latest
+        run: |
+          # Equal is a re-run of this step after the flip, and stays latest.
+          current=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          current=${current#v}
+          if [ -z "$current" ] || [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
+            gh release edit "v$VERSION" --draft=false --latest
+          else
+            echo "::notice::v$VERSION is not newer than the latest ($current); published without taking /releases/latest"
+            gh release edit "v$VERSION" --draft=false --latest=false
+          fi
       - name: Dry run
         if: ${{ inputs.dry_run }}
         run: |

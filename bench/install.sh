@@ -17,7 +17,8 @@
 # registration without creating one; uninstall-desktop takes back exactly
 # its own files. On Debian and Ubuntu: --deb installs the package; a plain
 # run then leaves it a package and says how to move; --tar moves, and says
-# the package is still there.
+# the package is still there and the line that takes it out; a plain run
+# after that keeps the per-user install its receipt names.
 set -u
 
 [ -f /src/install.sh ] || { echo "bench/install.sh: mount the checkout at /src" >&2; exit 2; }
@@ -100,6 +101,16 @@ if command -v apt-get >/dev/null 2>&1 && [ -f /assets/snyvi-linux-x64.deb ]; the
   sh /src/install.sh --tar --no-init > "$out" 2>&1
   t "--tar moves to the per-user install and says the package is still there" sh -c "[ -x '$HOME/.local/bin/snyvi' ] && grep -q 'The .deb is still installed' '$out'"
   t "and says which snyvi a new terminal runs" sh -c "grep -q 'updates itself from now on' '$out' && { grep -q 'comes first on your PATH' '$out' || grep -q 'not on your PATH' '$out'; }"
+  t "and names the one line that takes the package out" has "$out" "sudo apt remove snyvi$"
+  # Moved stays moved: the receipt --tar wrote wins over the package still
+  # installed beside it, where a plain run used to put the package back.
+  before_deb=$(stat -c %Y /usr/bin/snyvi)
+  out=/tmp/deb-tar-again.out
+  sh /src/install.sh --no-init > "$out" 2>&1
+  code=$?
+  t "a plain run after --tar stays per-user, and says why" sh -c "[ '$code' = 0 ] && grep -q 'kept the per-user install' '$out' && grep -q 'updates itself from now on' '$out' && ! grep -q 'installed as a package' '$out'"
+  [ "$code" = 0 ] || sed 's/^/      /' "$out"
+  t "and leaves the package as it was" sh -c "[ \"\$(stat -c %Y /usr/bin/snyvi)\" = '$before_deb' ] && dpkg-query -W -f='\${Status}' snyvi | grep -q 'install ok installed'"
   dpkg -r snyvi > /dev/null 2>&1
 fi
 

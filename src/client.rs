@@ -158,10 +158,9 @@ fn warn_if_stale(h: &Value) {
 
 /// `snyvi restart`: ask the daemon to restart itself and wait for it to come
 /// back. The daemon waits for its panes to be quiet unless `now`; while it
-/// waits, this says which panels it is waiting on, and Ctrl-C leaves the
-/// restart pending in the daemon rather than cancelling it. A daemon too old
-/// to have the route is stopped and started the old way, and no daemon at
-/// all is simply started.
+/// waits, this says which panels it is waiting on, and Ctrl-C calls the
+/// restart off. A daemon too old to have the route is stopped and started
+/// the old way, and no daemon at all is simply started.
 pub fn restart(paths: &Paths, now: bool) -> Result<()> {
     let Some(h) = health() else {
         ensure_daemon()?;
@@ -197,13 +196,88 @@ pub fn restart(paths: &Paths, now: bool) -> Result<()> {
         ),
         Err(e) => bail!("asking the daemon to restart: {e}"),
     }
-    wait_for_another(was)
+    wait_for_another(paths, was)
+}
+
+/// `snyvi restart --cancel`, and Ctrl-C while a restart waits: the restart
+/// the daemon is holding for quiet panels is called off. True when there
+/// was one.
+fn send_cancel(paths: &Paths) -> Result<bool> {
+    let Some(token) = config::read_token(paths) else {
+        bail!(
+            "no token in {}; is this the same user the daemon runs as?",
+            paths.config_dir.display()
+        );
+    };
+    let r = ureq::delete(&format!("{}/api/restart", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .call();
+    match r {
+        Ok(mut r) if r.status().is_success() => Ok(r
+            .body_mut()
+            .read_json::<Value>()
+            .ok()
+            .and_then(|j| j["cancelled"].as_bool())
+            .unwrap_or(false)),
+        Ok(r) if r.status() == 404 || r.status() == 405 => bail!(
+            "this daemon is too old to call a restart off; it restarts when the panels are quiet"
+        ),
+        Ok(mut r) => bail!(
+            "the daemon refused: {} {}",
+            r.status(),
+            r.body_mut().read_to_string().unwrap_or_default().trim()
+        ),
+        Err(e) => bail!("asking the daemon: {e}"),
+    }
+}
+
+pub fn cancel_restart(paths: &Paths) -> Result<()> {
+    if health().is_none() {
+        println!("not running");
+        return Ok(());
+    }
+    if send_cancel(paths)? {
+        println!("the restart is called off");
+    } else {
+        println!("no restart was waiting");
+    }
+    Ok(())
+}
+
+/// While this waits on a restart, Ctrl-C calls it off rather than leaving
+/// it to happen behind the reader's back. Once the old daemon has gone
+/// there is nothing to call off, and Ctrl-C only stops the waiting.
+fn cancel_on_ctrl_c(paths: &Paths) {
+    let paths = paths.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        if rt.block_on(tokio::signal::ctrl_c()).is_err() {
+            return;
+        }
+        eprintln!();
+        match send_cancel(&paths) {
+            Ok(true) => eprintln!("the restart is called off"),
+            Ok(false) => eprintln!("the restart is already under way"),
+            Err(e) => eprintln!("{e:#}"),
+        }
+        std::process::exit(130);
+    });
 }
 
 /// Watch health until a process other than `was` answers, saying which
 /// panels are holding it up while it waits. By pid rather than version: the
 /// point of a restart may be a file that says the same number.
-fn wait_for_another(was: Option<u64>) -> Result<()> {
+fn wait_for_another(paths: &Paths, was: Option<u64>) -> Result<()> {
+    cancel_on_ctrl_c(paths);
     let mut said: Option<usize> = None;
     let mut gone_since: Option<Instant> = None;
     loop {
@@ -222,7 +296,7 @@ fn wait_for_another(was: Option<u64>) -> Result<()> {
                     .unwrap_or(0);
                 if waiting > 0 && said != Some(waiting) {
                     eprintln!(
-                        "waiting on {waiting} panel{} still busy (an agent mid-turn, or a program printing)… --now skips the wait; Ctrl-C leaves the restart to happen when they are quiet",
+                        "waiting on {waiting} panel{} still busy (an agent mid-turn or waiting on you, or a program printing)… --now skips the wait; Ctrl-C calls the restart off",
                         if waiting == 1 { "" } else { "s" }
                     );
                     said = Some(waiting);
@@ -296,7 +370,7 @@ pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
                         " when the panels are quiet"
                     }
                 );
-                return wait_for_another(was);
+                return wait_for_another(paths, was);
             }
             404 | 405 => bail!("the daemon is too old to go back; `snyvi restart` first"),
             _ => bail!("{}", j["error"].as_str().unwrap_or("the daemon refused")),
@@ -337,11 +411,19 @@ pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
         if j["update"]["failed"].as_str() == Some(latest) {
             bail!("{latest} is out, but it was applied here before and did not start, so it is not staged again on its own; `snyvi update --to {latest}` tries it again");
         }
+        if j["update"]["skipped"].as_str() == Some(latest) {
+            bail!("{latest} is out, but you went back from it, so it is not staged again on its own; `snyvi update --to {latest}` takes it again");
+        }
         bail!(
             "{latest} is out but nothing was staged: {}",
             j["update"]["error"].as_str().unwrap_or("no reason given")
         );
     };
+    if let (Some(to), Some(skipped)) = (&o.to, j["update"]["skipped"].as_str()) {
+        if semver::Version::parse(to).ok() < semver::Version::parse(running).ok() {
+            eprintln!("{skipped} will not come back on its own; `snyvi update` takes it, or whatever is newest, again");
+        }
+    }
     eprintln!(
         "{ready} is staged and verified; restarting onto it{}",
         if o.now {
@@ -364,17 +446,19 @@ pub fn update(paths: &Paths, o: UpdateOpts) -> Result<()> {
                 .unwrap_or("the daemon refused the restart")
         );
     }
-    wait_for_another(was)
+    wait_for_another(paths, was)
 }
 
 /// `snyvi update check`: true when a newer version is out, and nothing is
 /// restarted. The daemon stages what it finds, as it would on its own timer.
 pub fn update_check(paths: &Paths) -> Result<bool> {
     ensure_daemon()?;
+    // Read fresh, and found without lifting the daily floor: a script
+    // asking every hour must not turn a day's pace into an hour's.
     let (status, j) = post(
         paths,
         "/api/update/check",
-        serde_json::json!({}),
+        serde_json::json!({ "lift": false }),
         Duration::from_secs(600),
     )?;
     match status {
@@ -450,6 +534,8 @@ pub fn update_line(u: &Value) -> Option<String> {
         } else {
             format!("update: {v} is ready; it applies in the next day when the desks are quiet, or now: snyvi update")
         }
+    } else if let Some(v) = s("skipped").filter(|v| s("available").is_none_or(|a| a == *v)) {
+        format!("update: you went back from {v}; it is not taken again on its own. `snyvi update --to {v}` takes it")
     } else if let Some(v) = s("available") {
         let how = u["how"]
             .as_array()

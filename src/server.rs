@@ -291,6 +291,13 @@ pub struct App {
     /// Set when the window has been asked to quit so a newer one can be
     /// started in its place; acted on when its stream ends.
     pub relaunch_window: std::sync::atomic::AtomicBool,
+    /// Set once this daemon has decided to leave for a restart: what the
+    /// pill says in the seconds before the stream drops, rather than
+    /// going back to "Restart to update".
+    pub restarting: std::sync::atomic::AtomicBool,
+    /// The `update` block last sent, so the watcher's tick sends it again
+    /// only when something in it moved. See `emit_update_if_changed`.
+    update_sent: std::sync::Mutex<String>,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -432,8 +439,9 @@ fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
                 }
             }
         }
-        emit_update(app);
     }
+    app.restarting.store(true, Ordering::Relaxed);
+    emit_update(app);
     let with_agent = app.panes.with_agent();
     match app.store.mark_panes_resume(&with_agent) {
         Ok(n) if n > 0 => {
@@ -452,14 +460,42 @@ fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
     true
 }
 
-/// A planned restart's marker, if the last exit left one: taken, so a crash
-/// later does not find it. `Some(apply)` when the last exit was planned.
-fn take_restart_marker(paths: &Paths) -> Option<bool> {
-    let path = paths.data_dir.join(RESTART_MARKER);
-    let text = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
+/// How old a marker may be and still describe this start. A planned exit
+/// is followed by a start within seconds -- two under systemd, a few more
+/// for a successor that crashed and was started again -- so a marker older
+/// than this was left by an exit whose start never came.
+const RESTART_MARKER_FOR: i64 = 10 * 60;
+
+/// A planned restart's marker, if the last exit left one and it is recent.
+/// `Some(apply)` when the last exit was planned. Read here and taken only
+/// once this daemon holds the port (`drop_restart_marker`): a successor
+/// that dies before then is started again, and must find it again.
+fn read_restart_marker(paths: &Paths) -> Option<bool> {
+    let text = std::fs::read_to_string(paths.data_dir.join(RESTART_MARKER)).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let at = v["at"].as_i64()?;
+    if (crate::store::now() - at).abs() > RESTART_MARKER_FOR {
+        return None;
+    }
     Some(v["apply"].as_bool().unwrap_or(false))
+}
+
+fn drop_restart_marker(paths: &Paths) {
+    let _ = std::fs::remove_file(paths.data_dir.join(RESTART_MARKER));
+}
+
+/// The pending restart as the pill and About see it: `restart_json`
+/// without its clock, so the block only changes when what it says does.
+fn pending_json(app: &App) -> serde_json::Value {
+    match *app.restart.lock().unwrap() {
+        Some(p) => json!({
+            "apply": p.apply,
+            "back": p.back,
+            "now": p.now,
+            "waiting_on": if p.now { vec![] } else { app.panes.busy() },
+        }),
+        None => serde_json::Value::Null,
+    }
 }
 
 /// The pending restart, as health and `snyvi restart` see it.
@@ -513,10 +549,10 @@ fn waiting(app: &App) -> i64 {
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let store = Store::open(&paths)?;
-    // A planned restart left a marker and marks; a crash left neither. Both
-    // are taken now, before anything can ask, so they describe this start
-    // and no later one.
-    let planned = take_restart_marker(&paths);
+    // A planned restart left a marker and marks; a crash left neither. The
+    // marks are taken now, before anything can ask, so they describe this
+    // start and no later one; the marker once the port is held.
+    let planned = read_restart_marker(&paths);
     let (resume, offer) = store.take_panes_resume().unwrap_or_default();
     if let Some(apply) = planned {
         eprintln!(
@@ -591,20 +627,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         leaving: std::sync::Mutex::new(Leaving::Stopped),
         update,
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
+        restarting: std::sync::atomic::AtomicBool::new(false),
+        update_sent: Default::default(),
     });
-    // What the last exit did, told by its marker: only a planned exit that
-    // applied something opens the next day's slot. Said before anything can
-    // ask, so health never shows a version as ready that is now running.
     if let Some(u) = &app.update {
-        match u.note_started(planned.unwrap_or(false), crate::store::now()) {
-            Some(crate::update::Started::Applied(v)) => {
-                eprintln!("snyvi: now {v}, updated; the next automatic update is a day or so away")
-            }
-            Some(crate::update::Started::Failed(v)) => eprintln!(
-                "snyvi: {v} was put in place but this is {VERSION} running from the same path; {v} is marked failed and not tried again on its own"
-            ),
-            None => {}
-        }
         if u.channel == crate::update::Channel::Dev {
             eprintln!("snyvi: a development build; it will not check for updates");
         } else if !u.auto() {
@@ -628,8 +654,6 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
-    spawn_restart_watcher(app.clone());
-    spawn_update_checker(app.clone());
 
     let router = Router::new()
         .route("/", get(shell_home))
@@ -674,7 +698,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/notes/restore", post(restore_asides))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
-        .route("/api/restart", post(restart))
+        .route("/api/restart", post(restart).delete(cancel_restart))
         .route("/api/update/check", post(update_check))
         .route("/api/update/auto", post(update_auto))
         .route("/api/reset", get(reset_census).post(reset))
@@ -741,6 +765,28 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
 
     let addr = format!("127.0.0.1:{}", config::port());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    // What the last exit did, told by its marker: only a planned exit that
+    // applied something opens the next day's slot. Said once this daemon
+    // holds the port -- one that panicked on the way here has not started,
+    // and `update::first_start` is still counting it -- and before it
+    // answers anything, so health never shows a version as ready that is
+    // now running.
+    if let Some(u) = &leaving.update {
+        match u.note_started(planned.unwrap_or(false), crate::store::now()) {
+            Some(crate::update::Started::Applied(v)) => {
+                eprintln!("snyvi: now {v}, updated; the next automatic update is a day or so away")
+            }
+            Some(crate::update::Started::Failed(v)) => eprintln!(
+                "snyvi: {v} was put in place but this is {VERSION} running from the same path; {v} is marked failed and not tried again on its own"
+            ),
+            None => {}
+        }
+    }
+    drop_restart_marker(&paths);
+    // After it: until then `ready` may still name the version now running,
+    // and the watcher would apply it again.
+    spawn_restart_watcher(leaving.clone());
+    spawn_update_checker(leaving.clone());
     // An install from an older snyvi gets the hooks that tell a panel what
     // Claude is doing, without the reader running `init-claude` again. Only
     // where our hook already is and names this binary, and only once this
@@ -815,10 +861,19 @@ fn spawn_restart_watcher(app: Arc<App>) {
                     if !matches!(&m, Ok(s) if s.starts_with("panes\n")) { continue }
                 }
             }
+            // The block moves with the clock too -- the day's slot opening,
+            // amber at a day, a failure ageing out -- and with the panels a
+            // pending restart waits on; nothing else would say so.
+            emit_update_if_changed(&app);
             let pending = *app.restart.lock().unwrap();
             match pending {
                 Some(p) => {
                     if !p.now && !app.panes.busy().is_empty() {
+                        continue;
+                    }
+                    // A check is downloading or an apply is swapping: wait
+                    // it out rather than block this task on the lock.
+                    if (p.apply || p.back) && app.update.as_ref().is_some_and(|u| u.busy()) {
                         continue;
                     }
                     app.restart.lock().unwrap().take();
@@ -893,7 +948,9 @@ fn spawn_update_checker(app: Arc<App>) {
             }
             let checker = u.clone();
             let before = checker.state().ready;
-            let r = tokio::task::spawn_blocking(move || checker.check(false, None)).await;
+            let r =
+                tokio::task::spawn_blocking(move || checker.check(crate::update::Ask::TIMER, None))
+                    .await;
             match r {
                 Ok(Ok(c)) if c.ready.is_some() && c.ready != before => {
                     eprintln!(
@@ -915,25 +972,50 @@ fn spawn_update_checker(app: Arc<App>) {
     });
 }
 
-/// The `update` block of health and About, and the `update` event's body.
+/// The `update` block of health and About, and the `update` event's body:
+/// the updater's word, the restart waiting for quiet if one is, and whether
+/// this daemon is on its way out.
 fn update_json(app: &App) -> serde_json::Value {
     let stale = app.exe.as_ref().is_some_and(Exe::stale);
-    match &app.update {
+    let mut j = match &app.update {
         Some(u) => u.json(crate::store::now(), stale),
         None => json!({ "channel": "unknown", "auto": false, "show": stale, "stale": stale }),
-    }
+    };
+    j["restart"] = pending_json(app);
+    j["restarting"] = json!(app.restarting.load(Ordering::Relaxed));
+    j
 }
 
 pub(crate) fn emit_update(app: &App) {
-    emit(app, "update", update_json(app));
+    let j = update_json(app);
+    *app.update_sent.lock().unwrap_or_else(|e| e.into_inner()) = j.to_string();
+    emit(app, "update", j);
+}
+
+/// `emit_update`, only when the block differs from the one last sent.
+fn emit_update_if_changed(app: &App) {
+    let j = update_json(app);
+    let text = j.to_string();
+    {
+        let mut sent = app.update_sent.lock().unwrap_or_else(|e| e.into_inner());
+        if *sent == text {
+            return;
+        }
+        *sent = text;
+    }
+    emit(app, "update", j);
 }
 
 /// After `run` has returned `Leaving::Restart`: the successor, by the path
 /// recorded at start. Under systemd the unit does it -- this process exits
 /// with `PLANNED_RESTART_EXIT` and `Restart=on-failure` brings the new file
-/// up inside the unit. Otherwise the successor is spawned detached and
-/// watched for up to ten seconds; a daemon that does not answer is said so
-/// in the log, which the updater's rollback will act on later. Never returns.
+/// up inside the unit, where `update::first_start` takes a bad one back out.
+/// Otherwise the successor is spawned detached, with its output in
+/// `daemon.log`, and watched for up to `CAME_UP_WITHIN`: when nothing at all
+/// answers after an apply, the previous version is put back and started.
+/// Something else answering -- an older snyvi from another path holding the
+/// port -- is not the successor, and not a reason to take the update back
+/// out either. Never returns.
 pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
     if under_systemd() {
         eprintln!("snyvi: planned restart under systemd; exiting {PLANNED_RESTART_EXIT} for the unit to start the new file");
@@ -951,16 +1033,29 @@ pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
         );
         std::process::exit(1);
     }
-    if let Some(v) = came_up(me) {
-        eprintln!(
-            "snyvi: {v} is up on {}; this one is done",
-            config::base_url()
-        );
-        std::process::exit(0);
+    match came_up(me, &exe) {
+        CameUp::Ours(v) => {
+            eprintln!(
+                "snyvi: {v} is up on {}; this one is done",
+                config::base_url()
+            );
+            std::process::exit(0);
+        }
+        CameUp::Other(what) => {
+            eprintln!(
+                "snyvi: something else answered on {} after the restart ({what}), not {}; stop it and run `snyvi restart`",
+                config::base_url(),
+                exe.display()
+            );
+            std::process::exit(1);
+        }
+        CameUp::Nothing => {}
     }
     eprintln!(
-        "snyvi: {} did not answer within 10 s of a planned restart",
-        exe.display()
+        "snyvi: {} did not answer within {} s of a planned restart; see {}",
+        exe.display(),
+        CAME_UP_WITHIN.as_secs(),
+        platform::daemon_log(&paths.data_dir).display()
     );
     if apply {
         // The file just placed does not run. The one that did is beside it
@@ -975,7 +1070,7 @@ pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
             eprintln!("snyvi: starting {} again failed: {e}", exe.display());
             std::process::exit(1);
         }
-        if let Some(v) = came_up(me) {
+        if let CameUp::Ours(v) = came_up(me, &exe) {
             eprintln!("snyvi: {v} is back up on {}", config::base_url());
             std::process::exit(0);
         }
@@ -987,26 +1082,47 @@ pub fn relaunch(exe: Option<PathBuf>, apply: bool, paths: &Paths) -> ! {
     std::process::exit(1);
 }
 
-/// Health answered by a process other than `me`, within ten seconds: its
-/// version.
-fn came_up(me: u32) -> Option<String> {
-    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+/// How long a successor has to answer. A daemon still migrating its store
+/// is not a failed one, and a rollback under it would be.
+const CAME_UP_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+enum CameUp {
+    /// Our successor: another process, from the recorded path. Its version.
+    Ours(String),
+    /// Another process answered, from another file.
+    Other(String),
+    Nothing,
+}
+
+/// Who answered health, within `CAME_UP_WITHIN`: a process other than `me`
+/// and from `exe` is the successor. A daemon from before health said its
+/// file (1.7.0 and older, what `--to` may go down to) is taken on its pid.
+fn came_up(me: u32, exe: &std::path::Path) -> CameUp {
+    let deadline = Instant::now() + CAME_UP_WITHIN;
     let mut wait = std::time::Duration::from_millis(20);
+    let mut other = None;
     while Instant::now() < deadline {
         if let Some(h) = crate::client::health() {
-            if h.get("pid").and_then(serde_json::Value::as_u64) != Some(u64::from(me)) {
-                return Some(
-                    h.get("version")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("?")
-                        .to_string(),
-                );
+            let version = h["version"].as_str().unwrap_or("?").to_string();
+            if h["pid"].as_u64() != Some(u64::from(me)) {
+                match h["exe"].as_str() {
+                    Some(e) if std::path::Path::new(e) != exe => {
+                        // Maybe the old one is still letting go of the port
+                        // and this is a third party that just took it; keep
+                        // looking until the deadline, and say so then.
+                        other = Some(format!("snyvi {version} from {e}"));
+                    }
+                    _ => return CameUp::Ours(version),
+                }
             }
         }
         std::thread::sleep(wait);
         wait = (wait * 2).min(std::time::Duration::from_millis(250));
     }
-    None
+    match other {
+        Some(what) => CameUp::Other(what),
+        None => CameUp::Nothing,
+    }
 }
 
 // ---------- shell ----------
@@ -1451,6 +1567,9 @@ async fn health(State(app): S) -> Json<serde_json::Value> {
         // So `snyvi stop` can end this exact process if it ignores the
         // shutdown endpoint, without having to guess which snyvi it is.
         "pid": std::process::id(),
+        // The file it runs from, so a restart can tell its successor from
+        // another snyvi that happens to hold the port.
+        "exe": app.exe.as_ref().map(|e| e.path.display().to_string()),
         "docs": app.store.count().unwrap_or(0),
         // Whether a link should be handed to a window or opened in a browser.
         // `snyvi open`, `snyvi browse` and the MCP server all ask here.
@@ -1787,8 +1906,9 @@ struct RestartBody {
 /// back as `claude --resume`; the rest as shells with their old screen
 /// greyed above, which is what any restart already does. Answers to the
 /// token (`snyvi restart`) or the window's capability (a click on the
-/// update pill, later); a tab holds neither. Asking again changes `when`
-/// and `apply` on the restart already pending rather than queueing another.
+/// update pill); a tab holds neither. Asking again adds to the restart
+/// already pending rather than queueing another: `snyvi restart` while the
+/// pill's update waits still takes the update, and `--now` hurries both.
 async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) -> Response {
     let cap = headers
         .get(CAPABILITY_HEADER)
@@ -1828,31 +1948,62 @@ async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) 
         )
             .into_response();
     }
-    {
+    let now = {
         let mut slot = app.restart.lock().unwrap();
-        let since = slot.map(|p| p.since).unwrap_or_else(Instant::now);
-        *slot = Some(Pending {
-            since,
-            apply: b.apply,
-            back: b.back,
-            now,
-        });
-    }
+        let was = *slot;
+        let p = Pending {
+            since: was.map(|p| p.since).unwrap_or_else(Instant::now),
+            apply: b.apply || was.is_some_and(|p| p.apply),
+            back: b.back || was.is_some_and(|p| p.back),
+            now: now || was.is_some_and(|p| p.now),
+        };
+        *slot = Some(p);
+        p.now
+    };
     let waiting_on = if now { vec![] } else { app.panes.busy() };
     app.restart_wake.notify_one();
+    emit_update(&app);
     Json(json!({ "ok": true, "waiting_on": waiting_on, "version": VERSION })).into_response()
 }
 
-#[derive(Deserialize, Default)]
+/// Call off a restart that is waiting for quiet: `snyvi restart --cancel`,
+/// Ctrl-C under `snyvi restart`, and the pill's Cancel. The same who as
+/// asking. One already under way is past calling off, and says so.
+async fn cancel_restart(State(app): S, headers: HeaderMap) -> Response {
+    if !capable(&app, &headers) && !authorized(&app, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
+    }
+    let cancelled = app.restart.lock().unwrap().take().is_some();
+    if cancelled {
+        eprintln!("snyvi: the restart that was waiting is called off");
+    }
+    emit_update(&app);
+    Json(json!({ "ok": true, "cancelled": cancelled })).into_response()
+}
+
+#[derive(Deserialize)]
 struct UpdateCheckBody {
     /// One release by number, for `snyvi update --to`; may go down.
     #[serde(default)]
     to: Option<String>,
+    /// Whether what is found goes past the daily floor: Check now and
+    /// `snyvi update` (and every client from before this field); not
+    /// `snyvi update check`, which a script may run every hour.
+    #[serde(default = "yes")]
+    lift: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// `Check now` in About, and `snyvi update`: read the manifest, stage what
-/// it names, and say. Sets `asked`, so the daily floor does not apply to
-/// what was found. Token or capability; a bare tab has neither.
+/// it names, and say. What it finds newer goes past the daily floor unless
+/// `lift` is false. Token or capability; a bare tab has neither.
 async fn update_check(
     State(app): S,
     headers: HeaderMap,
@@ -1885,7 +2036,11 @@ async fn update_check(
         }
     }
     let to = b.to.clone();
-    let r = tokio::task::spawn_blocking(move || u.check(true, to.as_deref())).await;
+    let ask = crate::update::Ask {
+        fresh: true,
+        lift: b.lift,
+    };
+    let r = tokio::task::spawn_blocking(move || u.check(ask, to.as_deref())).await;
     emit_update(&app);
     app.restart_wake.notify_one();
     match r {
@@ -2134,12 +2289,11 @@ impl EventsQ {
             .is_some_and(|v| !matches!(v, "" | "0" | "false" | "False"))
     }
 
-    /// The window's version, when the page says one: a window from 1.7 on
-    /// stamps its own number on the mark, and the page passes it along. An
-    /// older window says `1`, and is not known.
+    /// What the window says of itself: a window from 1.7 on stamps its own
+    /// number on the mark, and the page passes it along; an older one says
+    /// `1`, which the updater reads as older than any.
     fn window_version(&self) -> Option<String> {
-        let v = self.window.as_deref()?;
-        semver::Version::parse(v).ok().map(|_| v.to_string())
+        self.window.clone().filter(|_| self.is_window())
     }
 
     /// The agent's name, trimmed and cut to a length the header can hold.
@@ -2212,12 +2366,8 @@ impl Drop for StreamMark {
                 .windows
                 .fetch_sub(1, Ordering::Relaxed)
                 .saturating_sub(1);
-            if left == 0 && self.app.relaunch_window.swap(false, Ordering::Relaxed) {
-                if let Some(exe) = self.app.exe.as_ref().map(|e| e.path.clone()) {
-                    if let Err(e) = platform::spawn_detached(&exe, &["app"]) {
-                        eprintln!("snyvi: could not start the window again: {e}");
-                    }
-                }
+            if left == 0 && self.app.relaunch_window.load(Ordering::Relaxed) {
+                relaunch_window_when_gone(self.app.clone());
             }
         }
         // The last window closing is one of the updater's doors, and a page
@@ -2238,6 +2388,32 @@ impl Drop for StreamMark {
         }
     }
 }
+
+/// The window that was asked to quit has closed its stream: once no window
+/// has come back for `WINDOW_GONE_FOR` -- a page that reloads itself closes
+/// its stream too, and is back in a moment -- the new one is started. A
+/// window that did come back is still the old one, and its stream ending
+/// later is looked at again.
+fn relaunch_window_when_gone(app: Arc<App>) {
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    rt.spawn(async move {
+        tokio::time::sleep(WINDOW_GONE_FOR).await;
+        if app.windows.load(Ordering::Relaxed) != 0
+            || !app.relaunch_window.swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+        if let Some(exe) = app.exe.as_ref().map(|e| e.path.clone()) {
+            if let Err(e) = platform::spawn_detached(&exe, &["app"]) {
+                eprintln!("snyvi: could not start the window again: {e}");
+            }
+        }
+    });
+}
+
+const WINDOW_GONE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Broadcast payloads are "<event name>\n<json>".
 ///
@@ -2805,6 +2981,9 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
     let _ = socket
         .send(Message::Text(json!({ "ok": true }).to_string().into()))
         .await;
+    // A window is showing a desk: someone can see the panes a restart
+    // marked, so their clock starts now. See `pane::RESUME_FOR`.
+    app.panes.arm_marks();
     // Bounded, so a page that cannot keep up makes its forwarders wait, and a
     // forwarder that waits long enough is resynced rather than buffered.
     let (out, mut frames) = tokio::sync::mpsc::channel::<Arc<str>>(64);
@@ -4953,9 +5132,10 @@ mod tests {
     }
 
     /// The pre-paint script and the app must agree on the keys, or a saved setting is
-    /// written by one and never read by the other. The three theme keys are spelled
-    /// out in full: this is a substring check, and `snyvi.theme` would go on passing
-    /// on the strength of `snyvi.theme.light` alone.
+    /// written by one and never read by the other. The app's half is app.js, or
+    /// look.js for the theme and font, which it fetches once the page is idle. The
+    /// three theme keys are spelled out in full: this is a substring check, and
+    /// `snyvi.theme` would go on passing on the strength of `snyvi.theme.light` alone.
     #[test]
     fn settings_written_by_the_app_are_applied_before_first_paint() {
         for key in [
@@ -4968,7 +5148,10 @@ mod tests {
             "wrap",
         ] {
             let k = format!("snyvi.{key}");
-            assert!(APP_JS.contains(&k), "{k} is not used by app.js");
+            assert!(
+                APP_JS.contains(&k) || LOOK_JS.contains(&k),
+                "{k} is not used by app.js or look.js"
+            );
             assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
         }
     }

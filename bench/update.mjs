@@ -21,8 +21,12 @@
  * `snyvi update check` exits 10; `snyvi update` ignores the floor; `off`
  * means no check at all; an unchanged manifest costs a 304; a build under
  * `target/` never checks; and, with a page in front, the pill appears and
- * a click on it restarts onto the staged version. Linux only: appending to
- * a Mach-O breaks its signature, and the release legs prove the others.
+ * a click on it restarts onto the staged version. Since 1.7.1: a download
+ * that failed is tried again rather than stalled behind a 304, an agent
+ * waiting on an approval holds an update back as a turn does, and a window
+ * too old to say its number is asked to quit and started again, once.
+ * Linux only: appending to a Mach-O breaks its signature, and the release
+ * legs prove the others.
  */
 
 import { execFile, execFileSync } from "node:child_process";
@@ -40,6 +44,7 @@ const BIN_SRC = resolve(flag("--bin") || "./target/release/snyvi");
 const PORT = flag("--port") || "7817";   // 7816 is restart.mjs; see the list in ui/ui.mjs
 const DEV_PORT = String(Number(PORT) + 2);
 const GH_PORT = String(Number(PORT) + 1);
+const MANIFEST_PY = resolve(new URL("../packaging/manifest.py", import.meta.url).pathname);
 const EVERY_S = 2;
 
 function flag(name) {
@@ -86,6 +91,9 @@ async function main() {
   const env = {
     ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT,
     SNYVI_QUIET_S: "2", SNYVI_NOTIFY: "0",
+    // What `snyvi app` looks for before it starts a window; the window here
+    // is a script that writes down how it was started, and nothing is drawn.
+    DISPLAY: process.env.DISPLAY || ":0",
     SNYVI_UPDATE_URL: `http://127.0.0.1:${GH_PORT}/`, SNYVI_UPDATE_KEY: key.b64, SNYVI_UPDATE_EVERY_S: String(EVERY_S),
   };
   for (const k of ["SNYVI_SESSION", "SNYVI_DESK", "SNYVI_SLOT", "SNYVI_UI_DIR", "SNYVI_UPDATES"]) delete env[k];
@@ -95,22 +103,39 @@ async function main() {
   // otherwise wait on a server whose event loop it is itself blocking.
   const cli = (...a) => new Promise((ok, no) => execFile(BIN, a, { env, cwd: tmp, encoding: "utf8" }, (err, stdout, stderr) =>
     err ? no(Object.assign(err, { status: typeof err.code === "number" ? err.code : 1, stdout, stderr })) : ok(stdout)));
-  const key_ = `${process.platform === "darwin" ? "macos" : "linux"}-${process.arch}`;
-  /* One release: the tarball the release job would write, a manifest
-   * naming it, the signature. `bytes` is what `snyvi` in the tarball is. */
-  const release = (version, bytes, { hotfix = null, appMin = "1.0.0" } = {}) => {
+  const asset = `snyvi-linux-${process.arch}.tar.gz`;
+  /* One release: the tarball the release job would write, the manifest
+   * packaging/manifest.py writes for it -- the real script, so the daemon
+   * parses what a release publishes and not a hand-made copy of it -- and
+   * the signature. manifest.py wants a checksum for every download a
+   * release carries; the ones this bench does not serve get a made-up
+   * one, as ci.yml's check of the script does. `bytes` is what `snyvi` in
+   * the tarball is, and `app` what `snyvi-app` is, when the release is to
+   * carry a window. */
+  const appAsset = `snyvi-app-linux-${process.arch}.tar.gz`;
+  const release = (version, bytes, { hotfix = null, appMin = "1.0.0", app = null } = {}) => {
     const dir = join(tmp, "rel", version);
-    const top = `snyvi-${version}-x86_64-unknown-linux-musl`;
-    mkdirSync(join(dir, top), { recursive: true });
-    writeFileSync(join(dir, top, "snyvi"), bytes, { mode: 0o755 });
-    const tgz = join(dir, "snyvi-linux-x64.tar.gz");
-    execFileSync("tar", ["-C", dir, "-czf", tgz, top]);
-    const tarball = readFileSync(tgz);
-    const manifest = JSON.stringify({
-      version, date: new Date().toISOString(), channel: "daily", notes: `http://127.0.0.1:${GH_PORT}/notes/${version}`,
-      app_min: appMin, hotfix_below: hotfix, assets: { [key_]: { snyvi: ["snyvi-linux-x64.tar.gz", sha256(tarball)] } },
-    }, null, 2) + "\n";
-    files.set("snyvi-linux-x64.tar.gz", tarball);
+    const tar = (name, what, into) => {
+      const top = `${name}-${version}-x86_64-unknown-linux-musl`;
+      mkdirSync(join(dir, top), { recursive: true });
+      writeFileSync(join(dir, top, name), what, { mode: 0o755 });
+      execFileSync("tar", ["-C", dir, "-czf", join(dir, into), top]);
+      return readFileSync(join(dir, into));
+    };
+    const tarball = tar("snyvi", bytes, asset);
+    const appTarball = app ? tar("snyvi-app", app, appAsset) : null;
+    const sums = join(dir, "sums");
+    mkdirSync(sums, { recursive: true });
+    for (const name of execFileSync(MANIFEST_PY, ["--names"], { encoding: "utf8" }).split("\n").filter(Boolean)) {
+      const hash = name === asset ? sha256(tarball) : name === appAsset && appTarball ? sha256(appTarball) : sha256(Buffer.from(name));
+      writeFileSync(join(sums, `${name}.sha256`), `${hash}  ${name}\n`);
+    }
+    const out = join(dir, "latest.json");
+    execFileSync(MANIFEST_PY, [version, sums, "--out", out, "--app-min", appMin, "--hotfix-below", hotfix || ""],
+      { stdio: ["ignore", "ignore", "inherit"] });
+    const manifest = readFileSync(out, "utf8");
+    files.set(asset, tarball);
+    if (appTarball) files.set(appAsset, appTarball);
     files.set("latest.json", Buffer.from(manifest));
     files.set("latest.json.minisig", Buffer.from(signFile(key, manifest, `snyvi ${version}`)));
     files.set(`v${version}/latest.json`, Buffer.from(manifest));
@@ -161,8 +186,19 @@ async function main() {
     await sleep(EVERY_S * 2000 + 500);
     row("an unchanged manifest costs a 304", served.notModified > before304, `${served.manifest} manifest reads, ${served.notModified} answered 304`);
 
-    // Release three says every version under it should not wait.
+    // Release three says every version under it should not wait -- but its
+    // download is missing at first. The check fails, and the ones after it
+    // read the manifest whole rather than trusting a 304 over a stage that
+    // never happened; once the download is there, it goes.
     const r3 = release(v(3), stamped(v(3)), { hotfix: v(3) });
+    const tar3 = files.get(asset);
+    files.delete(asset);
+    const failing = await until(async () => { const h = await health(); return h && h.update.available === r3.version && h.update.error ? h : null; }, 40);
+    const reads = served.manifest, bare = served.notModified;
+    await sleep(EVERY_S * 2000 + 500);
+    row("a download that failed is tried again, not stalled behind a 304", !!failing && failing.update.ready == null && served.manifest > reads && served.notModified === bare,
+      !failing ? "the failure was never reported" : `ready ${failing.update.ready}; ${served.manifest - reads} manifest reads since, ${served.notModified - bare} of them 304`);
+    files.set(asset, tar3);
     const applied3 = await until(async () => { const h = await health(); return h && h.pid !== applied1.pid ? h : null; }, 80);
     row("a hotfix skips the floor", !!applied3 && onDisk() === r3.sha && sha256(readFileSync(prev)) === r1.sha,
       !applied3 ? "no new process in 20 s" : `pid ${applied1.pid} → ${applied3.pid}; on disk is ${onDisk() === r3.sha ? "the hotfix" : "not the hotfix"}; .prev is ${sha256(readFileSync(prev)) === r1.sha ? "the one before" : "something else"}`);
@@ -186,6 +222,13 @@ async function main() {
     const held = await health();
     row("a working agent holds an update back", !!staged4 && held.pid === applied3.pid && held.update.show === true,
       !staged4 ? "never staged" : `pid unchanged ${held.pid === applied3.pid}; the pill would show: ${held.update.show}`);
+    // The turn stops on an approval: applying now would take the question
+    // away unanswered.
+    await postT(`/api/panes/${pane}/agent`, { state: "needs_you", session });
+    await sleep(EVERY_S * 2000 + 2500);
+    const asking = await health();
+    row("an agent waiting on an approval holds it back too", !!asking && asking.pid === applied3.pid,
+      `pid unchanged ${!!asking && asking.pid === applied3.pid}`);
     await postT(`/api/panes/${pane}/agent`, { state: "done", session });
     const applied4 = await until(async () => { const h = await health(); return h && h.pid !== applied3.pid ? h : null; }, 80);
     const list = applied4 && (await desks()).find(d => d.id === desk);
@@ -208,9 +251,11 @@ async function main() {
     // A build that will not start: the file is placed, the successor never
     // answers, the old file is put back, and health says so.
     const r5 = release(v(5), Buffer.from("#!/bin/sh\nexit 1\n"), { hotfix: v(5) });
-    const rolled = await until(async () => { const h = await health(); return h && h.update.failed === r5.version ? h : null; }, 160);
+    // The old daemon gives its successor 30 s before it decides nothing
+    // came up.
+    const rolled = await until(async () => { const h = await health(); return h && h.update.failed === r5.version ? h : null; }, 200);
     row("a build that will not start is rolled back and marked failed", !!rolled && onDisk() === r3.sha && rolled.pid !== back.pid,
-      !rolled ? "health never said failed in 40 s" : `failed ${rolled.update.failed}; on disk is ${onDisk() === r3.sha ? "the kept version" : "something else"}; pid ${back.pid} → ${rolled.pid}`);
+      !rolled ? "health never said failed in 50 s" : `failed ${rolled.update.failed}; on disk is ${onDisk() === r3.sha ? "the kept version" : "something else"}; pid ${back.pid} → ${rolled.pid}`);
     if (!rolled) return;
     await sleep(EVERY_S * 2000 + 500);
     const still = await health();
@@ -261,10 +306,45 @@ async function main() {
       const clicked = await until(async () => { const h = await health(); return h && h.pid !== asked.pid ? h : null; }, 80);
       row("a click on the pill restarts onto the staged version", !!clicked && onDisk() === sha256(stamped(v(7))),
         clicked ? `pid ${asked.pid} → ${clicked.pid}; on disk is ${onDisk() === sha256(stamped(v(7))) ? "the release" : "not the release"}` : "no new process in 20 s");
+      // The page reloads onto the new build, which says what happened once.
+      // Every release here is this one binary with bytes on the end, so the
+      // number it names is the one the new daemon reports, not v(7).
+      const landed = await until(async () => {
+        const t = await evaluate(browser.cdp, sessionId, `(() => { const e = document.getElementById("upd"); return e && !e.hidden ? e.textContent : ""; })()`).catch(() => "");
+        return t && /^Updated to/.test(t) ? t : null;
+      }, 80);
+      row("the page back on the new build says it was updated", !!landed && !!clicked && landed.includes(clicked.version),
+        landed ? `pill says ${JSON.stringify(landed)}` : "no \"Updated to\" pill in 20 s");
     } else {
       await cli("update", "on").catch(() => {});
       row("with a page in front the pill appears", true, "skipped: no Chromium here (--no-browser, or none installed)");
     }
+
+    // A window from before 1.7 says `window=1` and no number. After an
+    // update, it is asked to quit, and once its stream has ended and stayed
+    // ended a moment, started again -- once. The "window" is a script beside
+    // the daemon that writes down how it was started, carried by the
+    // release as a window would be.
+    await until(async () => onDisk() === sha256(stamped(v(7))), 80);
+    const appLog = join(tmp, "app.log");
+    const fakeApp = tag => Buffer.from(`#!/bin/sh\n# ${tag}\necho "$*" >> '${appLog}'\n`);
+    writeFileSync(join(bin, "snyvi-app"), fakeApp("old"), { mode: 0o755 });
+    // The daemon looks for a window beside it when it starts.
+    const hb = await health();
+    await cli("restart", "--now").catch(() => {});
+    const hw = await until(async () => { const h = await health(); return h && hb && h.pid !== hb.pid ? h : null; }, 80);
+    release(v(8), stamped(v(8)), { app: fakeApp(v(8)), appMin: v(8) });
+    try { out = await cli("update", "--now"); } catch (e) { out = `exit ${e.status}: ${e.stderr}`; }
+    const hu = await until(async () => { const h = await health(); return h && hw && h.pid !== hw.pid ? h : null; }, 80);
+    const logged = () => existsSync(appLog) ? readFileSync(appLog, "utf8") : "";
+    const ac = new AbortController();
+    fetch(`${base}/api/events?window=1`, { signal: ac.signal }).then(r => r.body.getReader().read()).catch(() => {});
+    const quit = await until(async () => /--quit/.test(logged()), 40);
+    ac.abort();
+    const again = await until(async () => /window=1/.test(logged()) ? logged() : null, 40);
+    const quits = (logged().match(/--quit/g) || []).length;
+    row("a window too old to say its number is asked to quit and started again, once", !!hu && !!quit && !!again && quits === 1,
+      !hu ? `the update did not land: ${out.trim().split("\n").pop()}` : `the window was started with: ${JSON.stringify(logged().trim().split("\n"))}`);
 
     // A build under target/ never checks, and says so when asked.
     const devDir = join(tmp, "target", "release");

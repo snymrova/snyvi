@@ -1320,36 +1320,57 @@
   renderLive();
 
   /** The update pill beside it, from the daemon's `update` block. Shown
-   *  only when the daemon says so: the day's slot is open or the reader
-   *  asked, a version failed to start, or the file on disk is newer than
-   *  the daemon. A click restarts onto the staged version once the panels
-   *  are quiet; in a tab, which holds no capability, or on an install that
-   *  is only told, it opens About, which says what to run. */
+   *  when the daemon says so -- the day's slot is open or the reader asked,
+   *  a version failed to start, the file on disk is newer than the daemon --
+   *  while a restart waits for the panels to be quiet, and for one session
+   *  after an update landed, so a desk that came back is explained. A click
+   *  restarts onto the staged version once the panels are quiet; in a tab,
+   *  which holds no capability, on an install that is only told, or while a
+   *  restart waits, it opens About, which says what to run and holds Now
+   *  and Cancel. */
   const updEl = $("#upd");
-  let upd = null, updWaiting = false;
+  let upd = null, updWaiting = false, updFresh = null;
+  const DAY = 86400;
   function renderUpd() {
     const u = upd;
     let text = "", cls = "", title = "";
-    if (u && u.show) {
-      if (u.ready) { text = updWaiting ? "Restarting…" : `Restart to update · ${u.ready}`; cls = (u.amber ? "amber " : "") + (updWaiting ? "waiting" : ""); title = "Restarts once no panel is busy; Claude panels come back with their conversation"; }
+    const r = u && u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
+    if (u && (u.restarting || updWaiting)) { text = "Restarting…"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
+    else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting…"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
+    else if (u && u.show) {
+      if (u.ready) { text = capability ? `Restart to update · ${u.ready}` : `Update ready · ${u.ready}`; cls = u.amber ? "amber" : ""; title = capability ? "Restarts once no panel is busy; Claude panels come back with their conversation" : "The window restarts it; About says more"; }
       else if (u.failed_recent) { text = `${u.failed} did not start · kept ${boot.version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
       else if (u.available) { text = `${u.available} is out · how`; title = "This install is updated by hand; About says how"; }
-      else if (u.stale) { text = updWaiting ? "Restarting…" : "Restart to update"; cls = updWaiting ? "waiting" : ""; title = "The snyvi on disk is newer than the one running"; }
+      else if (u.stale) { text = capability ? "Restart to update" : "Update ready"; title = "The snyvi on disk is newer than the one running"; }
+    }
+    // Updated: once per landing, kept for the page it was first shown on.
+    const at = u && u.last_applied;
+    if (!text && at && Date.now() / 1000 - at < DAY && updFresh !== -1) {
+      let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
+      if (updFresh === at || seen !== String(at)) {
+        updFresh = at; try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
+        text = `Updated to ${boot.version} · what's new`; cls = "quiet updated"; title = "About has the release notes";
+      }
     }
     updEl.hidden = !text;
     if (!text) return;
     updEl.textContent = text; updEl.className = `upd ${cls}`.trim(); updEl.title = title;
+    updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
+    updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
   }
   function setUpd(u) { upd = u && typeof u === "object" ? u : null; renderUpd(); }
   updEl.addEventListener("click", async () => {
     const u = upd;
-    if (!u) return;
-    if ((u.ready || (u.stale && !u.failed_recent)) && capability && !updWaiting) {
+    if (!u || u.restarting || updWaiting) return;
+    if (!u.restart && (u.ready || (u.stale && !u.failed_recent)) && capability) {
       updWaiting = true; renderUpd();
-      try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); }
+      // The daemon's `update` event says what the restart waits on; until
+      // it comes, this pill says Restarting.
+      try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
       catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", String(e)); }
       return;
     }
+    if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }
     panel("about");
   });
 

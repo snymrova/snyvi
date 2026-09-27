@@ -61,11 +61,26 @@ const GIT_AT_MOST: Duration = Duration::from_secs(60);
 /// that waits for quiet. A build that prints a line a minute is not done; a
 /// shell at its prompt has printed nothing for longer than this.
 pub const BUSY_OUTPUT: Duration = Duration::from_secs(90);
-/// How long a resume mark is honoured after the daemon that set it went. A
-/// window that comes back sooner starts `claude --resume` in the marked
-/// panes; one that comes back a morning later gets a shell, because a
-/// conversation that old is the reader's to pick up, not a restart's to assume.
+/// How long a resume mark is honoured once someone looks: the clock starts
+/// at the first desk a window shows after the daemon came up, not at the
+/// start -- an update applied while nobody was here must not have spent the
+/// marks before anyone could see them. A window that shows a desk within
+/// this starts `claude --resume` in the marked panes; after it, an unspent
+/// mark becomes an offer (`Status::offer`), because a conversation left that
+/// long is the reader's to pick up, not a restart's to assume. See
+/// `Panes::arm_marks`.
 const RESUME_FOR: Duration = Duration::from_secs(5 * 60);
+/// However long nobody looks, the marks and offers go this long after the
+/// daemon came up: a conversation a day old is not coming back by itself.
+const MARKS_AT_MOST: Duration = Duration::from_secs(24 * 3600);
+/// An agent that says `working` and has printed nothing this long is not
+/// working: a Claude stopped with Esc says nothing more, while one that is
+/// working repaints its spinner every second.
+const WORKING_SILENT: Duration = Duration::from_secs(10 * 60);
+/// A pane busy only because its program keeps printing -- a log tail, a
+/// watcher, a dev server -- counts for at most this long, or an update
+/// would wait on it forever.
+const PRINTING_AT_MOST: Duration = Duration::from_secs(2 * 3600);
 
 /// What the rail and the sidebar say about a pane, sent whenever it changes.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -101,13 +116,14 @@ pub struct Status {
     /// a planned restart -- so the window's next start of it should be
     /// `claude --resume` rather than the shell. Set by `mark_resume` for a
     /// pane that has not run since, cleared by its first start, and honoured
-    /// for `RESUME_FOR` after the daemon came up. The page reads it off the
-    /// same status frame that tells it the pane lost its process.
+    /// for `RESUME_FOR` after a window first shows a desk. The page reads it
+    /// off the same status frame that tells it the pane lost its process.
     pub resume: bool,
     /// Claude was open in this pane when the last daemon stopped without
-    /// planning to (`snyvi stop`, a signal, a reboot): nothing starts it
-    /// again, but the page offers the conversation back with one click.
-    /// Cleared by the pane's first start, like `resume`.
+    /// planning to (`snyvi stop`, a signal, a reboot), or it was marked to
+    /// resume and nobody looked in time: nothing starts it again, but the
+    /// page offers the conversation back with one click. Cleared by the
+    /// pane's first start, like `resume`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub offer: bool,
     /// The folder the shell is in now, as the kernel says -- not where it was
@@ -168,6 +184,9 @@ struct Inner {
     /// When the process last printed anything, for `busy`: a pane whose
     /// program is still writing is not one to restart the daemon under.
     wrote: Instant,
+    /// When the present run of output began: the first print after
+    /// `busy_output` of quiet. See `PRINTING_AT_MOST`.
+    printing_since: Instant,
 }
 
 impl Inner {
@@ -211,6 +230,9 @@ pub struct Start<'a> {
     pub accent: &'a str,
 }
 
+/// Told a panel's id and the folder its shell is now in.
+type CwdSink = Box<dyn Fn(&str, &str) + Send + Sync>;
+
 pub struct Panes {
     live: Mutex<HashMap<String, Arc<Live>>>,
     dir: PathBuf,
@@ -224,16 +246,12 @@ pub struct Panes {
     /// What each pane last said on that stream: `(running, blocked, agent)`.
     /// Forgotten with the pane.
     told: Mutex<HashMap<String, (bool, bool, &'static str)>>,
-    /// The panes the last daemon marked on its planned way out, and until
-    /// when the mark holds. See `Status::resume`.
-    resume: Mutex<(std::collections::HashSet<String>, Instant)>,
-    /// The panes that had Claude open when the last daemon stopped without
-    /// planning to, for the page to offer the conversation back. See
-    /// `Status::offer`. Held for as long as a resume mark is.
-    offer: Mutex<(std::collections::HashSet<String>, Instant)>,
+    /// The panes the last daemon marked to resume or to offer, and the
+    /// clocks on them. See `Marks`.
+    marks: Mutex<Marks>,
     /// Where a pane's shell has moved to is written down through this -- the
     /// store's `set_pane_cwd`, given by the server, since panes have no store.
-    cwd_sink: Mutex<Option<Box<dyn Fn(&str, &str) + Send + Sync>>>,
+    cwd_sink: Mutex<Option<CwdSink>>,
 }
 
 impl Panes {
@@ -244,8 +262,7 @@ impl Panes {
             git: Mutex::new(HashMap::new()),
             events,
             told: Mutex::new(HashMap::new()),
-            resume: Mutex::new((Default::default(), Instant::now())),
-            offer: Mutex::new((Default::default(), Instant::now())),
+            marks: Mutex::new(Marks::default()),
             cwd_sink: Mutex::new(None),
         });
         // A daemon killed rather than stopped keeps what it had up to the
@@ -298,6 +315,7 @@ impl Panes {
                 run: 0,
                 cwd: String::new(),
                 wrote: Instant::now(),
+                printing_since: Instant::now(),
             }),
             tx,
             wake: Notify::new(),
@@ -371,10 +389,7 @@ impl Panes {
             })
     }
 
-    /// The panes a restart should wait for: a process is running and its
-    /// agent says `working`, or it printed something in the last
-    /// `BUSY_OUTPUT`. A pane that `needs_you`, is `done`, or sits at a prompt
-    /// is quiet, and so is a stopped one.
+    /// The panes a restart should wait for, and an update: see `is_busy`.
     pub fn busy(&self) -> Vec<String> {
         let now = Instant::now();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
@@ -382,7 +397,11 @@ impl Panes {
             .iter()
             .filter(|l| {
                 let i = l.inner.lock().unwrap();
-                is_busy(&i.status, now.saturating_duration_since(i.wrote))
+                is_busy(
+                    &i.status,
+                    now.saturating_duration_since(i.wrote),
+                    now.saturating_duration_since(i.printing_since),
+                )
             })
             .map(|l| l.id.clone())
             .collect();
@@ -405,50 +424,75 @@ impl Panes {
     }
 
     /// The panes the last daemon marked on its planned way out. Read from
-    /// the store once at start and held here for `RESUME_FOR`; a window that
-    /// asks for one of them back in that time gets `claude --resume`.
+    /// the store once at start and held until someone looks, and then for
+    /// `RESUME_FOR` (see `arm_marks`); a window that asks for one of them
+    /// back in that time gets `claude --resume`, and after it the offer.
     pub fn mark_resume(&self, ids: Vec<String>) {
-        self.mark_resume_for(ids, RESUME_FOR);
+        {
+            let mut m = self.marks.lock().unwrap();
+            m.resume = ids.into_iter().collect();
+            m.resume_until = None;
+            m.cap = Instant::now() + MARKS_AT_MOST;
+        }
+        self.refresh_marks();
     }
 
-    fn mark_resume_for(&self, ids: Vec<String>, ttl: Duration) {
-        let until = Instant::now() + ttl;
-        *self.resume.lock().unwrap() = (ids.into_iter().collect(), until);
-        // A pane already woken -- a page arrived before the marks were read,
-        // which the order in `server::run` rules out, but cheap to hold to.
+    /// The first desk a window shows after the daemon came up starts the
+    /// resume marks' clock. Once per daemon: a later look is not a first.
+    pub fn arm_marks(&self) {
+        {
+            let mut m = self.marks.lock().unwrap();
+            if m.resume_until.is_some() {
+                return;
+            }
+            m.resume_until = Some(Instant::now() + resume_for());
+        }
+        self.refresh_marks();
+    }
+
+    /// A pane already woken says what the marks say now -- a page arrived
+    /// before the marks were read, which the order in `server::run` rules
+    /// out, or a mark lapsed into an offer. Cheap to hold to.
+    fn refresh_marks(&self) {
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in live {
-            let marked = self.marked(&l.id);
+            let (marked, offered) = (self.marked(&l.id), self.offered(&l.id));
             let mut i = l.inner.lock().unwrap();
             if !i.status.running {
                 i.status.resume = marked;
+                i.status.offer = offered;
             }
         }
     }
 
     fn marked(&self, id: &str) -> bool {
-        let r = self.resume.lock().unwrap();
-        Instant::now() < r.1 && r.0.contains(id)
+        self.marks.lock().unwrap().resume(id, Instant::now())
     }
 
     fn unmark(&self, id: &str) {
-        self.resume.lock().unwrap().0.remove(id);
-        self.offer.lock().unwrap().0.remove(id);
+        let mut m = self.marks.lock().unwrap();
+        m.resume.remove(id);
+        m.offer.remove(id);
     }
 
     /// The panes that had Claude open when the last daemon stopped unplanned:
-    /// read once at start, like `mark_resume`, and held as long.
+    /// read once at start, like `mark_resume`, and held as long as a mark
+    /// can be.
     pub fn mark_offer(&self, ids: Vec<String>) {
-        *self.offer.lock().unwrap() = (ids.into_iter().collect(), Instant::now() + RESUME_FOR);
+        {
+            let mut m = self.marks.lock().unwrap();
+            m.offer = ids.into_iter().collect();
+            m.cap = Instant::now() + MARKS_AT_MOST;
+        }
+        self.refresh_marks();
     }
 
     fn offered(&self, id: &str) -> bool {
-        let r = self.offer.lock().unwrap();
-        Instant::now() < r.1 && r.0.contains(id)
+        self.marks.lock().unwrap().offer(id, Instant::now())
     }
 
     /// How a moved shell's folder is written down. Set once, by the server.
-    pub fn on_cwd(&self, sink: Box<dyn Fn(&str, &str) + Send + Sync>) {
+    pub fn on_cwd(&self, sink: CwdSink) {
         *self.cwd_sink.lock().unwrap() = Some(sink);
     }
 
@@ -679,11 +723,68 @@ impl Panes {
     }
 }
 
-/// Whether a pane is one a restart should wait for. The rule on its own,
-/// so it can be read and tested without a process: a running pane whose
-/// agent is mid-turn, or that printed something less than `BUSY_OUTPUT` ago.
-pub fn is_busy(s: &Status, since_output: Duration) -> bool {
-    s.running && (s.agent == "working" || since_output < busy_output())
+/// Whether a pane is one a restart should wait for, and an update. The
+/// rule on its own, so it can be read and tested without a process. A
+/// running pane is busy while its agent waits on the reader (`needs_you`:
+/// a restart would take the question away unanswered), while it is mid-turn
+/// and printing (`WORKING_SILENT`), or while its program printed something
+/// less than `BUSY_OUTPUT` ago, for at most `PRINTING_AT_MOST` of unbroken
+/// printing. `since_output` is how long since it last printed, and
+/// `printing_for` how long the present run of printing has gone on.
+pub fn is_busy(s: &Status, since_output: Duration, printing_for: Duration) -> bool {
+    if !s.running {
+        return false;
+    }
+    match s.agent {
+        "needs_you" => true,
+        "working" => since_output < WORKING_SILENT,
+        _ => since_output < busy_output() && printing_for < PRINTING_AT_MOST,
+    }
+}
+
+/// The panes the last daemon marked, and their clocks. A resume mark holds
+/// from the start until `resume_until`, which is unset until someone looks;
+/// past it, an unspent mark is an offer. Everything goes at `cap`.
+struct Marks {
+    resume: std::collections::HashSet<String>,
+    offer: std::collections::HashSet<String>,
+    resume_until: Option<Instant>,
+    cap: Instant,
+}
+
+impl Default for Marks {
+    fn default() -> Marks {
+        Marks {
+            resume: Default::default(),
+            offer: Default::default(),
+            resume_until: None,
+            cap: Instant::now(),
+        }
+    }
+}
+
+impl Marks {
+    fn resume(&self, id: &str, now: Instant) -> bool {
+        now < self.cap && self.resume_until.is_none_or(|t| now < t) && self.resume.contains(id)
+    }
+    fn offer(&self, id: &str, now: Instant) -> bool {
+        now < self.cap
+            && (self.offer.contains(id)
+                || (self.resume.contains(id) && self.resume_until.is_some_and(|t| now >= t)))
+    }
+}
+
+/// `RESUME_FOR`, unless `SNYVI_RESUME_S` says otherwise, for
+/// bench/restart.mjs, which cannot wait five minutes. Read once.
+fn resume_for() -> Duration {
+    static FOR: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *FOR.get_or_init(|| {
+        std::env::var("SNYVI_RESUME_S")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(RESUME_FOR)
+    })
 }
 
 /// `BUSY_OUTPUT`, unless `SNYVI_QUIET_S` says otherwise: bench/restart.mjs
@@ -876,6 +977,7 @@ impl Live {
             ..Status::default()
         };
         i.wrote = Instant::now();
+        i.printing_since = i.wrote;
         i.unsaved = true;
         panes.unmark(&self.id);
         let status = i.status.clone();
@@ -972,11 +1074,16 @@ fn read_loop(me: std::sync::Weak<Live>, mut reader: Box<dyn Read + Send>, run: u
                 proc,
                 unsaved,
                 wrote,
+                printing_since,
                 ..
             } = &mut *i;
             screen.feed(parser, &buf[..n]);
             *unsaved = true;
-            *wrote = Instant::now();
+            let now = Instant::now();
+            if now.saturating_duration_since(*wrote) >= busy_output() {
+                *printing_since = now;
+            }
+            *wrote = now;
             if !screen.replies.is_empty() {
                 let replies = std::mem::take(&mut screen.replies);
                 if let Some(p) = proc.as_mut() {
@@ -1261,12 +1368,14 @@ mod tests {
         assert_eq!(kept[10], "new");
     }
 
-    /// The quiet predicate, over what a restart looks at: an agent mid-turn
-    /// or a program still printing is busy; a stopped pane, a pane waiting
-    /// on its reader, one that finished a turn, and one at its prompt for a
-    /// while are not.
+    /// The quiet predicate, over what a restart and an update look at: an
+    /// agent waiting on its reader, one mid-turn, or a program still
+    /// printing is busy; a stopped pane, one that finished a turn, and one
+    /// at its prompt for a while are not -- and neither is an agent silent
+    /// past `WORKING_SILENT`, nor a program that has printed without a
+    /// break for `PRINTING_AT_MOST`.
     #[test]
-    fn a_restart_waits_for_working_agents_and_recent_output_only() {
+    fn a_restart_waits_for_agents_and_recent_output_but_not_forever() {
         let s = |running: bool, agent: &'static str| Status {
             running,
             agent,
@@ -1274,21 +1383,63 @@ mod tests {
         };
         let long_ago = BUSY_OUTPUT + Duration::from_secs(1);
         let just_now = Duration::from_secs(1);
-        assert!(is_busy(&s(true, "working"), long_ago));
-        assert!(is_busy(&s(true, ""), just_now));
-        assert!(is_busy(&s(true, "done"), just_now));
-        assert!(!is_busy(&s(true, ""), long_ago));
-        assert!(!is_busy(&s(true, "needs_you"), long_ago));
-        assert!(!is_busy(&s(true, "done"), long_ago));
-        assert!(!is_busy(&s(false, "working"), just_now));
-        assert!(!is_busy(&s(false, ""), just_now));
+        let a_while = Duration::from_secs(60);
+        let silent = WORKING_SILENT + Duration::from_secs(1);
+        let for_ever = PRINTING_AT_MOST + Duration::from_secs(1);
+        assert!(is_busy(&s(true, "working"), long_ago, a_while));
+        assert!(is_busy(&s(true, ""), just_now, a_while));
+        assert!(is_busy(&s(true, "done"), just_now, a_while));
+        assert!(!is_busy(&s(true, ""), long_ago, a_while));
+        assert!(!is_busy(&s(true, "done"), long_ago, a_while));
+        // An approval waiting is never cut off, however long it waits.
+        assert!(is_busy(&s(true, "needs_you"), long_ago, a_while));
+        assert!(is_busy(&s(true, "needs_you"), silent, for_ever));
+        // A turn stopped with Esc says `working` and nothing more.
+        assert!(!is_busy(&s(true, "working"), silent, a_while));
+        // A log tail is busy for two hours, and then it is not.
+        assert!(is_busy(&s(true, ""), just_now, PRINTING_AT_MOST - a_while));
+        assert!(!is_busy(&s(true, ""), just_now, for_ever));
+        assert!(!is_busy(&s(true, "done"), just_now, for_ever));
+        assert!(!is_busy(&s(false, "working"), just_now, a_while));
+        assert!(!is_busy(&s(false, "needs_you"), just_now, a_while));
+        assert!(!is_busy(&s(false, ""), just_now, a_while));
+    }
+
+    /// The marks wait for someone to look: ten minutes with nobody here
+    /// spends nothing. The first look starts `RESUME_FOR`; past it, an
+    /// unspent resume is an offer; past the cap, nothing is either.
+    #[test]
+    fn a_mark_waits_for_a_look_then_lapses_into_an_offer() {
+        let t0 = Instant::now();
+        let m = |until: Option<Instant>| Marks {
+            resume: ["r".to_string()].into(),
+            offer: ["o".to_string()].into(),
+            resume_until: until,
+            cap: t0 + MARKS_AT_MOST,
+        };
+        let later = t0 + Duration::from_secs(10 * 60);
+        // Nobody has looked: a resume holds, however long.
+        assert!(m(None).resume("r", later));
+        assert!(!m(None).offer("r", later));
+        assert!(m(None).offer("o", later));
+        // Looked at ten minutes: it holds five more, then is an offer.
+        let armed = m(Some(later + RESUME_FOR));
+        assert!(armed.resume("r", later + Duration::from_secs(60)));
+        assert!(!armed.resume("r", later + RESUME_FOR));
+        assert!(armed.offer("r", later + RESUME_FOR));
+        assert!(!armed.resume("o", later), "an offer is never a resume");
+        // A day on, nothing is anything.
+        let day = t0 + MARKS_AT_MOST;
+        assert!(!m(None).resume("r", day));
+        assert!(!armed.offer("r", day));
+        assert!(!armed.offer("o", day));
     }
 
     /// A mark is carried on the pane's status until its first start, whether
-    /// the pane was woken before or after the marks were read, and it is not
-    /// honoured past its time.
+    /// the pane was woken before or after the marks were read, and past its
+    /// time it is an offer.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_expires() {
+    async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_lapses() {
         let dir = crate::store::tempdir::Dir::new("snyvi-pane-mark");
         let (events, _) = broadcast::channel(16);
         let panes = Panes::new(&dir.path, events);
@@ -1327,9 +1478,12 @@ mod tests {
             panes.get(late).stop();
         }
         assert!(panes.status(early).resume, "the other mark is untouched");
-        // Past its time, a mark is a mark no more.
-        panes.mark_resume_for(vec![early.into()], Duration::ZERO);
+        // Past its time, a mark is an offer: the woken pane says so too.
+        panes.arm_marks();
+        panes.marks.lock().unwrap().resume_until = Some(Instant::now());
+        panes.refresh_marks();
         assert!(!panes.status(early).resume);
+        assert!(panes.status(early).offer);
         assert!(!panes.get(never).attach().0[0].contains("\"resume\":true"));
     }
 

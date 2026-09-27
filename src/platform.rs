@@ -701,8 +701,57 @@ pub fn terminate(pid: u32, force: bool) {
 /// created inheriting none -- which also leaves it without standard streams,
 /// and a write to a stdout or stderr that a process does not have is a write
 /// that goes nowhere rather than an error.
+///
+/// Where there are standard streams to give (not Windows, for the reason
+/// above), the daemon's go to `daemon.log` beside the store, appended to:
+/// a restart that went wrong is otherwise a daemon that says why to
+/// nobody. Over `DAEMON_LOG_MAX` it is moved to `daemon.log.1` first.
 pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(not(windows))]
+    {
+        if let Some(log) = open_daemon_log(&crate::config::paths().data_dir) {
+            let err = log.try_clone()?;
+            let mut cmd = Command::new(exe);
+            cmd.arg("serve")
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(log))
+                .stderr(Stdio::from(err));
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            cmd.spawn()?;
+            return Ok(());
+        }
+    }
     spawn_detached(exe, &["serve"])
+}
+
+#[cfg(not(windows))]
+const DAEMON_LOG_MAX: u64 = 1 << 20;
+
+/// Where a daemon started by snyvi writes what it says. `snyvi status`
+/// names it.
+pub fn daemon_log(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("daemon.log")
+}
+
+#[cfg(not(windows))]
+fn open_daemon_log(data_dir: &std::path::Path) -> Option<std::fs::File> {
+    let path = daemon_log(data_dir);
+    std::fs::create_dir_all(data_dir).ok()?;
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > DAEMON_LOG_MAX) {
+        let _ = std::fs::rename(&path, data_dir.join("daemon.log.1"));
+    }
+    let mut o = std::fs::OpenOptions::new();
+    o.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(&path).ok()
 }
 
 /// The same detached start for any of snyvi's own commands: `serve`, `app`
