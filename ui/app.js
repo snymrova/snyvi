@@ -1359,8 +1359,11 @@
     let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
     if (JSON.stringify(a.rows) === agentsSeen) return;
     const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
+    // And the fold of the other agents: a row turning is no reason to shut it.
+    const more = !!docEl.querySelector(".agents-more[open]");
     docEl.innerHTML = connectHtml(a);
     for (const id of open) docEl.querySelector(`.agent[data-agent="${CSS.escape(id)}"] details`)?.setAttribute("open", "");
+    if (more) docEl.querySelector(".agents-more")?.setAttribute("open", "");
   }
 
   /** The count beside the brand mark: how many agents hold a stream on the

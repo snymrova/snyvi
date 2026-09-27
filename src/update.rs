@@ -815,11 +815,18 @@ impl Updater {
     /// `Ask` for what a person's check does that the timer's does not. `to`
     /// is one release's manifest, for `--to`, and may go down.
     pub fn check(&self, ask: Ask, to: Option<&str>) -> Result<Checked> {
-        let _one = match self.op.try_lock() {
-            Ok(g) => g,
-            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => {
-                bail!("a check, an apply or a rollback is already running")
+        // A person's check waits for one under way -- the timer's, staging
+        // the very release they asked about -- and then answers from what it
+        // left; the timer's own check just skips its turn.
+        let _one = if ask.fresh {
+            self.op()
+        } else {
+            match self.op.try_lock() {
+                Ok(g) => g,
+                Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    bail!("a check, an apply or a rollback is already running")
+                }
             }
         };
         if self.channel == Channel::Dev {

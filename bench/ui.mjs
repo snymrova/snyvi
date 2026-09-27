@@ -1989,7 +1989,11 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   const size = `(() => { const t = document.querySelector(".dk .pn-scr")?.innerText || ""; const m = /(\\d+) (\\d+)/.exec(t); return m ? m[2] + "x" + m[1] : ""; })()`;
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    // The panes were started at 80x24 before the page fitted them: the size to
+    // come back to is the one they settle at.
     await until(`(${size}) !== ""`);
+    await until(`(${size}) !== "80x24"`, 30);
+    await sleep(300);
     const was = await q.ev(size);
     await walk(q, "a desk");
     await q.ev(`document.querySelector(".dk .pn-body").focus(); 1`);
@@ -2163,7 +2167,7 @@ async function startRows(p, url, arrive, base) {
   await p.clickOn("#btn-start");
   const drawn = await until(`document.querySelectorAll(".start .start-sec").length === 6`);
   const ids = await p.ev(`[...document.querySelectorAll(".start .start-sec")].map(s => s.id).join(" ")`);
-  rows.push(["/start has its six sections", drawn && ids === "arrives waiting versions desks notes keys" && (await p.ev("location.pathname")) === "/start",
+  rows.push(["/start has its six sections", drawn && ids === "desks notes arrives waiting versions keys" && (await p.ev("location.pathname")) === "/start",
     drawn ? ids : "the page did not draw"]);
 
   // Each Show me: exactly one element lit, nothing else moved.
@@ -2259,10 +2263,14 @@ async function connectRows(p, url, home, env) {
   const opened = await until(`location.pathname === "/connect" && document.querySelectorAll(".connect .agent").length >= 8`);
   const served = await p.ev(`fetch("/api/agents").then(r => r.json())`);
   const names = await p.ev(`[...document.querySelectorAll(".agent-name")].map(e => e.textContent)`);
-  const same = opened && JSON.stringify(names) === JSON.stringify(served.rows.map(r => r.name));
+  // Claude Code and whatever has been set up or has sent first; the rest in
+  // the daemon's order under "Using a different agent?".
+  const first = r => r.id === "claude" || r.id.startsWith("sender:") || (r.state && r.state !== "not_set_up") || r.live;
+  const order = [...served.rows.filter(first), ...served.rows.filter(r => !first(r))].map(r => r.name);
+  const same = opened && names[0] === "Claude Code" && JSON.stringify(names) === JSON.stringify(order);
   const allOff = same && (await p.ev(`[...document.querySelectorAll(".agent:not([data-agent^='sender:'])")].every(e => e.classList.contains("is-off"))`));
   rows.push(["? reaches it, one row per agent", offered && same && allOff,
-    !offered ? "no Connect an agent in the help box" : !opened ? "the page did not open" : !same ? `rows ${JSON.stringify(names)}` : !allOff ? "a row is not 'not set up' in a home that has never seen an agent" : `${names.length} rows, in the daemon's order, every agent not set up`]);
+    !offered ? "no Connect an agent in the help box" : !opened ? "the page did not open" : !same ? `rows ${JSON.stringify(names)}` : !allOff ? "a row is not 'not set up' in a home that has never seen an agent" : `${names.length} rows, Claude Code first, every agent not set up`]);
 
   const sender = await p.ev(`(() => { const e = document.querySelector('.agent[data-agent="sender:bench-agent"]'); return e && e.classList.contains("is-connected") && /sent/.test(e.querySelector(".agent-state").textContent); })()`);
   rows.push(["a sender it never heard of has a row", !!sender, sender ? "bench-agent, connected, with when it sent" : "no row for the MCP client that sent under its own name"]);
@@ -2280,6 +2288,8 @@ async function connectRows(p, url, home, env) {
   rows.push(["a row turns as its file does", stale && fixShown && connected && kept,
     !stale ? `Cursor stayed "${await stateOf("cursor")}" after its file named a path that is gone` : !fixShown ? "the fix is not the init command" : !connected ? "init cursor ran and the row did not turn" : !kept ? "the other server in the file was lost" : `needs fixing — "${says}" — then connected, the other entry kept`]);
 
+  // Codex is under "Using a different agent?", folded: opened as a reader would.
+  if (!(await p.ev(`!!document.querySelector(".agents-more")?.open`))) await p.clickOn(".agents-more > summary");
   const copyThere = await p.ui("vis", '.agent[data-agent="codex"] .agent-fix .copy');
   if (copyThere) await p.clickOn('.agent[data-agent="codex"] .agent-fix .copy');
   const copied = copyThere && await until(`document.querySelector('.agent[data-agent="codex"] .agent-fix .copy')?.textContent === "Copied"`, 10);
@@ -2317,9 +2327,9 @@ async function presenceRows(p, url, base, env, tmp) {
     !lit ? `the count reads "${one.n}" 4 s after an agent initialized` : h.agents["bench-agent"] !== 1 ? `health says ${JSON.stringify(h.agents)}` : `"1", lit, "${one.title}", and health agrees`]);
 
   await p.clickOn("#live");
-  const row = await until(`location.pathname === "/connect" && document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live") && /^online/.test(document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent)`, 40);
+  const row = await until(`location.pathname === "/connect" && document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live") && /^running now/.test(document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent)`, 40);
   const said = row && await p.ev(`document.querySelector('.agent[data-agent="sender:bench-agent"] .agent-state').textContent`);
-  rows.push(["the count opens the rows, and its row says online", row, row ? `the connect page, bench-agent "${said}"` : `at ${await p.ev("location.pathname")}, the row does not say online`]);
+  rows.push(["the count opens the rows, and its row says running now", row, row ? `the connect page, bench-agent "${said}"` : `at ${await p.ev("location.pathname")}, the row does not say running now`]);
 
   agent.stdin.end();
   const fell = await until(`document.querySelector("#live").textContent === "0" && !document.querySelector('.agent[data-agent="sender:bench-agent"]')?.classList.contains("is-live")`, 40);
@@ -2369,15 +2379,16 @@ async function resetRows(p, url, arrive) {
 
   await p.type(String(census.documents + 1));
   await p.press("Enter");
-  const landed = await until(`location.pathname === "/" && !!document.querySelector(".connect .agent")`, 80);
+  // A newcomer's window, with no desk: Welcome, at the inbox's address.
+  const landed = await until(`location.pathname === "/" && !!document.querySelector(".welcome")`, 80);
   const left = landed ? await p.ev(`(() => { try { return Object.keys(localStorage).filter(k => k.startsWith("snyvi.")); } catch { return []; } })()`) : [];
   const forgotten = landed && left.length === 0;
   const wideOff = landed && !(await p.ev(`document.documentElement.dataset.wide`));
   const empty = (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === 0;
   // The agents were not touched: the row the connect rows turned is still connected.
-  const stillConnected = landed && await p.ev(`document.querySelector('.agent[data-agent="cursor"]')?.classList.contains("is-connected")`);
+  const stillConnected = landed && await p.ev(`fetch("/api/agents").then(r => r.json()).then(a => a.rows.find(r => r.id === "cursor")?.state === "connected")`);
   rows.push(["and lands where a newcomer does", landed && forgotten && wideOff && empty && stillConnected,
-    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "the connect page, the width forgotten, nothing in storage, Cursor still connected"]);
+    !landed ? `on "${await p.ev("location.pathname")}" with title "${await p.ev("document.title")}"` : !forgotten ? `still in the page's storage: ${left.join(", ")}` : !wideOff ? "the width preference survived" : !empty ? "the daemon still has documents" : !stillConnected ? "the Cursor row no longer says connected" : "Welcome, the width forgotten, nothing in storage, Cursor still connected"]);
   return rows;
 }
 
