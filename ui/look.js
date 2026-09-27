@@ -16,6 +16,43 @@
  * where the reader is (`why`), and width and wrap themselves.
  */
 
+/* The foot column open: the beat each control arrives on, what each is,
+ * said beside it, and the column held open while it is answered. At rest
+ * the column is app.css's; none of this is on screen until the hand comes
+ * over it, which is also what fetches this file. The labels are the folded
+ * rail's icons' too. */
+const CSS = `
+.foot-rail > button:nth-child(2) { transition-delay: .02s; }
+.foot-rail > button:nth-child(3) { transition-delay: .05s; }
+.foot-rail > button:nth-child(4) { transition-delay: .08s; }
+.foot-rail > button:nth-child(5) { transition-delay: .11s; }
+.foot-rail > button:nth-child(6) { transition-delay: .14s; }
+.foot-rail > button:nth-child(7) { transition-delay: .17s; }
+/* What each one is, said beside it. These were \`title\`s, and the browser drew
+   them where it liked -- over the column, on its own schedule, covering the
+   very icons a reader was looking down to read. The name belongs next to the
+   column, not on top of it, and there is room to the right for all of them.
+   \`aria-label\` is what a screen reader was using all along; only the drawing
+   of it has changed. */
+.foot-rail > button { position: relative; }
+.foot-rail > button::after, #rail-nav > .icon::after { content: attr(data-label);
+  position: absolute; left: calc(100% + 9px); top: 50%; transform: translate(-3px, -50%); z-index: 32;
+  padding: 3px 8px; border-radius: 7px; background: var(--bg-raise); border: 1px solid var(--rule);
+  font-family: var(--sans); font-size: 11px; line-height: 1.35; font-weight: 500; color: var(--fg-2);
+  white-space: nowrap; pointer-events: none; opacity: 0;
+  transition: opacity .12s ease, transform .18s ease; }
+.foot-rail > button:hover::after, .foot-rail > button:focus-visible::after, #rail-nav > .icon:not(.on):is(:hover, :focus-visible)::after { opacity: 1; transform: translateY(-50%); }
+/* snyvi answers a press in that same strip of space to the right, which is
+   the point of answering there -- so while it is talking, the label steps
+   aside rather than being talked over. */
+.foot-rail > button.said::after { opacity: 0 !important; }
+/* And the column holds itself open for as long as it is being answered: the
+   pointer has usually left by then, and a tail pointing at the space where a
+   button used to be is worse than no tail at all. */
+.foot-rail:has(> button.said) > button { opacity: 1; transform: none; pointer-events: auto; }
+`;
+{ const s = document.createElement("style"); s.textContent = CSS; document.head.append(s); }
+
 /** Wire the buttons and fetch the other themes. Returns what the palette
  *  and the page call. */
 export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, sayTermSize }) {
