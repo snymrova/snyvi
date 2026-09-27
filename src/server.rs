@@ -3529,6 +3529,22 @@ struct AgentBody {
     /// The Claude Code session id, a UUID, when the event carried one.
     #[serde(default)]
     session: Option<String>,
+    /// From the status line (`snyvi statusline`): the model's name, and how
+    /// full its context window is.
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    ctx: Option<CtxBody>,
+}
+
+#[derive(Deserialize, Default)]
+struct CtxBody {
+    #[serde(default)]
+    pct: Option<f64>,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default)]
+    input: Option<u64>,
 }
 
 /// What the agent in a pane is doing, told by its hook (`snyvi hook`, run by
@@ -3558,10 +3574,24 @@ async fn pane_agent(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let live = match &b.state {
+    let mut live = match &b.state {
         Some(state) => app.panes.set_agent(&id, state),
         None => app.panes.is_running(&id),
     };
+    if live && (b.model.is_some() || b.ctx.is_some()) {
+        let c = b.ctx.unwrap_or_default();
+        let pct = c
+            .pct
+            .filter(|p| p.is_finite())
+            .map(|p| p.clamp(0.0, 100.0).round() as u8);
+        live = app.panes.set_context(
+            &id,
+            &crate::statusline::clean(b.model.as_deref().unwrap_or("")),
+            pct,
+            c.size.filter(|s| *s > 0),
+            c.input,
+        );
+    }
     if !live {
         return StatusCode::NOT_FOUND.into_response();
     }

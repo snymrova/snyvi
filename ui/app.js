@@ -2530,6 +2530,8 @@
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
   const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
+  /** The fullest context window among a desk's panels, as their status lines said. */
+  const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
   function renderDesks() {
     const list = state.desks ? state.desks.desks : [];
     let blocked = 0;
@@ -2549,7 +2551,7 @@
       // whether or not there is anything to say, so every row's line up.
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
-        `<span class="end"><span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
+        `<span class="end">${fullest(d) == null ? "" : `<span class="ctx${fullest(d) >= 85 ? " hot" : ""}" title="The fullest context window on this desk">${fullest(d)}%</span>`}<span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row

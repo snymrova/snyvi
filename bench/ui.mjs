@@ -1659,6 +1659,15 @@ async function panelRows(cdp, base, token) {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
     await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && /snyvi-bench/.test(document.querySelector('${P(pa)} .pn-scr')?.textContent || "")`);
 
+    // 1.7.1: what `snyvi statusline` tells a panel -- its model and how full
+    // its context window is -- is in the panel's head, amber from 85%.
+    const told = await fetch(`${base}/api/panes/${pa}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: 87.4, size: 200000, input: 174800 } }) });
+    const ctxShown = await until(`document.querySelector('${P(pa)} .pn-ctx')?.textContent === "87%"`, 30);
+    const ctxLook = await q.ev(`({ hot: !!document.querySelector('${P(pa)} .pn-ctx.hot'), title: document.querySelector('${P(pa)} .pn-ctx')?.title || "", row: document.querySelector('.dk-pane:has([data-focus="${pa}"]) .ctx')?.textContent || "" })`);
+    rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && ctxLook.row === "87%",
+      told.status !== 204 ? `the route answered ${told.status}` : !ctxShown ? "the head never showed it" : !ctxLook.hot ? "87% is not amber" : !ctxLook.row ? "the rail's row does not show it" : `"${ctxLook.title}", amber, and in the rail`]);
+
     // Full view, from the head's button, and back by the key.
     await q.hoverOn(`${P(pa)} .pn-head`);
     await q.clickOn(`${P(pa)} .pn-full`);

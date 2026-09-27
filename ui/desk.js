@@ -641,7 +641,7 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   const kept = keepStopped.delete(p.id);
@@ -841,6 +841,12 @@ const tilde = p => {
   return home && (p === home || p.startsWith(home + "/")) ? "~" + p.slice(home.length) : p;
 };
 const what = v => v.pane.name || v.status.title || v.status.cmd || v.pane.cmd || "shell";
+/** How full the agent's context window is, as its status line last said:
+ *  quiet under 70%, and the waiting amber from 85%, where Claude Code
+ *  itself starts to warn. Nothing at all for a shell. */
+const ctxPct = s => (s && s.ctx_pct != null ? s.ctx_pct : null);
+const ctxCls = p => (p >= 85 ? "ctx hot" : p >= 70 ? "ctx warm" : "ctx");
+const kTok = n => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 /** The conversation this pane last had, when there is one and Claude is not
  *  in the pane now. Checked here too: it is about to be a command line. */
 const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
@@ -855,6 +861,10 @@ function header(v) {
   $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";
   // An agent that reports through its hooks (Claude Code) says what it is
   // doing; anything else is only running, ringing, or ended.
+  const cp = ctxPct(s), cx = $(".pn-ctx");
+  cx.textContent = cp == null ? "" : `${cp}%`;
+  cx.className = "pn-ctx " + (cp == null ? "" : ctxCls(cp));
+  cx.title = cp == null ? "" : `${s.model ? s.model + " · " : ""}${cp}% of its context window${s.ctx_size ? ` (${kTok(s.ctx_size)})` : ""}${s.ctx_in ? ` · ${s.ctx_in.toLocaleString()} tokens in` : ""}`;
   $(".pn-state").textContent = s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
   v.el.classList.toggle("blk", !!s.blocked);
   v.el.classList.toggle("done", s.agent === "done");
@@ -1288,7 +1298,7 @@ function rail() {
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
     return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span></button>` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
@@ -1349,7 +1359,9 @@ function meta() {
     `<button type="button" data-a="rename" title="Rename desk" aria-label="Rename desk">${ico("pen")}</button>` +
     sure("drop", "", "Close the desk and its panels", "Close desk", ico("x")) + `</span></div>` +
     `<div class="row"><b>Folder</b><button type="button" class="dk-folder" data-a="reveal" title="Open ${esc(d.root)} in the file manager">${esc(tilde(d.root))}</button></div>`;
-  const low = v ? `<div class="row dk-pl"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.pid ? ` · pid ${s.pid}` : ""}${since ? ` · ${since}` : ""}</span></div>` : "";
+  const cp = ctxPct(s);
+  const low = v ? `<div class="row dk-pl"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.model ? ` · ${esc(s.model)}` : s.pid ? ` · pid ${s.pid}` : ""}` +
+    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}" title="${s.ctx_in ? `${s.ctx_in.toLocaleString()} tokens in` : ""}">${cp}%${s.ctx_size ? ` of ${kTok(s.ctx_size)}` : ""}</span>`}${since ? ` · ${since}` : ""}</span></div>` : "";
   // The panel's line ticks ("up 12s") on every frame that brings a status,
   // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
   // written alone while the rows above it are still the ones drawn here.
@@ -2249,6 +2261,13 @@ const CSS = `
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
+/* The context window, after the state: quiet, warmer from 70%, the waiting
+   amber from 85%. The rail's row and the meta's line wear the same three. */
+.pn-ctx:empty { display: none; }
+.ctx { color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.ctx.warm { color: var(--fg-2); }
+.ctx.hot { color: var(--warn); font-weight: 600; }
+.dk-focus .ctx { margin-left: auto; padding-left: 6px; font-size: 11px; }
 .pn.blk .pn-head { border-bottom: 2px solid var(--warn); }
 .pn.blk .pn-state { color: var(--warn); font-weight: 600; animation: pn-need .8s ease-out; }
 .pn.done .pn-state { color: var(--accent); }

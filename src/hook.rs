@@ -194,7 +194,8 @@ fn every_tool(entry: &Value) -> bool {
 pub fn install(command: &str, auto: bool) -> Result<(PathBuf, Vec<&'static str>, bool)> {
     let path = settings_path()?;
     let mut settings = read_settings(&path)?;
-    let (changed, rewritten) = install_into(&mut settings, command, auto)?;
+    let (mut changed, rewritten) = install_into(&mut settings, command, auto)?;
+    changed |= statusline_into(&mut settings, command)?;
     if changed {
         write_settings(&path, &settings)?;
     }
@@ -325,11 +326,25 @@ pub fn top_up() -> Result<bool> {
         return Ok(false);
     }
     let auto = have.iter().any(|(e, _)| *e == "PostToolUse");
-    let (changed, _) = install_into(&mut settings, &command.clone(), auto)?;
+    let command = command.clone();
+    let (mut changed, _) = install_into(&mut settings, &command, auto)?;
+    changed |= statusline_into(&mut settings, &command)?;
     if changed {
         write_settings(&path, &settings)?;
     }
     Ok(changed)
+}
+
+/// The status line beside the hooks, run by the same program: `X hook` gives
+/// `X statusline`. A reader's own line is kept for `crate::statusline` to run
+/// and for `uninstall` to give back.
+fn statusline_into(settings: &mut Value, hook_command: &str) -> Result<bool> {
+    let command = format!("{} statusline", hook_command.trim_end_matches(" hook"));
+    crate::statusline::install_into(
+        settings,
+        &command,
+        &crate::statusline::before_path(&crate::config::paths()),
+    )
 }
 
 /// Whether a hook command runs the binary at `exe`: its program, found on
@@ -356,10 +371,14 @@ pub fn uninstall() -> Result<(PathBuf, usize)> {
     let path = settings_path()?;
     let mut settings = read_settings(&path)?;
     let n = remove_from(&mut settings);
-    if n > 0 {
+    let line = crate::statusline::remove_from(
+        &mut settings,
+        &crate::statusline::before_path(&crate::config::paths()),
+    );
+    if n > 0 || line {
         write_settings(&path, &settings)?;
     }
-    Ok((path, n))
+    Ok((path, n + usize::from(line)))
 }
 
 pub fn remove_from(settings: &mut Value) -> usize {

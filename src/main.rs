@@ -20,6 +20,7 @@ mod screen;
 mod server;
 mod session;
 mod setup;
+mod statusline;
 mod store;
 /// `build.rs` compiles this one for itself -- it is what strips `ui/` on the
 /// way into the binary -- so the daemon never calls it and it is here only to
@@ -112,6 +113,8 @@ enum Cmd {
     Mcp,
     /// Claude Code hook (reads hook JSON on stdin): sends Markdown files Claude writes, and tells a desk panel what Claude in it is doing.
     Hook,
+    /// Claude Code status line (reads its JSON on stdin): tells a desk panel which model it is and how full its context window is. Prints nothing, or the status line you had before.
+    Statusline,
     /// Register snyvi with an agent: claude, codex, cursor, claude-desktop, gemini, windsurf, vscode or zed. Safe to run again.
     Init {
         /// Which agent. Alone, lists every agent and what each has of snyvi.
@@ -356,6 +359,7 @@ fn main() -> Result<()> {
         }
         Cmd::Mcp => mcp::run(paths),
         Cmd::Hook => hook::run(&paths),
+        Cmd::Statusline => statusline::run(&paths),
         Cmd::Init {
             agent: None,
             auto: _,

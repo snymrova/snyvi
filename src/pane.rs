@@ -104,6 +104,29 @@ pub struct Status {
     /// for `RESUME_FOR` after the daemon came up. The page reads it off the
     /// same status frame that tells it the pane lost its process.
     pub resume: bool,
+    /// Which model the agent in this pane is, and how full its context window
+    /// is, as Claude Code's status line said after its last reply
+    /// (`crate::statusline`). Empty for a shell or another agent, and cleared
+    /// with `agent` when the session ends.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_in: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx_at: Option<i64>,
+}
+
+/// The session is over: what it said about its model goes with it.
+fn clear_context(s: &mut Status) {
+    s.model.clear();
+    s.ctx_pct = None;
+    s.ctx_size = None;
+    s.ctx_in = None;
+    s.ctx_at = None;
 }
 
 /// The states an agent reports through its hooks. `needs_you` is Claude's
@@ -417,6 +440,45 @@ impl Panes {
         }
         i.status.agent = state;
         i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        if state.is_empty() {
+            clear_context(&mut i.status);
+        }
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        self.changed(&l.id, &s);
+        true
+    }
+
+    /// The model and the context window, as the status line in this pane last
+    /// said them. False when the pane is not running. Only a change is sent
+    /// on: the line runs after every reply, and most replies move the
+    /// percentage by less than one.
+    pub fn set_context(
+        &self,
+        id: &str,
+        model: &str,
+        pct: Option<u8>,
+        size: Option<u64>,
+        input: Option<u64>,
+    ) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return false;
+        }
+        let st = &i.status;
+        if st.model == model && st.ctx_pct == pct && st.ctx_size == size {
+            i.status.ctx_in = input;
+            return true;
+        }
+        i.status.model = model.to_string();
+        i.status.ctx_pct = pct;
+        i.status.ctx_size = size;
+        i.status.ctx_in = input;
+        i.status.ctx_at = Some(crate::store::now());
         let s = i.status.clone();
         drop(i);
         let _ = l.tx.send(status_frame(&l.id, &s).into());
@@ -741,6 +803,8 @@ impl Live {
             // Whatever this start is, the mark is spent: a window that chose
             // the shell over the conversation has chosen.
             resume: false,
+            // A new process has told nothing yet about any model.
+            ..Status::default()
         };
         i.wrote = Instant::now();
         i.unsaved = true;

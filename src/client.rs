@@ -608,6 +608,27 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
         .send_json(serde_json::json!({ "state": state, "session": session }));
 }
 
+/// What Claude's status line said, for the panel it runs in: the model, how
+/// full the context window is, and the conversation, which keeps the pane's
+/// saved id current after a `/resume` inside one Claude. The same route and
+/// the same short wait as `agent_state`: it runs after every reply.
+pub fn agent_context(paths: &Paths, pane: &str, seen: &crate::statusline::Seen) {
+    let Some(token) = config::read_token(paths) else {
+        return;
+    };
+    let _ = ureq::post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(500)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({
+            "session": seen.session,
+            "model": seen.model,
+            "ctx": { "pct": seen.pct, "size": seen.size, "input": seen.input },
+        }));
+}
+
 /// The notes of the desk `pane` is on, read and never written. It never starts
 /// a daemon: a pane only runs while one does, so none answering means the
 /// shell this came from is already gone.

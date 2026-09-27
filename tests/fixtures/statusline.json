@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "f94bace6-1a2b-4c3d-8e9f-0123456789ab",
+  "transcript_path": "/home/reader/.claude/projects/-home-reader-Projects-bos_dog/f94bace6-1a2b-4c3d-8e9f-0123456789ab.jsonl",
+  "cwd": "/home/reader/Projects/bos_dog",
+  "model": { "id": "claude-fable-5-1", "display_name": "Fable 5.1" },
+  "workspace": { "current_dir": "/home/reader/Projects/bos_dog", "project_dir": "/home/reader/Projects/bos_dog" },
+  "version": "2.1.283",
+  "output_style": { "name": "default" },
+  "cost": { "total_cost_usd": 1.27, "total_duration_ms": 845000, "total_api_duration_ms": 231000, "total_lines_added": 156, "total_lines_removed": 23 },
+  "context_window": { "used_percentage": 43.06, "context_window_size": 200000, "total_input_tokens": 86120, "total_output_tokens": 9012 },
+  "exceeds_200k_tokens": false
+}
