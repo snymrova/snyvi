@@ -271,18 +271,30 @@ Which installs are swapped, and which are only told:
 | the tarball in a folder you cannot write (`/usr/local/bin` with `sudo`) | told: About shows the two lines to run |
 | macOS, `snyvi.app` in Applications, the cask too | swapped (the cask says `auto_updates`, so `brew upgrade` leaves it alone unless `--greedy`) |
 | Windows, the installer's folder or Scoop's | swapped (`scoop update` later reinstalls over it harmlessly) |
-| the `.deb` | told: root owns `/usr/bin/snyvi`, so About and `snyvi status` show the two lines to run |
+| the `.deb` | told: root owns `/usr/bin/snyvi`, so About and `snyvi status` show the lines to run — with `snyvi-app` installed, both packages in one `apt install`, since the window's package wants the daemon's exact version |
 | `cargo install` | told: `cargo install snyvi` |
 | a build under `target/` | never checked |
 
-When the window is in front at the moment an update could go, a pill
-appears beside the agents count: `Restart to update · 1.6.3`. A click
-applies it as soon as the panels are quiet, and the page comes back on the
-new build with every Claude panel resumed (`claude --resume`, the same as
-the ↻ button) and every shell restarted with its old screen greyed above.
-Left alone, the pill stays quiet for a day and turns amber after — a panel
-whose agent is stuck at "working" because Claude died without saying so
-is the usual reason, and `snyvi restart --now` is the way through.
+Once the day's slot has opened with a version staged — at once, when
+`Check now` or `snyvi update` found it — a pill appears beside the agents
+count: `Restart to update · 1.6.3` (`Update ready` in a browser tab, which
+cannot restart anything). A click applies it as soon as the panels are
+quiet; while it waits the pill says how many it is waiting on, and About
+has `Now` and `Cancel`. Left alone, the pill turns amber after a day.
+
+Busy, for a restart: an agent mid-turn, or one waiting on you for an
+answer or a permission — an update never cuts off an approval. An agent
+that says it is working but has printed nothing for ten minutes (Claude
+stopped with Esc) is taken as quiet, and so is a panel that has only been
+printing for two hours straight, a log tail or a dev server.
+
+After the restart, every shell comes back with its old screen greyed
+above, and every Claude panel comes back with its conversation
+(`claude --resume`) the first time you look at its desk — not while
+nobody is there to see it. A panel you have not opened within five
+minutes of that first look shows the ↻ offer instead, for a day. The
+pill says `Updated to 1.6.3 · what's new` for the rest of that session,
+and a click opens About.
 
 Sooner than the daily slot, when you want it:
 
@@ -295,9 +307,12 @@ snyvi update --back     the version the last update replaced (kept as .prev)
 snyvi update off | on   the automatic path; `snyvi update` still works when off
 ```
 
-About has the same: `You're on 1.6.2 · checked 40 min ago · next update
-tomorrow`, with `Check now`, `Restart to update` when one is ready, and the
-on/off switch. A release marked as a hotfix (`hotfix_below` in the
+About has the same: `1.6.3 is ready · applies tomorrow, when the desks
+are quiet`, or `You're on the latest · checked 40 min ago`, with
+`Check now`, `Restart to update` when one is ready, and the on/off switch.
+A download that failed says so there, and the next check tries it again.
+`snyvi update check` only says; `Check now` and `snyvi update` also let
+what they find past the daily slot. A release marked as a hotfix (`hotfix_below` in the
 manifest, set by hand in the release job) is applied at the next quiet
 moment rather than the next day.
 
@@ -306,9 +321,16 @@ for CI, packagers and the dev loop, and wins over the switch. What is
 trusted: the manifest's minisign signature, against the key compiled in
 (`packaging/minisign.pub`); the sha256 of every download, at staging and
 again on the file just placed; a new daemon that does not answer within
-ten seconds is rolled back to `.prev` and health says `failed`. Under
+thirty seconds is rolled back to `.prev` and health says `failed`. Under
 systemd the unit does the restart (the daemon exits 75 and
-`Restart=on-failure` starts the new file); `.prev` stays for `--back`.
+`Restart=on-failure` starts the new file), and a new file that has
+started twice without taking the port is put back by its own third
+start. `.prev` stays for a day, and for `--back`; a version gone back
+from, with `--back` or `--to` a lower one, is not taken again on its own.
+
+A daemon snyvi started itself writes what it says to `daemon.log` beside
+the documents (`snyvi status` prints the path), kept to about a
+megabyte; under systemd it is in `journalctl --user -u snyvi`.
 
 Installed by hand over the old one — the one-liner again, `brew upgrade`,
 `sudo dpkg -i` — the daemon notices the file changed under it and any
@@ -320,8 +342,8 @@ Run `snyvi restart` to pick up the new version.
 ```
 
 A restart waits for the desks to be quiet the same way, says which panels
-it is waiting on, and `--now` skips the wait; Ctrl-C leaves it to happen
-on its own. Your documents, database and token are kept across every
+it is waiting on, and `--now` skips the wait; Ctrl-C while it waits, or
+`snyvi restart --cancel` from anywhere, calls it off. Your documents, database and token are kept across every
 kind of update, and the schema migrates itself. `snyvi status` shows both
 versions and one line about updates; `snyvi stop` shuts the daemon down.
 
@@ -331,7 +353,7 @@ versions and one line about updates; `snyvi stop` shuts the daemon down.
 snyvi uninstall-claude        # the MCP server, the hooks, the CLAUDE.md line
 snyvi uninstall-desktop       # Linux: the menu entry, icons and unit it wrote
 snyvi stop                    # the daemon
-rm ~/.local/bin/snyvi ~/.local/bin/snyvi-app   # or: sudo apt remove snyvi-app snyvi
+rm ~/.local/bin/snyvi ~/.local/bin/snyvi-app ~/.local/bin/*.prev   # or: sudo apt remove snyvi-app snyvi
 ```
 
 That leaves your documents and index in `~/.local/share/snyvi` and the
@@ -1165,6 +1187,8 @@ pack after adding a `.sublime-syntax` file there.
 | index     | `~/.local/share/snyvi/snyvi.db` (SQLite, FTS5) |
 | token     | `~/.config/snyvi/token` (required for every write) |
 | folders   | `~/.config/snyvi/folders.json` (the open folders, by path) |
+| log       | `~/.local/share/snyvi/daemon.log` (a daemon snyvi started; not on Windows) |
+| updates   | `~/.local/share/snyvi/updates/` (what is staged, and `state.json`) |
 
 On Windows, `%LOCALAPPDATA%\snyvi` and `%APPDATA%\snyvi\token`.
 

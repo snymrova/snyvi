@@ -239,12 +239,13 @@ async function openAbout(d) {
   }
 }
 
-/** The updates row: `You're on the latest · checked 40 min ago · next
- *  update tomorrow`, with `Check now` beside it, and what a press finds --
- *  the latest, a version ready with the restart control in the row, or the
- *  lines a told-only install runs. The daemon is the updater; this only
- *  says what it says (`/api/about` and `/api/update/*`). A tab holds no
- *  capability, so it reads the row and presses nothing. */
+/** The updates row: `1.7.1 is ready · applies tomorrow, when the desks
+ *  are quiet`, with `Check now` beside it, and what a press finds -- the
+ *  latest, a version ready with the restart control in the row, a restart
+ *  waiting for quiet with Now and Cancel, or the lines a told-only install
+ *  runs. The daemon is the updater; this only says what it says
+ *  (`/api/about` and `/api/update/*`). A tab holds no capability, so it
+ *  reads the row and presses nothing. */
 function updateRow(u, d) {
   const { rel, capability, deskApi } = d;
   const box = document.createElement("div"); box.className = "upd-row";
@@ -254,38 +255,63 @@ function updateRow(u, d) {
   box.append(say, act, how);
   const when = ts => { const s = ts - Date.now() / 1000; return s <= 0 ? "at the next quiet moment" : s < 3600 ? `in ${Math.max(1, Math.round(s / 60))} min` : s < 20 * 3600 ? `in ${Math.round(s / 3600)} h` : "tomorrow"; };
   const button = (label, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "text"; b.textContent = label; b.addEventListener("click", fn); return b; };
-  const draw = (u, busy) => {
+  const msg = e => String(e && e.message || e);
+  // `note` is what a press here just met -- a restart the daemon refused --
+  // and is said before anything the block says.
+  const draw = (u, busy, note) => {
     act.replaceChildren(); how.hidden = true;
     if (!u || u.channel === "unknown") { say.textContent = "This daemon cannot say what file it runs from, so it does not update itself."; return; }
     if (u.channel === "dev") { say.textContent = "A development build: it does not check."; return; }
+    const r = u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
+    const told = !!(u.how && u.how.length);
+    // An old failure is history once something else is out.
+    const failed = u.failed && (u.failed_recent || u.failed === u.available);
     const parts = [];
     if (busy) parts.push("Checking…");
-    else if (u.failed) parts.push(`${u.failed} was applied and did not start; the previous version was kept`);
+    else if (note) parts.push(note);
+    else if (u.restarting) parts.push("Restarting…");
+    else if (r) parts.push(n ? `Restarting when ${n === 1 ? "a panel is" : `${n} panels are`} quiet` : "Restarting…");
+    else if (failed) parts.push(`${u.failed} was applied and did not start; the previous version was kept`);
     else if (u.ready) parts.push(`${u.ready} is ready`);
+    else if (u.available && u.available === u.skipped) parts.push(`You went back from ${u.skipped}; the release after it updates as usual`);
+    else if (u.available && u.error) parts.push(told ? `${u.available} is out · the last check failed: ${u.error}` : `${u.available} is out · couldn't download it: ${u.error} · Check now tries again`);
     else if (u.available) parts.push(`${u.available} is out`);
     else if (u.error) parts.push(`The last check failed: ${u.error}`);
     else if (u.checked) parts.push(`You're on the latest · checked ${rel(u.checked)}`);
     else parts.push("Not checked yet");
-    if (!busy && !u.failed && !u.ready && !u.available && u.auto && u.slot) parts.push(`next update ${when(u.slot)}`);
-    if (!busy && u.ready) parts.push(u.auto && !u.slot_open ? `applies ${when(u.slot)}, when the desks are quiet` : "applies at the next quiet moment");
+    if (!busy && !r && u.ready) parts.push(u.auto && !u.slot_open ? `applies ${when(u.slot)}, when the desks are quiet` : "applies at the next quiet moment");
     if (!busy && !u.auto) parts.push(u.env_off ? "automatic updates off in the daemon's environment" : "automatic updates off");
     say.textContent = parts.join(" · ");
-    if (busy) return;
+    if (busy || u.restarting) return;
     if (u.available && !u.ready && u.how && u.how.length) { how.textContent = u.how.join("\n"); how.hidden = false; }
-    if (!capability) return;
+    const notes = () => { if (u.notes) { const a = document.createElement("a"); a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "release notes"; act.append(a); } };
+    if (!capability) { notes(); return; }
+    if (r) {
+      act.append(button("Now", async () => {
+        try { await deskApi("/api/restart", { when: "now" }); draw({ ...u, restarting: true }, false); } catch (e) { draw(u, false, `Could not restart: ${msg(e)}`); }
+      }), button("Cancel", async () => {
+        try {
+          const res = await fetch("/api/restart", { method: "DELETE", headers: { "x-snyvi-capability": capability } });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          draw({ ...u, restart: null }, false);
+        } catch (e) { draw(u, false, `Could not call it off: ${msg(e)}`); }
+      }));
+      return;
+    }
     if (u.ready) act.append(button("Restart to update", async () => {
       say.textContent = "Restarting when the panels are quiet…"; act.replaceChildren();
-      try { await deskApi("/api/restart", { when: "idle", apply: true }); } catch (e) { draw({ ...u, error: String(e.message || e) }, false); }
+      try { const j = await deskApi("/api/restart", { when: "idle", apply: true }); draw({ ...u, restart: { apply: true, waiting_on: j.waiting_on || [] } }, false); }
+      catch (e) { draw(u, false, `Could not restart: ${msg(e)}`); }
     }));
     act.append(button("Check now", async () => {
       draw(u, true);
       try { const j = await deskApi("/api/update/check", {}); draw(j.update, false); }
-      catch (e) { draw({ ...u, ready: null, available: null, error: String(e.message || e) }, false); }
+      catch (e) { draw({ ...u, error: msg(e) }, false); }
     }));
     if (!u.env_off) act.append(button(u.auto ? "Turn off" : "Turn on", async () => {
       try { const j = await deskApi("/api/update/auto", { on: !u.auto }); draw(j.update, false); } catch {}
     }));
-    if (u.notes) { const a = document.createElement("a"); a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "release notes"; act.append(a); }
+    notes();
   };
   draw(u, false);
   return box;
