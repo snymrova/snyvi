@@ -2420,7 +2420,7 @@
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
       previewButton() +
-      `<button data-act="delete">Delete<kbd>Del</kbd></button>` +
+      `<button data-act="delete">Remove<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
       (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button><button data-act="reveal" title="${esc(state.folder)}">Open in file manager</button>` : "") +

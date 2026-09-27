@@ -167,8 +167,8 @@ const HELP = `
   <section>
     <h3>Keep</h3>
     <div class="hk"><span>Pin <em>kept by prune</em></span><span class="keys"><kbd>p</kbd></span></div>
-    <div class="hk"><span>Delete</span><span class="keys"><kbd>del</kbd></span></div>
-    <div class="hk"><span>Undo a delete</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>Z</kbd></span></div>
+    <div class="hk"><span>Remove</span><span class="keys"><kbd>del</kbd></span></div>
+    <div class="hk"><span>Undo</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>Z</kbd></span></div>
   </section>
 </div>
 `;
@@ -432,7 +432,7 @@ function themeFact() {
 }
 
 // ---------- reset: the one thing that cannot be undone ----------
-/* A delete has Undo; this has a number. The dialog says what goes and what
+/* A removal has Undo; this has a number. The dialog says what goes and what
  * stays, and the button stays dead until the number of documents is typed
  * back -- the number, not "yes", because the number means the sentence was
  * read. The daemon is sent that number and refuses if it is no longer
@@ -448,7 +448,7 @@ function resetArm(d) {
 }
 
 /** The documents and the desks both, because the daemon checks both. */
-const resetSentence = (c, plural) => `This removes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panels, " : ""}the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
+const resetSentence = (c, plural) => `This deletes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panels, " : ""}the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
 
 async function openReset(d) {
   const { $, openDialog, closeDialog, help, resetDlg, plural } = d;
@@ -662,7 +662,7 @@ export function start({ cap }) {
       `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
       `Right-click anything for what it can do · ${kb("☰")} or ${kb("⇧", "F10")} the same menu from the keyboard`) +
     sec("arrives", "Nothing scrolls away",
-      `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you delete it, and a delete can be undone. ${showLink("arrives")}</p>`,
+      `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you remove it, and Undo brings it back. ${showLink("arrives")}</p>`,
       `${kb("⌘", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
     sec("waiting", "What is waiting",
       `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the oldest and takes it off, so the next ${kb("n")} is the one after: one key, in the order they came. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. ${showLink("waiting")}</p>`,

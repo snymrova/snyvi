@@ -2757,7 +2757,7 @@ async function resetRows(p, url, arrive) {
     offered ? "one line at the foot of the help box, no key, no button in the chrome" : "no Reset in the help box"]);
 
   await p.clickOn("#btn-reset");
-  const opened = await until(`!document.querySelector("#reset").hidden && /This removes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
+  const opened = await until(`!document.querySelector("#reset").hidden && /This deletes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
   const census = await p.ev(`fetch("/api/reset").then(r => r.json())`);
   const focused = await p.ui("at", "#reset-n");
   const tt = await p.ev(`(() => { const h = document.querySelector("#reset-title"); return { t: getComputedStyle(h).textTransform, s: h.textContent }; })()`);

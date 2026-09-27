@@ -655,7 +655,7 @@ function makeView(p) {
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
-    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Put this away" aria-label="Put this away">✕</button></div>` +
+    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   // A new project desk's first panel, holding `claude` for the reader's Enter.
