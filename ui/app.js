@@ -2713,6 +2713,7 @@
     show: (id, push, slot) => showDesk(id, push, slot),
     browse: (root, path, push) => showBrowse(root, path, push),
     drawBrowse: () => renderBrowse(),
+    drawTree: () => renderTree(),
     forget: id => { if (lastDesk === id) lastDesk = null; },
     // What the context menu and the moves out of this file reach for: the
     // page's own functions, so the chunk runs the code a row's button runs.
@@ -3624,9 +3625,7 @@
    * still reach it. One at a time; Esc, a click outside it, a link followed
    * in it and `\` close it. The numbers on the icons are the ones the
    * sections say: waiting, panels waiting on you, agents connected. */
-  const railNav = $("#rail-nav"), popEl = $("#pop");
-  const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
-  const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+  const railNav = $("#rail-nav");
   ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
   for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
   /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
@@ -3634,53 +3633,13 @@
     const b = document.querySelector(`#rail-nav ${sel} .badge`);
     if (b) { b.textContent = n ? String(n) : ""; b.className = "badge" + cls; }
   }
-  let popBtn = null;
-  function openPop(sec, btn) {
-    if (root.dataset.pop === sec) { closePop(); return; }
-    closePop(false);
-    root.dataset.pop = sec; popBtn = btn;
-    btn.classList.add("on"); btn.setAttribute("aria-expanded", "true");
-    popEl.setAttribute("aria-label", btn.getAttribute("aria-label"));
-    popEl.append(...POPS[sec].map(id => $(id)));
-    popEl.hidden = false;
-    // Drawn while folded, the titles were cut to a column that was not there.
-    if (sec === "tree") renderTree();
-    // Level with the icon, and moved only as far as it takes to stay on the
-    // window, the way a toast answers a control in the rail.
-    const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
-    popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
-    (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
-  }
-  /** Put the section back where it lives. `back` gives the focus to its icon. */
-  function closePop(back = true) {
-    const sec = root.dataset.pop;
-    if (!sec) return false;
-    delete root.dataset.pop;
-    popEl.hidden = true;
-    // Each back before the first section that follows it in #trees' order,
-    // whatever else is still at home: the end is not its place.
-    for (const id of POPS[sec]) {
-      if (id === "#note") { sideEl.insertBefore($(id), $(".side-foot")); continue; }
-      const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
-      treesEl.insertBefore($(id), after || popEl);
-    }
-    const b = popBtn; popBtn = null;
-    b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
-    if (back && b?.isConnected) b.focus({ preventScroll: true });
-    return true;
-  }
-  // The aside's section empties when its last line goes, and its icon with
-  // it: the popover goes too, and a keyboard that was in it lands on the
-  // rail rather than on nothing.
-  new MutationObserver(() => {
-    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
-    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
-    closePop(false);
-    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
-  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
+  /* What the popover does -- open, close, what closes it -- is menu.js's
+   * (`pop`, `unpop`), fetched on the first press of a rail icon: a reader
+   * whose sidebar is never folded never pays for it. Open means loaded. */
+  const closePop = (back = true) => !!root.dataset.pop && acts.unpop(back);
   railNav.addEventListener("click", e => {
     const b = e.target.closest("[data-pop]");
-    if (b) openPop(b.dataset.pop, b);
+    if (b) useActs().then(m => m.pop(actsCtx, b.dataset.pop, b));
     else if (e.target.closest("#rail-search")) openPalette();
   });
   // A toolbar: the arrows walk it, Tab leaves it.
@@ -3690,11 +3649,6 @@
     all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
     e.preventDefault();
   });
-  // Following a link in it is being done with it; opening a row's fold is not.
-  popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => closePop()); });
-  // The context menu is on <body>, but a row's menu is the popover's own: an
-  // action there (Rename, Remove with its Undo) happens in the row, in here.
-  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) closePop(false); }, true);
   function paintSideBtn() {
     const b = $("#btn-side-hide"), slim = root.dataset.side === "0";
     b.title = slim ? "Show sidebar  \\" : "Hide sidebar  \\";

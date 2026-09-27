@@ -447,6 +447,74 @@ function install(ctx) {
   addEventListener("resize", () => close());
 }
 
+/* ---------- the rail's popovers ----------
+ * With the sidebar folded to its rail, each icon opens its section in #pop,
+ * beside the rail: the section's own element, moved in, and moved back to
+ * its place when the popover closes. Every renderer writes by id, so what
+ * arrives while it is open lands in the popover; #pop is inside #trees, so
+ * the clicks the tree delegates still reach it. One at a time; Esc, a click
+ * outside it, a link followed in it and `\` close it. app.js's until 1.7.2:
+ * it is fetched on the first press of a rail icon, and a reader whose
+ * sidebar is never folded never pays for it. */
+const $ = s => document.querySelector(s), root = document.documentElement;
+const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
+const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+let popBtn = null, popWired = false;
+export function pop(ctx, sec, btn) {
+  const popEl = $("#pop");
+  if (!popWired) wirePop(popEl);
+  if (root.dataset.pop === sec) { unpop(); return; }
+  unpop(false);
+  root.dataset.pop = sec; popBtn = btn;
+  btn.classList.add("on"); btn.setAttribute("aria-expanded", "true");
+  popEl.setAttribute("aria-label", btn.getAttribute("aria-label"));
+  popEl.append(...POPS[sec].map(id => $(id)));
+  popEl.hidden = false;
+  // Drawn while folded, the titles were cut to a column that was not there.
+  if (sec === "tree") ctx.drawTree();
+  // Level with the icon, and moved only as far as it takes to stay on the
+  // window, the way a toast answers a control in the rail.
+  const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
+  popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
+  (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
+}
+/** Put the section back where it lives. `back` gives the focus to its icon. */
+export function unpop(back = true) {
+  const sec = root.dataset.pop, popEl = $("#pop"), treesEl = $("#trees");
+  if (!sec) return false;
+  delete root.dataset.pop;
+  popEl.hidden = true;
+  // Each back before the first section that follows it in #trees' order,
+  // whatever else is still at home: the end is not its place.
+  for (const id of POPS[sec]) {
+    if (id === "#note") { $("#side").insertBefore($(id), $(".side-foot")); continue; }
+    const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
+    treesEl.insertBefore($(id), after || popEl);
+  }
+  const b = popBtn; popBtn = null;
+  b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
+  if (back && b?.isConnected) b.focus({ preventScroll: true });
+  return true;
+}
+function wirePop(popEl) {
+  popWired = true;
+  const railNav = $("#rail-nav");
+  // The aside's section empties when its last line goes, and its icon with
+  // it: the popover goes too, and a keyboard that was in it lands on the
+  // rail rather than on nothing.
+  new MutationObserver(() => {
+    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
+    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
+    unpop(false);
+    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
+  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
+  // Following a link in it is being done with it; opening a row's fold is not.
+  popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => unpop()); });
+  // The context menu is on <body>, but a row's menu is the popover's own: an
+  // action there (Rename, Remove with its Undo) happens in the row, in here.
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) unpop(false); }, true);
+}
+
 /** Shut the menu from outside, which is what Escape does everywhere else on
  *  the page. A page that has never opened one has never fetched this file, so
  *  app.js asks only when it holds the module. */
