@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.6.0"
+version = "1.7.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -31,7 +31,7 @@ exclude = [
 # them. Bump it by hand, to the version being released, whenever the window's
 # own code changes: src/desktop.rs, src/bin/app.rs, tauri.conf.json, the frame.
 [package.metadata.snyvi]
-app_min = "1.6.0"
+app_min = "1.7.0"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }
