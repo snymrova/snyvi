@@ -2106,11 +2106,23 @@ async function startRows(p, url, arrive, base) {
 
   // The samples wear the page's own rules: a real diff's colours, the pill's.
   const sample = await p.ev(`(() => { const c = s => { const e = document.querySelector(s); return e ? getComputedStyle(e).backgroundColor : ""; };
-    return { add: c(".start-sample .add"), del: c(".start-sample .del"), pill: c(".keymode-sample"), inert: document.querySelectorAll(".start [inert]").length }; })()`);
+    const pill = document.querySelector(".keymode-sample");
+    return { add: c(".start-sample .add"), del: c(".start-sample .del"), pill: c(".keymode-sample"), pos: pill ? getComputedStyle(pill).position : "", inert: document.querySelectorAll(".start [inert]").length }; })()`);
   const want = await p.ev(`(() => { const pre = document.createElement("pre"); pre.className = "diff"; pre.innerHTML = '<code><span class="ln add">+</span><span class="ln del">-</span></code>'; document.body.append(pre);
     const r = { add: getComputedStyle(pre.querySelector(".add")).backgroundColor, del: getComputedStyle(pre.querySelector(".del")).backgroundColor, raise: getComputedStyle(document.body).getPropertyValue("--bg-raise") }; pre.remove(); return r; })()`);
-  rows.push(["the samples are drawn with the page's rules, inert", sample.add === want.add && sample.del === want.del && !!sample.pill && sample.inert >= 3,
-    sample.add !== want.add || sample.del !== want.del ? `the hunk is ${sample.add}/${sample.del}, a diff ${want.add}/${want.del}` : !sample.pill ? "the pill sample has no look" : `${sample.inert} inert samples, in the reader's colours`]);
+  rows.push(["the samples are drawn with the page's rules, inert", sample.add === want.add && sample.del === want.del && !!sample.pill && sample.pos === "static" && sample.inert >= 3,
+    sample.add !== want.add || sample.del !== want.del ? `the hunk is ${sample.add}/${sample.del}, a diff ${want.add}/${want.del}` : !sample.pill ? "the pill sample has no look"
+      : sample.pos !== "static" ? `the pill sample is ${sample.pos}, not in the page's flow` : `${sample.inert} inert samples, in the reader's colours`]);
+
+  // about.js's sheet stays once fetched: a danger row in the context menu
+  // must still read, red on its own background and not on red.
+  await p.ev(`(() => { const a = document.querySelector("#tree a[data-id]"), r = a.getBoundingClientRect();
+    a.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.x + 8, clientY: r.y + 4 })); return 1; })()`);
+  await until(`!!document.querySelector("#ctx:not([hidden]) button.danger")`, 30);
+  const danger = await p.ev(`(() => { const b = document.querySelector("#ctx:not([hidden]) button.danger"); if (!b) return null; const s = getComputedStyle(b); return { label: b.textContent, fg: s.color, bg: s.backgroundColor }; })()`);
+  await p.press("Escape");
+  rows.push(["a menu's danger row reads after about.js has loaded", !!danger && danger.fg !== danger.bg && !/^rgb\(/.test(danger.bg),
+    !danger ? "no danger row in a document's menu" : danger.fg === danger.bg || /^rgb\(/.test(danger.bg) ? `"${danger.label}" is ${danger.fg} on ${danger.bg}` : `"${danger.label}" in ${danger.fg}, on no fill`]);
 
   // snyvi's own aside: said once, when two are waiting, and never over an
   // agent's that is still unread.

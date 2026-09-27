@@ -17,12 +17,15 @@ const IDLE = 10000, DIM = 8000, HINT = 1500, HINT_EVERY = 30000;
 let pill = null, sleep = null, dimT = 0, offT = 0, hinted = 0;
 
 /* `.keymode-sample` is the pill as the first-ten-minutes page shows it: the
- * same look, in the page's flow rather than fixed at the bottom. */
+ * same look, in the page's flow rather than fixed at the bottom. Only the
+ * real pill is placed: `:is()` counts as its ID, so a class rule after it
+ * could never have put the sample back in the flow. */
 const CSS = `
-:is(#keymode, .keymode-sample) { position: fixed; left: 50%; bottom: 20px; z-index: 30; transform: translateX(-50%); pointer-events: none;
+#keymode { position: fixed; left: 50%; bottom: 20px; z-index: 30; transform: translateX(-50%); }
+:is(#keymode, .keymode-sample) { pointer-events: none;
   padding: 4px 11px; border-radius: 999px; font-size: 12px; color: var(--fg-2); background: var(--bg-raise);
   border: 1px solid var(--rule); box-shadow: var(--shadow); opacity: 0; transition: opacity .2s; }
-.keymode-sample { position: static; transform: none; display: inline-block; }
+.keymode-sample { display: inline-block; }
 :is(#keymode, .keymode-sample).show { opacity: 1; transition-duration: .12s; }
 :is(#keymode, .keymode-sample).on::before { content: "●"; color: var(--accent); margin-right: 6px; }
 #keymode.dim { opacity: .45; transition-duration: 2s; }

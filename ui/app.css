@@ -1230,7 +1230,7 @@ pre.code .ln::before { cursor: pointer; }
 #help .help-foot button.text:hover { background: var(--rule); }
 button.text { font: inherit; font-size: 13px; color: var(--fg-2); background: transparent; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 button.text:hover { color: var(--fg); background: var(--bg-side); }
-button.text:focus-visible, button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The reset dialog: a sentence, a number, and a button that is dead until
  * the number is right. Red is spent here and nowhere else in the chrome. */
 

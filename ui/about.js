@@ -544,8 +544,11 @@ const CSS_MOVED = `
 .reset-ask input:focus { border-color: var(--accent); }
 .reset-err { color: var(--del-fg); }
 .reset-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-button.danger { font: inherit; font-size: 13px; font-weight: 550; color: #fff; background: #b3261e; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
-button.danger:hover { background: #9a1f18; }
-button.danger:disabled { opacity: .4; cursor: default; }
+/* The Reset button's own: this sheet stays in the page once fetched, and a
+   bare \`button.danger\` would paint the context menu's danger rows too. */
+.reset-act button.danger { font: inherit; font-size: 13px; font-weight: 550; color: #fff; background: #b3261e; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+.reset-act button.danger:hover { background: #9a1f18; }
+.reset-act button.danger:disabled { opacity: .4; cursor: default; }
+.reset-act button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 `;
 { const s = document.createElement("style"); s.textContent = CSS_MOVED; document.head.append(s); }
