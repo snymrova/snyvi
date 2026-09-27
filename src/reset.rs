@@ -32,7 +32,9 @@ pub struct Opts {
 pub fn run(paths: &Paths, o: Opts) -> Result<()> {
     let running = crate::client::health().is_some();
     let census = census(paths, running)?;
-    let installed = paths.data_dir.exists() || paths.token_path.exists();
+    // A library, not a folder: the data directory also holds what the install
+    // keeps of itself (the updater's state), which a reset leaves.
+    let installed = paths.db_path.exists() || paths.docs_dir.exists() || paths.token_path.exists();
 
     if !installed && census == Census::default() {
         println!("Nothing to reset: snyvi is as it was installed.");
@@ -235,6 +237,11 @@ fn reset_on_disk(paths: &Paths) -> Result<()> {
         gone(std::path::Path::new(&db))?;
     }
     gone(&paths.token_path)?;
+    // What the daemon says, and the marker a planned restart leaves: about
+    // the library that is going, not the install.
+    gone(&crate::platform::daemon_log(&paths.data_dir))?;
+    gone(&paths.data_dir.join("daemon.log.1"))?;
+    gone(&paths.data_dir.join("restart.json"))?;
     gone(&paths.config_dir.join("sessions.json"))?;
     gone(&paths.config_dir.join("folders.json"))?;
     for dir in [&paths.data_dir, &paths.config_dir] {

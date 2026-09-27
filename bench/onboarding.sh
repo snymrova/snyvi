@@ -72,7 +72,7 @@ snyvi init-claude --claude-md | grep -q "already asks"
 test "$(grep -c send_document $HOME/.claude/CLAUDE.md)" = 1
 echo "--- 6. uninstall-claude leaves the file as it was found"
 snyvi uninstall-claude | tee $HOME/un.log
-grep -q "Removed 7 snyvi hook" $HOME/un.log
+grep -q "Removed 8 snyvi hook" $HOME/un.log   # 7 hooks and the status line
 check "b=json.load(open(os.path.expanduser('~/settings-before.json'))); assert s==b, (s,b); assert 'snyvi' not in d['mcpServers']"
 ! grep -q send_document $HOME/.claude/CLAUDE.md
 snyvi status | grep -q "MCP server not registered"
