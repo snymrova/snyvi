@@ -58,6 +58,10 @@ let drawing = false;
 /** How long the offer to put a line back stands, matching the page's own undo. */
 const BACK_MS = 8000;
 let backTimer = 0;
+/** The done lines Clear done just took off -- { at: desk id, xs: [note] } --
+ *  while their Undo stands. It shares backTimer with a single line's ✕: only
+ *  the newest offer stands. */
+let cleared = null;
 /** A panel just closed: its row stays in the rail for BACK_MS, greyed, with
  *  Undo -- { id, desk, name, said }. The daemon keeps the closed panel until
  *  `prune`; the row is only the offer. Only the newest close is offered. */
@@ -1450,14 +1454,20 @@ function noteSec(d) {
   // documents are.
   if (notesAt !== d.id) getNotes(d.id);
   const left = mine.filter(x => !x.done && !x.gone).length;
+  const done = mine.filter(x => x.done && !x.gone).length;
   const rows = mine.map(x => noteRow(x, esc)).join("");
+  // Clearing the done half answers where it was asked, as a ✕ does: the
+  // button's own place holds the Undo until it runs out.
+  const clear = cleared && cleared.at === d.id
+    ? `<span class="dk-note gone dk-cleared"><span class="nm">${ctx.plural(cleared.xs.length, "done note")} taken off</span><button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span>`
+    : done ? `<button type="button" class="dk-new" data-a="note-clear" title="Take every ticked line off the list · nothing is deleted">Clear done</button>` : "";
   return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
     `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     (rows ? `<ul class="dk-list">${rows}</ul>`
       : noteField ? "" : `<p class="dk-empty">Nothing on the list. What this desk owes you goes here.</p>`) +
     (noteField && noteField.kind === "new"
       ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="What has to happen" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<button type="button" class="dk-new" data-a="note-new">+ New note</button>`) +
+      : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>`) +
     `</details>`;
 }
 
@@ -1485,7 +1495,7 @@ function noteRow(x, esc) {
  *  desk's, and a field left open on this one must not reopen on that one. */
 function forgetNotes() {
   clearTimeout(backTimer);
-  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0;
+  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null;
 }
 
 /** This desk's list. Asked for once, unless a write says to look again. */
@@ -1498,7 +1508,10 @@ async function getNotes(id, again) {
   notesGet = null;
   // The desk was swapped while this was in flight: its list is not this one's.
   if (id !== deskId) return;
-  noteList = j.notes || []; notesAt = id;
+  // A read that lands between Clear done and the daemon hearing of it would
+  // put the cleared lines back for a moment.
+  const off = cleared && cleared.at === id ? new Set(cleared.xs.map(x => x.id)) : null;
+  noteList = (j.notes || []).filter(x => !off || !off.has(x.id)); notesAt = id;
   if (current()) rail();
 }
 
@@ -1779,6 +1792,7 @@ async function act(b) {
         // mean the last thing that happened.
         clearTimeout(backTimer);
         noteList = noteList.filter(y => y === x || !y.gone);
+        cleared = null;
         x.gone = true;
         backTimer = setTimeout(() => {
           noteList = noteList.filter(y => !y.gone);
@@ -1796,6 +1810,24 @@ async function act(b) {
         await ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {});
         await getNotes(d.id, true);
       }
+    } else if (a === "note-clear") {
+      const xs = noteList.filter(y => y.done && !y.gone);
+      if (xs.length) {
+        clearTimeout(backTimer);
+        noteList = noteList.filter(y => !y.done && !y.gone);
+        cleared = { at: d.id, xs };
+        backTimer = setTimeout(() => { cleared = null; if (current()) rail(); }, BACK_MS);
+        rail();
+        await Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {})));
+      }
+    } else if (a === "note-unclear" && cleared) {
+      const xs = cleared.xs;
+      clearTimeout(backTimer);
+      cleared = null;
+      noteList = noteList.concat(xs);
+      rail();
+      await Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {})));
+      await getNotes(d.id, true);
     }
   } catch (e) { ctx.toast("Could not do that", String(e)); }
 }
@@ -1808,8 +1840,13 @@ async function closePanel(v) {
   clearTimeout(closedTimer);
   closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
   closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
+  // The keyboard goes on to a neighbour, if it was in the one that closed:
+  // it is not left on nothing, typing into nowhere.
+  const ps = d.panes, i = ps.findIndex(p => p.id === v.id), next = (ps[i + 1] || ps[i - 1] || {}).id;
+  const had = v.el.contains(document.activeElement);
   await ctx.api(`/api/panes/${v.id}/delete`, {});
   await ctx.refresh();
+  if (next && (had || document.activeElement === document.body)) focusPane(next);
 }
 
 /** Undo a close. A desk that filled up in the meantime says so in the row,
@@ -1840,13 +1877,8 @@ function renamePanel(v) {
   const nm = v.el.querySelector(".pn-cmd");
   if (!nm || !v.el.isConnected) return;
   const input = Object.assign(document.createElement("input"), { className: "ren-in", value: v.pane.name || "", placeholder: short(v), spellcheck: false });
-  // The keyboard goes on to a neighbour, if it was in the one that closed:
-  // it is not left on nothing, typing into nowhere.
-  const ps = d.panes, i = ps.findIndex(p => p.id === v.id), next = (ps[i + 1] || ps[i - 1] || {}).id;
-  const had = v.el.contains(document.activeElement);
   input.setAttribute("aria-label", `Name of panel ${v.pane.slot}`);
   nm.replaceWith(input);
-  if (next && (had || document.activeElement === document.body)) focusPane(next);
   input.focus(); input.select();
   let done = false;
   const finish = async keep => {
@@ -1938,6 +1970,10 @@ function zoom() {
  *  focused pane alone. ⌃⌥⇧ and an arrow: the focused pane moved. ⌃⌥N a new
  *  panel, ⌃⌥W the focused one closed (with Undo in the rail), ⌃⌥] and ⌃⌥[
  *  the next and the previous focused, ⌃⌥R the focused one stopped or started. */
+/** AltGr, which Windows reports as Ctrl+Alt: a character on its way (`~` on
+ *  a German keyboard, `ń` on a Polish one), never a panel chord. */
+const altGr = e => !!e.getModifierState?.("AltGraph");
+
 function keys(e) {
   // F2 on a panel's row in the rail names it, as F2 on a file does.
   if (e.key === "F2" && !e.ctrlKey && !e.altKey && !e.metaKey && reading == null) {
@@ -1970,10 +2006,6 @@ function keys(e) {
     return;
   }
   if (!/^Digit[1-4]$/.test(e.code)) return;
-/** AltGr, which Windows reports as Ctrl+Alt: a character on its way (`~` on
- *  a German keyboard, `ń` on a Polish one), never a panel chord. */
-const altGr = e => !!e.getModifierState?.("AltGraph");
-
   const d = current(), p = d && d.panes.find(x => x.slot === +e.code[5]);
   if (!p) return;
   e.preventDefault(); e.stopPropagation();
@@ -2159,6 +2191,7 @@ export function actions(el) {
       { label: "Edit", run: does("note-edit") },
       { label: x.done ? "Untick" : "Tick", run: does("note-tick") }, R,
       { label: "Take off the list", danger: true, run: does("note-x") },
+      ...(noteList.some(y => y.done && !y.gone) ? [{ label: "Clear done", run: does("note-clear") }] : []),
     ] };
   }
   return null;
@@ -2493,6 +2526,9 @@ const CSS = `
 .dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
 .dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* Clear done's answer, in the foot beside + New note where the button was. */
+.dk-foot > .dk-cleared { flex: 1; min-width: 0; align-items: center; padding: 0 0 0 8px; }
+.dk-foot > .dk-cleared > .nm { text-decoration: none; }
 /* ---------- points ----------
  * The control by a selection: small, on the page's raised ground, where the
  * selection ends. And the kept points under the panels, on the list's own
