@@ -1,0 +1,4 @@
+# Signed bytes and keys: a checkout that rewrote their line endings (Git on
+# Windows does, by default) would break every signature over them.
+packaging/minisign.pub -text
+tests/fixtures/update/** -text

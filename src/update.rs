@@ -113,7 +113,11 @@ impl Channel {
         if s.contains(".app/Contents/MacOS/") {
             return Channel::Mac;
         }
-        if cfg!(windows) || s.as_bytes().get(1) == Some(&b':') {
+        // A Windows path, told by its shape rather than by where this runs,
+        // so the table in the tests holds on every platform: a drive letter,
+        // also behind the `\\?\` that canonicalising puts in front of one.
+        let bare = s.strip_prefix("//?/").unwrap_or(&s).as_bytes();
+        if bare.len() > 1 && bare[0].is_ascii_alphabetic() && bare[1] == b':' {
             return Channel::Win;
         }
         if ["/usr/bin/", "/usr/sbin/", "/usr/lib/", "/usr/libexec/"]
@@ -499,7 +503,9 @@ pub struct Updater {
     switch: PathBuf,
     source: Source,
     fetch: Box<dyn Fetch>,
-    key: minisign_verify::PublicKey,
+    /// None only if the key compiled in cannot be read, in which case no
+    /// manifest is ever taken; a daemon that cannot update still starts.
+    key: Option<minisign_verify::PublicKey>,
     running: semver::Version,
     /// `current`, worked out once per start.
     current: Mutex<Option<semver::Version>>,
@@ -554,11 +560,9 @@ impl Updater {
             // the environment against the real release would be a way to
             // make a daemon take anyone's manifest.
             Ok(k) if matches!(Source::from_env(), Source::Flat(_)) => {
-                minisign_verify::PublicKey::from_base64(k.trim())
-                    .expect("SNYVI_UPDATE_KEY is a minisign public key")
+                minisign_verify::PublicKey::from_base64(k.trim()).ok()
             }
-            _ => minisign_verify::PublicKey::decode(PUBLIC_KEY)
-                .expect("packaging/minisign.pub is a minisign public key"),
+            _ => release_key(),
         };
         let dir = paths.data_dir.join("updates");
         let switch = paths.config_dir.join("updates.json");
@@ -794,7 +798,12 @@ impl Updater {
             Got::Body { bytes, .. } => bytes,
             Got::NotModified => bail!("{url}.minisig: not modified, with no ETag sent"),
         };
-        verify(&self.key, &bytes, &sig)?;
+        let key = self.key.as_ref().ok_or_else(|| {
+            anyhow!(
+                "the release key in this build could not be read, so no manifest can be trusted"
+            )
+        })?;
+        verify(key, &bytes, &sig)?;
         let m = Manifest::parse(&bytes)?;
         let latest = m.version();
         let current = self.current();
@@ -924,7 +933,8 @@ impl Updater {
             }
             match a.role.as_str() {
                 "snyvi" => {
-                    let path = find(&into, &crate::platform::exe("snyvi"), false)?;
+                    // The tarballs are Linux's, whatever this runs on.
+                    let path = find(&into, "snyvi", false)?;
                     files.push(StagedFile {
                         role: "snyvi".into(),
                         sha256: sha256_file(&path)?,
@@ -932,7 +942,7 @@ impl Updater {
                     });
                 }
                 "app" => {
-                    let path = find(&into, &crate::platform::exe("snyvi-app"), false)?;
+                    let path = find(&into, "snyvi-app", false)?;
                     files.push(StagedFile {
                         role: "app".into(),
                         sha256: sha256_file(&path)?,
@@ -1280,6 +1290,13 @@ pub fn jitter_d(max: Duration) -> Duration {
 
 // ---------- verifying ----------
 
+/// The key compiled in. Read with carriage returns taken out: a checkout on
+/// Windows may write the file with CRLF line endings, and the line it is
+/// read from must be the key and nothing else.
+fn release_key() -> Option<minisign_verify::PublicKey> {
+    minisign_verify::PublicKey::decode(&PUBLIC_KEY.replace('\r', "")).ok()
+}
+
 /// The manifest against the release key. Prehashed and legacy signatures
 /// both: they are the same key either way.
 pub fn verify(key: &minisign_verify::PublicKey, manifest: &[u8], signature: &[u8]) -> Result<()> {
@@ -1616,6 +1633,11 @@ mod tests {
             Channel::Win
         );
         assert_eq!(
+            d(r"\\?\C:\Users\a\AppData\Local\Programs\snyvi\snyvi.exe"),
+            Channel::Win,
+            "canonicalised"
+        );
+        assert_eq!(
             d("/home/a/Projects/snyvi/target/release/snyvi"),
             Channel::Dev
         );
@@ -1831,7 +1853,7 @@ mod tests {
             verify(&key, &tampered, SIGNATURE).is_err(),
             "a changed byte fails"
         );
-        let release = minisign_verify::PublicKey::decode(PUBLIC_KEY).unwrap();
+        let release = release_key().expect("the release key reads, on every platform");
         assert!(
             verify(&release, SIGNED, SIGNATURE).is_err(),
             "the release key does not vouch for the test key's manifest"
@@ -2179,7 +2201,7 @@ mod tests {
         fake.put("latest.json.minisig", SIGNATURE.to_vec());
         fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
         let mut u = updater(&tmp, &exe, fake);
-        u.key = minisign_verify::PublicKey::decode(TEST_PUB).unwrap();
+        u.key = Some(minisign_verify::PublicKey::decode(TEST_PUB).unwrap());
         let c = u.check(false, None).unwrap();
         assert!(c.newer());
         assert_eq!(c.ready.as_deref(), Some("1.9.9"));
