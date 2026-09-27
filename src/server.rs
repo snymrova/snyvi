@@ -634,6 +634,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let router = Router::new()
         .route("/", get(shell_home))
         .route("/connect", get(shell_connect))
+        .route("/start", get(shell_start))
         .route("/d/{id}", get(shell_doc))
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
@@ -1164,6 +1165,14 @@ async fn shell_connect(State(app): S) -> Response {
     let tree = app.store.projects().unwrap_or_default();
     let boot = json!({ "view": "connect", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION, "agents": agents_json(&app) });
     shell(&app, boot, "", "Connect an agent · snyvi")
+}
+
+/// The first ten minutes: a page the client draws (`ui/about.js`), asked for
+/// from `?`, the connect page, ⌘K `>`, or an aside's link.
+async fn shell_start(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "start", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "The first ten minutes · snyvi")
 }
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {

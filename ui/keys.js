@@ -16,12 +16,15 @@ const IDLE = 10000, DIM = 8000, HINT = 1500, HINT_EVERY = 30000;
 
 let pill = null, sleep = null, dimT = 0, offT = 0, hinted = 0;
 
+/* `.keymode-sample` is the pill as the first-ten-minutes page shows it: the
+ * same look, in the page's flow rather than fixed at the bottom. */
 const CSS = `
-#keymode { position: fixed; left: 50%; bottom: 20px; z-index: 30; transform: translateX(-50%); pointer-events: none;
+:is(#keymode, .keymode-sample) { position: fixed; left: 50%; bottom: 20px; z-index: 30; transform: translateX(-50%); pointer-events: none;
   padding: 4px 11px; border-radius: 999px; font-size: 12px; color: var(--fg-2); background: var(--bg-raise);
   border: 1px solid var(--rule); box-shadow: var(--shadow); opacity: 0; transition: opacity .2s; }
-#keymode.show { opacity: 1; transition-duration: .12s; }
-#keymode.on::before { content: "●"; color: var(--accent); margin-right: 6px; }
+.keymode-sample { position: static; transform: none; display: inline-block; }
+:is(#keymode, .keymode-sample).show { opacity: 1; transition-duration: .12s; }
+:is(#keymode, .keymode-sample).on::before { content: "●"; color: var(--accent); margin-right: 6px; }
 #keymode.dim { opacity: .45; transition-duration: 2s; }
 #keymode.hit { animation: key-hit .2s; }
 @keyframes key-hit { 50% { border-color: var(--accent); } }
@@ -31,12 +34,18 @@ body.keys #main #chrome { box-shadow: 0 1px 0 var(--accent); }
 /** The pill and its sheet, made the first time either is wanted. It is a
  *  status region, so a screen reader hears "Keys on" and "Keys off" without
  *  the focus moving. */
-function mount() {
-  if (pill) return;
+/** The pill's look, once, for the pill and for the sample of it. */
+export function sheet() {
+  if (document.getElementById("keys-drawn")) return;
   const s = document.createElement("style");
   s.id = "keys-drawn";
   s.textContent = CSS;
   document.head.append(s);
+}
+
+function mount() {
+  if (pill) return;
+  sheet();
   pill = Object.assign(document.createElement("div"), { id: "keymode" });
   pill.setAttribute("role", "status");
   document.body.append(pill);

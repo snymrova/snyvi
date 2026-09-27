@@ -195,6 +195,9 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
     }
 
     println!("\nTry it: in Claude Code, ask for a plan. It arrives at {base}, or in the window when one is open.");
+    // The stall every first run hit: a session open before the MCP entry
+    // existed never loads it, and nothing says so.
+    println!("Restart any Claude Code session that is already open: one that was running before this does not see snyvi.");
     println!("`snyvi status` shows all of this; `snyvi uninstall-claude` takes it back out.");
     Ok(())
 }

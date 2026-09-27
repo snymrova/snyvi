@@ -386,7 +386,7 @@ export function connect(a, { esc, rel }) {
     const when = r.last_sent != null ? ` · sent ${rel(r.last_sent)}` : "";
     let say, state;
     if (other) { state = "connected"; say = `Calls itself <code>${esc(r.name)}</code>, and ${live ? "is here now" : "has sent"}: connected.`; }
-    else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet." : ""}`; }
+    else if (r.state === "connected") { state = "connected"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)} ${esc(r.args.join(" "))}</code>.${r.last_sent == null ? " Nothing has arrived from it yet. Restart any session that was already open: one that was running before this does not see snyvi." : ""}`; }
     else if (r.state === "stale") { state = "stale"; say = `Registered in <code>${esc(r.file)}</code> as <code>${esc(r.command)}</code>, which no longer exists — every send fails.`; }
     else if (r.state === "unreadable") { state = "stale"; say = `<code>${esc(r.file)}</code> could not be read (${esc(r.error)}), so it is not edited. Put the entry in by hand.`; }
     // Here, and nothing in its user file: registered somewhere the daemon
@@ -410,8 +410,117 @@ export function connect(a, { esc, rel }) {
   return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Connect an agent</h1><p class="doc-sub">Any agent that speaks MCP can send documents here. Each row is what that agent's own settings say about snyvi, right now.</p></header>` +
     `<ul class="agents">${rows.map(row).join("")}</ul>` +
     (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
-    `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand.</p></div>`;
+    `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand. Once something arrives: <a href="/start" data-nav="start">the first ten minutes</a>.</p></div>`;
 }
+
+// ---------- /start: the first ten minutes ----------
+/* A page, not a tour: six sections, a paragraph and a line of keys each,
+ * for someone with one document in front of them. No screenshots -- they
+ * would ride in the binary, show one theme to a reader on another, and be
+ * stale the day the window moves. The page shows the real window instead:
+ * a "Show me" lights the element it means, where it is, with the wash an
+ * arrival's row gets, and never opens, moves or changes anything; and three
+ * samples are drawn with the page's own classes, inert, so they wear the
+ * reader's theme, accent and font. */
+const kb = (...ks) => ks.map(k => `<kbd${k === "⌘" ? " data-mod" : ""}>${k}</kbd>`).join("");
+/** What each Show me lights, and what it says when that is not there. Asked
+ *  at the moment of the click as well as at the draw: an arrival while the
+ *  page is read makes the first one true. */
+const folded = () => document.documentElement.dataset.side === "0";
+const q = s => document.querySelector(s);
+const SHOW = {
+  arrives: { at: () => q("#tree a[data-id]") && (folded() ? q('#rail-nav [data-pop="tree"]') : q("#tree a[data-id]")),
+    none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Connect an agent</a>` },
+  waiting: { at: () => q("#queue .t-queue") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#queue .t-queue")), none: "Nothing is waiting right now." },
+  desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .s-head")), none: "Desks live in the window: <code>snyvi app</code>." },
+  notes: { at: () => !q("#note")?.hidden && (folded() ? q("#rail-note") : q("#note")), none: "No aside right now." },
+  keys: { at: () => q("#btn-help"), none: "" },
+};
+let startCap = false;
+const showLink = k => (SHOW[k].at() ? `<a href="#${k}" class="show-me" data-show="${k}">Show me</a>` : `<span class="show-none">${SHOW[k].none}</span>`);
+
+/** Light the thing a section is about, and nothing else: no navigation, no
+ *  focus moved, nothing opened. The foot's ? is only on screen while its
+ *  column is open, so the column is held open for as long as the light is. */
+function showMe(a) {
+  const k = a.dataset.show, el = SHOW[k] && SHOW[k].at();
+  if (!el) { a.outerHTML = `<span class="show-none">${SHOW[k].none}</span>`; return; }
+  el.scrollIntoView({ block: "nearest" });
+  const held = k === "keys" ? el : null;
+  held?.classList.add("said");
+  el.classList.remove("wash", "show-lit"); void el.offsetWidth;
+  el.classList.add("wash", "show-lit");
+  setTimeout(() => { el.classList.remove("wash", "show-lit"); held?.classList.remove("said"); }, 1500);
+}
+
+/** The page, drawn into the document pane. `cap` says whether this window
+ *  can run desks. */
+export function start({ cap }) {
+  startCap = !!cap;
+  const sec = (id, title, body, keys) => `<section id="${id}" class="start-sec"><h2>${title}</h2>${body}${keys ? `<p class="start-keys">${keys}</p>` : ""}</section>`;
+  return `<div class="connect start"><header class="doc-head"><h1 class="doc-title">The first ten minutes</h1><p class="doc-sub">Six things, a paragraph each. Every key is in ${kb("?")}.</p></header>` +
+    sec("arrives", "A document arrives",
+      `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you delete it, and a delete can be undone. ${showLink("arrives")}</p>`,
+      `${kb("⌘", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
+    sec("waiting", "What is waiting",
+      `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the oldest and takes it off, so the next ${kb("n")} is the one after: one key, in the order they came. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. ${showLink("waiting")}</p>`,
+      `${kb("n")} the next one waiting · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("⌘", "Z")} put it back`) +
+    sec("versions", "Versions",
+      `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +
+      `<pre class="code diff start-sample" inert aria-hidden="true"><code><span class="ln hunk">@@ -3,2 +3,2 @@</span>\n<span class="ln del">-## The cache</span>\n<span class="ln del">-It lives beside each desk.</span>\n<span class="ln add">+## The cache, per project</span>\n<span class="ln add">+It is per project, not per desk.</span></code></pre>`,
+      `${kb("[")} ${kb("]")} older / newer · ${kb("c")} compare · ${kb("s")} side by side / inline · ${kb("t")} contents`) +
+    sec("desks", "A desk",
+      `<p>A desk is one project's workbench: its folder, and up to four real terminal panels beside what you read, each running a shell or an agent. Make one with + beside Desks, or with the desk button on a folder to start it there. Everything the desk's agents send is listed on its rail, next to the panel that sent it. When an agent in a panel is waiting on you, for an answer or a permission, its row turns amber and Desks counts it. Restarting snyvi stops what runs in the panels; each comes back in its folder, and offers the conversation back with one click. ${showLink("desks")}</p>`,
+      `${kb("⌃", "`")} desk / reading · ${kb("⌃", "⌥", "1")}–${kb("4")} a panel · ${kb("⌃", "⌥", "N")} new panel · ${kb("⌃", "⌥", "W")} close it (with Undo) · ${kb("⌃", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
+    sec("notes", "Notes, points and asides",
+      `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
+      `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
+      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
+      `Right-click anything for what it can do · ${kb("☰")} or ${kb("⇧", "F10")} the same menu from the keyboard`) +
+    sec("keys", "Keys",
+      `<p>The letter keys start asleep, so a ${kb("j")} meant for a terminal cannot move the page. ${kb("⌃", "B")} wakes them; a pill at the bottom says <em>Keys on</em>, and they sleep again on Esc, a click, or ten quiet seconds.</p>` +
+      `<div class="keymode-sample show on" inert aria-hidden="true">Keys on · esc</div>` +
+      `<p>Keys with a modifier always work. ${kb("⌘", "K")} searches everything, and a search that starts with <code>&gt;</code> lists what snyvi can do: a theme, a new desk, a folder, an agent to connect. ${showLink("keys")}</p>`,
+      `${kb("⌃", "B")} letter keys · ${kb("⌘", "K")} search · ${kb("⌘", "K")} <code>&gt;</code> commands · ${kb("?")} every key · ${kb("\\")} sidebar · ${kb("Esc")} back to where you were`) +
+    `<p class="connect-foot">Nothing here yet? <a href="/connect" data-nav="connect">Connect an agent</a>.</p></div>`;
+}
+
+/** After the page is in: the keys say ctrl off a Mac, and the pill's look is
+ *  keys.js's own, fetched for the sample. */
+export async function startReady(v) {
+  if (!/Mac/.test(navigator.platform)) document.querySelectorAll(".start kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
+  try { (await import(`/assets/keys.js${v ? `?v=${v}` : ""}`)).sheet(); } catch {}
+}
+document.getElementById("doc").addEventListener("click", e => {
+  const a = e.target.closest(".start .show-me");
+  if (!a) return;
+  e.preventDefault();
+  showMe(a);
+});
+
+/* The page's own look, and the point sample's: the four rules of desk.js a
+ * point row is drawn with, copied here because desk.js is a chunk a browser
+ * never loads, scoped to the sample. The bench holds the copy to the real
+ * one (startRows). */
+const START_CSS = `
+.start-sec { margin: 0 0 30px; }
+.start-sec h2 { font-size: 18px; margin: 0 0 8px; }
+.start-sec p { font-size: 15px; line-height: 1.6; color: var(--fg-2); margin: 0 0 10px; }
+.start-keys { font-size: 13px !important; color: var(--fg-3) !important; }
+.start kbd { display: inline-block; min-width: 18px; padding: 0 5px; font-family: var(--mono); font-size: 11px; line-height: 18px; text-align: center; color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: 4px; white-space: nowrap; }
+.show-me { font-size: 13px; white-space: nowrap; }
+.show-none { font-size: 13px; color: var(--fg-3); }
+pre.start-sample { margin: 6px 0 12px; font-size: 12.5px; }
+.start-sample.dk-list { list-style: none; margin: 6px 0 0; padding: 0; max-width: 280px; }
+.start-sample .dk-note { display: flex; align-items: flex-start; gap: 6px; border-radius: 6px; }
+.start-sample .dk-note > .nm { flex: 1; min-width: 0; text-align: left; padding: 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere; }
+.start-sample .dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+button.start-sample.dk-new { display: block; padding: 3px 8px; font-size: 12px; border-radius: 6px; margin: 0 0 12px; }
+button.start-sample.dk-put { color: var(--accent); }
+.keymode-sample { margin: 6px 0 12px; }
+.show-lit { animation-iteration-count: 2 !important; }
+`;
+{ const s = document.createElement("style"); s.textContent = START_CSS; document.head.append(s); }
 
 /* The about and reset boxes, which this file builds -- in app.css until 1.7.1, and nothing on screen used them before
  * this file was loaded, so they came here to leave first paint. */

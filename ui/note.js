@@ -24,7 +24,7 @@ const CSS = `
   background: transparent; border: 1px solid transparent; transition: background .6s ease, border-color .6s ease, box-shadow .6s ease, padding .3s ease; }
 .note-now { overflow: hidden; isolation: isolate; }
 .note-now > p, .note-now > .note-by { position: relative; z-index: 1; }
-.note-now[data-about] { cursor: pointer; }
+.note-now:is([data-about], [data-href]) { cursor: pointer; }
 /* snyvi peeking from behind the note on hover, and for a moment when a new one arrives: large, tilted, faint, with a
    feeling. It rises from the corner rather than fading in on the spot. */
 .note-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
@@ -75,7 +75,7 @@ const CSS = `
   opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s; }
 #note:hover .note-trail, #note:focus-within .note-trail { opacity: 1; visibility: visible; transform: none; transition-delay: .25s, .25s, 0s; }
 .note-trail li { padding: 9px 12px; border-radius: 10px; background: var(--note-bg); border: 1px solid var(--note-rule); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
-.note-trail li[data-about] { cursor: pointer; }
+.note-trail li:is([data-about], [data-href]) { cursor: pointer; }
 .note-trail li[data-about]:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule)); }
 .note-trail p { color: var(--fg); }
 .note-trail .note-by { margin-top: 4px; }
@@ -100,7 +100,7 @@ const CSS = `
 
 /** Wire the card and draw it. What comes in is the page's; `render` is what
  *  the page calls on every change to `state.notes`. */
-export function init({ root, $, state, liveNotes, esc, relShort, showDoc, toast, closeSay, ghostSpent, stillMotion, GHOST_MS, holdUndo, dropUndo }) {
+export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, ghostSpent, stillMotion, GHOST_MS, holdUndo, dropUndo }) {
   const sheet = document.createElement("style");
   sheet.id = "note-drawn";
   sheet.textContent = CSS;
@@ -132,7 +132,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, toast,
   const noteBg = id => `<svg class="note-bg" viewBox="0 0 32 32" aria-hidden="true">` +
     `<rect class="nb-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="nb-body" x="1" y="4" width="30" height="27" rx="9"/>` +
     `<ellipse class="nb-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="nb-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
-    FEELINGS[id % FEELINGS.length] + `</svg>`;
+    FEELINGS[(typeof id === "number" ? id : String(id).length) % FEELINGS.length] + `</svg>`;
   /** The byline says whose work it came through: "via claude-code on api". */
   function noteBy(n) {
     return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
@@ -173,9 +173,9 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, toast,
     noteShown = n.id;
     const by = noteBy(n);
     noteEl.innerHTML =
-      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}` +
+      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : t.href ? ` data-href="${esc(t.href)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}` +
         `<li class="note-all"><button type="button" data-note-all title="Close every aside · Undo for 4 s">Close all</button></li></ol>` : "") +
-      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : ""}>` +
+      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : n.href ? ` data-href="${esc(n.href)}" title="Read more"` : ""}>` +
       noteBg(n.id) + `<button type="button" class="note-x" data-note-x title="Close · Undo for 4 s  Esc" aria-label="Close this aside">✕</button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
     // A new note brings snyvi up from behind it for a moment, as a hover does.
     // A window in the background would play that to nobody, so it waits.
@@ -213,8 +213,9 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, toast,
     if (e.target.closest("[data-note-x]")) { closeNotes(liveNotes().slice(0, 1).map(n => n.id), !e.detail); return; }
     if (e.target.closest("[data-note-all]")) { closeNotes(liveNotes().map(n => n.id), !e.detail); return; }
     seeNotes();
-    const a = e.target.closest("[data-about]");
+    const a = e.target.closest("[data-about]"), h = e.target.closest("[data-href]");
     if (a) showDoc(a.dataset.about, true);
+    else if (h) showStart(true, h.dataset.href.slice(h.dataset.href.indexOf("#")));
   });
   noteEl.addEventListener("keydown", e => {
     // Esc closes the aside the hand is on, and goes no further: not back a
@@ -225,8 +226,8 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, toast,
       return;
     }
     if (e.target.closest("button")) return;
-    const a = e.target.closest(".note-now[data-about]");
-    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDoc(a.dataset.about, true); }
+    const a = e.target.closest(".note-now[data-about], .note-now[data-href]");
+    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); a.dataset.about ? showDoc(a.dataset.about, true) : showStart(true, a.dataset.href.slice(a.dataset.href.indexOf("#"))); }
   });
   noteEl.addEventListener("animationend", e => {
     if (e.animationName === "drain" && noteGone) noteSettle(noteGone);
@@ -264,6 +265,9 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, toast,
     if (tell) notesSay("restore", g.ids).catch(e => toast("Could not bring the aside back", String(e)));
   }
   async function notesSay(what, ids) {
+    // snyvi's own lines live in this page; only an agent's reach the daemon.
+    ids = ids.filter(id => !String(id).startsWith("snyvi:"));
+    if (!ids.length) return;
     const r = await fetch(`/api/notes/${what}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
     if (!r.ok) throw new Error(`${r.status}`);
   }

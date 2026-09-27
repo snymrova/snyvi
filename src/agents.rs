@@ -623,6 +623,10 @@ pub fn init(agent: &Agent, instructions: bool) -> Result<()> {
         agent.name
     );
     println!(
+        "Restart any {} session that is already open: one that was running before this does not see snyvi.",
+        agent.name
+    );
+    println!(
         "`snyvi status` shows all of this; `snyvi uninstall {}` takes it back out.",
         agent.id
     );

@@ -617,7 +617,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    was, 140 ms, before the list moves up into its place. Both start at a
    negative delay when the tree is rebuilt under them (see `moment` in
    app.js), so a rebuild never plays them again. */
-.t-doc.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is */
+.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is; /start's Show me too */
+@media (prefers-reduced-motion: reduce) { .wash { outline: 2px solid var(--accent); outline-offset: 1px; } }
 .t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
 @keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
 /* A removed document's row, standing where it was on the row's own grid, so

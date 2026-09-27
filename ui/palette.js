@@ -26,7 +26,7 @@ export function open(deps) {
   if (!d) { d = deps; wire(); }
   const { input, browsing, codePre, state } = d;
   input.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
-    : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff)";
+    : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff  > commands)";
   search(input.value);
 }
 
@@ -89,6 +89,24 @@ function deskItems(q) {
   for (const k of state.desks.desks) if (!l || k.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: k.id, t: `Desk · ${k.name}`, s: k.root });
   return out;
 }
+/** `>` and a word: what snyvi can do, rather than what it holds. A static
+ *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
+ *  has no list of its own to read yet. */
+const COMMANDS = [
+  { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
+  { cmd: "desk", t: "New desk", s: "A shell on a desk, in your home folder", window: true },
+  { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
+  { cmd: "connect", t: "Connect an agent", s: "Claude Code, Codex, Cursor and the rest" },
+  { cmd: "start", t: "The first ten minutes", s: "What snyvi does, a paragraph each" },
+  { cmd: "keys", t: "Keys", s: "Every key, and ⌃B for the letters" },
+];
+function commandItems(q) {
+  const m = /^\s*>\s*(.*)$/.exec(q);
+  if (!m) return null;
+  const l = m[1].trim().toLowerCase();
+  return COMMANDS.filter(c => (!c.window || d.capability) && (!l || c.t.toLowerCase().includes(l)));
+}
+
 /** The keyboard's way to the `+` beside Folders. */
 function folderItems(q) {
   const l = q.trim().toLowerCase();
@@ -119,6 +137,14 @@ async function search(q) {
     list.innerHTML = `<li class="sel" data-i="0"><span class="t">Go to line ${+g[1]}</span><span class="s">${esc(document.title)}</span></li>`;
     return;
   }
+  const commands = commandItems(q);
+  if (commands) {
+    items = commands; sel = 0;
+    list.innerHTML = items.length ? items.map(row).join("") : none(q);
+    pal.classList.remove("themes");
+    previewSel();
+    return;
+  }
   let found = [];
   if (browsing()) {
     try { found = (await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json()).map(p => ({ file: p })); } catch {}
@@ -135,8 +161,16 @@ async function search(q) {
 
 // Kept: the preview already drew it, so closing must not put it back first.
 function pick(it) {
+  // Theme… is a way into the theme rows, which preview as they are walked.
+  if (it.cmd === "theme") { d.input.value = "theme"; search("theme"); return; }
   if (it.theme) previewing = false;
   close();
+  if (it.cmd) {
+    const c = it.cmd;
+    c === "desk" ? d.act("make", null) : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+      : c === "start" ? d.showStart(true) : d.openHelp();
+    return;
+  }
   const { state } = d;
   it.theme ? d.setTheme(it.theme) : it.pick ? d.act("pick") : it.line ? d.gotoLine(it.line)
     : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? d.showDesk(it.desk, true)

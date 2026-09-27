@@ -1257,6 +1257,23 @@
     afterRender();
     watchAgents();
   }
+  /** The first ten minutes: a page about.js draws, like the connect page.
+   *  `at` is a section to land on (`#desks`), as an aside's link names one. */
+  async function showStart(push = true, at = location.hash) {
+    if (push) leave();
+    offDesk();
+    state.view = "start"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "The first ten minutes · snyvi";
+    if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
+    let m;
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return; }
+    docEl.innerHTML = m.start({ cap: !!capability });
+    m.startReady(boot.v);
+    if (push) swapIn();
+    const sec = at && document.getElementById(at.slice(1));
+    if (sec) sec.scrollIntoView({ block: "start" }); else main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
   /** Ask again while the page is on screen; redraw only when something changed. */
   function watchAgents() {
     clearInterval(agentsTimer);
@@ -1575,6 +1592,29 @@
    * makes the logo blink and the rail's aside dot glow. */
   /** The asides on the card: the daemon keeps a closed one, flagged, for Undo. */
   const liveNotes = () => state.notes.filter(n => !n.dismissed);
+  /* snyvi's own asides: five lines at five first moments, each once, each
+   * pointing into /start. Not a tour and not a checklist: it waits while an
+   * agent's aside is unread, says at most one thing in ten minutes (the
+   * daemon's own quiet for agents, aside.rs), and remembers what it said in
+   * this browser (`snyvi.seen.*`, which Reset clears). Kept on the card's
+   * list with ids `snyvi:*`, which note.js never tells the daemon about. */
+  const OWN = {
+    "first-doc": ["Your first document. Everything that arrives stays here, filed by project and session.", "arrives"],
+    "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
+    "first-desk": ["Your first desk: up to four terminals beside what you read. ⌃` goes between the desk and reading.", "desks"],
+    "blocked": ["A panel is waiting on you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
+    "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
+  };
+  const isOwn = n => String(n.id).startsWith("snyvi:");
+  const withOwn = list => state.notes.filter(isOwn).concat(list);
+  function snyviSays(key) {
+    if (store.get(`snyvi.seen.${key}`) || state.notes.some(n => !n.dismissed && !n.seen)) return;
+    if (Date.now() - (+store.get("snyvi.seen.at") || 0) < 600e3) return;
+    store.set(`snyvi.seen.${key}`, "1"); store.set("snyvi.seen.at", String(Date.now()));
+    const [text, sec] = OWN[key];
+    state.notes = [{ id: `snyvi:${key}`, text, sender: "", at: Date.now() / 1000, href: `/start#${sec}` }, ...state.notes.filter(n => !isOwn(n))];
+    renderNote();
+  }
   let noteMod = null, noteLoading = null;
   function renderNote() {
     if (noteMod) return noteMod.render();
@@ -1582,7 +1622,7 @@
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
     if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
-      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, toast, closeSay, ghostSpent, stillMotion, GHOST_MS,
+      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, ghostSpent, stillMotion, GHOST_MS,
         holdUndo: f => (undoing = f), dropUndo: f => { if (undoing === f) undoing = null; } });
       noteMod.render();
     }, () => { noteLoading = null; });
@@ -1890,7 +1930,7 @@
         markCur(links, cur);
       });
     }
-    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect");
+    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect" || state.view === "start");
   }
 
   /* A contents entry is a hash link, and the browser's own handling of one
@@ -2306,6 +2346,7 @@
     e.preventDefault();
     if (a.dataset.nav === "inbox") showInbox(true);
     else if (a.dataset.nav === "connect") showConnect(true);
+    else if (a.dataset.nav === "start") showStart(true, a.hash || "");
     else if (a.dataset.nav === "desks") showDesk(null, true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else if (a.dataset.desk !== undefined) showDesk(+a.dataset.desk, true, +a.dataset.slot || 0);
@@ -2371,6 +2412,7 @@
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     if (location.pathname === "/connect") return showConnect(false);
+    if (location.pathname === "/start") return showStart(false);
     const k = location.pathname.match(/^\/desk\/(\d+)$/);
     if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
     showInbox(false);
@@ -2532,12 +2574,17 @@
   const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
   /** The fullest context window among a desk's panels, as their status lines said. */
   const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
+  let desksSeen = null;
   function renderDesks() {
     const list = state.desks ? state.desks.desks : [];
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     badge('[data-pop="desks"]', blocked, " blk");
+    // Two of snyvi's own first moments: a first desk, and a panel waiting.
+    if (desksSeen === 0 && list.length === 1) snyviSays("first-desk");
+    if (state.desks) desksSeen = list.length;
+    if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
@@ -2623,6 +2670,7 @@
     if (state.view === "inbox") return { inbox: true };
     if (state.view === "browse" && state.browseRoot) return { browse: state.browseRoot.id, path: "" };
     if (state.view === "connect") return { connect: true };
+    if (state.view === "start") return { start: true };
     if (state.view === "desk") return { desk: state.deskId };
     return null;
   }
@@ -2642,6 +2690,7 @@
       return { name: r ? r.name : "the folder", go: () => showBrowse(b.browse, "", true) };
     }
     if (b && b.connect) return { name: "Connect an agent", go: () => showConnect(true) };
+    if (b && b.start) return { name: "The first ten minutes", go: () => showStart(true, "") };
     if (b && "desk" in b) {
       const d = b.desk != null && state.desks && state.desks.desks.find(x => x.id === b.desk);
       return { name: d ? d.name : "Desks", go: () => showDesk(b.desk, true) };
@@ -2761,7 +2810,7 @@
     } catch {}
     try {
       const n = await (await fetch("/api/notes")).json();
-      if (Array.isArray(n.notes)) { state.notes = n.notes; renderNote(); }
+      if (Array.isArray(n.notes)) { state.notes = withOwn(n.notes); renderNote(); }
     } catch {}
     await refreshTree();
     if (state.view === "inbox") showInbox(false);
@@ -2815,7 +2864,7 @@
     // An agent left a note, or a reader looked at one somewhere.
     es.addEventListener("notes", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
-      if (Array.isArray(j.notes)) { state.notes = j.notes; renderNote(); }
+      if (Array.isArray(j.notes)) { state.notes = withOwn(j.notes); renderNote(); }
     });
     es.addEventListener("doc", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -2863,7 +2912,10 @@
       renderTree(); markActive();
       await refreshTree(d.project_id);
       deskDocs();
+      if (state.waiting > 1) snyviSays("two-waiting");
+      else if (j.supersedes) snyviSays("version");
       if (opens) {
+        snyviSays("first-doc");
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
@@ -3145,7 +3197,7 @@
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc });
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, openHelp });
   }
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
@@ -3294,6 +3346,7 @@
   $("#btn-about").addEventListener("click", () => panel("about"));
   $("#btn-reset").addEventListener("click", () => panel("reset"));
   $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
+  $("#btn-start").addEventListener("click", () => { closeDialog(help); showStart(true, ""); });
 
   // ---------- the contents on a narrow window ----------
   /* Past 1100 px the rail stops fitting beside the document and becomes a
@@ -3566,6 +3619,7 @@
   }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
+  else if (state.view === "start") { history.replaceState({ start: true }, "", "/start" + location.hash); showStart(false); }
   else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();

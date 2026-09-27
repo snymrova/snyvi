@@ -241,6 +241,7 @@ async function main() {
     sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
     sections.push(["the first frame, in the reader's theme", await firstFrameRows(p, url)]);
     sections.push(["the about box", await aboutRows(p, url)]);
+    sections.push(["the first ten minutes", await startRows(p, url, arrive, base)]);
     sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
     sections.push(["an agent that is here", await presenceRows(p, url, base, env, tmp)]);
     // Last, because it takes the library with it.
@@ -2069,6 +2070,64 @@ main().catch(e => { console.error(e.message); process.exit(1); });
  *  nothing remembered for the reader who was here before. */
 /** One panel inside `?`, and everything on it read from the daemon when it
  *  opens, so the version it names is the one answering. */
+/** 1.7.1: the first ten minutes. `?` answers with the letters asleep, the
+ *  page has its six sections, each Show me lights exactly its element and
+ *  moves nothing, the samples wear the real rules, and snyvi's own aside
+ *  says its line once. */
+async function startRows(p, url, arrive, base) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  await p.goto(url);
+  await p.pointerAway();
+  await p.press("?", { raw: true });
+  const asleep = await p.ev(`!document.body.classList.contains("keys")`);
+  const help = await p.ui("vis", "#help");
+  rows.push(["? opens the keys with the letters asleep", asleep && help, !asleep ? "the letters were awake" : help ? "the box is up" : "nothing opened"]);
+  await p.clickOn("#btn-start");
+  const drawn = await until(`document.querySelectorAll(".start .start-sec").length === 6`);
+  const ids = await p.ev(`[...document.querySelectorAll(".start .start-sec")].map(s => s.id).join(" ")`);
+  rows.push(["/start has its six sections", drawn && ids === "arrives waiting versions desks notes keys" && (await p.ev("location.pathname")) === "/start",
+    drawn ? ids : "the page did not draw"]);
+
+  // Each Show me: exactly one element lit, nothing else moved.
+  const before = await p.ev(`({ url: location.href, focus: document.activeElement?.id || document.activeElement?.tagName })`);
+  const lit = [], broke = [];
+  for (const k of ["arrives", "waiting", "desks", "notes", "keys"]) {
+    const has = await p.ev(`!!document.querySelector('.start .show-me[data-show="${k}"]')`);
+    if (!has) { const why = await p.ev(`document.querySelector("#${k} .show-none")?.textContent || ""`); if (!why && k !== "keys") broke.push(`${k}: no link and no reason`); continue; }
+    await p.ev(`document.querySelector('.start .show-me[data-show="${k}"]').click(); 1`);
+    const n = await p.ev(`document.querySelectorAll(".show-lit").length`);
+    if (n !== 1) broke.push(`${k}: ${n} lit`); else lit.push(k);
+    await sleep(1600);
+  }
+  const after = await p.ev(`({ url: location.href, focus: document.activeElement?.id || document.activeElement?.tagName })`);
+  rows.push(["each Show me lights one thing and moves nothing", broke.length === 0 && lit.length >= 2 && after.url === before.url && after.focus === before.focus,
+    broke.length ? broke.join("; ") : after.url !== before.url ? `went to ${after.url}` : after.focus !== before.focus ? `focus moved to ${after.focus}` : `lit ${lit.join(", ")}; the rest say why not`]);
+
+  // The samples wear the page's own rules: a real diff's colours, the pill's.
+  const sample = await p.ev(`(() => { const c = s => { const e = document.querySelector(s); return e ? getComputedStyle(e).backgroundColor : ""; };
+    return { add: c(".start-sample .add"), del: c(".start-sample .del"), pill: c(".keymode-sample"), inert: document.querySelectorAll(".start [inert]").length }; })()`);
+  const want = await p.ev(`(() => { const pre = document.createElement("pre"); pre.className = "diff"; pre.innerHTML = '<code><span class="ln add">+</span><span class="ln del">-</span></code>'; document.body.append(pre);
+    const r = { add: getComputedStyle(pre.querySelector(".add")).backgroundColor, del: getComputedStyle(pre.querySelector(".del")).backgroundColor, raise: getComputedStyle(document.body).getPropertyValue("--bg-raise") }; pre.remove(); return r; })()`);
+  rows.push(["the samples are drawn with the page's rules, inert", sample.add === want.add && sample.del === want.del && !!sample.pill && sample.inert >= 3,
+    sample.add !== want.add || sample.del !== want.del ? `the hunk is ${sample.add}/${sample.del}, a diff ${want.add}/${want.del}` : !sample.pill ? "the pill sample has no look" : `${sample.inert} inert samples, in the reader's colours`]);
+
+  // snyvi's own aside: said once, when two are waiting, and never over an
+  // agent's that is still unread.
+  await fetch(`${base}/api/notes/seen`, { method: "POST" }).catch(() => {});
+  await p.ev(`Object.keys(localStorage).filter(k => k.startsWith("snyvi.seen.")).forEach(k => localStorage.removeItem(k)); 1`);
+  await p.goto(url);
+  await arrive(); await arrive();
+  const said = await until(`/^Two are waiting/.test(document.querySelector("#note .note-now p")?.textContent || "")`, 40);
+  await p.ev(`document.querySelector("#note [data-note-x]")?.click(); 1`);
+  await sleep(4500);
+  await arrive();
+  await sleep(800);
+  const again = await p.ev(`/^Two are waiting/.test(document.querySelector("#note .note-now p")?.textContent || "")`);
+  rows.push(["snyvi says its own line once", said && !again, !said ? "no aside when two were waiting" : again ? "it said it again" : "once, pointing at the first ten minutes"]);
+  return rows;
+}
+
 async function aboutRows(p, url) {
   const rows = [];
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };

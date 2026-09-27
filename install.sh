@@ -366,3 +366,18 @@ fi
 say "  snyvi send README.md    a document, and a link to read it"
 say "  snyvi app               the window, where desks run"
 say "  snyvi status            what is running, what is registered"
+
+# One question, asked only where it can be answered: a desktop to open the
+# window on, the window installed, and a terminal. `curl | sh` has no stdin
+# of its own, so the answer is read from /dev/tty, and no tty is no question.
+if { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } &&
+   { [ "${app:-0}" = 1 ] || have snyvi-app; } &&
+   ( : </dev/tty ) 2>/dev/null; then
+  printf "\nOpen the window now? [Y/n] " >/dev/tty
+  answer=
+  read -r answer </dev/tty || answer=n
+  case $answer in
+    [nN]*) ;;
+    *) "$snyvi" app >/dev/null 2>&1 & ;;
+  esac
+fi
