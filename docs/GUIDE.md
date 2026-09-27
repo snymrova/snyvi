@@ -645,7 +645,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | z     | wrap long lines                             |
 | p     | pin (kept by `prune`)                       |
 | n     | open the next document waiting              |
-| Del   | delete document (⌘/ctrl Z undoes it)        |
+| Del   | remove document (⌘/ctrl Z undoes it)        |
 | i     | inbox                                       |
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
@@ -926,7 +926,8 @@ window, and it survives a restart.
 
 The inbox lists what is waiting first, oldest first, then everything
 else. "Mark all read" empties the queue without opening anything, for
-the day an agent sent thirty. Twelve arrivals in two seconds are twelve
+the day an agent sent thirty; it answers "Marked 30 read · Undo" where
+the bar was, and ⌘/ctrl Z puts them back. Twelve arrivals in two seconds are twelve
 rows and one bar that says twelve.
 
 The one place an arrival opens by itself is the inbox with nothing
@@ -954,12 +955,21 @@ Removing is one keystroke and no question. `Del`, or the ✕ on a
 document's row in the sidebar, takes it out of the inbox at once. Its
 row stays where it was, saying "removed", with an "Undo" in it and a
 thin bar along its foot that drains over four seconds; resting the
-pointer on the row stops the bar. ⌘/ctrl Z does the same, which is
-where your hand goes anyway.
+pointer or the keyboard's focus on the row stops the bar. Removed with
+a key, the focus lands on the Undo, so Enter takes it back. ⌘/ctrl Z
+does the same, which is where your hand goes anyway.
 Nothing is destroyed in the meantime: the daemon marks the document
 deleted and keeps it until `prune` runs, which is what makes the offer
 real. It disappears from the tree, the inbox, search and the queue in
 every tab at once, and comes back to the same place.
+
+When snyvi says no, nothing you did is lost. An Undo that is refused
+keeps its row, which says "Could not bring it back" with a Retry; a
+note or a name that is refused is back in its field with the reason
+under it; a tick or a close that is refused is put back, and its own
+row says so. An error stays until its ✕, and news that arrives
+meanwhile waits behind it. A list that could not be loaded says "Could
+not reach snyvi · Retry" in its own place, and never looks empty.
 
 What moves in the sidebar says so once, and briefly. An arrival's row
 is lit for a moment, the way a heading is where a link landed -- the
@@ -999,7 +1009,8 @@ document it is about, and then clicking it opens that document.
 An aside can be closed: the ✕ in its corner, or Esc while it has the
 focus. Its card stays where it was as one line, "Aside closed", with an
 "Undo" and the same draining four-second bar a removed document's row
-has; ⌘/ctrl Z works too. When the bar runs out, the next aside you
+has; ⌘/ctrl Z works too. The Undo asks the daemon first, and a refusal
+keeps the line, saying so, with a Retry. When the bar runs out, the next aside you
 haven't closed takes the card, or the card goes. With a trail behind it,
 "Close all" at the foot of the trail closes every one at once. Closing
 is not muting: the next aside an agent sends shows as usual. A closed
@@ -1089,7 +1100,9 @@ notes you already have, not an import.
 The folder itself stays open. It is in the sidebar until you close it,
 across restarts and upgrades of the daemon, so the repositories you read
 in are there each morning without being opened again. A folder that has
-gone from disk in the meantime is dropped quietly.
+gone from disk in the meantime is dropped quietly. Closing one (its ✕,
+or Close folder in its menu) leaves its row as "closed · Undo" for a
+few seconds, and the Undo opens it again in its place.
 
 ```
 snyvi browse            # the current folder
