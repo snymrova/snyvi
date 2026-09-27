@@ -1949,6 +1949,33 @@ async function deskLossRows(cdp, base, token) {
     const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-empty")`);
     rows.push(["notes fetch refused → Retry line, not the empty prompt", await refused(p) && !!notes.line && !notes.prompt && prompt,
       !(await refused(p)) ? "the desk never asked for its notes" : notes.prompt ? "the empty prompt, as if the list were empty" : !notes.line ? "nothing says the notes did not load" : prompt ? `"${notes.line}", and the Retry read the (empty) list` : "the Retry did not read the list"]);
+
+    // A point kept from a document this desk's panel sent is still there
+    // after going to another desk and back.
+    await fetch(`${base}/api/docs`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ content: "# A passage to keep\n\nThis line is worth keeping as a point for the panel that sent it.\n", title: "A passage to keep", pane }) });
+    await p.clickOn(`a[data-desk="${desk}"]`);
+    const listed = await until(`!!document.querySelector("#toc a[data-read]")`);
+    let kept = false, survived = false;
+    if (listed) {
+      await p.clickOn("#toc a[data-read]");
+      await until(`!!document.querySelector("#doc .prose p")`);
+      const at = await p.ui("center", "#doc .prose p");
+      await p.drag(at.x - 150, at.y, 300);
+      if (await until(`!!document.querySelector(".dk-pick")`, 20)) {
+        await p.clickOn(".dk-pick");
+        kept = await until(`!!document.querySelector("#toc .dk-points")`, 20);
+      }
+      if (kept) {
+        await p.clickOn(`a[data-desk="${other}"]`);
+        await until(`location.pathname === "/desk/${other}"`);
+        await p.clickOn(`a[data-desk="${desk}"]`);
+        await until(`location.pathname === "/desk/${desk}"`);
+        survived = await until(`!!document.querySelector("#toc .dk-points")`, 20);
+      }
+    }
+    rows.push(["points survive switching desk and back", survived,
+      !listed ? "the panel's document is not in the desk's rail" : !kept ? "no point could be kept from it" : survived ? "the point is in the rail after another desk and back" : "the point went with the switch"]);
   } finally {
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${other}/delete`).catch(() => {});

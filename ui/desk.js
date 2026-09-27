@@ -1803,10 +1803,21 @@ function again(v) {
   if (reading != null) ctx.go(deskId, true, n); else focusPane(v.id);
 }
 
-function forgetPoints() {
+/** Leaving a desk hides its points and keeps them: they are the reader's,
+ *  and coming back finds them where they were. A point whose Undo was still
+ *  standing goes, as any offer does once its row is left. They are kept by
+ *  panel, for the life of the page; only a panel that is no longer on any
+ *  desk takes its points with it (`keepPoints`). */
+function hidePoints() {
   hidePick();
   clearTimeout(saidTimer); clearTimeout(pointTimer);
-  points = new Map(); pointSaid = null;
+  pointSaid = null;
+  for (const [id, list] of points) { const k = list.filter(y => !y.gone); if (k.length) points.set(id, k); else points.delete(id); }
+}
+function keepPoints(desks) {
+  if (!desks) return;
+  const live = new Set(desks.desks.flatMap(d => d.panes.map(p => p.id)));
+  for (const id of points.keys()) if (!live.has(id)) points.delete(id);
 }
 
 // ---------- actions ----------
@@ -2184,10 +2195,11 @@ export function open(c) {
   style();
   if (first) measure();
   if (deskId !== c.id) {
-    views.clear(); docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints();
+    views.clear(); docList = []; docsAt = null; docsAll = false; forgetNotes(); hidePoints();
     focused = null; full = false;
   }
   deskId = c.id; reading = null;
+  keepPoints(c.desks);
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
   draw();
@@ -2359,6 +2371,7 @@ export const panels = () => views.size;
 export function update(desks) {
   if (!ctx) return;
   ctx.desks = desks;
+  keepPoints(desks);
   const d = current();
   // Behind a document, the page is not the desk's to draw: the rail is.
   if (reading != null) { if (d) { sync(d); rail(); } else { ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = ""; } return; }
@@ -2389,7 +2402,7 @@ export function close() {
   views.clear();
   focused = null;
   docList = []; docsAt = null; docsAll = false;
-  forgetNotes(); forgetPoints();
+  forgetNotes(); hidePoints();
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
