@@ -29,7 +29,7 @@
   --rule: #dccfb3;
   --rule-2: #cbbc9c;
   --accent-l: #93301a;
-  --deepen: 8%;
+  --deepen: 9%;  /* every accent at 4.5:1 on the ground and on its wash */
   --code-bg: #ece1c8;
   --mark: #f2d27f;
   --add: #dcebc8; --add-fg: #2f5e1a;
@@ -140,6 +140,7 @@
    still reads on the sidebar. */
 [data-theme="sage"] {
   color-scheme: light;
+  --deepen: 3%;  /* violet and teal on their wash, to 4.5:1 */
   --bg: #f2f5ef;
   --bg-side: #ebf0e7;
   --bg-raise: #fafcf8;
@@ -220,7 +221,7 @@
   --fg-3: #948472;
   --rule: #302722;
   --rule-2: #40352e;
-  --wash: 16%;
+  --wash: 14%;   /* the most that keeps Passion on it at 4.5:1 */
   --wash-on: transparent;
   --kw: 100%;
   --mascot-peek: .16;

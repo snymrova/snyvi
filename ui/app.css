@@ -127,7 +127,7 @@
   --fg-3: rgba(255,255,255,.47);
   --rule: rgba(255,255,255,.08);
   --rule-2: rgba(255,255,255,.14);
-  --wash: 16%;
+  --wash: 13%;   /* the most that keeps Passion on it at 4.5:1 */
   --wash-on: transparent;
   --kw: 100%;
   --mascot-peek: .16;
