@@ -107,19 +107,30 @@ export async function drop(ctx, b) {
 /** Turn a name in the tree into a field, in place. Enter and blur keep what was
  *  typed, Escape abandons it; the label goes back the moment either happens, so
  *  the tree is never left holding an input. */
-export function rename(ctx, holder, what, id) {
+/** Why a field is open again: under it, until the next key. */
+function fieldErr(input, why) {
+  const p = Object.assign(document.createElement("span"), { className: "field-err", textContent: why });
+  p.setAttribute("role", "alert");
+  input.after(p);
+  input.addEventListener("input", () => p.remove(), { once: true });
+  input.addEventListener("blur", () => p.remove(), { once: true });
+}
+
+/** A name typed and refused comes back in the field (`typed`), with why. */
+export function rename(ctx, holder, what, id, typed, why) {
   const { toast } = ctx;
   const label = holder.querySelector(":scope > .nm");
   if (!label || holder.querySelector("input.ren-in")) return;
   const before = label.textContent, cls = label.className;
   const input = document.createElement("input");
   input.className = "ren-in";
-  input.value = before;
+  input.value = typed ?? before;
   input.spellcheck = false;
   input.setAttribute("aria-label", `Name of this ${what}`);
   label.replaceWith(input);
   holder.classList.add("renaming");
   input.focus(); input.select();
+  if (why) fieldErr(input, why);
 
   let settled = false;
   const finish = async keep => {
@@ -149,7 +160,8 @@ export function rename(ctx, holder, what, id) {
       }
     } catch (e) {
       label.textContent = before;
-      toast("Could not rename", String(e));
+      if (holder.isConnected) rename(ctx, holder, what, id, next, `Could not rename · ${e.message}`);
+      else toast(`Could not rename ${before}`, e.message);
     }
   };
   // The app answers single keys, and Escape closes find and the palette.

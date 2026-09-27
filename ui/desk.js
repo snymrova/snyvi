@@ -50,7 +50,7 @@ let noteList = [], notesAt = null, notesGet = null;
  *  a line being rewritten in place. Held here rather than in the DOM because
  *  the rail is redrawn whole -- by a pane's status, by the clock every 30s --
  *  and a field that lived only in the page would be swept away mid-word. */
-let noteField = null, noteDraft = "", noteCaret = 0;
+let noteField = null, noteDraft = "", noteCaret = 0, noteErr = "";
 /** True only while the rail's HTML is being replaced. An element losing the
  *  focus that way is not a reader clicking away from it, and must not be read
  *  as one: without this, every redraw committed whatever was half-typed. */
@@ -1499,10 +1499,13 @@ function noteSec(d) {
     (rows ? `<ul class="dk-list">${rows}</ul>`
       : noteField ? "" : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
     (noteField && noteField.kind === "new"
-      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
+      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}</div>`
       : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>`) +
     `</details>`;
 }
+
+/** Why the field is open again, after a save the daemon refused. */
+const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(noteErr)}</span>` : "";
 
 /** One line. A line being rewritten is a field in the row's own place, so the
  *  text does not move under the cursor as it becomes editable; a line just
@@ -1515,7 +1518,7 @@ function noteRow(x, esc) {
   }
   if (noteField && noteField.kind === "edit" && noteField.id === x.id) {
     return `<li class="dk-note${x.done ? " done" : ""}"><span class="dk-tick ghost" aria-hidden="true"></span>` +
-      `<input class="dk-note-in" aria-label="This note" spellcheck="false"></li>`;
+      `<input class="dk-note-in" aria-label="This note" spellcheck="false">${noteSays(esc)}</li>`;
   }
   return `<li class="dk-note${x.done ? " done" : ""}">` +
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
@@ -1595,7 +1598,7 @@ function noteFocus() {
   const inp = ctx.tocEl.querySelector(".dk-note-in");
   if (!inp) return;
   inp.value = noteDraft;
-  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; });
+  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; if (noteErr) { noteErr = ""; inp.nextElementSibling?.remove(); } });
   // Where the caret was, not the end of the line: the rail redraws on the
   // clock every 30 seconds, and a caret that jumped to the end each time
   // would make a long note impossible to correct in the middle.
@@ -1604,7 +1607,7 @@ function noteFocus() {
     // The desk gives every other key to the shell in the focused panel.
     e.stopPropagation();
     if (e.key === "Enter") { e.preventDefault(); saveNote(true); }
-    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; rail(); }
+    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; noteErr = ""; rail(); }
   });
   inp.addEventListener("blur", () => { if (!drawing) saveNote(false); });
   inp.focus();
@@ -1620,14 +1623,21 @@ async function saveNote(again) {
   const f = noteField, text = noteDraft.trim(), d = current();
   if (!f || !d) return;
   noteField = again && f.kind === "new" ? { kind: "new" } : null;
-  noteDraft = ""; noteCaret = 0;
+  noteDraft = ""; noteCaret = 0; noteErr = "";
   rail();
   if (f.kind === "new" && !text) return;
   try {
     if (f.kind === "new") await ctx.api(`/api/desks/${d.id}/notes`, { text });
     else await ctx.api(`/api/desks/${d.id}/notes/${f.id}`, { text });
     await getNotes(d.id, true);
-  } catch (e) { ctx.toast("Could not keep that note", String(e)); }
+  } catch (e) {
+    // What was typed is not lost to a no: the field opens again with it,
+    // and the reason stands under it until the next key.
+    const why = `Could not ${f.kind === "new" ? "add the note" : "keep the change"} · ${e.message}`;
+    if (d !== current()) return ctx.toast(why, text);
+    noteField = f; noteDraft = text; noteCaret = text.length; noteErr = why;
+    rail();
+  }
 }
 
 /** The documents this desk's panes sent, for the rail. Fetched when the desk
@@ -1938,17 +1948,28 @@ async function restorePanel(id) {
   await ctx.refresh();
 }
 
+/** Why a field is open again: under it, until the next key. */
+function fieldErr(input, why) {
+  const p = Object.assign(document.createElement("span"), { className: "field-err", textContent: why });
+  p.setAttribute("role", "alert");
+  input.after(p);
+  input.addEventListener("input", () => p.remove(), { once: true });
+  input.addEventListener("blur", () => p.remove(), { once: true });
+}
+
 /** Name a panel, in its head, in place of the title its program sets. Empty
- *  gives the head back to the program. */
-function renamePanel(v) {
+ *  gives the head back to the program. A name refused comes back in the
+ *  field (`typed`), with why under it, as a note's does. */
+function renamePanel(v, typed, why) {
   // A panel the grid has no room for is brought up first: its head is where the name goes.
   if (!v.el.isConnected && reading == null) focusPane(v.id);
   const nm = v.el.querySelector(".pn-cmd");
   if (!nm || !v.el.isConnected) return;
-  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: v.pane.name || "", placeholder: short(v), spellcheck: false });
+  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: typed ?? (v.pane.name || ""), placeholder: short(v), spellcheck: false });
   input.setAttribute("aria-label", `Name of panel ${v.pane.slot}`);
   nm.replaceWith(input);
   input.focus(); input.select();
+  if (why) fieldErr(input, why);
   let done = false;
   const finish = async keep => {
     if (done) return;
@@ -1956,7 +1977,8 @@ function renamePanel(v) {
     const name = input.value.trim();
     input.replaceWith(nm);
     if (keep && name !== (v.pane.name || "")) {
-      try { await ctx.api(`/api/panes/${v.id}/rename`, { name }); v.pane.name = name; await ctx.refresh(); } catch (e) { ctx.toast("Could not rename", String(e)); }
+      try { await ctx.api(`/api/panes/${v.id}/rename`, { name }); v.pane.name = name; await ctx.refresh(); }
+      catch (e) { header(v); rail(); return renamePanel(v, name, `Could not rename · ${e.message}`); }
     }
     header(v); rail();
     v.body.focus();
@@ -1969,20 +1991,22 @@ function renamePanel(v) {
   input.addEventListener("blur", () => finish(true));
 }
 
-function renameDesk(d) {
+function renameDesk(d, typed, why) {
   const nm = ctx.metaEl.querySelector(".dk-nm");
   if (!nm) return;
-  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: d.name, spellcheck: false });
+  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: typed ?? d.name, spellcheck: false });
   input.setAttribute("aria-label", "Name of this desk");
   nm.replaceWith(input);
   input.focus(); input.select();
+  if (why) fieldErr(input, why);
   let done = false;
   const finish = async keep => {
     if (done) return;
     done = true;
     const name = input.value.trim();
     if (keep && name && name !== d.name) {
-      try { await ctx.api(`/api/desks/${d.id}/rename`, { name }); await ctx.refresh(); } catch (e) { ctx.toast("Could not rename", String(e)); }
+      try { await ctx.api(`/api/desks/${d.id}/rename`, { name }); await ctx.refresh(); }
+      catch (e) { rail(); return renameDesk(d, name, `Could not rename · ${e.message}`); }
     }
     rail();
   };

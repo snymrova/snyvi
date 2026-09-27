@@ -238,6 +238,7 @@ async function main() {
     sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
     sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
     sections.push(["a desk for each project", await projectDeskRows(cdp, base, token, tmp)]);
+    sections.push(["nothing lost on a desk when snyvi says no", await deskLossRows(cdp, base, token)]);
     sections.push(["panels: full view, moved, linked, and their menus", await panelRows(cdp, base, token)]);
     sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
     sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
@@ -1807,6 +1808,58 @@ async function projectDeskRows(cdp, base, token, tmp) {
     }
   } finally {
     if (made) await post(`/api/desks/${made.id}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** 1.7.2, on a desk: a note or a name the daemon refused is back in its
+ *  field with the reason under it; the rail puts back what it changed when
+ *  the daemon says no, and says which thing failed, in that thing's row. In
+ *  a tab of its own, with the capability, as `deskRows` is. */
+async function deskLossRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "refusals" });
+  const desk = d.desk ? d.desk.id : d.id;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const field = sel => p.ev(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); return i ? { value: i.value, err: i.parentElement.querySelector(".field-err")?.textContent || null, focused: document.activeElement === i } : null; })()`);
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`!!document.querySelector("#toc [data-a=note-new]")`);
+
+    // A new note, refused: the text is back in the field, and why is under it.
+    const typed = "a line the daemon will not keep";
+    await p.clickOn("#toc [data-a=note-new]");
+    await until(`!!document.querySelector("#toc .dk-note-in")`);
+    await p.type(typed);
+    await refuse(p, "POST", /\/notes$/, 400, { error: "a desk holds 50 notes" });
+    await p.press("Enter");
+    await sleep(400);
+    const f1 = await field("#toc .dk-note-in");
+    rows.push(["note save refused → text back in the field", await refused(p) && f1?.value === typed && /^Could not add the note/.test(f1.err || ""),
+      !(await refused(p)) ? "Enter never asked the daemon" : !f1 ? "the field closed, and the text with it" : f1.value !== typed ? `the field holds "${f1.value}"` : !f1.err ? "the text is back, but nothing says why" : `"${f1.value}", and under it "${f1.err}"`]);
+    await p.press("Escape");
+
+    // The desk's name, refused: the typed name is back in the field.
+    await p.clickOn("#meta [data-a=rename]");
+    await until(`!!document.querySelector("#meta .ren-in")`);
+    await p.type("a name the daemon refuses");
+    await refuse(p, "POST", /\/rename$/, 400, { error: "that name is taken" });
+    await p.press("Enter");
+    await sleep(400);
+    const f2 = await field("#meta .ren-in");
+    rows.push(["rename refused → typed name back in the field", await refused(p) && f2?.value === "a name the daemon refuses" && /^Could not rename/.test(f2.err || ""),
+      !(await refused(p)) ? "Enter never asked the daemon" : !f2 ? "the field closed, and the name with it" : f2.value !== "a name the daemon refuses" ? `the field holds "${f2.value}"` : !f2.err ? "the name is back, but nothing says why" : `"${f2.value}", and under it "${f2.err}"`]);
+    await p.press("Escape");
+  } finally {
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
   return rows;
