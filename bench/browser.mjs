@@ -474,7 +474,7 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
     console.log(`  ${"theme colours".padEnd(28)} FAIL ${status.length} of 8 themes were read back`);
   }
   for (const s of status) {
-    const w = s.worst, ok = !!w && w.ratio >= s.bar;
+    const w = s.worst, ok = !!w && w.ratio >= (w.bar || s.bar);
     failed ||= !ok;
     const why = !w ? "nothing was read" : `${s.rows.length} pairs at ${s.bar}:1, worst ${w.token} on ${w.surface} at ${w.ratio.toFixed(2)}:1`;
     console.log(`  ${`colours (${s.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);

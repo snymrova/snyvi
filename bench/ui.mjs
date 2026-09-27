@@ -2434,6 +2434,30 @@ async function motionRows(p, url, arrive) {
   const quiet = await anims();
   await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "" }] }, p.s);
   rows.push(["reduced motion means none", quiet.length === 0, quiet.length ? `${quiet.length} still running: ${[...new Set(quiet.map(a => a.name))].join(", ")}` : "no animation on the page at all"]);
+
+  // None, and nothing lost to it: what used to show only by fading in (the
+  // skeleton) still shows, and an Undo's clock still stops under the hand.
+  const media = v => p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: v }] }, p.s);
+  await media("reduce");
+  const sk = await p.ev(`(() => { const b = document.createElement("span"); b.className = "sk-bar"; document.body.append(b); const o = +getComputedStyle(b).opacity; b.remove(); return o; })()`);
+  await media("");
+  rows.push(["skeleton visible under reduced motion", sk > 0.03, sk > 0.03 ? `the bars rest at ${sk}` : `the bars are at ${sk}: the wait shows nothing`]);
+  const origin = await p.ev("location.origin"), held = {};
+  for (const mode of ["reduce", ""]) {
+    await media(mode);
+    const d = await arrive();
+    await p.goto(`${origin}/d/${d.id}`);
+    await p.pointerAway();
+    await p.press("Delete");
+    await sleep(400);
+    await p.ev(`document.querySelector("#trees .t-ghost .t-undo")?.focus()`);
+    await sleep(6000);
+    held[mode || "full"] = await p.ev(`!!document.querySelector("#trees .t-ghost .t-undo")`);
+    await p.ev(`document.activeElement?.blur()`);
+  }
+  await media("");
+  rows.push(["ghost Undo still there after 6 s with focus on it, both motion modes", held.reduce && held.full,
+    held.reduce && held.full ? "the clock held while the focus rested on the Undo, with motion and without" : `gone after 6 s under focus with ${[!held.reduce && "reduced motion", !held.full && "full motion"].filter(Boolean).join(" and ")}`]);
   void second;
   return rows;
 }
@@ -2654,6 +2678,8 @@ async function resetRows(p, url, arrive) {
   const opened = await until(`!document.querySelector("#reset").hidden && /This removes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
   const census = await p.ev(`fetch("/api/reset").then(r => r.json())`);
   const focused = await p.ui("at", "#reset-n");
+  const tt = await p.ev(`(() => { const h = document.querySelector("#reset-title"); return { t: getComputedStyle(h).textTransform, s: h.textContent }; })()`);
+  rows.push(["reset title in sentence case", tt.t === "none" && tt.s === "Reset snyvi", tt.t === "none" ? `"${tt.s}"` : `drawn ${tt.t}`]);
   rows.push(["the dialog says what goes", opened && focused && (await say()).includes(`${census.documents} document`) && (await say()).includes("Agents stay") && await goDisabled(),
     !opened ? "the dialog did not open, or said nothing" : !focused ? "focus is not in the number field" : `"${await say()}", the button dead, the cursor in the field`]);
 
