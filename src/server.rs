@@ -404,6 +404,19 @@ const RESTART_MARKER: &str = "restart.json";
 /// restart costs exactly what a stop does, and the window's reconnect is
 /// what brings the panes back.
 fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
+    // On its way out from the moment the pending restart is taken: the
+    // apply can take a while, and `snyvi restart` reads "nothing pending and
+    // not restarting" as given up. Given up it is, if this returns false.
+    app.restarting.store(true, Ordering::Relaxed);
+    let left = leave(app, apply, back);
+    if !left {
+        app.restarting.store(false, Ordering::Relaxed);
+        emit_update(app);
+    }
+    left
+}
+
+fn leave(app: &App, apply: bool, back: bool) -> bool {
     if apply || back {
         let Some(u) = &app.update else {
             eprintln!("snyvi: no updater on this daemon; not restarting");
@@ -442,14 +455,19 @@ fn leave_for_restart(app: &App, apply: bool, back: bool) -> bool {
     }
     app.restarting.store(true, Ordering::Relaxed);
     emit_update(app);
-    let with_agent = app.panes.with_agent();
-    match app.store.mark_panes_resume(&with_agent) {
+    // The panes an agent is in, and the marks this daemon was given and
+    // nobody has spent yet -- an update applied while nobody was here must
+    // not lose the last one's.
+    let (mut resume, offer) = app.panes.unspent();
+    resume.extend(app.panes.with_agent());
+    match app.store.mark_panes_resume(&resume) {
         Ok(n) if n > 0 => {
             eprintln!("snyvi: restarting; {n} panel(s) will resume their conversation")
         }
         Ok(_) => eprintln!("snyvi: restarting"),
         Err(e) => eprintln!("snyvi: restarting; could not mark panels to resume: {e}"),
     }
+    let _ = app.store.offer_panes_resume(&offer);
     let marker = json!({ "apply": apply, "from": VERSION, "at": crate::store::now() });
     let _ = std::fs::write(app.paths.data_dir.join(RESTART_MARKER), marker.to_string());
     *app.leaving.lock().unwrap() = Leaving::Restart {
@@ -549,11 +567,17 @@ fn waiting(app: &App) -> i64 {
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let store = Store::open(&paths)?;
-    // A planned restart left a marker and marks; a crash left neither. The
-    // marks are taken now, before anything can ask, so they describe this
-    // start and no later one; the marker once the port is held.
+    // A planned restart left a marker and marks; a crash left neither. Both
+    // are read now, before anything can ask, and cleared once the port is
+    // held: a successor that dies before then is started again, and must
+    // find them again. A mark to resume with no marker behind it -- the
+    // restart it was for never came, or came long ago -- is only an offer:
+    // nothing types a conversation back on its own the next day.
     let planned = read_restart_marker(&paths);
-    let (resume, offer) = store.take_panes_resume().unwrap_or_default();
+    let (mut resume, mut offer) = store.panes_resume().unwrap_or_default();
+    if planned.is_none() {
+        offer.append(&mut resume);
+    }
     if let Some(apply) = planned {
         eprintln!(
             "snyvi: back from a planned restart{}; {} panel(s) to resume",
@@ -783,6 +807,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         }
     }
     drop_restart_marker(&paths);
+    let _ = leaving.store.clear_panes_resume();
     // After it: until then `ready` may still name the version now running,
     // and the watcher would apply it again.
     spawn_restart_watcher(leaving.clone());
@@ -832,7 +857,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // in them are marked to be offered back, which the next window does with
     // one click and not on its own. A planned restart marked them already.
     if matches!(why, Leaving::Stopped) {
-        let with_agent = leaving.panes.with_agent();
+        // With the marks still unspent, as offers: this exit was not planned.
+        let (resume, offer) = leaving.panes.unspent();
+        let mut with_agent = leaving.panes.with_agent();
+        with_agent.extend(resume);
+        with_agent.extend(offer);
         if let Ok(n) = leaving.store.offer_panes_resume(&with_agent) {
             if n > 0 {
                 eprintln!("snyvi: {n} panel(s) had Claude open; the window will offer each conversation back");
@@ -3655,6 +3684,11 @@ struct StartBody {
     /// command is built here, from the id the pane kept, never from the page.
     #[serde(default)]
     resume: bool,
+    /// The resume is the page's own, after a restart, not a click: honoured
+    /// only while this daemon still holds the pane's mark. A mark that lapsed
+    /// while its panel sat unshown starts `cmd`, with the conversation offered.
+    #[serde(default)]
+    marked: bool,
     #[serde(default = "default_cols")]
     cols: u16,
     #[serde(default = "default_rows")]
@@ -3687,8 +3721,10 @@ async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let lapsed = b.resume && b.marked && !app.panes.marked(&id);
+    let offer = lapsed && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
-    let cmd = if b.resume {
+    let cmd = if b.resume && !lapsed {
         let session = &placed.pane.agent_session;
         if !crate::desk::valid_session(session) {
             return (
@@ -3714,12 +3750,14 @@ async fn start_pane(
     };
     let start = crate::pane::Start {
         cwd,
+        root: &placed.root,
         cmd: &cmd,
         desk: &placed.desk_name,
         slot: placed.pane.slot,
         cols: b.cols,
         rows: b.rows,
         accent: &b.accent,
+        offer,
     };
     match live.start(start, &app.panes) {
         Ok(status) => Json(json!({ "status": status })).into_response(),

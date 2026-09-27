@@ -389,6 +389,11 @@ pub fn move_pane(tx: &rusqlite::Transaction, desk_id: i64, from: i64, to: i64) -
         "UPDATE panes SET slot = ?2 WHERE id = ?1",
         params![moving, to],
     )?;
+    // Full view is on a pane, not a position: it goes where that pane went.
+    tx.execute(
+        "UPDATE desks SET full_slot = CASE full_slot WHEN ?2 THEN ?3 WHEN ?3 THEN ?2 ELSE full_slot END WHERE id = ?1",
+        params![desk_id, from, to],
+    )?;
     Ok(true)
 }
 
@@ -604,28 +609,39 @@ pub fn mark_offer(conn: &Connection, ids: &[String]) -> Result<usize> {
     Ok(n)
 }
 
-/// The marks the last daemon left, taken: read once by the daemon that comes
-/// up, and cleared in the same breath, so a daemon that crashes later does
-/// not find them again a day on. The runtime keeps them from here
-/// (`pane::Panes::mark_resume`, `mark_offer`), for as long as they hold.
-/// Returns the planned restart's panes, then the ones to offer.
-pub fn take_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
+/// The marks the last daemon left: the planned restart's panes, then the ones
+/// to offer. Read once by the daemon that comes up, which keeps them in the
+/// runtime from there (`pane::Panes::mark_resume`, `mark_offer`) and clears
+/// them here (`clear_resume`) only once it holds the port: a successor that
+/// dies before then is started again, and must find them again.
+pub fn read_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
     let mut stmt =
         conn.prepare("SELECT id, resume_next FROM panes WHERE resume_next <> 0 ORDER BY id")?;
     let rows: Vec<(String, i64)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    if !rows.is_empty() {
-        conn.execute(
-            "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
-            [],
-        )?;
-    }
     let (planned, offered): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, k)| *k == 1);
     Ok((
         planned.into_iter().map(|(id, _)| id).collect(),
         offered.into_iter().map(|(id, _)| id).collect(),
     ))
+}
+
+/// Every mark cleared, so a daemon that crashes later does not find them
+/// again a day on. What is still unspent at the next exit is written back.
+pub fn clear_resume(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
+        [],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn take_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
+    let marks = read_resume(conn)?;
+    clear_resume(conn)?;
+    Ok(marks)
 }
 
 /// Where a pane's shell has gone, so its next start is there: the folder the
@@ -1276,6 +1292,8 @@ mod tests {
                 .collect()
         };
         let before = ids(&conn, d);
+        assert!(layout(&conn, d, 0.5, 0.5, Some(1)).unwrap());
+        assert!(layout(&conn, other, 0.5, 0.5, Some(1)).unwrap());
         let tx = conn.transaction().unwrap();
         assert!(move_pane(&tx, d, 1, 3).unwrap());
         tx.commit().unwrap();
@@ -1283,6 +1301,12 @@ mod tests {
             ids(&conn, d),
             [before[2].clone(), before[1].clone(), before[0].clone()]
         );
+        assert_eq!(
+            get(&conn, d).unwrap().unwrap().full_slot,
+            3,
+            "full view went with its pane"
+        );
+        assert_eq!(get(&conn, other).unwrap().unwrap().full_slot, 1);
 
         // Into the empty slot 4: nothing comes back the other way.
         let tx = conn.transaction().unwrap();

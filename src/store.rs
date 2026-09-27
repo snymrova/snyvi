@@ -1079,10 +1079,16 @@ impl Store {
         desk::mark_resume(&self.conn.lock().unwrap(), ids)
     }
 
-    /// Those marks, taken by the daemon that comes up (`desk::take_resume`):
-    /// the planned restart's panes, then the ones to offer.
-    pub fn take_panes_resume(&self) -> Result<(Vec<String>, Vec<String>)> {
-        desk::take_resume(&self.conn.lock().unwrap())
+    /// Those marks, as the daemon that comes up reads them
+    /// (`desk::read_resume`): the planned restart's panes, then the ones to
+    /// offer.
+    pub fn panes_resume(&self) -> Result<(Vec<String>, Vec<String>)> {
+        desk::read_resume(&self.conn.lock().unwrap())
+    }
+
+    /// And cleared, once that daemon holds the port (`desk::clear_resume`).
+    pub fn clear_panes_resume(&self) -> Result<()> {
+        desk::clear_resume(&self.conn.lock().unwrap())
     }
 
     /// Mark the panes that had Claude open, on an unplanned way out

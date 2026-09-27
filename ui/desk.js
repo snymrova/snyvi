@@ -682,7 +682,7 @@ function makeView(p) {
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && /^(Digit[1-4]|Key[ZNWR]|Bracket(Left|Right))$/.test(e.code))) return;
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWR]|Bracket(Left|Right))$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
@@ -833,7 +833,10 @@ async function run(v, cmd, quiet, again) {
   try {
     // `again` resumes the conversation the pane kept; the daemon builds that
     // command from the id it holds, and what Start re-runs stays as it was.
-    const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
+    // A quiet `again` is this page's own resume after a restart (`marked`):
+    // the daemon holds to it only while the mark does, and past it starts
+    // `cmd` with the conversation offered -- a panel unshown for minutes.
+    const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, marked: !!quiet, cmd, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
     if (!quiet) v.body.focus();
   } catch (e) {
@@ -1837,8 +1840,13 @@ function renamePanel(v) {
   const nm = v.el.querySelector(".pn-cmd");
   if (!nm || !v.el.isConnected) return;
   const input = Object.assign(document.createElement("input"), { className: "ren-in", value: v.pane.name || "", placeholder: short(v), spellcheck: false });
+  // The keyboard goes on to a neighbour, if it was in the one that closed:
+  // it is not left on nothing, typing into nowhere.
+  const ps = d.panes, i = ps.findIndex(p => p.id === v.id), next = (ps[i + 1] || ps[i - 1] || {}).id;
+  const had = v.el.contains(document.activeElement);
   input.setAttribute("aria-label", `Name of panel ${v.pane.slot}`);
   nm.replaceWith(input);
+  if (next && (had || document.activeElement === document.body)) focusPane(next);
   input.focus(); input.select();
   let done = false;
   const finish = async keep => {
@@ -1937,7 +1945,7 @@ function keys(e) {
     if (v) { e.preventDefault(); e.stopPropagation(); renamePanel(v); }
     return;
   }
-  if (!(e.ctrlKey && e.altKey) || e.metaKey) return;
+  if (!(e.ctrlKey && e.altKey) || e.metaKey || altGr(e)) return;
   if (e.shiftKey && NEXT[e.key]) {
     const d = current(), v = views.get(focused);
     if (reading != null || !d || !v) return;
@@ -1962,6 +1970,10 @@ function keys(e) {
     return;
   }
   if (!/^Digit[1-4]$/.test(e.code)) return;
+/** AltGr, which Windows reports as Ctrl+Alt: a character on its way (`~` on
+ *  a German keyboard, `ń` on a Polish one), never a panel chord. */
+const altGr = e => !!e.getModifierState?.("AltGraph");
+
   const d = current(), p = d && d.panes.find(x => x.slot === +e.code[5]);
   if (!p) return;
   e.preventDefault(); e.stopPropagation();

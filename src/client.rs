@@ -280,6 +280,7 @@ fn wait_for_another(paths: &Paths, was: Option<u64>) -> Result<()> {
     cancel_on_ctrl_c(paths);
     let mut said: Option<usize> = None;
     let mut gone_since: Option<Instant> = None;
+    let mut given_up = 0;
     loop {
         match health() {
             Some(h) if h.get("pid").and_then(Value::as_u64) != was => {
@@ -290,6 +291,27 @@ fn wait_for_another(paths: &Paths, was: Option<u64>) -> Result<()> {
             }
             Some(h) => {
                 gone_since = None;
+                // Nothing pending and not on its way out, and still the same
+                // process: the daemon took the restart and gave it up -- an
+                // update that would not go in, nothing to go back to. Twice,
+                // a quarter of a second apart, so a look between the two
+                // flags is not taken for it. Only a daemon that says
+                // `restarting` at all (1.7.1 on) can be read this way.
+                let restarting = h["update"].get("restarting").and_then(Value::as_bool);
+                given_up = if h["restart"].is_null() && restarting == Some(false) {
+                    given_up + 1
+                } else {
+                    0
+                };
+                if given_up >= 2 {
+                    if said.is_some() {
+                        eprintln!();
+                    }
+                    match h["update"]["error"].as_str().filter(|e| !e.is_empty()) {
+                        Some(e) => bail!("the daemon did not restart: {e}"),
+                        None => bail!("the daemon did not restart; its log says why"),
+                    }
+                }
                 let waiting = h["restart"]["waiting_on"]
                     .as_array()
                     .map(Vec::len)
@@ -572,6 +594,19 @@ fn print_running() -> Result<()> {
 }
 
 /// Make sure a daemon is listening; spawn one detached if not.
+/// A planned restart's marker, written moments ago: the daemon went on
+/// purpose and its successor has not taken the port yet (it drops the
+/// marker once it has). See `server::leave_for_restart`.
+fn restart_under_way() -> bool {
+    let Ok(text) = std::fs::read_to_string(config::paths().data_dir.join("restart.json")) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["at"].as_i64())
+        .is_some_and(|at| (crate::store::now() - at).abs() < 30)
+}
+
 pub fn ensure_daemon() -> Result<()> {
     if let Some(h) = health() {
         warn_if_stale(&h);
@@ -584,7 +619,25 @@ pub fn ensure_daemon() -> Result<()> {
             config::port()
         );
     }
+    // A planned restart is under way: the successor is on its way, and a
+    // second `snyvi serve` started now would race it for the port -- and
+    // count as one of its tries to come up (`update::first_start`).
+    if restart_under_way() {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            if health().is_some() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
     let exe = std::env::current_exe().context("locating snyvi binary")?;
+    // A file an update renamed over, under a process still running from it,
+    // reads as `… (deleted)` on Linux; the name holds the new file now.
+    let exe = match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(live) if !exe.exists() => std::path::PathBuf::from(live),
+        _ => exe,
+    };
     crate::platform::spawn_daemon(&exe).context("starting snyvi daemon")?;
     // A daemon is listening about 25 ms after it is started -- it reads a
     // 438 KB grammar dump and opens the database first -- and this used to ask

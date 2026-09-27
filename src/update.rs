@@ -1272,6 +1272,13 @@ impl Updater {
     /// the old window holds its file open for as long as it is up, so a
     /// file that will not go is left for the check after.
     fn clean_prev(&self, now: i64) {
+        // What was set aside still running is no one's to go back to: it
+        // goes as soon as it can, whatever the day.
+        for (_, target) in self.targets() {
+            for old in set_aside(&prev_of(&target)) {
+                let _ = remove_any(&old);
+            }
+        }
         if self
             .state()
             .last_applied
@@ -1401,6 +1408,10 @@ pub fn first_start(paths: &crate::config::Paths, exe: &Path) -> FirstStart {
     let u = Updater::new(paths, exe, Box::new(Http));
     match u.rollback(false) {
         Ok(true) => FirstStart::RolledBack(applying),
+        // Some files went back and not others -- the daemon's, not the
+        // window's. `rollback` has recorded it; the daemon's own file is the
+        // previous one again, and that is what starts.
+        Err(_) if read_state(&dir).applying.is_none() => FirstStart::RolledBack(applying),
         // Nothing to put back: this is what there is, and it goes on
         // trying, counted, rather than stopping the only daemon there is.
         _ => {
@@ -1548,6 +1559,42 @@ fn prev_of(path: &Path) -> PathBuf {
     with_suffix(path, ".prev")
 }
 
+/// A `.prev` out of the way of the next one: removed, or -- one still
+/// running, which Windows will not delete but will rename: a window started
+/// before the last update -- renamed aside, for `clean_prev` to take later.
+/// Left where it was, the swap after it would fail on every try.
+fn clear_prev(prev: &Path) {
+    if remove_any(prev).is_ok() || !prev.exists() {
+        return;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let _ = fs::rename(prev, with_suffix(prev, &format!(".{nanos}.old")));
+}
+
+/// The `.prev`s `clear_prev` set aside.
+fn set_aside(prev: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name)) = (prev.parent(), prev.file_name().and_then(|n| n.to_str())) else {
+        return vec![];
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return vec![];
+    };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix(name))
+                .and_then(|rest| rest.strip_prefix('.'))
+                .is_some_and(|rest| rest.ends_with(".old"))
+        })
+        .collect()
+}
+
 fn remove_any(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() => fs::remove_dir_all(path),
@@ -1654,7 +1701,7 @@ fn swap_file(staged: &Path, target: &Path, sha256: &str) -> Result<()> {
         bail!("{}: not the file that was verified", incoming.display());
     }
     let prev = prev_of(target);
-    let _ = remove_any(&prev);
+    clear_prev(&prev);
     // On Unix the old file is linked to `.prev` and the new one renamed over
     // it: one rename, so there is never a moment with nothing at the name
     // for a start to find. Windows will not rename over a running
@@ -1696,7 +1743,7 @@ fn swap_dir(staged: &Path, target: &Path, sha256: &str) -> Result<()> {
         bail!("{}: not the bundle that was verified", incoming.display());
     }
     let prev = prev_of(target);
-    let _ = remove_any(&prev);
+    clear_prev(&prev);
     if target.exists() {
         fs::rename(target, &prev).with_context(|| format!("moving {} aside", target.display()))?;
     }
@@ -2325,6 +2372,27 @@ mod tests {
             .as_bytes(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_prev_set_aside_is_found_and_nothing_else() {
+        let tmp = tempdir();
+        let prev = prev_of(&tmp.join("snyvi-app.exe"));
+        for n in [
+            "snyvi-app.exe.prev",
+            "snyvi-app.exe.prev.123.old",
+            "snyvi-app.exe.prevx.old",
+            "snyvi.exe.prev.1.old",
+        ] {
+            fs::write(tmp.join(n), b"x").unwrap();
+        }
+        assert_eq!(
+            set_aside(&prev),
+            vec![tmp.join("snyvi-app.exe.prev.123.old")]
+        );
+        clear_prev(&prev);
+        assert!(!prev.exists(), "a .prev nothing holds is simply removed");
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

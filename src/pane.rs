@@ -181,6 +181,10 @@ struct Inner {
     run: u64,
     /// The folder the running process was started in, for the git tick.
     cwd: String,
+    /// The desk's own folder. git's `status` is asked only inside it: a
+    /// repository's own config can name commands that `status` runs (a
+    /// filter driver), and a shell can `cd` into any repository at all.
+    root: String,
     /// When the process last printed anything, for `busy`: a pane whose
     /// program is still writing is not one to restart the daemon under.
     wrote: Instant,
@@ -220,6 +224,8 @@ pub struct Live {
 /// What `start` needs to know that is not the pane's own.
 pub struct Start<'a> {
     pub cwd: &'a str,
+    /// The desk's folder: see `Inner.root`.
+    pub root: &'a str,
     pub cmd: &'a str,
     pub desk: &'a str,
     pub slot: i64,
@@ -228,6 +234,9 @@ pub struct Start<'a> {
     /// The accent the window is wearing, `#rrggbb`, for the prompt snyvi
     /// dresses the shell in. Empty when the page did not say.
     pub accent: &'a str,
+    /// The pane comes back as its shell while its conversation is still on
+    /// offer: the page's own resume found the mark lapsed (`start_pane`).
+    pub offer: bool,
 }
 
 /// Told a panel's id and the folder its shell is now in.
@@ -314,6 +323,7 @@ impl Panes {
                 unsaved: false,
                 run: 0,
                 cwd: String::new(),
+                root: String::new(),
                 wrote: Instant::now(),
                 printing_since: Instant::now(),
             }),
@@ -333,10 +343,14 @@ impl Panes {
     async fn git_tick(self: &Arc<Self>) {
         self.follow_folders();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
-        let mut by_dir: HashMap<String, Vec<Arc<Live>>> = HashMap::new();
+        // Each folder, whether a pane in it is inside its desk's folder, and
+        // the panes in it.
+        let mut by_dir: HashMap<String, (bool, Vec<Arc<Live>>)> = HashMap::new();
         for l in live {
-            if let Some(cwd) = l.running_in() {
-                by_dir.entry(cwd).or_default().push(l);
+            if let Some((cwd, home)) = l.running_in() {
+                let e = by_dir.entry(cwd).or_default();
+                e.0 |= home;
+                e.1.push(l);
             }
         }
         // A folder nothing runs in any more is not worth remembering.
@@ -344,7 +358,7 @@ impl Panes {
             .lock()
             .unwrap()
             .retain(|d, _| by_dir.contains_key(d));
-        for (dir, panes) in by_dir {
+        for (dir, (home, panes)) in by_dir {
             let now = Instant::now();
             if self
                 .git
@@ -358,7 +372,14 @@ impl Panes {
             let d = dir.clone();
             let Ok((branch, dirty)) = tokio::task::spawn_blocking(move || {
                 let p = std::path::Path::new(&d);
-                (crate::project::head_of(p), crate::project::modified(p))
+                // The branch is read from files; whether the tree has changes
+                // runs git, which only the desk's own folder gets to steer.
+                let dirty = if home {
+                    crate::project::modified(p)
+                } else {
+                    None
+                };
+                (crate::project::head_of(p), dirty)
             })
             .await
             else {
@@ -465,7 +486,32 @@ impl Panes {
         }
     }
 
-    fn marked(&self, id: &str) -> bool {
+    /// The marks still unspent, as they stand now -- to resume, then to
+    /// offer -- for an exit to write back: a daemon that goes before anyone
+    /// looked must not take the last one's marks with it. A pane started
+    /// since has spent its mark (`unmark`).
+    pub fn unspent(&self) -> (Vec<String>, Vec<String>) {
+        let now = Instant::now();
+        let m = self.marks.lock().unwrap();
+        let mut resume: Vec<String> = m
+            .resume
+            .iter()
+            .filter(|id| m.resume(id, now))
+            .cloned()
+            .collect();
+        let mut offer: Vec<String> = m
+            .resume
+            .union(&m.offer)
+            .filter(|id| m.offer(id, now))
+            .cloned()
+            .collect();
+        resume.sort();
+        offer.sort();
+        (resume, offer)
+    }
+
+    /// Whether a pane is marked to come back as its conversation, now.
+    pub fn marked(&self, id: &str) -> bool {
         self.marks.lock().unwrap().resume(id, Instant::now())
     }
 
@@ -487,7 +533,8 @@ impl Panes {
         self.refresh_marks();
     }
 
-    fn offered(&self, id: &str) -> bool {
+    /// Whether a pane's conversation is offered back, now.
+    pub fn offered(&self, id: &str) -> bool {
         self.marks.lock().unwrap().offer(id, Instant::now())
     }
 
@@ -909,6 +956,7 @@ impl Live {
         let (mut cmd, born) = command(s.cmd, s.accent);
         cmd.cwd(s.cwd);
         i.cwd = s.cwd.to_string();
+        i.root = s.root.to_string();
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "snyvi");
@@ -971,7 +1019,7 @@ impl Live {
             // Whatever this start is, the mark is spent: a window that chose
             // the shell over the conversation has chosen.
             resume: false,
-            offer: false,
+            offer: s.offer,
             cwd: s.cwd.to_string(),
             // A new process has told nothing yet about any model.
             ..Status::default()
@@ -1185,12 +1233,15 @@ impl Live {
         folder_of(pid)
     }
 
-    fn running_in(&self) -> Option<String> {
+    /// The folder the running process is in, and whether that is inside the
+    /// desk's own folder (see `Inner.root`).
+    fn running_in(&self) -> Option<(String, bool)> {
         let i = self.inner.lock().unwrap();
-        i.status
-            .running
-            .then(|| i.cwd.clone())
-            .filter(|c| !c.is_empty())
+        if !i.status.running || i.cwd.is_empty() {
+            return None;
+        }
+        let home = !i.root.is_empty() && std::path::Path::new(&i.cwd).starts_with(&i.root);
+        Some((i.cwd.clone(), home))
     }
 
     /// What git said, kept and sent on only when it is news. A header that
@@ -1462,12 +1513,14 @@ mod tests {
             let cwd = dir.path.to_string_lossy().to_string();
             let s = Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "sleep 30",
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             };
             let status = panes.get(late).start(s, &panes).unwrap();
             assert!(!status.resume);
@@ -1478,12 +1531,25 @@ mod tests {
             panes.get(late).stop();
         }
         assert!(panes.status(early).resume, "the other mark is untouched");
+        // What an exit writes back: the mark nobody has spent.
+        assert!(panes.unspent().0.contains(&early.to_string()));
+        #[cfg(unix)]
+        assert!(
+            !panes.unspent().0.contains(&late.to_string()),
+            "spent by its start"
+        );
         // Past its time, a mark is an offer: the woken pane says so too.
         panes.arm_marks();
         panes.marks.lock().unwrap().resume_until = Some(Instant::now());
         panes.refresh_marks();
         assert!(!panes.status(early).resume);
         assert!(panes.status(early).offer);
+        assert!(!panes.marked(early), "the page's own resume is refused now");
+        assert!(panes.unspent().0.is_empty());
+        assert!(
+            panes.unspent().1.contains(&early.to_string()),
+            "and written back as an offer"
+        );
         assert!(!panes.get(never).attach().0[0].contains("\"resume\":true"));
     }
 
@@ -1512,6 +1578,7 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "printf 'pane=%s\\n' \"$SNYVI_SESSION\"; pwd; exit 3",
                 desk: "d",
                 slot: 1,
@@ -1520,6 +1587,7 @@ mod tests {
                 cols: 400,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1573,12 +1641,14 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: &cmd,
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1615,12 +1685,14 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "read x",
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
@@ -1680,12 +1752,14 @@ mod tests {
         live.start(
             Start {
                 cwd: &cwd,
+                root: &cwd,
                 cmd: "for t in a b c d e; do printf '\\033]0;%s\\007' $t; sleep 0.05; done; printf '\\a'; read x",
                 desk: "d",
                 slot: 1,
                 cols: 80,
                 rows: 10,
                 accent: "",
+                offer: false,
             },
             &panes,
         )
