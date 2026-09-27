@@ -91,7 +91,6 @@ const CSS = `
    drain as a removed document's row. */
 .note-ghost { padding: 5px 12px; font-size: 12px; }
 .note-ghost::after { left: 12px; right: 12px; }
-.note-ghost.hold::after { animation-play-state: paused; }
 .note-ghost > .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Close all: the trail's own quiet last line, not a card. */
 .note-trail li.note-all { padding: 0; background: none; border: 0; box-shadow: none; text-align: right; }
@@ -101,7 +100,7 @@ const CSS = `
 
 /** Wire the card and draw it. What comes in is the page's; `render` is what
  *  the page calls on every change to `state.notes`. */
-export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, ghostSpent, stillMotion, GHOST_MS, holdUndo, dropUndo }) {
+export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, undoClock, holdUndo, dropUndo }) {
   const sheet = document.createElement("style");
   sheet.id = "note-drawn";
   sheet.textContent = CSS;
@@ -151,9 +150,9 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
       // ghost it would redraw is this one, and redrawing it drops the
       // keyboard off its Undo.
       if (noteEl.querySelector(".note-ghost")?.dataset.ids === noteGone.ids.join(",")) return;
-      const g = noteGone, t = ghostSpent(g, noteEl.querySelector(".t-ghost"));
+      const g = noteGone;
       noteEl.hidden = false; noteEl.dataset.lit = ""; noteEl.dataset.seen = "";
-      noteEl.innerHTML = `<div class="t-ghost note-ghost" data-ids="${g.ids.join(",")}" style="--t:-${t}ms"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
+      noteEl.innerHTML = `<div class="t-ghost note-ghost" data-ids="${g.ids.join(",")}" style="--undo-left:${g.clock.left()}"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
       return;
     }
     if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }
@@ -230,20 +229,16 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     const a = e.target.closest(".note-now[data-about], .note-now[data-href]");
     if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); a.dataset.about ? showDoc(a.dataset.about, true) : showStart(true, a.dataset.href.slice(a.dataset.href.indexOf("#"))); }
   });
-  noteEl.addEventListener("animationend", e => {
-    if (e.animationName === "drain" && noteGone && !noteGone.held) noteSettle(noteGone);
-  });
   /** Close asides: off the card at once, in every page once the daemon has
    *  it, and the card holds the way back for GHOST_MS. Nothing is deleted. */
   function closeNotes(ids, byKey = false) {
     if (!ids.length) return;
     if (noteGone) noteSettle(noteGone);
-    const g = { ids, spent: 0, timer: 0 };
+    const g = { ids, clock: undoClock("#note .note-ghost", () => noteSettle(g)) };
     g.undo = () => undoNotes(g);
     state.notes = state.notes.map(n => ids.includes(n.id) ? { ...n, dismissed: true, seen: true } : n);
     noteGone = g; holdUndo(g.undo);
     renderNote();
-    if (stillMotion.matches) g.timer = setTimeout(() => noteSettle(g), GHOST_MS);
     // A keyboard that closed it lands on the Undo, not on the page's start.
     // A pointer does not: a focus resting there would hold the clock.
     if (byKey) noteEl.querySelector("[data-note-undo]")?.focus({ preventScroll: true });
@@ -251,22 +246,20 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
   }
   function noteSettle(g) {
     if (noteGone !== g) return;
-    clearTimeout(g.timer);
+    g.clock.stop();
     dropUndo(g.undo);
     noteGone = null;
     renderNote();
   }
   async function undoNotes(g, tell = true) {
     if (noteGone !== g || g.asking) return;
-    clearTimeout(g.timer);
     if (tell) {
       // The daemon first: an aside put back on the card while the daemon
       // still holds it closed would be gone again at the next page. The
       // clock holds while it is asked, and after a no, which the card says
       // where the Undo was, with the Undo as its Retry.
       const gh = noteEl.querySelector(".note-ghost");
-      gh?.classList.add("hold");
-      g.held = g.asking = true;
+      g.clock.hold = g.asking = true;
       const ok = await notesSay("restore", g.ids).then(() => true, () => false);
       g.asking = false;
       if (noteGone !== g) return;
@@ -275,6 +268,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
         return;
       }
     }
+    g.clock.stop();
     dropUndo(g.undo);
     noteGone = null;
     state.notes = state.notes.map(n => g.ids.includes(n.id) ? { ...n, dismissed: false } : n);

@@ -939,7 +939,8 @@ const CSS_MOVED = `
   animation: mmd-spin .7s linear infinite;
 }
 @keyframes mmd-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .mmd-slow .mmd-note::before { animation-duration: 2.4s; } }
+/* Still, a spinner is a ring that says nothing: "Drawing…" says it. */
+@media (prefers-reduced-motion: reduce) { .mmd-slow .mmd-note::before { display: none; } }
 /* Over the cap: offered, not spent. */
 .mmd-ask { display: block; margin: 0 auto 8px; font-family: var(--sans); font-size: 13px; padding: 7px 14px; border-radius: var(--radius); background: var(--bg-raise); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .mmd-ask:hover { color: var(--accent); }

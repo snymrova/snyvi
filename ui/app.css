@@ -343,7 +343,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* The panes' own scrollbars: there when a list is longer than the pane, and
    no wider than they need to be. The document keeps the browser's. */
 #trees, #toc, #meta { scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
-@media (prefers-reduced-motion: reduce) { #main, #toc { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { #main, #toc { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* ---------- sidebar ---------- */
 .side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 16px; }
@@ -585,14 +585,17 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    negative delay when the tree is rebuilt under them (see `moment` in
    app.js), so a rebuild never plays them again. */
 .wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is; /start's Show me too */
-@media (prefers-reduced-motion: reduce) { .wash { outline: 2px solid var(--accent); outline-offset: 1px; } }
+@media (prefers-reduced-motion: reduce) { .wash, .prose .flash { outline: 2px solid var(--accent); outline-offset: 1px; } }
 .t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
 @keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
 /* A removed document's row, standing where it was on the row's own grid, so
    nothing below it moves: the title dims, says "removed", and holds the Undo.
-   The bar along its foot drains over the time the offer stands (GHOST_MS in
-   app.js) and stops while a pointer or a focus rests on the row. `--t` starts
-   both where the last draw left them, so a redraw never plays them again. */
+   The bar along its foot is the time the offer has left: app.js's clock
+   (undoClock) writes it into --undo-left, and stops while a pointer or a
+   focus rests on the row. The bar only moves in a short transition between
+   the clock's ticks, so under reduced motion it is still and still says
+   what is left. `--t` starts the row's fade where the last draw left it, so
+   a redraw never plays it again. */
 .t-ghost { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: 6px; color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
 .t-gone:not(.leaving) > .t-ghost { animation: ghost-in 120ms ease-out both; animation-delay: var(--t, 0ms); }
 @keyframes ghost-in { from { color: var(--fg-2); } }
@@ -600,9 +603,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-ghost > .title { min-width: 0; }
 .t-gone > .t-ghost > .k { margin-left: 0; font-family: inherit; font-size: 11px; }
 .t-ghost > .t-undo { margin-left: auto; align-self: center; padding: 2px 7px; }
-.t-ghost::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; animation: drain 4000ms linear forwards; animation-delay: var(--t, 0ms); }
-.t-ghost:is(:hover, :focus-within)::after, .t-gone.back .t-ghost::after { animation-play-state: paused; }
-@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.t-ghost::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform .1s linear; }
 .t-gone.leaving { animation-delay: var(--t, 0ms); }
 /* What stands around a ghost only for its sake -- the same document's row in
    Waiting, a project that left with its last document -- is there to be read
@@ -767,8 +768,8 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 :root { --sk-wait: 200ms; }
 .sk-bar {
   display: block; height: .72em; margin: .93em 0; border-radius: 5px;
-  background: var(--fg); opacity: 0;
-  animation: sk-in .28s ease var(--sk-wait) forwards, sk-breathe 1.9s ease-in-out calc(var(--sk-wait) + .28s) infinite;
+  background: var(--fg); opacity: .07;
+  animation: sk-in .28s ease var(--sk-wait) both, sk-breathe 1.9s ease-in-out calc(var(--sk-wait) + .28s) infinite;
 }
 .sk-gap { display: block; height: 1.5em; }   /* the air between two paragraphs */
 .doc-title.sk { display: flex; align-items: center; height: 39px; }
@@ -776,12 +777,10 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .doc-sub.sk { height: 17px; }
 .doc-sub .sk-bar { height: 11px; margin: 0; }
 .sk-body { max-width: var(--measure, none); }
-@keyframes sk-in { to { opacity: .07; } }
+/* The bars rest visible; the fade in is an extra, so with no motion at
+   all the waiting still shows. */
+@keyframes sk-in { from { opacity: 0; } }
 @keyframes sk-breathe { 50% { opacity: .13; } }
-@media (prefers-reduced-motion: reduce) {
-  /* The waiting still has to show; only the breathing goes. */
-  .sk-bar { animation: sk-in .28s ease var(--sk-wait) forwards; }
-}
 
 .prose { font-family: var(--body); font-size: 17px; line-height: 1.65; }
 :root[data-font="serif"] .prose { font-size: 18px; }

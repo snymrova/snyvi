@@ -208,7 +208,7 @@
     });
     // A folder just closed stands where it was, holding its Undo, as a
     // removed document's row does. A refused Undo says so in it.
-    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone${shut.err ? " back" : ""}"><div class="t-ghost b-ghost">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
+    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone"><div class="t-ghost b-ghost" style="--undo-left:${shut.clock.left()}">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
     browseEl.innerHTML = head + `<div class="b-body s-body">` + rows.join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
@@ -284,10 +284,10 @@
   function ghostRow() {
     const g = gone;
     g.drawn = true;
-    const t = g.closing ? Date.now() - g.closing : ghostSpent(g);
+    const t = Date.now() - (g.closing || g.made);
     // A refused Undo says so in the row and holds its clock: the button is
     // its Retry. Pruned, there is nothing to retry, and the row just closes.
-    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost">${docIco()}<span class="title"${g.err ? ` title="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` title="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
   }
 
   // ---------- the queue ----------
@@ -969,15 +969,14 @@
     if (!r) return;
     if (!(await post(`/api/browse/${id}/close`))?.ok) return toast(`Could not close ${r.name}`, "", null, { label: "Retry", run: () => closeRoot(id) });
     shutSettle();
-    const s = shut = { r, at, made: Date.now() };
+    const s = shut = { r, at, made: Date.now(), clock: undoClock("#browse-nav .b-ghost", () => shutSettle()) };
     undoing = s.undo = () => reopenRoot(s);
     state.browse = state.browse.filter(x => x.id !== id);
     if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else { renderTree(); markActive(); }
-    if (stillMotion.matches) s.timer = setTimeout(shutSettle, GHOST_MS);
   }
   async function reopenRoot(s) {
     if (shut !== s || s.asking) return;
-    clearTimeout(s.timer);
+    s.clock.hold = true;
     if (undoing === s.undo) undoing = null;
     s.asking = true;
     const r = await post(`/api/browse/${s.r.id}/reopen`);
@@ -987,16 +986,16 @@
       // Gone (410): the folder is not there to reopen, and the row closes.
       s.dead = r?.status === 410;
       s.err = s.dead ? "Could not reopen it · it is gone" : "Could not reopen it";
-      if (s.dead) s.timer = setTimeout(shutSettle, GHOST_MS); else undoing = s.undo;
+      if (s.dead) { s.clock.hold = false; s.clock.again(); } else undoing = s.undo;
       return renderBrowse();
     }
-    shut = null;
+    shut = null; s.clock.stop();
     if (!state.browse.some(x => x.id === s.r.id)) state.browse.splice(s.at, 0, s.r);
     renderBrowse();
   }
   function shutSettle() {
     if (!shut) return;
-    clearTimeout(shut.timer);
+    shut.clock.stop();
     if (undoing === shut.undo) undoing = null;
     shut = null;
     renderBrowse();
@@ -1536,28 +1535,29 @@
     return null;
   }
 
-  /** The clock on a removed row is the bar's own animation: it drains in CSS,
-   *  stops there while a pointer or a focus rests on the row -- a reader
-   *  deciding is not a reader who has gone -- and its end ends the offer. So
-   *  the bar and the offer cannot disagree. A redraw asks the bar how far it
-   *  got and starts the new one there. Where nothing animates (reduced
-   *  motion, or no row to stand in) a plain timer does it. */
-  const stillMotion = matchMedia("(prefers-reduced-motion: reduce)");
-  function ghostSpent(g, el = document.querySelector("#trees .t-ghost")) {
-    const a = el && el.getAnimations ? el.getAnimations({ subtree: true }).find(x => x.animationName === "drain") : null;
-    const at = a && a.effect ? a.effect.getComputedTiming().progress : null;
-    if (a) g.spent = at == null ? GHOST_MS : Math.round(at * GHOST_MS);
-    return g.spent;
+  /** The clock on an Undo, the same in both motion modes. It stops while a
+   *  pointer or a focus rests on the offer (the element `sel` finds, wherever
+   *  a redraw has put it) -- a reader deciding is not a reader who has gone --
+   *  and while `hold` is set, which is an Undo being asked or refused. The
+   *  drain bar only draws what it says, through --undo-left, so the two
+   *  cannot disagree; under reduced motion the bar is still and still shows
+   *  what is left. `left()` is that fraction, for a row drawn again. */
+  function undoClock(sel, done, ms = GHOST_MS) {
+    let at = performance.now(), rest = ms;
+    const c = { hold: false, left: () => Math.max(0, rest / ms), stop: () => clearInterval(t), again() { rest = ms; } };
+    const t = setInterval(() => {
+      const now = performance.now(), el = document.querySelector(sel);
+      if (!c.hold && !el?.matches(":hover, :focus-within")) rest -= now - at;
+      at = now;
+      el?.style.setProperty("--undo-left", c.left());
+      if (rest <= 0) { c.stop(); done(); }
+    }, 100);
+    return c;
   }
-  treesEl.addEventListener("animationend", e => {
-    if (e.animationName !== "drain") return;
-    if (e.target.closest(".b-ghost")) shutSettle();
-    else if (gone && e.target.closest(".t-ghost")) ghostSettle(gone);
-  });
   /** The offer is over: the row closes where it stood, as a read one does. */
   function ghostSettle(g) {
     if (gone !== g || g.closing) return;
-    clearTimeout(g.timer);
+    g.clock.stop();
     if (undoing === g.undo) undoing = null;
     g.closing = Date.now();
     renderTree(); markActive();
@@ -1580,8 +1580,9 @@
     if (place && place.doc) d = { ...place.doc, ...d, title: place.doc.title };
     // Only the newest offer stands: two rows both saying Undo cannot both mean
     // the last thing that happened.
-    if (gone) { clearTimeout(gone.timer); if (undoing === gone.undo) undoing = null; gone = null; }
-    const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), spent: 0, timer: 0, drawn: false, made: Date.now() };
+    if (gone) { gone.clock.stop(); if (undoing === gone.undo) undoing = null; gone = null; }
+    const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), drawn: false, made: Date.now() };
+    g.clock = undoClock("#tree .t-gone .t-ghost, #queue .t-gone .t-ghost", () => ghostSettle(g));
     g.undo = () => undoGone(g);
     // What stands around the ghost stands with it until the offer ends, so
     // nothing above it moves the row out from under the pointer either: the
@@ -1603,7 +1604,6 @@
     gone = g;
     undoing = g.undo;
     renderTree(); markActive();
-    if (!g.drawn || stillMotion.matches) g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
     try {
       const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status}`);
@@ -1615,11 +1615,10 @@
       // drawn: the offer goes where the toast goes.
       if (gone === g && !g.drawn) {
         toast("Removed", d.title, null, { label: "Undo", run: g.undo }, { life: GHOST_MS });
-        clearTimeout(g.timer);
-        g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
+        g.clock.again();
       }
     } catch (e) {
-      if (gone === g) { clearTimeout(g.timer); gone = null; if (undoing === g.undo) undoing = null; }
+      if (gone === g) { g.clock.stop(); gone = null; if (undoing === g.undo) undoing = null; }
       if (g.waiting) await refetchQueue();
       await refreshTree(d.project_id);
       toast("Could not remove", String(e));
@@ -1631,7 +1630,7 @@
    *  their list again -- so the list never closes up and opens again. */
   async function undoGone(g) {
     if (gone !== g || g.closing || g.back) return;
-    clearTimeout(g.timer);
+    g.clock.hold = true;
     g.back = true; g.err = "";
     if (undoing === g.undo) undoing = null;
     renderTree(); markActive();
@@ -1643,7 +1642,8 @@
       g.back = false;
       g.dead = r?.status === 410;
       g.err = g.dead ? "Could not undo · prune has deleted it" : "Could not bring it back";
-      if (g.dead) g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
+      // A refusal holds the clock; pruned, there is nothing to hold it for.
+      if (g.dead) { g.clock.hold = false; g.clock.again(); }
       else undoing = g.undo;
       renderTree(); markActive();
       // No row to say it in: the toast the offer was made in says it instead.
@@ -1657,6 +1657,7 @@
       // The "restored" event puts the row back in every other tab.
       if (g.here) showDoc(g.id);
     } finally {
+      g.clock.stop();
       if (gone === g) gone = null;
       renderTree(); markActive();
     }
@@ -1790,7 +1791,7 @@
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
     if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
-      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, ghostSpent, stillMotion, GHOST_MS,
+      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, undoClock,
         holdUndo: f => (undoing = f), dropUndo: f => { if (undoing === f) undoing = null; } });
       noteMod.render();
     }, () => { noteLoading = null; });
@@ -2043,7 +2044,7 @@
     const top = cur.offsetTop, bottom = top + cur.offsetHeight;
     const seen = tocEl.scrollTop, h = tocEl.clientHeight;
     if (top >= seen + 24 && bottom <= seen + h - 24) return;
-    tocEl.scrollTo({ top: Math.max(0, top - h / 2), behavior: now ? "instant" : "smooth" });
+    tocEl.scrollTo({ top: Math.max(0, top - h / 2), behavior: now || matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   }
 
   /** Call `track` on the frame after every scroll or resize, and once now.
