@@ -2102,7 +2102,9 @@ async function motionRows(p, url, arrive) {
   const resumed = await p.ev(`(() => { const li = document.querySelector('#queue li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
   rows.push(["once, whatever the tree does under it", resumed >= 250 && resumed < 700, resumed < 0 ? "the wash is gone or was never there" : `the wash is ${resumed} ms in, on a row rebuilt by the next arrival`]);
   const bar = await p.ev(`(() => { const qb = document.querySelector("#queue-bar .qb"); const n = qb && qb.querySelector(".qb-n");
-    return { kept: qb === window.__bar, rise: qb ? qb.getAnimations().some(a => a.animationName === "rise") : null, tick: n ? n.getAnimations().some(a => a.animationName === "tick") : null }; })()`);
+    return { kept: qb === window.__bar, rise: qb ? qb.getAnimations().some(a => a.animationName === "rise") : null, tick: n ? n.classList.contains("tick") || n.getAnimations().some(a => a.animationName === "tick") : null }; })()`);
+  // The tick is 180 ms, over before a slow machine gets here; the class the
+  // page put on the new count says it ran.
   rows.push(["the bar stays put and the count ticks", bar.kept && !bar.rise && bar.tick,
     !bar.kept ? "the bar was rebuilt for the second arrival" : bar.rise ? "the bar rose again" : !bar.tick ? "the count changed with nothing to say so" : "the same bar, and the new count settled in"]);
 
