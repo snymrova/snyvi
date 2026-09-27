@@ -552,9 +552,16 @@ impl Panes {
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in live {
             let Some(now) = l.shell_cwd() else { continue };
+            // The kernel answers with the folder resolved -- macOS's /var is
+            // /private/var, and any folder reached through a link -- so the
+            // one the pane was started in is not a move to where it is.
+            let was = l.inner.lock().unwrap().cwd.clone();
+            if was == now || same_folder(&was, &now) {
+                continue;
+            }
             let s = {
                 let mut i = l.inner.lock().unwrap();
-                if i.cwd == now || !i.status.running {
+                if i.cwd != was || !i.status.running {
                     continue;
                 }
                 i.cwd = now.clone();
@@ -1236,12 +1243,18 @@ impl Live {
     /// The folder the running process is in, and whether that is inside the
     /// desk's own folder (see `Inner.root`).
     fn running_in(&self) -> Option<(String, bool)> {
-        let i = self.inner.lock().unwrap();
-        if !i.status.running || i.cwd.is_empty() {
-            return None;
-        }
-        let home = !i.root.is_empty() && std::path::Path::new(&i.cwd).starts_with(&i.root);
-        Some((i.cwd.clone(), home))
+        let (cwd, root) = {
+            let i = self.inner.lock().unwrap();
+            if !i.status.running || i.cwd.is_empty() {
+                return None;
+            }
+            (i.cwd.clone(), i.root.clone())
+        };
+        // Both resolved: the folder may be the kernel's answer (see
+        // `follow_folders`) and the root as the desk was made.
+        let real = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
+        let home = !root.is_empty() && real(&cwd).starts_with(real(&root));
+        Some((cwd, home))
     }
 
     /// What git said, kept and sent on only when it is news. A header that
@@ -1304,6 +1317,14 @@ pub fn folder_of(pid: u32) -> Option<String> {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn folder_of(_pid: u32) -> Option<String> {
     None
+}
+
+/// Two spellings of one folder: through a link, or with /private in front.
+fn same_folder(a: &str, b: &str) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
 }
 
 fn status_frame(id: &str, s: &Status) -> String {
@@ -1666,6 +1687,53 @@ mod tests {
         let (first, _rx) = live.attach();
         let snap = first.last().unwrap();
         assert!(snap.contains("late"), "{snap}");
+    }
+
+    /// A pane started in a folder reached through a link has not moved when
+    /// the kernel names the folder resolved: macOS's /var is /private/var.
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_folder_through_a_link_is_not_a_move() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-link");
+        std::fs::create_dir_all(dir.path.join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.path.join("real"), dir.path.join("link")).unwrap();
+        let (events, _ev) = broadcast::channel(64);
+        let panes = Panes::new(&dir.path, events);
+        let id = "00112233445566778899aabbccddeeff";
+        let live = panes.get(id);
+        let link = dir.path.join("link").to_string_lossy().to_string();
+        live.start(
+            Start {
+                cwd: &link,
+                root: &link,
+                cmd: "sleep 30",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+                offer: false,
+            },
+            &panes,
+        )
+        .unwrap();
+        for _ in 0..50 {
+            if live.shell_cwd().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            live.shell_cwd().is_some_and(|c| c.ends_with("/real")),
+            "the kernel names it resolved"
+        );
+        panes.follow_folders();
+        assert_eq!(live.inner.lock().unwrap().cwd, link, "not a move");
+        assert!(
+            live.running_in().is_some_and(|(_, home)| home),
+            "and still inside the desk's folder"
+        );
+        live.stop();
     }
 
     /// The agent's word reaches only a pane that is running, is sent once per

@@ -2743,7 +2743,9 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         let exe = bin.join("snyvi");
         fs::write(&exe, b"old daemon").unwrap();
-        fs::write(bin.join("snyvi-app"), b"old window").unwrap();
+        // Named as the updater looks for it beside the daemon: .exe on Windows.
+        let app = bin.join(crate::platform::exe("snyvi-app"));
+        fs::write(&app, b"old window").unwrap();
         let u = updater(&tmp, &exe, Fake::new());
         let vdir = tmp.join("data/updates/9.9.9");
         fs::create_dir_all(&vdir).unwrap();
@@ -2778,8 +2780,8 @@ mod tests {
             b"old daemon",
             "the daemon went back"
         );
-        assert_eq!(fs::read(bin.join("snyvi-app")).unwrap(), b"old window");
-        assert!(!bin.join("snyvi.prev").exists() && !bin.join("snyvi-app.prev").exists());
+        assert_eq!(fs::read(&app).unwrap(), b"old window");
+        assert!(!bin.join("snyvi.prev").exists() && !prev_of(&app).exists());
         assert!(u.state().applying.is_none());
     }
 
