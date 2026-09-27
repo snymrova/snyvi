@@ -505,18 +505,29 @@
   const SHOW_DOCS = 5, SHOW_ROWS = 8;
   const wholeWf = w => liftedWorkflows.has(w.id) || (state.doc && state.doc.workflow_id === w.id);
   function projectRows(p) {
-    const pid = String(p.id), wfs = state.sub.get(pid);
+    const pid = String(p.id);
+    let wfs = state.sub.get(pid);
     if (!wfs) return `<li class="t-wait">…</li>`;
     const allWfs = liftedCaps.has(pid);
     // A removed document's row stands in its session until the offer goes.
     // Its session may have gone with it, when it was the only document there:
     // then the row stands alone where the session was.
     const g = gone && gone.where === "proj" && gone.pid === pid ? gone : null;
-    const lostWf = g && !wfs.some(w => w.id === g.wf);
+    // And the sessions keep the order they were drawn in: a session that lost
+    // its newest document can sort below another, and move the Undo with it.
+    // One that came since goes on top, where it would have anyway.
+    let fresh = 0;
+    if (g && g.order) {
+      const was = new Map(g.order.map((id, i) => [id, i]));
+      const kept = wfs.filter(w => was.has(w.id)).sort((a, b) => was.get(a.id) - was.get(b.id));
+      fresh = wfs.length - kept.length;
+      wfs = [...wfs.filter(w => !was.has(w.id)), ...kept];
+    }
+    const lostWf = g && !wfs.some(w => w.id === g.wf), lostAt = g ? g.wfAt + fresh : -1;
     const lone = () => `<li class="t-wf solo"><ul>${ghostRow()}</ul></li>`;
     let h = "", shownWfs = 0, rows = 0;
     for (const [wi, w] of wfs.entries()) {
-      if (lostWf && wi === g.wfAt) h += lone();
+      if (lostWf && wi === lostAt) h += lone();
       // Past the budget, only the session being read is drawn.
       if (!allWfs && rows >= SHOW_ROWS && !(state.doc && state.doc.workflow_id === w.id)) continue;
       shownWfs++;
@@ -538,7 +549,7 @@
       else if (liftedWorkflows.has(w.id) && w.total > SHOW_DOCS) h += `<li class="t-more"><button type="button" data-less-docs="${w.id}">less</button></li>`;
       h += `</ul></li>`;
     }
-    if (lostWf && g.wfAt >= wfs.length) h += lone();
+    if (lostWf && lostAt >= wfs.length) h += lone();
     if (p.workflows > shownWfs) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - shownWfs} more sessions</button></li>`;
     else if (allWfs && wfs.length > 1 && liftedCaps.has(pid)) h += `<li class="t-more"><button type="button" data-less-wf="${p.id}">fewer sessions</button></li>`;
     return h;
@@ -1402,7 +1413,7 @@
     if (!from && !treeEl.querySelector(sel)) return null;
     for (const [pid, wfs] of state.sub) for (const [wfAt, w] of wfs.entries()) {
       const at = w.docs.findIndex(x => x.id === id);
-      if (at >= 0) return { where: "proj", pid, wf: w.id, wfAt, at, solo: w.total === 1 && w.docs.length === 1, doc: w.docs[at] };
+      if (at >= 0) return { where: "proj", pid, wf: w.id, wfAt, at, solo: w.total === 1 && w.docs.length === 1, doc: w.docs[at], order: wfs.map(x => x.id) };
     }
     return null;
   }
@@ -3404,6 +3415,7 @@
    * sections say: waiting, panels waiting on you, agents connected. */
   const railNav = $("#rail-nav"), popEl = $("#pop");
   const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
+  const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
   ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
   for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
   /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
@@ -3434,9 +3446,13 @@
     if (!sec) return false;
     delete root.dataset.pop;
     popEl.hidden = true;
-    for (const id of POPS[sec]) id === "#note" ? sideEl.insertBefore($(id), $(".side-foot")) : treesEl.insertBefore($(id), popEl);
-    // Put back in #trees' order: the inbox's two are the only ones that share it.
-    if (sec === "inbox") treesEl.insertBefore($("#inbox-row"), $("#queue"));
+    // Each back before the first section that follows it in #trees' order,
+    // whatever else is still at home: the end is not its place.
+    for (const id of POPS[sec]) {
+      if (id === "#note") { sideEl.insertBefore($(id), $(".side-foot")); continue; }
+      const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
+      treesEl.insertBefore($(id), after || popEl);
+    }
     const b = popBtn; popBtn = null;
     b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
     if (back && b?.isConnected) b.focus({ preventScroll: true });
@@ -3524,7 +3540,11 @@
         : e.key === "ArrowLeft" ? width() - pane.sign * step
           : e.key === "Home" ? pane.min : e.key === "End" ? pane.max : null;
       if (to === null) return;
+      // At once, as a drag is: the fold's easing would trail a held key.
+      root.dataset.resizing = "1";
       store.set(pane.key, String(set(to)));
+      void $("#app").offsetWidth;
+      delete root.dataset.resizing;
       e.preventDefault();
       e.stopPropagation();
     });

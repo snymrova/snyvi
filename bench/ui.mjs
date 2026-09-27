@@ -609,6 +609,9 @@ async function narrowRows(p, url) {
     navigated.title === titleBefore ? `the row opened nothing (${rowsShown.all} rows, ${rowsShown.other} not current)` : navigated.pop ? "the popover stayed open over the document it opened"
       : !widened.side || widened.width <= 200 || widened.icons ? `back at 1280 px the sidebar is ${widened.side ? widened.width + " px" : "gone"}` : !widened.rail ? "back at 1280 px the rail is gone"
         : "opens the document and closes; the sidebar is back open at 1280 px"]);
+  // Back to the page with code on it: `z` below says "no code on this page"
+  // on the one the popover opened, and it would be right to.
+  if (navigated.title !== titleBefore) { await p.press("ArrowLeft", { alt: true }); await sleep(600); }
 
   for (const w of [1000, 700]) {
     await p.width(w);
@@ -660,7 +663,10 @@ async function sideRailRows(p, url, arrive) {
   await p.goto(url);
   await p.pointerAway();
   const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "pop"];
+  // The fold eases over 160 ms; the widths below are read where it lands.
+  const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
   await p.press("\\");
+  await eased();
   const folded = await p.ev(`({ side: document.documentElement.dataset.side, width: Math.round(document.querySelector("#side").getBoundingClientRect().width), icons: window.__ui.vis("#rail-nav"), tree: window.__ui.vis("#tree") })`);
   rows.push(["\\ folds the sidebar to its rail", folded.side === "0" && folded.width === 44 && folded.icons && !folded.tree,
     folded.side !== "0" ? "\\ did not fold it" : folded.width !== 44 ? `the rail is ${folded.width} px` : !folded.icons ? "no icons on it" : folded.tree ? "the tree is still drawn in 44 px" : "44 px, icons only"]);
@@ -718,6 +724,7 @@ async function sideRailRows(p, url, arrive) {
   await p.press("\\");
   const shut = await p.ev(`({ pop: document.documentElement.dataset.pop || "", side: document.documentElement.dataset.side })`);
   await p.press("\\");
+  await eased();
   const order = await p.ev(`[...document.querySelector("#trees").children].map(e => e.id)`);
   const width = await p.ev(`Math.round(document.querySelector("#side").getBoundingClientRect().width)`);
   rows.push(["\\ closes a popover, then unfolds, the sections in their order", !shut.pop && shut.side === "0" && JSON.stringify(order) === JSON.stringify(HOME) && width > 200,
@@ -925,6 +932,10 @@ async function queueRows(p, url, arrive) {
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
 
   await p.goto(url);
+  // Nothing waiting to start with, whatever the sections above left unread:
+  // every count below is counted from here. Mark all read, as the inbox does.
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
+  await p.reload();
   await p.pointerAway();
   await p.ui("scrollMain", 12000); await sleep(700);
   const before = await read();

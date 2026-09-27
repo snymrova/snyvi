@@ -1408,13 +1408,20 @@ function drawIn(el, html) {
   return true;
 }
 
-/** A pane's row in the rail takes its new name in place. */
+/** A pane's row in the rail takes its new name, and how full its context
+ *  window is, in place. */
 function named(v) {
   const b = ctx.tocEl.querySelector(`.dk-focus[data-focus="${v.id}"]`);
   if (!b) return;
   const here = v.status.cwd || v.pane.cwd;
   b.title = what(v) + (here ? ` · ${tilde(here)}` : "");
   b.querySelector(".nm").textContent = short(v);
+  const cp = ctxPct(v.status);
+  let c = b.querySelector(".ctx");
+  if (cp == null) { c?.remove(); return; }
+  if (!c) b.append(c = document.createElement("span"));
+  c.className = ctxCls(cp);
+  c.textContent = `${cp}%`;
 }
 
 /* ---------- the list ----------
