@@ -504,6 +504,23 @@ export function unpop(back = true) {
 function wirePop(popEl) {
   popWired = true;
   const railNav = $("#rail-nav");
+  // The menu's keys: the arrows walk its rows, Home and End go to its ends,
+  // a letter to the next row that starts with it. Tabbing out of it closes it.
+  popEl.addEventListener("keydown", e => {
+    if (e.target.closest("input") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const bs = [...popEl.querySelectorAll("a[href], button, summary")].filter(x => x.offsetParent), at = bs.indexOf(document.activeElement), n = bs.length;
+    const go = i => bs[(i + n) % n]?.focus();
+    if (e.key === "ArrowDown") go(at + 1);
+    else if (e.key === "ArrowUp") go(at - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(-1);
+    else if (e.key.length === 1 && /\S/.test(e.key)) {
+      const k = e.key.toLowerCase();
+      for (let j = 1; j <= n; j++) { const b = bs[(at + j) % n]; if (b.textContent.trim().toLowerCase().startsWith(k)) { b.focus(); break; } }
+    } else return;
+    e.preventDefault(); e.stopPropagation();
+  });
+  popEl.addEventListener("focusout", e => { const t = e.relatedTarget; if (t && !popEl.contains(t) && !t.closest("#ctx")) unpop(false); });
   // The aside's section empties when its last line goes, and its icon with
   // it: the popover goes too, and a keyboard that was in it lands on the
   // rail rather than on nothing.

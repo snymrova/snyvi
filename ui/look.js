@@ -215,5 +215,18 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
   paintAccent();
   paintFavicon();
   loadThemes();
+  /* The foot column is a toolbar: the arrows walk it (up is up: the column
+   * grows upward from the switch, which is the first in the page's order),
+   * Home and End go to its ends, and Esc lets it go. */
+  const foot = $("#foot-rail");
+  foot.addEventListener("keydown", e => {
+    const bs = [...foot.querySelectorAll("button")].filter(b => b.offsetParent), at = bs.indexOf(document.activeElement);
+    const go = i => bs[(i + bs.length) % bs.length]?.focus();
+    if (e.key === "ArrowUp") go(at + 1); else if (e.key === "ArrowDown") go(at - 1);
+    else if (e.key === "Home") go(0); else if (e.key === "End") go(-1);
+    else if (e.key === "Escape") document.activeElement.blur();
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  });
   return { THEMES, slot, previewTheme, setTheme, loadThemes, paintFontBtn };
 }

@@ -2008,12 +2008,13 @@
     // fetch before focusing leaves the keys the reader is already typing in
     // the page's own shortcuts, where `p` pins the document and `Delete`
     // deletes it -- a query is not a command, and must never arrive as one.
+    const from = findBar.hidden ? document.activeElement : null;
     findBar.hidden = false;
     const input = $("#find-input");
     input.focus(); input.select();
     try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
     catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", String(e)); return; }
-    find.open({ $, docEl, bring });
+    find.open({ $, docEl, bring }, from);
   }
 
   // ---------- focus beacon for desktop notifications ----------
