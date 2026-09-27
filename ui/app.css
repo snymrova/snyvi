@@ -1224,6 +1224,8 @@ pre.code .ln::before { cursor: pointer; }
 }
 
 /* ---------- palette / help ---------- */
+/* A native control snyvi has not drawn itself still wears the accent. */
+:root { accent-color: var(--accent); }
 #palette, #help, #about, #reset { position: fixed; inset: 0; background: var(--scrim); z-index: 40; display: grid; place-items: start center; padding-top: 12vh; }
 #palette[hidden], #help[hidden], #about[hidden], #reset[hidden] { display: none; }
 .palette-box, .help-box { width: min(620px, 92vw); background: var(--bg-raise); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; animation: rise 140ms cubic-bezier(.2,.7,.2,1); }
@@ -1234,7 +1236,8 @@ pre.code .ln::before { cursor: pointer; }
    Connect, Reset -- past the bottom edge, where no click can reach it. */
 .help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 84vh; overflow-y: auto; }
 .help-close { position: absolute; top: 12px; right: 12px; }
-.help-box h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-3); }
+/* One dialog title: About's, Reset's. The shortcuts card sets its own in its head. */
+.help-box h2 { margin: 0 0 4px; font-size: 18px; color: var(--fg); }
 .help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 .help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }
 .help-box dd { margin: 0; }
@@ -1247,7 +1250,7 @@ pre.code .ln::before { cursor: pointer; }
    there is no key column to line up; the keys sit on the right edge. */
 #help .help-box { width: min(700px, 92vw); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; }
 .help-head { flex: none; display: flex; align-items: center; padding: 14px 14px 12px 24px; }
-.help-head h2 { margin: 0; flex: 1; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg); }
+.help-head h2 { margin: 0; flex: 1; font-size: 15px; font-weight: 600; }
 #help .help-close { position: static; }
 #help .help-foot { flex: none; margin: 0; padding: 10px 14px 10px 16px; border-top: 1px solid var(--rule); background: var(--bg-side); }
 #help .help-foot button.text:hover { background: var(--rule); }

@@ -633,7 +633,6 @@ button.start-sample.dk-put { color: var(--accent); }
  * this file was loaded, so they came here to leave first paint. */
 const CSS_MOVED = `
 .about-box { width: min(560px, 92vw); }
-.about-box h2 { text-transform: none; letter-spacing: 0; font-size: 18px; color: var(--fg); margin-bottom: 4px; }
 .about-box p { margin: 0 0 14px; font-size: 14px; color: var(--fg-2); }
 .about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }
 .about-box dt { font-family: inherit; font-size: 13px; color: var(--fg-3); }
@@ -650,11 +649,16 @@ const CSS_MOVED = `
 .reset-ask input { display: block; width: 100%; margin-top: 6px; font: inherit; font-family: var(--mono); font-size: 15px; padding: 8px 10px; border: 1px solid var(--rule-2); border-radius: 6px; background: var(--bg); color: inherit; outline: none; }
 .reset-ask input:focus { border-color: var(--accent); }
 .reset-err { color: var(--del-fg); }
+/* "Also the pinned ones", drawn as a document's checkbox is, in the danger colour once ticked. */
+#reset-pinned { appearance: none; position: relative; width: 14px; height: 14px; margin: 0 6px -2px 0; border: 1.5px solid var(--rule-2); border-radius: 4px; background: var(--bg-raise); cursor: pointer; }
+#reset-pinned:checked { background: var(--danger); border-color: var(--danger); }
+#reset-pinned:checked::after { content: ""; position: absolute; left: 3.5px; top: 0; width: 4px; height: 8px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+#reset-pinned:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .reset-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 /* The Reset button's own: this sheet stays in the page once fetched, and a
    bare \`button.danger\` would paint the context menu's danger rows too. */
-.reset-act button.danger { font: inherit; font-size: 13px; font-weight: 550; color: #fff; background: #b3261e; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
-.reset-act button.danger:hover { background: #9a1f18; }
+.reset-act button.danger { font: inherit; font-size: 13px; font-weight: 550; color: var(--on-accent); background: var(--danger); border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+.reset-act button.danger:hover { background: color-mix(in srgb, var(--danger), var(--fg) 12%); }
 .reset-act button.danger:disabled { opacity: .4; cursor: default; }
 .reset-act button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 `;
