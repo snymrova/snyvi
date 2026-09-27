@@ -795,33 +795,74 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
     }
 }
 
-/// Tick a line on the list of the desk this pane is on, as `by`.
-pub fn tick_desk_note(paths: &Paths, pane: &str, note: i64, by: &str) -> Result<Value> {
+/// Tick a line on the list of the desk this pane is on, as `by`, with the
+/// commit the work went into and a document about it when there are those.
+pub fn tick_desk_note(
+    paths: &Paths,
+    pane: &str,
+    note: i64,
+    by: &str,
+    commit: &str,
+    about: &str,
+) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/notes/{note}/tick"),
+        serde_json::json!({ "by": by, "commit": commit, "about": about }),
+    )?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
+        400 => bail!("{}", said(&mut resp)),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// Name the panel this pane is: what the reader sees in its head and on the
+/// desk's rail. Empty gives it back to its program's title.
+pub fn name_panel(paths: &Paths, pane: &str, name: &str) -> Result<()> {
+    let resp = pane_post(
+        paths,
+        &format!("{pane}/name"),
+        serde_json::json!({ "name": name }),
+    )?;
+    match resp.status().as_u16() {
+        200 => Ok(()),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// A write an agent makes on its own pane, `/api/panes/{path}`, with the token.
+fn pane_post(paths: &Paths, path: &str, body: Value) -> Result<ureq::http::Response<ureq::Body>> {
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
             "no token at {}; is the daemon running as this user?",
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::post(&format!(
-        "{}/api/panes/{pane}/notes/{note}/tick",
-        config::base_url()
-    ))
-    .header("Authorization", &format!("Bearer {token}"))
-    .config()
-    .timeout_global(Some(Duration::from_secs(5)))
-    .http_status_as_error(false)
-    .build()
-    .send_json(serde_json::json!({ "by": by }))
-    .context("asking snyvi")?;
-    match resp.status().as_u16() {
-        200 => Ok(resp.body_mut().read_json()?),
-        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
-        404 => {
-            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
-        }
-        s => bail!("snyvi answered {s}"),
-    }
+    ureq::post(&format!("{}/api/panes/{path}", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(body)
+        .context("asking snyvi")
+}
+
+/// The `error` a refusal carries, or a word for one that carries none.
+fn said(resp: &mut ureq::http::Response<ureq::Body>) -> String {
+    resp.body_mut()
+        .read_json::<Value>()
+        .ok()
+        .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| "snyvi refused it".to_string())
 }
 
 /// Leave an aside at the foot of the sidebar.

@@ -107,8 +107,9 @@ const COMMANDS = [
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
   { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
-  { cmd: "connect", t: "Connect an agent", s: "Claude Code, Codex, Cursor and the rest" },
-  { cmd: "start", t: "The first ten minutes", s: "What snyvi does, a paragraph each" },
+  { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
+  { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
+  { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
   { cmd: "keys", t: "Keys", s: "Every key, and ⌃B for the letters" },
 ];
 function commandItems(q) {
@@ -181,7 +182,7 @@ function pick(it) {
   if (it.cmd) {
     const c = it.cmd;
     c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
-      : c === "start" ? d.showStart(true, "") : d.openHelp();
+      : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
     return;
   }
   const { state } = d;

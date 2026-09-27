@@ -196,7 +196,7 @@
     browseEl.innerHTML = head + `<div class="b-body s-body">` + state.browse.map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
       return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
-    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Read a folder as it is on disk"}</button></div>`;
+    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
 
@@ -232,9 +232,11 @@
    *  has one and goes to it, and waits for the pointer, as a folder's does,
    *  while it has none. The Inbox's project and the desk on its folder are
    *  the same project, and this is where the sidebar says so. */
+  /** One folder however it was spelled: a trailing slash is not another place. */
+  const sameRoot = (a, b) => !!a && !!b && a.replace(/(.)\/+$/, "$1") === b.replace(/(.)\/+$/, "$1");
   const projDeskBtn = p => {
     if (!capability || !p.root) return "";
-    const d = state.desks && state.desks.desks.find(x => x.root === p.root);
+    const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));
     return d ? `<button type="button" class="b-new has" data-projdesk="${p.id}" title="Show desk ${esc(d.name)}" aria-label="Show desk ${esc(d.name)}">${icon("desk")}</button>`
       : `<button type="button" class="b-new" data-projdesk="${p.id}" title="New desk for ${esc(p.name)}" aria-label="New desk for ${esc(p.name)}">${icon("desk")}</button>`;
   };
@@ -594,7 +596,7 @@
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">Nothing here yet. Send something:<br><code>snyvi send README.md</code><br><br>Or read a folder: the row under <b>Folders</b>, below.</div>`;
+      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -860,7 +862,9 @@
       // In a folder's row, a desk on that folder; in the Desks head, the
       // question of where.
       const f = folderOf(nd);
-      if (f) act("make", f); else askWhere(nd, e.detail === 0);
+      // With no project known yet the only real answer is a folder: the
+      // dialog, at once, rather than a menu of one row.
+      if (f) act("make", f); else if (capability && !deskPlaces().length) act("pick", true); else askWhere(nd, e.detail === 0);
       return;
     }
     const pd = e.target.closest("[data-projdesk]");
@@ -1216,21 +1220,20 @@
     if (!items || push) {
       try { items = await (await fetch("/api/inbox?limit=60")).json(); } catch { items = []; }
     }
-    boot.inbox = null;
-    // Nothing to read: the page is the connect page, with the rows the shell
-    // came with or, on a later visit, fetched now.
-    let agents = null;
+    boot.inbox = null; boot.agents = null;
+    // Nothing to read, and no desk yet: the page is Welcome -- which project
+    // first -- at the inbox's own address. A window that has desks and no
+    // documents yet says where they will land.
+    let welcomeHtml = null;
     if (!items.length) {
-      agents = boot.agents; boot.agents = null;
-      if (!agents) { try { agents = await (await fetch("/api/agents")).json(); } catch {} }
-      await connectReady();
+      if (capability && !state.desks) await loadDesks();
+      if (!capability || !(state.desks && state.desks.desks.length)) welcomeHtml = await welcomePage();
     }
     document.title = "snyvi";
     if (push) history.pushState({ inbox: true }, "", "/");
-    docEl.innerHTML = inboxHtml(items, agents);
+    docEl.innerHTML = welcomeHtml != null ? welcomeHtml : inboxHtml(items);
     if (push) swapIn();
     afterRender();
-    if (!items.length) watchAgents();
     // The inbox lists every waiting row, and the page opened with the oldest
     // few: the rest come after the page is on screen, not before the sidebar is.
     if (state.waiting > state.queue.length) {
@@ -1241,9 +1244,9 @@
     }
   }
 
-  function inboxHtml(items, agents) {
+  function inboxHtml(items) {
     const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
-    if (!items.length) return connectHtml ? connectHtml(agents) : "";
+    if (!items.length) return `<div class="inbox-head"><h1>Inbox</h1><p>What your agents write lands here, filed by project. Ask one in a desk for a plan.</p></div>`;
     // What is waiting comes first, oldest first, so the landing page answers
     // "what is new" before "what is there".
     const n = state.waiting;
@@ -1268,14 +1271,14 @@
   const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
   async function connectReady() {
     if (connectHtml) return;
-    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel })); }
+    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel, cap: !!capability })); }
     catch (e) { panelLoading = null; toast("Could not open that page", String(e)); }
   }
   async function showConnect(push = true) {
     if (push) leave();
     offDesk();
     state.view = "connect"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
-    document.title = "Connect an agent · snyvi";
+    document.title = "Agents · snyvi";
     if (push) history.pushState({ connect: true }, "", "/connect");
     let a = boot.agents; boot.agents = null;
     if (!a) { try { a = await (await fetch("/api/agents")).json(); } catch { a = null; } }
@@ -1292,7 +1295,7 @@
     if (push) leave();
     offDesk();
     state.view = "start"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
-    document.title = "The first ten minutes · snyvi";
+    document.title = "How snyvi works · snyvi";
     if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
     let m;
     try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return; }
@@ -1305,13 +1308,54 @@
     if (sec) sec.scrollIntoView({ block: "start" }); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
+  /** Welcome: what snyvi is, and which project first. Its own address to
+   *  come back to from Help; the empty library draws the same page at `/`. */
+  let welcomePlaces = [];
+  async function welcomePage() {
+    let m;
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return ""; }
+    welcomePlaces = capability ? deskPlaces() : [];
+    return m.welcome({ cap: !!capability, places: welcomePlaces, home: state.desks && state.desks.home, mascot: mascotHead("plain"), esc });
+  }
+  async function showWelcome(push = true) {
+    if (push) leave();
+    offDesk();
+    state.view = "welcome"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "Welcome · snyvi";
+    if (push) history.pushState({ welcome: true }, "", "/welcome");
+    if (capability && !state.desks) await loadDesks();
+    const html = await welcomePage();
+    if (state.view !== "welcome") return;
+    docEl.innerHTML = html;
+    if (push) swapIn();
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
+  // Welcome's question, and Connect wherever it is offered.
+  docEl.addEventListener("click", async e => {
+    const b = e.target.closest("[data-w]");
+    if (!b || !docEl.contains(b)) return;
+    const w = b.dataset.w;
+    if (w === "pick") act("pick", true);
+    else if (w === "place") { const f = welcomePlaces[+b.dataset.i]; if (f) act("make", f); }
+    else if (w === "connect") connectClaude(b);
+  });
+  /** Connect Claude Code, from the Agents page or a desk's panel: it asks,
+   *  in place, then runs `init-claude` in the daemon. */
+  async function connectClaude(b, done) {
+    const m = await panelMod();
+    m.connectAsk(b, { api: (path, body) => deskApi(path, body), done: (a, ok) => {
+      if (a && state.view === "connect" && connectHtml) setTimeout(() => { if (state.view === "connect") docEl.innerHTML = connectHtml(a); }, 1600);
+      done && done(a, ok);
+    } });
+  }
   /** Ask again while the page is on screen; redraw only when something changed. */
   function watchAgents() {
     clearInterval(agentsTimer);
     agentsTimer = setInterval(refreshAgents, 2500);
   }
   async function refreshAgents() {
-    if (!docEl.querySelector(".connect") || document.hidden) return;
+    if (state.view !== "connect" || !docEl.querySelector(".connect") || document.hidden) return;
     let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
     if (JSON.stringify(a.rows) === agentsSeen) return;
     const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
@@ -1656,10 +1700,12 @@
    * daemon's own quiet for agents, aside.rs), and remembers what it said in
    * this browser (`snyvi.seen.*`, which Reset clears). Kept on the card's
    * list with ids `snyvi:*`, which note.js never tells the daemon about. */
+  const cmdK = /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K";
   const OWN = {
-    "first-doc": ["Your first document. Everything that arrives stays here, filed by project and session.", "arrives"],
+    "first-doc": ["Your first document. What arrives stays, filed with its project: nothing scrolls away.", "arrives"],
     "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
-    "first-desk": ["Your first desk: up to four terminals beside what you read. ⌃` goes between the desk and reading.", "desks"],
+    "second-desk": [`Got another project? Give it a desk too. ${cmdK} and its name goes between them.`, "desks"],
+    "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one waiting on you.", "desks"],
     "blocked": ["A panel is waiting on you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
     "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
   };
@@ -1667,14 +1713,34 @@
   // By when each was said, newest first, as the daemon's list is: an agent's
   // aside after snyvi's line is the one the card shows, not a line behind it.
   const withOwn = list => list.concat(state.notes.filter(isOwn)).sort((a, b) => (b.at || 0) - (a.at || 0));
+  /* Held, not dropped: a moment that comes while an agent's aside is unread,
+   * or inside the ten quiet minutes, waits in `snyvi.own.held` and is said
+   * when the way is clear -- once, as ever. */
+  let ownTimer = 0;
+  const heldOwn = () => { try { return JSON.parse(store.get("snyvi.own.held") || "[]"); } catch { return []; } };
   function snyviSays(key) {
-    if (store.get(`snyvi.seen.${key}`) || state.notes.some(n => !n.dismissed && !n.seen)) return;
-    if (Date.now() - (+store.get("snyvi.seen.at") || 0) < 600e3) return;
+    if (!OWN[key] || store.get(`snyvi.seen.${key}`)) return;
+    const quiet = 600e3 - (Date.now() - (+store.get("snyvi.seen.at") || 0));
+    if (quiet > 0 || state.notes.some(n => !n.dismissed && !n.seen)) {
+      const held = heldOwn();
+      if (!held.includes(key)) store.set("snyvi.own.held", JSON.stringify(held.concat(key)));
+      clearTimeout(ownTimer);
+      ownTimer = setTimeout(sayHeld, Math.max(quiet, 30e3));
+      return;
+    }
+    store.set("snyvi.own.held", JSON.stringify(heldOwn().filter(k => k !== key)));
     store.set(`snyvi.seen.${key}`, "1"); store.set("snyvi.seen.at", String(Date.now()));
     const [text, sec] = OWN[key];
     state.notes = [{ id: `snyvi:${key}`, text, sender: "", at: Date.now() / 1000, href: `/start#${sec}` }, ...state.notes.filter(n => !isOwn(n))];
     renderNote();
   }
+  /** The first held moment, if the way is clear now; the rest keep waiting. */
+  function sayHeld() {
+    const k = heldOwn().find(k => !store.get(`snyvi.seen.${k}`));
+    if (k) snyviSays(k); else store.set("snyvi.own.held", "[]");
+  }
+  // A moment held when the last page closed is still owed.
+  if (heldOwn().length) ownTimer = setTimeout(sayHeld, 30e3);
   let noteMod = null, noteLoading = null;
   function renderNote() {
     if (noteMod) return noteMod.render();
@@ -1990,7 +2056,7 @@
         markCur(links, cur);
       });
     }
-    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect" || state.view === "start");
+    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect" || state.view === "start" || state.view === "welcome");
   }
 
   /* A contents entry is a hash link, and the browser's own handling of one
@@ -2407,6 +2473,7 @@
     if (a.dataset.nav === "inbox") showInbox(true);
     else if (a.dataset.nav === "connect") showConnect(true);
     else if (a.dataset.nav === "start") showStart(true, a.hash || "");
+    else if (a.dataset.nav === "welcome") showWelcome(true);
     else if (a.dataset.nav === "desks") showDesk(null, true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
     else if (a.dataset.desk !== undefined) showDesk(+a.dataset.desk, true, +a.dataset.slot || 0);
@@ -2473,6 +2540,7 @@
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     if (location.pathname === "/connect") return showConnect(false);
     if (location.pathname === "/start") return showStart(false);
+    if (location.pathname === "/welcome") return showWelcome(false);
     const k = location.pathname.match(/^\/desk\/(\d+)$/);
     if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
     showInbox(false);
@@ -2619,14 +2687,19 @@
     putAway: pid => putAway(String(pid)),
     applyRename: (what, id) => applyRename(what, id),
     places: () => deskPlaces(),
+    hold: id => heldPanes.add(id),
   };
+  /** Panels made to wait for the reader's Enter: a new project desk's first,
+   *  holding `claude`. The desk view takes each once, as it draws it. */
+  const heldPanes = new Set();
   /** Where a new desk could go besides the home folder: the folders the
    *  Inbox's projects were written from, then the folders open under Folders,
    *  one row a folder, less any that already has a desk -- that one is a
    *  click on its row away, and a second desk on it is its menu's to offer. */
   function deskPlaces() {
-    const home = state.desks && state.desks.home, taken = new Set(state.desks ? state.desks.desks.map(d => d.root) : []), out = [];
-    const put = (abs, f) => { if (abs && abs !== home && !taken.has(abs)) { taken.add(abs); out.push({ abs, ...f }); } };
+    const trim = p => p && p.replace(/(.)\/+$/, "$1");
+    const home = trim(state.desks && state.desks.home), taken = new Set(state.desks ? state.desks.desks.map(d => trim(d.root)) : []), out = [];
+    const put = (abs, f) => { const k = trim(abs); if (k && k !== home && !taken.has(k)) { taken.add(k); out.push({ abs, ...f }); } };
     for (const p of state.tree) if (!away.has(String(p.id))) put(p.root, { project: p.id, name: p.name });
     for (const r of state.browse) put(r.path, { root: r.id, path: "", name: r.name });
     return out;
@@ -2660,14 +2733,19 @@
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     badge('[data-pop="desks"]', blocked, " blk");
-    // Two of snyvi's own first moments: a first desk, and a panel waiting.
-    if (desksSeen === 0 && list.length === 1) snyviSays("first-desk");
+    // snyvi's own moments on the way to a second project: one desk, asked
+    // for another once an agent has worked in it; two, and what that gives.
+    if (list.length === 1 && list[0].panes.some(p => p.status && p.status.agent)) snyviSays("second-desk");
+    if (desksSeen === 1 && list.length === 2) snyviSays("two-desks");
     if (state.desks) desksSeen = list.length;
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Put a project on a desk</button></li>` : "");
+        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
+    // One desk is one project; the second is when snyvi starts to earn its
+    // place, so it is asked for, under the first, until there is one.
+    const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ Another project</button></li>` : "";
     const rows = list.map(d => {
       const m = mark3(d.panes), has = d.panes.length > 0;
       const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
@@ -2686,10 +2764,10 @@
     // row and let go on the new one would not be a click. So what changed
     // is written, and only that -- the mark column, the head -- and the list
     // is drawn whole only when a row itself is different.
-    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
+    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top + more && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
-      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
-      deskNav.$top = top; deskNav.$head = head;
+      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + more + `</ul>`;
+      deskNav.$top = top + more; deskNav.$head = head;
       deskNav.querySelectorAll(".t-desk").forEach((li, i) => { li.$r = rows[i][0] + rows[i][2]; li.$e = rows[i][1]; });
       return;
     }
@@ -2717,7 +2795,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: el => el ? askWhere(el, false) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: el => el ? askWhere(el, false) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -2750,6 +2828,7 @@
     if (state.view === "browse" && state.browseRoot) return { browse: state.browseRoot.id, path: "" };
     if (state.view === "connect") return { connect: true };
     if (state.view === "start") return { start: true };
+    if (state.view === "welcome") return { welcome: true };
     if (state.view === "desk") return { desk: state.deskId };
     return null;
   }
@@ -2768,8 +2847,9 @@
       const r = state.browse.find(x => x.id === b.browse);
       return { name: r ? r.name : "the folder", go: () => showBrowse(b.browse, "", true) };
     }
-    if (b && b.connect) return { name: "Connect an agent", go: () => showConnect(true) };
-    if (b && b.start) return { name: "The first ten minutes", go: () => showStart(true, "") };
+    if (b && b.connect) return { name: "Agents", go: () => showConnect(true) };
+    if (b && b.start) return { name: "How snyvi works", go: () => showStart(true, "") };
+    if (b && b.welcome) return { name: "Welcome", go: () => showWelcome(true) };
     if (b && "desk" in b) {
       const d = b.desk != null && state.desks && state.desks.desks.find(x => x.id === b.desk);
       return { name: d ? d.name : "Desks", go: () => showDesk(b.desk, true) };
@@ -2991,12 +3071,13 @@
       renderTree(); markActive();
       await refreshTree(d.project_id);
       deskDocs();
-      if (state.waiting > 1) snyviSays("two-waiting");
+      // First in the library, wherever the reader is -- on a desk, most
+      // often -- and not just first into an empty inbox: a reader with a
+      // year of documents is not told this one is their first.
+      if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
+      else if (state.waiting > 1) snyviSays("two-waiting");
       else if (j.supersedes) snyviSays("version");
       if (opens) {
-        // First in the library, not just first into an empty inbox: a reader
-        // with a year of documents is not told this one is their first.
-        if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
@@ -3278,7 +3359,7 @@
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, openHelp, places: deskPlaces });
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, openHelp, places: deskPlaces });
   }
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
@@ -3428,6 +3509,7 @@
   $("#btn-reset").addEventListener("click", () => panel("reset"));
   $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
   $("#btn-start").addEventListener("click", () => { closeDialog(help); showStart(true, ""); });
+  $("#btn-welcome").addEventListener("click", () => { closeDialog(help); showWelcome(true); });
 
   // ---------- the contents on a narrow window ----------
   /* Past 1100 px the rail stops fitting beside the document and becomes a
@@ -3721,6 +3803,7 @@
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
   else if (state.view === "start") { history.replaceState({ start: true }, "", "/start" + location.hash); showStart(false); }
+  else if (state.view === "welcome") { history.replaceState({ welcome: true }, "", "/welcome"); showWelcome(false); }
   else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
   else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
   connect();

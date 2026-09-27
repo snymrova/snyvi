@@ -146,9 +146,15 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    screen or a log reads nothing once its shell is gone. An agent has one
    write, since 1.6: `tick_desk_note` marks an open line done
    (`POST /api/panes/{id}/notes/{note}/tick`), through the same checks, and
-   records the agent's name beside it (`desk_notes.done_by`). It cannot
+   records the agent's name beside it (`desk_notes.done_by`), and, since
+   1.7.1, the commit it names (`done_commit`, 7 to 40 hex digits) and a
+   document it sent (`done_doc`, a document id); anything else is refused
+   with a 400 that says what a hash looks like, so the line stays open. It cannot
    untick, write, add or take a line off; a line the reader ticked stays
-   theirs, and the reader's own untick or re-tick clears the name. Both tools
+   theirs, and the reader's own untick or re-tick clears all three. Since
+   1.7.1 it can also name its own panel: `name_panel`
+   (`POST /api/panes/{id}/name`), through the same checks, writes only that
+   pane's `name`, the one ✎ sets. The tools
    are offered only when `SNYVI_SESSION` is set. This does not widen what a
    token holder can reach -- the store is a file the reader's processes can
    already open -- it hands an agent one list through the front door.
@@ -383,8 +389,9 @@ reading view uses.
 and `full` on `POST /api/desks/{id}/layout`. And one behind the token, beside
 the hook's: `POST /api/panes/{id}/agent` takes `model` and `ctx: {pct, size,
 input}` from `snyvi statusline` for a running pane, and the pane's status
-carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. A `name_panel` MCP
-tool is the next cheap addition, and not in yet.
+carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. The `name_panel`
+MCP tool writes the same name through `POST /api/panes/{id}/name`, behind the
+token and a running pane.
 
 ## 7. Gaps, stated
 

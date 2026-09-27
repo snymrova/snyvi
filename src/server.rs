@@ -683,6 +683,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/", get(shell_home))
         .route("/connect", get(shell_connect))
         .route("/start", get(shell_start))
+        .route("/welcome", get(shell_welcome))
         .route("/d/{id}", get(shell_doc))
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
@@ -696,6 +697,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/health", get(health))
         .route("/api/about", get(about))
         .route("/api/agents", get(agents))
+        .route("/api/agents/claude/connect", post(connect_claude))
         .route("/api/tree", get(tree))
         .route("/api/projects/{id}/tree", get(project_tree))
         .route("/api/workflows/{id}/tree", get(workflow_tree))
@@ -768,6 +770,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/panes/{id}/agent", post(pane_agent))
         .route("/api/panes/{id}/notes", get(pane_notes))
         .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
+        .route("/api/panes/{id}/name", post(pane_name))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -1309,7 +1312,7 @@ async fn shell_home(State(app): S) -> Response {
 async fn shell_connect(State(app): S) -> Response {
     let tree = app.store.projects().unwrap_or_default();
     let boot = json!({ "view": "connect", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION, "agents": agents_json(&app) });
-    shell(&app, boot, "", "Connect an agent · snyvi")
+    shell(&app, boot, "", "Agents · snyvi")
 }
 
 /// The first ten minutes: a page the client draws (`ui/about.js`), asked for
@@ -1317,7 +1320,15 @@ async fn shell_connect(State(app): S) -> Response {
 async fn shell_start(State(app): S) -> Response {
     let tree = app.store.projects().unwrap_or_default();
     let boot = json!({ "view": "start", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
-    shell(&app, boot, "", "The first ten minutes · snyvi")
+    shell(&app, boot, "", "How snyvi works · snyvi")
+}
+
+/// Welcome: what snyvi is, and one question -- which project first. The page
+/// an empty window opens on, drawn by `ui/about.js`; reopened from Help.
+async fn shell_welcome(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "welcome", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "Welcome · snyvi")
 }
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
@@ -1667,11 +1678,57 @@ async fn agents(State(app): S) -> Response {
     Json(agents_json(&app)).into_response()
 }
 
+/// Connect Claude Code from the window: what `snyvi init-claude --auto` does
+/// in a terminal, run by this binary for this binary -- never for another
+/// one -- after the reader said yes to what it writes. The window's gate,
+/// as a desk is: a tab cannot change what Claude Code runs. It answers with
+/// what init printed and the agents as they are now.
+async fn connect_claude(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    // The path this daemon was started from, as the updater keeps it: once an
+    // update has renamed a new file over it, `current_exe` names the old one,
+    // gone (`… (deleted)` on Linux), and the same program is at the path.
+    let recorded = app.exe.as_ref().map(|e| e.path.clone());
+    let ran = tokio::task::spawn_blocking(move || {
+        let exe = match recorded {
+            Some(p) => p,
+            None => std::env::current_exe()?,
+        };
+        std::process::Command::new(exe)
+            .args(["init-claude", "--auto"])
+            .stdin(std::process::Stdio::null())
+            .output()
+    })
+    .await;
+    match ran {
+        Ok(Ok(out)) => {
+            let said = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Json(json!({ "ok": out.status.success(), "said": said.trim(), "agents": agents_json(&app) }))
+                .into_response()
+        }
+        Ok(Err(e)) => err(e.into()),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
 fn agents_json(app: &App) -> serde_json::Value {
     let senders = app.store.senders().unwrap_or_default();
     let online = app.online.lock().unwrap_or_else(|e| e.into_inner()).clone();
     json!({
         "program": crate::setup::program().0,
+        // Whether a new desk's first panel can offer `claude`: on the
+        // daemon's PATH, or registered (which it would not be without it).
+        "claude_on_path": crate::platform::find_on_path("claude").is_some(),
         "rows": crate::agents::rows(&senders, &online),
         "online": online,
         "now": crate::store::now(),
@@ -3907,6 +3964,12 @@ struct TickBody {
     /// The agent's name, as its MCP client gave it in `initialize`.
     #[serde(default)]
     by: String,
+    /// The commit the work is in, if the agent made one.
+    #[serde(default)]
+    commit: String,
+    /// A document the agent sent about the work, by its id.
+    #[serde(default)]
+    about: String,
 }
 
 /// An agent ticks a line on its own desk's list: `tick_desk_note`. The same
@@ -3933,8 +3996,32 @@ async fn pane_tick_note(
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return err(e),
     };
-    let by = body.map(|Json(b)| b.by).unwrap_or_default();
-    match app.store.tick_desk_note(placed.desk_id, note, &by) {
+    let b = body.map(|Json(b)| b).unwrap_or_default();
+    let (commit, doc) = (b.commit.trim(), b.about.trim());
+    // Said wrong, it is said back rather than dropped: the agent can tick
+    // again with the hash `git log` printed, and the line is still open.
+    if !commit.is_empty() && !crate::desk::commit_ok(commit) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "commit must be a hash as git log prints it: 7 to 40 hex digits" })),
+        )
+            .into_response();
+    }
+    if !doc.is_empty() && !crate::desk::doc_ok(doc) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": "about must be a document id from send_document: 10 hex digits" }),
+            ),
+        )
+            .into_response();
+    }
+    let tick = crate::desk::Tick {
+        by: b.by,
+        commit: commit.into(),
+        doc: doc.into(),
+    };
+    match app.store.tick_desk_note(placed.desk_id, note, &tick) {
         Ok(true) => {
             emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
             Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
@@ -3946,6 +4033,35 @@ async fn pane_tick_note(
             Json(json!({ "error": "no open note by that id on this desk" })),
         )
             .into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// An agent names the panel it runs in: `name_panel`. The gate the list has
+/// -- the token, then a running pane -- and the one thing it touches is that
+/// pane's own name, the one the reader sets with ✎. Empty gives the panel
+/// back to its program's title.
+async fn pane_name(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !app.panes.is_running(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match app.store.rename_pane(&id, &b.name) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }
@@ -4841,6 +4957,7 @@ mod tests {
             "async fn start_pane(",
             "async fn stop_pane(",
             "async fn paste_image(",
+            "async fn connect_claude(",
         ] {
             let from = src
                 .find(handler)
@@ -4928,6 +5045,17 @@ mod tests {
         assert!(
             src.contains(r#".route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))"#)
         );
+        // And naming its panel: token, running pane, then only that pane's name.
+        let name = &src[src.find("async fn pane_name(").unwrap()..];
+        let name = &name[..name.find("\n}\n").unwrap()];
+        assert!(name.find("authorized(").unwrap() < name.find("app.panes").unwrap());
+        assert!(name.find("app.panes.is_running(").unwrap() < name.find("app.store").unwrap());
+        assert_eq!(
+            name.matches("app.store").count(),
+            name.matches("app.store.rename_pane(&id,").count(),
+            "pane_name reaches the store for more than its own pane's name"
+        );
+        assert!(src.contains(r#".route("/api/panes/{id}/name", post(pane_name))"#));
     }
 
     /// The capability is read off the fragment and presented in a frame. If it

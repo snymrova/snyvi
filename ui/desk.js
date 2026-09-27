@@ -648,8 +648,11 @@ function makeView(p) {
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Put this away" aria-label="Put this away">✕</button></div>` +
+    `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
-  const kept = keepStopped.delete(p.id);
+  // A new project desk's first panel, holding `claude` for the reader's Enter.
+  const first = !!(ctx.held && ctx.held.delete(p.id));
+  const kept = keepStopped.delete(p.id) || first;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
     // A pane with no process and no exit code lost its shell to a daemon that
@@ -665,6 +668,7 @@ function makeView(p) {
     offered: !!(p.status && p.status.offer),
   };
   const { body, start } = v;
+  if (first) firstPanel(v);
   v.g = v.cv.getContext("2d");
   watchLook();
 
@@ -888,6 +892,7 @@ function header(v) {
   cx.textContent = cp == null ? "" : `${cp}%`;
   cx.className = "pn-ctx " + (cp == null ? "" : ctxCls(cp));
   cx.title = cp == null ? "" : `${s.model ? s.model + " · " : ""}${cp}% of its context window${s.ctx_size ? ` (${kTok(s.ctx_size)})` : ""}${s.ctx_in ? ` · ${s.ctx_in.toLocaleString()} tokens in` : ""}`;
+  if (s.agent) heardFrom(v);
   $(".pn-state").textContent = s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
   v.el.classList.toggle("blk", !!s.blocked);
   v.el.classList.toggle("done", s.agent === "done");
@@ -904,6 +909,34 @@ function header(v) {
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
   cursor(v);
+}
+
+/** The first panel of a new project desk: `claude` in its Start field, the
+ *  field focused so Enter runs it -- and, when Claude Code is not set up for
+ *  snyvi yet, one strip above it that connects it first. A session started
+ *  before that could never see snyvi. */
+async function firstPanel(v) {
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (!v.start.hidden) v.start.querySelector("input").focus(); }));
+  let a;
+  try { a = await (await fetch("/api/agents")).json(); } catch { return; }
+  const row = a.rows.find(r => r.id === "claude");
+  if (!row || row.state === "connected" || !ctx.connect) return;
+  const strip = v.el.querySelector(".pn-connect");
+  strip.innerHTML = `<p>snyvi isn't connected to Claude Code yet. Connect it first, so what Claude writes lands here.</p><div class="w-connect"><button type="button" class="w-btn">Connect</button></div>`;
+  strip.hidden = false;
+  strip.querySelector("button").addEventListener("click", e => {
+    ctx.connect(e.currentTarget, (_, ok) => { if (ok) setTimeout(() => { strip.hidden = true; v.start.querySelector("input").focus(); }, 2400); });
+  });
+}
+
+/** The first time a hook is heard from any panel, that panel says so, once,
+ *  in its own place: Claude and snyvi are talking. */
+function heardFrom(v) {
+  try { if (localStorage.getItem("snyvi.seen.hooked")) return; localStorage.setItem("snyvi.seen.hooked", "1"); } catch { return; }
+  const strip = v.el.querySelector(".pn-connect");
+  strip.innerHTML = `<p class="ok">Claude is connected here. What it sends lands on this desk's rail.</p>`;
+  strip.hidden = false;
+  setTimeout(() => { strip.hidden = true; }, 6000);
 }
 
 // ---------- the desk ----------
@@ -1360,7 +1393,7 @@ function rail() {
         (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
-      : `<p class="dk-empty">Nothing yet. What an agent in a panel sends lands here.</p>`) +
+      : waitingFirst(d)) +
     `</details>` + noteSec(d) + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
@@ -1464,9 +1497,9 @@ function noteSec(d) {
   return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
     `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     (rows ? `<ul class="dk-list">${rows}</ul>`
-      : noteField ? "" : `<p class="dk-empty">Nothing on the list. What this desk owes you goes here.</p>`) +
+      : noteField ? "" : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
     (noteField && noteField.kind === "new"
-      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="What has to happen" aria-label="A new note on this desk" spellcheck="false"></div>`
+      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
       : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>`) +
     `</details>`;
 }
@@ -1487,8 +1520,42 @@ function noteRow(x, esc) {
   return `<li class="dk-note${x.done ? " done" : ""}">` +
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" title="${x.done_by ? `Ticked by ${esc(x.done_by)} · click to rewrite` : "Click to rewrite"}">${esc(x.text)}</button>` +
-    (x.done && x.done_by ? `<span class="dk-by" title="Ticked by ${esc(x.done_by)}">${esc(x.done_by)}</span>` : "") +
-    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" title="Take it off the list · nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></li>`;
+    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" title="Take it off the list · nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
+    (x.done && x.done_by ? byLine(x, esc) : "") + `</li>`;
+}
+
+/** Copy a tick's commit, and say so where it is: the hash reads "copied" for
+ *  a moment, in its own place, rather than in a corner of the window. */
+function copySha(b) {
+  if (!b) return;
+  navigator.clipboard?.writeText(b.dataset.c);
+  if (b.dataset.said != null) return;
+  const was = b.textContent;
+  b.textContent = "copied"; b.dataset.said = "";
+  setTimeout(() => { if (b.isConnected) { b.textContent = was; delete b.dataset.said; } }, 1200);
+}
+
+/** Under a line an agent ticked: who, and where the work went when it said --
+ *  the commit (a click copies the whole hash, and says so in its own place)
+ *  and the document it sent (a click opens it). A line of its own, so a long
+ *  note keeps the rail's width and nothing beside it moves. */
+function byLine(x, esc) {
+  const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" title="Copy ${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
+  const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" title="Open what ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
+  return `<span class="dk-by"><span title="Ticked by ${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}</span>`;
+}
+
+/** A desk with nothing sent yet waits for its first document, and says how
+ *  to get one: the sentence to give Claude, with its Copy. After five
+ *  minutes of waiting it names the usual reason nothing comes. */
+const WANT = "Plan what's next here and send it to snyvi";
+const waitSince = new Map();
+function waitingFirst(d) {
+  if (!waitSince.has(d.id)) waitSince.set(d.id, Date.now());
+  const long = Date.now() - waitSince.get(d.id) > 300e3;
+  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true"></span>Waiting for the first one…</p>` +
+    `<p class="dk-ask">Ask Claude: <q>${WANT}</q> <button type="button" class="dk-sha" data-a="want-copy" data-c="${WANT}">copy</button></p>` +
+    (long ? `<p class="dk-empty">Nothing yet? A Claude session started before snyvi was connected cannot see it: start a new one.</p>` : "") + `</div>`;
 }
 
 /** Leaving a desk leaves its list with it: another desk's notes are another
@@ -1785,7 +1852,9 @@ async function act(b) {
         // the done half -- so the list is read back rather than guessed at.
         await getNotes(d.id, true);
       }
-    } else if (a === "note-x") {
+    } else if (a === "note-sha" || a === "want-copy") copySha(b);
+    else if (a === "note-doc") ctx.read(b.dataset.d);
+    else if (a === "note-x") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) {
         // Only the newest offer stands: two rows both saying Undo cannot both
@@ -2189,7 +2258,9 @@ export function actions(el) {
     const does = a => () => act({ dataset: { a, n: String(x.id) } });
     return { head: x.text, items: [
       { label: "Edit", run: does("note-edit") },
-      { label: x.done ? "Untick" : "Tick", run: does("note-tick") }, R,
+      { label: x.done ? "Untick" : "Tick", run: does("note-tick") },
+      ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
+      ...(x.done && x.done_commit ? [{ label: "Copy commit", run: () => copySha(note.querySelector(".dk-sha")) }] : []), R,
       { label: "Take off the list", danger: true, run: does("note-x") },
       ...(noteList.some(y => y.done && !y.gone) ? [{ label: "Clear done", run: does("note-clear") }] : []),
     ] };
@@ -2333,7 +2404,7 @@ const CSS = `
 .pn.pn-drop, .dk-tabs .pn-drop { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pn-head { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; font-size: 11.5px; color: var(--fg-3); border-bottom: 1px solid var(--rule); cursor: default; white-space: nowrap; flex: none; }
 .pn-slot { font-family: var(--mono); color: var(--fg-2); }
-.pn-start[hidden] { display: none; }
+.pn-start[hidden], .pn-connect[hidden] { display: none; }
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
@@ -2395,6 +2466,17 @@ const CSS = `
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
 .pn-start .pn-resume { color: var(--fg); font-weight: 500; }
 .pn-start .pn-resume[hidden] { display: none; }
+.pn-connect { position: absolute; left: 12px; right: 12px; bottom: 60px; padding: 10px 12px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: var(--shadow); font-size: 12.5px; color: var(--fg-2); }
+.pn-connect p { margin: 0 0 8px; line-height: 1.45; }
+.pn-connect p:last-child { margin: 0; }
+.pn-connect .ok { color: var(--ok); }
+.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.dk-wait .dk-empty { display: flex; align-items: center; gap: 6px; }
+.dk-ask { margin: 2px 8px 6px; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
+.dk-ask q { color: var(--fg); }
+.dk-spin { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-3); border-right-color: transparent; animation: dk-spin 1.2s linear infinite; }
+@keyframes dk-spin { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .dk-spin { animation: none; } }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
 .pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: var(--pn-size); }
 /* ---------- the rail ----------
@@ -2494,28 +2576,42 @@ const CSS = `
  * does not fit can be shortened; a note is a sentence, and half of it is not a
  * smaller version of it. */
 .dk-sec + .dk-notes { margin-top: 16px; }
-.dk-note { display: flex; align-items: flex-start; gap: 6px; border-radius: 6px; transition: background var(--t); }
+.dk-note { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; border-radius: 6px; transition: background var(--t); }
 .dk-note:hover { background: var(--rule); }
 .dk-note > .nm { flex: 1; min-width: 0; text-align: left; padding: 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere; }
 .dk-note:hover > .nm { color: var(--fg); }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
 .dk-note.done > .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-3); }
-/* A line an agent ticked says which agent, small, at its end: the reader
-   can untick it like any other. */
-.dk-by { flex: none; align-self: center; margin-left: 6px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); opacity: .8; }
+/* A line an agent ticked says which agent, and where the work went, on a
+   line of its own under the text, lined up with it: the reader can untick
+   it like any other. */
+.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 26px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
+.dk-by > span { opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
+.dk-sha { padding: 0 3px; background: var(--rule); }
+.dk-sha[data-said] { color: var(--ok); }
+.dk-sent { display: grid; place-items: center; width: 16px; height: 16px; }
+.dk-sent svg { width: 12px; height: 12px; }
+.dk-by button:hover { color: var(--accent); }
 /* The circle. A button rather than a checkbox input so it draws the same on
    every platform, with the role and the state a checkbox would have carried. */
-.dk-tick { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin: 5px 0 0 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
+.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; margin: 7px 0 0 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
 .dk-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
-.dk-tick svg { width: 11px; height: 11px; }
+.dk-tick svg { width: 9px; height: 9px; }
+/* Small to the eye and not to the hand: the press lands on 20 px. */
+.dk-tick:not(.ghost)::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; }
 /* The field's own circle: the row keeps its shape while it is being written,
    so the text does not step left and back again as the field opens and shuts. */
 .dk-tick.ghost { box-shadow: inset 0 0 0 1.5px var(--rule-2); }
-.dk-note .dk-tools { align-self: flex-start; margin-top: 3px; }
+/* A note's ✕ keeps its room whether it shows or not: the text wraps, and
+   room given only under the pointer rewrapped it -- the row changed height
+   under the hand that was reaching for it. */
+.dk-note .dk-tools { align-self: flex-start; margin-top: 3px; width: auto; padding-right: 3px; opacity: 0; transition: opacity var(--t); }
+.dk-note:hover .dk-tools, .dk-note .dk-tools:has(:focus-visible), .dk-note .dk-tools:has([data-armed]) { opacity: 1; }
 .dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
 .dk-note-in:focus { outline: none; }
 .dk-note-in::placeholder { color: var(--fg-3); }

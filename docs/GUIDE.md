@@ -419,9 +419,20 @@ The first `send` starts the daemon in the background; it stays resident
 (about 25 MB) so every later send and every page open is instant. It
 listens on `127.0.0.1:7777` only. Set `SNYVI_PORT` to change the port.
 
-New to it? *The first ten minutes* (`/start`, from the `?` box, the
-connect page, or ⌘K `>`) is six short sections -- a document arriving,
-what waits, versions, desks, notes and asides, keys -- each with a
+A new window opens on *Welcome* (`/welcome`, also in the `?` box and ⌘K
+`>`): what snyvi is, and one question -- *What are you working on?* The
+answer is a folder, chosen in the desktop's own dialog or from the
+projects snyvi already knows; snyvi never looks through your folders on
+its own. That folder becomes a desk, named after it, whose first panel
+holds `claude` in its Start field for your Enter. If Claude Code is not
+set up for snyvi yet, the panel offers to connect it first, and says what
+that writes before it writes anything. The desk's rail then waits for the
+first document, with the sentence to ask Claude for one, and once an
+agent has worked there the sidebar asks for a second project.
+
+*How snyvi works* (`/start`, from the `?` box, Agents, or ⌘K `>`) is six
+short sections, in the order the story goes -- a desk for each project,
+notes, documents arriving, what waits, versions, keys -- each with a
 *Show me* that lights the real thing in the window.
 
 ### Connecting an agent
@@ -439,27 +450,29 @@ cannot parse, is left alone and the snippet printed instead).
 it has one, asking it to send what it writes; `snyvi uninstall <agent>`
 takes the entry and the line back out.
 
-The viewer says the same thing. When the library is empty the page is
-*Connect an agent*: one row per agent, read by the daemon from the
-agent's own file, saying whether it is connected, not set up, or
+The viewer says the same thing, on *Agents* (`/connect`): one row per agent, read by the daemon from the
+agent's own file, saying whether it is set up, not set up, or
 registered under a path that no longer exists, with the command or the
 snippet that fixes it and, once a document has come from it, when. An
-agent whose session is open this moment says *online* instead -- the
+agent whose session is open this moment says *running now* instead -- the
 MCP server holds a connection to the daemon from the agent's first
 message until its process ends, so the row is as live as the session
 -- and the count beside the mark in the sidebar says how many are, on
-every page. It is reachable at any time from the foot of the `?` box
-and from that count, and `snyvi init` with no agent prints the same rows.
+every page. Claude Code is always listed first, with a *Connect Claude
+Code* button in the window; the other agents wait under *Using a different
+agent?* until one is set up. It is reachable at any time from the foot of
+the `?` box and from that count, and `snyvi init` with no agent prints
+the same rows.
 
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and two more inside a desk. `send_document` is
+That exposes two MCP tools, and three more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
 URL. `send_aside` is the small one, and [Asides](#asides) below says what it
-is for. `read_desk_notes` and `tick_desk_note` are offered only to a Claude
-running in a desk's panel: one reads that desk's notes, the other ticks one
-done. The tool
+is for. `read_desk_notes`, `tick_desk_note` and `name_panel` are offered
+only to a Claude running in a desk's panel: one reads that desk's notes,
+one ticks one done, and one names the panel it runs in. The tool
 descriptions tell Claude when to use each; a line in your global
 `CLAUDE.md` helps it remember:
 
@@ -1004,7 +1017,11 @@ snyvi's. A Claude running in one of a desk's panels is offered
 `read_desk_notes`, which returns that desk's notes, open and done, each
 with its number, and `tick_desk_note`, which marks one open line done when
 the work it names is finished. A line an agent ticked carries the agent's
-name at its end; untick it and it is yours again. There is no way for an
+name at its end, and, when the agent passed them, the commit the work went
+into (click it to copy the hash) and a ↗ that opens the document it sent
+about the work; untick it and it is yours again, with none of those. The
+same Claude can name its panel with `name_panel`, a few words for what it
+is doing there, which you can rename like any other. There is no way for an
 agent to add, untick, change or remove a line. It is found by the pane: the panel puts its id in
 the shell's environment as `SNYVI_SESSION`, and the daemon answers only
 while that panel is running, and only with its own desk's list -- never

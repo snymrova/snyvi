@@ -153,6 +153,32 @@ pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 .agent-fix summary { cursor: pointer; font-size: 13px; color: var(--fg-3); }
 .agent-fix details[open] summary { margin-bottom: 6px; }
 .connect-foot { margin-top: 24px; color: var(--fg-3); font-size: 13.5px; }
+.agents-more { margin-top: 20px; }
+.agents-more > summary { cursor: pointer; font-size: 14px; color: var(--fg-2); padding: 6px 0; }
+.agents-more[open] > summary { margin-bottom: 8px; }
+/* Welcome: the story in two lines, one question, one button. */
+.welcome { max-width: 560px; padding-top: 6vh; }
+.welcome .w-mark .mk { width: 44px; height: 44px; }
+.welcome .doc-title { margin: 14px 0 12px; }
+.w-lede { font-size: 16px; line-height: 1.55; color: var(--fg-2); margin: 0 0 36px; }
+.w-q { font-size: 20px; font-weight: 600; margin: 0 0 14px; }
+.w-btn { font: inherit; font-size: 14.5px; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
+.w-btn:hover { filter: brightness(1.08); }
+.w-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.w-or { margin: 26px 0 8px; font-size: 13.5px; color: var(--fg-3); }
+.w-places { list-style: none; margin: 0; padding: 0; }
+.w-places button { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; font: inherit; padding: 7px 10px; margin: 0 -10px; border-radius: 6px; color: var(--fg); }
+.w-places button:hover { background: var(--rule); }
+.w-places b { font-weight: 600; font-size: 14.5px; }
+.w-places span { font-family: var(--mono); font-size: 12px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-tab { font-size: 15px; color: var(--fg-2); }
+.w-connect { margin-top: 10px; }
+.w-ask-box { padding: 12px 14px; border: 1px solid var(--rule-2); border-radius: 8px; background: var(--bg-raise); }
+.w-ask-box p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; color: var(--fg-2); }
+.w-ask-act { display: flex; gap: 12px; align-items: center; }
+.w-said { margin: 0; font-size: 13.5px; color: var(--fg-2); }
+.w-said.ok { color: var(--add-fg); }
+.w-said.bad { color: var(--del-fg); margin-bottom: 6px; }
 .help-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; padding: 4px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
 .help-col { display: flex; flex-direction: column; gap: 18px; align-content: start; }
 .help-col h3 { margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: .01em; color: var(--fg-3); }
@@ -403,7 +429,7 @@ document.getElementById("doc").addEventListener("click", e => {
   navigator.clipboard?.writeText(b.parentElement.querySelector("code").textContent);
   b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200);
 });
-export function connect(a, { esc, rel }) {
+export function connect(a, { esc, rel, cap }) {
   const rows = a ? a.rows : [];
   const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
   const row = r => {
@@ -421,25 +447,80 @@ export function connect(a, { esc, rel }) {
     else { state = "off"; say = r.file ? `Nothing in <code>${esc(r.file)}</code>.` : `Not set up.`; }
     // An agent that is here now says so in place of "connected": a session
     // of it is open on the daemon this moment, not only set up to be.
-    const word = live ? `online${live > 1 ? ` ×${live}` : ""}` : { connected: "connected", stale: "needs fixing", off: "not set up" }[state];
+    const word = live ? `running now${live > 1 ? ` ×${live}` : ""}` : { connected: "set up", stale: "needs fixing", off: "not set up" }[state];
     if (live) state += " is-live";
+    // Claude Code, not set up, in the window: one button, which asks first.
+    const button = cap && r.id === "claude" && r.state !== "connected" && r.state !== "unreadable" ? `<div class="w-connect"><button type="button" class="w-btn" data-w="connect">Connect Claude Code</button></div>` : "";
     const fix = other || r.state === "connected" ? "" :
-      `<div class="agent-fix">${r.state === "unreadable" ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : "Or by hand, in"} <code>${esc(r.fix.place)}</code></summary>${cmd(r.fix.snippet, "snippet")}</details></div>`;
+      `<div class="agent-fix">${button}${r.state === "unreadable" ? "" : button ? "" : cmd(r.fix.command)}<details><summary>${r.state === "unreadable" ? "In" : button ? "Or from a terminal, or by hand" : "Or by hand, in"} ${button ? "" : `<code>${esc(r.fix.place)}</code>`}</summary>${button ? cmd(r.fix.command) : ""}${cmd(r.fix.snippet, "snippet")}</details></div>`;
     const i = r.instructions;
-    const line = other || !i ? "" : `<p class="agent-instr">${
+    // Claude Code set up by snyvi sends what it writes through its hooks, so
+    // the instructions line is not a step it is missing.
+    const line = other || !i || (r.id === "claude" && !i.present) ? "" : `<p class="agent-instr">${
       i.present ? `Asked to send what it writes, in <code>${esc(i.place)}</code>.`
       : state === "connected" ? `Not yet asked to send what it writes: the line below goes in <code>${esc(i.place)}</code>.`
       : `Then the line below, in <code>${esc(i.place)}</code>.`}</p>`;
     return `<li class="agent is-${state}" data-agent="${esc(r.id)}"><div class="agent-head"><span class="agent-dot"></span><b class="agent-name">${esc(r.name)}</b><span class="agent-state">${word}${when}</span></div><p class="agent-say">${say}</p>${fix}${line}</li>`;
   };
   const line = rows.find(r => r.instructions)?.instructions.line || "";
-  return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Connect an agent</h1><p class="doc-sub">Any agent that speaks MCP can send documents here. Each row is what that agent's own settings say about snyvi, right now.</p></header>` +
-    `<ul class="agents">${rows.map(row).join("")}</ul>` +
-    (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
-    `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand. Once something arrives: <a href="/start" data-nav="start">the first ten minutes</a>.</p></div>`;
+  // Claude Code first and always shown; any other agent only once it is set
+  // up or has sent something. The rest wait under one question.
+  const shown = rows.filter(r => r.id === "claude" || r.id.startsWith("sender:") || (r.state && r.state !== "not_set_up") || r.live);
+  const rest = rows.filter(r => !shown.includes(r));
+  return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Agents</h1><p class="doc-sub">An agent sends what it writes here, and snyvi shows what it is doing in its desk. Each row is what that agent's own settings say, right now.</p></header>` +
+    `<ul class="agents">${shown.map(row).join("")}</ul>` +
+    (rest.length ? `<details class="agents-more"><summary>Using a different agent?</summary><ul class="agents">${rest.map(row).join("")}</ul>` +
+      (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") + `</details>` : "") +
+    `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand. <a href="/start" data-nav="start">How snyvi works</a>.</p></div>`;
 }
 
-// ---------- /start: the first ten minutes ----------
+/** Connect Claude Code from the window, after saying what that writes. The
+ *  ask replaces the button, in its place; so does the answer. `done` hears
+ *  the agents as they are after it. */
+export function connectAsk(b, { api, done }) {
+  const box = b.closest(".w-connect") || b.parentElement;
+  const was = box.innerHTML;
+  box.innerHTML = `<div class="w-ask-box" role="group" aria-label="Connect Claude Code"><p>This adds snyvi to Claude Code: its MCP server in <code>~/.claude.json</code>, and hooks and a status line in <code>~/.claude/settings.json</code>, all run by this snyvi. A status line of your own is kept. <code>snyvi uninstall-claude</code> takes it all back out.</p>` +
+    `<div class="w-ask-act"><button type="button" class="w-btn" data-w="connect-yes">Connect</button><button type="button" class="text" data-w="connect-no">Not now</button></div></div>`;
+  box.querySelector('[data-w="connect-yes"]').focus();
+  box.onclick = async e => {
+    const t = e.target.closest("[data-w]");
+    if (!t) return;
+    e.stopPropagation();
+    if (t.dataset.w === "connect-no") { box.onclick = null; box.innerHTML = was; box.querySelector("button")?.focus(); return; }
+    if (t.dataset.w !== "connect-yes") return;
+    box.onclick = null;
+    box.innerHTML = `<p class="w-said">Connecting…</p>`;
+    try {
+      const j = await api("/api/agents/claude/connect", {});
+      const row = j.agents && j.agents.rows.find(r => r.id === "claude");
+      const ok = j.ok && row && row.state === "connected";
+      box.innerHTML = ok ? `<p class="w-said ok">Connected. A Claude session started from now on sends here.</p>`
+        : `<p class="w-said bad">It did not take. What it said:</p><pre class="cmd"><code>${(j.said || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</code></pre>`;
+      done && done(j.agents, ok);
+    } catch (e) { box.innerHTML = `<p class="w-said bad">Could not connect: ${String(e.message || e).replace(/[&<>]/g, "")}</p>`; }
+  };
+}
+
+// ---------- /welcome ----------
+/* What snyvi is, in the README's words, and one question: which project
+ * first. The answer is a folder, from the desktop's own dialog or from the
+ * projects snyvi already knows -- it never looks through folders itself.
+ * Nothing about agents is here: that is asked inside the desk, if at all. */
+export function welcome({ cap, places, home, mascot, esc }) {
+  const tilde = p => (home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p);
+  const ask = cap ? `<h2 class="w-q">What are you working on?</h2>` +
+    `<button type="button" class="w-btn w-pick" data-w="pick">Choose its folder…</button>` +
+    (places.length ? `<p class="w-or">Or one snyvi already knows:</p><ul class="w-places">${places.map((f, i) =>
+      `<li><button type="button" data-w="place" data-i="${i}"><b>${esc(f.name)}</b><span>${esc(tilde(f.abs))}</span></button></li>`).join("")}</ul>` : "")
+    : `<p class="w-tab">Desks live in the snyvi window: <code>snyvi app</code>.</p>`;
+  return `<div class="connect welcome"><div class="w-mark">${mascot}</div>` +
+    `<h1 class="doc-title">All your passion projects, in one calm place.</h1>` +
+    `<p class="w-lede">More projects than hours? Give each one a desk: its folder, its agents side by side, and everything they write kept.</p>` +
+    ask + `<p class="connect-foot"><a href="/start" data-nav="start">How snyvi works</a></p></div>`;
+}
+
+// ---------- /start: how snyvi works ----------
 /* A page, not a tour: six sections, a paragraph and a line of keys each,
  * for someone with one document in front of them. No screenshots -- they
  * would ride in the binary, show one theme to a reader on another, and be
@@ -456,7 +537,7 @@ const folded = () => document.documentElement.dataset.side === "0";
 const q = s => document.querySelector(s);
 const SHOW = {
   arrives: { at: () => q("#tree a[data-id]") && (folded() ? q('#rail-nav [data-pop="tree"]') : q("#tree a[data-id]")),
-    none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Connect an agent</a>` },
+    none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
   waiting: { at: () => q("#queue .t-queue") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#queue .t-queue")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .s-head")), none: "Desks live in the window: <code>snyvi app</code>." },
   notes: { at: () => !q("#note")?.hidden && (folded() ? q("#rail-note") : q("#note")), none: "No aside right now." },
@@ -484,8 +565,16 @@ function showMe(a) {
 export function start({ cap }) {
   startCap = !!cap;
   const sec = (id, title, body, keys) => `<section id="${id}" class="start-sec"><h2>${title}</h2>${body}${keys ? `<p class="start-keys">${keys}</p>` : ""}</section>`;
-  return `<div class="connect start"><header class="doc-head"><h1 class="doc-title">The first ten minutes</h1><p class="doc-sub">Six things, a paragraph each. Every key is in ${kb("?")}.</p></header>` +
-    sec("arrives", "A document arrives",
+  return `<div class="connect start"><header class="doc-head"><h1 class="doc-title">How snyvi works</h1><p class="doc-sub">Six things, a paragraph each. Every key is in ${kb("?")}.</p></header>` +
+    sec("desks", "A desk for each project",
+      `<p>A desk is one project's workbench: its folder, and up to four real terminal panels beside what you read, each running a shell or an agent. Make one with + beside Desks, which asks which project or folder it is for, or with the desk button on a project's or a folder's row. Everything the desk's agents send is listed on its rail, next to the panel that sent it. When an agent in a panel is waiting on you, for an answer or a permission, its row turns amber and Desks counts it. Restarting snyvi stops what runs in the panels; each comes back in its folder, and offers the conversation back with one click. ${showLink("desks")}</p>`,
+      `${kb("⌃", "`")} desk / reading · ${kb("⌃", "⌥", "1")}–${kb("4")} a panel · ${kb("⌃", "⌥", "N")} new panel · ${kb("⌃", "⌥", "W")} close it (with Undo) · ${kb("⌃", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
+    sec("notes", "Out of your head: notes, points and asides",
+      `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
+      `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
+      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
+      `Right-click anything for what it can do · ${kb("☰")} or ${kb("⇧", "F10")} the same menu from the keyboard`) +
+    sec("arrives", "Nothing scrolls away",
       `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you delete it, and a delete can be undone. ${showLink("arrives")}</p>`,
       `${kb("⌘", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
     sec("waiting", "What is waiting",
@@ -495,20 +584,12 @@ export function start({ cap }) {
       `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +
       `<pre class="code diff start-sample" inert aria-hidden="true"><code><span class="ln hunk">@@ -3,2 +3,2 @@</span>\n<span class="ln del">-## The cache</span>\n<span class="ln del">-It lives beside each desk.</span>\n<span class="ln add">+## The cache, per project</span>\n<span class="ln add">+It is per project, not per desk.</span></code></pre>`,
       `${kb("[")} ${kb("]")} older / newer · ${kb("c")} compare · ${kb("s")} side by side / inline · ${kb("t")} contents`) +
-    sec("desks", "A desk",
-      `<p>A desk is one project's workbench: its folder, and up to four real terminal panels beside what you read, each running a shell or an agent. Make one with + beside Desks, which asks which project or folder it is for, or with the desk button on a project's or a folder's row. Everything the desk's agents send is listed on its rail, next to the panel that sent it. When an agent in a panel is waiting on you, for an answer or a permission, its row turns amber and Desks counts it. Restarting snyvi stops what runs in the panels; each comes back in its folder, and offers the conversation back with one click. ${showLink("desks")}</p>`,
-      `${kb("⌃", "`")} desk / reading · ${kb("⌃", "⌥", "1")}–${kb("4")} a panel · ${kb("⌃", "⌥", "N")} new panel · ${kb("⌃", "⌥", "W")} close it (with Undo) · ${kb("⌃", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
-    sec("notes", "Notes, points and asides",
-      `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
-      `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
-      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
-      `Right-click anything for what it can do · ${kb("☰")} or ${kb("⇧", "F10")} the same menu from the keyboard`) +
     sec("keys", "Keys",
       `<p>The letter keys start asleep, so a ${kb("j")} meant for a terminal cannot move the page. ${kb("⌃", "B")} wakes them; a pill at the bottom says <em>Keys on</em>, and they sleep again on Esc, a click, or ten quiet seconds.</p>` +
       `<div class="keymode-sample show on" inert aria-hidden="true">Keys on · esc</div>` +
       `<p>Keys with a modifier always work. ${kb("⌘", "K")} searches everything, and a search that starts with <code>&gt;</code> lists what snyvi can do: a theme, a new desk, a folder, an agent to connect. ${showLink("keys")}</p>`,
       `${kb("⌃", "B")} letter keys · ${kb("⌘", "K")} search · ${kb("⌘", "K")} <code>&gt;</code> commands · ${kb("?")} every key · ${kb("\\")} sidebar · ${kb("Esc")} back to where you were`) +
-    `<p class="connect-foot">Nothing here yet? <a href="/connect" data-nav="connect">Connect an agent</a>.</p></div>`;
+    `<p class="connect-foot">${cap ? `Nothing here yet? <a href="/welcome" data-nav="welcome">Give a project a desk</a>. ` : ""}<a href="/connect" data-nav="connect">Agents</a>.</p></div>`;
 }
 
 /** After the page is in: the keys say ctrl off a Mac, and the pill's look is

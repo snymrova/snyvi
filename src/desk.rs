@@ -88,7 +88,9 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   done_at INTEGER NOT NULL DEFAULT 0,
   removed_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  done_by TEXT NOT NULL DEFAULT ''
+  done_by TEXT NOT NULL DEFAULT '',
+  done_commit TEXT NOT NULL DEFAULT '',
+  done_doc TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
@@ -130,6 +132,13 @@ pub struct DeskNote {
     /// not done.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub done_by: String,
+    /// The commit the agent said the work is in, when it ticked the line: a
+    /// hash, so the reader can find it in `git log`. Only ever beside `done_by`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub done_commit: String,
+    /// A document the agent sent about the work (its id), which the row opens.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub done_doc: String,
 }
 
 /// A pane, which in this phase is a workspace row and no process.
@@ -686,7 +695,7 @@ pub fn clear(conn: &Connection) -> Result<()> {
 /// the row under the reader's cursor on every keystroke they finished.
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
-        "SELECT id, text, done_at, created_at, done_by FROM desk_notes
+        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at = 0 THEN 0 ELSE 1 END, done_at, id",
     )?;
@@ -744,6 +753,8 @@ pub fn add_note(
         done: false,
         created_at: now,
         done_by: String::new(),
+        done_commit: String::new(),
+        done_doc: String::new(),
     }))
 }
 
@@ -784,26 +795,60 @@ pub fn set_note(
     // A tick from the page is the reader's own: whoever ticked it before, it
     // is theirs now, and an untick clears it.
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = '' WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = '', done_doc = ''
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
         params![desk_id, id, if done { now } else { 0 }],
     )? > 0)
 }
 
-/// An agent ticks a line on its own desk's list: done, and by whom. Only
-/// ever done -- an agent cannot untick, write, add or take a line off -- and
-/// only an open line: one the reader already ticked stays theirs. False when
-/// the line is not on this desk's list, or is already done.
-pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, by: &str, now: i64) -> Result<bool> {
-    let by = if by.trim().is_empty() {
+/// What an agent says with its tick: who it is, and, if it has them, the
+/// commit the work went into and a document it sent about it.
+#[derive(Clone, Debug, Default)]
+pub struct Tick {
+    pub by: String,
+    /// Checked by `commit_ok` before it gets here; kept as given, lowercased.
+    pub commit: String,
+    /// Checked by `doc_ok`.
+    pub doc: String,
+}
+
+/// A commit hash as `git log` prints one, short or full: 7 to 40 hex digits
+/// and nothing else. A branch name or a sentence is not a commit, and the row
+/// that shows it would be showing something no one can look up.
+pub fn commit_ok(commit: &str) -> bool {
+    (7..=40).contains(&commit.len()) && commit.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A document's id as `store::new_id` makes one: ten hex digits.
+pub fn doc_ok(doc: &str) -> bool {
+    doc.len() == 10 && doc.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// An agent ticks a line on its own desk's list: done, by whom, and where the
+/// work is. Only ever done -- an agent cannot untick, write, add or take a
+/// line off -- and only an open line: one the reader already ticked stays
+/// theirs. False when the line is not on this desk's list, or is already done.
+pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64) -> Result<bool> {
+    let by = if tick.by.trim().is_empty() {
         "an agent"
     } else {
-        by.trim()
+        tick.by.trim()
     };
     let by: String = by.chars().take(60).collect();
+    let commit = if commit_ok(&tick.commit) {
+        tick.commit.to_ascii_lowercase()
+    } else {
+        String::new()
+    };
+    let doc = if doc_ok(&tick.doc) {
+        tick.doc.to_ascii_lowercase()
+    } else {
+        String::new()
+    };
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = ?4
+        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0",
-        params![desk_id, id, now, by],
+        params![desk_id, id, now, by, commit, doc],
     )? > 0)
 }
 
@@ -841,6 +886,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done: r.get::<_, i64>(2)? != 0,
         created_at: r.get(3)?,
         done_by: r.get(4)?,
+        done_commit: r.get(5)?,
+        done_doc: r.get(6)?,
     })
 }
 
@@ -1003,15 +1050,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            !tick_note(&conn, yours, n.id, "claude-code", 1).unwrap(),
+            !tick_note(&conn, yours, n.id, &by("claude-code"), 1).unwrap(),
             "not across desks"
         );
-        assert!(tick_note(&conn, mine, n.id, "claude-code", 1).unwrap());
+        assert!(tick_note(&conn, mine, n.id, &by("claude-code"), 1).unwrap());
         let got = &notes(&conn, mine).unwrap()[0];
         assert!(got.done);
         assert_eq!(got.done_by, "claude-code");
         assert!(
-            !tick_note(&conn, mine, n.id, "claude-code", 2).unwrap(),
+            !tick_note(&conn, mine, n.id, &by("claude-code"), 2).unwrap(),
             "a done line stays as it is"
         );
 
@@ -1021,12 +1068,63 @@ mod tests {
         assert!(!got.done);
         assert_eq!(got.done_by, "");
         // A tick from nobody in particular still says an agent did it.
-        assert!(tick_note(&conn, mine, n.id, "  ", 4).unwrap());
+        assert!(tick_note(&conn, mine, n.id, &by("  "), 4).unwrap());
         assert_eq!(notes(&conn, mine).unwrap()[0].done_by, "an agent");
         // A line taken off the list cannot be ticked.
         assert!(set_note(&conn, mine, n.id, None, Some(false), 5).unwrap());
         assert!(remove_note(&conn, mine, n.id, 6).unwrap());
-        assert!(!tick_note(&conn, mine, n.id, "claude-code", 7).unwrap());
+        assert!(!tick_note(&conn, mine, n.id, &by("claude-code"), 7).unwrap());
+    }
+
+    fn by(name: &str) -> Tick {
+        Tick {
+            by: name.into(),
+            ..Tick::default()
+        }
+    }
+
+    /// A tick can say where the work went: a commit hash, and a document the
+    /// agent sent. Anything that is not one is dropped, not stored, and the
+    /// reader's untick takes both off with the name.
+    #[test]
+    fn a_tick_carries_its_commit_and_document_and_an_untick_clears_them() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "fix the hover", 0)
+            .unwrap()
+            .unwrap();
+        let tick = Tick {
+            by: "claude-code".into(),
+            commit: "90F09D6".into(),
+            doc: "82cc8f2d3c".into(),
+        };
+        assert!(tick_note(&conn, mine, n.id, &tick, 1).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert_eq!(
+            (got.done_commit.as_str(), got.done_doc.as_str()),
+            ("90f09d6", "82cc8f2d3c")
+        );
+        assert!(set_note(&conn, mine, n.id, None, Some(false), 2).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert_eq!(
+            (
+                got.done_by.as_str(),
+                got.done_commit.as_str(),
+                got.done_doc.as_str()
+            ),
+            ("", "", "")
+        );
+        let junk = Tick {
+            by: "claude-code".into(),
+            commit: "main; rm -rf".into(),
+            doc: "../etc".into(),
+        };
+        assert!(tick_note(&conn, mine, n.id, &junk, 3).unwrap());
+        let got = &notes(&conn, mine).unwrap()[0];
+        assert_eq!((got.done_commit.as_str(), got.done_doc.as_str()), ("", ""));
+        assert!(commit_ok("90f09d6") && commit_ok(&"a".repeat(40)));
+        assert!(!commit_ok("90f09d") && !commit_ok(&"a".repeat(41)) && !commit_ok("main"));
+        assert!(doc_ok("82cc8f2d3c") && !doc_ok("82cc8f2d3") && !doc_ok("82cc8f2d3z"));
     }
 
     /// An emptied line is not a blank row: rewriting a note to nothing takes

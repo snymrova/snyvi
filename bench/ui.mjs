@@ -1809,9 +1809,20 @@ async function panelRows(cdp, base, token) {
     await pick("Tick");
     const ticked = await until(`!!document.querySelector('.dk-note.done [data-n="${n1}"]')`, 30);
     rows.push(["a note's menu ticks it", !!nm && ticked, !nm ? "no menu on the note" : ticked ? `"${nm.head}": ${nm.items.join(" · ")}` : "the note is still open"]);
-    const tk = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
-    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by')?.textContent === "bench-agent"`, 40);
-    const again = await fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ by: "bench-agent" }) });
+    const tickBy = body => fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const wrong = await tickBy({ by: "bench-agent", commit: "main" });
+    const tk = await tickBy({ by: "bench-agent", commit: "90F09D6aa" });
+    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by > span')?.textContent === "bench-agent"`, 40);
+    const sha = await q.ev(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-sha')?.textContent || ""`);
+    rows.push(["an agent's tick carries its commit, and a branch name is refused", wrong.status === 400 && sha === "90f09d6",
+      wrong.status !== 400 ? `"main" as a commit answered ${wrong.status}` : `the row shows "${sha}"`]);
+    const named = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "bench named" }) });
+    const headSays = named.ok && await until(`document.querySelector('${P(pa)} .pn-head')?.textContent.includes("bench named")`, 40);
+    const unnamed = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "" }) });
+    const noToken = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) });
+    rows.push(["an agent names its panel, and only with the token", headSays && unnamed.ok && noToken.status === 401,
+      !named.ok ? `name answered ${named.status}` : !headSays ? "the head never showed it" : noToken.status !== 401 ? `no token answered ${noToken.status}` : "the head shows it, empty gives it back"]);
+    const again = await tickBy({ by: "bench-agent" });
     rows.push(["an agent's tick shows in the rail, with its name", byAgent && again.status === 409,
       !tk.ok ? `the tick answered ${tk.status}` : !byAgent ? "the rail never showed it" : again.status !== 409 ? `a second tick answered ${again.status}` : "done, \"bench-agent\" at its end, and a second tick refused"]);
 

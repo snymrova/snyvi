@@ -742,6 +742,9 @@ summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
    saying so, and the way to it. Its ✕ follows it rather than splitting the
    slack with it. */
 .b-new.has { opacity: 1; color: var(--fg-2); }
+/* A project with no desk yet shows the way to one, quietly, without a hover:
+   a desk for each project is the point, not a hidden extra. */
+.t-proj > summary > .b-new:not(.has) { opacity: .45; }
 .t-proj > summary > .b-new + .row-x { margin-left: 0; }
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }

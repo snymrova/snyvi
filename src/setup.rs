@@ -194,7 +194,7 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
         println!("  `snyvi init-claude --claude-md` adds one line to ~/.claude/CLAUDE.md asking Claude to send you what it writes.");
     }
 
-    println!("\nTry it: in Claude Code, ask for a plan. It arrives at {base}, or in the window when one is open.");
+    println!("\nTry it: open the window (`snyvi app`), give a project a desk, and run claude there. What it writes lands beside it, or at {base} without the window.");
     // The stall every first run hit: a session open before the MCP entry
     // existed never loads it, and nothing says so.
     println!("Restart any Claude Code session that is already open: one that was running before this does not see snyvi.");

@@ -244,6 +244,9 @@ impl Store {
             // 1.7.1: what the reader called a panel, and a desk's full view.
             "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0",
+            // 1.7.1: where an agent's tick says the work went.
+            "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1186,8 +1189,8 @@ impl Store {
         desk::set_note(&self.conn.lock().unwrap(), desk_id, id, text, done, now())
     }
 
-    pub fn tick_desk_note(&self, desk_id: i64, id: i64, by: &str) -> Result<bool> {
-        desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, by, now())
+    pub fn tick_desk_note(&self, desk_id: i64, id: i64, tick: &desk::Tick) -> Result<bool> {
+        desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
     }
 
     pub fn remove_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {

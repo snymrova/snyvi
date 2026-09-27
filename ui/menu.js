@@ -56,15 +56,28 @@ export async function make(ctx, f) {
   const { toast, api } = ctx;
   try {
     const j = await api("/api/desks", !f ? {} : f.project != null ? { project: f.project, name: f.name } : { root: f.root, path: f.path });
-    // A new desk opens on a shell, not on an empty grid: one panel, started.
-    // The view sizes it to the panel the moment it is drawn.
+    // A desk for a project opens on Claude, ready: the first panel holds
+    // `claude` in its Start field, and the reader's Enter runs it -- nothing
+    // starts in their name. Without Claude Code here, and on the home
+    // folder's desk, it opens on a shell, started, as it always did.
+    const claude = !!f && await hasClaude();
     try {
-      const p = await api(`/api/desks/${j.desk.id}/panes`, {});
-      await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
+      const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude" } : {});
+      if (claude) ctx.hold(p.pane.id);
+      else await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     } catch (e) { toast("The desk is made, but its shell did not start", String(e)); }
     await ctx.load();
     ctx.show(j.desk.id, true);
   } catch (e) { toast("Could not make a desk", String(e)); }
+}
+
+/** Whether `claude` can run here: on the daemon's PATH, or set up (which
+ *  it would not be without it). */
+async function hasClaude() {
+  try {
+    const a = await (await fetch("/api/agents")).json();
+    return !!a.claude_on_path || a.rows.some(r => r.id === "claude" && r.state === "connected");
+  } catch { return false; }
 }
 
 /** The desk glyph on a project's row: the project's desk when it has one,
@@ -72,7 +85,8 @@ export async function make(ctx, f) {
 export async function projectDesk(ctx, pid) {
   const p = ctx.state.tree.find(x => x.id === pid);
   if (!p) return;
-  const d = ctx.state.desks && ctx.state.desks.desks.find(x => x.root === p.root);
+  const trim = s => s && s.replace(/(.)\/+$/, "$1");
+  const d = ctx.state.desks && ctx.state.desks.desks.find(x => trim(x.root) === trim(p.root));
   if (d) ctx.show(d.id, true);
   else await make(ctx, { project: pid, name: p.name });
 }
