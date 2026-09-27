@@ -1,8 +1,18 @@
 name: ci
+# A branch is tested through its pull request and main through its pushes.
+# Both on every push, as before, ran the whole matrix twice for one commit.
+# workflow_dispatch is the full matrix on demand, for a branch that wants
+# the Intel Mac before it merges: `gh workflow run ci.yml --ref <branch>`.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+# A newer push to a pull request makes the run for the older one worthless.
+# Not on main, where every merge keeps its own full run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   build-test-bench:
     runs-on: ubuntu-latest
@@ -23,6 +33,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --release -- -D warnings
       - name: Test
+        # With the release profile, unlike the other desktops: the perf
+        # budget below measures the binary's size, which is LTO's to decide,
+        # and a test step on other flags would share no dependency with the
+        # build and rebuild all of them, uncached, on every run.
         run: cargo test --release
       - name: Build
         run: cargo build --release
@@ -319,6 +333,11 @@ jobs:
             deb_arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
+    # Nothing built here ships, so not with fat LTO, which is most of a
+    # build's time; release.yml builds the downloads with the real profile.
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -556,6 +575,10 @@ jobs:
     # anyone notices.
     timeout-minutes: 35
     runs-on: windows-latest
+    # Without fat LTO, for the reason given on the desktop job.
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -725,13 +748,18 @@ jobs:
       # Both legs report: one architecture's failure is not the other's.
       fail-fast: false
       matrix:
-        include:
-          - target: aarch64-apple-darwin
-            runner: macos-14
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
+        # The Intel leg is the slowest runner here by twice, and it held
+        # every pull request's check for its 17 minutes. It runs on main,
+        # on workflow_dispatch, and in release.yml's dry run; a pull
+        # request gets Apple silicon alone. A matrix cannot drop an include
+        # entry by condition, hence the list as one expression.
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"target":"aarch64-apple-darwin","runner":"macos-14"}]' || '[{"target":"aarch64-apple-darwin","runner":"macos-14"},{"target":"x86_64-apple-darwin","runner":"macos-15-intel"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    # Without fat LTO, for the reason given on the desktop job.
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
