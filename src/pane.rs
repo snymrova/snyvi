@@ -1199,10 +1199,18 @@ mod tests {
         let panes = Panes::new(&dir.path, events);
         let live = panes.get("ffeeddccbbaa99887766554433221100");
         let cwd = dir.path.to_string_lossy().to_string();
+        // The shell leaves a file once "late" is out, and the page attaches
+        // the moment it is there: a shell slow to start on a busy machine
+        // moves both together, where a fixed wait once caught neither line.
+        let said = dir.path.join("late-said");
+        let cmd = format!(
+            "printf 'early\\n'; sleep 0.3; printf 'late\\n'; : > '{}'; sleep 2",
+            said.display()
+        );
         live.start(
             Start {
                 cwd: &cwd,
-                cmd: "printf 'early\\n'; sleep 0.3; printf 'late\\n'; sleep 2",
+                cmd: &cmd,
                 desk: "d",
                 slot: 1,
                 cols: 80,
@@ -1212,9 +1220,16 @@ mod tests {
             &panes,
         )
         .unwrap();
-        // "late" is printed 0.3 s in; the next unwatched frame is a second
-        // after the first, so without a catch-up the snapshot would miss it.
-        tokio::time::sleep(Duration::from_millis(700)).await;
+        // "late" is printed 0.3 s after "early"; the next unwatched frame is
+        // a second after the first, so without a catch-up the snapshot taken
+        // now would miss it.
+        for _ in 0..100 {
+            if said.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(said.exists(), "the shell never printed its second line");
         let (first, _rx) = live.attach();
         let snap = first.last().unwrap();
         assert!(snap.contains("late"), "{snap}");
