@@ -301,17 +301,17 @@ pub fn layout(conn: &Connection, id: i64, col: f64, row: f64, full: Option<i64>)
 /// Close a desk, and its panes with it.
 ///
 /// `ON DELETE CASCADE` does the second half, which is why `PRAGMA foreign_keys`
-/// is on for this connection: without it the panes would stay, hold their share
-/// of the global cap, and belong to nothing.
+/// is on for this connection: without it the panes would stay, fill slots on
+/// no desk, and belong to nothing. Its closed panes go the same way.
 pub fn delete(conn: &Connection, id: i64) -> Result<bool> {
     Ok(conn.execute("DELETE FROM desks WHERE id = ?1", params![id])? > 0)
 }
 
 /// Open a pane on a desk, in the lowest free slot.
 ///
-/// Both caps are read inside the same transaction that writes the row, so two
-/// requests that arrive together cannot each see seven panes and both make an
-/// eighth.
+/// The desk's four is read inside the same transaction that writes the row,
+/// so two requests that arrive together cannot each see three panes and both
+/// make a fourth.
 pub fn open_pane(
     conn: &mut Connection,
     desk_id: i64,

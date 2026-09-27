@@ -7,8 +7,9 @@ its owner's. Written 2026-09-24 from an audit of the tree on
 
 ## Where we are
 
-The appearance of the window is five buttons at the foot of the sidebar:
-theme, accent, Aa, width, wrap. Every one of them is a value on `<html>`
+The appearance of the window is five of the seven buttons at the foot of the
+sidebar -- theme, accent, Aa, width, wrap; the other two are the keys and the
+rocket. Every one of them is a value on `<html>`
 (`data-theme`, `data-accent`, `data-font`, `data-wide`, `data-wrap`), set
 by `ui/boot.js` before first paint and by `ui/app.js` on a click, kept in
 `localStorage` under `snyvi.*`, and read by CSS alone. That shape is right
@@ -305,7 +306,8 @@ you have to see it on the page. So:
 - The theme button's tooltip names both slots: `Paper · Ink (system)`.
 - The about panel, which already lists what is kept, lists the three keys.
 
-No new button. The foot of the sidebar stays at five.
+No new button. The foot of the sidebar stays at seven: the five above, the
+keys and the rocket.
 
 ### 6. A desk's colour (phase 4) -- dropped
 
