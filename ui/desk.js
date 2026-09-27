@@ -2511,7 +2511,7 @@ const CSS = `
 .pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
 .pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
 .pn-sb > .gap { color: var(--fg-3); font-style: italic; }
-.pn-old { color: var(--fg-3); opacity: .7; }
+.pn-old { color: var(--fg-3); }
 /* The live screen on a layer of its own, and each row shut in on itself: a
  * spinner's frame repaints its row, not the pane or the panes beside it
  * (docs/DESK-PAINT.md, Phase 2). */
@@ -2568,7 +2568,7 @@ const CSS = `
  * rows: a mark at the left, the name, and one fact at the right. */
 .dk-lab { display: flex; align-items: baseline; padding-left: 8px; }
 .dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.dk-lab .n i { font-style: normal; opacity: .6; }
+.dk-lab .n i { font-style: normal; }
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; }
 .dk-foot + .dk-sec { margin-top: 16px; }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
@@ -2605,7 +2605,7 @@ const CSS = `
 .dk-sec:not([open]) .s-chev { transform: rotate(-45deg); }
 .dk-sec > summary:hover { color: var(--fg-2); }
 .dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
-.dk-panes .on .slot { color: inherit; opacity: .7; }
+.dk-panes .on .slot { color: inherit; }
 .dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
 .dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: 12px; border-radius: 6px; }
 .dk-new:hover:not(:disabled) { color: var(--accent); }
@@ -2671,7 +2671,7 @@ const CSS = `
    line of its own under the text, lined up with it: the reader can untick
    it like any other. */
 .dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 26px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
-.dk-by > span { opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-by > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
 .dk-sha { padding: 0 3px; background: var(--rule); }
 .dk-sha[data-said] { color: var(--ok); }
