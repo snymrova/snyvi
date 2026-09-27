@@ -18,7 +18,8 @@
 # daemon if one was running; nothing you sent is touched.
 #
 #   sh install.sh --deb             the two .debs instead (Debian, Ubuntu; needs root)
-#   sh install.sh --tar             the per-user install, even over a .deb
+#   sh install.sh --tar             the per-user install, even over a .deb; later
+#                                   runs keep it, the .deb left where it is
 #   sh install.sh --no-app          no window
 #   sh install.sh --no-init         do not register with Claude Code
 #   sh install.sh --version 1.3.0   a particular release, not the latest
@@ -36,6 +37,7 @@ version=${SNYVI_VERSION:-}
 bin_dir=${SNYVI_BIN_DIR:-$HOME/.local/bin}
 asset_dir=${SNYVI_ASSET_DIR:-}
 mode=auto
+bin_dir_given=${SNYVI_BIN_DIR:+1}
 want_app=1
 want_init=1
 snyvi=
@@ -48,8 +50,8 @@ while [ $# -gt 0 ]; do
     --no-init) want_init=0 ;;
     --version) version=${2:?--version needs a value}; shift ;;
     --version=*) version=${1#--version=} ;;
-    --bin-dir) bin_dir=${2:?--bin-dir needs a value}; shift ;;
-    --bin-dir=*) bin_dir=${1#--bin-dir=} ;;
+    --bin-dir) bin_dir=${2:?--bin-dir needs a value}; bin_dir_given=1; shift ;;
+    --bin-dir=*) bin_dir=${1#--bin-dir=}; bin_dir_given=1 ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "install.sh: unknown option $1 (try --help)" >&2; exit 2 ;;
   esac
@@ -167,12 +169,23 @@ deb_installed() {
 }
 display() { [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }
 
+# The receipt a per-user install left, which the daemon reads too (see
+# src/update.rs): its channel, and the folder it went in.
+conf=${SNYVI_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/snyvi}
+receipt_channel=
+receipt_bin=
+if [ -f "$conf/install.json" ]; then
+  receipt_channel=$(field channel < "$conf/install.json")
+  receipt_bin=$(field bin_dir < "$conf/install.json")
+fi
+
 say "snyvi: ${version:-latest} for $os $arch"
 if [ -n "$running_pid" ]; then
   say "  snyvi ${running_version:-?} is running (pid $running_pid)${running_bin:+ from $running_bin}"
 fi
 
 switched=0
+deb_left=0
 app=0
 told=
 case $os in
@@ -203,9 +216,19 @@ case $os in
     ;;
   Linux)
     # A machine that has snyvi as a package keeps it as one: nobody's
-    # install is moved behind their back. --tar is how to move.
+    # install is moved behind their back. --tar is how to move -- and once
+    # moved, it stays moved: a receipt from --tar, with its snyvi still in
+    # the folder it names, wins over a package left installed beside it.
+    # Without that, the next plain run put the package back in charge, a
+    # step back to a version that does not update itself.
     if [ "$mode" = auto ]; then
-      if deb_installed snyvi; then
+      if [ "$receipt_channel" = tar ] && [ -n "$receipt_bin" ] && [ -x "$receipt_bin/snyvi" ]; then
+        mode=tar
+        [ -n "$bin_dir_given" ] || bin_dir=$receipt_bin
+        if deb_installed snyvi; then
+          told="kept the per-user install in $receipt_bin, as $conf/install.json says it was made; the .deb beside it was left alone"
+        fi
+      elif deb_installed snyvi; then
         mode=deb
         told="installed as a package; snyvi tells you when a new one is out. \`sh install.sh --tar\` moves to the per-user install, which updates itself"
       else
@@ -248,7 +271,13 @@ case $os in
       place "$bin" snyvi
       snyvi=$bin_dir/snyvi
       say "  snyvi is in $bin_dir"
-      if deb_installed snyvi; then switched=1; fi
+      # A package still here: a move, unless the daemon running is already
+      # this copy -- a re-run after the move, which restarts it as any
+      # update does rather than stopping it.
+      if deb_installed snyvi; then
+        deb_left=1
+        if [ -z "$running_bin" ] || [ "$(real "$running_bin")" != "$(real "$bin_dir/snyvi")" ]; then switched=1; fi
+      fi
 
       # The window, beside it, when this machine can run one: a display,
       # WebKitGTK 4.1, and a glibc as new as the one it was built against.
@@ -295,7 +324,6 @@ case $os in
 
       # The receipt the daemon reads to know how it was installed, and so
       # what an update may do to it. See src/update.rs.
-      conf=${SNYVI_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/snyvi}
       mkdir -p "$conf"
       esc=$(real "$bin_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
       if [ "$app" = 1 ]; then app_json=true; else app_json=false; fi
@@ -354,8 +382,17 @@ case $restarted in
   same) say "  The daemon that was running is now $new_version." ;;
   moved) say "  The daemon that ran from ${running_bin:-the other copy} was stopped; this one is running now." ;;
 esac
-if [ "$os/$mode" = Linux/tar ] && [ "$switched" = 1 ]; then
-  say "  The .deb is still installed; \`sudo apt-get remove snyvi snyvi-app\` takes it out."
+# Not run for the reader: piped from curl there is no tty to ask for a
+# password on, and taking out someone's package is theirs to do.
+if [ "$os/$mode" = Linux/tar ] && [ "$deb_left" = 1 ]; then
+  say "  The .deb is still installed. Two installs pull different ways -- apt"
+  say "  upgrades /usr/bin/snyvi, this one updates itself -- and whichever comes"
+  say "  first on PATH is the one a terminal runs. To take the package out:"
+  # Only what is installed: neither package is in a repository, so apt
+  # cannot even find the name of one that never was.
+  pkgs=snyvi
+  if deb_installed snyvi-app; then pkgs="$pkgs snyvi-app"; fi
+  say "    sudo apt remove $pkgs"
 fi
 found=$(command -v snyvi 2>/dev/null || true)
 if [ -z "$found" ]; then
