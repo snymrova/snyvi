@@ -1296,6 +1296,8 @@
     if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
     let m;
     try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return; }
+    // The first fetch of the chunk is a wait, and a click in it went elsewhere.
+    if (state.view !== "start") return;
     docEl.innerHTML = m.start({ cap: !!capability });
     m.startReady(boot.v);
     if (push) swapIn();
@@ -1376,7 +1378,13 @@
     updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
     updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
   }
-  function setUpd(u) { upd = u && typeof u === "object" ? u : null; renderUpd(); }
+  function setUpd(u) {
+    upd = u && typeof u === "object" ? u : null;
+    // The daemon's word has come, whichever came first -- it or the reply to
+    // the click: from here the pill says what it says.
+    if (upd && (upd.restart || upd.restarting)) updWaiting = false;
+    renderUpd();
+  }
   updEl.addEventListener("click", async () => {
     const u = upd;
     if (!u || u.restarting || updWaiting) return;
@@ -1656,7 +1664,9 @@
     "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
   };
   const isOwn = n => String(n.id).startsWith("snyvi:");
-  const withOwn = list => state.notes.filter(isOwn).concat(list);
+  // By when each was said, newest first, as the daemon's list is: an agent's
+  // aside after snyvi's line is the one the card shows, not a line behind it.
+  const withOwn = list => list.concat(state.notes.filter(isOwn)).sort((a, b) => (b.at || 0) - (a.at || 0));
   function snyviSays(key) {
     if (store.get(`snyvi.seen.${key}`) || state.notes.some(n => !n.dismissed && !n.seen)) return;
     if (Date.now() - (+store.get("snyvi.seen.at") || 0) < 600e3) return;
@@ -2984,7 +2994,9 @@
       if (state.waiting > 1) snyviSays("two-waiting");
       else if (j.supersedes) snyviSays("version");
       if (opens) {
-        snyviSays("first-doc");
+        // First in the library, not just first into an empty inbox: a reader
+        // with a year of documents is not told this one is their first.
+        if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
@@ -3516,6 +3528,15 @@
     if (back && b?.isConnected) b.focus({ preventScroll: true });
     return true;
   }
+  // The aside's section empties when its last line goes, and its icon with
+  // it: the popover goes too, and a keyboard that was in it lands on the
+  // rail rather than on nothing.
+  new MutationObserver(() => {
+    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
+    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
+    closePop(false);
+    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
+  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
   railNav.addEventListener("click", e => {
     const b = e.target.closest("[data-pop]");
     if (b) openPop(b.dataset.pop, b);
@@ -3530,7 +3551,9 @@
   });
   // Following a link in it is being done with it; opening a row's fold is not.
   popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => closePop()); });
-  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target)) closePop(false); }, true);
+  // The context menu is on <body>, but a row's menu is the popover's own: an
+  // action there (Rename, Remove with its Undo) happens in the row, in here.
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) closePop(false); }, true);
   function paintSideBtn() {
     const b = $("#btn-side-hide"), slim = root.dataset.side === "0";
     b.title = slim ? "Show sidebar  \\" : "Hide sidebar  \\";

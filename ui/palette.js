@@ -181,7 +181,7 @@ function pick(it) {
   if (it.cmd) {
     const c = it.cmd;
     c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
-      : c === "start" ? d.showStart(true) : d.openHelp();
+      : c === "start" ? d.showStart(true, "") : d.openHelp();
     return;
   }
   const { state } = d;
