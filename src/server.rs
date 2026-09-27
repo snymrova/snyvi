@@ -709,6 +709,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/docs/{id}/read", post(mark_read))
         .route("/api/queue", get(queue))
         .route("/api/queue/clear", post(clear_queue))
+        .route("/api/queue/unread", post(unread))
         .route("/api/docs/{id}/delete", post(delete_doc))
         .route("/api/docs/{id}/undelete", post(undelete_doc))
         .route("/api/docs/{id}/history", get(history))
@@ -2660,7 +2661,26 @@ async fn clear_queue(State(app): S) -> Response {
             if !ids.is_empty() {
                 emit(&app, "read", json!({ "ids": ids, "waiting": 0 }));
             }
-            Json(json!({ "ok": true, "n": ids.len() })).into_response()
+            Json(json!({ "ok": true, "n": ids.len(), "ids": ids })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct IdsBody {
+    ids: Vec<String>,
+}
+
+/// Mark all read, taken back: the ids `clear_queue` answered with wait again.
+/// Every tab hears it as a restore, which refetches the queue and the tree.
+async fn unread(State(app): S, Json(b): Json<IdsBody>) -> Response {
+    match app.store.mark_unread(&b.ids) {
+        Ok(back) => {
+            if !back.is_empty() {
+                emit(&app, "restored", json!({ "waiting": waiting(&app) }));
+            }
+            Json(json!({ "ok": true, "n": back.len() })).into_response()
         }
         Err(e) => err(e),
     }

@@ -697,6 +697,26 @@ impl Store {
         Ok(ids)
     }
 
+    /// Mark all read, taken back: the ids it returned go back on the queue,
+    /// except one removed since, which has no row to wait in. Returns the
+    /// ones that went back.
+    pub fn mark_unread(&self, ids: &[String]) -> Result<Vec<String>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut back = Vec::new();
+        for id in ids {
+            if tx.execute(
+                "UPDATE docs SET unread = 1 WHERE id = ?1 AND unread = 0 AND deleted_at = 0",
+                params![id],
+            )? > 0
+            {
+                back.push(id.clone());
+            }
+        }
+        tx.commit()?;
+        Ok(back)
+    }
+
     /// Name a project yourself. The directory it was derived from is its identity and
     /// does not move, so sends keep landing here; `renamed` stops the derived name
     /// from reclaiming the label on the next one.
@@ -1933,6 +1953,16 @@ mod tests {
         assert_eq!(cleared, vec![b.id, c.id]);
         assert!(s.queue(10).unwrap().is_empty());
         assert!(s.mark_all_read().unwrap().is_empty());
+        // And taken back: both wait again, in the order they came, and one
+        // removed in between stays gone.
+        s.delete(&cleared[1]).unwrap();
+        let back = s.mark_unread(&cleared).unwrap();
+        assert_eq!(back, vec![cleared[0].clone()]);
+        assert_eq!(ids(s.queue(10).unwrap()), vec![cleared[0].clone()]);
+        assert!(
+            s.mark_unread(&cleared).unwrap().is_empty(),
+            "already waiting"
+        );
     }
 
     #[test]

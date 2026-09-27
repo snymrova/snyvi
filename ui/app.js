@@ -38,6 +38,9 @@
 
   // ---------- helpers ----------
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  /** A POST, with a JSON body when there is one. Null is the daemon saying
+   *  nothing at all, which a refusal (a Response that is not ok) is not. */
+  const post = (u, b) => fetch(u, b ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : { method: "POST" }).catch(() => null);
   const rel = ts => {
     const d = Date.now() / 1000 - ts;
     if (d < 45) return "just now";
@@ -468,13 +471,22 @@
   async function clearQueue() {
     const n = state.waiting;
     if (!n) return;
+    // Where the bar stood, before the redraw takes it: the Undo goes there.
+    const at = liveAct()?.getBoundingClientRect() || null;
+    const r = await post("/api/queue/clear");
+    const j = r?.ok && await r.json();
+    if (!j) return toast("Could not mark them read", "", null, { label: "Retry", run: clearQueue });
     depart(state.queue.map(d => d.id));
     state.queue = []; state.waiting = 0;
     unmarkRows(null);
     renderTree(); markActive();
     if (state.view === "inbox") showInbox(false);
-    try { await fetch("/api/queue/clear", { method: "POST" }); } catch {}
-    toast("Marked read", plural(n, "document"), null, null, { face: "glad" });
+    // The rows come back on the daemon's "restored", in every tab.
+    const undo = undoing = async () => {
+      if (undoing === undo) undoing = null;
+      if (!(await post("/api/queue/unread", { ids: j.ids }))?.ok) toast("Could not bring them back", "", null, { label: "Retry", run: undo });
+    };
+    toast(`Marked ${n} read`, "", null, { label: "Undo", run: undo }, { at });
   }
 
   /** Rows leaving the queue, told by the server: this tab's own opens come
@@ -3250,7 +3262,8 @@
    *  which is the way the eye is already travelling after a click. */
   function placeToasts(el) {
     const s = toastsEl.style, box = 330, gap = 12;
-    const r = el && el.isConnected ? el.getBoundingClientRect() : null;
+    // An element, or the place one stood in before a redraw took it.
+    const r = el?.isConnected ? el.getBoundingClientRect() : el?.width ? el : null;
     // A control that is not on screen -- the sidebar folded away, the button
     // scrolled past -- is no better an address than the corner. This catches
     // the ones handed in by name as well: `w` and `z` answer at the rail
@@ -3296,7 +3309,7 @@
    * the old one's place, wherever that was, and the old one is simply gone.
    * Clicking the accent eight times running is eight bobs of the same head
    * in eight colours, which is the setting itself, said. */
-  let said = null;
+  let said = null, held = null;
   /** Clear whatever is being said now, without ceremony. */
   function hush() {
     if (!said) return;
@@ -3305,27 +3318,46 @@
     said.anchor?.classList?.remove("said");
     said = null;
   }
+  /** The answer has gone: the news it held back can be said now. */
+  function unsay() {
+    hush(); placeToasts(null);
+    const h = held; held = null;
+    if (h) toast(...h);
+  }
 
   /** snyvi's answer, beside whatever was just pressed. `onClick` makes the
    *  whole thing one; `action` ({label, run}) puts a button in it instead,
    *  for the one thing an answer can offer that a reader must be able to
    *  reach deliberately. `opts.at` overrides where it goes -- `null` sends it
-   *  to the corner -- and `opts.face` overrides how it is said. */
+   *  to the corner -- and `opts.face` overrides how it is said. A "Could
+   *  not…" is an error: it stays until its ✕, with no face on it, since
+   *  something the reader wanted did not happen; `action` is then its Retry. */
   function toast(title, sub, onClick, action, opts = {}) {
     const at = "at" in opts ? opts.at : liveAct();
+    // News from the background never takes the place of an answer the reader
+    // still needs, an error or an Undo: it waits until that one has gone.
+    if (opts.at === null && said?.keep) return void (held = [title, sub, onClick, action, opts]);
     hush();
+    const err = opts.error ?? /^Could not /.test(title);
     const el = document.createElement("div");
     el.className = "toast";
-    el.dataset.feel = opts.face || feelFor(title);
-    el.innerHTML = `<span class="who">${mascotHead(el.dataset.feel)}</span>` +
+    if (err) el.setAttribute("role", "alert");
+    else el.dataset.feel = opts.face || feelFor(title);
+    el.innerHTML = (err ? "" : `<span class="who">${mascotHead(el.dataset.feel)}</span>`) +
       `<span class="say"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
     if (action) {
       const b = document.createElement("button");
       b.type = "button"; b.className = "act"; b.textContent = action.label;
-      b.addEventListener("click", ev => { ev.stopPropagation(); hush(); action.run(); });
+      b.addEventListener("click", ev => { ev.stopPropagation(); unsay(); action.run(); });
       el.appendChild(b);
-    } else {
+    } else if (!err) {
       el.addEventListener("click", () => { hush(); onClick && onClick(); });
+    }
+    if (err) {
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "act tx"; x.textContent = "✕"; x.ariaLabel = "Dismiss";
+      x.onclick = unsay;
+      el.appendChild(x);
     }
     toastsEl.appendChild(el);
     // Placed once it is in, so it is placed by the height it really has.
@@ -3334,10 +3366,10 @@
     saidBy(anchor);
     const life = opts.life || (action ? UNDO_MS : onClick ? 8000 : 3500);
     // It fades where it stands, and only if it is still the one being said.
-    const mine = { el, anchor, timer: 0 };
-    mine.timer = setTimeout(() => {
+    const mine = { el, anchor, timer: 0, keep: err || !!action };
+    if (!err) mine.timer = setTimeout(() => {
       el.classList.add("out");
-      mine.timer = setTimeout(() => { if (said === mine) { hush(); placeToasts(null); } }, 180);
+      mine.timer = setTimeout(() => { if (said === mine) unsay(); }, 180);
     }, life);
     said = mine;
     return el;

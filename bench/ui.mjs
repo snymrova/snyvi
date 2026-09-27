@@ -226,6 +226,7 @@ async function main() {
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
+    sections.push(["nothing lost when snyvi says no", await lossRows(p, arrive)]);
     sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
     sections.push(["an aside, closed", await asideRows(p, base, token)]);
     sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
@@ -1112,6 +1113,55 @@ async function deleteRows(p, arrive) {
   const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);
   rows.push(["a removal a reload agrees with", stillGone && found === 0,
     !stillGone ? "the inbox lists it again after the reload" : found ? `search still finds ${found}` : "gone from the inbox and from search, because the daemon did it"]);
+  return rows;
+}
+
+/** 1.7.2: what the reader did is never lost to a refusal. Each row makes the
+ *  daemon say no once (`refuse`), and reads that the page says so where the
+ *  thing was done and still holds what it held: an error stays until its ✕,
+ *  and news that comes meanwhile waits behind it rather than taking its place. */
+async function lossRows(p, arrive) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const said = () => p.ev(`(() => { const t = document.querySelector("#toasts .toast"); return t ? { text: t.querySelector(".t").textContent, alert: t.getAttribute("role") === "alert", face: !!t.querySelector(".who") } : null; })()`);
+  const waiting = () => p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.length)`);
+
+  // Mark all read, refused: the queue is still there, and the page says so.
+  const a = await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read.\n" });
+  await arrive({ name: "loss-b.md", body: "# Loss B\n\nOne that waits.\n" });
+  await p.goto(`${origin}/d/${a.id}`);
+  await p.pointerAway();
+  await until(`!document.querySelector("#queue-bar").hidden`);
+  const before = await waiting();
+  await refuse(p, "POST", /^\/api\/queue\/clear$/);
+  await p.clickOn("#queue-bar [data-q=clear]");
+  await sleep(300);
+  const t1 = await said(), bar1 = await p.ev(`!document.querySelector("#queue-bar").hidden`), w1 = await waiting();
+  rows.push(["mark all read refused → queue still there", await refused(p) && !!t1?.alert && !t1.face && bar1 && w1 === before,
+    !(await refused(p)) ? "the click never asked the daemon" : !t1 ? "nothing was said" : !t1.alert ? `it said "${t1.text}", as if it had worked` : t1.face ? "the error wears a face" : !bar1 ? "the queue bar went anyway" : `"${t1.text}", no face, the bar and ${w1} waiting still there`]);
+
+  // News while the error stands: a newer version of the open document.
+  await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read, again.\n" });
+  await sleep(1500);
+  const t2 = await said();
+  await p.clickOn("#toasts .toast .tx");
+  const news = await until(`/newer version/.test(document.querySelector("#toasts .toast .t")?.textContent || "")`, 20);
+  rows.push(["error toast survives an arrival", t2?.alert && news,
+    !t2?.alert ? `the arrival took its place: "${t2?.text}"` : news ? "the error stayed until its ✕, and then the arrival was said" : "the arrival was dropped, not held"]);
+
+  // Mark all read, done: its Undo holds against news too, and brings them back.
+  await p.clickOn("#queue-bar [data-q=clear]");
+  await sleep(300);
+  const t3 = await said();
+  await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read, a third time.\n" });
+  await sleep(1500);
+  const t4 = await said();
+  rows.push(["Marked read · Undo survives an arrival", /^Marked \d+ read$/.test(t3?.text || "") && t4?.text === t3.text,
+    !t3 ? "nothing was said" : !/^Marked \d+ read$/.test(t3.text) ? `it said "${t3.text}"` : t4?.text !== t3.text ? `the arrival took its place: "${t4?.text}"` : `"${t3.text} · Undo" is still there after the arrival`]);
+  await p.clickOn("#toasts .toast .act");
+  const back = await until(`fetch("/api/queue").then(r => r.json()).then(q => q.length >= ${before})`, 30);
+  rows.push(["and its Undo puts them back", back, back ? `${before} waiting again` : `${await waiting()} waiting, not ${before}`]);
   return rows;
 }
 

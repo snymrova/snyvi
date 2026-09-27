@@ -1173,6 +1173,9 @@ pre.code .ln::before { cursor: pointer; }
 .toast .act { font: inherit; font-size: 11.5px; font-weight: 550; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: 6px; padding: 3px 9px; margin-left: 4px; cursor: pointer; flex: none; }
 .toast .act:hover { background: var(--bg-side); }
 .toast .act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* An error has no face and no timer: it stays until its ✕. */
+.toast[role=alert] { padding-left: 12px; cursor: auto; }
+.toast .tx { border: 0; color: var(--fg-3); padding: 3px 4px; margin-left: 0; }
 
 /* snyvi itself: the logo's head, at the logo's geometry, in the colours the
    accent moves -- so the answer to a change of accent arrives wearing it.
