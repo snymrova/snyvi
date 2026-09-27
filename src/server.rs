@@ -517,7 +517,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // are taken now, before anything can ask, so they describe this start
     // and no later one.
     let planned = take_restart_marker(&paths);
-    let resume = store.take_panes_resume().unwrap_or_default();
+    let (resume, offer) = store.take_panes_resume().unwrap_or_default();
     if let Some(apply) = planned {
         eprintln!(
             "snyvi: back from a planned restart{}; {} panel(s) to resume",
@@ -614,6 +614,14 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // Before the listener: a window's first status frame must already say
     // which panes come back as a conversation.
     app.panes.mark_resume(resume);
+    app.panes.mark_offer(offer);
+    // Where a shell moves to is where it starts next (`pane::follow_folders`).
+    let weak = Arc::downgrade(&app);
+    app.panes.on_cwd(Box::new(move |id, cwd| {
+        if let Some(app) = weak.upgrade() {
+            let _ = app.store.set_pane_cwd(id, cwd);
+        }
+    }));
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
     let leaving = app.clone();
@@ -772,8 +780,19 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // daemon that is going takes its shells with it, and they do not come
     // back with the next one. What comes back is the text, greyed -- and,
     // after a planned restart, the conversation, which the window asks for.
-    leaving.panes.shutdown();
     let why = leaving.leaving.lock().unwrap().clone();
+    // Not planned -- `snyvi stop`, a signal, a reboot: the panes with Claude
+    // in them are marked to be offered back, which the next window does with
+    // one click and not on its own. A planned restart marked them already.
+    if matches!(why, Leaving::Stopped) {
+        let with_agent = leaving.panes.with_agent();
+        if let Ok(n) = leaving.store.offer_panes_resume(&with_agent) {
+            if n > 0 {
+                eprintln!("snyvi: {n} panel(s) had Claude open; the window will offer each conversation back");
+            }
+        }
+    }
+    leaving.panes.shutdown();
     Ok(why)
 }
 
@@ -3484,8 +3503,14 @@ async fn start_pane(
         cmd
     };
     let live = app.panes.get(&id);
+    // Where the shell last was; the desk's own folder if that one is gone.
+    let cwd = if std::path::Path::new(&placed.pane.cwd).is_dir() {
+        placed.pane.cwd.as_str()
+    } else {
+        placed.root.as_str()
+    };
     let start = crate::pane::Start {
-        cwd: &placed.pane.cwd,
+        cwd,
         cmd: &cmd,
         desk: &placed.desk_name,
         slot: placed.pane.slot,

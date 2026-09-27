@@ -104,6 +104,17 @@ pub struct Status {
     /// for `RESUME_FOR` after the daemon came up. The page reads it off the
     /// same status frame that tells it the pane lost its process.
     pub resume: bool,
+    /// Claude was open in this pane when the last daemon stopped without
+    /// planning to (`snyvi stop`, a signal, a reboot): nothing starts it
+    /// again, but the page offers the conversation back with one click.
+    /// Cleared by the pane's first start, like `resume`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub offer: bool,
+    /// The folder the shell is in now, as the kernel says -- not where it was
+    /// started. Empty until it has been asked, and on Windows, which has no
+    /// cheap answer.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub cwd: String,
     /// Which model the agent in this pane is, and how full its context window
     /// is, as Claude Code's status line said after its last reply
     /// (`crate::statusline`). Empty for a shell or another agent, and cleared
@@ -216,6 +227,13 @@ pub struct Panes {
     /// The panes the last daemon marked on its planned way out, and until
     /// when the mark holds. See `Status::resume`.
     resume: Mutex<(std::collections::HashSet<String>, Instant)>,
+    /// The panes that had Claude open when the last daemon stopped without
+    /// planning to, for the page to offer the conversation back. See
+    /// `Status::offer`. Held for as long as a resume mark is.
+    offer: Mutex<(std::collections::HashSet<String>, Instant)>,
+    /// Where a pane's shell has moved to is written down through this -- the
+    /// store's `set_pane_cwd`, given by the server, since panes have no store.
+    cwd_sink: Mutex<Option<Box<dyn Fn(&str, &str) + Send + Sync>>>,
 }
 
 impl Panes {
@@ -227,6 +245,8 @@ impl Panes {
             events,
             told: Mutex::new(HashMap::new()),
             resume: Mutex::new((Default::default(), Instant::now())),
+            offer: Mutex::new((Default::default(), Instant::now())),
+            cwd_sink: Mutex::new(None),
         });
         // A daemon killed rather than stopped keeps what it had up to the
         // last of these.
@@ -270,6 +290,7 @@ impl Panes {
                 proc: None,
                 status: Status {
                     resume: self.marked(id),
+                    offer: self.offered(id),
                     ..Status::default()
                 },
                 old,
@@ -292,6 +313,7 @@ impl Panes {
     /// pages that are watching. One question per folder per tick, and a folder
     /// that answers slowly is asked less often: see `GIT_BACKOFF`.
     async fn git_tick(self: &Arc<Self>) {
+        self.follow_folders();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         let mut by_dir: HashMap<String, Vec<Arc<Live>>> = HashMap::new();
         for l in live {
@@ -344,6 +366,7 @@ impl Panes {
             .map(|l| l.inner.lock().unwrap().status.clone())
             .unwrap_or_else(|| Status {
                 resume: self.marked(id),
+                offer: self.offered(id),
                 ..Status::default()
             })
     }
@@ -410,6 +433,48 @@ impl Panes {
 
     fn unmark(&self, id: &str) {
         self.resume.lock().unwrap().0.remove(id);
+        self.offer.lock().unwrap().0.remove(id);
+    }
+
+    /// The panes that had Claude open when the last daemon stopped unplanned:
+    /// read once at start, like `mark_resume`, and held as long.
+    pub fn mark_offer(&self, ids: Vec<String>) {
+        *self.offer.lock().unwrap() = (ids.into_iter().collect(), Instant::now() + RESUME_FOR);
+    }
+
+    fn offered(&self, id: &str) -> bool {
+        let r = self.offer.lock().unwrap();
+        Instant::now() < r.1 && r.0.contains(id)
+    }
+
+    /// How a moved shell's folder is written down. Set once, by the server.
+    pub fn on_cwd(&self, sink: Box<dyn Fn(&str, &str) + Send + Sync>) {
+        *self.cwd_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// Ask the kernel where each running shell is, and when one has moved, say
+    /// so: in its status, for the page; in `Inner.cwd`, for the git tick; and
+    /// through the sink, so the next start is there too. The kernel and not
+    /// the terminal's folder report (OSC 7): that is text any program in the
+    /// panel can print, and this folder decides where the daemon runs git.
+    fn follow_folders(&self) {
+        let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
+        for l in live {
+            let Some(now) = l.shell_cwd() else { continue };
+            let s = {
+                let mut i = l.inner.lock().unwrap();
+                if i.cwd == now || !i.status.running {
+                    continue;
+                }
+                i.cwd = now.clone();
+                i.status.cwd = now.clone();
+                i.status.clone()
+            };
+            let _ = l.tx.send(status_frame(&l.id, &s).into());
+            if let Some(sink) = self.cwd_sink.lock().unwrap().as_ref() {
+                sink(&l.id, &now);
+            }
+        }
     }
 
     /// An agent in a running pane says what it is doing. Only a pane this
@@ -546,6 +611,8 @@ impl Panes {
 
     /// Stop everything and write it down: the daemon is going.
     pub fn shutdown(&self) {
+        // Where each shell is, one last time, so each comes back there.
+        self.follow_folders();
         self.persist_all();
         let all: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in all {
@@ -803,6 +870,8 @@ impl Live {
             // Whatever this start is, the mark is spent: a window that chose
             // the shell over the conversation has chosen.
             resume: false,
+            offer: false,
+            cwd: s.cwd.to_string(),
             // A new process has told nothing yet about any model.
             ..Status::default()
         };
@@ -997,6 +1066,18 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
 impl Live {
     /// The folder a running process was started in, or nothing when the pane
     /// is stopped: a stopped pane has no tree worth asking about.
+    /// The folder this pane's process is in now, as the kernel reports it.
+    fn shell_cwd(&self) -> Option<String> {
+        let pid = {
+            let i = self.inner.lock().unwrap();
+            if !i.status.running {
+                return None;
+            }
+            i.status.pid?
+        };
+        folder_of(pid)
+    }
+
     fn running_in(&self) -> Option<String> {
         let i = self.inner.lock().unwrap();
         i.status
@@ -1018,6 +1099,53 @@ impl Live {
         drop(i);
         let _ = self.tx.send(status_frame(&self.id, &s).into());
     }
+}
+
+/// A process's working folder. Linux reads `/proc/<pid>/cwd`; macOS asks
+/// `proc_pidinfo`; anywhere else there is no answer, and a pane's folder
+/// stays the one it started in.
+#[cfg(target_os = "linux")]
+pub fn folder_of(pid: u32) -> Option<String> {
+    let p = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    p.is_dir().then(|| p.to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "macos")]
+pub fn folder_of(pid: u32) -> Option<String> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    // SAFETY: the buffer is a zeroed struct of exactly the size passed, the
+    // layout the kernel fills for this flavour.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    let raw: &[libc::c_char] = unsafe {
+        std::slice::from_raw_parts(
+            info.pvi_cdir.vip_path.as_ptr() as *const libc::c_char,
+            std::mem::size_of_val(&info.pvi_cdir.vip_path),
+        )
+    };
+    let bytes: Vec<u8> = raw
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect();
+    let p = String::from_utf8(bytes).ok()?;
+    std::path::Path::new(&p).is_dir().then_some(p)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn folder_of(_pid: u32) -> Option<String> {
+    None
 }
 
 fn status_frame(id: &str, s: &Status) -> String {
@@ -1438,5 +1566,32 @@ mod tests {
         );
         assert!(dots[1].contains("\"blocked\":true"), "{dots:?}");
         live.stop();
+    }
+
+    /// 1.7.1: a shell that `cd`s is found where it went, by asking the
+    /// kernel -- which is what brings a panel back in that folder.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_shell_that_moved_is_found_where_it_went() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-cwd");
+        std::fs::create_dir(dir.path.join("sub")).unwrap();
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "cd sub && exec sleep 5"])
+            .current_dir(&dir.path)
+            .spawn()
+            .unwrap();
+        let want = std::fs::canonicalize(dir.path.join("sub")).unwrap();
+        let mut seen = None;
+        for _ in 0..50 {
+            seen = folder_of(child.id()).map(std::path::PathBuf::from);
+            if seen.as_deref() == Some(want.as_path()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(seen.as_deref(), Some(want.as_path()));
+        assert_eq!(folder_of(u32::MAX), None, "no such process, no folder");
     }
 }

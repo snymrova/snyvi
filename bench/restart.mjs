@@ -154,6 +154,44 @@ async function main() {
     // a kept-alive connection to the process that has just left.
     const h4 = await until(async () => { const h = await health(); return h && h.pid !== h3.pid ? h : null; }, 20);
     row("snyvi restart --now skips the wait", !!h4 && h4.pid !== h3.pid && /running on/.test(out), `${out.trim().split("\n").pop()}; pid ${h3 && h3.pid} → ${h4 && h4.pid}`);
+
+    // 1.7.1: a shell that moved comes back where it moved to, and a stop
+    // nobody planned -- `snyvi stop`, a signal, a reboot -- offers the Claude
+    // panels' conversations back rather than starting them.
+    const root = (await desks()).find(x => x.id === desk).root;
+    const moved = join(root, "moved-here");
+    mkdirSync(moved, { recursive: true });
+    const wander = (await postC(`/api/desks/${desk}/panes`)).pane.id;
+    await postC(`/api/panes/${wander}/start`, { cmd: `cd '${moved}' && exec sleep 300` });
+    await postT(`/api/panes/${wander}/agent`, { state: "working", session });
+    const followed = await until(async () => { const d = (await desks()).find(x => x.id === desk); const s = (d.panes.find(p => p.id === wander) || {}).status || {}; return s.cwd === moved ? s : null; }, 40);
+    row("a shell's folder is followed as it moves", !!followed, followed ? `status says ${followed.cwd}` : "the status never named the folder it moved to");
+    const h5 = await health();
+    try { cli("stop"); } catch {}
+    await until(async () => !(await health()), 40);
+    cli("send", md);
+    const h6 = await until(health, 40);
+    const offered = (await desks()).find(x => x.id === desk);
+    const w = offered && offered.panes.find(p => p.id === wander);
+    const ws = (w && w.status) || {};
+    row("an unplanned stop offers the conversation, in the folder the shell was in", !!h6 && h6.pid !== (h5 && h5.pid) && !!w && w.cwd === moved && ws.offer === true && !ws.resume,
+      !h6 ? "no daemon came back" : !w ? "the panel is gone" : `cwd ${w.cwd}, offer ${ws.offer}, resume ${ws.resume}`);
+    if (chrome && w) {
+      const browser2 = await launch(join(tmp, "chrome2"));
+      const { sessionId: s2 } = await tab(browser2.cdp);
+      const url2 = `${base}/desk/${desk}#cap=${cap}`;
+      const loaded2 = pageLoad(browser2.cdp, s2, url2);
+      await browser2.cdp.send("Page.navigate", { url: url2 }, s2);
+      await loaded2;
+      const ev = async expr => (await browser2.cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true }, s2)).result.value;
+      const strip = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer:not([hidden])')`), 60);
+      const cmdNow = ((((await desks()).find(x => x.id === desk) || {}).panes || []).find(p => p.id === wander) || {}).status?.cmd || "";
+      await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="x"]')?.click(); 1`);
+      const away = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer[hidden]')`), 20);
+      row("the window offers it with a strip, and runs nothing it was not asked to", !!strip && !!away && !/--resume/.test(cmdNow),
+        !strip ? "no strip on the panel" : /--resume/.test(cmdNow) ? `the panel started ${cmdNow}` : !away ? "✕ did not put it away" : `the shell came back (${JSON.stringify(cmdNow)}), the strip offered, ✕ put it away`);
+      killTree(browser2.proc);
+    }
   } finally {
     if (chromeProc) killTree(chromeProc);
     try { cli("stop"); } catch {}

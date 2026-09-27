@@ -84,7 +84,11 @@ pub fn head_of(dir: &Path) -> Option<String> {
 /// for it. Untracked files do not count; they are not changes to a branch.
 pub fn modified(dir: &Path) -> Option<bool> {
     let mut cmd = std::process::Command::new("git");
+    // No repository's config runs a command on the daemon's tick: an
+    // fsmonitor hook is exactly that, and a panel can `cd` anywhere.
     cmd.args([
+        "-c",
+        "core.fsmonitor=false",
         "--no-optional-locks",
         "status",
         "--porcelain",

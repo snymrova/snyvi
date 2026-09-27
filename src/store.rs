@@ -1079,9 +1079,21 @@ impl Store {
         desk::mark_resume(&self.conn.lock().unwrap(), ids)
     }
 
-    /// Those marks, taken by the daemon that comes up (`desk::take_resume`).
-    pub fn take_panes_resume(&self) -> Result<Vec<String>> {
+    /// Those marks, taken by the daemon that comes up (`desk::take_resume`):
+    /// the planned restart's panes, then the ones to offer.
+    pub fn take_panes_resume(&self) -> Result<(Vec<String>, Vec<String>)> {
         desk::take_resume(&self.conn.lock().unwrap())
+    }
+
+    /// Mark the panes that had Claude open, on an unplanned way out
+    /// (`desk::mark_offer`).
+    pub fn offer_panes_resume(&self, ids: &[String]) -> Result<usize> {
+        desk::mark_offer(&self.conn.lock().unwrap(), ids)
+    }
+
+    /// Where a pane's shell has moved to (`desk::set_cwd`).
+    pub fn set_pane_cwd(&self, id: &str, cwd: &str) -> Result<bool> {
+        desk::set_cwd(&self.conn.lock().unwrap(), id, cwd)
     }
 
     pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {

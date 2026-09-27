@@ -643,6 +643,7 @@ function makeView(p) {
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
+    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Put this away" aria-label="Put this away">✕</button></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   const kept = keepStopped.delete(p.id);
   const v = {
@@ -655,6 +656,9 @@ function makeView(p) {
     body: el.querySelector(".pn-body"), old: el.querySelector(".pn-old"), sb: el.querySelector(".pn-sb"), scr: el.querySelector(".pn-scr"),
     caret: el.querySelector(".pn-caret"), cv: el.querySelector(".pn-cv"), pal: null, stale: new Set(), textT: 0, holding: false, start: el.querySelector(".pn-start"), size: "",
     pinned: true,   // at the bottom, so new lines keep it there
+    // The last daemon stopped with Claude open here: offered back once, by
+    // the strip, until it is taken, put away, or the reader types.
+    offered: !!(p.status && p.status.offer),
   };
   const { body, start } = v;
   v.g = v.cv.getContext("2d");
@@ -696,6 +700,7 @@ function makeView(p) {
     if (b == null) return;
     e.preventDefault(); e.stopPropagation();
     v.typed = Date.now();
+    if (v.offered) { v.offered = false; header(v); }
     input(v, b);
   });
   // Copy on selection: the scrollback is text in the page, so the browser
@@ -720,6 +725,14 @@ function makeView(p) {
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
   start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
+  // The offer types `claude --resume <id>` at the prompt, without Enter (`again`),
+  // in the folder the shell came back in. Nothing is typed until it is clicked.
+  el.querySelector(".pn-offer").addEventListener("click", e => {
+    const b = e.target.closest("[data-offer]");
+    if (!b) return;
+    v.offered = false; header(v);
+    if (b.dataset.offer === "go") again(v); else body.focus();
+  });
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
   return v;
@@ -786,7 +799,10 @@ function fit(v) {
  *  A daemon that went on purpose -- `snyvi restart`, an update -- marks the
  *  panes an agent was in, and the status that says the pane lost its process
  *  says `resume` too: that one comes back as the conversation, the way the
- *  ↻ button brings it, rather than as the shell. */
+ *  ↻ button brings it, rather than as the shell. One that went without
+ *  planning to -- `snyvi stop`, a signal, a reboot -- says `offer`: the shell
+ *  comes back in the folder it was in, and the strip over it offers the
+ *  conversation with one click, which types the resume and never runs it. */
 function resume(v) {
   if (v.resumed || v.starting || !v.size) return;
   if (v.status.running || v.status.exit != null) {
@@ -877,6 +893,9 @@ function header(v) {
   if (!v.start.hidden && wasHidden) v.start.querySelector("input").value = s.cmd || v.pane.cmd || "";
   v.start.querySelector("input").placeholder = "blank for the shell";
   v.start.querySelector(".pn-resume").hidden = !talked(v);
+  if (s.offer) v.offered = true;
+  const off = v.el.querySelector(".pn-offer");
+  if (off) off.hidden = !(v.offered && talked(v) && s.running);
   cursor(v);
 }
 
@@ -1361,13 +1380,17 @@ function meta() {
     `<div class="row"><b>Folder</b><button type="button" class="dk-folder" data-a="reveal" title="Open ${esc(d.root)} in the file manager">${esc(tilde(d.root))}</button></div>`;
   const cp = ctxPct(s);
   const low = v ? `<div class="row dk-pl"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.model ? ` · ${esc(s.model)}` : s.pid ? ` · pid ${s.pid}` : ""}` +
-    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}" title="${s.ctx_in ? `${s.ctx_in.toLocaleString()} tokens in` : ""}">${cp}%${s.ctx_size ? ` of ${kTok(s.ctx_size)}` : ""}</span>`}${since ? ` · ${since}` : ""}</span></div>` : "";
+    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}" title="${s.ctx_in ? `${s.ctx_in.toLocaleString()} tokens in` : ""}">${cp}%${s.ctx_size ? ` of ${kTok(s.ctx_size)}` : ""}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
+    // The folder the panel's shell is in now, when it is not the desk's own.
+    ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" title="${esc(s.cwd || v.pane.cwd)}">${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
   // The panel's line ticks ("up 12s") on every frame that brings a status,
   // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
   // written alone while the rows above it are still the ones drawn here.
   const el = ctx.metaEl, pl = el.querySelector(".dk-pl");
   if (el.$top === top && el.firstElementChild === el.$first && (pl || !low)) {
-    if (low !== el.$low) { if (low) pl.outerHTML = low; else if (pl) pl.remove(); }
+    // The panel's lines -- its state and, when it moved, its folder -- are
+    // written together: all of the old ones out, the new ones in their place.
+    if (low !== el.$low) { el.querySelectorAll(".dk-pl").forEach((r, i) => { if (i) r.remove(); }); if (low) pl.outerHTML = low; else if (pl) pl.remove(); }
   } else drawIn(el, top + low);
   el.$top = top; el.$low = low;
   ctx.rail.classList.remove("empty");
@@ -1389,7 +1412,8 @@ function drawIn(el, html) {
 function named(v) {
   const b = ctx.tocEl.querySelector(`.dk-focus[data-focus="${v.id}"]`);
   if (!b) return;
-  b.title = what(v);
+  const here = v.status.cwd || v.pane.cwd;
+  b.title = what(v) + (here ? ` · ${tilde(here)}` : "");
   b.querySelector(".nm").textContent = short(v);
 }
 
@@ -2306,6 +2330,15 @@ const CSS = `
 .pn-body .nf { position: relative; font-size: 10px; }
 .pn-body .g { position: relative; -webkit-text-fill-color: transparent; }
 .pn-body .g::before { content: ""; position: absolute; inset: 0; background: currentColor; -webkit-mask: var(--g) 0 0 / 100% 100% no-repeat; mask: var(--g) 0 0 / 100% 100% no-repeat; }
+/* The offer after an unplanned stop: over the top of the panel, in the
+   waiting amber, out of the way of the prompt it would type into. */
+.pn-offer { position: absolute; left: 12px; right: 12px; top: 8px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-raise)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: 6px; box-shadow: var(--shadow); }
+.pn-offer[hidden] { display: none; }
+.pn-offer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-offer button { flex: none; padding: 3px 8px; border-radius: 4px; color: var(--fg-2); }
+.pn-offer [data-offer="go"] { color: var(--accent); font-weight: 600; }
+.pn-offer button:hover { background: var(--rule-2); color: var(--fg); }
 .pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: var(--shadow); }
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
 .pn-start .pn-resume { color: var(--fg); font-weight: 500; }

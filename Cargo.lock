@@ -3967,6 +3967,7 @@ dependencies = [
  "getrandom 0.3.4",
  "html-escape",
  "ignore",
+ "libc",
  "mimalloc",
  "mime_guess",
  "minisign-verify",

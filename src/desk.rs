@@ -8,12 +8,15 @@
 //! everything an agent sent you" stops being a sentence anyone can say.
 //!
 //! Two things are persisted and one is not. The workspace -- which folder,
-//! which slots, what to re-run -- is here, because that is what a restore needs
-//! and a restore is the point. The process is not: a pane comes back stopped,
-//! with `Start` offered, and nothing on this machine ever spawns a shell
-//! because a daemon woke up. The screen and the PTY that Phase 3 adds are
-//! in-memory beside these rows and die with the daemon, which is why a pane row
-//! carries no state column at all.
+//! which slots, what to re-run, the folder each shell had moved to -- is here,
+//! because that is what a restore needs and a restore is the point. The
+//! process is not: a pane comes back stopped, and the daemon never spawns a
+//! shell because it woke up. The window does: a pane that lost its process to
+//! a daemon going away is started again by the page when it is drawn
+//! (`resume()` in ui/desk.js), since that is the reader's window asking, not a
+//! timer. The screen and the PTY are in-memory beside these rows and die with
+//! the daemon, which is why a pane row carries no state column at all --
+//! `resume_next` is a mark for the next start, not a state.
 //!
 //! A desk holds four panes and there is no cap across desks. There was one,
 //! eight, written against the memory budget: a truecolor cell is about 11
@@ -586,22 +589,52 @@ pub fn mark_resume(conn: &Connection, ids: &[String]) -> Result<usize> {
     Ok(n)
 }
 
+/// Mark the panes that had Claude open when the daemon stopped without
+/// planning to -- `snyvi stop`, a signal, a reboot -- as ones to *offer* back
+/// (`resume_next = 2`), where a planned restart's mark (1) starts them as the
+/// conversation. A pane already marked either way keeps its mark.
+pub fn mark_offer(conn: &Connection, ids: &[String]) -> Result<usize> {
+    let mut n = 0;
+    for id in ids {
+        n += conn.execute(
+            "UPDATE panes SET resume_next = 2 WHERE id = ?1 AND resume_next = 0 AND agent_session <> ''",
+            params![id],
+        )?;
+    }
+    Ok(n)
+}
+
 /// The marks the last daemon left, taken: read once by the daemon that comes
-/// up after a planned restart, and cleared in the same breath, so a daemon
-/// that crashes later does not find them again a day on. The runtime keeps
-/// them from here (`pane::Panes::mark_resume`), for as long as they hold.
-pub fn take_resume(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT id FROM panes WHERE resume_next <> 0 ORDER BY id")?;
-    let ids: Vec<String> = stmt
-        .query_map([], |r| r.get(0))?
+/// up, and cleared in the same breath, so a daemon that crashes later does
+/// not find them again a day on. The runtime keeps them from here
+/// (`pane::Panes::mark_resume`, `mark_offer`), for as long as they hold.
+/// Returns the planned restart's panes, then the ones to offer.
+pub fn take_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
+    let mut stmt =
+        conn.prepare("SELECT id, resume_next FROM panes WHERE resume_next <> 0 ORDER BY id")?;
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    if !ids.is_empty() {
+    if !rows.is_empty() {
         conn.execute(
             "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
             [],
         )?;
     }
-    Ok(ids)
+    let (planned, offered): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, k)| *k == 1);
+    Ok((
+        planned.into_iter().map(|(id, _)| id).collect(),
+        offered.into_iter().map(|(id, _)| id).collect(),
+    ))
+}
+
+/// Where a pane's shell has gone, so its next start is there: the folder the
+/// kernel reported on the git tick, or at shutdown. True only when it moved.
+pub fn set_cwd(conn: &Connection, id: &str, cwd: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE panes SET cwd = ?2 WHERE id = ?1 AND cwd <> ?2",
+        params![id, cwd],
+    )? > 0)
 }
 
 /// A Claude Code session id: a UUID, lowercase hex and four dashes. Nothing
@@ -1121,24 +1154,55 @@ mod tests {
         let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
         assert!(set_agent_session(&conn, &talked.id, a).unwrap());
         assert!(set_agent_session(&conn, &other.id, a).unwrap());
-        assert_eq!(take_resume(&conn).unwrap(), Vec::<String>::new());
+        let none = (Vec::<String>::new(), Vec::<String>::new());
+        assert_eq!(take_resume(&conn).unwrap(), none);
         // Two asked for, one with a conversation: one mark. The third pane
         // knows a conversation but was not asked for, and stays unmarked.
         assert_eq!(
             mark_resume(&conn, &[talked.id.clone(), silent.id.clone()]).unwrap(),
             1
         );
-        assert_eq!(take_resume(&conn).unwrap(), vec![talked.id.clone()]);
-        assert_eq!(
-            take_resume(&conn).unwrap(),
-            Vec::<String>::new(),
-            "taken once"
-        );
+        assert_eq!(take_resume(&conn).unwrap().0, vec![talked.id.clone()]);
+        assert_eq!(take_resume(&conn).unwrap(), none, "taken once");
         // A new set replaces the old, so a mark cannot outlive the restart
         // that made it.
         mark_resume(&conn, std::slice::from_ref(&talked.id)).unwrap();
         mark_resume(&conn, std::slice::from_ref(&other.id)).unwrap();
-        assert_eq!(take_resume(&conn).unwrap(), vec![other.id.clone()]);
+        assert_eq!(take_resume(&conn).unwrap().0, vec![other.id.clone()]);
+
+        // 1.7.1: an unplanned stop offers instead, only where a conversation
+        // is known, and never over a planned mark.
+        mark_resume(&conn, std::slice::from_ref(&talked.id)).unwrap();
+        assert_eq!(
+            mark_offer(
+                &conn,
+                &[talked.id.clone(), other.id.clone(), silent.id.clone()]
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            take_resume(&conn).unwrap(),
+            (vec![talked.id.clone()], vec![other.id.clone()])
+        );
+    }
+
+    /// Where the shell went is where it starts next, and saying the same
+    /// folder twice is no change.
+    #[test]
+    fn a_pane_keeps_the_folder_its_shell_moved_to() {
+        let mut conn = db();
+        let d = create(&conn, "/p", None, 0).unwrap();
+        let Opened::Pane(p) = pane(&mut conn, d.id) else {
+            panic!()
+        };
+        assert!(set_cwd(&conn, &p.id, "/p/sub").unwrap());
+        assert!(!set_cwd(&conn, &p.id, "/p/sub").unwrap());
+        assert_eq!(
+            super::pane(&conn, &p.id).unwrap().unwrap().pane.cwd,
+            "/p/sub"
+        );
+        assert!(!set_cwd(&conn, "nope", "/x").unwrap());
     }
 
     /// The gesture is a right-click on a folder, so the folder's name is the
