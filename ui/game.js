@@ -670,3 +670,28 @@ function roundRect(c, x, y, w, h, r) {
   c.arcTo(x, y, x + w, y, r);
   c.closePath();
 }
+
+/* The game's shell over the sidebar -- in app.css until 1.7.1, and nothing on screen used them before
+ * this file was loaded, so they came here to leave first paint. */
+const CSS_MOVED = `
+/* The rocket's game covers the sidebar and nothing else: absolute over the
+   column, above the note's trail and the rail (28), under the palette and
+   the dialogs (40), so a document opening beside it is never in its way and
+   a dialog over it is still a dialog. It is \`ui/game.js\`'s to draw; this is
+   only its shell -- a head with the score, the sky, a foot with the best. */
+#side .game { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg-side); }
+.game-head, .game-foot { display: flex; align-items: center; gap: 8px; font-family: var(--sans); color: var(--fg-3); }
+.game-head { padding: 12px 10px 4px 16px; font-size: 12px; }
+.game-title { margin-right: auto; font-weight: 600; color: var(--fg-2); letter-spacing: -.005em; }
+.game-score { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--fg); margin-right: 2px; }
+.game-sky { flex: 1; min-height: 0; width: 100%; display: block; touch-action: none; }
+/* An outline drawn inwards, not an inset shadow: the canvas paints its own
+   bitmap over the element's shadow every frame, so the ring was there and
+   then covered. The sky is the game's only focusable control and it takes
+   every flight key, so this is the one ring that has to show. */
+.game-sky:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.game-foot { justify-content: space-between; padding: 4px 16px 12px; font-size: 11px; }
+.game-hint, .game-best { white-space: nowrap; }
+.game-best { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+`;
+{ const s = document.createElement("style"); s.textContent = CSS_MOVED; document.head.append(s); }

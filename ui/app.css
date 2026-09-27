@@ -418,90 +418,6 @@ html[data-link="off"] .live { visibility: hidden; }
 /* Drawn in the face it has picked, so the button says which one it is. */
 .icon .aa { font-size: 13px; font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: 11px; letter-spacing: -.06em; }
-/* The note. Nothing until an agent says something; a warm glow until a
-   reader rests on it; then a single quiet line. The trail of the ones before
-   opens upward on hover, over the tree rather than pushing it. */
-#note { position: relative; margin: 0 8px;
-  /* A side note's surface: a breath of the accent in the sidebar's colour,
-     and a hairline with a little warmth in it. Quiet on purpose. */
-  --note-bg: color-mix(in srgb, var(--accent) 6%, var(--bg-side));
-  --note-rule: color-mix(in srgb, var(--accent) 16%, var(--rule)); }
-.note-now { position: relative; display: block; padding: 9px 12px; border-radius: 10px; cursor: default; outline: none;
-  background: transparent; border: 1px solid transparent; transition: background .6s ease, border-color .6s ease, box-shadow .6s ease, padding .3s ease; }
-.note-now { overflow: hidden; isolation: isolate; }
-.note-now > p, .note-now > .note-by { position: relative; z-index: 1; }
-.note-now[data-about] { cursor: pointer; }
-/* snyvi peeking from behind the note on hover, and for a moment when a new one arrives: large, tilted, faint, with a
-   feeling. It rises from the corner rather than fading in on the spot. */
-.note-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
-  opacity: 0; transform: translate(12px, 26px) rotate(0deg); transition: opacity .25s ease, transform .45s cubic-bezier(.3,1.5,.5,1); }
-#note:hover .note-bg, #note:focus-within .note-bg, #note.peek .note-bg { opacity: var(--mascot-peek); transform: rotate(-14deg); transition-delay: .12s; }
-.note-bg .nb-body { fill: var(--mascot); }
-.note-bg .nb-nub { fill: var(--mascot-nub); }
-.note-bg .nb-cheek, .note-bg .nb-love { fill: var(--heart); }
-.note-bg .nb-ink { fill: var(--mascot-ink); }
-.note-bg .nb-shine { fill: #fff; }
-.note-bg .nb-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2; stroke-linecap: round; }
-/* Opened -- hovered or focused -- a read note wears the same warm card as
-   the ones in the trail above it, so the stack reads as one voice. */
-#note:hover .note-now, #note:focus-within .note-now { background: var(--note-bg); border-color: var(--note-rule); }
-/* The surface is quiet, so the words are not. */
-#note:hover .note-now p, #note:focus-within .note-now p { color: var(--fg); }
-/* snyvi peeks from the byline's corner, so the byline ends before it does. */
-#note:hover .note-by-now, #note:focus-within .note-by-now, #note.peek .note-by-now { padding-right: 40px; }
-.note-now:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-/* Interface text, not reading text: the UI's sans at 13px for the note and
-   11px for its byline, the sizes a Mac sidebar uses for a label and its
-   caption. The reading font is for documents; at 13px in a sidebar a serif
-   goes soft. */
-.note-now p, .note-trail p { margin: 0; font-family: var(--sans); font-size: 13px; font-weight: 400; line-height: 1.38; letter-spacing: -.003em;
-  color: var(--fg-2); text-wrap: pretty; }
-.note-by { display: block; margin-top: 4px; font-family: var(--sans); font-size: 11px; line-height: 1.3; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.note-by-now { display: flex; gap: 6px; }
-.note-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.note-snyvi { font-weight: 600; color: var(--accent); }
-.note-more { flex: none; margin-left: auto; padding: 0 5px; border-radius: 6px; background: var(--rule); color: var(--fg-3); }
-/* On hover the trail it counts is open above, and snyvi is peeking from that corner. */
-#note:hover .note-more, #note:focus-within .note-more, #note.peek .note-more { visibility: hidden; }
-#note[data-lit="1"] .note-now { background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  animation: note-glow 3.2s ease-in-out infinite; }
-#note[data-lit="1"] .note-now p { color: var(--fg); }
-#note[data-seen="1"]:not(:hover):not(:focus-within) .note-now p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); }
-#note[data-seen="1"]:not(:hover):not(:focus-within) .note-by { display: none; }
-#note[data-seen="1"]:not(:hover):not(:focus-within) .note-now { padding-top: 5px; padding-bottom: 5px; }
-
-@keyframes note-glow {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
-  50% { box-shadow: 0 0 14px 0 color-mix(in srgb, var(--accent) 16%, transparent); }
-}
-/* The ones before, each its own card in the same quiet surface as the note
-   below them, opaque over the tree they float above. */
-.note-trail { position: absolute; left: 0; right: 0; bottom: 100%; margin: 0 0 6px; padding: 0; list-style: none; z-index: 5;
-  display: flex; flex-direction: column; gap: 6px;
-  opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s; }
-#note:hover .note-trail, #note:focus-within .note-trail { opacity: 1; visibility: visible; transform: none; transition-delay: .25s, .25s, 0s; }
-.note-trail li { padding: 9px 12px; border-radius: 10px; background: var(--note-bg); border: 1px solid var(--note-rule); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
-.note-trail li[data-about] { cursor: pointer; }
-.note-trail li[data-about]:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule)); }
-.note-trail p { color: var(--fg); }
-.note-trail .note-by { margin-top: 4px; }
-/* The ✕ that closes the aside: in the card's corner, there only while the
-   card is opened -- hovered or focused -- like the other rows' tools. The
-   words keep clear of it. */
-.note-now > p { padding-right: 14px; }
-.note-x { position: absolute; top: 5px; right: 5px; z-index: 2; width: 18px; height: 18px; display: grid; place-items: center; padding: 0;
-  font: inherit; font-size: 10px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; opacity: 0; pointer-events: none; }
-#note:is(:hover, :focus-within) .note-x { opacity: 1; pointer-events: auto; }
-.note-x:hover { background: var(--rule-2); color: var(--fg); }
-/* A closed aside, standing where the card was with its Undo, on the same
-   drain as a removed document's row. */
-.note-ghost { padding: 5px 12px; font-size: 12px; }
-.note-ghost::after { left: 12px; right: 12px; }
-.note-ghost > .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Close all: the trail's own quiet last line, not a card. */
-.note-trail li.note-all { padding: 0; background: none; border: 0; box-shadow: none; text-align: right; }
-.note-all button { font: inherit; font-family: var(--sans); font-size: 11px; color: var(--fg-3); padding: 2px 6px; border-radius: 4px; background: var(--bg-side); }
-.note-all button:hover { color: var(--fg); background: var(--rule-2); }
 
 .side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
 .side-foot { position: relative; }
@@ -597,25 +513,6 @@ html[data-link="off"] .live { visibility: hidden; }
   .foot-rail > button { opacity: 1; transform: none; pointer-events: auto; }
 }
 .icon .qm { font-family: var(--sans); font-size: 14px; font-weight: 600; }
-/* The rocket's game covers the sidebar and nothing else: absolute over the
-   column, above the note's trail and the rail (28), under the palette and
-   the dialogs (40), so a document opening beside it is never in its way and
-   a dialog over it is still a dialog. It is `ui/game.js`'s to draw; this is
-   only its shell -- a head with the score, the sky, a foot with the best. */
-#side .game { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg-side); }
-.game-head, .game-foot { display: flex; align-items: center; gap: 8px; font-family: var(--sans); color: var(--fg-3); }
-.game-head { padding: 12px 10px 4px 16px; font-size: 12px; }
-.game-title { margin-right: auto; font-weight: 600; color: var(--fg-2); letter-spacing: -.005em; }
-.game-score { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--fg); margin-right: 2px; }
-.game-sky { flex: 1; min-height: 0; width: 100%; display: block; touch-action: none; }
-/* An outline drawn inwards, not an inset shadow: the canvas paints its own
-   bitmap over the element's shadow every frame, so the ring was there and
-   then covered. The sky is the game's only focusable control and it takes
-   every flight key, so this is the one ring that has to show. */
-.game-sky:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.game-foot { justify-content: space-between; padding: 4px 16px 12px; font-size: 11px; }
-.game-hint, .game-best { white-space: nowrap; }
-.game-best { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 #trees { overflow-y: auto; padding: 0 8px 8px; font-size: 13px; flex: 1; min-height: 0; }
 #tree ul { list-style: none; margin: 0; padding: 0; }
@@ -1071,76 +968,6 @@ mark.find.cur { background: var(--accent); color: #fff; }
 pre.mermaid { background: transparent; text-align: center; padding: 8px 0; overflow: visible; font-family: var(--mono); font-size: 12.5px; color: var(--fg-3); white-space: pre-wrap; }
 pre.mermaid::before { display: none; }
 
-/* A drawn diagram is not prose, so it takes what the reading measure is not
-   using: the column's own padding, which is as much as can be given without
-   reflowing the text around it. The pane itself is one keystroke away (`w`) and
-   the screen is another (`f`). */
-.mmd { margin: 1.5em 0; position: relative; }
-.mmd[data-state="done"] { margin-inline: calc(-1 * var(--doc-pad, 0px)); }
-.mmd-frame { display: flex; align-items: center; justify-content: center; }
-.mmd-frame svg { max-width: 100%; height: auto; }
-/* Once it has a viewport the frame owns the box and the SVG fills it, so the
-   viewBox is the only thing that decides what is shown. */
-.mmd[data-zoom] .mmd-frame { overflow: hidden; border-radius: var(--radius); }
-.mmd[data-zoom] .mmd-frame svg { width: 100%; height: 100%; max-width: none; display: block; }
-.mmd[data-zoom="in"] .mmd-frame { cursor: grab; }
-.mmd[data-grab] .mmd-frame { cursor: grabbing; }
-/* The controls: present when the diagram is under the cursor or holds the
-   focus, absent from a page being read -- the bargain the rename pencils in the
-   tree make. Always there for a reader on a touch screen, which has no hover. */
-.mmd-tools {
-  position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px;
-  border-radius: var(--radius); background: var(--bg-raise); box-shadow: 0 1px 3px rgba(0,0,0,.18);
-  opacity: 0; transition: opacity .12s ease; pointer-events: none;
-}
-.mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd[data-full] .mmd-tools { opacity: 1; pointer-events: auto; }
-@media (hover: none) { .mmd-tools { opacity: 1; pointer-events: auto; } }
-.mmd-tools button {
-  font-family: var(--sans); font-size: 12px; line-height: 1; color: var(--fg-2);
-  min-width: 26px; height: 24px; padding: 0 6px; border-radius: 5px; background: none;
-}
-.mmd-tools button:hover { background: var(--rule); color: var(--fg); }
-.mmd-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Filling the screen is the one place a 4738 px graph is legible. The figure
-   is laid over the page from where it is, and the document -- not the figure
-   -- is what asks the browser for fullscreen. A figure of its own in the top
-   layer is what WebKitGTK, the Linux window's engine, drew every glyph of as
-   nothing: the boxes and arrows stayed and the labels, the tool bar and an
-   SVG's own text went; and on the way back it kept the figure at the size
-   its placeholder had until the next scroll. A fixed box has neither fault in
-   any engine. mmdFull in app.js. */
-.mmd[data-full] { position: fixed; inset: 0; z-index: 30; margin: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
-.mmd[data-full] .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
-/* Until the diagram lands the figure holds about the space it will want, so the
-   text below it does not jump when it does. An estimate from the source, set by
-   the client -- see mmdWeight in app.js. */
-.mmd:not([data-state="done"]) .mmd-frame {
-  min-height: var(--mmd-reserve, 200px);
-  border-radius: var(--radius);
-  background: linear-gradient(var(--code-bg), var(--code-bg));
-}
-.mmd[data-state="error"] .mmd-frame { min-height: 0; display: block; background: none; }
-.mmd-fail { padding: 2px 0; }
-.mmd-note { font-family: var(--sans); font-size: 12px; letter-spacing: .04em; color: var(--fg-3); text-align: center; padding: 10px; }
-/* The label is for a diagram that is about to appear; a reader who waits long
-   enough to wonder gets a spinner instead of a word that never changes. */
-.mmd-slow .mmd-note::before {
-  content: ""; display: block; width: 18px; height: 18px; margin: 0 auto 8px;
-  border: 2px solid var(--rule-2); border-top-color: var(--fg-3); border-radius: 50%;
-  animation: mmd-spin .7s linear infinite;
-}
-@keyframes mmd-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .mmd-slow .mmd-note::before { animation-duration: 2.4s; } }
-/* Over the cap: offered, not spent. */
-.mmd-ask { display: block; margin: 0 auto 8px; font-family: var(--sans); font-size: 13px; padding: 7px 14px; border-radius: var(--radius); background: var(--bg-raise); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-.mmd-ask:hover { color: var(--accent); }
-.mmd-why { display: block; }
-/* A source Mermaid could not parse is the one the reader most wants to read. */
-.mmd-err { font-family: var(--sans); font-size: 13px; color: var(--del-fg); margin: 0 0 8px; text-align: left; }
-/* Ligatures off, like every other code block: this is shown so the reader can
-   see the characters the agent actually wrote, and JetBrains Mono draws `-->`
-   as a single arrow, which is the one thing it must not do here. */
-.mmd-src { font-feature-settings: "calt" 0, "liga" 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; text-align: left; white-space: pre-wrap; background: var(--code-bg); border-radius: var(--radius); padding: 12px 14px; margin: 0; color: var(--fg-2); overflow-x: auto; }
 
 /* history */
 #history { margin-top: 20px; }
@@ -1372,28 +1199,6 @@ button.text:hover { color: var(--fg); background: var(--bg-side); }
 button.text:focus-visible, button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The reset dialog: a sentence, a number, and a button that is dead until
  * the number is right. Red is spent here and nowhere else in the chrome. */
-.about-box { width: min(560px, 92vw); }
-.about-box h2 { text-transform: none; letter-spacing: 0; font-size: 18px; color: var(--fg); margin-bottom: 4px; }
-.about-box p { margin: 0 0 14px; font-size: 14px; color: var(--fg-2); }
-.about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }
-.about-box dt { font-family: inherit; font-size: 13px; color: var(--fg-3); }
-.about-box dd { min-width: 0; overflow-wrap: anywhere; }
-.about-box dd.path { font-family: var(--mono); font-size: 12.5px; }
-.about-box dd.pre { white-space: pre-line; }
-.about-box .muted { color: var(--fg-3); }
-.about-box a { color: var(--accent); text-decoration: none; }
-.about-box a:hover { text-decoration: underline; }
-.reset-box { width: min(520px, 92vw); margin: 0; }
-.reset-box p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
-.reset-box label { display: block; font-size: 14px; margin: 0 0 12px; }
-.reset-box label[hidden] { display: none; }
-.reset-ask input { display: block; width: 100%; margin-top: 6px; font: inherit; font-family: var(--mono); font-size: 15px; padding: 8px 10px; border: 1px solid var(--rule-2); border-radius: 6px; background: var(--bg); color: inherit; outline: none; }
-.reset-ask input:focus { border-color: var(--accent); }
-.reset-err { color: var(--del-fg); }
-.reset-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-button.danger { font: inherit; font-size: 13px; font-weight: 550; color: #fff; background: #b3261e; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
-button.danger:hover { background: #9a1f18; }
-button.danger:disabled { opacity: .4; cursor: default; }
 
 /* ---------- print ---------- */
 @media print {

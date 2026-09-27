@@ -75,6 +75,12 @@ const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js"));
 /// ⌘K, fetched the first time it is pressed: the one box a reader summons
 /// rather than meets, so first paint does not carry it.
 const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/palette.js"));
+/// The theme, accent and font steppers, fetched once the page is idle or the
+/// foot column is reached: nothing on screen needs them until a click there.
+const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
+/// The aside card at the sidebar's foot, fetched when there is an aside to
+/// show: a reader no agent has spoken to never pays for it.
+const NOTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/note.js"));
 /// Every theme but Paper and Ink, fetched once the page is idle: first paint
 /// carries only the two defaults, and boot.js paints a returning reader's
 /// own theme from a copy it kept, so the window opens as fast as it can.
@@ -197,6 +203,8 @@ impl Ui {
             ("menu.js", MENU_JS),
             ("themes.css", THEMES_CSS),
             ("palette.js", PALETTE_JS),
+            ("look.js", LOOK_JS),
+            ("note.js", NOTE_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -543,6 +551,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         h.update(MENU_JS.as_bytes());
         h.update(THEMES_CSS.as_bytes());
         h.update(PALETTE_JS.as_bytes());
+        h.update(LOOK_JS.as_bytes());
+        h.update(NOTE_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -714,6 +724,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/assets/menu.js", get(asset_menu))
         .route("/assets/themes.css", get(asset_themes))
         .route("/assets/palette.js", get(asset_palette))
+        .route("/assets/look.js", get(asset_look))
+        .route("/assets/note.js", get(asset_note))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -1296,6 +1308,24 @@ async fn asset_palette(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "palette.js",
         PALETTE_JS,
+    )
+}
+/// The look steppers, on the same terms: the page asks once it is idle.
+async fn asset_look(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "look.js",
+        LOOK_JS,
+    )
+}
+/// The aside card, on the same terms: asked for when there is an aside.
+async fn asset_note(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "note.js",
+        NOTE_JS,
     )
 }
 /// The other themes, on the same terms: the page asks once it is idle.
@@ -4730,6 +4760,8 @@ mod tests {
             ("keys.js", KEYS_JS),
             ("menu.js", MENU_JS),
             ("palette.js", PALETTE_JS),
+            ("look.js", LOOK_JS),
+            ("note.js", NOTE_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
@@ -4771,6 +4803,8 @@ mod tests {
             "MENU_JS",
             "THEMES_CSS",
             "PALETTE_JS",
+            "LOOK_JS",
+            "NOTE_JS",
         ] {
             assert!(
                 block.contains(chunk),

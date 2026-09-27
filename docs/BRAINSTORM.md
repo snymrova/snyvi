@@ -32,7 +32,7 @@ Concrete budgets (targets, not measurements yet):
 | Render a 1 MB Markdown file         | < 200 ms              |
 | Render a 50k-line code file         | scrolls at 60 fps (virtualized) |
 | Binary size                         | < 15 MB single file   |
-| Network on first load (web)         | < 53 KB gzipped UI, all from localhost |
+| Network on first load (web)         | < 52 KB gzipped UI, all from localhost |
 | Open an already-received document   | < 30 ms request to first paint |
 | Any interaction                     | < 100 ms, or it is a bug |
 | Library of 10,000 docs              | sidebar and search stay instant |
@@ -50,7 +50,11 @@ opens them has chosen. `docs/DESK.md` has the rest.
 The first-load line was 50 KB through 1.5.0, which stood at 49.2 KB. 1.6
 raised it to 53 KB on purpose: a removed row's Undo and the ✕ that goes back
 must answer in the frame of the click, so they are in first paint, while the
-context menus and their look went to `ui/menu.js`. `bench/bytes.mjs` holds it.
+context menus and their look went to `ui/menu.js`. 1.7.1 took it back down to
+52 KB while adding the sidebar's rail: the theme, accent and font steppers
+went to `ui/look.js`, the aside card to `ui/note.js`, the letter keys to
+`ui/keys.js`, and the diagram, game and about/reset styles to their own
+chunks, about 5.5 KB out of first paint in all. `bench/bytes.mjs` holds it.
 
 What these budgets rule out:
 

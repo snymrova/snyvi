@@ -342,7 +342,7 @@ async function openReset(d) {
  *  navigation commits, and a task it already queued -- the toggle event a
  *  rendered `<details open>` fires, which writes `snyvi.open` -- can run
  *  after the drop here. Seen once in CI: one key back in storage. */
-function afterReset() {
+export function afterReset() {
   try { sessionStorage.setItem("snyvi.reset", "1"); } catch {}
   try { Object.keys(localStorage).filter(k => k.startsWith("snyvi.")).forEach(k => localStorage.removeItem(k)); } catch {}
   location.replace("/");
@@ -412,3 +412,31 @@ export function connect(a, { esc, rel }) {
     (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") +
     `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand.</p></div>`;
 }
+
+/* The about and reset boxes, which this file builds -- in app.css until 1.7.1, and nothing on screen used them before
+ * this file was loaded, so they came here to leave first paint. */
+const CSS_MOVED = `
+.about-box { width: min(560px, 92vw); }
+.about-box h2 { text-transform: none; letter-spacing: 0; font-size: 18px; color: var(--fg); margin-bottom: 4px; }
+.about-box p { margin: 0 0 14px; font-size: 14px; color: var(--fg-2); }
+.about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }
+.about-box dt { font-family: inherit; font-size: 13px; color: var(--fg-3); }
+.about-box dd { min-width: 0; overflow-wrap: anywhere; }
+.about-box dd.path { font-family: var(--mono); font-size: 12.5px; }
+.about-box dd.pre { white-space: pre-line; }
+.about-box .muted { color: var(--fg-3); }
+.about-box a { color: var(--accent); text-decoration: none; }
+.about-box a:hover { text-decoration: underline; }
+.reset-box { width: min(520px, 92vw); margin: 0; }
+.reset-box p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.reset-box label { display: block; font-size: 14px; margin: 0 0 12px; }
+.reset-box label[hidden] { display: none; }
+.reset-ask input { display: block; width: 100%; margin-top: 6px; font: inherit; font-family: var(--mono); font-size: 15px; padding: 8px 10px; border: 1px solid var(--rule-2); border-radius: 6px; background: var(--bg); color: inherit; outline: none; }
+.reset-ask input:focus { border-color: var(--accent); }
+.reset-err { color: var(--del-fg); }
+.reset-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+button.danger { font: inherit; font-size: 13px; font-weight: 550; color: #fff; background: #b3261e; border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+button.danger:hover { background: #9a1f18; }
+button.danger:disabled { opacity: .4; cursor: default; }
+`;
+{ const s = document.createElement("style"); s.textContent = CSS_MOVED; document.head.append(s); }

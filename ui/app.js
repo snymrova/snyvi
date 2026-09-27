@@ -1567,172 +1567,23 @@
   }
 
   // ---------- the note: a line an agent leaves beside the work ----------
-  /** It sits above the theme bar and is nothing at all until an agent says
-   *  something. A new note glows until a reader rests on it; after that it is
-   *  one quiet line. The ones before it wait in a trail a hover away. Seen is
-   *  the daemon's, so a glance in one window puts the glow out in all. */
-  const noteEl = $("#note");
-  let noteLook = 0, notePeek = 0, noteShown = (state.notes.find(n => !n.dismissed) || {}).id || 0;
+  /* The card is ui/note.js, fetched the first time there is an aside to show.
+   * Until then the page keeps only the mark: `data-note` on the root, which
+   * makes the logo blink and the rail's aside dot glow. */
   /** The asides on the card: the daemon keeps a closed one, flagged, for Undo. */
   const liveNotes = () => state.notes.filter(n => !n.dismissed);
-  /** An aside a reader just closed: the card stands where it was as one line
-   *  holding the Undo, on the same drain as a removed document's row, and
-   *  only when that ends does the next aside take the card. */
-  let noteGone = null;
-  /** There is one snyvi on screen, the logo, and the note is its voice: a
-   *  waiting note perks it up, a new one makes it hop, and a reader resting on
-   *  the note gets a smile and a heart. The card itself carries no face. */
-  const markEl = $(".brand-mark");
-  /** Behind the note, when a reader comes over: snyvi large and tilted,
-   *  peeking up from the corner with a feeling. Each note keeps its own --
-   *  glad, a wink, heart eyes -- chosen by its id, so a redraw never
-   *  changes its mind. */
-  const HEART = (x, y) => `<path class="nb-love" transform="translate(${x} ${y}) scale(.8)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/>`;
-  const FEELINGS = [
-    `<path class="nb-line" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="nb-ink" d="M12.6 21.6q3.4 4.6 6.8 0z"/>`,
-    `<ellipse class="nb-ink" cx="11" cy="16.5" rx="2.6" ry="3.3"/><circle class="nb-shine" cx="11.9" cy="15.2" r="1"/><path class="nb-line" d="M18.6 17.6q2.4-2.8 4.8 0M13.5 22.6q3 2.8 6 0"/>`,
-    HEART(11, 16.5) + HEART(21, 16.5) + `<path class="nb-line" d="M13.5 22.6q2.5 2.4 5 0"/>`,
-  ];
-  const noteBg = id => `<svg class="note-bg" viewBox="0 0 32 32" aria-hidden="true">` +
-    `<rect class="nb-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="nb-body" x="1" y="4" width="30" height="27" rx="9"/>` +
-    `<ellipse class="nb-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="nb-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
-    FEELINGS[id % FEELINGS.length] + `</svg>`;
-  /** The byline says whose work it came through: "via claude-code on api". */
-  function noteBy(n) {
-    return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
-  }
+  let noteMod = null, noteLoading = null;
   function renderNote() {
-    const [n, ...trail] = noteGone ? [] : liveNotes();
-    // Removed rather than emptied: `html[data-note]` matches an empty value
-    // too, so writing "" left the mark blinking on every page from boot, note
-    // or no note -- a perpetual animation for a state the page was not in.
-    // It blinks while a note waits and stops when the reader rests on it.
+    if (noteMod) return noteMod.render();
+    const n = liveNotes()[0];
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
-    if (noteGone) {
-      // The daemon's word on the close arrives while the ghost stands; the
-      // ghost it would redraw is this one, and redrawing it drops the
-      // keyboard off its Undo.
-      if (noteEl.querySelector(".note-ghost")?.dataset.ids === noteGone.ids.join(",")) return;
-      const g = noteGone, t = ghostSpent(g, noteEl.querySelector(".t-ghost"));
-      noteEl.hidden = false; noteEl.dataset.lit = ""; noteEl.dataset.seen = "";
-      noteEl.innerHTML = `<div class="t-ghost note-ghost" data-ids="${g.ids.join(",")}" style="--t:-${t}ms"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
-      return;
-    }
-    if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }
-    noteEl.hidden = false;
-    noteEl.dataset.lit = n.lit && !n.seen ? "1" : "";
-    noteEl.dataset.seen = n.seen ? "1" : "";
-    // A note newer than the one on screen makes snyvi hop; a reload or a redraw does not.
-    const arrived = n.id !== noteShown && !n.seen;
-    if (arrived && markEl) {
-      markEl.classList.remove("hop"); void markEl.offsetWidth; markEl.classList.add("hop");
-      // Whatever snyvi was saying to a reader on the face, the line that just
-      // arrived outranks it: the agent takes the floor, and the hop is the
-      // mark's answer rather than the nod. Asked only of a bubble that is
-      // open, which is also the only time `closeSay` is in scope: the first
-      // render runs before the block below it is reached.
-      if ("say" in root.dataset) closeSay();
-    }
-    noteShown = n.id;
-    const by = noteBy(n);
-    noteEl.innerHTML =
-      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}` +
-        `<li class="note-all"><button type="button" data-note-all title="Close every aside · Undo for 4 s">Close all</button></li></ol>` : "") +
-      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : ""}>` +
-      noteBg(n.id) + `<button type="button" class="note-x" data-note-x title="Close · Undo for 4 s  Esc" aria-label="Close this aside">✕</button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
-    // A new note brings snyvi up from behind it for a moment, as a hover does.
-    // A window in the background would play that to nobody, so it waits.
-    if (arrived) { if (document.hidden) peekOwed = true; else peekNote(); }
+    if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
+      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, toast, closeSay, ghostSpent, stillMotion, GHOST_MS,
+        holdUndo: f => (undoing = f), dropUndo: f => { if (undoing === f) undoing = null; } });
+      noteMod.render();
+    }, () => { noteLoading = null; });
   }
-  let peekOwed = false;
-  function peekNote() {
-    peekOwed = false;
-    clearTimeout(notePeek);
-    void noteEl.offsetWidth;   // the new card's resting state first, so the rise transitions
-    noteEl.classList.add("peek");
-    notePeek = setTimeout(() => noteEl.classList.remove("peek"), 4200);
-  }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && peekOwed) peekNote(); });
-  function seeNotes() {
-    if (!liveNotes().some(n => !n.seen)) return;
-    state.notes = state.notes.map(n => ({ ...n, seen: true }));
-    // Only the card's marks change, not what is in it: a rebuild here, on
-    // the focus a press on its ✕ brings, swapped the button out between the
-    // press and the release, and the click never happened.
-    if (!noteGone) { noteEl.dataset.lit = ""; noteEl.dataset.seen = "1"; delete root.dataset.note; }
-    fetch("/api/notes/seen", { method: "POST" }).catch(() => {});
-  }
-  // Resting on it is reading it; passing over on the way to the theme button is not.
-  // The logo looks down at whoever comes over to the note.
-  const noteNear = on => { if (on) root.dataset.noteNear = "1"; else delete root.dataset.noteNear; };
-  noteEl.addEventListener("mouseenter", () => { noteNear(true); clearTimeout(noteLook); noteLook = setTimeout(seeNotes, 700); });
-  noteEl.addEventListener("mouseleave", () => { noteNear(false); clearTimeout(noteLook); });
-  noteEl.addEventListener("focusin", () => { noteNear(true); seeNotes(); });
-  noteEl.addEventListener("focusout", () => noteNear(false));
-  markEl?.addEventListener("animationend", e => { if (e.animationName === "bm-hop") markEl.classList.remove("hop"); });
-  noteEl.addEventListener("click", e => {
-    if (e.target.closest("[data-note-undo]")) { if (noteGone) noteGone.undo(); return; }
-    // `detail` is 0 for a click a key made, and only a keyboard is handed on to Undo.
-    if (e.target.closest("[data-note-x]")) { closeNotes(liveNotes().slice(0, 1).map(n => n.id), !e.detail); return; }
-    if (e.target.closest("[data-note-all]")) { closeNotes(liveNotes().map(n => n.id), !e.detail); return; }
-    seeNotes();
-    const a = e.target.closest("[data-about]");
-    if (a) showDoc(a.dataset.about, true);
-  });
-  noteEl.addEventListener("keydown", e => {
-    // Esc closes the aside the hand is on, and goes no further: not back a
-    // page, which is what it does with nothing over the page.
-    if (e.key === "Escape") {
-      e.preventDefault(); e.stopPropagation();
-      if (e.target.closest(".note-now")) closeNotes(liveNotes().slice(0, 1).map(n => n.id), true);
-      return;
-    }
-    if (e.target.closest("button")) return;
-    const a = e.target.closest(".note-now[data-about]");
-    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showDoc(a.dataset.about, true); }
-  });
-  noteEl.addEventListener("animationend", e => {
-    if (e.animationName === "drain" && noteGone) noteSettle(noteGone);
-  });
-  /** Close asides: off the card at once, in every page once the daemon has
-   *  it, and the card holds the way back for GHOST_MS. Nothing is deleted. */
-  function closeNotes(ids, byKey = false) {
-    if (!ids.length) return;
-    if (noteGone) noteSettle(noteGone);
-    const g = { ids, spent: 0, timer: 0 };
-    g.undo = () => undoNotes(g);
-    state.notes = state.notes.map(n => ids.includes(n.id) ? { ...n, dismissed: true, seen: true } : n);
-    noteGone = g; undoing = g.undo;
-    renderNote();
-    if (stillMotion.matches) g.timer = setTimeout(() => noteSettle(g), GHOST_MS);
-    // A keyboard that closed it lands on the Undo, not on the page's start.
-    // A pointer does not: a focus resting there would hold the clock.
-    if (byKey) noteEl.querySelector("[data-note-undo]")?.focus({ preventScroll: true });
-    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", String(e)); });
-  }
-  function noteSettle(g) {
-    if (noteGone !== g) return;
-    clearTimeout(g.timer);
-    if (undoing === g.undo) undoing = null;
-    noteGone = null;
-    renderNote();
-  }
-  function undoNotes(g, tell = true) {
-    if (noteGone !== g) return;
-    clearTimeout(g.timer);
-    if (undoing === g.undo) undoing = null;
-    noteGone = null;
-    state.notes = state.notes.map(n => g.ids.includes(n.id) ? { ...n, dismissed: false } : n);
-    renderNote();
-    if (tell) notesSay("restore", g.ids).catch(e => toast("Could not bring the aside back", String(e)));
-  }
-  async function notesSay(what, ids) {
-    const r = await fetch(`/api/notes/${what}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
-    if (!r.ok) throw new Error(`${r.status}`);
-  }
-  // "3 min ago" stays true without anything arriving.
-  setInterval(() => { if (liveNotes().length && !noteGone && !noteEl.matches(":hover")) renderNote(); }, 60000);
   renderNote();
 
   // ---------- snyvi answers ----------
@@ -2734,7 +2585,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => newDesk(null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: () => act("make", null), refresh: loadDesks, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3061,7 +2912,7 @@
       if (state.view === "inbox") showInbox(false);
     });
     // The library is gone, from this tab or another: every page starts over.
-    es.addEventListener("reset", () => afterReset());
+    es.addEventListener("reset", () => panelMod().then(m => m.afterReset(), () => location.replace("/")));
     es.addEventListener("browse", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
       state.browse = j.roots || [];
@@ -3277,8 +3128,10 @@
     // would otherwise lose the word to a box that was not there yet.
     const input = $("#palette-input");
     if (pal.hidden) { input.value = ""; openDialog(pal, input); }
-    try { palMod = await (palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    let lk;
+    try { [palMod, lk] = await Promise.all([palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`), useLook()]); }
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
+    const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
       openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc });
   }
@@ -3286,105 +3139,16 @@
   const browsing = () => state.view === "browse" && state.browseRoot;
   $("#btn-search").addEventListener("click", openPalette);
 
-  // ---------- theme / font / panes ----------
-  /* One click always changes what you see: the button steps to the next of
-   * the eight, as the swatch steps to the next accent. The one it lands on is
-   * kept exactly as a palette pick is -- in the slot of its side, and
-   * dropped to "the system" when that side is what the system shows, so the
-   * OS switching light and dark still moves between your two.
-   *
-   * Which theme is in each slot, and whether the system or the button picks
-   * the slot, are the three `snyvi.theme.*` keys; boot.js owns resolving them
-   * into `data-theme` and "is it dark?". */
-  const { system: sysDark } = snyviTheme;
-  /* The eight, each with the side it is: which slot it lives in, and which
-   * side the button lands on when it is kept. Four light and four dark, one
-   * of each for every pair of accents. */
-  const THEMES = { paper: ["Paper", "light"], snow: ["Snow", "light"], sage: ["Sage", "light"], parchment: ["Parchment", "light"],
-    ink: ["Ink", "dark"], midnight: ["Midnight", "dark"], espresso: ["Espresso", "dark"], contrast: ["Contrast", "dark"] };
-  const sysSide = () => (sysDark.matches ? "dark" : "light");
-  const slot = k => store.get(k === "light" ? "snyvi.theme.light" : "snyvi.theme.dark") || (k === "light" ? "paper" : (matchMedia("(prefers-contrast: more)").matches ? "contrast" : "ink"));
-  // The button steps through the eight like the swatch steps through the
-  // accents: one click, the next one, the whole window in it.
-  const ORDER = Object.keys(THEMES);
-  const nextTheme = () => ORDER[(ORDER.indexOf(root.dataset.theme) + 1) % ORDER.length];
-  const SUN = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10" cy="10" r="3.5"/><path d="M10 2.5v1.5M10 16v1.5M2.5 10H4M16 10h1.5M4.7 4.7l1.06 1.06M14.24 14.24l1.06 1.06M4.7 15.3l1.06-1.06M14.24 5.76l1.06-1.06"/></svg>';
-  const MOON = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M16.5 12.2A6.8 6.8 0 0 1 7.8 3.5a6.8 6.8 0 1 0 8.7 8.7z"/></svg>';
-  function paintThemeBtn() {
-    const b = $("#btn-theme"), n = nextTheme();
-    // The icon is the side a click will land on.
-    b.innerHTML = THEMES[n][1] === "dark" ? MOON : SUN;
-    b.dataset.label = `Theme: ${(THEMES[root.dataset.theme] || [root.dataset.theme])[0]} · click for ${THEMES[n][0]}`;
-  }
-  $("#btn-theme").addEventListener("click", async () => { await loadThemes(); setTheme(nextTheme()); });
-  paintThemeBtn();
-  /* Every theme but Paper and Ink, fetched once the page is idle rather than
-   * carried by first paint. The button and ⌘K theme wait on the same promise,
-   * so a click that beats it -- a few milliseconds from the local daemon --
-   * lands anyway. When it is in, the theme boot.js stood in for is drawn,
-   * and the copies it will stand in with next time are brought up to date. */
-  let themesP = null;
-  const loadThemes = () => themesP ||= new Promise(done => {
-    const l = document.createElement("link");
-    l.rel = "stylesheet"; l.href = `/assets/themes.css${boot.v ? `?v=${boot.v}` : ""}`;
-    l.onload = () => {
-      const was = root.dataset.theme;
-      snyviTheme.ready();
-      keepCopies();
-      paintThemeBtn();
-      if (mmd && root.dataset.theme !== was) mmd.retheme();
-      done(true);
-    };
-    l.onerror = () => { l.remove(); themesP = null; done(false); };
-    document.head.append(l);
-  });
-  (window.requestIdleCallback || setTimeout)(() => loadThemes(), { timeout: 1500 });
-  /** The copies boot.js paints the first frame from: the block of the theme
-   *  in each slot, as the sheet has it now, so a copy lasts exactly as long
-   *  as that theme's colours do. Paper and Ink are in first paint and need
-   *  none; a slot naming a theme that no longer exists goes back to its
-   *  default. */
-  function keepCopies() {
-    const sheet = [...document.styleSheets].find(x => /\/assets\/themes\.css/.test(x.href || ""));
-    if (!sheet) return;
-    for (const side of ["light", "dark"]) {
-      const t = slot(side), key = `snyvi.theme.css.${side}`;
-      if (t === "paper" || t === "ink") { store.del(key); continue; }
-      const rule = [...sheet.cssRules].find(r => r.selectorText === `[data-theme="${t}"]`);
-      if (rule) store.set(key, ":root" + rule.cssText);
-      else { store.del(key); store.del(`snyvi.theme.${side}`); }
-    }
-  }
-  /** Keep a theme picked in the palette: it goes in the slot of its side, and
-   *  the button lands on that side -- dropped to "the system" when that is
-   *  what the system shows, the same rule as a click on the button. */
-  function setTheme(name) {
-    const [label, side] = THEMES[name] || [];
-    if (!side) return;
-    store.set(side === "light" ? "snyvi.theme.light" : "snyvi.theme.dark", name);
-    store.set("snyvi.theme.follow", side === sysSide() ? "" : side);
-    keepCopies();
-    previewTheme(null);
-    paintThemeBtn();
-    toast("Theme", label, null, null, { face: "glad", at: $("#btn-theme") });
-  }
-  /** Draw a theme without keeping it, or, with no name, the one that is
-   *  kept. Diagrams already drawn in it come back from their cache. */
-  function previewTheme(name) {
-    const was = root.dataset.theme;
-    name ? (root.dataset.theme = name) : snyviTheme.apply();
-    if (mmd && root.dataset.theme !== was) mmd.retheme();
-  }
-  // The same fault by a different route: following the system, the page
-  // moves when the system does, and the diagrams on it were drawn before it
-  // moved. boot.js has already re-resolved `data-theme` by the time this runs;
-  // applying again is free and keeps this from depending on that order.
-  sysDark.addEventListener("change", () => {
-    const was = root.dataset.theme;
-    snyviTheme.apply();
-    paintThemeBtn();
-    if (mmd && root.dataset.theme !== was) mmd.retheme();
-  });
+  // ---------- the look: theme, accent, font ----------
+  /* The three steppers in the foot column and the loader for the themes
+   * that are not in first paint are ui/look.js, fetched once the page is
+   * idle, or sooner if the hand reaches the column or ⌘K opens. Until it is
+   * in, the page wears what boot.js resolved, which is all first paint needs. */
+  let look = null, lookLoading = null;
+  const useLook = () => (lookLoading ||= import(`/assets/look.js${boot.v ? `?v=${boot.v}` : ""}`)
+    .then(m => (look = m.init({ root, $, store, boot, toast, control, onDesk, desk: () => desk, mmd: () => mmd, sayTermSize })), e => { lookLoading = null; throw e; }));
+  (window.requestIdleCallback || setTimeout)(() => useLook().catch(() => {}), { timeout: 1500 });
+  for (const ev of ["pointerenter", "focusin"]) $(".foot-set").addEventListener(ev, () => useLook().catch(() => {}));
   /* Which controls mean something where the reader is, in one place: the
    * column paints from it and `w` and `z` ask it, so the two cannot
    * disagree. A control that does nothing here is dimmed, not hidden -- it
@@ -3413,7 +3177,7 @@
     }
     if (!why("wide")) $("#btn-wide").dataset.label = onDesk() ? "Focused panel in full view · w" : "Maximise width · w";
     if (!why("wrap")) $("#btn-wrap").dataset.label = "Wrap long lines · z";
-    if (!why("font")) paintFontBtn();
+    if (!why("font")) look?.paintFontBtn();
   }
   /** Run a control, or say why it does nothing here, beside its button. */
   const control = (c, run) => () => {
@@ -3443,70 +3207,9 @@
   $("#btn-wrap").addEventListener("click", control("wrap", toggleWrap));
   $("#btn-wrap").classList.toggle("on", root.dataset.wrap === "1");
 
-  // The reading faces, in the order Aa steps through them. "" is Inter.
-  const FONTS = [["", "Inter"], ["serif", "Source Serif"], ["literata", "Literata"], ["atkinson", "Atkinson Hyperlegible"], ["mono", "JetBrains Mono"]];
-  function paintFontBtn() {
-    const f = FONTS.find(([k]) => k === (root.dataset.font || "")) || FONTS[0];
-    // On a desk, Aa is the terminal's text size; the face there is always mono.
-    if (onDesk()) { const t = desk.textSize(); $("#btn-font").dataset.label = `Text size: ${t.name} · click for ${t.next}`; return; }
-    $("#btn-font").dataset.label = `Font: ${f[1]} · click for the next`;
-  }
   /** The terminal's text size, said beside Aa: after a click, or ⌃= ⌃- ⌃0 in
    *  a panel. */
   const sayTermSize = () => { paintControls(); toast("Text size", desk.textSize().name, null, null, { face: "glad", at: $("#btn-font") }); };
-  $("#btn-font").addEventListener("click", control("font", () => {
-    if (onDesk()) { const t = desk.textSize(); desk.textSize(t.at === t.of - 1 ? -(t.of - 1) : 1); sayTermSize(); return; }
-    const i = FONTS.findIndex(([k]) => k === (root.dataset.font || ""));
-    const [next, name] = FONTS[(i + 1) % FONTS.length];
-    next ? (root.dataset.font = next) : delete root.dataset.font;
-    store.set("snyvi.font", next);
-    paintFontBtn();
-    toast("Font", name, null, null, { face: "glad", at: $("#btn-font") });
-  }));
-  paintFontBtn();
-  /* The accent colours, in the order a click steps through them. "" is
-   * passion, the default: the red the mark itself wears. They were a popover of eight swatches, which is a
-   * menu to read for a setting with no wrong answer: every one of them is
-   * simply a colour, and the only way to know which you want is to see it on
-   * the page. So the button is the setting now -- one click, the next colour,
-   * the whole window in it before the finger is off the mouse -- and the
-   * swatch on the button is where you are. snyvi wears the accent too, so the
-   * face that says which one it is arrives in that colour. */
-  const ACCENTS = [["", "Passion"], ["crimson", "Crimson"], ["rose", "Rose"], ["violet", "Violet"], ["blue", "Blue"], ["teal", "Teal"], ["green", "Green"], ["graphite", "Graphite"]];
-  const accBtn = $("#btn-accent");
-  const accName = k => (ACCENTS.find(([a]) => a === k) || ACCENTS[0])[1];
-  function paintAccent() {
-    const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
-    accBtn.dataset.label = `Accent: ${accName(ACCENTS[i][0])} · click for ${accName(ACCENTS[(i + 1) % ACCENTS.length][0])}`;
-  }
-  /* The tab's icon wears the accent too: snyvi's face drawn in the mascot
-   * colours the stylesheet resolved, each a plain hex the SVG can hold,
-   * which is how boot.js hands a token back. */
-  function paintFavicon() {
-    const [body, nub, ink] = ["--mascot", "--mascot-nub", "--mascot-ink"].map(v => snyviTheme.colour(v));
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><rect x="14" y="0.5" width="4" height="5" rx="2" fill="${nub}"/><rect x="1" y="4" width="30" height="27" rx="9" fill="${body}"/><ellipse cx="11" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3" fill="${ink}"/><path d="M13.5 23Q16 25.2 18.5 23" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/></svg>`;
-    const link = $("#favicon");
-    if (link) link.href = "data:image/svg+xml," + encodeURIComponent(svg);
-  }
-  function setAccent(k) {
-    k ? (root.dataset.accent = k) : delete root.dataset.accent;
-    store.set("snyvi.accent", k);
-    paintAccent();
-    paintFavicon();
-    if (mmd) mmd.retheme();
-  }
-  accBtn.addEventListener("click", () => {
-    const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
-    const [next, name] = ACCENTS[(i + 1) % ACCENTS.length];
-    setAccent(next);
-    // The swatch is the same shape in every colour, so the change is quiet
-    // where the click was. It flicks once, and snyvi says the name beside it.
-    accBtn.classList.remove("flick"); void accBtn.offsetWidth; accBtn.classList.add("flick");
-    toast("Accent", name, null, null, { face: "glad", at: accBtn });
-  });
-  accBtn.addEventListener("animationend", () => accBtn.classList.remove("flick"));
-  paintAccent();
-  paintFavicon();
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
   const appEl = $("#app"), help = $("#help"), aboutDlg = $("#about"), resetDlg = $("#reset");
   const dialogs = [pal, help, aboutDlg, resetDlg];
@@ -3704,6 +3407,13 @@
     else keyMode?.off();
   }
 
+  /* What the letters act on, handed to keys.js with each one. */
+  const keyCtx = { state, browsing, browseEl, showBrowse, order, siblings, showDoc, showCompare, togglePin, toggleSplit, togglePreview,
+    openFind, deleteCurrent, openNext, showInbox, rawUrl, mmd: () => mmd,
+    wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
+    rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
+    side: () => sideNarrow.matches ? toggleSheet("side") : fold("side") };
+
   document.addEventListener("keydown", e => {
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
@@ -3744,58 +3454,13 @@
       return;
     }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+    // `?` answers asleep too: the help box is where a reader finds out the
+    // letters sleep at all, so the key that opens it cannot be one of them.
+    if (e.key === "?") { e.preventDefault(); help.hidden ? openHelp() : closeDialog(help); return; }
     if (!keysOn) { if (e.key.length === 1 || e.key === "Delete") useKeys().then(m => m.hint(), () => {}); return; }
-    if (browsing() && (e.key === "j" || e.key === "k")) {
-      keyMode?.hit();
-      const links = [...browseEl.querySelectorAll(".b-file a")];
-      const at = links.findIndex(a => a.dataset.path === state.browsePath);
-      const next = links[at + (e.key === "j" ? 1 : -1)] || (at < 0 ? links[0] : null);
-      if (next) showBrowse(next.dataset.browse, next.dataset.path, true);
-      e.preventDefault();
-      return;
-    }
-    const ids = order(), i = state.doc ? ids.indexOf(state.doc.id) : -1;
-    const sib = siblings(), si = state.doc ? sib.indexOf(state.doc.id) : -1;
-    switch (e.key) {
-      case "j": if (ids[i + 1]) showDoc(ids[i + 1], true); else if (i < 0 && ids[0]) showDoc(ids[0], true); break;
-      case "k": if (i > 0) showDoc(ids[i - 1], true); break;
-      case "[": if (sib[si + 1]) showDoc(sib[si + 1], true); break;   // sidebar is newest-first, so older is +1
-      case "]": if (si > 0) showDoc(sib[si - 1], true); break;
-      // A second `c` leaves the comparison: over a desk, the meta's Back button
-      // is not drawn, and the key that opened it is the natural way out.
-      case "c": if (state.comparing) { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); } else showCompare(); break;
-      case "p": togglePin(); break;
-      case "s": toggleSplit(); break;
-      case "v": togglePreview(); break;
-      case "/": openFind(); break;
-      // Delete and not Backspace: a key a reader leans on while thinking is
-      // not a key to lose a document to.
-      case "Delete": deleteCurrent(); break;
-      case "n": openNext(); break;
-      case "i": showInbox(true); break;
-      case "w": control("wide", toggleWide)(); break;
-      case "z": control("wrap", toggleWrap)(); break;
-      case "t":
-        if (railNarrow.matches) { if (!rail.classList.contains("empty")) toggleSheet("rail"); }
-        else fold("rail");
-        break;
-      // The diagram under the cursor, or the last one used: fit it, or fill the
-      // screen with it. Both are no-ops on a page with no diagram on it.
-      case "0": if (mmd) mmd.key("0"); break;
-      case "f": if (mmd) mmd.key("f"); break;
-      case "\\":
-        if (sideNarrow.matches) toggleSheet("side");
-        else fold("side");
-        break;
-      case "o":
-        if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
-        else if (browsing() && state.browsePath) window.open(rawUrl(state.browseRoot.id, state.browsePath), "_blank");
-        break;
-      case "?": help.hidden ? openHelp() : closeDialog(help); break;
-      default: return;
-    }
-    keyMode?.hit();
-    e.preventDefault();
+    // The letters themselves are keys.js's, which ⌃B fetched before any of
+    // them could act; one pressed in the milliseconds before it landed is dropped.
+    if (keyMode?.letter(e, keyCtx)) { keyMode.hit(); e.preventDefault(); }
   });
 
   // ---------- boot ----------

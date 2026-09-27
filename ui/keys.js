@@ -106,3 +106,52 @@ export function hint() {
   clearTimeout(offT);
   offT = setTimeout(() => { if (!sleep) pill.className = ""; }, HINT);
 }
+
+/** A single letter, once ⌃B has woken them: what it does, through what the
+ *  page hands over. False for a key that is not one of them, so the page
+ *  leaves it alone. They were a switch in app.js, carried by every first
+ *  paint for a reader who may never press ⌃B; since 1.7.1 they come with
+ *  the pill, which ⌃B fetches before any letter can act. */
+export function letter(e, c) {
+  const { state } = c;
+  if (c.browsing() && (e.key === "j" || e.key === "k")) {
+    const links = [...c.browseEl.querySelectorAll(".b-file a")];
+    const at = links.findIndex(a => a.dataset.path === state.browsePath);
+    const next = links[at + (e.key === "j" ? 1 : -1)] || (at < 0 ? links[0] : null);
+    if (next) c.showBrowse(next.dataset.browse, next.dataset.path, true);
+    return true;
+  }
+  const ids = c.order(), i = state.doc ? ids.indexOf(state.doc.id) : -1;
+  const sib = c.siblings(), si = state.doc ? sib.indexOf(state.doc.id) : -1;
+  switch (e.key) {
+    case "j": if (ids[i + 1]) c.showDoc(ids[i + 1], true); else if (i < 0 && ids[0]) c.showDoc(ids[0], true); break;
+    case "k": if (i > 0) c.showDoc(ids[i - 1], true); break;
+    case "[": if (sib[si + 1]) c.showDoc(sib[si + 1], true); break;   // sidebar is newest-first, so older is +1
+    case "]": if (si > 0) c.showDoc(sib[si - 1], true); break;
+    // A second `c` leaves the comparison: over a desk, the meta's Back button
+    // is not drawn, and the key that opened it is the natural way out.
+    case "c": if (state.comparing) { state.cache.delete(state.doc.id); c.showDoc(state.doc.id, false); } else c.showCompare(); break;
+    case "p": c.togglePin(); break;
+    case "s": c.toggleSplit(); break;
+    case "v": c.togglePreview(); break;
+    case "/": c.openFind(); break;
+    // Delete and not Backspace: a key a reader leans on while thinking is
+    // not a key to lose a document to.
+    case "Delete": c.deleteCurrent(); break;
+    case "n": c.openNext(); break;
+    case "i": c.showInbox(true); break;
+    case "w": c.wide(); break;
+    case "z": c.wrap(); break;
+    case "t": c.rail(); break;
+    // The diagram under the cursor, or the last one used: fit it, or fill the
+    // screen with it. Both are no-ops on a page with no diagram on it.
+    case "0": case "f": c.mmd()?.key(e.key); break;
+    case "\\": c.side(); break;
+    case "o":
+      if (state.doc) window.open(`/api/docs/${state.doc.id}/raw`, "_blank");
+      else if (c.browsing() && state.browsePath) window.open(c.rawUrl(state.browseRoot.id, state.browsePath), "_blank");
+      break;
+    default: return false;
+  }
+  return true;
+}
