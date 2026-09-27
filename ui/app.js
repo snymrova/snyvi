@@ -2845,6 +2845,12 @@
       // it is -- a reader mid-paragraph did not ask to be moved -- and the
       // arrival is offered instead of taken.
       const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
+      // A newer version of a file already waiting takes that row's place:
+      // the daemon marked the older ones read when this one landed, and
+      // counts one. By file and not by `supersedes`, which names only the
+      // version just before -- a page that missed an event kept the rest.
+      const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
+      if (older.length) dropFromQueue(older, state.waiting - older.length);
       // Held in order only while everything waiting is held: past that the
       // arrival is the newest, and belongs after rows this page never had.
       if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);

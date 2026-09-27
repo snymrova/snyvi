@@ -175,13 +175,15 @@ async function main() {
     // A new document, the way an agent's send makes one: its own file, its
     // own content, through the API. What the queue rows send while reading.
     let arrivals = 0;
-    const arrive = async () => {
-      const n = ++arrivals, path = join(tmp, `arrival-${n}.md`);
-      writeFileSync(path, `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
+    // `o` sends a named file (`name`, `body`), again if it was sent before,
+    // under a `workflow` of its own.
+    const arrive = async (o = {}) => {
+      const n = ++arrivals, path = join(tmp, o.name || `arrival-${n}.md`);
+      writeFileSync(path, o.body || `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
       const r = await fetch(`${base}/api/docs`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ path, cwd: tmp }),
+        body: JSON.stringify({ path, cwd: tmp, ...(o.workflow ? { workflow: o.workflow } : {}) }),
       });
       if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
       return (await r.json()).doc;
@@ -990,6 +992,27 @@ async function queueRows(p, url, arrive) {
   const empty = await read();
   rows.push(["an arrival on an empty inbox", openedItself && empty.bar === null && empty.marked === 0,
     !openedItself ? `stayed on "${empty.title}"` : empty.bar !== null ? "opened, but the bar counts it" : "opened itself, and is read"]);
+
+  // 1.7.1: one file sent three times, twice from one session and once from
+  // another workflow, unread, is one row waiting: the newest. The daemon
+  // counted one all along; the page kept the older rows until a reload.
+  await p.goto(url);
+  const plan = "the-plan.md";
+  await arrive({ name: plan, body: "# The plan\n\nFirst draft.\n" });
+  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan")`);
+  await arrive({ name: plan, body: "# The plan, revised\n\nSecond draft.\n" });
+  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan, revised")`);
+  await sleep(300);
+  const twice = await p.ev(`({ rows: [...document.querySelectorAll("#queue .title")].map(t => t.textContent).filter(t => t.startsWith("The plan")), n: document.querySelector("#queue .t-label .n")?.textContent })`);
+  await arrive({ name: plan, body: "# The plan, third\n\nFrom elsewhere.\n", workflow: "ui audit" });
+  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan, third")`);
+  await sleep(300);
+  const thrice = await p.ev(`({ rows: [...document.querySelectorAll("#queue .title")].map(t => t.textContent).filter(t => t.startsWith("The plan")), n: document.querySelector("#queue .t-label .n")?.textContent })`);
+  await p.press("i"); await sleep(600);
+  const listed = await p.ev(`[...document.querySelectorAll(".inbox.waiting .title")].map(a => a.textContent).filter(t => t.startsWith("The plan"))`);
+  rows.push(["one file sent three times waits once", twice.rows.join("|") === "The plan, revised" && thrice.rows.join("|") === "The plan, third" && listed.join("|") === "The plan, third" && thrice.n === "1",
+    twice.rows.length !== 1 ? `after two sends the sidebar lists ${twice.rows.join(", ")}` : thrice.rows.length !== 1 ? `after a third from another workflow it lists ${thrice.rows.join(", ")}`
+      : listed.length !== 1 ? `the inbox lists ${listed.join(", ")}` : thrice.n !== "1" ? `the count says ${thrice.n}` : "one row, the newest, in the sidebar and the inbox; the count says 1"]);
   void late;
   return rows;
 }
