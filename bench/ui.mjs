@@ -227,7 +227,7 @@ async function main() {
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
     sections.push(["nothing lost when snyvi says no", await lossRows(p, base, token, arrive, browsed)]);
-    sections.push(["by keyboard, and back", await reachRows(p, arrive)]);
+    sections.push(["by keyboard, and back", await reachRows(p, base, token, arrive)]);
     sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
     sections.push(["an aside, closed", await asideRows(p, base, token)]);
     sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
@@ -292,6 +292,7 @@ const KEYS = {
   ArrowUp: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
   Delete: { key: "Delete", code: "Delete", vk: 46 },
   "⇧F10": { key: "F10", code: "F10", vk: 121, shift: true },
+  "⇧Tab": { key: "Tab", code: "Tab", vk: 9, shift: true },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
   "\\": { key: "\\", code: "Backslash", vk: 220, text: "\\" },
@@ -1267,7 +1268,7 @@ async function lossRows(p, base, token, arrive, browsed) {
 
 /** 1.7.2: a keyboard is never left on nothing. A menu gives the focus back
  *  to the row it came from, however it was opened and however it closed. */
-async function reachRows(p, arrive) {
+async function reachRows(p, base, token, arrive) {
   const rows = [];
   const origin = await p.ev("location.origin");
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
@@ -1299,6 +1300,28 @@ async function reachRows(p, arrive) {
   const esc = await p.ui("at", row);
   rows.push(["Esc after right-click → focus back", menu && esc,
     !menu ? "the right-click opened no menu" : esc ? "the menu went, and the focus is on the row that was right-clicked" : `the focus is on ${JSON.stringify(await p.ui("focus"))}`]);
+  await p.pointerAway();
+
+  // An older aside in the trail is reached by Tab and opened by Enter.
+  const say = async (text, about) => {
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent", ...(about ? { about } : {}) }) });
+    return (await r.json()).note;
+  };
+  await say("The first older aside, about the reach document.", d.id);
+  await say("The second older aside, about it too.", d.id);
+  const now = await say("The newest aside, on the card.");
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(now.text)}`);
+  await p.ev(`document.querySelector("#note .note-now").focus()`);
+  await sleep(500);
+  await p.press("⇧Tab", { raw: true });   // Close all
+  await p.press("⇧Tab", { raw: true });   // the second aside in the trail
+  const on = await p.ev(`document.activeElement?.closest(".note-trail li")?.querySelector(".note-t")?.textContent || null`);
+  await p.press("Enter");
+  const went = await until(`document.title === ${JSON.stringify(d.title)}`);
+  rows.push(["Tab reaches the second aside in the trail; Enter opens it", /second older aside/.test(on || "") && went,
+    !on ? `Tab went to ${JSON.stringify(await p.ui("focus"))}, not the trail` : !/second older aside/.test(on) ? `Tab reached "${on}"` : went ? "reached, and Enter opened the document it is about" : `Enter left the page on "${await p.ev("document.title")}"`]);
   await p.pointerAway();
   return rows;
 }

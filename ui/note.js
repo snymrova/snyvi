@@ -48,7 +48,7 @@ const CSS = `
    11px for its byline, the sizes a Mac sidebar uses for a label and its
    caption. The reading font is for documents; at 13px in a sidebar a serif
    goes soft. */
-.note-now p, .note-trail p { margin: 0; font-family: var(--sans); font-size: 13px; font-weight: 400; line-height: 1.38; letter-spacing: -.003em;
+.note-now p, .note-trail .note-t { display: block; margin: 0; font-family: var(--sans); font-size: 13px; font-weight: 400; line-height: 1.38; letter-spacing: -.003em;
   color: var(--fg-2); text-wrap: pretty; }
 .note-by { display: block; margin-top: 4px; font-family: var(--sans); font-size: 11px; line-height: 1.3; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .note-by-now { display: flex; gap: 6px; }
@@ -75,9 +75,11 @@ const CSS = `
   opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s; }
 #note:hover .note-trail, #note:focus-within .note-trail { opacity: 1; visibility: visible; transform: none; transition-delay: .25s, .25s, 0s; }
 .note-trail li { padding: 9px 12px; border-radius: 10px; background: var(--note-bg); border: 1px solid var(--note-rule); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
-.note-trail li:is([data-about], [data-href]) { cursor: pointer; }
-.note-trail li[data-about]:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule)); }
-.note-trail p { color: var(--fg); }
+/* An older aside that leads somewhere is a button, so a keyboard opens it too. */
+.note-go { display: block; width: 100%; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.note-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: 4px; }
+.note-trail li:has(> .note-go:hover) { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule)); }
+.note-trail .note-t { color: var(--fg); }
 .note-trail .note-by { margin-top: 4px; }
 /* The ✕ that closes the aside: in the card's corner, there only while the
    card is opened -- hovered or focused -- like the other rows' tools. The
@@ -173,7 +175,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     noteShown = n.id;
     const by = noteBy(n);
     noteEl.innerHTML =
-      (trail.length ? `<ol class="note-trail">${trail.map(t => `<li${t.about ? ` data-about="${esc(t.about)}"` : t.href ? ` data-href="${esc(t.href)}"` : ""}><p>${esc(t.text)}</p><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span></li>`).join("")}` +
+      (trail.length ? `<ol class="note-trail">${trail.map(t => { const go = t.about ? ` data-about="${esc(t.about)}"` : t.href ? ` data-href="${esc(t.href)}"` : ""; return `<li>${go ? `<button type="button" class="note-go"${go}>` : ""}<span class="note-t">${esc(t.text)}</span><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span>${go ? "</button>" : ""}</li>`; }).join("")}` +
         `<li class="note-all"><button type="button" data-note-all title="Close every aside · Undo for 4 s">Close all</button></li></ol>` : "") +
       `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : n.href ? ` data-href="${esc(n.href)}" title="Read more"` : ""}>` +
       noteBg(n.id) + `<button type="button" class="note-x" data-note-x title="Close · Undo for 4 s  Esc" aria-label="Close this aside">✕</button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
