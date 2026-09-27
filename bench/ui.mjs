@@ -389,6 +389,27 @@ class Driver {
 /* ---------- the rows ---------- */
 
 const within = (v, lo, hi) => v !== null && v >= lo && v <= hi;
+/** The daemon saying no, once. The next request the page makes with `method`
+ *  to a path matching `path` is answered with `status` and `body` without
+ *  reaching the daemon, and `fetch` is the page's own again. A status of 0 is
+ *  no answer at all, the way a fetch to a stopped daemon fails. What happens
+ *  to the page after a no is what the rows that use this read; `refused(p)`
+ *  says whether the no was ever asked for, so a row cannot pass by never
+ *  having been refused. A navigation takes it off with everything else. */
+const refuse = (p, method, path, status = 500, body = { error: "refused by the bench" }) => p.ev(`(() => {
+  const real = window.fetch, re = new RegExp(${JSON.stringify(path.source)});
+  window.__refused = false;
+  window.fetch = function (u, o) {
+    const at = new URL(u instanceof Request ? u.url : u, location.href).pathname;
+    if (((o && o.method) || "GET").toUpperCase() !== ${JSON.stringify(method)} || !re.test(at)) return real.apply(this, arguments);
+    window.fetch = real;
+    window.__refused = true;
+    return ${status} ? Promise.resolve(new Response(${JSON.stringify(JSON.stringify(body))}, { status: ${status}, headers: { "content-type": "application/json" } }))
+      : Promise.reject(new TypeError("Failed to fetch"));
+  };
+  return 1;
+})()`);
+const refused = p => p.ev("window.__refused === true");
 /** Everything a row read, on stderr, for when a row fails and the sentence is not enough. */
 const dbg = (name, o) => { if (process.env.SNYVI_UI_DEBUG) console.error(`  [${name}] ${JSON.stringify(o)}`); };
 
