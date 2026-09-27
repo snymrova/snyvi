@@ -397,6 +397,11 @@ The first `send` starts the daemon in the background; it stays resident
 (about 25 MB) so every later send and every page open is instant. It
 listens on `127.0.0.1:7777` only. Set `SNYVI_PORT` to change the port.
 
+New to it? *The first ten minutes* (`/start`, from the `?` box, the
+connect page, or ⌘K `>`) is six short sections -- a document arriving,
+what waits, versions, desks, notes and asides, keys -- each with a
+*Show me* that lights the real thing in the window.
+
 ### Connecting an agent
 
 `snyvi mcp` is a plain stdio MCP server, so any agent that speaks MCP can
@@ -448,6 +453,13 @@ hooks at the new place rather than leaving them failing quietly on
 every tool call. `snyvi status` ends with a line saying what is
 registered and whether it still points at a binary that exists, and
 `snyvi uninstall-claude` takes all of it back out.
+
+It also sets Claude Code's status line to `snyvi statusline`, which prints
+nothing and tells a desk panel which model it runs and how full its context
+window is. A status line you already had is kept and still shows -- snyvi
+runs it for you -- and `uninstall-claude` puts it back. Restart any Claude
+Code session that was already open: one started before this does not see
+snyvi.
 
 `snyvi init-claude --auto` additionally installs a `PostToolUse` hook in
 `~/.claude/settings.json`, so every Markdown file Claude writes or edits
@@ -603,19 +615,37 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
 | t     | toggle contents                             |
-| \     | toggle sidebar                              |
+| \     | fold the sidebar to its rail / open it      |
 | o     | open source                                 |
 | ?     | show keys                                   |
 | Esc   | back to where the document was opened from  |
 | alt ← / → | back / forward                          |
 | ☰ / ⇧F10 | the menu for what has the focus           |
-| F2    | rename the project or desk row you are on   |
+| F2    | rename the project, desk or panel row you are on |
+| ⌘K `>` | what snyvi can do: a theme, a desk, a folder, an agent, the keys |
+
+`?` works with the letters asleep: it is how you find out they sleep.
+
+**The rail.** `\` or the button at the top of the sidebar folds it to a
+44 px column of icons -- the inbox, projects, desks, folders, agents, an
+aside when there is one, and search -- and each opens its section beside
+the rail; Esc, a click outside, or following a link closes it. The inbox
+icon counts what waits, the desks icon the panels waiting on you. A window
+narrower than 760 px always shows the sidebar this way.
+
+**On a desk**, with any key going to the panel otherwise: `⌃⌥1`–`⌃⌥4` a
+panel, `⌃⌥]` / `⌃⌥[` the next and the previous, `⌃⌥N` a new panel, `⌃⌥W`
+close it (its row keeps Undo for 8 s), `⌃⌥R` stop or start it, `⌃⌥Z` it
+alone, and `⌃⌥⇧` with an arrow moves it. The ✎ in a panel's head, F2 on its
+row or Rename… in its menu names it; the ⋯ at the end of the desk's head
+is the desk's own menu. A panel running Claude shows its model and how full
+its context window is, amber from 85%.
 
 **Right-click** anything in the sidebar, the rail or a desk for what it can
 do: a folder, a file, a project, a document, a desk, a panel's head or its
 terminal, a document in a desk's rail, a note, a point. The top line names
 what the menu is for; what removes or closes comes last, in red, and Close
-panel and Close desk ask a second time. Each entry does what the row's own
+desk asks a second time (Close panel does not: it keeps Undo). Each entry does what the row's own
 button does -- Remove from inbox leaves the same Undo in the row as its ✕.
 The menu key or ⇧F10 opens it from the keyboard for whatever has the focus
 (inside a panel, only the menu key: ⇧F10 is the program's), arrow keys and
