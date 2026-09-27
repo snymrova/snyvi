@@ -1187,7 +1187,7 @@
       pending(id, fromHistory);
       if (push) { history.pushState({ id, over: state.deskBehind, back }, "", `/d/${id}`); push = false; }
       overBar();
-      try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", String(e)); } return; }
+      try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", e); } return; }
       if (turn !== opening) return;
       state.opening = null;
     }
@@ -1262,7 +1262,7 @@
       const r = await fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       j = await r.json();
-    } catch (e) { toast("Could not open file", String(e)); return; }
+    } catch (e) { toast("Could not open file", e); return; }
     const back = push ? cameFrom() : null;
     if (push) leave();
     offDesk();
@@ -1348,7 +1348,7 @@
   async function connectReady() {
     if (connectHtml) return;
     try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel, cap: !!capability })); }
-    catch (e) { panelLoading = null; toast("Could not open that page", String(e)); }
+    catch (e) { panelLoading = null; toast("Could not open that page", e); }
   }
   async function showConnect(push = true) {
     if (push) leave();
@@ -1374,7 +1374,7 @@
     document.title = "How snyvi works · snyvi";
     if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
     let m;
-    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return; }
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", e); return; }
     // The first fetch of the chunk is a wait, and a click in it went elsewhere.
     if (state.view !== "start") return;
     docEl.innerHTML = m.start({ cap: !!capability });
@@ -1389,7 +1389,7 @@
   let welcomePlaces = [];
   async function welcomePage() {
     let m;
-    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return ""; }
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", e); return ""; }
     welcomePlaces = capability ? deskPlaces() : [];
     return m.welcome({ cap: !!capability, places: welcomePlaces, home: state.desks && state.desks.home, mascot: mascotHead("plain"), esc });
   }
@@ -1479,7 +1479,7 @@
     const a = aId || state.previous, b = bId || (cur && cur.id);
     if (!cur || !a) { toast("No previous version", "Nothing has been sent for this one before."); return; }
     let j;
-    try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
+    try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Could not compare the versions", e); return; }
     state.comparing = { a, b };
     docEl.innerHTML = `<header class="doc-head"><h1 class="doc-title">${esc(cur.title)}</h1><p class="doc-sub">changes ${fmt(j.a.received_at)} → ${fmt(j.b.received_at)}${state.split ? " · split" : " · inline"}</p></header><article class="prose kind-diff">${j.html}</article>`;
     swapIn();
@@ -1629,7 +1629,7 @@
       if (gone === g) { g.clock.stop(); gone = null; if (undoing === g.undo) undoing = null; }
       if (g.waiting) await refetchQueue();
       await refreshTree(d.project_id);
-      toast("Could not remove", String(e));
+      toast("Could not remove it", e);
     }
   }
 
@@ -2014,7 +2014,7 @@
     const input = $("#find-input");
     input.focus(); input.select();
     try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", String(e)); return; }
+    catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", e); return; }
     find.open({ $, docEl, bring }, from);
   }
 
@@ -2716,7 +2716,7 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, browseEl,
+    state, esc, toast, sayErr, browseEl,
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
     load: () => loadDesks(),
@@ -2761,7 +2761,7 @@
    *  reader's to see: they pressed something and nothing happened otherwise. */
   async function act(what, ...args) {
     try { const m = await useActs(); return m[what](actsCtx, ...args); }
-    catch (e) { actsLoading = null; toast("Could not do that", String(e)); }
+    catch (e) { actsLoading = null; toast("Could not do that", e); }
   }
 
   let deskRoots = "";
@@ -2843,10 +2843,10 @@
       return;
     }
     try { desk = await (deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
+    catch (e) { deskLoading = null; toast("Could not open the desk", e); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast, sayErr, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3360,14 +3360,30 @@
     if (h) toast(...h);
   }
 
+  /** An error, in words: `why` for the sub-line, `raw` (its own text, for
+   *  whoever needs the exact words) for the toast's title until 1.8's tip.
+   *  What snyvi's daemon said is shown as it said it; what the browser said
+   *  about the daemon is said the way a person would. */
+  function sayErr(e) {
+    const raw = String(e?.message ?? e).replace(/^Error: /, "");
+    return { raw, why: /dynamically imported|module script/i.test(raw) ? "part of snyvi did not load"
+      : /fetch|network|load failed/i.test(raw) ? "snyvi is not answering"
+      : /token|capabilit|\b40[13]\b/i.test(raw) ? "this window lost its link to snyvi · reopen it"
+      : /\b5\d\d\b/.test(raw) ? "something went wrong in snyvi"
+      : /\b(404|410)\b/.test(raw) ? "it is not there any more" : raw };
+  }
+
   /** snyvi's answer, beside whatever was just pressed. `onClick` makes the
    *  whole thing one; `action` ({label, run}) puts a button in it instead,
    *  for the one thing an answer can offer that a reader must be able to
    *  reach deliberately. `opts.at` overrides where it goes -- `null` sends it
    *  to the corner -- and `opts.face` overrides how it is said. A "Could
    *  not…" is an error: it stays until its ✕, with no face on it, since
-   *  something the reader wanted did not happen; `action` is then its Retry. */
+   *  something the reader wanted did not happen; `action` is then its Retry.
+   *  `sub` may be the error itself, which is said through sayErr. */
   function toast(title, sub, onClick, action, opts = {}) {
+    let raw = "";
+    if (sub && typeof sub === "object") ({ why: sub, raw } = sayErr(sub));
     const at = "at" in opts ? opts.at : liveAct();
     // News from the background never takes the place of an answer the reader
     // still needs, an error or an Undo: it waits until that one has gone.
@@ -3377,6 +3393,7 @@
     const el = document.createElement("div");
     el.className = "toast";
     if (err) el.setAttribute("role", "alert");
+    if (raw) el.title = raw;
     else el.dataset.feel = opts.face || feelFor(title);
     el.innerHTML = (err ? "" : `<span class="who">${mascotHead(el.dataset.feel)}</span>`) +
       `<span class="say"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
@@ -3426,7 +3443,7 @@
     if (pal.hidden) { input.value = ""; openDialog(pal, input); }
     let lk;
     try { [palMod, lk] = await Promise.all([palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`), useLook()]); }
-    catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
+    catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", e); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
       openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, openHelp, places: deskPlaces });
@@ -3559,7 +3576,7 @@
     // The sky is the sidebar, and a rail is 44 px of it.
     if (root.dataset.side === "0") { toast("Asteroids", sideNarrow.matches ? "needs a wider window" : "needs the sidebar open · \\", null, null, { at: gameBtn }); return; }
     try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { gameLoading = null; toast("Could not start the game", String(e)); return; }
+    catch (e) { gameLoading = null; toast("Could not start the game", e); return; }
     gameBtn.classList.add("on");
     game.open($("#side"), { back: gameBtn, onClose: () => gameBtn.classList.remove("on") });
   });
@@ -3572,7 +3589,7 @@
   async function panel(which) {
     let m;
     try { m = await panelMod(); }
-    catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
+    catch (e) { panelLoading = null; toast("Could not open that panel", e); return; }
     m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural, rel, capability, deskApi });
   }
   $("#btn-about").addEventListener("click", () => panel("about"));

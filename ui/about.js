@@ -75,7 +75,7 @@ async function clickUpd() {
     // The daemon's `update` event says what the restart waits on; until
     // it comes, this pill says Restarting.
     try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
-    catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", String(e)); }
+    catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", e); }
     return;
   }
   if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }

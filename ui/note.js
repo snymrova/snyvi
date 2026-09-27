@@ -244,7 +244,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     // A keyboard that closed it lands on the Undo, not on the page's start.
     // A pointer does not: a focus resting there would hold the clock.
     if (byKey) noteEl.querySelector("[data-note-undo]")?.focus({ preventScroll: true });
-    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", String(e)); });
+    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", e); });
   }
   function noteSettle(g) {
     if (noteGone !== g) return;

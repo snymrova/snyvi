@@ -45,7 +45,7 @@ export async function pick(ctx, forDesk = false) {
     const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
     if (d) d.open = true;
     ctx.browse(j.root.id, "", true);
-  } catch (e) { toast("Could not open a folder", String(e)); }
+  } catch (e) { toast("Could not open a folder", e); }
   finally { picking = false; browseEl.classList.remove("picking"); }
 }
 
@@ -65,10 +65,10 @@ export async function make(ctx, f) {
       const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude" } : {});
       if (claude) ctx.hold(p.pane.id);
       else await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
-    } catch (e) { toast("The desk is made, but its shell did not start", String(e)); }
+    } catch (e) { toast("The desk is made, but its shell did not start", e); }
     await ctx.load();
     ctx.show(j.desk.id, true);
-  } catch (e) { toast("Could not make a desk", String(e)); }
+  } catch (e) { toast("Could not make a desk", e); }
 }
 
 /** Whether `claude` can run here: on the daemon's PATH, or set up (which
@@ -160,8 +160,8 @@ export function rename(ctx, holder, what, id, typed, why) {
       }
     } catch (e) {
       label.textContent = before;
-      if (holder.isConnected) rename(ctx, holder, what, id, next, `Could not rename · ${e.message}`);
-      else toast(`Could not rename ${before}`, e.message);
+      if (holder.isConnected) rename(ctx, holder, what, id, next, `Could not rename · ${ctx.sayErr(e).why}`);
+      else toast(`Could not rename ${before}`, e);
     }
   };
   // The app answers single keys, and Escape closes find and the palette.
@@ -184,7 +184,7 @@ export async function terminal(ctx, body) {
     const j = await r.json().catch(() => ({}));
     if (r.ok) toast("Terminal", j.dir || "opened");
     else toast("No terminal", j.error || `${r.status}`);
-  } catch (e) { toast("No terminal", String(e)); }
+  } catch (e) { toast("Could not open a terminal", e); }
 }
 /** The same place, in the file manager -- Files, Finder, Explorer. The same
  *  ids go over and the daemon resolves them the same way; a desk's folder
@@ -201,7 +201,7 @@ export async function reveal(ctx, body) {
       return j;
     })();
     toast("Opened", j.dir || "the folder");
-  } catch (e) { toast("Could not open the folder", e.message || String(e)); }
+  } catch (e) { toast("Could not open the folder", e); }
 }
 
 /** A document the page holds, wherever it is: on screen, waiting, or in a
@@ -239,14 +239,14 @@ async function newPanel(ctx, id) {
     await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     await ctx.load();
     ctx.show(id, true);
-  } catch (e) { ctx.toast("Could not open a panel", String(e.message || e)); }
+  } catch (e) { ctx.toast("Could not open a panel", e); }
 }
 
 /** Close a desk and its panels; the asking twice is the caller's. */
 async function dropDesk(ctx, id) {
   const { state } = ctx;
   try { await ctx.api(`/api/desks/${id}/delete`, {}); }
-  catch (e) { ctx.toast(`Could not close the desk: ${e.message}`); return; }
+  catch (e) { ctx.toast("Could not close the desk", e); return; }
   ctx.forget(id);
   await ctx.load();
   if (state.view === "desk" && state.deskId === id) ctx.show(null, true);
@@ -430,7 +430,7 @@ function install(ctx) {
     // The focus goes back where the menu came from, unless the entry moves
     // it itself -- renaming, opening, going to a desk (`moves`).
     close(!it.moves);
-    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast("Could not do that", String(err)));
+    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").toLowerCase()}`, err));
   });
   // The item under the pointer is the one with the focus: one row lit, and
   // Enter acts on it.

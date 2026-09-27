@@ -778,7 +778,7 @@ async function paste(v, data) {
       const j = await ctx.api(`/api/panes/${v.id}/paste`, blob, blob.type);
       input(v, bracket(v, j.path));
       ctx.toast("Pasted as a document", j.path);
-    } catch (e) { ctx.toast("Could not paste the image", String(e)); }
+    } catch (e) { ctx.toast("Could not paste the image", e); }
     return;
   }
   const t = data.getData("text/plain");
@@ -862,7 +862,7 @@ async function run(v, cmd, quiet, again) {
     // Two windows on one desk both resume it, and the one that loses is told
     // "already running" -- which is the outcome it wanted. Anything else is
     // worth saying, even for a start nobody asked for: the folder may be gone.
-    else if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start", String(e));
+    else if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start the panel", e);
   } finally {
     v.starting = false;
     v.resuming = false;
@@ -1215,7 +1215,7 @@ async function moveTo(v, slot) {
   const d = current();
   if (!d || slot === v.pane.slot) return;
   try { await ctx.api(`/api/desks/${d.id}/move`, { from: v.pane.slot, to: slot }); }
-  catch (e) { ctx.toast("Could not move the panel", String(e.message || e)); }
+  catch (e) { ctx.toast("Could not move the panel", e); }
 }
 
 /** A pane's head dragged onto another pane, or onto its tab, trades their
@@ -1655,7 +1655,7 @@ async function saveNote(again) {
   } catch (e) {
     // What was typed is not lost to a no: the field opens again with it,
     // and the reason stands under it until the next key.
-    const why = `Could not ${f.kind === "new" ? "add the note" : "keep the change"} · ${e.message}`;
+    const why = `Could not ${f.kind === "new" ? "add the note" : "keep the change"} · ${ctx.sayErr(e).why}`;
     if (d !== current()) return ctx.toast(why, text);
     noteField = f; noteDraft = text; noteCaret = text.length; noteErr = why;
     rail();
@@ -1955,7 +1955,7 @@ async function act(b, byKey) {
       if (await told(b.dataset, "clear", "Could not bring them back", () => { noteList = noteList.filter(y => !xs.includes(y)); cleared = c; },
         () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
-  } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e.message); }
+  } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e); }
 }
 
 /** What each of the rail's other buttons was asked to do, for its error. */
@@ -2050,7 +2050,7 @@ function renamePanel(v, typed, why) {
     input.replaceWith(nm);
     if (keep && name !== (v.pane.name || "")) {
       try { await ctx.api(`/api/panes/${v.id}/rename`, { name }); v.pane.name = name; await ctx.refresh(); }
-      catch (e) { header(v); rail(); return renamePanel(v, name, `Could not rename · ${e.message}`); }
+      catch (e) { header(v); rail(); return renamePanel(v, name, `Could not rename · ${ctx.sayErr(e).why}`); }
     }
     header(v); rail();
     v.body.focus();
@@ -2078,7 +2078,7 @@ function renameDesk(d, typed, why) {
     const name = input.value.trim();
     if (keep && name && name !== d.name) {
       try { await ctx.api(`/api/desks/${d.id}/rename`, { name }); await ctx.refresh(); }
-      catch (e) { rail(); return renameDesk(d, name, `Could not rename · ${e.message}`); }
+      catch (e) { rail(); return renameDesk(d, name, `Could not rename · ${ctx.sayErr(e).why}`); }
     }
     rail();
   };
@@ -2163,7 +2163,7 @@ function keys(e) {
     e.preventDefault(); e.stopPropagation();
     if (e.code === "KeyN") { const why = noNew(d); if (why) ctx.toast("New panel", why); else act({ dataset: { a: "new" } }); }
     else if (!v) return;
-    else if (e.code === "KeyW") closePanel(v, true).catch(err => ctx.toast("Could not close it", String(err)));
+    else if (e.code === "KeyW") closePanel(v, true).catch(err => ctx.toast("Could not close the panel", err));
     else if (e.code === "KeyR") { if (v.status.running) ctx.api(`/api/panes/${v.id}/stop`, {}).catch(() => {}); else run(v, v.status.cmd || v.pane.cmd || ""); }
     else {
       const ps = d.panes, i = ps.findIndex(p => p.id === focused);
