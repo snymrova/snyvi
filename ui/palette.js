@@ -54,7 +54,10 @@ function wire() {
       previewSel();
     } else if (e.key === "Enter" && items[sel]) pick(items[sel]);
   });
-  list.addEventListener("click", e => { const li = e.target.closest("li"); if (li) pick(items[+li.dataset.i]); });
+  list.addEventListener("click", e => {
+    if (e.target.closest("[data-retry]")) { e.stopPropagation(); search(d.input.value); return; }
+    const li = e.target.closest("li[data-i]"); if (li) pick(items[+li.dataset.i]);
+  });
   pal.addEventListener("click", e => { if (e.target === pal) close(); });
 }
 
@@ -157,16 +160,20 @@ async function search(q) {
     previewSel();
     return;
   }
-  let found = [];
-  if (browsing()) {
-    try { found = (await (await fetch(`/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}`)).json()).map(p => ({ file: p })); } catch {}
-  } else if (!q.trim()) found = (await (await fetch("/api/inbox?limit=12")).json()).map(x => ({ ...x, snippet: "" }));
-  else found = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
+  // A search the daemon did not answer is not a search that found nothing:
+  // the list says which, with a Retry.
+  let found = null;
+  try {
+    const r = await fetch(browsing() ? `/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}` : q.trim() ? `/api/search?q=${encodeURIComponent(q)}` : "/api/inbox?limit=12");
+    found = r.ok ? await r.json() : null;
+  } catch {}
+  const off = !Array.isArray(found);
+  found = off ? [] : browsing() ? found.map(p => ({ file: p })) : q.trim() ? found : found.map(x => ({ ...x, snippet: "" }));
   // Theme rows are each drawn in their theme, so the sheet has to be in.
   if (themeItems(q).length) await d.loadThemes();
   if (mine !== seq || pal.hidden) return;
   items = themeItems(q).concat(deskItems(q), folderItems(q), found); sel = 0;
-  list.innerHTML = items.length ? items.map(row).join("") : none(q);
+  list.innerHTML = items.map(row).join("") + (off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : items.length ? "" : none(q));
   pal.classList.toggle("themes", items.some(it => it.theme));
   previewSel();
 }

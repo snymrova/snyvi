@@ -40,6 +40,10 @@
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   /** A POST, with a JSON body when there is one. Null is the daemon saying
    *  nothing at all, which a refusal (a Response that is not ok) is not. */
+  /** A list the daemon did not send, said where the list goes -- never as the
+   *  list being empty -- with a Retry that loads it again (`data-retry`). */
+  const noReach = (what, tag = "p") => `<${tag} class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry="${what}">Retry</button></${tag}>`;
+  let treeOff = false, desksOff = false;
   const post = (u, b) => fetch(u, b ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : { method: "POST" }).catch(() => null);
   const rel = ts => {
     const d = Date.now() / 1000 - ts;
@@ -513,6 +517,13 @@
   }
 
   document.addEventListener("click", e => {
+    const rt = e.target.closest("[data-retry]");
+    if (rt) {
+      e.preventDefault(); e.stopPropagation();
+      const w = rt.dataset.retry;
+      if (w === "dir") fillTree(rt.closest(".b-tree")); else if (w === "inbox") showInbox(false); else if (w === "tree") refreshTree(); else if (w === "desks") loadDesks();
+      return;
+    }
     const b = e.target.closest("[data-q]");
     if (!b) return;
     e.preventDefault();
@@ -616,7 +627,7 @@
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
+      treeEl.innerHTML = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -643,7 +654,7 @@
       if (d.dataset.pid) openProjects.add(d.dataset.pid);
     }
     // No label: the projects hang under Inbox, which is what they are.
-    let h = "";
+    let h = treeOff ? noReach("tree") : "";
     let put = 0;
     for (const p of projects) {
       if (away.has(String(p.id))) {
@@ -759,7 +770,9 @@
    *  to a "…" under the reader. `only` narrows it to one project, which is what
    *  an arrival needs — nothing else in the library moved.  */
   async function refreshTree(only) {
-    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+    const r = await fetch("/api/tree").catch(() => null), j = r?.ok && await r.json().catch(() => null);
+    treeOff = !Array.isArray(j);
+    if (!treeOff) state.tree = j;
     const pids = only != null ? [String(only)] : [...state.sub.keys()];
     await Promise.all(pids.filter(pid => state.sub.has(pid)).map(pid => fillProject(pid, true)));
     renderTree();
@@ -777,8 +790,8 @@
     ul.innerHTML = `<li class="b-empty">…</li>`;
     const rootId = ul.dataset.root, path = ul.dataset.path || "";
     let entries;
-    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { ul.dataset.loaded = ""; return; }
-    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; return; }
+    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch {}
+    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = noReach("dir", "li"); return; }
     if (!entries.length) { ul.innerHTML = `<li class="b-empty">empty</li>`; return; }
     ul.innerHTML = entries.map(e => entryHtml(rootId, e)).join("");
     markActive();
@@ -1277,14 +1290,16 @@
     state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
     let items = boot.inbox;
     if (!items || push) {
-      try { items = await (await fetch("/api/inbox?limit=60")).json(); } catch { items = []; }
+      const r = await fetch("/api/inbox?limit=60").catch(() => null);
+      items = r?.ok ? await r.json().catch(() => null) : null;
     }
     boot.inbox = null; boot.agents = null;
     // Nothing to read, and no desk yet: the page is Welcome -- which project
     // first -- at the inbox's own address. A window that has desks and no
-    // documents yet says where they will land.
-    let welcomeHtml = null;
-    if (!items.length) {
+    // documents yet says where they will land. Nothing *said* is not
+    // nothing there: that is its own line, never Welcome.
+    let welcomeHtml = items ? null : `<div class="inbox-head"><h1>Inbox</h1>${noReach("inbox")}</div>`;
+    if (items && !items.length) {
       if (capability && !state.desks) await loadDesks();
       if (!capability || !(state.desks && state.desks.desks.length)) welcomeHtml = await welcomePage();
     }
@@ -1295,7 +1310,7 @@
     afterRender();
     // The inbox lists every waiting row, and the page opened with the oldest
     // few: the rest come after the page is on screen, not before the sidebar is.
-    if (state.waiting > state.queue.length) {
+    if (items && state.waiting > state.queue.length) {
       try {
         const q = await (await fetch("/api/queue")).json();
         if (Array.isArray(q) && state.view === "inbox") { state.queue = q; docEl.innerHTML = inboxHtml(items); renderTree(); markActive(); }
@@ -2790,7 +2805,7 @@
 
   let deskRoots = "";
   async function loadDesks() {
-    if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
+    if (capability) { try { state.desks = await deskApi("/api/desks"); desksOff = false; } catch { desksOff = true; } }
     // A project's row says whether it has a desk; only a desk made, closed
     // or moved changes that, not the panes' dots, which change all day. The
     // tree draws the desks as it goes.
@@ -2817,7 +2832,7 @@
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
+        : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
     // One desk is one project; the second is when snyvi starts to earn its
     // place, so it is asked for, under the first, until there is one.
     const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ Another project</button></li>` : "";

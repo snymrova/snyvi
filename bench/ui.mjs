@@ -1218,6 +1218,19 @@ async function lossRows(p, base, token, arrive, browsed) {
     !(await refused(p)) ? "the ✕ never asked the daemon" : !kept ? "the row went anyway" : !no ? "nothing said it failed" : `the row is there, and beside its ✕: "${no}"`]);
   await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
 
+  // The Inbox, not sent: a line that says so, with its Retry -- not Welcome,
+  // which is what an empty library looks like.
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await refuse(p, "GET", /^\/api\/inbox$/);
+  await p.clickOn(".t-inbox");
+  await sleep(500);
+  const inbox = await p.ev(`({ line: document.querySelector("#doc .no-reach")?.textContent || null, welcome: (document.querySelector("#doc h1")?.textContent || "") !== "Inbox", list: !!document.querySelector("#doc ul.inbox") })`);
+  if (inbox.line) await p.clickOn("#doc .no-reach [data-retry]");
+  const listed = !!inbox.line && await until(`!!document.querySelector("#doc ul.inbox")`);
+  rows.push(["inbox fetch refused → Retry line, not Welcome", await refused(p) && !!inbox.line && !inbox.welcome && listed,
+    !(await refused(p)) ? "the Inbox never asked the daemon" : inbox.welcome ? "the page is Welcome, as if the library were empty" : !inbox.line ? "nothing says it could not load" : listed ? `"${inbox.line}", and the Retry brought the list` : "the Retry did not bring the list"]);
+
   // An aside's Undo, refused: the daemon still holds it closed, so the card
   // must not show it again; it shows the ghost, saying so.
   const say = async text => {
@@ -1855,6 +1868,7 @@ async function deskLossRows(cdp, base, token) {
   const pane = (await post(`/api/desks/${desk}/panes`)).pane.id;
   await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
   await post(`/api/desks/${desk}/notes`, { text: "a line to tick" });
+  const d2 = await post("/api/desks", { name: "refusals-b" }), other = d2.desk ? d2.desk.id : d2.id;
 
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -1923,8 +1937,21 @@ async function deskLossRows(cdp, base, token) {
     const shut = await p.ev(`({ row: !!document.querySelector("#toc .dk-pane.run:not(.closing)"), closed: [...document.querySelectorAll("#toc .dk-panes .dk-note.gone")].some(r => /Closed/.test(r.textContent)) })`), e2 = await err();
     rows.push(["close refused → panel row running, no Closed row", await refused(p) && shut.row && !shut.closed && e2.includes("Could not close panel 1"),
       !(await refused(p)) ? "the ✕ never asked the daemon" : !shut.row ? "the panel's row is gone or still closing" : shut.closed ? "a Closed · Undo row was drawn anyway" : !e2.length ? "nothing said it failed" : `still running, and its row says "${e2.join(" / ")}"`]);
+
+    // Another desk's notes, not sent: a line that says so, not the prompt
+    // an empty list gets.
+    await refuse(p, "GET", /\/notes$/);
+    await p.clickOn(`a[data-desk="${other}"]`);
+    await until(`location.pathname === "/desk/${other}"`);
+    await sleep(500);
+    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes .dk-empty") })`);
+    if (notes.line) await p.clickOn("#toc .dk-notes .no-reach [data-a=reload]");
+    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-empty")`);
+    rows.push(["notes fetch refused → Retry line, not the empty prompt", await refused(p) && !!notes.line && !notes.prompt && prompt,
+      !(await refused(p)) ? "the desk never asked for its notes" : notes.prompt ? "the empty prompt, as if the list were empty" : !notes.line ? "nothing says the notes did not load" : prompt ? `"${notes.line}", and the Retry read the (empty) list` : "the Retry did not read the list"]);
   } finally {
     await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${other}/delete`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }

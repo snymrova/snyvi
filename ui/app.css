@@ -665,6 +665,9 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* Why a field is open again (a rename, a note): under it, until the next key. */
 .field-err { position: absolute; left: 8px; top: 100%; z-index: 5; padding: 2px 6px; border-radius: 4px; background: var(--bg-raise); box-shadow: var(--shadow); color: var(--danger); font-size: 11px; white-space: nowrap; }
 :has(> .field-err) { position: relative; }
+/* A list the daemon did not send, in its own place, with its Retry. */
+.no-reach { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; color: var(--fg-2); font-size: 12px; list-style: none; }
+.no-reach button { color: var(--accent); font: inherit; font-weight: 550; }
 /* Past a cap, and while a project's rows are on their way. Both sit where a
    document row would, and neither should read as one: what is behind a row the
    tree has not drawn is an offer, not a document. */

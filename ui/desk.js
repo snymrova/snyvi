@@ -38,6 +38,10 @@ let full = false;
  *  they belong to -- so a desk swapped for another never shows the last
  *  one's list while its own is on the way. */
 let docList = [], docsAt = null;
+/** The desk whose documents, or whose notes, the daemon did not send: its
+ *  section says so, with a Retry, rather than looking empty. */
+let docsOff = null, notesOff = null;
+const noReach = w => `<p class="no-reach" role="alert">Could not reach snyvi<button type="button" data-a="reload" data-w="${w}">Retry</button></p>`;
 /** The rail shows the latest few of those and names the rest; a click on
  *  the rest opens the whole list, for this desk, until it is left. */
 const DOCS_SHOWN = 8;
@@ -1397,7 +1401,7 @@ function rail() {
         (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
-      : waitingFirst(d)) +
+      : docsOff === d.id ? noReach("docs") : waitingFirst(d)) +
     `</details>` + noteSec(d) + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
@@ -1489,7 +1493,7 @@ function noteSec(d) {
   // Asked for once per desk, from the draw that first needs it: the list is
   // small and it is not worth a round trip on every arrival the way the
   // documents are.
-  if (notesAt !== d.id) getNotes(d.id);
+  if (notesAt !== d.id && notesOff !== d.id) getNotes(d.id);
   const left = mine.filter(x => !x.done && !x.gone).length;
   const done = mine.filter(x => x.done && !x.gone).length;
   const rows = mine.map(x => noteRow(x, esc)).join("");
@@ -1501,7 +1505,7 @@ function noteSec(d) {
   return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
     `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     (rows ? `<ul class="dk-list">${rows}</ul>`
-      : noteField ? "" : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
+      : noteField ? "" : notesOff === d.id ? noReach("notes") : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
     (noteField && noteField.kind === "new"
       ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}</div>`
       : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>` + errLine("clear", esc, "p")) +
@@ -1582,8 +1586,9 @@ async function getNotes(id, again) {
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
   let j;
-  try { j = await ctx.api(`/api/desks/${id}/notes`); } catch { notesGet = null; return; }
-  notesGet = null;
+  try { j = await ctx.api(`/api/desks/${id}/notes`); }
+  catch { notesGet = null; if (id === deskId) { notesOff = id; if (current()) rail(); } return; }
+  notesGet = null; notesOff = null;
   // The desk was swapped while this was in flight: its list is not this one's.
   if (id !== deskId) return;
   // A read that lands between Clear done and the daemon hearing of it would
@@ -1658,9 +1663,10 @@ export async function docs() {
   const id = deskId;
   if (id == null || !ctx) return;
   let j;
-  try { j = await ctx.api(`/api/desks/${id}/docs`); } catch { return; }
+  try { j = await ctx.api(`/api/desks/${id}/docs`); }
+  catch { if (id === deskId) { docsOff = id; if (current()) rail(); } return; }
   if (id !== deskId) return;
-  docList = j.docs || []; docsAt = id;
+  docList = j.docs || []; docsAt = id; docsOff = null;
   if (current()) rail();
 }
 
@@ -1841,6 +1847,7 @@ async function act(b) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
+    else if (a === "reload") { if (b.dataset.w === "docs") { docsOff = null; docs(); } else { notesOff = null; getNotes(d.id, true); } }
     else if (a === "put" && v) put(v);
     else if (a === "again" && v) again(v);
     else if (a === "point-x" || a === "point-back") {
