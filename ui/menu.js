@@ -203,20 +203,12 @@ function docById(ctx, id) {
   return null;
 }
 
-/** Pin or unpin any document, as `p` does the one on screen. */
-async function pin(ctx, id) {
-  const { state, toast } = ctx;
-  if (state.doc && state.doc.id === id) return ctx.togglePin();
-  const d = docById(ctx, id) || await fetch(`/api/docs/${id}`).then(r => r.json()).catch(() => null);
-  if (!d) return;
-  const pinned = !d.pinned;
-  try {
-    const r = await fetch(`/api/docs/${id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    d.pinned = pinned; state.cache.delete(id);
-    await ctx.refreshTree(d.project_id);
-    toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it", null, null, { face: pinned ? "glad" : "plain" });
-  } catch (e) { toast("Could not pin", String(e)); }
+/** Pin or unpin any document, as `p` does the one on screen: app.js's
+ *  `pin`, with where the item stood, since the menu has gone by the answer. */
+async function pin(ctx, id, at) {
+  const { state } = ctx;
+  const d = (state.doc?.id === id && state.doc) || docById(ctx, id) || await fetch(`/api/docs/${id}`).then(r => r.json()).then(j => j.doc).catch(() => null);
+  if (d) ctx.pin(d, at);
 }
 
 /** Off the inbox, as the row's ✕ does: through that ✕ when the row has one,
@@ -304,7 +296,7 @@ function entries(ctx, el) {
     const id = el.dataset.id, d = docById(ctx, id), path = d && d.source_path;
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
       { label: "Open", run: () => ctx.open(id) },
-      { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: () => pin(ctx, id) }, RULE,
+      { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
       term({ doc: id }), files({ doc: id }), RULE,
       { label: "Remove from inbox", key: "Del", danger: true, run: () => remove(ctx, id, el) },
@@ -416,8 +408,11 @@ function install(ctx) {
       setTimeout(() => { if (b.isConnected && b.dataset.armed) { delete b.dataset.armed; b.firstElementChild.textContent = it.label; } }, 3000);
       return;
     }
+    // Where the item stood, taken before the menu goes: an answer that has
+    // no control left to stand beside stands there (`pin`).
+    const at = b.getBoundingClientRect();
     close();
-    Promise.resolve().then(() => it.run()).catch(err => ctx.toast("Could not do that", String(err)));
+    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast("Could not do that", String(err)));
   });
   menu.addEventListener("keydown", e => {
     const bs = [...menu.querySelectorAll("button")], at = bs.indexOf(document.activeElement);

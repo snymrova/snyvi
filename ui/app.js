@@ -2468,17 +2468,20 @@
   const openTerminal = (body = here()) => act("terminal", body);
   const openFolder = (body = here()) => act("reveal", body);
 
-  async function togglePin() {
-    if (!state.doc) return;
-    const pinned = !state.doc.pinned;
-    try {
-      await fetch(`/api/docs/${state.doc.id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
-      state.doc.pinned = pinned; state.cache.delete(state.doc.id);
-      await refreshTree(state.doc.project_id);
-      renderMeta(false);
-      toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it", null, null, { face: pinned ? "glad" : "plain" });
-    } catch (e) { toast("Could not pin", String(e)); }
+  /** Pin or unpin a document: the meta pane's button, `p`, a row's menu.
+   *  The ● and the button's word are the answer, and only once the daemon
+   *  has said yes. A menu has gone by then, so it hands in where its item
+   *  stood (`at`), and a small "Pinned" answers there. */
+  async function pin(d, at) {
+    const pinned = !d.pinned;
+    const r = await post(`/api/docs/${d.id}/pin`, { pinned });
+    if (!r?.ok) return toast(`Could not ${pinned ? "pin" : "unpin"} it`, d.title, null, { label: "Retry", run: () => pin(d, at) });
+    d.pinned = pinned; state.cache.delete(d.id);
+    if (state.doc?.id === d.id) { state.doc.pinned = pinned; renderMeta(false); }
+    await refreshTree(d.project_id);
+    if (at) toast(pinned ? "Pinned" : "Unpinned", "", null, null, { at, face: pinned ? "glad" : "plain" });
   }
+  const togglePin = () => state.doc && pin(state.doc);
 
   function enhanceCode() {
     for (const pre of docEl.querySelectorAll("pre.code")) {
@@ -2710,7 +2713,7 @@
     folderOf: el => folderOf(el),
     closeRoot: id => closeRoot(id),
     open: id => showDoc(id, true),
-    togglePin: () => togglePin(),
+    togglePin, pin,
     refreshTree: pid => refreshTree(pid),
     deleteDoc: d => deleteDoc(d),
     knownDocs,

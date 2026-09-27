@@ -1180,6 +1180,16 @@ async function lossRows(p, base, token, arrive) {
   const again = await until(`document.title === ${JSON.stringify(doomed.title)}`);
   rows.push(["undo refused → Retry brings it back", again, again ? "the second ask was answered, and the document is open again" : `landed on "${await p.ev("document.title")}"`]);
 
+  // Pin, refused: no ●, and the button still offers to pin.
+  await p.pointerAway();
+  await refuse(p, "POST", /\/pin$/);
+  await p.clickOn("#meta [data-act=pin]");
+  await sleep(400);
+  const pinned = await p.ev(`({ btn: document.querySelector("#meta [data-act=pin]")?.firstChild?.textContent.trim(), dot: !!document.querySelector('#trees a[data-id="${doomed.id}"] .pin'), err: document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null })`);
+  rows.push(["pin refused → no ●, button still reads Pin", await refused(p) && pinned.btn === "Pin" && !pinned.dot && /^Could not pin/.test(pinned.err || ""),
+    !(await refused(p)) ? "the button never asked the daemon" : pinned.btn !== "Pin" ? `the button reads "${pinned.btn}"` : pinned.dot ? "the row has its ● anyway" : !pinned.err ? "nothing said it failed" : `still "Pin", no ●, and "${pinned.err}"`]);
+  await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
+
   // An aside's Undo, refused: the daemon still holds it closed, so the card
   // must not show it again; it shows the ghost, saying so.
   const say = async text => {
