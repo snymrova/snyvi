@@ -226,7 +226,7 @@ async function main() {
     sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
     sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
     sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
-    sections.push(["nothing lost when snyvi says no", await lossRows(p, base, token, arrive)]);
+    sections.push(["nothing lost when snyvi says no", await lossRows(p, base, token, arrive, browsed)]);
     sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
     sections.push(["an aside, closed", await asideRows(p, base, token)]);
     sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
@@ -1121,7 +1121,7 @@ async function deleteRows(p, arrive) {
  *  daemon say no once (`refuse`), and reads that the page says so where the
  *  thing was done and still holds what it held: an error stays until its ✕,
  *  and news that comes meanwhile waits behind it rather than taking its place. */
-async function lossRows(p, base, token, arrive) {
+async function lossRows(p, base, token, arrive, browsed) {
   const rows = [];
   const origin = await p.ev("location.origin");
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
@@ -1189,6 +1189,33 @@ async function lossRows(p, base, token, arrive) {
   const pinned = await p.ev(`({ btn: document.querySelector("#meta [data-act=pin]")?.firstChild?.textContent.trim(), dot: !!document.querySelector('#trees a[data-id="${doomed.id}"] .pin'), err: document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null })`);
   rows.push(["pin refused → no ●, button still reads Pin", await refused(p) && pinned.btn === "Pin" && !pinned.dot && /^Could not pin/.test(pinned.err || ""),
     !(await refused(p)) ? "the button never asked the daemon" : pinned.btn !== "Pin" ? `the button reads "${pinned.btn}"` : pinned.dot ? "the row has its ● anyway" : !pinned.err ? "nothing said it failed" : `still "Pin", no ●, and "${pinned.err}"`]);
+  await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
+
+  // Close folder: a ghost with its Undo where the row was, and the Undo
+  // opens the same folder again. Refused, the row stays and says so.
+  const root = browsed.replace(/^.*\/b\//, "").replace(/\/.*$/, "");
+  const open = () => p.ev(`fetch("/api/browse").then(r => r.text()).then(t => t.includes(${JSON.stringify(root)}))`);
+  const rowOf = `#browse-nav .b-root[data-root="${root}"]`;
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`!!document.querySelector(${JSON.stringify(rowOf)})`);
+  await p.hoverOn(`${rowOf} > summary`);
+  await p.clickOn(`${rowOf} [data-close]`);
+  await sleep(500);
+  const shut = await p.ev(`(() => { const g = document.querySelector("#browse-nav .b-ghost"); return g ? g.textContent : null; })()`), closed = !(await open());
+  if (shut) await p.clickOn("#browse-nav .b-ghost [data-reopen]");
+  const reopened = !!shut && await until(`!!document.querySelector(${JSON.stringify(rowOf)})`) && await open();
+  rows.push(["close folder → ghost; Undo reopens it", closed && !!shut && reopened,
+    !closed ? "the daemon still has the folder open" : !shut ? "the row went with no ghost" : reopened ? `"${shut}", and the Undo opened the same folder again` : "the Undo did not bring the folder back"]);
+  await p.pointerAway();
+  await sleep(300);
+  await refuse(p, "POST", /\/close$/);
+  await p.hoverOn(`${rowOf} > summary`);
+  await p.clickOn(`${rowOf} [data-close]`);
+  await sleep(400);
+  const kept = await p.ev(`!!document.querySelector(${JSON.stringify(rowOf)})`), no = await p.ev(`document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null`);
+  rows.push(["close folder refused → row stays, with the error", await refused(p) && kept && /^Could not close/.test(no || ""),
+    !(await refused(p)) ? "the ✕ never asked the daemon" : !kept ? "the row went anyway" : !no ? "nothing said it failed" : `the row is there, and beside its ✕: "${no}"`]);
   await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
 
   // An aside's Undo, refused: the daemon still holds it closed, so the card

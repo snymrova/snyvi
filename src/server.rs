@@ -734,6 +734,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/pick", post(browse_pick))
         .route("/api/browse/{id}/close", post(browse_close))
+        .route("/api/browse/{id}/reopen", post(browse_reopen))
         .route("/api/browse/{id}/tree", get(browse_tree))
         .route("/api/browse/{id}/file", get(browse_file))
         .route("/api/browse/{id}/raw", get(browse_raw))
@@ -2279,6 +2280,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
     for root in app.browse.list() {
         app.browse.close(&root.id);
     }
+    app.browse.forget_closed();
     let _ = std::fs::remove_file(app.paths.config_dir.join("sessions.json"));
     let _ = std::fs::remove_file(app.paths.config_dir.join("folders.json"));
     match config::rotate_token(&app.paths) {
@@ -4414,6 +4416,18 @@ async fn browse_close(State(app): S, Path(id): Path<String>) -> Response {
         Json(json!({ "ok": true })).into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+/// Close folder, taken back. Only a folder closed in this run comes back, so
+/// a page with no token can undo its own close and open nothing else.
+async fn browse_reopen(State(app): S, Path(id): Path<String>) -> Response {
+    match app.browse.reopen(&id) {
+        Some(root) => {
+            emit(&app, "browse", json!({ "roots": app.browse.list() }));
+            Json(json!({ "root": root })).into_response()
+        }
+        None => StatusCode::GONE.into_response(),
     }
 }
 

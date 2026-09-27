@@ -83,6 +83,10 @@ pub struct Browser {
     recent: Mutex<HashMap<String, Vec<Watched>>>,
     /// Where the list of open folders is kept between runs. None in tests.
     file: Option<PathBuf>,
+    /// Folders closed since the daemon started, by id, so the page's Undo
+    /// can put one back: the page holds no token, so it cannot open a path,
+    /// but it can take back its own close.
+    closed: Mutex<HashMap<String, Root>>,
 }
 
 impl Browser {
@@ -94,6 +98,7 @@ impl Browser {
             index: Mutex::new(HashMap::new()),
             recent: Mutex::new(HashMap::new()),
             file: None,
+            closed: Mutex::new(HashMap::new()),
         }
     }
 
@@ -191,11 +196,34 @@ impl Browser {
             .lock()
             .unwrap()
             .retain(|(k, _)| !k.starts_with(id));
-        let gone = self.roots.write().unwrap().remove(id).is_some();
-        if gone {
+        let gone = self.roots.write().unwrap().remove(id);
+        let was = gone.is_some();
+        if let Some(root) = gone {
+            self.closed.lock().unwrap().insert(root.id.clone(), root);
             self.save();
         }
-        gone
+        was
+    }
+
+    /// A close, taken back: the folder is open again under the same id, in
+    /// the same place in the list. None when it was never closed here, or is
+    /// no longer a folder.
+    pub fn reopen(&self, id: &str) -> Option<Root> {
+        let root = self.closed.lock().unwrap().remove(id)?;
+        if !Path::new(&root.path).is_dir() {
+            return None;
+        }
+        self.roots
+            .write()
+            .unwrap()
+            .insert(root.id.clone(), root.clone());
+        self.save();
+        Some(root)
+    }
+
+    /// Forget what could be reopened: after a reset there is nothing to undo.
+    pub fn forget_closed(&self) {
+        self.closed.lock().unwrap().clear();
     }
 
     pub fn list(&self) -> Vec<Root> {
@@ -740,5 +768,10 @@ mod tests {
         assert!(b.close(&r.id));
         assert!(!b.close(&r.id));
         assert!(b.list().is_empty());
+        // And taken back: the same root, once.
+        assert_eq!(b.reopen(&r.id).map(|x| x.id), Some(r.id.clone()));
+        assert_eq!(b.list().len(), 1);
+        assert!(b.reopen(&r.id).is_none(), "open already");
+        assert!(b.reopen("nope").is_none());
     }
 }

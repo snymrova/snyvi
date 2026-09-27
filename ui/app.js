@@ -155,6 +155,8 @@
    *  list), and the clock. Captured at the click, because the refetch that
    *  follows no longer has the row to say where it was. One at a time. */
   let gone = null;
+  /** A folder just closed, whose ghost holds the Undo (`closeRoot`). */
+  let shut = null;
   const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
   function toggleFold(key) {
@@ -192,14 +194,18 @@
    *  Its body always ends in a quiet "open a folder" row, so reading a folder is
    *  something the sidebar offers rather than a command a reader has to have heard of. */
   function renderBrowse() {
-    const ids = state.browse.map(r => r.id).join(",");
+    const ids = state.browse.map(r => r.id).join(",") + (shut ? `|${shut.r.id}${shut.err || ""}` : "");
     if (browseEl.dataset.ids === ids) return;
     browseEl.dataset.ids = ids;
     const head = secHead("folders", "Folders");
-    browseEl.innerHTML = head + `<div class="b-body s-body">` + state.browse.map(r => {
+    const rows = state.browse.filter(r => r.id !== shut?.r.id).map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
       return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
-    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
+    });
+    // A folder just closed stands where it was, holding its Undo, as a
+    // removed document's row does. A refused Undo says so in it.
+    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone${shut.err ? " back" : ""}"><div class="t-ghost b-ghost">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
+    browseEl.innerHTML = head + `<div class="b-body s-body">` + rows.join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
 
@@ -896,6 +902,11 @@
       deleteDoc(d, dx);
       return;
     }
+    if (e.target.closest("[data-reopen]")) {
+      e.preventDefault(); e.stopPropagation();
+      if (shut && Date.now() - shut.made > 350) shut.undo();
+      return;
+    }
     if (e.target.closest("[data-undoc]")) {
       e.preventDefault(); e.stopPropagation();
       // Not in the first moments: the Undo is drawn where the ✕ was, and the
@@ -936,12 +947,46 @@
     closeRoot(b.dataset.close);
   });
 
-  /** A folder off the Folders list: the ✕ on its row, and its menu's Close
-   *  folder. Nothing on disk is touched. */
+  /** A folder off the Folders list: the ✕ on its row, its menu's Close
+   *  folder, the meta pane's. Nothing on disk is touched. The daemon is
+   *  asked first, and a no is said beside the ✕ with a Retry; a yes leaves
+   *  the row's ghost with the Undo, which the daemon's reopen takes back. */
   async function closeRoot(id) {
-    try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
-    state.browse = state.browse.filter(r => r.id !== id);
+    const at = state.browse.findIndex(r => r.id === id), r = state.browse[at];
+    if (!r) return;
+    if (!(await post(`/api/browse/${id}/close`))?.ok) return toast(`Could not close ${r.name}`, "", null, { label: "Retry", run: () => closeRoot(id) });
+    shutSettle();
+    const s = shut = { r, at, made: Date.now() };
+    undoing = s.undo = () => reopenRoot(s);
+    state.browse = state.browse.filter(x => x.id !== id);
     if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else { renderTree(); markActive(); }
+    if (stillMotion.matches) s.timer = setTimeout(shutSettle, GHOST_MS);
+  }
+  async function reopenRoot(s) {
+    if (shut !== s || s.asking) return;
+    clearTimeout(s.timer);
+    if (undoing === s.undo) undoing = null;
+    s.asking = true;
+    const r = await post(`/api/browse/${s.r.id}/reopen`);
+    s.asking = false;
+    if (shut !== s) return;
+    if (!r?.ok) {
+      // Gone (410): the folder is not there to reopen, and the row closes.
+      s.dead = r?.status === 410;
+      s.err = s.dead ? "Could not reopen it · it is gone" : "Could not reopen it";
+      if (s.dead) s.timer = setTimeout(shutSettle, GHOST_MS); else undoing = s.undo;
+      return renderBrowse();
+    }
+    shut = null;
+    if (!state.browse.some(x => x.id === s.r.id)) state.browse.splice(s.at, 0, s.r);
+    renderBrowse();
+  }
+  function shutSettle() {
+    if (!shut) return;
+    clearTimeout(shut.timer);
+    if (undoing === shut.undo) undoing = null;
+    shut = null;
+    renderBrowse();
   }
 
   /** Turn a name in the tree into a field, in place (menu.js, `rename`). */
@@ -1540,7 +1585,9 @@
     return g.spent;
   }
   treesEl.addEventListener("animationend", e => {
-    if (e.animationName === "drain" && gone && e.target.closest(".t-ghost")) ghostSettle(gone);
+    if (e.animationName !== "drain") return;
+    if (e.target.closest(".b-ghost")) shutSettle();
+    else if (gone && e.target.closest(".t-ghost")) ghostSettle(gone);
   });
   /** The offer is over: the row closes where it stood, as a read one does. */
   function ghostSettle(g) {
@@ -2445,12 +2492,7 @@
     }
     if (b.dataset.act === "terminal") openTerminal();
     if (b.dataset.act === "reveal") openFolder();
-    if (b.dataset.act === "closebrowse") {
-      const id = state.browseRoot.id;
-      try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
-      state.browse = state.browse.filter(r => r.id !== id);
-      showInbox(true);
-    }
+    if (b.dataset.act === "closebrowse") closeRoot(state.browseRoot.id);
   });
 
   /** Open the machine's own terminal where the reader is looking.
