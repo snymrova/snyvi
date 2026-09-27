@@ -1420,7 +1420,7 @@
    *  in place, then runs `init-claude` in the daemon. */
   async function connectClaude(b, done) {
     const m = await panelMod();
-    m.connectAsk(b, { api: (path, body) => deskApi(path, body), done: (a, ok) => {
+    m.connectAsk(b, { sayErr, api: (path, body) => deskApi(path, body), done: (a, ok) => {
       if (a && state.view === "connect" && connectHtml) setTimeout(() => { if (state.view === "connect") docEl.innerHTML = connectHtml(a); }, 1600);
       done && done(a, ok);
     } });
@@ -3590,7 +3590,7 @@
     let m;
     try { m = await panelMod(); }
     catch (e) { panelLoading = null; toast("Could not open that panel", e); return; }
-    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural, rel, capability, deskApi });
+    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural, rel, capability, deskApi, sayErr });
   }
   $("#btn-about").addEventListener("click", () => panel("about"));
   $("#btn-reset").addEventListener("click", () => panel("reset"));

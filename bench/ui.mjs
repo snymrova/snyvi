@@ -2775,7 +2775,7 @@ async function resetRows(p, url, arrive) {
   await arrive();
   await sleep(300);
   await p.press("Enter");
-  const refused = await until(`!document.querySelector("#reset-err").hidden && /has changed/.test(document.querySelector("#reset-err").textContent)`);
+  const refused = await until(`!document.querySelector("#reset-err").hidden && /^Could not reset · 1 document arrived since you looked · type \\d+$/.test(document.querySelector("#reset-err").textContent)`);
   const stillHere = !(await p.ev(`document.querySelector("#reset").hidden`)) && (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === census.documents + 1;
   const reasked = (await say()).includes(`${census.documents + 1} document`) && await goDisabled();
   rows.push(["a stale number is refused", refused && stillHere && reasked,

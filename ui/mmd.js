@@ -829,9 +829,17 @@ addEventListener("resize", () => {
 function mmdFail(fig, e) {
   fig.dataset.state = "error";
   fig.style.removeProperty("--mmd-reserve");
-  const msg = document.createElement("p");
+  const msg = document.createElement("div");   // it may hold the parser's dump, folded
   msg.className = "mmd-err";
-  msg.textContent = `This diagram could not be drawn — ${e && e.message ? e.message : e}`;
+  // The parser's first line says what went wrong; the rest of its dump is
+  // there for whoever wants it, folded.
+  const [first, ...rest] = String(e && e.message ? e.message : e).split("\n");
+  msg.textContent = `Could not draw this diagram · ${first}`;
+  if (rest.join("").trim()) {
+    const more = document.createElement("details"), sum = document.createElement("summary"), dump = document.createElement("pre");
+    sum.textContent = "What the parser said"; dump.textContent = rest.join("\n");
+    more.append(sum, dump); msg.append(more);
+  }
   const pre = document.createElement("pre");
   pre.className = "mmd-src";
   pre.textContent = fig.dataset.src;

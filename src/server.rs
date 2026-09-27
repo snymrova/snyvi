@@ -2224,6 +2224,14 @@ struct ResetBody {
 ///
 /// A same-origin POST is accepted beside the token, as `terminal` explains:
 /// the page has no token, and the dialog is the page's.
+/// "1 document", "3 documents": the reset refusals are read by a person.
+fn docs(n: i64) -> String {
+    format!("{n} document{}", if n == 1 { "" } else { "s" })
+}
+fn pinned_docs(n: i64) -> String {
+    format!("{n} pinned document{}", if n == 1 { "" } else { "s" })
+}
+
 async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> Response {
     if !from_this_page(&headers) && !authorized(&app, &headers) {
         return (
@@ -2240,7 +2248,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         return (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": format!("the library has changed: {} document(s) now, not {}; look again", census.documents, b.documents),
+                "error": format!("the library has changed: {} now, not {}", docs(census.documents), b.documents),
                 "census": census,
             })),
         )
@@ -2250,7 +2258,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         return (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": format!("the desks have changed: {} now, not {}; look again", census.desks, b.desks),
+                "error": format!("the desks have changed: {} now, not {}", census.desks, b.desks),
                 "census": census,
             })),
         )
@@ -2260,7 +2268,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         return (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": format!("{} pinned document(s) would go with it; say so", census.pinned),
+                "error": format!("{} would go with it", pinned_docs(census.pinned)),
                 "census": census,
             })),
         )

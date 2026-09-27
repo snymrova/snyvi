@@ -58,8 +58,9 @@ pub fn run(paths: &Paths, o: Opts) -> Result<()> {
     }
     if census.pinned > 0 && !o.pinned {
         bail!(
-            "{} pinned document(s) would go with it, and a pin means keep. Add --pinned to reset them too; nothing was done",
-            census.pinned
+            "{} pinned document{} would go with it, and a pin means keep. Add --pinned to reset them too; nothing was done",
+            census.pinned,
+            if census.pinned == 1 { "" } else { "s" }
         );
     }
     if !o.yes {

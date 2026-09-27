@@ -298,7 +298,8 @@ async function openAbout(d) {
   aboutFacts.replaceChildren();
   openDialog(aboutDlg, aboutDlg.firstElementChild);
   let a;
-  try { a = await (await fetch("/api/about")).json(); } catch { $("#about-say").textContent = "The daemon did not answer."; return; }
+  try { a = await (await fetch("/api/about")).json(); } catch { noReach($("#about-say"), () => openAbout(d)); return; }
+  $("#about-say").classList.remove("no-reach");
   $("#about-say").textContent = `${a.description}.`;
   const fact = (k, v, cls) => {
     if (v == null || v === "") return;
@@ -333,6 +334,22 @@ async function openAbout(d) {
  *  runs. The daemon is the updater; this only says what it says
  *  (`/api/about` and `/api/update/*`). A tab holds no capability, so it
  *  reads the row and presses nothing. */
+/** What the updater's own error means, said the way a person would; the
+ *  exact words go in the line's title. Not signed is said as what it is, a
+ *  refusal that kept this machine safe. */
+const updWhy = (e, v) => /not signed/i.test(e) ? `${v || "the update"} was not signed by snyvi, so it was not installed`
+  : /HTTP 404/.test(e) ? "the release is not there yet"
+  : /HTTP|dns|resolve|connect|timed? ?out|network/i.test(e) ? "snyvi could not reach GitHub"
+  : /space|disk|read-only|permission/i.test(e) ? "the disk would not take it" : e;
+
+/** "Could not reach snyvi", with a Retry that does `again`. */
+function noReach(el, again) {
+  const b = Object.assign(document.createElement("button"), { type: "button", textContent: "Retry" });
+  b.addEventListener("click", again);
+  el.replaceChildren("Could not reach snyvi", b);
+  el.classList.add("no-reach");
+}
+
 function updateRow(u, d) {
   const { rel, capability, deskApi } = d;
   const box = document.createElement("div"); box.className = "upd-row";
@@ -342,7 +359,7 @@ function updateRow(u, d) {
   box.append(say, act, how);
   const when = ts => { const s = ts - Date.now() / 1000; return s <= 0 ? "at the next quiet moment" : s < 3600 ? `in ${Math.max(1, Math.round(s / 60))} min` : s < 20 * 3600 ? `in ${Math.round(s / 3600)} h` : "tomorrow"; };
   const button = (label, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "text"; b.textContent = label; b.addEventListener("click", fn); return b; };
-  const msg = e => String(e && e.message || e);
+  const msg = e => d.sayErr(e).why;
   // `note` is what a press here just met -- a restart the daemon refused --
   // and is said before anything the block says.
   const draw = (u, busy, note) => {
@@ -361,34 +378,35 @@ function updateRow(u, d) {
     else if (failed) parts.push(`${u.failed} was applied and did not start; the previous version was kept`);
     else if (u.ready) parts.push(`${u.ready} is ready`);
     else if (u.available && u.available === u.skipped) parts.push(`You went back from ${u.skipped}; the release after it updates as usual`);
-    else if (u.available && u.error) parts.push(told ? `${u.available} is out · the last check failed: ${u.error}` : `${u.available} is out · couldn't download it: ${u.error} · Check now tries again`);
+    else if (u.available && u.error) parts.push(told ? `${u.available} is out · the last check failed: ${updWhy(u.error, u.available)}` : `${u.available} is out · ${updWhy(u.error, u.available)} · Check now tries again`);
     else if (u.available) parts.push(`${u.available} is out`);
-    else if (u.error) parts.push(`The last check failed: ${u.error}`);
+    else if (u.error) parts.push(`The last check failed: ${updWhy(u.error)}`);
     else if (u.checked) parts.push(`You're on the latest · checked ${rel(u.checked)}`);
     else parts.push("Not checked yet");
     if (!busy && !r && u.ready) parts.push(u.auto && !u.slot_open ? `applies ${when(u.slot)}, when the desks are quiet` : "applies at the next quiet moment");
     if (!busy && !u.auto) parts.push(u.env_off ? "automatic updates off in the daemon's environment" : "automatic updates off");
     say.textContent = parts.join(" · ");
+    say.title = u.error || "";
     if (busy || u.restarting) return;
     if (u.available && !u.ready && u.how && u.how.length) { how.textContent = u.how.join("\n"); how.hidden = false; }
     const notes = () => { if (u.notes) { const a = document.createElement("a"); a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "release notes"; act.append(a); } };
     if (!capability) { notes(); return; }
     if (r) {
       act.append(button("Now", async () => {
-        try { await deskApi("/api/restart", { when: "now" }); draw({ ...u, restarting: true }, false); } catch (e) { draw(u, false, `Could not restart: ${msg(e)}`); }
+        try { await deskApi("/api/restart", { when: "now" }); draw({ ...u, restarting: true }, false); } catch (e) { draw(u, false, `Could not restart · ${msg(e)}`); }
       }), button("Cancel", async () => {
         try {
           const res = await fetch("/api/restart", { method: "DELETE", headers: { "x-snyvi-capability": capability } });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           draw({ ...u, restart: null }, false);
-        } catch (e) { draw(u, false, `Could not call it off: ${msg(e)}`); }
+        } catch (e) { draw(u, false, `Could not call it off · ${msg(e)}`); }
       }));
       return;
     }
     if (u.ready) act.append(button("Restart to update", async () => {
       say.textContent = "Restarting when the panels are quiet…"; act.replaceChildren();
       try { const j = await deskApi("/api/restart", { when: "idle", apply: true }); draw({ ...u, restart: { apply: true, waiting_on: j.waiting_on || [] } }, false); }
-      catch (e) { draw(u, false, `Could not restart: ${msg(e)}`); }
+      catch (e) { draw(u, false, `Could not restart · ${msg(e)}`); }
     }));
     act.append(button("Check now", async () => {
       draw(u, true);
@@ -441,7 +459,8 @@ async function openReset(d) {
   resetSay.textContent = "Reading what there is…";
   resetArm(d);
   openDialog(resetDlg, resetN);
-  try { resetCensus = await (await fetch("/api/reset")).json(); } catch { resetSay.textContent = "The daemon did not answer."; return; }
+  try { resetCensus = await (await fetch("/api/reset")).json(); } catch { noReach(resetSay, () => openReset(d)); return; }
+  resetSay.classList.remove("no-reach");
   resetSay.textContent = resetSentence(resetCensus, plural);
   if (resetCensus.pinned > 0) {
     $("#reset-pinned-say").textContent = `Also the ${plural(resetCensus.pinned, "pinned document")} — a pin means keep`;
@@ -470,11 +489,18 @@ async function submitReset(e, d) {
   let r;
   try {
     r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, desks: resetCensus.desks || 0, pinned: resetPin.checked }) });
-  } catch { resetGo.textContent = "Reset"; resetErr.textContent = "The daemon did not answer."; resetErr.hidden = false; return; }
+  } catch { resetGo.textContent = "Reset"; noReach(resetErr, () => { resetErr.hidden = true; resetArm(d); submitReset(e, d); }); resetErr.hidden = false; resetArm(d); return; }
   if (r.ok) { afterReset(); return; }
   resetGo.textContent = "Reset";
   let j = {}; try { j = await r.json(); } catch {}
-  resetErr.textContent = j.error || `The daemon refused (${r.status}).`;
+  // Why, from what changed: the daemon sends the library as it is now.
+  const c = j.census, was = resetCensus, n = c ? c.documents - was.documents : 0;
+  resetErr.classList.remove("no-reach");
+  resetErr.textContent = `Could not reset · ${!c ? j.error || "snyvi said no"
+    : n ? `${plural(Math.abs(n), "document")} ${n > 0 ? "arrived" : "went"} since you looked · type ${c.documents}`
+    : c.desks !== was.desks ? `the desks changed since you looked · type ${c.documents}`
+    : `${plural(c.pinned, "pinned document")} · tick Also the pinned to include them`}`;
+  resetErr.title = j.error || "";
   resetErr.hidden = false;
   // The number has moved: say the new sentence and ask for the new number.
   if (j.census) { resetCensus = j.census; $("#reset-n").value = ""; $("#reset-say").textContent = resetSentence(j.census, plural); }
@@ -538,7 +564,7 @@ export function connect(a, { esc, rel, cap }) {
 /** Connect Claude Code from the window, after saying what that writes. The
  *  ask replaces the button, in its place; so does the answer. `done` hears
  *  the agents as they are after it. */
-export function connectAsk(b, { api, done }) {
+export function connectAsk(b, { api, done, sayErr }) {
   const box = b.closest(".w-connect") || b.parentElement;
   const was = box.innerHTML;
   box.innerHTML = `<div class="w-ask-box" role="group" aria-label="Connect Claude Code"><p>This adds snyvi to Claude Code: its MCP server in <code>~/.claude.json</code>, and hooks and a status line in <code>~/.claude/settings.json</code>, all run by this snyvi. A status line of your own is kept. <code>snyvi uninstall-claude</code> takes it all back out.</p>` +
@@ -559,7 +585,7 @@ export function connectAsk(b, { api, done }) {
       box.innerHTML = ok ? `<p class="w-said ok">Connected. A Claude session started from now on sends here.</p>`
         : `<p class="w-said bad">It did not take. What it said:</p><pre class="cmd"><code>${(j.said || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</code></pre>`;
       done && done(j.agents, ok);
-    } catch (e) { box.innerHTML = `<p class="w-said bad">Could not connect: ${String(e.message || e).replace(/[&<>]/g, "")}</p>`; }
+    } catch (e) { box.innerHTML = `<p class="w-said bad">Could not connect Claude Code · ${sayErr(e).why.replace(/[&<>]/g, "")}</p>`; }
   };
 }
 
