@@ -215,6 +215,69 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
   paintAccent();
   paintFavicon();
   loadThemes();
+  /* ---------- the panes' widths ----------   (app.js's until 1.7.2) */
+  /* Each pane's edge drags, between a floor where its rows stop being
+   * readable and a ceiling past which the document would be the pane that
+   * does not fit. The width goes into the custom property the grid already
+   * reads, so every rule that knows the pane's width follows, and into
+   * storage, which boot.js applies before first paint. Double-click puts the
+   * default back; for a keyboard the arrow keys move it and Home and End
+   * take it to either limit. */
+  const PANES = [
+    { el: $("#side"), prop: "--side-w", key: "snyvi.side-w", min: 200, max: 440, dflt: 264, sign: 1 },
+    { el: $("#rail"), prop: "--rail-w", key: "snyvi.rail-w", min: 180, max: 400, dflt: 232, sign: -1 },
+  ];
+  for (const pane of PANES) {
+    const g = pane.el.querySelector(".gutter");
+    const width = () => parseFloat(getComputedStyle(root).getPropertyValue(pane.prop)) || pane.dflt;
+    const set = w => {
+      w = Math.round(Math.max(pane.min, Math.min(pane.max, w)));
+      root.style.setProperty(pane.prop, `${w}px`);
+      g.setAttribute("aria-valuenow", w);
+      return w;
+    };
+    g.setAttribute("aria-valuenow", width());
+    g.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      const x0 = e.clientX, w0 = width();
+      let w = w0;
+      g.setPointerCapture(e.pointerId);
+      root.dataset.resizing = "1";
+      const move = ev => { w = set(w0 + pane.sign * (ev.clientX - x0)); };
+      const up = () => {
+        delete root.dataset.resizing;
+        g.removeEventListener("pointermove", move);
+        g.removeEventListener("pointerup", up);
+        g.removeEventListener("pointercancel", up);
+        store.set(pane.key, String(w));
+      };
+      g.addEventListener("pointermove", move);
+      g.addEventListener("pointerup", up);
+      g.addEventListener("pointercancel", up);
+      e.preventDefault();
+    });
+    g.addEventListener("dblclick", () => {
+      root.style.removeProperty(pane.prop);
+      store.del(pane.key);
+      g.setAttribute("aria-valuenow", pane.dflt);
+    });
+    g.addEventListener("keydown", e => {
+      const step = e.shiftKey ? 64 : 16;
+      const to = e.key === "ArrowRight" ? width() + pane.sign * step
+        : e.key === "ArrowLeft" ? width() - pane.sign * step
+          : e.key === "Home" ? pane.min : e.key === "End" ? pane.max : null;
+      if (to === null) return;
+      // At once, as a drag is: the fold's easing would trail a held key.
+      root.dataset.resizing = "1";
+      store.set(pane.key, String(set(to)));
+      void $("#app").offsetWidth;
+      delete root.dataset.resizing;
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  }
+
+
   /* The foot column is a toolbar: the arrows walk it (up is up: the column
    * grows upward from the switch, which is the first in the page's order),
    * Home and End go to its ends, and Esc lets it go. */
