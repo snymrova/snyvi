@@ -1,0 +1,16 @@
+{
+  "version": "1.9.9",
+  "date": "2026-09-26T00:00:00Z",
+  "channel": "daily",
+  "notes": "https://github.com/snymrova/snyvi/releases/tag/v1.9.9",
+  "app_min": "1.6.0",
+  "hotfix_below": null,
+  "assets": {
+    "linux-x64": {
+      "snyvi": [
+        "snyvi-linux-x64.tar.gz",
+        "d805009b877914f79af9921481cdac006e61f1bc3615a6a2b69b5c2156c955e9"
+      ]
+    }
+  }
+}

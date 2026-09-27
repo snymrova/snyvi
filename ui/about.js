@@ -165,6 +165,12 @@ pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 .hk .keys code { font-family: var(--mono); font-size: 11px; color: var(--fg-2); background: var(--rule); padding: 0 5px; border-radius: 4px; line-height: 18px; }
 #help kbd { display: inline-block; box-sizing: border-box; min-width: 20px; padding: 0 5px; font-family: var(--mono); font-size: 11px; line-height: 18px; text-align: center; color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: 4px; white-space: nowrap; }
 .help-col .help-note { margin: 8px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg-3); }
+/* The updates row in About: the sentence, the controls after it, and the
+   lines a told-only install runs under both. */
+.upd-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.upd-act { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+.upd-act button.text { padding: 0; font-size: 13px; }
+.upd-how { flex-basis: 100%; margin: 4px 0 0; padding: 6px 10px; font-family: var(--mono); font-size: 12px; line-height: 1.5; background: var(--code-bg); border-radius: var(--radius); white-space: pre-wrap; }
 @media (max-width: 600px) {
   .help-body { grid-template-columns: 1fr; }
   #help-col-2 { margin-top: 18px; }
@@ -219,6 +225,7 @@ async function openAbout(d) {
   const build = [a.commit, a.target].filter(Boolean).join(", ");
   if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
   fact("Version", ver);
+  fact("Updates", updateRow(a.update, d));
   fact("Binary", a.binary, "path");
   fact("Documents", a.data_dir, "path");
   fact("Settings", a.config_dir, "path");
@@ -230,6 +237,58 @@ async function openAbout(d) {
     link.textContent = a.repository.replace(/^https?:\/\//, "");
     fact("Source", link);
   }
+}
+
+/** The updates row: `You're on the latest · checked 40 min ago · next
+ *  update tomorrow`, with `Check now` beside it, and what a press finds --
+ *  the latest, a version ready with the restart control in the row, or the
+ *  lines a told-only install runs. The daemon is the updater; this only
+ *  says what it says (`/api/about` and `/api/update/*`). A tab holds no
+ *  capability, so it reads the row and presses nothing. */
+function updateRow(u, d) {
+  const { rel, capability, deskApi } = d;
+  const box = document.createElement("div"); box.className = "upd-row";
+  const say = document.createElement("span"); say.className = "upd-say";
+  const act = document.createElement("span"); act.className = "upd-act";
+  const how = document.createElement("pre"); how.className = "upd-how"; how.hidden = true;
+  box.append(say, act, how);
+  const when = ts => { const s = ts - Date.now() / 1000; return s <= 0 ? "at the next quiet moment" : s < 3600 ? `in ${Math.max(1, Math.round(s / 60))} min` : s < 20 * 3600 ? `in ${Math.round(s / 3600)} h` : "tomorrow"; };
+  const button = (label, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "text"; b.textContent = label; b.addEventListener("click", fn); return b; };
+  const draw = (u, busy) => {
+    act.replaceChildren(); how.hidden = true;
+    if (!u || u.channel === "unknown") { say.textContent = "This daemon cannot say what file it runs from, so it does not update itself."; return; }
+    if (u.channel === "dev") { say.textContent = "A development build: it does not check."; return; }
+    const parts = [];
+    if (busy) parts.push("Checking…");
+    else if (u.failed) parts.push(`${u.failed} was applied and did not start; the previous version was kept`);
+    else if (u.ready) parts.push(`${u.ready} is ready`);
+    else if (u.available) parts.push(`${u.available} is out`);
+    else if (u.error) parts.push(`The last check failed: ${u.error}`);
+    else if (u.checked) parts.push(`You're on the latest · checked ${rel(u.checked)}`);
+    else parts.push("Not checked yet");
+    if (!busy && !u.failed && !u.ready && !u.available && u.auto && u.slot) parts.push(`next update ${when(u.slot)}`);
+    if (!busy && u.ready) parts.push(u.auto && !u.slot_open ? `applies ${when(u.slot)}, when the desks are quiet` : "applies at the next quiet moment");
+    if (!busy && !u.auto) parts.push(u.env_off ? "automatic updates off in the daemon's environment" : "automatic updates off");
+    say.textContent = parts.join(" · ");
+    if (busy) return;
+    if (u.available && !u.ready && u.how && u.how.length) { how.textContent = u.how.join("\n"); how.hidden = false; }
+    if (!capability) return;
+    if (u.ready) act.append(button("Restart to update", async () => {
+      say.textContent = "Restarting when the panels are quiet…"; act.replaceChildren();
+      try { await deskApi("/api/restart", { when: "idle", apply: true }); } catch (e) { draw({ ...u, error: String(e.message || e) }, false); }
+    }));
+    act.append(button("Check now", async () => {
+      draw(u, true);
+      try { const j = await deskApi("/api/update/check", {}); draw(j.update, false); }
+      catch (e) { draw({ ...u, ready: null, available: null, error: String(e.message || e) }, false); }
+    }));
+    if (!u.env_off) act.append(button(u.auto ? "Turn off" : "Turn on", async () => {
+      try { const j = await deskApi("/api/update/auto", { on: !u.auto }); draw(j.update, false); } catch {}
+    }));
+    if (u.notes) { const a = document.createElement("a"); a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "release notes"; act.append(a); }
+  };
+  draw(u, false);
+  return box;
 }
 
 /** The three `snyvi.theme.*` keys, said as a sentence: your light theme,

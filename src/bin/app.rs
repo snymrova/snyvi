@@ -71,8 +71,12 @@ const SCHEME: &str = "snyvi";
 const DEFAULT_PORT: u16 = 7777;
 
 /// What the page in this window carries on its first URL, so the daemon
-/// counts it as a window. The same mark `snyvi app` puts there.
-const WINDOW_MARK: &str = "window=1";
+/// counts it as a window -- and, from 1.7 on, which window: the page sends
+/// the value back on its event stream, and a daemon that has just applied
+/// an update relaunches a window older than that update wants. `snyvi app`
+/// writes `window=1` on the link it hands over; `stamped` below makes it
+/// this.
+const WINDOW_MARK: &str = concat!("window=", env!("CARGO_PKG_VERSION"));
 
 /// The window commands the page is allowed, and no others. The frame is the
 /// page's: it drags the window by its own header row (Tauri's own handler
@@ -119,6 +123,13 @@ fn main() {
         Some(u) => u,
         None => hand_to_snyvi(None),
     };
+    // `--quit` is the daemon asking the window that is up to go, so that a
+    // newer one can be started in its place after an update. The
+    // single-instance plugin below carries the word to that window and ends
+    // this process; with no window up there is nothing to do, and this one
+    // ends in setup, before a window is made.
+    let quit = url == "--quit";
+    let url = if quit { base_url(None) } else { url };
     // The caller checks for a display too, and falls back to a browser when
     // there is none. Checked again here because this is also reachable
     // directly. Linux only: elsewhere a desktop session is the only way this
@@ -150,14 +161,14 @@ fn main() {
     // whenever it can costs an exec and buys the window its panes. Falling
     // through -- no `snyvi` beside this executable -- reads the link here, as
     // before, and opens a window with no capability and so no panes.
-    let parsed = if parsed.scheme() == SCHEME {
+    let parsed = stamped(if parsed.scheme() == SCHEME {
         if snyvi_binary().is_some() || !daemon_up() {
             hand_to_snyvi(Some(&url));
         }
         resolve(&parsed, &base_url(None))
     } else {
         parsed
-    };
+    });
     // The origin the window reads from, kept before the URL is handed to the
     // builder. Every navigation is measured against it below.
     let home = parsed.origin().ascii_serialization();
@@ -170,6 +181,10 @@ fn main() {
         // one" -- and it is a likely thing to type now that closing the window
         // only hides it, which would otherwise leave two tray icons behind.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if argv.get(1).map(String::as_str) == Some("--quit") {
+                app.exit(0);
+                return;
+            }
             let Some(w) = app.get_webview_window("main") else {
                 return;
             };
@@ -206,6 +221,9 @@ fn main() {
     let run = builder
         .setup(move |app| {
             use tauri_plugin_window_state::{AppHandleExt, WindowExt};
+            if quit {
+                std::process::exit(0);
+            }
             let at_home = home.clone();
             let frame = frame_wanted();
             // The page may run the window commands above, and only from the
@@ -375,6 +393,31 @@ fn open_in(w: &WebviewWindow, url: tauri::Url) {
         url
     };
     let _ = w.navigate(url);
+}
+
+/// The mark on a link, whatever it said when the link was made, carries this
+/// window's version from here: `snyvi app` writes `window=1`, and the page
+/// keeps the value for its session and sends it on its event stream.
+fn stamped(mut url: tauri::Url) -> tauri::Url {
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if !pairs.iter().any(|(k, _)| k == "window") {
+        return url;
+    }
+    {
+        let mut q = url.query_pairs_mut();
+        q.clear();
+        for (k, v) in &pairs {
+            if k == "window" {
+                q.append_pair("window", env!("CARGO_PKG_VERSION"));
+            } else {
+                q.append_pair(k, v);
+            }
+        }
+    }
+    url
 }
 
 /// A `snyvi://` link as the address it stands for on the daemon:
@@ -736,12 +779,40 @@ mod tests {
 
     #[test]
     fn a_link_is_the_daemon_address_with_the_mark() {
-        assert_eq!(r("snyvi://d/abc"), "http://127.0.0.1:7777/d/abc?window=1");
-        assert_eq!(r("snyvi:///d/abc"), "http://127.0.0.1:7777/d/abc?window=1");
-        assert_eq!(r("snyvi://"), "http://127.0.0.1:7777/?window=1");
+        assert_eq!(
+            r("snyvi://d/abc"),
+            format!("http://127.0.0.1:7777/d/abc?{WINDOW_MARK}")
+        );
+        assert_eq!(
+            r("snyvi:///d/abc"),
+            format!("http://127.0.0.1:7777/d/abc?{WINDOW_MARK}")
+        );
+        assert_eq!(
+            r("snyvi://"),
+            format!("http://127.0.0.1:7777/?{WINDOW_MARK}")
+        );
         assert_eq!(
             r("snyvi://d/abc?v=2"),
-            "http://127.0.0.1:7777/d/abc?v=2&window=1"
+            format!("http://127.0.0.1:7777/d/abc?v=2&{WINDOW_MARK}")
+        );
+    }
+
+    #[test]
+    fn the_mark_carries_this_windows_version() {
+        let v = env!("CARGO_PKG_VERSION");
+        let s = |u: &str| stamped(u.parse().unwrap()).to_string();
+        assert_eq!(
+            s("http://127.0.0.1:7777/?window=1#cap=x"),
+            format!("http://127.0.0.1:7777/?window={v}#cap=x")
+        );
+        assert_eq!(
+            s("http://127.0.0.1:7777/d/abc?v=2&window=1"),
+            format!("http://127.0.0.1:7777/d/abc?v=2&window={v}")
+        );
+        assert_eq!(
+            s("http://127.0.0.1:7777/d/abc?v=2"),
+            "http://127.0.0.1:7777/d/abc?v=2",
+            "no mark, nothing added"
         );
     }
 }

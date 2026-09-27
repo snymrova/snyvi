@@ -49,17 +49,20 @@ the palette offer it as `New desk`. The home directory is the daemon's to
 name, so no path from the page reaches the filesystem on that route. A folder
 under Folders still gives one on that folder, from its `+` or its menu.
 
-**Two caps, and the global one is the one that matters.** Four panes per desk
-keeps each pane readable. Eight panes in total, with 2 MB of scrollback each,
-is what the memory budget allows: 16 MB against the 20 MB of headroom
-`BRAINSTORM.md` records. Four per desk bounds nothing once the number of desks
-is unbounded, so the global cap is the one with a test
-(`desk::tests::eight_panes_is_the_whole_of_it_however_many_desks_there_are`).
-Both caps are checked inside the transaction that inserts the pane.
+**Four per desk, and no cap across desks.** Four panes per desk keeps each
+pane readable, and it is checked inside the transaction that inserts the pane.
+There used to be a second cap, eight panes in total, written against the memory
+budget (8 × 2 MB of scrollback against 20 MB of headroom). It went in 1.6: a
+reader with three projects running wants three desks of panels. What a pane
+nobody is watching costs is kept small instead. Its frames run once a second
+rather than sixty times (`pane::UNWATCHED_FRAME`), a page that attaches is
+caught up at once, and its scrollback is still capped at 2 MB. The test is
+`desk::tests::twelve_panes_on_three_desks_all_open`.
 
 **Slots, not splits.** There are two columns and four slots. An odd pane out
 spans its row, and the whole layout is two fractions. Below 1100 px a desk
-shows two panes, and below 700 px it shows one. The others stay one key away.
+shows two panes, and below 700 px it shows one. The others stay one key away,
+as tabs, and a narrow window can still open all four.
 
 ## 2. The premises, and the line that enforces each
 
@@ -100,14 +103,17 @@ shows two panes, and below 700 px it shows one. The others stay one key away.
    before it, the id only labelled what went in. The handler checks the token,
    then that the pane is running, and only then touches the store, to find
    the pane's desk and read that desk's list. A pane id seen in an old
-   screen or a log reads nothing once its shell is gone. There is no write
-   route for an agent: the list is the reader's, and the MCP tool
-   (`read_desk_notes`) is read-only and offered only when `SNYVI_SESSION`
-   is set. This does not widen what a token holder can reach -- the store
-   is a file the reader's processes can already open -- it hands an agent
-   one list through the front door. `every_desk_route_is_behind_the_gate`
-   holds the order of those checks, and that the store is reached for
-   nothing else.
+   screen or a log reads nothing once its shell is gone. An agent has one
+   write, since 1.6: `tick_desk_note` marks an open line done
+   (`POST /api/panes/{id}/notes/{note}/tick`), through the same checks, and
+   records the agent's name beside it (`desk_notes.done_by`). It cannot
+   untick, write, add or take a line off; a line the reader ticked stays
+   theirs, and the reader's own untick or re-tick clears the name. Both tools
+   are offered only when `SNYVI_SESSION` is set. This does not widen what a
+   token holder can reach -- the store is a file the reader's processes can
+   already open -- it hands an agent one list through the front door.
+   `every_desk_route_is_behind_the_gate` holds the order of those checks,
+   and that the store is reached for nothing else.
 
 One consequence to know about: **a capability dies with the daemon that
 minted it.** After a restart or an upgrade, an open window's socket is
@@ -308,10 +314,21 @@ to write to the reader's clipboard. Copy is the reader's: releasing a
 selection copies it, and so does Ctrl+Shift+C.
 
 **Reserved keys.** `⌃\`` swaps between the desk and the reading view.
-`⌃⌥1`–`⌃⌥4` focus a pane by slot. `⌃⌥Z` zooms the focused pane to the
-grid's full size and back, tmux's `prefix z`; zoom is the view's, not the
-pane's, so `⌃⌥2` while zoomed shows pane 2 at full size. `⌘` combinations
-go to the platform.
+`⌃⌥1`–`⌃⌥4` focus a pane by slot. `⌃⌥Z` puts the focused pane in full
+view and back, tmux's `prefix z`: it fills the window, with the sidebar and
+the rail folded away and the other panes as tabs in the desk's head. The ⤢
+at the right of a pane's head and a double-click on the head do the same.
+Full view is the view's, not the pane's, so `⌃⌥2` in full view shows pane 2,
+and it is kept per desk until the page reloads. A pane out of sight that is
+waiting on the reader shows `!` on its tab. Esc is not a way out: it belongs
+to the program in the pane. `⌃⌥⇧` and an arrow move the focused pane to the
+position beside it, trading places with the pane there, and a pane's head
+dragged onto another pane (or its tab) does the same. The number goes with
+the position -- pane 2 is always the one `⌃⌥2` reaches -- and the documents
+each pane sent are renumbered with it, in the same transaction
+(`POST /api/desks/{id}/move`). A process already running keeps the
+`SNYVI_SLOT` it was started with; an environment cannot be changed from
+outside. `⌘` combinations go to the platform.
 Ctrl+Shift+C and Ctrl+Shift+V are copy and paste, as in a Linux terminal.
 Every other key goes to the pane, including the single-letter keys the
 reading view uses.

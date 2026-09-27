@@ -99,6 +99,28 @@ pub fn open_url(url: &str) -> bool {
     }
 }
 
+/// Show a folder in the desktop's file manager.
+///
+/// On Windows that is Explorer by name, with the path as its argument, rather
+/// than `open_url`'s `cmd /C start`: a command line for cmd would read a `%`
+/// or a `^` in a folder's name as its own. Elsewhere the link opener already
+/// does it -- `xdg-open` and `open` show a directory in the file manager.
+pub fn open_folder(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return Command::new("explorer")
+            .arg(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_url(&dir.to_string_lossy())
+    }
+}
+
 /// The browsers that can open a chrome-less window, in the order to try them.
 ///
 /// A Chromium-family browser in app mode has no tabs, no address bar and no
@@ -680,6 +702,13 @@ pub fn terminate(pid: u32, force: bool) {
 /// and a write to a stdout or stderr that a process does not have is a write
 /// that goes nowhere rather than an error.
 pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
+    spawn_detached(exe, &["serve"])
+}
+
+/// The same detached start for any of snyvi's own commands: `serve`, `app`
+/// when the daemon relaunches the window after an update, `--quit` handed
+/// to the window binary. Arguments are plain words, never paths.
+pub fn spawn_detached(exe: &std::path::Path, args: &[&str]) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -697,7 +726,10 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
         let mut line: Vec<u16> = vec![b'"' as u16];
         line.extend(exe.as_os_str().encode_wide().filter(|c| *c != b'"' as u16));
         line.push(b'"' as u16);
-        line.extend(" serve".encode_utf16());
+        for a in args {
+            line.push(b' ' as u16);
+            line.extend(a.encode_utf16());
+        }
         line.push(0);
 
         let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
@@ -736,7 +768,7 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
     #[cfg(not(windows))]
     {
         let mut cmd = Command::new(exe);
-        cmd.arg("serve")
+        cmd.args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -753,7 +785,7 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(test)]
 mod tests {

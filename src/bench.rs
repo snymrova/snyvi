@@ -196,7 +196,10 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     let mut rows = Rows { failed: false };
 
     let size = std::fs::metadata(&exe)?.len() as f64 / MB;
-    rows.size("binary size, snyvi", size, 15.0);
+    // 15 MB until 1.7.0, when the daemon began updating itself: the manifest's
+    // signature, the checksums, reading a tarball and a zip, and the icons
+    // `install-desktop` writes came to about half a megabyte.
+    rows.size("binary size, snyvi", size, 16.0);
 
     // Three cold starts: the first also creates the database and the token,
     // and the two after it open what the first left, which is every start

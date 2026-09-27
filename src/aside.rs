@@ -34,6 +34,9 @@ pub struct Aside {
     pub lit: bool,
     /// Whether a reader has looked at it.
     pub seen: bool,
+    /// Closed by a reader. Kept, flagged, so an Undo has it to put back; the
+    /// ring still lets it go in its turn.
+    pub dismissed: bool,
 }
 
 /// What a sender posts.
@@ -87,6 +90,7 @@ impl Asides {
             at: now,
             lit,
             seen: false,
+            dismissed: false,
         };
         g.asides.push_front(aside.clone());
         g.asides.truncate(KEEP);
@@ -105,6 +109,30 @@ impl Asides {
         let mut changed = false;
         for n in g.asides.iter_mut().filter(|n| !n.seen) {
             n.seen = true;
+            changed = true;
+        }
+        changed
+    }
+
+    /// A reader closed these. True when that changed anything.
+    pub fn dismiss(&self, ids: &[u64]) -> bool {
+        self.set_dismissed(ids, true)
+    }
+
+    /// Undo: the closed ones are back where they were.
+    pub fn restore(&self, ids: &[u64]) -> bool {
+        self.set_dismissed(ids, false)
+    }
+
+    fn set_dismissed(&self, ids: &[u64], to: bool) -> bool {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut changed = false;
+        for n in g
+            .asides
+            .iter_mut()
+            .filter(|n| ids.contains(&n.id) && n.dismissed != to)
+        {
+            n.dismissed = to;
             changed = true;
         }
         changed
@@ -160,5 +188,30 @@ mod tests {
         assert!(asides.see());
         assert!(!asides.see());
         assert!(asides.list()[0].seen);
+    }
+
+    #[test]
+    fn closing_keeps_it_for_undo() {
+        let asides = Asides::default();
+        let a = asides.add(new("a"), 0).unwrap();
+        let b = asides.add(new("b"), 60).unwrap();
+        assert!(asides.dismiss(&[b.id]));
+        assert!(!asides.dismiss(&[b.id]), "closing twice changes nothing");
+        let l = asides.list();
+        assert_eq!(l.len(), 2, "a closed aside is still listed");
+        assert!(l[0].dismissed && !l[1].dismissed);
+        assert!(asides.restore(&[b.id]));
+        assert!(!asides.list()[0].dismissed);
+        assert!(asides.dismiss(&[a.id, b.id]));
+        let c = asides.add(new("c"), 120).unwrap();
+        assert!(
+            !asides.list()[0].dismissed,
+            "a new aside after a close shows"
+        );
+        assert_eq!(asides.list()[0].id, c.id);
+        assert!(
+            !asides.dismiss(&[999]),
+            "an id that is gone changes nothing"
+        );
     }
 }

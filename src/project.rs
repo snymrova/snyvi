@@ -83,17 +83,24 @@ pub fn head_of(dir: &Path) -> Option<String> {
 /// process, so the daemon does it on its own tick and a prompt never waits
 /// for it. Untracked files do not count; they are not changes to a branch.
 pub fn modified(dir: &Path) -> Option<bool> {
-    let out = std::process::Command::new("git")
-        .args([
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "--untracked-files=no",
-        ])
-        .current_dir(dir)
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new("git");
+    cmd.args([
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+    ])
+    .current_dir(dir)
+    .stderr(std::process::Stdio::null());
+    // The daemon has no console on Windows, so a console program it runs is
+    // given one of its own: a window flashed up on every tick, for every
+    // folder a panel works in.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(crate::platform::CREATE_NO_WINDOW);
+    }
+    let out = cmd.output().ok()?;
     out.status.success().then_some(!out.stdout.is_empty())
 }
 

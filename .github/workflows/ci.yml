@@ -7,6 +7,11 @@ jobs:
   build-test-bench:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Every bench copies the binary out of target/, where it would count as
+    # a per-user install and read GitHub for a newer version mid-run. The
+    # benches are offline; bench/update.mjs clears this for its own daemon.
+    env:
+      SNYVI_UPDATES: "off"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -54,6 +59,24 @@ jobs:
           ruby -c "$(packaging/homebrew.sh "$latest" /tmp/cask)"
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: The update manifest can be written
+        # latest.json is what a running snyvi reads to learn what is out, and
+        # release.yml writes it from the .sha256 files beside every download.
+        # A made-up set of those proves the script, its names and the checks
+        # that stop a half-built release on every push, not on release day.
+        run: |
+          set -e
+          mkdir -p /tmp/sums
+          for name in $(packaging/manifest.py --names); do
+            printf '%s  %s\n' "$(printf '%s' "$name" | sha256sum | cut -d' ' -f1)" "$name" > "/tmp/sums/$name.sha256"
+          done
+          packaging/manifest.py 0.0.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 --hotfix-below 0.0.0
+          python3 -c "import json; m=json.load(open('/tmp/latest.json')); assert m['assets']['linux-x64']['snyvi'][0]=='snyvi-linux-x64.tar.gz' and m['hotfix_below']=='0.0.0', m"
+          # A release that has not got every download is not described.
+          rm /tmp/sums/snyvi-windows-x64.zip.sha256
+          packaging/manifest.py 0.0.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 2>/dev/null && { echo "manifest.py wrote a manifest with a download missing"; exit 1; }
+          # And app_min in Cargo.toml is a version the release could carry.
+          python3 -c "import tomllib; d=tomllib.load(open('Cargo.toml','rb')); v=d['package']['version']; m=d['package']['metadata']['snyvi']['app_min']; assert tuple(map(int,m.split('.')))<=tuple(map(int,v.split('.'))), f'app_min {m} is newer than {v}'"
       - name: Lay out the .app
         # The other packaging script, which only a Mac can finish (the icon
         # and the signature) but any machine can lay out. Run here so that an
@@ -107,6 +130,21 @@ jobs:
         # reaches every control. Counts and positions, so every row holds on
         # any machine. See the 0.11 and 0.12 notes in docs/ROADMAP.md.
         run: node bench/ui.mjs --check
+      - name: A restart that costs nothing
+        # A daemon of its own on a spare port: a panel with an agent mid-turn
+        # holds `snyvi restart` back; the turn ending lets it go; the new
+        # daemon says which panel comes back as a conversation, and the page
+        # asks for exactly that. Never the daemon on 7777.
+        run: node bench/restart.mjs
+      - name: The daemon updates itself
+        # A release of its own: a manifest signed with a key made for the
+        # run, served from a port beside a daemon on another, a tarball of
+        # the binary just built. The daemon checks, stages, verifies, applies
+        # at a quiet moment, comes back on the new file with the old beside
+        # it, holds the next one behind the daily floor, lets a hotfix
+        # through, rolls back a build that will not start, and goes back on
+        # request. Never the daemon on 7777, never GitHub.
+        run: node bench/update.mjs
       - name: What the page weighs
         # The four assets the page cannot start without, fetched from a
         # daemon this starts and gzipped as it serves them -- not read out of
@@ -190,6 +228,63 @@ jobs:
           curl -sf "$url" | grep -q "second draft"
           grep -q "watched.md → $url" /tmp/watch.err
           ./target/release/snyvi stop
+
+  installer:
+    # The one-liner, run for real, in three distributions: the per-user
+    # install every Linux gets by default, an update over a running daemon,
+    # uninstall-desktop, and on the Debian family a .deb that stays a .deb
+    # until --tar moves it. In containers, under a throwaway HOME, with the
+    # downloads built from this commit and handed over by SNYVI_ASSET_DIR;
+    # never GitHub, never a daemon anyone uses. See bench/install.sh.
+    #
+    # The static build a release ships, since the containers are older than
+    # the runner and a binary linked against its glibc would not start in
+    # them. Without fat LTO: what is tested here is the script, and a
+    # release-profile link is most of a build's time.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: installer-musl
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: A static build
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo build --release --target x86_64-unknown-linux-musl --bin snyvi
+      - name: The downloads, named as a release names them
+        run: |
+          set -e
+          B=target/x86_64-unknown-linux-musl/release/snyvi
+          name=snyvi-0.0.0-ci-x86_64-unknown-linux-musl
+          mkdir -p /tmp/assets/$name
+          cp "$B" README.md /tmp/assets/$name/
+          tar -C /tmp/assets -czf /tmp/assets/snyvi-linux-x64.tar.gz $name
+          rm -r /tmp/assets/$name
+          deb=$(packaging/deb.sh "$B" 0.0.0-ci amd64 /tmp/deb)
+          cp "$deb" /tmp/assets/snyvi-linux-x64.deb
+          cd /tmp/assets && for f in *.tar.gz *.deb; do sha256sum "$f" > "$f.sha256"; done
+          ls -l /tmp/assets
+      - name: install.sh in Debian, Ubuntu and Fedora
+        run: |
+          set -e
+          sh -n install.sh
+          failed=0
+          for image in debian:bookworm ubuntu:22.04 fedora:latest; do
+            # Fedora's image has no tar; everything else the script uses is
+            # in each base image, which is the point of running it there.
+            prep=true
+            case $image in fedora:*) prep="dnf install -y -q tar gzip >/dev/null" ;; esac
+            docker run --rm -v "$PWD:/src:ro" -v /tmp/assets:/assets:ro "$image" \
+              sh -c "$prep && sh /src/bench/install.sh" || failed=1
+          done
+          exit $failed
 
   desktop:
     # The Tauri window is behind a feature flag, so nothing else compiles it.

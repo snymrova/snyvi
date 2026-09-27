@@ -7,25 +7,52 @@ on:
       version:
         description: "Version to release, e.g. 0.1.0 (creates tag v<version>)"
         required: true
+      hotfix_below:
+        description: "Machines running anything older than this apply at their next check rather than their next daily slot. Empty on an ordinary release."
+        required: false
+        default: ""
+      dry_run:
+        description: "Build every download onto a draft, write and sign latest.json, and stop there: nothing is published"
+        type: boolean
+        default: false
+
+# A daemon updates itself from what this workflow publishes, so the workflow
+# has to be trustworthy in a way a hand-run download never needed it to be.
+# The shape: `create` opens one draft release; every build leg uploads onto
+# that draft, in parallel; `publish` checks that every download the manifest
+# will name is there, writes latest.json from their checksums, signs it, and
+# only then flips the draft public. A reader, or a daemon, never sees a
+# release with a download still missing. Before this the release was public
+# the moment its first leg finished, some forty minutes before its last
+# asset landed, and v1.5.0 had no assets at all for its first four minutes.
 permissions:
   contents: write
+  # Provenance: each leg attests the files it built, so `gh attestation
+  # verify <file> --repo snymrova/snyvi` proves a download came out of this
+  # workflow on the commit the tag names. Orthogonal to the minisign
+  # signature over latest.json, which is what the daemon checks.
+  id-token: write
+  attestations: write
+
+# One run per version at a time: a tag push racing a workflow_dispatch for the
+# same version would otherwise share a draft and clobber each other's uploads.
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
-            cc: musl-gcc
-            deb_arch: amd64
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            cc: musl-gcc
-            deb_arch: arm64
-    runs-on: ${{ matrix.runner }}
+  create:
+    # The one job that decides the version and opens the release. Everything
+    # else takes the version from here rather than deriving it again.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - name: The tag must name the version in Cargo.toml
+        id: version
         # v0.6.0 was first pushed onto a commit whose Cargo.toml still said
         # 0.5.0, from a clone that had not fetched the release it was naming.
         # The run built the previous release and labelled it as the new one,
@@ -41,6 +68,42 @@ jobs:
             echo "bump Cargo.toml first, then move the tag onto that commit."
             exit 1; }
           echo "releasing $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: One draft, reused on a re-run
+        # A draft has no tag yet on a workflow_dispatch; GitHub creates the
+        # tag at the target when the draft is published, which is what the
+        # old target_commitish did. `gh` finds a draft by its tag name, so
+        # the legs can upload to it and `publish` can edit it. A version that
+        # is already public is not built again: a release is cut once, and a
+        # re-run of a failed job after `publish` does not come through here.
+        run: |
+          v="v${{ steps.version.outputs.version }}"
+          if draft=$(gh release view "$v" --json isDraft -q .isDraft 2>/dev/null); then
+            test "$draft" = "true" && { echo "reusing the draft $v"; exit 0; }
+            echo "$v is already published; a release is cut once."
+            exit 1
+          fi
+          gh release create "$v" --draft --generate-notes --title "$v" --target "$GITHUB_SHA"
+
+  build:
+    needs: create
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            cc: musl-gcc
+            deb_arch: amd64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            cc: musl-gcc
+            deb_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.create.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -58,18 +121,14 @@ jobs:
           SNYVI_BENCH_FACTOR=3 $B bench --check
       - name: Package
         run: |
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          version="${version#v}"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          name=snyvi-$version-${{ matrix.target }}
+          name=snyvi-$VERSION-${{ matrix.target }}
           mkdir -p dist/$name
           cp target/${{ matrix.target }}/release/snyvi README.md dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
       - name: Package .deb
         run: |
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          deb=$(packaging/deb.sh target/${{ matrix.target }}/release/snyvi "${version#v}" ${{ matrix.deb_arch }} dist)
+          deb=$(packaging/deb.sh target/${{ matrix.target }}/release/snyvi "$VERSION" ${{ matrix.deb_arch }} dist)
           echo "DEB=$deb" >> "$GITHUB_ENV"
           dpkg-deb -I "$deb"
           sudo dpkg -i "$deb"
@@ -85,25 +144,22 @@ jobs:
         # that link permanent instead. The version-stamped originals stay and
         # are still the canonical ones: they are what the cask reads, what a
         # checksum is published against, and what a file should be called once
-        # it is sitting in somebody's downloads folder.
+        # it is sitting in somebody's downloads folder. The fixed names are
+        # also what latest.json carries, so a daemon updating itself never
+        # has a version in a file name, only in the manifest.
         run: |
           case "${{ matrix.deb_arch }}" in amd64) arch=x64;; *) arch=arm64;; esac
           cp "dist/snyvi-$VERSION-${{ matrix.target }}.tar.gz" "dist/snyvi-linux-$arch.tar.gz"
           cp "$DEB" "dist/snyvi-linux-$arch.deb"
           (cd dist && sha256sum "snyvi-linux-$arch.tar.gz" > "snyvi-linux-$arch.tar.gz.sha256")
           (cd dist && sha256sum "snyvi-linux-$arch.deb" > "snyvi-linux-$arch.deb.sha256")
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/attest-build-provenance@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
-          files: |
+          subject-path: |
             dist/*.tar.gz
             dist/*.deb
-            dist/*.sha256
-          # Both matrix legs upload to one release, and each call that asks for
-          # notes appends another copy; v0.5.0 went out with the changelog line
-          # twice. One leg authors the notes, the other only adds its files.
-          generate_release_notes: ${{ matrix.deb_arch == 'amd64' }}
+      - name: Onto the draft
+        run: gh release upload "v$VERSION" dist/*.tar.gz dist/*.deb dist/*.sha256 --clobber
 
   desktop:
     # The native window, as an add-on to the static package rather than a second
@@ -122,10 +178,11 @@ jobs:
     # the only arm runners were 24.04 and a package built there would have
     # excluded every distribution older than that.
     #
-    # After `build`, because both jobs upload to the same release: running them
-    # in sequence keeps two writers off one release, and lets the static
-    # package's job be the one that authors the notes.
-    needs: build
+    # Beside `build` rather than after it: the legs used to run in sequence
+    # to keep two writers off one public release, and the release took as
+    # long as all of them added up. Now they upload to a draft, each its own
+    # files, and the release takes as long as the slowest.
+    needs: create
     strategy:
       matrix:
         include:
@@ -136,6 +193,9 @@ jobs:
             deb_arch: arm64
             name: aarch64-linux
     runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.create.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -163,37 +223,38 @@ jobs:
         # The tarball carries the one executable; whoever unpacks it puts it
         # beside their snyvi, which is where `snyvi app` looks first.
         run: |
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          version="${version#v}"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          name=snyvi-app-$version-${{ matrix.name }}
+          name=snyvi-app-$VERSION-${{ matrix.name }}
           mkdir -p dist/$name
           cp target/release/snyvi-app README.md dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && sha256sum $name.tar.gz > $name.tar.gz.sha256)
-          deb=$(packaging/deb.sh --desktop target/release/snyvi-app "$version" ${{ matrix.deb_arch }} dist)
+          deb=$(packaging/deb.sh --desktop target/release/snyvi-app "$VERSION" ${{ matrix.deb_arch }} dist)
           dpkg-deb -I "$deb"
           # Installing it must pull in snyvi rather than replace it, but the
           # static package is not in an apt repository, so satisfy it from the
           # matrix job's artifact is not possible here; check the field instead.
-          dpkg-deb -f "$deb" Depends | grep -q "snyvi (= $version)"
+          dpkg-deb -f "$deb" Depends | grep -q "snyvi (= $VERSION)"
           (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
-          # A name that does not carry the version, so the README can link it
-          # at /releases/latest/download/ the way it links everything else.
-          # Without this the window -- the half of snyvi that desks need -- was
-          # the one download a reader could not be given a straight link to,
-          # and the README sent them to the release page to find it by eye.
+          # Names that do not carry the version, so the README can link the
+          # .deb at /releases/latest/download/ the way it links everything
+          # else, and so latest.json can name the tarball: a daemon on the
+          # per-user install swaps snyvi-app beside snyvi from this one.
+          # Without the first, the window -- the half of snyvi that desks
+          # need -- was the one download a reader could not be given a
+          # straight link to, and the README sent them to the release page
+          # to find it by eye.
           arch=$([ "${{ matrix.deb_arch }}" = amd64 ] && echo x64 || echo arm64)
           cp "$deb" "dist/snyvi-app-linux-$arch.deb"
+          cp "dist/$name.tar.gz" "dist/snyvi-app-linux-$arch.tar.gz"
           (cd dist && sha256sum "snyvi-app-linux-$arch.deb" > "snyvi-app-linux-$arch.deb.sha256")
-      - uses: softprops/action-gh-release@v2
+          (cd dist && sha256sum "snyvi-app-linux-$arch.tar.gz" > "snyvi-app-linux-$arch.tar.gz.sha256")
+      - uses: actions/attest-build-provenance@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
-          files: |
+          subject-path: |
             dist/*.tar.gz
             dist/*.deb
-            dist/*.sha256
+      - name: Onto the draft
+        run: gh release upload "v$VERSION" dist/*.tar.gz dist/*.deb dist/*.sha256 --clobber
 
   windows:
     # One job and one artifact. The split on Linux exists because a static musl
@@ -201,13 +262,12 @@ jobs:
     # no engine, and snyvi-app.exe uses WebView2, which is part of the
     # operating system on Windows 10 and 11 rather than a package to depend on.
     # So the zip carries both, and installing the window is not a second step.
-    #
-    # After `desktop` for the same reason `desktop` is after `build`: three
-    # jobs upload to one release, and running them in sequence keeps two
-    # writers off it.
-    needs: desktop
+    needs: create
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.create.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -244,8 +304,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $version = "${{ github.event.inputs.version || github.ref_name }}" -replace '^v', ''
-          Add-Content -Path $env:GITHUB_ENV -Value "VERSION=$version"
+          $version = $env:VERSION
           $name = "snyvi-$version-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item target/release/snyvi.exe, target/release/snyvi-app.exe, README.md "dist/$name/"
@@ -259,24 +318,31 @@ jobs:
           # the zip stays for anyone who would rather have a folder.
           pwsh packaging/windows.ps1 $version
           if ($LASTEXITCODE -ne 0) { throw "the installer did not build" }
-      - name: The same download, under a name that does not move
+      - name: The same downloads, under names that do not move
         # See the Linux job: the README links at an exact asset name, so the
-        # installer needs one that outlives this version.
+        # installer needs one that outlives this version. The zip gets one
+        # too, because it is what a daemon updates itself from: a running
+        # .exe cannot be overwritten on Windows but can be renamed, and the
+        # zip's two files are what go in beside the renamed ones.
         shell: pwsh
         run: |
           $v = $env:VERSION
-          $alias = "snyvi-windows-x64-setup.exe"
-          Copy-Item "dist/snyvi-$v-x86_64-pc-windows-msvc-setup.exe" "dist/$alias"
-          $hash = (Get-FileHash "dist/$alias" -Algorithm SHA256).Hash.ToLower()
-          [IO.File]::WriteAllText((Join-Path (Resolve-Path "dist") "$alias.sha256"), "$hash  $alias`n")
-      - uses: softprops/action-gh-release@v2
+          foreach ($pair in @(
+              @("snyvi-$v-x86_64-pc-windows-msvc-setup.exe", "snyvi-windows-x64-setup.exe"),
+              @("snyvi-$v-x86_64-pc-windows-msvc.zip",       "snyvi-windows-x64.zip"))) {
+            $from, $alias = $pair
+            Copy-Item "dist/$from" "dist/$alias"
+            $hash = (Get-FileHash "dist/$alias" -Algorithm SHA256).Hash.ToLower()
+            [IO.File]::WriteAllText((Join-Path (Resolve-Path "dist") "$alias.sha256"), "$hash  $alias`n")
+          }
+      - uses: actions/attest-build-provenance@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
-          files: |
+          subject-path: |
             dist/*.zip
             dist/*-setup.exe
-            dist/*.sha256
+      - name: Onto the draft
+        shell: bash
+        run: gh release upload "v$VERSION" dist/*.zip dist/*-setup.exe dist/*.sha256 --clobber
 
   macos:
     # One bundle per architecture, and the bundle is the whole download: both
@@ -284,10 +350,7 @@ jobs:
     # runs, and the command line is a symlink to the snyvi beside it. There
     # is no static/dynamic fork here either -- the window uses the WebKit
     # that is part of macOS -- so, as on Windows, nothing is a second step.
-    #
-    # After `windows` for the same reason `windows` is after `desktop`: one
-    # writer on the release at a time.
-    needs: windows
+    needs: create
     strategy:
       matrix:
         include:
@@ -297,6 +360,9 @@ jobs:
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.create.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -320,12 +386,9 @@ jobs:
           ./target/release/snyvi stop
       - name: Package
         run: |
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          version="${version#v}"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          name=snyvi-$version-${{ matrix.target }}
+          name=snyvi-$VERSION-${{ matrix.target }}
           mkdir -p dist/$name
-          packaging/app.sh target/release/snyvi target/release/snyvi-app "$version" dist/$name
+          packaging/app.sh target/release/snyvi target/release/snyvi-app "$VERSION" dist/$name
           cp README.md dist/$name/
           plutil -lint dist/$name/snyvi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/$name/snyvi.app
@@ -355,23 +418,105 @@ jobs:
           case "${{ matrix.target }}" in aarch64-*) arch=arm64;; *) arch=x64;; esac
           cp "dist/snyvi-$VERSION-${{ matrix.target }}.tar.gz" "dist/snyvi-macos-$arch.tar.gz"
           (cd dist && shasum -a 256 "snyvi-macos-$arch.tar.gz" > "snyvi-macos-$arch.tar.gz.sha256")
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/attest-build-provenance@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          target_commitish: ${{ github.sha }}
-          files: |
-            dist/*.tar.gz
-            dist/*.sha256
+          subject-path: dist/*.tar.gz
+      - name: Onto the draft
+        run: gh release upload "v$VERSION" dist/*.tar.gz dist/*.sha256 --clobber
+
+  publish:
+    # The gate. Nothing below it runs, and nothing above it is visible, until
+    # every download is on the draft and the manifest that names them is
+    # written and signed. latest.json is what a running snyvi reads to learn
+    # what is out (packaging/manifest.py says what is in it); its signature
+    # is what lets the daemon apply an update unasked, so a release without
+    # the signing key still ships every download but is only ever reported,
+    # never applied.
+    needs: [create, build, desktop, windows, macos]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.create.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every download is on the draft
+        run: |
+          gh release view "v$VERSION" --json assets -q '.assets[].name' | sort > "$RUNNER_TEMP/have"
+          missing=0
+          for name in $(packaging/manifest.py --names); do
+            for f in "$name" "$name.sha256"; do
+              grep -qx "$f" "$RUNNER_TEMP/have" || { echo "missing from the draft: $f"; missing=1; }
+            done
+          done
+          test "$missing" = 0 || exit 1
+          echo "$(wc -l < "$RUNNER_TEMP/have") files on the draft, every one the manifest names among them"
+      - name: Write latest.json
+        # hotfix_below comes from the dispatch input, or from a `hotfix:
+        # <version>` line in the tag's message; it is never derived, because
+        # it is the one field that moves every machine within hours rather
+        # than once a day. The tag object is in the checkout on a tag push;
+        # on a dispatch there is no tag yet and the line cannot exist.
+        run: |
+          hotfix="${{ github.event.inputs.hotfix_below }}"
+          if [ -z "$hotfix" ]; then
+            hotfix=$(git tag -l --format='%(contents)' "v$VERSION" | sed -n 's/^hotfix: *//p' | head -1)
+          fi
+          test -z "$hotfix" || echo "hotfix_below: $hotfix"
+          gh release download "v$VERSION" -p '*.sha256' -D "$RUNNER_TEMP/sums"
+          packaging/manifest.py "$VERSION" "$RUNNER_TEMP/sums" --out dist/latest.json --hotfix-below "$hotfix"
+      - name: Sign it
+        # minisign over the manifest, with the public key compiled into snyvi;
+        # sha256 in the manifest catches a corrupt download, the signature
+        # catches a manifest that did not come from this job. The key pair is
+        # made once, without a password so this step has no prompt to answer:
+        #
+        #   minisign -G -W -p packaging/minisign.pub -s minisign.key
+        #   gh secret set MINISIGN_SECRET_KEY < minisign.key
+        #
+        # and the public half is committed. Signed, then checked against that
+        # committed key, so a secret that does not match the key the daemon
+        # trusts fails here and not on every machine at once.
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY is not set; latest.json is unsigned. A daemon will report $VERSION but never apply it."
+            exit 0
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+          (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key")
+          minisign -S -W -s "$RUNNER_TEMP/minisign.key" -m dist/latest.json -t "snyvi $VERSION"
+          rm -f "$RUNNER_TEMP/minisign.key"
+          test -f packaging/minisign.pub || { echo "packaging/minisign.pub is not committed; the daemon has no key to check against"; exit 1; }
+          minisign -V -p packaging/minisign.pub -m dist/latest.json
+      - name: The manifest, in the log
+        run: |
+          cat dist/latest.json
+          ls -l dist
+      - name: Onto the draft
+        run: gh release upload "v$VERSION" dist/latest.json* --clobber
+      - name: Publish
+        # The one moment the release becomes visible: every download, the
+        # manifest and its signature are already on it. --latest so that
+        # /releases/latest/download/ points here from now on, which is the
+        # URL every README link and every daemon reads.
+        if: ${{ !inputs.dry_run }}
+        run: gh release edit "v$VERSION" --draft=false --latest
+      - name: Dry run
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "::notice::dry run: v$VERSION stays a draft at $(gh release view "v$VERSION" --json url -q .url); delete it by hand, or let the next real run of $VERSION reuse it."
 
   crate:
-    # `cargo install snyvi`. Last, after every binary is on the release, so a
-    # crate never names a version whose downloads are still being built.
-    # Default features only: `snyvi-app` is behind `desktop`, so what a
-    # crates.io user compiles is the static daemon and CLI and never WebKitGTK.
+    # `cargo install snyvi`. After `publish`, so a crate never names a version
+    # whose downloads are not public yet. Default features only: `snyvi-app`
+    # is behind `desktop`, so what a crates.io user compiles is the static
+    # daemon and CLI and never WebKitGTK.
     #
     # Skipped, not failed, without the token: a fork, or a release cut before
     # the secret was set, still ships every download above.
-    needs: macos
+    needs: publish
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -393,28 +538,30 @@ jobs:
     # `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` and
     # `scoop install snyvi`. The manifest is written from the .sha256 the
     # windows job uploaded beside the zip (packaging/scoop.sh) and pushed to
-    # the bucket, so the bucket cannot fall behind a release either.
+    # the bucket, so the bucket cannot fall behind a release either. After
+    # `publish`, because the script reads that .sha256 from the public
+    # download URL, which a draft does not have.
     #
     # The bucket is its own repository, as the Homebrew tap is, because
     # `scoop bucket add` clones the whole repository it is given and this one
     # is 80 MB of film. A token with contents:write on snymrova/scoop-snyvi:
     # SCOOP_BUCKET_TOKEN, or the tap's token if that one already reaches the
     # bucket. Skipped without either.
-    needs: windows
+    needs: [create, publish]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Write the manifest and push it to the bucket
         env:
           BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.create.outputs.version }}
         run: |
           if [ -z "$BUCKET_TOKEN" ]; then
             echo "::warning::SCOOP_BUCKET_TOKEN is not set; the bucket was not updated."
             exit 0
           fi
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          version="${version#v}"
-          manifest=$(packaging/scoop.sh "$version" dist)
+          manifest=$(packaging/scoop.sh "$VERSION" dist)
           python3 -m json.tool "$manifest" > /dev/null
           git clone --depth 1 "https://x-access-token:${BUCKET_TOKEN}@github.com/snymrova/scoop-snyvi.git" bucket
           mkdir -p bucket/bucket
@@ -423,33 +570,35 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add bucket/snyvi.json
-          git diff --cached --quiet && { echo "the bucket already says $version"; exit 0; }
-          git commit -m "snyvi $version"
+          git diff --cached --quiet && { echo "the bucket already says $VERSION"; exit 0; }
+          git commit -m "snyvi $VERSION"
           git push
 
   homebrew:
     # `brew install --cask snymrova/snyvi/snyvi`. The cask is written from the
-    # .sha256 files the macos job just uploaded (packaging/homebrew.sh), and
+    # .sha256 files the macos job uploaded (packaging/homebrew.sh), and
     # pushed to the tap, so the tap cannot fall behind a release: the version
-    # in it is bumped by the same run that published the version.
+    # in it is bumped by the same run that published the version. After
+    # `publish` for the same reason as scoop: the script reads the public
+    # download URL.
     #
     # GITHUB_TOKEN cannot write to another repository, so this needs a token
     # with contents:write on snymrova/homebrew-snyvi. Skipped without one.
-    needs: macos
+    needs: [create, publish]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Write the cask and push it to the tap
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.create.outputs.version }}
         run: |
           if [ -z "$TAP_TOKEN" ]; then
             echo "::warning::HOMEBREW_TAP_TOKEN is not set; the tap was not updated."
             exit 0
           fi
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          version="${version#v}"
-          cask=$(packaging/homebrew.sh "$version" dist)
+          cask=$(packaging/homebrew.sh "$VERSION" dist)
           ruby -c "$cask"
           git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/snymrova/homebrew-snyvi.git" tap
           mkdir -p tap/Casks
@@ -458,6 +607,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add Casks/snyvi.rb
-          git diff --cached --quiet && { echo "the tap already says $version"; exit 0; }
-          git commit -m "snyvi $version"
+          git diff --cached --quiet && { echo "the tap already says $VERSION"; exit 0; }
+          git commit -m "snyvi $VERSION"
           git push

@@ -5,6 +5,10 @@ Documentation=https://github.com/snymrova/snyvi
 [Service]
 Type=simple
 ExecStart=/usr/bin/snyvi serve
+# on-failure is also how `snyvi restart` works under this unit: the daemon
+# exits 75 for a planned restart (see server.rs, PLANNED_RESTART_EXIT) and
+# is started again from whatever file ExecStart names now. Do not add 75 to
+# SuccessExitStatus, or a restart would be a stop.
 Restart=on-failure
 RestartSec=2
 # A desk's panes are the daemon's children, and theirs are theirs. When the

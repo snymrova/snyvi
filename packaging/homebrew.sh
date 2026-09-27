@@ -62,6 +62,12 @@ cask "snyvi" do
   desc "Fast, beautiful viewer for the documents your agents produce"
   homepage "https://mrova.rocks/snyvi"
 
+  # The daemon updates the bundle itself, once a day, from the release's
+  # latest.json; what Chrome, VS Code and Slack say for the same reason.
+  # \`brew upgrade\` then leaves snyvi alone unless asked with --greedy, and
+  # a greedy upgrade only ever reinstalls a version the daemon already has.
+  auto_updates true
+
   depends_on macos: ">= :big_sur"
 
   app "snyvi-#{version}-#{arch}-apple-darwin/snyvi.app"

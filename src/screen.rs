@@ -1070,7 +1070,11 @@ impl vte::Perform for Screen {
                 let n = arg(0, 1).min(self.cols - self.x);
                 let blank = self.blank();
                 let x = self.x;
-                self.clear_half(x);
+                // Only a character the cursor splits is lost; one that starts
+                // at the cursor moves right with the rest, whole.
+                if self.grid[self.y][x].width == 0 {
+                    self.clear_half(x);
+                }
                 let row = &mut self.grid[self.y];
                 for _ in 0..n {
                     row.pop();
@@ -1672,5 +1676,16 @@ mod tests {
         rep.apply(&f);
         rep.agrees(&s).unwrap();
         assert!(f.len() < 64 * 1024, "one frame, bounded: {}", f.len());
+    }
+
+    /// An insert at the start of a wide character moves it right, whole: it
+    /// is only lost when the cursor is in the middle of one.
+    #[test]
+    fn an_insert_keeps_the_wide_character_it_starts_on() {
+        let (mut s, mut p) = screen(20, 2);
+        feed(&mut s, &mut p, "ab中文\x1b[5G\x1b[2@");
+        assert_eq!(s.text()[0], "ab中  文");
+        feed(&mut s, &mut p, "\r\n中文\x1b[2G\x1b[1@");
+        assert_eq!(s.text()[1], "   文");
     }
 }
