@@ -30,6 +30,13 @@ mod strip;
 mod update;
 mod watch;
 
+/// "1 panel", "3 panels": a count in words, never "panel(s)"
+/// (docs/DESIGN.md §3.1). Regular plurals only, which is every word it is
+/// asked for.
+pub(crate) fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
 use anyhow::{Context, Result};
 
 // musl's allocator is slow under the renderer's allocation pattern; mimalloc keeps the
@@ -421,8 +428,8 @@ fn main() -> Result<()> {
                 );
             }
             println!(
-                "{} document(s){}",
-                gone.len(),
+                "{}{}",
+                plural(gone.len(), "document"),
                 if dry_run {
                     " would be deleted"
                 } else {
@@ -445,8 +452,8 @@ fn main() -> Result<()> {
             }
             if !panels.is_empty() {
                 println!(
-                    "{} closed panel(s){}",
-                    panels.len(),
+                    "{}{}",
+                    plural(panels.len(), "closed panel"),
                     if dry_run {
                         " would be deleted"
                     } else {

@@ -240,7 +240,7 @@ pub fn uninstall_claude_keeping(keeping: bool) -> Result<()> {
     let (path, n) = hook::uninstall()?;
     match n {
         0 => println!("No snyvi hooks in {}.", path.display()),
-        n => println!("Removed {n} snyvi hook(s) from {}.", path.display()),
+        n => println!("Removed {} from {}.", crate::plural(n, "snyvi hook"), path.display()),
     }
     if let Some(path) = claude_md_remove()? {
         println!("Removed the snyvi line from {}.", path.display());
@@ -733,7 +733,7 @@ pub fn install_desktop() -> Result<()> {
             println!("wrote {}", path.display());
         }
         if !current.is_empty() {
-            println!("{} file(s) already current", current.len());
+            println!("{} already current", crate::plural(current.len(), "file"));
         }
         let apps = data.join("applications");
         quietly("update-desktop-database", &[&apps.to_string_lossy()]);

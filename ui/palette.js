@@ -25,8 +25,8 @@ let previewing = false;
 export function open(deps) {
   if (!d) { d = deps; wire(); }
   const { input, browsing, codePre, state } = d;
-  input.placeholder = browsing() ? `Find a file in ${state.browseRoot.name}…  (:120 for a line)`
-    : codePre() ? "Search documents…  (:120 for a line)" : "Search documents…  (p:project  kind:md|code|diff  > commands)";
+  input.placeholder = browsing() ? `Find a file in ${state.browseRoot.name} · :120 for a line`
+    : codePre() ? "Search documents · :120 for a line" : "Search documents · p:project · kind:md · > commands";
   search(input.value);
 }
 
@@ -42,6 +42,14 @@ export function close() {
   d.closeDialog(d.pal);
 }
 
+/** The one row lit, to the eye and to a screen reader: the input is a
+ *  combobox, and the row it points at is its active descendant. */
+function lit() {
+  const { input, list } = d;
+  list.querySelectorAll("li[data-i]").forEach((x, i) => { x.classList.toggle("sel", i === sel); x.setAttribute("aria-selected", String(i === sel)); });
+  items[sel] ? input.setAttribute("aria-activedescendant", `pal-${sel}`) : input.removeAttribute("aria-activedescendant");
+}
+
 function wire() {
   const { input, list, pal } = d;
   input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => search(input.value), 60); });
@@ -49,7 +57,7 @@ function wire() {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % Math.max(1, items.length);
-      list.querySelectorAll("li").forEach((li, i) => li.classList.toggle("sel", i === sel));
+      lit();
       list.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
       previewSel();
     } else if (e.key === "Enter" && items[sel]) pick(items[sel]);
@@ -60,7 +68,7 @@ function wire() {
     const li = e.target.closest("li[data-i]");
     if (!li || +li.dataset.i === sel) return;
     sel = +li.dataset.i;
-    list.querySelectorAll("li").forEach((x, i) => x.classList.toggle("sel", i === sel));
+    lit();
     previewSel();
   });
   list.addEventListener("click", e => {
@@ -122,7 +130,8 @@ const COMMANDS = [
   { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
   { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
-  { cmd: "keys", t: "Keys", s: "Every key, and ⌃B for the letters" },
+  { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
+  { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
 ];
 function commandItems(q) {
   const m = /^\s*>\s*(.*)$/.exec(q);
@@ -137,15 +146,15 @@ function folderItems(q) {
   if (!d.capability || !l || !("open folder".startsWith(l) || "folder".startsWith(l) || "browse".startsWith(l))) return [];
   return [{ pick: true, t: "Open folder…", s: "The desktop's folder dialog" }];
 }
-const row = (it, i) => { const { esc, rel } = d; return `<li class="${i === 0 ? "sel" : ""}${it.theme ? " theme" : ""}" data-i="${i}"${it.theme ? ` data-theme="${it.theme}"` : ""}>` + (
-  it.t ? `<span class="t">${esc(it.t)}</span><span class="s">${esc(it.s)}</span>`
+const row = (it, i) => { const { esc, rel } = d; return `<li role="option" id="pal-${i}" aria-selected="${i === 0}" class="${i === 0 ? "sel" : ""}${it.theme ? " theme" : ""}" data-i="${i}"${it.theme ? ` data-theme="${it.theme}"` : ""}>` + (
+  it.t ? `<span class="t">${esc(it.t)}${it.key ? `<kbd>${esc(it.key)}</kbd>` : ""}</span><span class="s">${esc(it.s)}</span>`
     : it.file ? `<span class="t">${esc(it.file.split("/").pop())}</span><span class="s">${esc(it.file)}</span>`
       : `<span class="t">${esc(it.title)}</span><span class="s">${esc(it.project)} · ${esc(it.workflow_title)} · ${rel(it.received_at)}</span>${it.snippet ? `<span class="snip">${it.snippet}</span>` : ""}`) + `</li>`; };
 /** Nothing matched: said, so an empty list is not a search still running.
  *  Not a row -- there is nothing to pick -- so the arrows and Enter pass it
- *  by. The face is sorry and still: it is redrawn on every keystroke that
- *  finds nothing, and a head that shook on each would be nagging. */
-const none = q => `<div class="pal-none">${d.mascotHead("oops")}<span>${q.trim() ? `Nothing for <b>${d.esc(q.trim())}</b>` : "Nothing here yet"}</span></div>`;
+ *  by. A search that finds nothing is the reader's miss, not snyvi's, and
+ *  gets no face (docs/DESIGN.md §2.3); an empty library gets snyvi at rest. */
+const none = q => `<div class="pal-none">${q.trim() ? `<span>Nothing for <b>${d.esc(q.trim())}</b></span>` : `${d.mascotHead("rest")}<span>Nothing here yet</span>`}</div>`;
 
 async function search(q) {
   const { list, pal, state, browsing, codePre, esc } = d;
@@ -184,6 +193,7 @@ async function search(q) {
   items = themeItems(q).concat(deskItems(q), folderItems(q), found); sel = 0;
   list.innerHTML = items.map(row).join("") + (off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : items.length ? "" : none(q));
   pal.classList.toggle("themes", items.some(it => it.theme));
+  lit();
   previewSel();
 }
 
@@ -197,7 +207,7 @@ function pick(it) {
   close();
   if (it.cmd) {
     const c = it.cmd;
-    c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+    c === "quiet" ? d.toggleQuiet() : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
       : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
     return;
   }
@@ -217,19 +227,20 @@ function pick(it) {
 const CSS = `
 #palette-list { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow-y: auto; }
 #palette-list:empty { display: none; }
-#palette-list li { padding: 8px 12px; border-radius: 6px; cursor: pointer; display: grid; gap: 1px; }
+#palette-list li { padding: 8px 12px; border-radius: var(--r-sm); cursor: pointer; display: grid; gap: 1px; }
 #palette-list li:hover { background: var(--rule); }
 #palette-list li.sel { background: var(--accent-bg); }
-#palette-list .t { font-weight: 550; font-size: 14px; }
-#palette-list .s { font-size: 12px; color: var(--fg-3); }
-#palette-list .snip { font-size: 12.5px; color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#palette-list mark { background: var(--mark); color: inherit; border-radius: 2px; }
+#palette-list .t { font-weight: 500; font-size: var(--fs-body-s); }
+#palette-list .s { font-size: var(--fs-small); color: var(--fg-3); }
+#palette-list .snip { font-size: var(--fs-small); color: var(--fg-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#palette-list mark { background: var(--mark); color: inherit; border-radius: var(--r-xs); }
 #palette.themes { background: none; }
 #palette-list li.theme { background: var(--bg); color: var(--fg); border: 1px solid var(--rule-2); margin-bottom: 4px; }
 #palette-list li.theme.sel { background: var(--accent-bg); box-shadow: inset 3px 0 var(--accent); }
-.pal-none { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 13px; color: var(--fg-3); }
+.pal-none { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: var(--fs-ui); color: var(--fg-3); }
 .pal-none .mk { width: 22px; height: 22px; flex: none; }
-.pal-none b { font-weight: 550; color: var(--fg-2); }
+#palette-list .t kbd { float: right; margin-left: 8px; }
+.pal-none b { font-weight: 600; color: var(--fg-2); }
 `;
 {
   const st = document.createElement("style");

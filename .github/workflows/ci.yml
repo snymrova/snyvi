@@ -181,6 +181,13 @@ jobs:
         # 50 KB budget in docs/BRAINSTORM.md, and an asset that does not
         # parse as served, which is the strip's own safety net.
         run: node bench/bytes.mjs --check
+      - name: The design system's debt only goes down
+        # docs/DESIGN.md §9.3: raw colours, off-scale font sizes, raw
+        # durations, unnamed z-indexes, titles, raw errors, banned words,
+        # buttons nested in links -- each counted against
+        # bench/lint-ui.baseline.json. Report mode: the push fails only when
+        # a count goes up, and a change that pays debt lowers the file.
+        run: node bench/lint-ui.mjs --check
       - name: The README's pictures can still be taken
         # bench/media.mjs is the camera the README's pictures come from; a
         # release re-takes them. Taken here into a folder that is thrown

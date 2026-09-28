@@ -18,9 +18,9 @@
  */
 
 const CSS = `
-.win { position: fixed; top: 14px; right: 10px; z-index: 10; display: flex; gap: 2px; }
+.win { position: fixed; top: 14px; right: 10px; z-index: var(--z-sticky); display: flex; gap: 2px; }
 .win[hidden] { display: none; }
-.wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .wb:hover { background: var(--rule); color: var(--fg); }
 .wb-close:hover { background: #c0392b; color: #fff; }
 .win .wb-restore, .win[data-max="1"] .wb-max { display: none; }
@@ -45,9 +45,9 @@ const CSS = `
 
 const svg = (d, cls) => `<svg${cls ? ` class="${cls}"` : ""} viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">${d}</svg>`;
 const BUTTONS =
-  `<button class="wb" data-win="min" title="Minimise" aria-label="Minimise window">${svg('<path d="M1.5 6.5h9"/>')}</button>` +
-  `<button class="wb" data-win="max" title="Maximise" aria-label="Maximise window">${svg('<rect x="1.5" y="1.5" width="9" height="9" rx="1.2"/>', "wb-max")}${svg('<path d="M3.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8.5"/><rect x="1.5" y="3.5" width="7" height="7" rx="1"/>', "wb-restore")}</button>` +
-  `<button class="wb wb-close" data-win="close" title="Close" aria-label="Close window">${svg('<path d="M2 2l8 8M10 2l-8 8"/>')}</button>`;
+  `<button class="wb" data-win="min" data-tip="Minimise" aria-label="Minimise window">${svg('<path d="M1.5 6.5h9"/>')}</button>` +
+  `<button class="wb" data-win="max" data-tip="Maximise" aria-label="Maximise window">${svg('<rect x="1.5" y="1.5" width="9" height="9" rx="1.2"/>', "wb-max")}${svg('<path d="M3.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8.5"/><rect x="1.5" y="3.5" width="7" height="7" rx="1"/>', "wb-restore")}</button>` +
+  `<button class="wb wb-close" data-win="close" data-tip="Close" aria-label="Close window">${svg('<path d="M2 2l8 8M10 2l-8 8"/>')}</button>`;
 
 /* The desk's keys, in the help box. A desk exists only in the window, so
  * the keys for one are the window's to tell of, in the box the `?` opens
@@ -91,7 +91,7 @@ export function frame(root, $) {
     el.innerHTML = BUTTONS;
     document.body.append(el);
     const wb = w => el.querySelector(`[data-win=${w}]`), btn = wb("max");
-    const show = m => { el.dataset.max = m ? "1" : "0"; btn.title = m ? "Restore" : "Maximise"; btn.setAttribute("aria-label", m ? "Restore window" : "Maximise window"); };
+    const show = m => { el.dataset.max = m ? "1" : "0"; btn.dataset.tip = m ? "Restore" : "Maximise"; btn.setAttribute("aria-label", m ? "Restore window" : "Maximise window"); };
     const refresh = () => win("is_maximized").then(show, () => {});
     show(max);
     wb("min").addEventListener("click", () => win("minimize"));

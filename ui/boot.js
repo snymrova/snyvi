@@ -19,6 +19,8 @@ try {
   if (ac) d.dataset.accent = ac;
   var f = localStorage.getItem("snyvi.font");
   if (f) d.dataset.font = f;
+  // The quiet mascot (docs/DESIGN.md §2.5), kept with the other looks.
+  if (localStorage.getItem("snyvi.mascot") === "quiet") d.dataset.mascot = "quiet";
   // Under 760 px the sidebar is only ever its rail (app.js keeps this true).
   if (localStorage.getItem("snyvi.side") === "0" || matchMedia("(max-width: 760px)").matches) d.dataset.side = "0";
   if (localStorage.getItem("snyvi.rail") === "0") d.dataset.rail = "0";

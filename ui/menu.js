@@ -28,7 +28,7 @@ let picking = false;
  *  so a tab is told where it can be done instead. */
 export async function pick(ctx, forDesk = false) {
   const { capability, state, toast, browseEl } = ctx;
-  if (!capability) { toast("Folders open from the snyvi window", "Or from a terminal: snyvi browse <folder>"); return; }
+  if (!capability) { toast("Folders open from the snyvi window", { sub: "or from a terminal · snyvi browse <folder>", face: null }); return; }
   if (picking) return;
   picking = true;
   browseEl.classList.add("picking");
@@ -36,7 +36,7 @@ export async function pick(ctx, forDesk = false) {
     const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } });
     if (r.status === 204) return;   // closed without a choice
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { toast("Could not open a folder", j.error || `HTTP ${r.status}`); return; }
+    if (!r.ok) { toast("Could not open a folder", { sub: new Error(j.error || `${r.status}`) }); return; }
     if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
     ctx.drawBrowse();
     // Kept under Folders either way: it is a folder the reader works in now.
@@ -45,7 +45,7 @@ export async function pick(ctx, forDesk = false) {
     const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
     if (d) d.open = true;
     ctx.browse(j.root.id, "", true);
-  } catch (e) { toast("Could not open a folder", e); }
+  } catch (e) { toast("Could not open a folder", { sub: e }); }
   finally { picking = false; browseEl.classList.remove("picking"); }
 }
 
@@ -65,10 +65,10 @@ export async function make(ctx, f) {
       const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude" } : {});
       if (claude) ctx.hold(p.pane.id);
       else await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
-    } catch (e) { toast("The desk is made, but its shell did not start", e); }
+    } catch (e) { toast("Could not start the new desk's shell", { sub: e }); }
     await ctx.load();
     ctx.show(j.desk.id, true);
-  } catch (e) { toast("Could not make a desk", e); }
+  } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 
 /** Whether `claude` can run here: on the daemon's PATH, or set up (which
@@ -95,13 +95,12 @@ export async function projectDesk(ctx, pid) {
  *  is no undoing that, so the first click asks and the second closes, as Close
  *  desk does in the desk's own rail. */
 export async function drop(ctx, b) {
-  if (!b.dataset.armed) {
-    b.dataset.armed = "1"; b.textContent = "Close?"; b.title = "Close the desk and its panels: click again";
-    const li = b.closest("li"); li.classList.add("arming");
-    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "✕"; b.title = "Close desk"; li.classList.remove("arming"); } }, 3000);
-    return;
-  }
-  await dropDesk(ctx, +b.dataset.dropdesk);
+  if (ctx.armed(b, { label: "Close desk?", sub: ends(ctx, +b.dataset.dropdesk) })) await dropDesk(ctx, +b.dataset.dropdesk);
+}
+/** What closing a desk ends, in the words the ask uses: "Ends 3 panels". */
+function ends(ctx, id) {
+  const n = ctx.state.desks?.desks.find(d => d.id === id)?.panes.length || 0;
+  return n ? `Ends ${n} panel${n === 1 ? "" : "s"}` : "Nothing is running on it";
 }
 
 /** Turn a name in the tree into a field, in place. Enter and blur keep what was
@@ -125,7 +124,7 @@ export function rename(ctx, holder, what, id, typed, why) {
   const input = document.createElement("input");
   input.className = "ren-in";
   input.value = typed ?? before;
-  input.spellcheck = false;
+  input.spellcheck = false; input.autocomplete = "off";
   input.setAttribute("aria-label", `Name of this ${what}`);
   label.replaceWith(input);
   holder.classList.add("renaming");
@@ -161,7 +160,7 @@ export function rename(ctx, holder, what, id, typed, why) {
     } catch (e) {
       label.textContent = before;
       if (holder.isConnected) rename(ctx, holder, what, id, next, `Could not rename · ${ctx.sayErr(e).why}`);
-      else toast(`Could not rename ${before}`, e);
+      else toast(`Could not rename ${before}`, { sub: e });
     }
   };
   // The app answers single keys, and Escape closes find and the palette.
@@ -182,9 +181,9 @@ export async function terminal(ctx, body) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));
-    if (r.ok) toast("Terminal", j.dir || "opened");
-    else toast("No terminal", j.error || `${r.status}`);
-  } catch (e) { toast("Could not open a terminal", e); }
+    // The terminal opening is the answer; only a refusal is said.
+    if (!r.ok) toast("Could not open a terminal", { sub: new Error(j.error || `${r.status}`) });
+  } catch (e) { toast("Could not open a terminal", { sub: e }); }
 }
 /** The same place, in the file manager -- Files, Finder, Explorer. The same
  *  ids go over and the daemon resolves them the same way; a desk's folder
@@ -192,16 +191,15 @@ export async function terminal(ctx, body) {
 export async function reveal(ctx, body) {
   const { toast } = ctx;
   try {
-    const j = body.desk != null ? await ctx.api("/api/reveal", body) : await (async () => {
+    await (body.desk != null ? ctx.api("/api/reveal", body) : (async () => {
       const r = await fetch("/api/reveal", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || `${r.status}`);
-      return j;
-    })();
-    toast("Opened", j.dir || "the folder");
-  } catch (e) { toast("Could not open the folder", e); }
+    })());
+    // The file manager opening is the answer; only a refusal is said.
+  } catch (e) { toast("Could not open the folder", { sub: e }); }
 }
 
 /** A document the page holds, wherever it is: on screen, waiting, or in a
@@ -230,7 +228,7 @@ function remove(ctx, id, el) {
   if (x) x.click(); else ctx.deleteDoc(docById(ctx, id) || { id, title: ctx.knownDocs.get(id)?.title || "Document" });
 }
 
-function copy(ctx, text) { navigator.clipboard?.writeText(text); ctx.toast("Copied", text); }
+
 
 /** A panel on a desk, started, and the desk shown: the desk's own +. */
 async function newPanel(ctx, id) {
@@ -239,14 +237,14 @@ async function newPanel(ctx, id) {
     await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     await ctx.load();
     ctx.show(id, true);
-  } catch (e) { ctx.toast("Could not open a panel", e); }
+  } catch (e) { ctx.toast("Could not open a panel", { sub: e }); }
 }
 
 /** Close a desk and its panels; the asking twice is the caller's. */
 async function dropDesk(ctx, id) {
   const { state } = ctx;
   try { await ctx.api(`/api/desks/${id}/delete`, {}); }
-  catch (e) { ctx.toast("Could not close the desk", e); return; }
+  catch (e) { ctx.toast("Could not close the desk", { sub: e }); return; }
   ctx.forget(id);
   await ctx.load();
   if (state.view === "desk" && state.deskId === id) ctx.show(null, true);
@@ -268,9 +266,13 @@ async function dropDesk(ctx, id) {
  *  one of them is on the page. */
 const RULE = "rule";
 function entries(ctx, el) {
-  const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: () => copy(ctx, text) });
+  const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const term = body => capability && { label: "Open terminal here", run: () => terminal(ctx, body) };
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
+  // snyvi's own mark: the one setting that is about snyvi itself.
+  if (el.matches(".brand-mark")) return { head: "snyvi", items: [
+    { label: document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot", run: () => ctx.toggleQuiet() },
+  ] };
   if (el.matches(".b-root > summary, .b-dir > details > summary")) {
     const f = ctx.folderOf(el);
     if (!f) return null;
@@ -298,10 +300,9 @@ function entries(ctx, el) {
     return { head: p.name, items: [
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
       ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
-      capability && p.root && RULE,
+      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
       term({ project: pid }), files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
-      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
-      { label: "Remove from sidebar", danger: true, run: () => ctx.putAway(pid) },
+      { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
     ] };
   }
   if (el.matches("a[data-id]")) {
@@ -311,7 +312,7 @@ function entries(ctx, el) {
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
       term({ doc: id }), files({ doc: id }), RULE,
-      { label: "Remove from inbox", key: "Del", danger: true, run: () => remove(ctx, id, el) },
+      { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }
   // A desk's row in the sidebar, and the ⋯ at the end of the desk's own
@@ -323,12 +324,12 @@ function entries(ctx, el) {
     if (!d || !capability) return null;
     return { head: d.name, items: [
       !here && { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? "⌃⌥N" : "", run: () => newPanel(ctx, id) },
+      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
-      dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => dk.zoomOn() }, RULE,
+      dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
+      { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) }, RULE,
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
-      { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      { label: "Close desk", danger: true, sure: true, run: () => dropDesk(ctx, id) },
+      { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }
   // `+ New desk`, wherever it is -- the Desks head, the empty Desks row, the
@@ -361,7 +362,7 @@ export function open(ctx, el, x, y, byKey = false) {
   // key; for a pointer, the row that was right-clicked (or the nearest
   // thing in it that takes focus), so a keyboard picks up where it was.
   opener = byKey ? document.activeElement : el.closest("a[href], button, summary, [tabindex]") || el;
-  menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? "<hr>"
+  menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? `<hr role="separator">`
     : `<button type="button" role="menuitem" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.key ? `<kbd>${ctx.esc(e.key)}</kbd>` : ""}</button>`).join("");
   menu.hidden = false;
   // Below the point when it fits, above it when it does not, and scrolled
@@ -390,15 +391,22 @@ const close = (back = false) => {
 /** The menu's look, with the menu: a page that never right-clicks never
  *  pays for it (bench/bytes.mjs). Theme tokens only, so every theme has it. */
 const CSS = `
-#ctx { position: fixed; z-index: 40; min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: 13px; transform-origin: 0 0; animation: ctx-in 80ms ease-out; }
+/* The folded sidebar's popover: it only ever opens through pop() below. */
+#pop { position: fixed; left: 50px; top: 8px; z-index: var(--z-pop); width: var(--side-w); max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain;
+  padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
+  animation: sheet-l var(--dur-quick) var(--ease-out); }
+#pop > #note { margin: 6px 0 0; }
+#pop > :first-child .s-head { margin-top: 4px; }
+@media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
+#ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
 @keyframes ctx-in { from { opacity: 0; transform: scale(.97); } }
 @media (prefers-reduced-motion: reduce) { #ctx { animation: none; } }
 /* What the menu acts on, named at its top: a right-click in a busy grid
    says which panel it meant. */
-#ctx .ctx-head { padding: 4px 10px 5px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
-#ctx button { display: flex; align-items: baseline; gap: 16px; width: 100%; text-align: left; padding: 5px 10px; border-radius: 5px; color: var(--fg-2); }
+#ctx .ctx-head { padding: 4px 10px 5px; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
+#ctx button { display: flex; align-items: baseline; gap: 16px; width: 100%; text-align: left; padding: 5px 10px; border-radius: var(--r-sm); color: var(--fg-2); }
 #ctx button > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#ctx button kbd { flex: none; font-family: var(--mono); font-size: 11px; color: var(--fg-3); background: none; border: 0; padding: 0; }
+#ctx button kbd { flex: none; min-width: 0; color: var(--fg-3); background: none; border: 0; padding: 0; }
 #ctx button:hover { background: var(--rule); }
 #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
 #ctx button.danger { color: var(--danger); }
@@ -418,19 +426,14 @@ function install(ctx) {
     if (!it) return;
     // Ending a process asks twice, in its own place: the entry says what the
     // next click does, and goes back after three seconds.
-    if (it.sure && !b.dataset.armed) {
-      b.dataset.armed = "1";
-      b.firstElementChild.textContent = `${it.label}? · click again`;
-      setTimeout(() => { if (b.isConnected && b.dataset.armed) { delete b.dataset.armed; b.firstElementChild.textContent = it.label; } }, 3000);
-      return;
-    }
+    if (it.sure && !ctx.armed(b, { label: `${it.label}?`, sub: it.sure, text: b.firstElementChild })) return;
     // Where the item stood, taken before the menu goes: an answer that has
     // no control left to stand beside stands there (`pin`).
     const at = b.getBoundingClientRect();
     // The focus goes back where the menu came from, unless the entry moves
     // it itself -- renaming, opening, going to a desk (`moves`).
     close(!it.moves);
-    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").toLowerCase()}`, err));
+    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").toLowerCase()}`, { sub: err, at }));
   });
   // The item under the pointer is the one with the focus: one row lit, and
   // Enter acts on it.
@@ -518,7 +521,9 @@ function wirePop(popEl) {
     else if (e.key === "ArrowUp") go(at - 1);
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(-1);
-    else if (e.key.length === 1 && /\S/.test(e.key)) {
+    // Letters and digits find a row; every other key -- \, Escape, ? --
+    // is the page's, as it is outside the popover.
+    else if (/^[a-z0-9]$/i.test(e.key)) {
       const k = e.key.toLowerCase();
       for (let j = 1; j <= n; j++) { const b = bs[(at + j) % n]; if (b.textContent.trim().toLowerCase().startsWith(k)) { b.focus(); break; } }
     } else return;

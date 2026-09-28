@@ -35,6 +35,8 @@
   --add: #dcebc8; --add-fg: #2f5e1a;
   --del: #f2d0c2; --del-fg: #8b2a1f;
   --shadow: 0 10px 40px rgba(60, 40, 10, .18), 0 1px 2px rgba(60, 40, 10, .10);
+  --shadow-1: 0 1px 3px rgba(60, 40, 10, 0.11);
+  --shadow-3: 0 18px 60px rgba(60, 40, 10, 0.22), 0 2px 6px rgba(60, 40, 10, 0.11);
   --scrim: rgba(50, 34, 12, .3);
   --ok: #2f6b1f;
   --warn: #8a4a06;
@@ -82,6 +84,7 @@
   --add: rgba(95, 224, 143, .2); --add-fg: #b8f0a8;
   --del: rgba(255, 138, 138, .2); --del-fg: #ffa3a3;
   --shadow: 0 0 0 1px #6e6e6e;
+  --shadow-1: var(--shadow); --shadow-3: var(--shadow);
   --scrim: rgba(0, 0, 0, .7);
   --ok: #5fe08f;
   --warn: #ffb454;
@@ -117,6 +120,8 @@
   --add: #dcfce7; --add-fg: #166534;
   --del: #fee2e2; --del-fg: #991b1b;
   --shadow: 0 10px 40px rgba(15, 20, 35, .14), 0 1px 2px rgba(15, 20, 35, .08);
+  --shadow-1: 0 1px 3px rgba(15, 20, 35, 0.08);
+  --shadow-3: 0 18px 60px rgba(15, 20, 35, 0.18), 0 2px 6px rgba(15, 20, 35, 0.08);
   --scrim: rgba(12, 16, 28, .28);
   --ok: #15753a;
   --warn: #94430a;
@@ -154,6 +159,8 @@
   --add: #d8efd2; --add-fg: #1f5c1a;
   --del: #f6dcd6; --del-fg: #8e2219;
   --shadow: 0 10px 40px rgba(20, 30, 15, .14), 0 1px 2px rgba(20, 30, 15, .08);
+  --shadow-1: 0 1px 3px rgba(20, 30, 15, 0.08);
+  --shadow-3: 0 18px 60px rgba(20, 30, 15, 0.18), 0 2px 6px rgba(20, 30, 15, 0.08);
   --scrim: rgba(16, 22, 12, .28);
   --ok: #14652f;
   --warn: #843c06;
@@ -192,6 +199,8 @@
   --add: rgba(74, 222, 128, .14); --add-fg: #86efac;
   --del: rgba(248, 113, 113, .14); --del-fg: #fca5a5;
   --shadow: 0 10px 40px rgba(0, 4, 16, .55), 0 1px 2px rgba(0, 4, 16, .4);
+  --shadow-1: 0 1px 3px rgba(0, 4, 16, 0.33);
+  --shadow-3: 0 18px 60px rgba(0, 4, 16, 0.65), 0 2px 6px rgba(0, 4, 16, 0.33);
   --scrim: rgba(2, 6, 18, .55);
   --ok: #5bd984;
   --warn: #eaa546;
@@ -230,6 +239,8 @@
   --add: rgba(127, 207, 111, .14); --add-fg: #a9e29a;
   --del: rgba(245, 131, 111, .14); --del-fg: #f8ad9e;
   --shadow: 0 10px 40px rgba(8, 4, 0, .55), 0 1px 2px rgba(8, 4, 0, .4);
+  --shadow-1: 0 1px 3px rgba(8, 4, 0, 0.33);
+  --shadow-3: 0 18px 60px rgba(8, 4, 0, 0.65), 0 2px 6px rgba(8, 4, 0, 0.33);
   --scrim: rgba(10, 6, 2, .55);
   --ok: #7fcf6f;
   --warn: #eaaa55;

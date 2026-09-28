@@ -22,31 +22,15 @@
  * over it, which is also what fetches this file. The labels are the folded
  * rail's icons' too. */
 const CSS = `
-.foot-rail > button:nth-child(2) { transition-delay: .02s; }
-.foot-rail > button:nth-child(3) { transition-delay: .05s; }
-.foot-rail > button:nth-child(4) { transition-delay: .08s; }
-.foot-rail > button:nth-child(5) { transition-delay: .11s; }
-.foot-rail > button:nth-child(6) { transition-delay: .14s; }
-.foot-rail > button:nth-child(7) { transition-delay: .17s; }
-/* What each one is, said beside it. These were \`title\`s, and the browser drew
-   them where it liked -- over the column, on its own schedule, covering the
-   very icons a reader was looking down to read. The name belongs next to the
-   column, not on top of it, and there is room to the right for all of them.
-   \`aria-label\` is what a screen reader was using all along; only the drawing
-   of it has changed. */
-.foot-rail > button { position: relative; }
-.foot-rail > button::after, #rail-nav > .icon::after { content: attr(data-label);
-  position: absolute; left: calc(100% + 9px); top: 50%; transform: translate(-3px, -50%); z-index: 32;
-  padding: 3px 8px; border-radius: 7px; background: var(--bg-raise); border: 1px solid var(--rule);
-  font-family: var(--sans); font-size: 11px; line-height: 1.35; font-weight: 500; color: var(--fg-2);
-  white-space: nowrap; pointer-events: none; opacity: 0;
-  transition: opacity .12s ease, transform .18s ease; }
-.foot-rail > button:hover::after, .foot-rail > button:focus-visible::after, #rail-nav > .icon:not(.on):is(:hover, :focus-visible)::after { opacity: 1; transform: translateY(-50%); }
-/* snyvi answers a press in that same strip of space to the right, which is
-   the point of answering there -- so while it is talking, the label steps
-   aside rather than being talked over. */
-.foot-rail > button.said::after { opacity: 0 !important; }
-/* And the column holds itself open for as long as it is being answered: the
+/* The beat each arrives on, capped: the last is in by --dur-instant, however
+   many there are (docs/DESIGN.md §7.2). */
+.foot-rail > button:nth-child(2) { transition-delay: calc(var(--dur-instant) * .25); }
+.foot-rail > button:nth-child(3) { transition-delay: calc(var(--dur-instant) * .5); }
+.foot-rail > button:nth-child(4) { transition-delay: calc(var(--dur-instant) * .75); }
+.foot-rail > button:nth-child(n+5) { transition-delay: var(--dur-instant); }
+/* What each one is, said beside it, is the tip's now (ui/tip.js): these
+   were the one place snyvi drew its own labels, and every control has one
+   the same way. The column holds itself open for as long as it is being answered: the
    pointer has usually left by then, and a tail pointing at the space where a
    button used to be is worse than no tail at all. */
 .foot-rail:has(> button.said) > button { opacity: 1; transform: none; pointer-events: auto; }
@@ -83,7 +67,7 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
     const b = $("#btn-theme"), n = nextTheme();
     // The icon is the side a click will land on.
     b.innerHTML = THEMES[n][1] === "dark" ? MOON : SUN;
-    b.dataset.label = `Theme: ${(THEMES[root.dataset.theme] || [root.dataset.theme])[0]} · click for ${THEMES[n][0]}`;
+    b.dataset.tip = `Theme: ${(THEMES[root.dataset.theme] || [root.dataset.theme])[0]}`; b.dataset.tipSub = `click for ${THEMES[n][0]}`;
   }
   $("#btn-theme").addEventListener("click", async () => { await loadThemes(); setTheme(nextTheme()); });
   paintThemeBtn();
@@ -127,14 +111,15 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
    *  the button lands on that side -- dropped to "the system" when that is
    *  what the system shows, the same rule as a click on the button. */
   function setTheme(name) {
-    const [label, side] = THEMES[name] || [];
+    const [, side] = THEMES[name] || [];
     if (!side) return;
     store.set(side === "light" ? "snyvi.theme.light" : "snyvi.theme.dark", name);
     store.set("snyvi.theme.follow", side === sysSide() ? "" : side);
     keepCopies();
     previewTheme(null);
+    // The page in its new colours is the answer (docs/DESIGN.md §4.1, rung
+    // 0); the button's own label, under the hand, names it.
     paintThemeBtn();
-    toast("Theme", label, null, null, { face: "glad", at: $("#btn-theme") });
   }
   /** Draw a theme without keeping it, or, with no name, the one that is
    *  kept. Diagrams already drawn in it come back from their cache. */
@@ -158,17 +143,17 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
   function paintFontBtn() {
     const f = FONTS.find(([k]) => k === (root.dataset.font || "")) || FONTS[0];
     // On a desk, Aa is the terminal's text size; the face there is always mono.
-    if (onDesk()) { const t = desk().textSize(); $("#btn-font").dataset.label = `Text size: ${t.name} · click for ${t.next}`; return; }
-    $("#btn-font").dataset.label = `Font: ${f[1]} · click for the next`;
+    const b = $("#btn-font");
+    if (onDesk()) { const t = desk().textSize(); b.dataset.tip = `Text size: ${t.name}`; b.dataset.tipSub = `click for ${t.next}`; return; }
+    b.dataset.tip = `Font: ${f[1]}`; b.dataset.tipSub = "click for the next";
   }
   $("#btn-font").addEventListener("click", control("font", () => {
     if (onDesk()) { const t = desk().textSize(); desk().textSize(t.at === t.of - 1 ? -(t.of - 1) : 1); sayTermSize(); return; }
     const i = FONTS.findIndex(([k]) => k === (root.dataset.font || ""));
-    const [next, name] = FONTS[(i + 1) % FONTS.length];
+    const [next] = FONTS[(i + 1) % FONTS.length];
     next ? (root.dataset.font = next) : delete root.dataset.font;
     store.set("snyvi.font", next);
     paintFontBtn();
-    toast("Font", name, null, null, { face: "glad", at: $("#btn-font") });
   }));
   paintFontBtn();
   /* The accent colours, in the order a click steps through them. "" is
@@ -184,7 +169,7 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
   const accName = k => (ACCENTS.find(([a]) => a === k) || ACCENTS[0])[1];
   function paintAccent() {
     const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
-    accBtn.dataset.label = `Accent: ${accName(ACCENTS[i][0])} · click for ${accName(ACCENTS[(i + 1) % ACCENTS.length][0])}`;
+    accBtn.dataset.tip = `Accent: ${accName(ACCENTS[i][0])}`; accBtn.dataset.tipSub = `click for ${accName(ACCENTS[(i + 1) % ACCENTS.length][0])}`;
   }
   /* The tab's icon wears the accent too: snyvi's face drawn in the mascot
    * colours the stylesheet resolved, each a plain hex the SVG can hold,
@@ -204,12 +189,11 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
   }
   accBtn.addEventListener("click", () => {
     const i = ACCENTS.findIndex(([k]) => k === (root.dataset.accent || ""));
-    const [next, name] = ACCENTS[(i + 1) % ACCENTS.length];
+    const [next] = ACCENTS[(i + 1) % ACCENTS.length];
     setAccent(next);
     // The swatch is the same shape in every colour, so the change is quiet
-    // where the click was. It flicks once, and snyvi says the name beside it.
+    // where the click was. It flicks once; its label, under the hand, names it.
     accBtn.classList.remove("flick"); void accBtn.offsetWidth; accBtn.classList.add("flick");
-    toast("Accent", name, null, null, { face: "glad", at: accBtn });
   });
   accBtn.addEventListener("animationend", () => accBtn.classList.remove("flick"));
   paintAccent();

@@ -573,6 +573,12 @@ impl Store {
     /// a delete that leaves a nearly identical row behind reads as one that did
     /// not happen. Undo puts the same seven back.
     pub fn delete(&self, id: &str) -> Result<bool> {
+        Ok(self.delete_versions(id)? > 0)
+    }
+
+    /// The same, saying how many versions went: the page's Undo names them
+    /// ("Removed · 3 versions"), so a ✕ that took seven says it took seven.
+    pub fn delete_versions(&self, id: &str) -> Result<usize> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let at = now();
@@ -584,7 +590,7 @@ impl Store {
             )
             .optional()?;
         let Some((project_id, source_path)) = found else {
-            return Ok(false);
+            return Ok(0);
         };
         let n = match source_path {
             Some(sp) => tx.execute(
@@ -597,7 +603,7 @@ impl Store {
             )?,
         };
         tx.commit()?;
-        Ok(n > 0)
+        Ok(n)
     }
 
     /// Put back a document that was deleted. False when there is nothing to put
@@ -629,6 +635,50 @@ impl Store {
         };
         tx.commit()?;
         Ok(n > 0)
+    }
+
+    /// What removals took that can still come back, newest first until
+    /// prune takes it (`GET /api/removed`, the page's "Removed · Show"): the
+    /// documents, one row per removal -- which is one row per lineage, named
+    /// by its newest version, with how many went -- and, with `desks`, the
+    /// notes taken off a desk's list and the panels closed on one. Each row
+    /// carries the route that puts it back; the asides the daemon holds in
+    /// memory are the server's to add.
+    pub fn removed(&self, limit: usize, desks: bool) -> Result<Vec<Removed>> {
+        let conn = self.conn.lock().unwrap();
+        let mut out: Vec<Removed> = conn
+            .prepare(
+                "SELECT d.id, d.title, p.name, d.deleted_at, COUNT(*), MAX(d.received_at)
+                 FROM docs d JOIN projects p ON p.id = d.project_id WHERE d.deleted_at != 0
+                 GROUP BY d.project_id, COALESCE(d.source_path, d.id), d.deleted_at
+                 ORDER BY d.deleted_at DESC LIMIT ?1",
+            )?
+            .query_map(params![limit as i64], |r| {
+                let id: String = r.get(0)?;
+                Ok(Removed {
+                    kind: "doc",
+                    restore: format!("/api/docs/{id}/undelete"),
+                    id,
+                    title: r.get(1)?,
+                    from: r.get(2)?,
+                    desk: None,
+                    at: r.get(3)?,
+                    versions: r.get::<_, i64>(4)? as usize,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        if desks {
+            for (desk, id, name, text, at) in desk::removed_notes(&conn, limit)? {
+                out.push(Removed { kind: "note", id: id.to_string(), title: text, from: name, desk: Some(desk), at, versions: 1,
+                    restore: format!("/api/desks/{desk}/notes/{id}/restore") });
+            }
+            for (id, desk, name, label, at) in desk::closed_panes(&conn, limit)? {
+                out.push(Removed { kind: "panel", restore: format!("/api/panes/{id}/restore"), id, title: label, from: name, desk: Some(desk), at, versions: 1 });
+            }
+        }
+        out.sort_by(|a, b| b.at.cmp(&a.at));
+        out.truncate(limit);
+        Ok(out)
     }
 
     /// Every snapshot of one file in a project, newest first.
@@ -1322,6 +1372,25 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
     })
 }
 
+/// One thing a removal took that can still come back (`Store::removed`).
+#[derive(Debug, Serialize)]
+pub struct Removed {
+    /// "doc", "note", "panel" or "aside".
+    pub kind: &'static str,
+    pub id: String,
+    /// What the row says: a document's title, a note's text, a panel's name.
+    pub title: String,
+    /// Where it was: the project, or the desk.
+    pub from: String,
+    pub desk: Option<i64>,
+    /// When it was removed (seconds).
+    pub at: i64,
+    /// How many versions of a document went with it; 1 for everything else.
+    pub versions: usize,
+    /// The POST that puts it back.
+    pub restore: String,
+}
+
 pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1844,6 +1913,42 @@ mod tests {
     }
 
     #[test]
+    fn removed_lists_what_can_come_back_newest_first_one_row_per_removal() {
+        let (s, _d) = temp_store();
+        s.insert(&new_id("1"), version_of("/p/S.md", "Script", "one", "w")).unwrap();
+        let newest = s.insert(&new_id("2"), version_of("/p/S.md", "Script v2", "two", "w")).unwrap();
+        let other = s.insert(&new_id("o"), new_doc("Notes", "elsewhere", "w")).unwrap();
+        s.insert(&new_id("k"), new_doc("Kept", "stays", "w")).unwrap();
+        assert!(s.removed(10, true).unwrap().is_empty(), "nothing removed, nothing listed");
+
+        assert_eq!(s.delete_versions(&newest.id).unwrap(), 2);
+        s.delete(&other.id).unwrap();
+        let desk = s.create_desk("/home/p/snyvi", None).unwrap();
+        let note = s.add_desk_note(desk.id, "ship it").unwrap().unwrap();
+        assert!(s.remove_desk_note(desk.id, note.id).unwrap());
+
+        let docs: Vec<_> = s.removed(10, false).unwrap();
+        assert!(docs.iter().all(|r| r.kind == "doc"), "no desk rows without the desk's gate");
+        assert_eq!(docs.len(), 2, "one row for the lineage, one for the other: {docs:?}");
+        let script = docs.iter().find(|r| r.versions == 2).expect("the lineage says how many went");
+        assert_eq!(script.title, "Script v2", "named by its newest version");
+        assert_eq!(script.restore, format!("/api/docs/{}/undelete", script.id));
+
+        let all = s.removed(10, true).unwrap();
+        let n = all.iter().find(|r| r.kind == "note").expect("the removed note is listed");
+        assert_eq!((n.title.as_str(), n.desk), ("ship it", Some(desk.id)));
+        assert_eq!(n.restore, format!("/api/desks/{}/notes/{}/restore", desk.id, note.id));
+        assert!(all.windows(2).all(|w| w[0].at >= w[1].at), "newest first");
+
+        // Brought back, it leaves the list.
+        assert!(s.undelete(&script.id).unwrap());
+        assert!(s.restore_desk_note(desk.id, note.id).unwrap());
+        let left = s.removed(10, true).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].title, "Notes");
+    }
+
+    #[test]
     fn removing_a_document_takes_its_versions_and_undo_brings_them_back() {
         let (s, _d) = temp_store();
         let first = s
@@ -1858,7 +1963,8 @@ mod tests {
 
         // One ✕ on one row removes one document, versions and all -- otherwise
         // the version behind it takes its place and the delete reads as undone.
-        assert!(s.delete(&newest.id).unwrap());
+        // It says how many went, which is what the page's Undo names.
+        assert_eq!(s.delete_versions(&newest.id).unwrap(), 2);
         assert!(s.get(&first.id).unwrap().is_none());
         assert_eq!(s.inbox(10).unwrap().len(), 1);
         assert!(s.history(first.project_id, "/p/S.md").unwrap().is_empty());

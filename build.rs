@@ -51,6 +51,7 @@ fn strip_ui() {
         ("palette.js", strip::Lang::Js),
         ("look.js", strip::Lang::Js),
         ("note.js", strip::Lang::Js),
+        ("tip.js", strip::Lang::Js),
         ("app.css", strip::Lang::Css),
         ("themes.css", strip::Lang::Css),
     ] {

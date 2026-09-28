@@ -862,6 +862,33 @@ pub fn remove_note(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result
 }
 
 /// Put a removed line back where it was.
+/// Notes taken off a desk's list, newest first: what `GET /api/removed`
+/// offers back beside the documents. Each is (desk, note, desk name, text,
+/// removed at); `restore_note` puts one back.
+pub fn removed_notes(conn: &Connection, limit: usize) -> Result<Vec<(i64, i64, String, String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT n.desk_id, n.id, d.name, n.text, n.removed_at FROM desk_notes n JOIN desks d ON d.id = n.desk_id
+         WHERE n.removed_at != 0 ORDER BY n.removed_at DESC, n.id DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Panels closed and not yet pruned, newest first, for the same list: (pane,
+/// desk, desk name, what it was called, closed at). `restore_pane` reopens one.
+pub fn closed_panes(conn: &Connection, limit: usize) -> Result<Vec<(String, i64, String, String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.desk_id, d.name, COALESCE(NULLIF(c.name, ''), NULLIF(c.cmd, ''), 'shell'), c.closed_at
+         FROM panes_closed c JOIN desks d ON d.id = c.desk_id ORDER BY c.closed_at DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 pub fn restore_note(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE desk_notes SET removed_at = 0 WHERE desk_id = ?1 AND id = ?2",

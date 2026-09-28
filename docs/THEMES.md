@@ -192,6 +192,32 @@ current dark block, which has neither: 856 B raw, 385 B gzipped. Four
 themes cost under 2 KB gzipped against the 60 KB budget in the
 brainstorm; `bench/bytes.mjs` will say the real number.
 
+### Three tiers (1.8)
+
+The design system (`docs/DESIGN.md` §6) sorts every token into one of
+three tiers, and a theme only ever touches the first two:
+
+- **Primitive**: the raw values a theme is made of -- Paper's
+  `#faf9f6`, Passion's `-l` and `-d`. They live only inside a theme's
+  block (and the accent blocks), never in a component.
+- **Semantic**: what a value is *for* -- `--bg`, `--fg-2`, `--rule`,
+  `--accent`, `--on-accent`, `--ok`, `--warn`, `--danger`, `--focus`,
+  `--led-glow`, `--mascot-shine`, and the three shadows `--shadow-1`
+  (a raised card), `--shadow` (a popover, menu, tip or toast) and
+  `--shadow-3` (a dialog), which each theme sets (Contrast maps all
+  three to its ring). A theme is a complete assignment of these.
+- **Component**, and rare: `--row-h`, `--ib`, `--toast-w`, the
+  `--mascot-*` set.
+
+The scales are theme-free and live once on `app.css :root`: type
+(`--fs-micro` 11 … `--fs-h1` 34, and `--fs-read` per reading face),
+space (`--sp-1` 2 … `--sp-11` 48), radius (`--r-xs`, `--r-sm`, `--r-md`,
+`--r-pill`), layers (`--z-sticky` … `--z-over`, toasts above dialogs)
+and motion (`--dur-instant` 80, `--dur-quick` 140, `--dur-move` 220,
+`--dur-moment`, and the three curves). `bench/lint-ui.mjs` counts every
+raw colour, px font size, duration and z-index outside them, and the
+count may only go down.
+
 ### The themes
 
 Eight, to match the eight accents: four light, four dark. Every one

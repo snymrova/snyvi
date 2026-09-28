@@ -49,6 +49,8 @@ const SHIP_SPEED = 270;     // px/s at full tilt, sideways
 const SHIP_CLIMB = 200;     // px/s forward and back
 const BULLET_SPEED = 520;
 const SHIPS = 3;
+/** The reader asked for less motion: the fresh ship does not blink. */
+const still = matchMedia("(prefers-reduced-motion: reduce)");
 
 /* Three sizes of rock: the radius in px, what one is worth, and the size it
  * breaks into. A small one breaks into nothing. */
@@ -93,7 +95,7 @@ class Game {
     this.byTouch = matchMedia("(hover: none)").matches;
     this.el.innerHTML =
       `<div class="game-head"><span class="game-title">Asteroids</span><span class="game-score">0</span>` +
-      `<button class="icon game-close" type="button" aria-label="Close (Esc)" title="Close (Esc)">✕</button></div>` +
+      `<button class="icon game-close" type="button" aria-label="Close" data-tip="Close" data-key="esc"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>` +
       `<canvas class="game-sky" tabindex="0" aria-label="${this.byTouch ? "The sky. Drag to steer, hold to fire." : "The sky. Arrows steer, space fires, esc leaves."}"></canvas>` +
       `<div class="game-foot"><span class="game-hint">${this.byTouch ? "" : "esc leaves"}</span><span class="game-best"></span></div>`;
     host.appendChild(this.el);
@@ -529,7 +531,9 @@ class Game {
    *  clipped to the dome so it sits in the helmet rather than on it. */
   drawShip(x, y, p, now) {
     const c = this.ctx, s = this.ship;
-    if (s.safe > 0 && Math.floor(now / 90) % 2) return;   // a fresh ship blinks
+    // A fresh ship blinks, at 250 ms a beat: faster is a flicker, and WCAG
+    // 2.3 counts it (docs/DESIGN.md §7.3). Under reduced motion it does not.
+    if (s.safe > 0 && !still.matches && Math.floor(now / 250) % 2) return;
     c.save();
     c.translate(x, y);
     c.rotate(s.vx / SHIP_SPEED * 0.2);
@@ -679,18 +683,18 @@ const CSS_MOVED = `
    the dialogs (40), so a document opening beside it is never in its way and
    a dialog over it is still a dialog. It is \`ui/game.js\`'s to draw; this is
    only its shell -- a head with the score, the sky, a foot with the best. */
-#side .game { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg-side); }
+#side .game { position: absolute; inset: 0; z-index: var(--z-over); display: flex; flex-direction: column; background: var(--bg-side); }
 .game-head, .game-foot { display: flex; align-items: center; gap: 8px; font-family: var(--sans); color: var(--fg-3); }
-.game-head { padding: 12px 10px 4px 16px; font-size: 12px; }
+.game-head { padding: 12px 10px 4px 16px; font-size: var(--fs-small); }
 .game-title { margin-right: auto; font-weight: 600; color: var(--fg-2); letter-spacing: -.005em; }
-.game-score { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--fg); margin-right: 2px; }
+.game-score { font-family: var(--mono); font-size: var(--fs-ui); font-variant-numeric: tabular-nums; color: var(--fg); margin-right: 2px; }
 .game-sky { flex: 1; min-height: 0; width: 100%; display: block; touch-action: none; }
 /* An outline drawn inwards, not an inset shadow: the canvas paints its own
    bitmap over the element's shadow every frame, so the ring was there and
    then covered. The sky is the game's only focusable control and it takes
    every flight key, so this is the one ring that has to show. */
 .game-sky:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.game-foot { justify-content: space-between; padding: 4px 16px 12px; font-size: 11px; }
+.game-foot { justify-content: space-between; padding: 4px 16px 12px; font-size: var(--fs-micro); }
 .game-hint, .game-best { white-space: nowrap; }
 .game-best { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 `;

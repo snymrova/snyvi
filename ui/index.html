@@ -14,22 +14,22 @@
   <aside id="side" tabindex="-1">
     <div class="side-head" data-tauri-drag-region="deep">
       <a class="brand" href="/" data-nav="inbox"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-wink" d="M8.6 17.8q2.4-3 4.8 0"/><g class="bm-love"><path transform="translate(11 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/><path transform="translate(21 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span><span class="bm-say" id="bm-say" hidden aria-hidden="true"></span></a>
-      <a class="live" id="live" href="/connect" data-nav="connect" title="No agent is connected" aria-label="No agent is connected">0</a><button class="upd" id="upd" type="button" aria-live="polite" hidden></button>
-      <button class="icon" id="btn-search" title="Search  ⌘K" aria-label="Search">
+      <a class="live" id="live" href="/connect" data-nav="connect" data-tip="No agent connected" aria-label="No agent connected">0</a><button class="upd" id="upd" type="button" aria-live="polite" hidden></button>
+      <button class="icon" id="btn-search" data-tip="Search" data-key="mod+k" aria-label="Search">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </button>
-      <button class="icon" id="btn-side-hide" title="Hide sidebar  \" aria-label="Hide sidebar" aria-controls="side">
+      <button class="icon" id="btn-side-hide" data-tip="Hide sidebar" data-key="\" aria-label="Hide sidebar" aria-controls="side">
         <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M8 4v12"/><path class="pane" d="M4.5 4H8v12H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="currentColor" stroke="none"/></svg>
       </button>
     </div>
     <nav id="rail-nav" aria-label="Sidebar" aria-orientation="vertical">
-      <button class="icon" data-pop="inbox" data-ico="inbox" data-label="Inbox" aria-label="Inbox"><b class="badge"></b></button>
-      <button class="icon" data-pop="tree" data-ico="project" data-label="Projects" aria-label="Projects"></button>
-      <button class="icon" data-pop="desks" data-ico="desk" data-label="Desks" aria-label="Desks"><b class="badge"></b></button>
-      <button class="icon" data-pop="browse" data-ico="folder" data-label="Folders" aria-label="Folders"></button>
-      <a class="icon" id="rail-live" href="/connect" data-nav="connect" data-label="No agent is connected" aria-label="Agents connected"><i></i><b class="badge"></b></a>
-      <button class="icon" id="rail-note" data-pop="note" data-label="Aside" aria-label="Aside"><i></i></button>
-      <button class="icon" id="rail-search" data-ico="search" data-label="Search · ⌘K" aria-label="Search"></button>
+      <button class="icon" data-pop="inbox" data-ico="inbox" data-tip="Inbox" aria-label="Inbox"><b class="badge"></b></button>
+      <button class="icon" data-pop="tree" data-ico="project" data-tip="Projects" aria-label="Projects"></button>
+      <button class="icon" data-pop="desks" data-ico="desk" data-tip="Desks" aria-label="Desks"><b class="badge"></b></button>
+      <button class="icon" data-pop="browse" data-ico="folder" data-tip="Folders" aria-label="Folders"></button>
+      <a class="icon" id="rail-live" href="/connect" data-nav="connect" data-tip="No agent connected" aria-label="No agent connected"><i></i><b class="badge"></b></a>
+      <button class="icon" id="rail-note" data-pop="note" data-tip="Aside" aria-label="Aside"><i></i></button>
+      <button class="icon" id="rail-search" data-ico="search" data-tip="Search" data-key="mod+k" aria-label="Search"></button>
     </nav>
     <div id="trees">
       <div id="inbox-row"></div>
@@ -43,62 +43,62 @@
     <div class="side-foot">
       <div class="foot-set">
         <div class="foot-rail" id="foot-rail" role="toolbar" aria-orientation="vertical" aria-label="Look and more">
-          <button class="icon keep" id="btn-theme" data-label="Theme" aria-label="Theme">
+          <button class="icon keep" id="btn-theme" data-tip-live data-tip="Theme" aria-label="Theme">
             <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
           </button>
-          <button class="icon" id="btn-accent" data-label="Accent colour" aria-label="Accent colour"><span class="sw"></span></button>
-          <button class="icon" id="btn-font" data-label="Reading font" aria-label="Font"><span class="aa">Aa</span></button>
-          <button class="icon" id="btn-wide" data-label="Maximise width · w" aria-label="Width">
+          <button class="icon" id="btn-accent" data-tip-live data-tip="Accent colour" aria-label="Accent colour"><span class="sw"></span></button>
+          <button class="icon" id="btn-font" data-tip-live data-tip="Reading font" aria-label="Font"><span class="aa">Aa</span></button>
+          <button class="icon" id="btn-wide" data-tip-live data-tip="Maximise width" data-key="w" aria-label="Width">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 6L3 10l4 4M13 6l4 4-4 4M10 4v12"/></svg>
           </button>
-          <button class="icon" id="btn-wrap" data-label="Wrap long lines · z" aria-label="Wrap">
+          <button class="icon" id="btn-wrap" data-tip-live data-tip="Wrap long lines" data-key="z" aria-label="Wrap">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14M3 10h10a2.5 2.5 0 0 1 0 5H8M10 13l-2 2 2 2M3 15h2"/></svg>
           </button>
-          <button class="icon" id="btn-help" data-label="Keyboard shortcuts · ⌃B ?" aria-label="Keyboard shortcuts"><span class="qm">?</span></button>
-          <button class="icon" id="btn-game" data-label="Asteroids" aria-label="Asteroids">
+          <button class="icon" id="btn-help" data-tip="Keyboard shortcuts" data-key="?" aria-label="Keyboard shortcuts"><span class="qm">?</span></button>
+          <button class="icon" id="btn-game" data-tip="Asteroids" aria-label="Asteroids">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5c2.7 1.7 3.9 5 3.4 9L10 14.2 6.6 11.5c-.5-4 .7-7.3 3.4-9z"/><circle cx="10" cy="8.2" r="1.3"/><path d="M6.8 10.8 4.6 13.2l2.3.6M13.2 10.8l2.2 2.4-2.3.6M10 14.2v3.3"/></svg>
           </button>
         </div>
       </div>
     </div>
-    <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="440" tabindex="0" title="Drag to resize · double-click to reset"></div>
+    <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="440" tabindex="0" data-tip="Drag to resize" data-tip-sub="double-click to reset"></div>
   </aside>
   <main id="main">
     <div id="chrome" data-tauri-drag-region="deep">
-      <div class="over" hidden><span class="over-t"></span><button class="over-x" title="Back to the panels  ⌃`" aria-label="Back to the panels"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
+      <div class="over" hidden><span class="over-t"></span><button class="over-x" data-tip="Back to the panels" data-key="ctrl+`" aria-label="Back to the panels"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
       <div class="chrome-r">
-        <button class="icon" id="btn-rail" title="Contents  t" aria-label="Show contents" aria-controls="rail">
+        <button class="icon" id="btn-rail" data-tip="Contents" data-key="t" aria-label="Show contents" aria-controls="rail">
           <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M12 4v12"/></svg>
         </button>
       </div>
     </div>
     <div id="queue-bar" hidden role="status" aria-live="polite"></div>
-    <div id="find" hidden role="search"><input id="find-input" type="text" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span id="find-count" role="status" aria-live="polite"></span><button class="icon" id="find-prev" title="Previous (Shift+Enter)" aria-label="Previous match">↑</button><button class="icon" id="find-next" title="Next (Enter)" aria-label="Next match">↓</button><button class="icon" id="find-close" title="Close (Esc)" aria-label="Close find">✕</button></div>
+    <div id="find" hidden role="search"><input id="find-input" type="text" placeholder="Find in document" aria-label="Find in document" autocomplete="off" spellcheck="false"><span id="find-count" role="status" aria-live="polite"></span><button class="icon" id="find-prev" data-tip="Previous match" data-key="shift+enter" aria-label="Previous match"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button><button class="icon" id="find-next" data-tip="Next match" data-key="enter" aria-label="Next match"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><button class="icon" id="find-close" data-tip="Close find" data-key="esc" aria-label="Close find"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div id="doc">{{INITIAL_HTML}}</div>
   </main>
   <aside id="rail" tabindex="-1">
     <div class="rail-grip" data-tauri-drag-region="deep"></div>
-    <button class="icon" id="btn-rail-hide" title="Hide contents  t" aria-label="Hide contents" aria-controls="rail">
+    <button class="icon" id="btn-rail-hide" data-tip="Hide contents" data-key="t" aria-label="Hide contents" aria-controls="rail">
       <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M12 4v12"/><path class="pane" d="M12 4h3.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H12z" fill="currentColor" stroke="none"/></svg>
     </button>
     <nav id="toc" aria-label="Contents"></nav>
     <div id="meta"></div>
-    <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Contents width" aria-valuemin="180" aria-valuemax="400" tabindex="0" title="Drag to resize · double-click to reset"></div>
+    <div class="gutter" role="separator" aria-orientation="vertical" aria-label="Contents width" aria-valuemin="180" aria-valuemax="400" tabindex="0" data-tip="Drag to resize" data-tip-sub="double-click to reset"></div>
   </aside>
 </div>
 <div id="scrim"></div>
 <div id="toasts" aria-live="polite"></div>
 <div id="palette" hidden>
   <div class="palette-box" role="dialog" aria-modal="true" aria-label="Search">
-    <input id="palette-input" type="text" placeholder="Search documents…" autocomplete="off" spellcheck="false">
+    <input id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" aria-label="Search" placeholder="Search documents" autocomplete="off" spellcheck="false">
     <ul id="palette-list" role="listbox"></ul>
   </div>
 </div>
 <div id="help" hidden>
   <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1">
     <div class="help-head">
-      <h2 id="help-title">Keyboard shortcuts</h2>
-      <button class="icon help-close" id="help-close" title="Close (Esc)" aria-label="Close">✕</button>
+      <h2 class="dlg-title" id="help-title">Keyboard shortcuts</h2>
+      <button class="icon help-close" id="help-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
     <div class="help-body"></div>
     <div class="help-foot">

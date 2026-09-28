@@ -852,9 +852,12 @@ async function run(v, cmd, quiet, again) {
     // A quiet `again` is this page's own resume after a restart (`marked`):
     // the daemon holds to it only while the mark does, and past it starts
     // `cmd` with the conversation offered -- a panel unshown for minutes.
+    const was = document.activeElement;
     const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, marked: !!quiet, cmd, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
-    if (!quiet) v.body.focus();
+    // The panel takes the keys -- unless the reader went somewhere else, a
+    // note, a name, while the daemon was starting it.
+    if (!quiet && (document.activeElement === was || document.activeElement === document.body)) v.body.focus();
   } catch (e) {
     // A conversation the daemon no longer has an id for -- the mark outlived
     // it -- is not worth a word: the shell is what the pane gets instead.
@@ -2022,6 +2025,7 @@ async function restorePanel(id) {
 
 /** Why a field is open again: under it, until the next key. */
 function fieldErr(input, why) {
+  if (input.nextElementSibling?.classList.contains("field-err")) input.nextElementSibling.remove();
   const p = Object.assign(document.createElement("span"), { className: "field-err", textContent: why });
   p.setAttribute("role", "alert");
   input.after(p);
@@ -2078,7 +2082,8 @@ function renameDesk(d, typed, why) {
     const name = input.value.trim();
     if (keep && name && name !== d.name) {
       try { await ctx.api(`/api/desks/${d.id}/rename`, { name }); await ctx.refresh(); }
-      catch (e) { rail(); return renameDesk(d, name, `Could not rename · ${ctx.sayErr(e).why}`); }
+      // Refused: the field stays as typed, says why, and Enter asks again.
+      catch (e) { if (input.isConnected) { done = false; fieldErr(input, `Could not rename · ${ctx.sayErr(e).why}`); input.focus(); return; } rail(); return renameDesk(d, name, `Could not rename · ${ctx.sayErr(e).why}`); }
     }
     rail();
   };

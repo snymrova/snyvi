@@ -37,8 +37,8 @@ function renderUpd() {
   const u = upd, { capability, plural, version } = uc;
   let text = "", cls = "", title = "";
   const r = u && u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
-  if (u && (u.restarting || updWaiting)) { text = "Restarting…"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
-  else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting…"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
+  if (u && (u.restarting || updWaiting)) { text = "Restarting"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
+  else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
   else if (u && u.show) {
     if (u.ready) { text = capability ? `Restart to update · ${u.ready}` : `Update ready · ${u.ready}`; cls = u.amber ? "amber" : ""; title = capability ? "Restarts once no panel is busy; Claude panels come back with their conversation" : "The window restarts it; About says more"; }
     else if (u.failed_recent) { text = `${u.failed} did not start · kept ${version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
@@ -56,7 +56,10 @@ function renderUpd() {
   }
   updEl.hidden = !text;
   if (!text) return;
-  updEl.textContent = text; updEl.className = `upd ${cls}`.trim(); updEl.title = title;
+  // The why is a sentence, and a tip is a name: it is in the pill's
+  // aria-label and in About, where the pill leads (docs/DESIGN.md §3.4).
+  updEl.textContent = text; updEl.className = `upd ${cls}`.trim();
+  if (cls === "waiting") updEl.insertAdjacentHTML("afterbegin", DOTS);
   updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
   updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
 }
@@ -75,7 +78,7 @@ async function clickUpd() {
     // The daemon's `update` event says what the restart waits on; until
     // it comes, this pill says Restarting.
     try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
-    catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", e); }
+    catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", { sub: e }); }
     return;
   }
   if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }
@@ -95,25 +98,33 @@ export function open(which, d) {
  * time either is asked for, since nothing else ever shows them. */
 const ABOUT = `
 <div class="help-box about-box" role="dialog" aria-modal="true" aria-labelledby="about-title" tabindex="-1">
-  <button class="icon help-close" id="about-close" title="Close (Esc)" aria-label="Close">✕</button>
-  <h2 id="about-title">snyvi</h2>
+  <button class="icon help-close" id="about-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <h2 class="dlg-title" id="about-title">snyvi</h2>
   <p id="about-say">A fast, beautiful viewer for the documents your agents produce.</p>
   <dl id="about-facts"></dl>
 </div>
 `;
 const RESET = `
 <form class="help-box reset-box" role="dialog" aria-modal="true" aria-labelledby="reset-title" tabindex="-1">
-  <button class="icon help-close" id="reset-close" type="button" title="Close (Esc)" aria-label="Close">✕</button>
-  <h2 id="reset-title">Reset snyvi</h2>
+  <button class="icon help-close" id="reset-close" type="button" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <h2 class="dlg-title" id="reset-title">Reset snyvi</h2>
   <p id="reset-say">Reading what there is…</p>
   <label id="reset-pinned-row" hidden><input type="checkbox" id="reset-pinned"> <span id="reset-pinned-say"></span></label>
   <label class="reset-ask">Type the number of documents to continue
     <input id="reset-n" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="reset-say">
   </label>
   <p id="reset-err" class="reset-err" role="alert" hidden></p>
-  <div class="reset-act"><button class="text" type="button" id="reset-cancel">Cancel</button><button class="danger" type="submit" id="reset-go" disabled>Reset</button></div>
+  <div class="reset-act"><button class="text" type="button" id="reset-cancel">Cancel</button><button class="btn btn-danger fill" type="submit" id="reset-go" disabled>Reset</button></div>
 </form>
 `;
+/** The keys as this machine names them, the words app.js's keyHint uses
+ *  (docs/DESIGN.md §3.4): glyphs on a Mac, Ctrl and Alt everywhere else. */
+const MAC = /Mac/.test(navigator.platform);
+const KEY = { mod: MAC ? "⌘" : "Ctrl", ctrl: MAC ? "⌃" : "Ctrl", alt: MAC ? "⌥" : "Alt", shift: MAC ? "⇧" : "Shift" };
+/** The working dots (app.css .dots), beside a word, for a process under way. */
+const DOTS = `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+const kb = (...ks) => ks.map(k => `<kbd>${KEY[k] || k}</kbd>`).join("");
+
 // ---------- the shortcuts card: its rows ride here, not in index.html ----------
 /* The card's shell -- title, close, the foot's three buttons -- is in
  * index.html so `?` opens it at once; the two columns of keys are 3 KB of
@@ -126,10 +137,10 @@ const HELP = `
 <div class="help-col">
   <section>
     <h3>Everywhere</h3>
-    <div class="hk"><span>Letter keys on / off</span><span class="keys"><kbd>⌃</kbd><kbd>B</kbd></span></div>
-    <div class="hk"><span>Search</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>K</kbd></span></div>
+    <div class="hk"><span>Letter keys on / off</span><span class="keys">${kb("ctrl", "B")}</span></div>
+    <div class="hk"><span>Search</span><span class="keys">${kb("mod", "K")}</span></div>
     <div class="hk"><span>These shortcuts</span><span class="keys"><kbd>?</kbd></span></div>
-    <div class="hk"><span>Close</span><span class="keys"><kbd>esc</kbd></span></div>
+    <div class="hk"><span>Close</span><span class="keys"><kbd>Esc</kbd></span></div>
   </section>
   <section>
     <h3>Move</h3>
@@ -137,8 +148,8 @@ const HELP = `
     <div class="hk"><span>Older / newer version</span><span class="keys"><kbd>[</kbd><i>/</i><kbd>]</kbd></span></div>
     <div class="hk"><span>The next document waiting</span><span class="keys"><kbd>n</kbd></span></div>
     <div class="hk"><span>Inbox</span><span class="keys"><kbd>i</kbd></span></div>
-    <div class="hk"><span>Back / forward</span><span class="keys"><kbd>alt</kbd><kbd>←</kbd><i>/</i><kbd>→</kbd></span></div>
-    <div class="hk"><span>Go to a line</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>K</kbd><code>:120</code></span></div>
+    <div class="hk"><span>Back / forward</span><span class="keys">${kb("alt", "←")}<i>/</i><kbd>→</kbd></span></div>
+    <div class="hk"><span>Go to a line</span><span class="keys">${kb("mod", "K")}<code>:120</code></span></div>
   </section>
   <section>
     <h3>Read</h3>
@@ -156,7 +167,7 @@ const HELP = `
     <h3>Diagram</h3>
     <div class="hk"><span>Fullscreen</span><span class="keys"><kbd>f</kbd></span></div>
     <div class="hk"><span>Fit to window</span><span class="keys"><kbd>0</kbd></span></div>
-    <div class="hk"><span>Zoom</span><span class="keys"><kbd data-mod>⌘</kbd><i>+</i>scroll</span></div>
+    <div class="hk"><span>Zoom</span><span class="keys">${kb("mod")}<i>+</i>scroll</span></div>
     <div class="hk"><span>Pan</span><span class="keys">drag</span></div>
   </section>
   <section>
@@ -167,8 +178,8 @@ const HELP = `
   <section>
     <h3>Keep</h3>
     <div class="hk"><span>Pin <em>kept by prune</em></span><span class="keys"><kbd>p</kbd></span></div>
-    <div class="hk"><span>Remove</span><span class="keys"><kbd>del</kbd></span></div>
-    <div class="hk"><span>Undo</span><span class="keys"><kbd data-mod>⌘</kbd><kbd>Z</kbd></span></div>
+    <div class="hk"><span>Remove</span><span class="keys"><kbd>Del</kbd></span></div>
+    <div class="hk"><span>Undo</span><span class="keys">${kb("mod", "Z")}</span></div>
   </section>
 </div>
 `;
@@ -179,8 +190,6 @@ function fillHelp(d) {
   help.querySelector(".help-body").innerHTML = HELP;
   // The native window adds its own rows (ui/frame.js) once these are in.
   help.dispatchEvent(new Event("snyvi:help"));
-  // The chip that says ⌘ says it on a Mac; everywhere else the key is ctrl.
-  if (!/Mac/.test(navigator.platform)) help.querySelectorAll("kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
 }
 
 const CSS = `
@@ -192,72 +201,65 @@ const CSS = `
 .agent:last-child { border-bottom: 1px solid var(--rule); }
 .agent-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); align-self: center; flex: none; }
-.agent.is-connected .agent-dot { background: var(--add-fg); }
+.agent.is-connected .agent-dot { background: var(--ok); }
 /* Here now: the accent, with a ring, so an open session reads apart from one that is only set up. */
 .agent.is-live .agent-dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 .agent.is-live .agent-state { color: var(--accent); }
-.agent.is-stale .agent-dot { background: var(--del-fg); }
+.agent.is-stale .agent-dot { background: var(--danger); }
 .agent-name { font-size: 16px; font-weight: 600; }
-.agent-state { color: var(--fg-3); font-size: 13px; }
+.agent-state { color: var(--fg-3); font-size: var(--fs-ui); }
 .agent-say { margin: 6px 0 0; font-size: 14.5px; color: var(--fg-2); line-height: 1.5; }
-.connect code { font-family: var(--mono); font-size: 12.5px; }
+.connect code { font-family: var(--mono); font-size: var(--fs-small); }
 .agent-fix { margin-top: 10px; }
-.agent-instr { margin: 8px 0 0; font-size: 13.5px; color: var(--fg-3); }
+.agent-instr { margin: 8px 0 0; font-size: var(--fs-ui); color: var(--fg-3); }
 .connect-line { margin-top: 28px; }
-.connect-line p { margin: 0 0 8px; font-size: 14px; color: var(--fg-2); }
-pre.cmd { position: relative; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border-radius: var(--radius); padding: 8px 72px 8px 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connect-line p { margin: 0 0 8px; font-size: var(--fs-body-s); color: var(--fg-2); }
+pre.cmd { position: relative; font-family: var(--mono); font-size: var(--fs-ui); line-height: 1.55; background: var(--code-bg); border-radius: var(--r-sm); padding: 8px 72px 8px 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 pre.cmd code { background: none; padding: 0; font-size: inherit; }
-pre.cmd .copy { position: absolute; top: 6px; right: 8px; font: inherit; font-family: var(--sans); font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--bg-raise); color: var(--fg-2); box-shadow: 0 1px 2px rgba(0,0,0,.12); border: 0; cursor: pointer; }
-pre.cmd .copy:hover { color: var(--fg); }
-pre.cmd .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .agent-fix details { margin-top: 8px; }
-.agent-fix summary { cursor: pointer; font-size: 13px; color: var(--fg-3); }
+.agent-fix summary { cursor: pointer; font-size: var(--fs-ui); color: var(--fg-3); }
 .agent-fix details[open] summary { margin-bottom: 6px; }
-.connect-foot { margin-top: 24px; color: var(--fg-3); font-size: 13.5px; }
+.connect-foot { margin-top: 24px; color: var(--fg-3); font-size: var(--fs-ui); }
 .agents-more { margin-top: 20px; }
-.agents-more > summary { cursor: pointer; font-size: 14px; color: var(--fg-2); padding: 6px 0; }
+.agents-more > summary { cursor: pointer; font-size: var(--fs-body-s); color: var(--fg-2); padding: 6px 0; }
 .agents-more[open] > summary { margin-bottom: 8px; }
 /* Welcome: the story in two lines, one question, one button. */
 .welcome { max-width: 560px; padding-top: 6vh; }
 .welcome .w-mark .mk { width: 44px; height: 44px; }
 .welcome .doc-title { margin: 14px 0 12px; }
 .w-lede { font-size: 16px; line-height: 1.55; color: var(--fg-2); margin: 0 0 36px; }
-.w-q { font-size: 20px; font-weight: 600; margin: 0 0 14px; }
-.w-btn { font: inherit; font-size: 14.5px; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
-.w-btn:hover { filter: brightness(1.08); }
-.w-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.w-or { margin: 26px 0 8px; font-size: 13.5px; color: var(--fg-3); }
+.w-q { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 14px; }
+.w-or { margin: 26px 0 8px; font-size: var(--fs-ui); color: var(--fg-3); }
 .w-places { list-style: none; margin: 0; padding: 0; }
-.w-places button { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; font: inherit; padding: 7px 10px; margin: 0 -10px; border-radius: 6px; color: var(--fg); }
+.w-places button { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; font: inherit; padding: 7px 10px; margin: 0 -10px; border-radius: var(--r-sm); color: var(--fg); }
 .w-places button:hover { background: var(--rule); }
 .w-places b { font-weight: 600; font-size: 14.5px; }
-.w-places span { font-family: var(--mono); font-size: 12px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.w-tab { font-size: 15px; color: var(--fg-2); }
+.w-places span { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-tab { font-size: var(--fs-body-s); color: var(--fg-2); }
 .w-connect { margin-top: 10px; }
 .w-ask-box { padding: 12px 14px; border: 1px solid var(--rule-2); border-radius: 8px; background: var(--bg-raise); }
-.w-ask-box p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; color: var(--fg-2); }
+.w-ask-box p { margin: 0 0 10px; font-size: var(--fs-ui); line-height: 1.5; color: var(--fg-2); }
 .w-ask-act { display: flex; gap: 12px; align-items: center; }
-.w-said { margin: 0; font-size: 13.5px; color: var(--fg-2); }
-.w-said.ok { color: var(--add-fg); }
-.w-said.bad { color: var(--del-fg); margin-bottom: 6px; }
+.w-said { margin: 0; font-size: var(--fs-ui); color: var(--fg-2); }
+.w-said.ok { color: var(--ok); }
+.w-said.bad { color: var(--danger); margin-bottom: 6px; }
 .help-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; padding: 4px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
 .help-col { display: flex; flex-direction: column; gap: 18px; align-content: start; }
-.help-col h3 { margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: .01em; color: var(--fg-3); }
-.hk { display: flex; align-items: center; gap: 12px; min-height: 30px; padding: 1px 0; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--fg); }
+.help-col h3 { margin: 0 0 2px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); }
+.hk { display: flex; align-items: center; gap: 12px; min-height: 30px; padding: 1px 0; border-top: 1px solid var(--rule); font-size: var(--fs-ui); color: var(--fg); }
 .hk:first-of-type { border-top: 0; }
 .hk > span:first-child { flex: 1; min-width: 0; line-height: 1.3; }
-.hk em { font-style: normal; font-size: 12px; color: var(--fg-3); }
-.hk .keys { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--fg-3); }
-.hk .keys i { font-style: normal; font-size: 11px; padding: 0 1px; }
-.hk .keys code { font-family: var(--mono); font-size: 11px; color: var(--fg-2); background: var(--rule); padding: 0 5px; border-radius: 4px; line-height: 18px; }
-#help kbd { display: inline-block; box-sizing: border-box; min-width: 20px; padding: 0 5px; font-family: var(--mono); font-size: 11px; line-height: 18px; text-align: center; color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: 4px; white-space: nowrap; }
-.help-col .help-note { margin: 8px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg-3); }
+.hk em { font-style: normal; font-size: var(--fs-small); color: var(--fg-3); }
+.hk .keys { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-small); color: var(--fg-3); }
+.hk .keys i { font-style: normal; font-size: var(--fs-micro); padding: 0 1px; }
+.hk .keys code { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); background: var(--rule); padding: 0 5px; border-radius: var(--r-xs); line-height: 18px; }
+.help-col .help-note { margin: 8px 0 0; font-size: var(--fs-small); line-height: 1.4; color: var(--fg-3); }
 /* The updates row in About: the sentence, the controls after it, and the
    lines a told-only install runs under both. */
 .upd-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .upd-act { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
-.upd-act button.text { padding: 0; font-size: 13px; }
-.upd-how { flex-basis: 100%; margin: 4px 0 0; padding: 6px 10px; font-family: var(--mono); font-size: 12px; line-height: 1.5; background: var(--code-bg); border-radius: var(--radius); white-space: pre-wrap; }
+.upd-act button.text { padding: 0; font-size: var(--fs-ui); }
+.upd-how { flex-basis: 100%; margin: 4px 0 0; padding: 6px 10px; font-family: var(--mono); font-size: var(--fs-small); line-height: 1.5; background: var(--code-bg); border-radius: var(--r-sm); white-space: pre-wrap; }
 @media (max-width: 600px) {
   .help-body { grid-template-columns: 1fr; }
   #help-col-2 { margin-top: 18px; }
@@ -364,17 +366,17 @@ function updateRow(u, d) {
   // and is said before anything the block says.
   const draw = (u, busy, note) => {
     act.replaceChildren(); how.hidden = true;
-    if (!u || u.channel === "unknown") { say.textContent = "This daemon cannot say what file it runs from, so it does not update itself."; return; }
+    if (!u || u.channel === "unknown") { say.textContent = "snyvi cannot tell which file it runs from here, so it does not update itself."; return; }
     if (u.channel === "dev") { say.textContent = "A development build: it does not check."; return; }
     const r = u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
     const told = !!(u.how && u.how.length);
     // An old failure is history once something else is out.
     const failed = u.failed && (u.failed_recent || u.failed === u.available);
     const parts = [];
-    if (busy) parts.push("Checking…");
+    if (busy) parts.push("Checking");
     else if (note) parts.push(note);
-    else if (u.restarting) parts.push("Restarting…");
-    else if (r) parts.push(n ? `Restarting when ${n === 1 ? "a panel is" : `${n} panels are`} quiet` : "Restarting…");
+    else if (u.restarting) parts.push("Restarting");
+    else if (r) parts.push(n ? `Restarting when ${n === 1 ? "a panel is" : `${n} panels are`} quiet` : "Restarting");
     else if (failed) parts.push(`${u.failed} was applied and did not start; the previous version was kept`);
     else if (u.ready) parts.push(`${u.ready} is ready`);
     else if (u.available && u.available === u.skipped) parts.push(`You went back from ${u.skipped}; the release after it updates as usual`);
@@ -384,9 +386,11 @@ function updateRow(u, d) {
     else if (u.checked) parts.push(`You're on the latest · checked ${rel(u.checked)}`);
     else parts.push("Not checked yet");
     if (!busy && !r && u.ready) parts.push(u.auto && !u.slot_open ? `applies ${when(u.slot)}, when the desks are quiet` : "applies at the next quiet moment");
-    if (!busy && !u.auto) parts.push(u.env_off ? "automatic updates off in the daemon's environment" : "automatic updates off");
+    if (!busy && !u.auto) parts.push(u.env_off ? "automatic updates off in snyvi's environment" : "automatic updates off");
     say.textContent = parts.join(" · ");
-    say.title = u.error || "";
+    if (busy || u.restarting) say.insertAdjacentHTML("afterbegin", DOTS);
+    // The updater's own words, for whoever needs them, in the line's tip.
+    if (u.error) { say.dataset.tip = "What it said"; say.dataset.tipSub = u.error; } else delete say.dataset.tip;
     if (busy || u.restarting) return;
     if (u.available && !u.ready && u.how && u.how.length) { how.textContent = u.how.join("\n"); how.hidden = false; }
     const notes = () => { if (u.notes) { const a = document.createElement("a"); a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "release notes"; act.append(a); } };
@@ -485,7 +489,7 @@ async function submitReset(e, d) {
   const resetGo = $("#reset-go"), resetErr = $("#reset-err"), resetPin = $("#reset-pinned");
   e.preventDefault();
   if (resetGo.disabled) return;
-  resetGo.disabled = true; resetGo.textContent = "Resetting…";
+  resetGo.disabled = true; resetGo.innerHTML = `${DOTS}Resetting`;
   let r;
   try {
     r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documents: resetCensus.documents, desks: resetCensus.desks || 0, pinned: resetPin.checked }) });
@@ -500,7 +504,7 @@ async function submitReset(e, d) {
     : n ? `${plural(Math.abs(n), "document")} ${n > 0 ? "arrived" : "went"} since you looked · type ${c.documents}`
     : c.desks !== was.desks ? `the desks changed since you looked · type ${c.documents}`
     : `${plural(c.pinned, "pinned document")} · tick Also the pinned to include them`}`;
-  resetErr.title = j.error || "";
+  if (j.error) { resetErr.dataset.tip = "What it said"; resetErr.dataset.tipSub = j.error; } else delete resetErr.dataset.tip;
   resetErr.hidden = false;
   // The number has moved: say the new sentence and ask for the new number.
   if (j.census) { resetCensus = j.census; $("#reset-n").value = ""; $("#reset-say").textContent = resetSentence(j.census, plural); }
@@ -518,7 +522,7 @@ document.getElementById("doc").addEventListener("click", e => {
 });
 export function connect(a, { esc, rel, cap }) {
   const rows = a ? a.rows : [];
-  const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy" title="Copy">Copy</button></pre>`;
+  const cmd = (text, cls) => `<pre class="cmd ${cls || ""}"><code>${esc(text)}</code><button type="button" class="copy">Copy</button></pre>`;
   const row = r => {
     const other = r.id.startsWith("sender:");
     const live = r.live || 0;
@@ -570,14 +574,17 @@ export function connectAsk(b, { api, done, sayErr }) {
   box.innerHTML = `<div class="w-ask-box" role="group" aria-label="Connect Claude Code"><p>This adds snyvi to Claude Code: its MCP server in <code>~/.claude.json</code>, and hooks and a status line in <code>~/.claude/settings.json</code>, all run by this snyvi. A status line of your own is kept. <code>snyvi uninstall-claude</code> takes it all back out.</p>` +
     `<div class="w-ask-act"><button type="button" class="w-btn" data-w="connect-yes">Connect</button><button type="button" class="text" data-w="connect-no">Not now</button></div></div>`;
   box.querySelector('[data-w="connect-yes"]').focus();
+  const no = () => { box.onclick = box.onkeydown = null; box.innerHTML = was; box.querySelector("button")?.focus(); };
+  // Esc is Not now, as it closes anything else that asks.
+  box.onkeydown = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); no(); } };
   box.onclick = async e => {
     const t = e.target.closest("[data-w]");
     if (!t) return;
     e.stopPropagation();
-    if (t.dataset.w === "connect-no") { box.onclick = null; box.innerHTML = was; box.querySelector("button")?.focus(); return; }
+    if (t.dataset.w === "connect-no") return no();
     if (t.dataset.w !== "connect-yes") return;
-    box.onclick = null;
-    box.innerHTML = `<p class="w-said">Connecting…</p>`;
+    box.onclick = box.onkeydown = null;
+    box.innerHTML = `<p class="w-said">${DOTS}Connecting</p>`;
     try {
       const j = await api("/api/agents/claude/connect", {});
       const row = j.agents && j.agents.rows.find(r => r.id === "claude");
@@ -616,7 +623,6 @@ export function welcome({ cap, places, home, mascot, esc }) {
  * arrival's row gets, and never opens, moves or changes anything; and three
  * samples are drawn with the page's own classes, inert, so they wear the
  * reader's theme, accent and font. */
-const kb = (...ks) => ks.map(k => `<kbd${k === "⌘" ? " data-mod" : ""}>${k}</kbd>`).join("");
 /** What each Show me lights, and what it says when that is not there. Asked
  *  at the moment of the click as well as at the draw: an arrival while the
  *  page is read makes the first one true. */
@@ -655,34 +661,33 @@ export function start({ cap }) {
   return `<div class="connect start"><header class="doc-head"><h1 class="doc-title">How snyvi works</h1><p class="doc-sub">Six things, a paragraph each. Every key is in ${kb("?")}.</p></header>` +
     sec("desks", "A desk for each project",
       `<p>A desk is one project's workbench: its folder, and up to four real terminal panels beside what you read, each running a shell or an agent. Make one with + beside Desks, which asks which project or folder it is for, or with the desk button on a project's or a folder's row. Everything the desk's agents send is listed on its rail, next to the panel that sent it. When an agent in a panel is waiting on you, for an answer or a permission, its row turns amber and Desks counts it. Restarting snyvi stops what runs in the panels; each comes back in its folder, and offers the conversation back with one click. ${showLink("desks")}</p>`,
-      `${kb("⌃", "`")} desk / reading · ${kb("⌃", "⌥", "1")}–${kb("4")} a panel · ${kb("⌃", "⌥", "N")} new panel · ${kb("⌃", "⌥", "W")} close it (with Undo) · ${kb("⌃", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
+      `${kb("ctrl", "`")} desk / reading · ${kb("ctrl", "⌥", "1")}–${kb("4")} a panel · ${kb("ctrl", "⌥", "N")} new panel · ${kb("ctrl", "⌥", "W")} close it (with Undo) · ${kb("ctrl", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
     sec("notes", "Out of your head: notes, points and asides",
       `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
       `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
       `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
-      `Right-click anything for what it can do · ${kb("☰")} or ${kb("⇧", "F10")} the same menu from the keyboard`) +
+      `Right-click anything for what it can do · ${kb("☰")} or ${kb("shift", "F10")} the same menu from the keyboard`) +
     sec("arrives", "Nothing scrolls away",
       `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you remove it, and Undo brings it back. ${showLink("arrives")}</p>`,
-      `${kb("⌘", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
+      `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
     sec("waiting", "What is waiting",
       `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the oldest and takes it off, so the next ${kb("n")} is the one after: one key, in the order they came. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. ${showLink("waiting")}</p>`,
-      `${kb("n")} the next one waiting · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("⌘", "Z")} put it back`) +
+      `${kb("n")} the next one waiting · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("mod", "Z")} put it back`) +
     sec("versions", "Versions",
       `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +
       `<pre class="code diff start-sample" inert aria-hidden="true"><code><span class="ln hunk">@@ -3,2 +3,2 @@</span>\n<span class="ln del">-## The cache</span>\n<span class="ln del">-It lives beside each desk.</span>\n<span class="ln add">+## The cache, per project</span>\n<span class="ln add">+It is per project, not per desk.</span></code></pre>`,
       `${kb("[")} ${kb("]")} older / newer · ${kb("c")} compare · ${kb("s")} side by side / inline · ${kb("t")} contents`) +
     sec("keys", "Keys",
-      `<p>The letter keys start asleep, so a ${kb("j")} meant for a terminal cannot move the page. ${kb("⌃", "B")} wakes them; a pill at the bottom says <em>Keys on</em>, and they sleep again on Esc, a click, or ten quiet seconds.</p>` +
-      `<div class="keymode-sample show on" inert aria-hidden="true">Keys on · esc</div>` +
-      `<p>Keys with a modifier always work. ${kb("⌘", "K")} searches everything, and a search that starts with <code>&gt;</code> lists what snyvi can do: a theme, a new desk, a folder, an agent to connect. ${showLink("keys")}</p>`,
-      `${kb("⌃", "B")} letter keys · ${kb("⌘", "K")} search · ${kb("⌘", "K")} <code>&gt;</code> commands · ${kb("?")} every key · ${kb("\\")} sidebar · ${kb("Esc")} back to where you were`) +
+      `<p>The letter keys start asleep, so a ${kb("j")} meant for a terminal cannot move the page. ${kb("ctrl", "B")} wakes them; a pill at the bottom says <em>Keys on</em>, and they sleep again on Esc, a click, or ten quiet seconds.</p>` +
+      `<div class="keymode-sample show on" inert aria-hidden="true">Keys on · Esc</div>` +
+      `<p>Keys with a modifier always work. ${kb("mod", "K")} searches everything, and a search that starts with <code>&gt;</code> lists what snyvi can do: a theme, a new desk, a folder, an agent to connect. ${showLink("keys")}</p>`,
+      `${kb("ctrl", "B")} letter keys · ${kb("mod", "K")} search · ${kb("mod", "K")} <code>&gt;</code> commands · ${kb("?")} every key · ${kb("\\")} sidebar · ${kb("Esc")} back to where you were`) +
     `<p class="connect-foot">${cap ? `Nothing here yet? <a href="/welcome" data-nav="welcome">Give a project a desk</a>. ` : ""}<a href="/connect" data-nav="connect">Agents</a>.</p></div>`;
 }
 
-/** After the page is in: the keys say ctrl off a Mac, and the pill's look is
- *  keys.js's own, fetched for the sample. */
+/** After the page is in: the pill's look is keys.js's own, fetched for the
+ *  sample. */
 export async function startReady(v) {
-  if (!/Mac/.test(navigator.platform)) document.querySelectorAll(".start kbd[data-mod]").forEach(k => { k.textContent = "ctrl"; });
   try { (await import(`/assets/keys.js${v ? `?v=${v}` : ""}`)).sheet(); } catch {}
 }
 document.getElementById("doc").addEventListener("click", e => {
@@ -698,18 +703,17 @@ document.getElementById("doc").addEventListener("click", e => {
  * one (startRows). */
 const START_CSS = `
 .start-sec { margin: 0 0 30px; }
-.start-sec h2 { font-size: 18px; margin: 0 0 8px; }
-.start-sec p { font-size: 15px; line-height: 1.6; color: var(--fg-2); margin: 0 0 10px; }
-.start-keys { font-size: 13px !important; color: var(--fg-3) !important; }
-.start kbd { display: inline-block; min-width: 18px; padding: 0 5px; font-family: var(--mono); font-size: 11px; line-height: 18px; text-align: center; color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: 4px; white-space: nowrap; }
-.show-me { font-size: 13px; white-space: nowrap; }
-.show-none { font-size: 13px; color: var(--fg-3); }
-pre.start-sample { margin: 6px 0 12px; font-size: 12.5px; }
+.start-sec h2 { font-size: var(--fs-h3); margin: 0 0 8px; }
+.start-sec p { font-size: var(--fs-body-s); line-height: 1.6; color: var(--fg-2); margin: 0 0 10px; }
+.start-keys { font-size: var(--fs-ui) !important; color: var(--fg-3) !important; }
+.show-me { font-size: var(--fs-ui); white-space: nowrap; }
+.show-none { font-size: var(--fs-ui); color: var(--fg-3); }
+pre.start-sample { margin: 6px 0 12px; font-size: var(--fs-small); }
 .start-sample.dk-list { list-style: none; margin: 6px 0 0; padding: 0; max-width: 280px; }
-.start-sample .dk-note { display: flex; align-items: flex-start; gap: 6px; border-radius: 6px; }
-.start-sample .dk-note > .nm { flex: 1; min-width: 0; text-align: left; padding: 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere; }
+.start-sample .dk-note { display: flex; align-items: flex-start; gap: 6px; border-radius: var(--r-sm); }
+.start-sample .dk-note > .nm { flex: 1; min-width: 0; text-align: left; padding: 4px 0; font-size: var(--fs-small); line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere; }
 .start-sample .dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-button.start-sample.dk-new { display: block; padding: 3px 8px; font-size: 12px; border-radius: 6px; margin: 0 0 12px; }
+button.start-sample.dk-new { display: block; padding: 3px 8px; font-size: var(--fs-small); border-radius: var(--r-sm); margin: 0 0 12px; }
 button.start-sample.dk-put { color: var(--accent); }
 .keymode-sample { margin: 6px 0 12px; }
 .show-lit { animation-iteration-count: 2 !important; }
@@ -722,42 +726,36 @@ const CSS_MOVED = `
 /* The update pill, which this file draws (pill). */
 :root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
 :root[data-side="0"] #upd.quiet { display: none; }
-.upd { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 8px; border: 0; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font: inherit; font-size: 11px; font-weight: 600; line-height: 16px; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
+.upd { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 8px; border: 0; border-radius: var(--r-pill); background: var(--accent-bg); color: var(--accent); font: inherit; font-size: var(--fs-micro); font-weight: 600; line-height: 16px; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
 .upd[hidden] { display: none; }
 .upd:hover { color: var(--fg); }
 .upd.amber { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-.upd.failed { background: var(--del); color: var(--del-fg); }
+.upd.failed { background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); }
 .upd.waiting { opacity: .7; }
 .upd.waiting[tabindex="-1"] { cursor: default; }
 .upd.quiet { background: none; color: var(--fg-3); font-weight: 500; }
 .about-box { width: min(560px, 92vw); }
-.about-box p { margin: 0 0 14px; font-size: 14px; color: var(--fg-2); }
+.about-box p { margin: 0 0 14px; font-size: var(--fs-body-s); color: var(--fg-2); }
 .about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }
-.about-box dt { font-family: inherit; font-size: 13px; color: var(--fg-3); }
+.about-box dt { font-family: inherit; font-size: var(--fs-ui); color: var(--fg-3); }
 .about-box dd { min-width: 0; overflow-wrap: anywhere; }
-.about-box dd.path { font-family: var(--mono); font-size: 12.5px; }
+.about-box dd.path { font-family: var(--mono); font-size: var(--fs-small); }
 .about-box dd.pre { white-space: pre-line; }
 .about-box .muted { color: var(--fg-3); }
 .about-box a { color: var(--accent); text-decoration: none; }
 .about-box a:hover { text-decoration: underline; }
 .reset-box { width: min(520px, 92vw); margin: 0; }
-.reset-box p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
-.reset-box label { display: block; font-size: 14px; margin: 0 0 12px; }
+.reset-box p { margin: 0 0 12px; font-size: var(--fs-body-s); line-height: 1.5; }
+.reset-box label { display: block; font-size: var(--fs-body-s); margin: 0 0 12px; }
 .reset-box label[hidden] { display: none; }
-.reset-ask input { display: block; width: 100%; margin-top: 6px; font: inherit; font-family: var(--mono); font-size: 15px; padding: 8px 10px; border: 1px solid var(--rule-2); border-radius: 6px; background: var(--bg); color: inherit; outline: none; }
+.reset-ask input { display: block; width: 100%; margin-top: 6px; font: inherit; font-family: var(--mono); font-size: var(--fs-body-s); padding: 8px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: inherit; outline: none; }
 .reset-ask input:focus { border-color: var(--accent); }
-.reset-err { color: var(--del-fg); }
+.reset-err { color: var(--danger); }
 /* "Also the pinned ones", drawn as a document's checkbox is, in the danger colour once ticked. */
-#reset-pinned { appearance: none; position: relative; width: 14px; height: 14px; margin: 0 6px -2px 0; border: 1.5px solid var(--rule-2); border-radius: 4px; background: var(--bg-raise); cursor: pointer; }
+#reset-pinned { appearance: none; position: relative; width: 14px; height: 14px; margin: 0 6px -2px 0; border: 1.5px solid var(--rule-2); border-radius: var(--r-xs); background: var(--bg-raise); cursor: pointer; }
 #reset-pinned:checked { background: var(--danger); border-color: var(--danger); }
 #reset-pinned:checked::after { content: ""; position: absolute; left: 3.5px; top: 0; width: 4px; height: 8px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 #reset-pinned:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .reset-act { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-/* The Reset button's own: this sheet stays in the page once fetched, and a
-   bare \`button.danger\` would paint the context menu's danger rows too. */
-.reset-act button.danger { font: inherit; font-size: 13px; font-weight: 550; color: var(--on-accent); background: var(--danger); border: 0; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
-.reset-act button.danger:hover { background: color-mix(in srgb, var(--danger), var(--fg) 12%); }
-.reset-act button.danger:disabled { opacity: .4; cursor: default; }
-.reset-act button.danger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 `;
 { const s = document.createElement("style"); s.textContent = CSS_MOVED; document.head.append(s); }

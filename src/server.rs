@@ -81,6 +81,9 @@ const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
 /// The aside card at the sidebar's foot, fetched when there is an aside to
 /// show: a reader no agent has spoken to never pays for it.
 const NOTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/note.js"));
+/// The tip every control names itself with (docs/DESIGN.md §8.1), fetched on
+/// the first pointer resting on one, or the first Tab.
+const TIP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/tip.js"));
 /// Every theme but Paper and Ink, fetched once the page is idle: first paint
 /// carries only the two defaults, and boot.js paints a returning reader's
 /// own theme from a copy it kept, so the window opens as fast as it can.
@@ -205,6 +208,7 @@ impl Ui {
             ("palette.js", PALETTE_JS),
             ("look.js", LOOK_JS),
             ("note.js", NOTE_JS),
+            ("tip.js", TIP_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -613,6 +617,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         h.update(PALETTE_JS.as_bytes());
         h.update(LOOK_JS.as_bytes());
         h.update(NOTE_JS.as_bytes());
+        h.update(TIP_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -712,6 +717,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/queue/unread", post(unread))
         .route("/api/docs/{id}/delete", post(delete_doc))
         .route("/api/docs/{id}/undelete", post(undelete_doc))
+        .route("/api/removed", get(removed_list))
         .route("/api/docs/{id}/history", get(history))
         .route("/api/projects/{id}/rename", post(rename_project))
         .route("/api/workflows/{id}/rename", post(rename_workflow))
@@ -790,6 +796,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/assets/palette.js", get(asset_palette))
         .route("/assets/look.js", get(asset_look))
         .route("/assets/note.js", get(asset_note))
+        .route("/assets/tip.js", get(asset_tip))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -1516,6 +1523,15 @@ async fn asset_note(State(app): S) -> Response {
         NOTE_JS,
     )
 }
+/// The tip, on the same terms: asked for when a control is first rested on.
+async fn asset_tip(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "tip.js",
+        TIP_JS,
+    )
+}
 /// The other themes, on the same terms: the page asks once it is idle.
 async fn asset_themes(State(app): S) -> Response {
     asset(&app, "text/css; charset=utf-8", "themes.css", THEMES_CSS)
@@ -1926,18 +1942,51 @@ async fn history(State(app): S, Path(id): Path<String>) -> Response {
 /// Delete at once, and say nothing first. The page offers Undo for a few
 /// seconds; the document is on disk until `prune` runs either way.
 async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
-    match app.store.delete(&id) {
-        Ok(true) => {
+    match app.store.delete_versions(&id) {
+        Ok(n) if n > 0 => {
             emit(
                 &app,
                 "deleted",
                 json!({ "id": id, "waiting": waiting(&app) }),
             );
-            Json(json!({ "ok": true })).into_response()
+            Json(json!({ "ok": true, "versions": n })).into_response()
         }
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
+}
+
+/// What can still come back after its Undo has gone, newest first until
+/// prune takes it: the page's "Removed · Show" (docs/DESIGN.md §4.4). The
+/// desk rows -- notes off a list, closed panels -- only for a page holding
+/// the desk capability, the gate every desk route has; without it the list
+/// is the documents and the asides, which any page can already see.
+async fn removed_list(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    const ROWS: usize = 100;
+    let desks = refuse_desk(&app, &headers, &q).is_none();
+    let mut items = match app.store.removed(ROWS, desks) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    for a in app.asides.list().into_iter().filter(|a| a.dismissed) {
+        items.push(crate::store::Removed {
+            kind: "aside",
+            id: a.id.to_string(),
+            title: a.text,
+            from: a.sender.unwrap_or_default(),
+            desk: None,
+            at: a.at,
+            versions: 1,
+            restore: "/api/notes/restore".into(),
+        });
+    }
+    items.sort_by(|a, b| b.at.cmp(&a.at));
+    items.truncate(ROWS);
+    Json(json!({ "items": items })).into_response()
 }
 
 /// The other half of Undo. Gone means pruned, which is the one delete that
@@ -4752,7 +4801,7 @@ mod tests {
     use super::{
         desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
         BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS,
-        MMD_JS, NOTE_JS, PALETTE_JS,
+        MMD_JS, NOTE_JS, PALETTE_JS, TIP_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -5288,6 +5337,7 @@ mod tests {
             ("palette.js", PALETTE_JS),
             ("look.js", LOOK_JS),
             ("note.js", NOTE_JS),
+            ("tip.js", TIP_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
@@ -5331,6 +5381,7 @@ mod tests {
             "PALETTE_JS",
             "LOOK_JS",
             "NOTE_JS",
+            "TIP_JS",
         ] {
             assert!(
                 block.contains(chunk),

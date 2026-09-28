@@ -727,6 +727,13 @@ page, and every colour a theme draws text in is measured on every
 surface it sits on -- 4.5:1 or better, 7:1 for Contrast -- with each
 of the eight accents, on every build.
 
+snyvi's face answers you here and there -- it perks up when something
+arrives, and shows a heart when the last thing waiting is read. If you
+would rather it kept still, **Quiet mascot** in ⌘K (type `>quiet`), or
+on the mark's own right-click menu, keeps every face at rest and nothing
+of it moving; the same place turns it back. It is kept with the rest of
+the look.
+
 Paper and Ink come with the window itself, so it opens at full speed;
 the other six load in the background a moment later. Whichever you
 choose, the window opens in it with no flash of another theme first.
@@ -954,10 +961,23 @@ Forward; in a browser they are the same one step, not two.
 Removing is one keystroke and no question. `Del`, or the ✕ on a
 document's row in the sidebar, takes it out of the inbox at once. Its
 row stays where it was, saying "removed", with an "Undo" in it and a
-thin bar along its foot that drains over four seconds; resting the
+thin bar along its foot that drains over six seconds; resting the
 pointer or the keyboard's focus on the row stops the bar. Removed with
 a key, the focus lands on the Undo, so Enter takes it back. ⌘/ctrl Z
-does the same, which is where your hand goes anyway.
+does the same, which is where your hand goes anyway. A file that was
+sent several times goes with all its versions, and the row says how
+many ("removed · 3 versions"); Undo brings every one back.
+
+Every Undo in snyvi -- a document, a project taken out of the
+sidebar, a folder, an aside, Mark all read, a desk's note or panel --
+stands for the same six seconds, and only the newest stands: removing
+something else settles the last offer, and ⌘/ctrl Z always means the
+most recent thing you did.
+
+After the six seconds it is still not gone. The foot of the Inbox says
+"3 removed · Show" while there is anything to bring back, and Show
+lists it -- documents and asides, newest first -- with an Undo on each
+row, until `prune` deletes them for good.
 Nothing is destroyed in the meantime: the daemon marks the document
 deleted and keeps it until `prune` runs, which is what makes the offer
 real. It disappears from the tree, the inbox, search and the queue in
@@ -1008,7 +1028,7 @@ document it is about, and then clicking it opens that document.
 
 An aside can be closed: the ✕ in its corner, or Esc while it has the
 focus. Its card stays where it was as one line, "Aside closed", with an
-"Undo" and the same draining four-second bar a removed document's row
+"Undo" and the same draining six-second bar a removed document's row
 has; ⌘/ctrl Z works too. The Undo asks the daemon first, and a refusal
 keeps the line, saying so, with a Retry. When the bar runs out, the next aside you
 haven't closed takes the card, or the card goes. With a trail behind it,

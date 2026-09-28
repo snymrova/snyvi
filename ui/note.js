@@ -20,7 +20,7 @@ const CSS = `
      and a hairline with a little warmth in it. Quiet on purpose. */
   --note-bg: color-mix(in srgb, var(--accent) 6%, var(--bg-side));
   --note-rule: color-mix(in srgb, var(--accent) 16%, var(--rule)); }
-.note-now { position: relative; display: block; padding: 9px 12px; border-radius: 10px; cursor: default; outline: none;
+.note-now { position: relative; display: block; padding: 9px 12px; border-radius: var(--r-md); cursor: default; outline: none;
   background: transparent; border: 1px solid transparent; transition: background .6s ease, border-color .6s ease, box-shadow .6s ease, padding .3s ease; }
 .note-now { overflow: hidden; isolation: isolate; }
 .note-now > p, .note-now > .note-by { position: relative; z-index: 1; }
@@ -28,13 +28,13 @@ const CSS = `
 /* snyvi peeking from behind the note on hover, and for a moment when a new one arrives: large, tilted, faint, with a
    feeling. It rises from the corner rather than fading in on the spot. */
 .note-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
-  opacity: 0; transform: translate(12px, 26px) rotate(0deg); transition: opacity .25s ease, transform .45s cubic-bezier(.3,1.5,.5,1); }
+  opacity: 0; transform: translate(12px, 26px) rotate(0deg); transition: opacity var(--dur-move) ease, transform .45s cubic-bezier(.3,1.5,.5,1); }
 #note:hover .note-bg, #note:focus-within .note-bg, #note.peek .note-bg { opacity: var(--mascot-peek); transform: rotate(-14deg); transition-delay: .12s; }
 .note-bg .nb-body { fill: var(--mascot); }
 .note-bg .nb-nub { fill: var(--mascot-nub); }
-.note-bg .nb-cheek, .note-bg .nb-love { fill: var(--heart); }
+.note-bg .nb-cheek { fill: var(--heart); }
 .note-bg .nb-ink { fill: var(--mascot-ink); }
-.note-bg .nb-shine { fill: #fff; }
+.note-bg .nb-shine { fill: var(--mascot-shine); }
 .note-bg .nb-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2; stroke-linecap: round; }
 /* Opened -- hovered or focused -- a read note wears the same warm card as
    the ones in the trail above it, so the stack reads as one voice. */
@@ -48,13 +48,13 @@ const CSS = `
    11px for its byline, the sizes a Mac sidebar uses for a label and its
    caption. The reading font is for documents; at 13px in a sidebar a serif
    goes soft. */
-.note-now p, .note-trail .note-t { display: block; margin: 0; font-family: var(--sans); font-size: 13px; font-weight: 400; line-height: 1.38; letter-spacing: -.003em;
+.note-now p, .note-trail .note-t { display: block; margin: 0; font-family: var(--sans); font-size: var(--fs-ui); font-weight: 400; line-height: 1.38; letter-spacing: -.003em;
   color: var(--fg-2); text-wrap: pretty; }
-.note-by { display: block; margin-top: 4px; font-family: var(--sans); font-size: 11px; line-height: 1.3; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-by { display: block; margin-top: 4px; font-family: var(--sans); font-size: var(--fs-micro); line-height: 1.3; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .note-by-now { display: flex; gap: 6px; }
 .note-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .note-snyvi { font-weight: 600; color: var(--accent); }
-.note-more { flex: none; margin-left: auto; padding: 0 5px; border-radius: 6px; background: var(--rule); color: var(--fg-3); }
+.note-more { flex: none; margin-left: auto; padding: 0 5px; border-radius: var(--r-sm); background: var(--rule); color: var(--fg-3); }
 /* On hover the trail it counts is open above, and snyvi is peeking from that corner. */
 #note:hover .note-more, #note:focus-within .note-more, #note.peek .note-more { visibility: hidden; }
 #note[data-lit="1"] .note-now { background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent);
@@ -72,12 +72,12 @@ const CSS = `
    below them, opaque over the tree they float above. */
 .note-trail { position: absolute; left: 0; right: 0; bottom: 100%; margin: 0 0 6px; padding: 0; list-style: none; z-index: 5;
   display: flex; flex-direction: column; gap: 6px;
-  opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s; }
+  opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity var(--dur-move) ease, transform var(--dur-move) ease, visibility 0s linear var(--dur-move); }
 #note:hover .note-trail, #note:focus-within .note-trail { opacity: 1; visibility: visible; transform: none; transition-delay: .25s, .25s, 0s; }
-.note-trail li { padding: 9px 12px; border-radius: 10px; background: var(--note-bg); border: 1px solid var(--note-rule); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+.note-trail li { padding: 9px 12px; border-radius: var(--r-md); background: var(--note-bg); border: 1px solid var(--note-rule); box-shadow: var(--shadow); }
 /* An older aside that leads somewhere is a button, so a keyboard opens it too. */
 .note-go { display: block; width: 100%; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
-.note-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: 4px; }
+.note-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: var(--r-xs); }
 .note-trail li:has(> .note-go:hover) { border-color: color-mix(in srgb, var(--accent) 35%, var(--rule)); }
 .note-trail .note-t { color: var(--fg); }
 .note-trail .note-by { margin-top: 4px; }
@@ -86,23 +86,36 @@ const CSS = `
    words keep clear of it. */
 .note-now > p { padding-right: 14px; }
 .note-x { position: absolute; top: 5px; right: 5px; z-index: 2; width: 18px; height: 18px; display: grid; place-items: center; padding: 0;
-  font: inherit; font-size: 10px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; opacity: 0; pointer-events: none; }
+  font: inherit; font-size: var(--fs-micro); line-height: 1; color: var(--fg-3); background: none; border-radius: var(--r-xs); cursor: pointer; opacity: 0; pointer-events: none; }
 #note:is(:hover, :focus-within) .note-x { opacity: 1; pointer-events: auto; }
 .note-x:hover { background: var(--rule-2); color: var(--fg); }
 /* A closed aside, standing where the card was with its Undo, on the same
    drain as a removed document's row. */
-.note-ghost { padding: 5px 12px; font-size: 12px; }
+.note-ghost { padding: 5px 12px; font-size: var(--fs-small); }
 .note-ghost::after { left: 12px; right: 12px; }
 .note-ghost > .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Close all: the trail's own quiet last line, not a card. */
 .note-trail li.note-all { padding: 0; background: none; border: 0; box-shadow: none; text-align: right; }
-.note-all button { font: inherit; font-family: var(--sans); font-size: 11px; color: var(--fg-3); padding: 2px 6px; border-radius: 4px; background: var(--bg-side); }
+.note-all button { font: inherit; font-family: var(--sans); font-size: var(--fs-micro); color: var(--fg-3); padding: 2px 6px; border-radius: var(--r-xs); background: var(--bg-side); }
 .note-all button:hover { color: var(--fg); background: var(--rule-2); }
 `;
 
 /** Wire the card and draw it. What comes in is the page's; `render` is what
  *  the page calls on every change to `state.notes`. */
-export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, undoClock, holdUndo, dropUndo }) {
+/** snyvi's own asides, by the moment that says each (app.js snyviSays), and
+ *  the part of /start each one points into. Here, not in first paint: this
+ *  file is the only one that shows them. */
+const OWN = mod => ({
+  "first-doc": ["Your first document. What arrives stays, filed with its project: nothing scrolls away.", "arrives"],
+  "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
+  "second-desk": [`Got another project? Give it a desk too. ${mod} and its name goes between them.`, "desks"],
+  "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one waiting on you.", "desks"],
+  "blocked": ["A panel is waiting on you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
+  "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
+});
+
+export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo }) {
+  const own = OWN(keyHint("mod+k"));
   const sheet = document.createElement("style");
   sheet.id = "note-drawn";
   sheet.textContent = CSS;
@@ -122,24 +135,30 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
    *  the note gets a smile and a heart. The card itself carries no face. */
   const markEl = $(".brand-mark");
   /** Behind the note, when a reader comes over: snyvi large and tilted,
-   *  peeking up from the corner with a feeling. Each note keeps its own --
-   *  glad, a wink, heart eyes -- chosen by its id, so a redraw never
-   *  changes its mind. */
-  const HEART = (x, y) => `<path class="nb-love" transform="translate(${x} ${y}) scale(.8)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/>`;
-  const FEELINGS = [
-    `<path class="nb-line" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="nb-ink" d="M12.6 21.6q3.4 4.6 6.8 0z"/>`,
-    `<ellipse class="nb-ink" cx="11" cy="16.5" rx="2.6" ry="3.3"/><circle class="nb-shine" cx="11.9" cy="15.2" r="1"/><path class="nb-line" d="M18.6 17.6q2.4-2.8 4.8 0M13.5 22.6q3 2.8 6 0"/>`,
-    HEART(11, 16.5) + HEART(21, 16.5) + `<path class="nb-line" d="M13.5 22.6q2.5 2.4 5 0"/>`,
-  ];
+   *  peeking up from the corner. At rest for an agent's aside; glad for
+   *  snyvi's own first lines (docs/DESIGN.md §2.2) -- never a face picked by
+   *  id, and never a wink or hearts beside the words. The faces are the
+   *  mascot's `rest` and `glad`, at the size that keeps shine and cheeks. */
+  const EYE = x => `<ellipse class="nb-ink" cx="${x}" cy="16.5" rx="2.6" ry="3.3"/><circle class="nb-shine" cx="${x + 0.9}" cy="15.2" r="1"/>`;
+  const FEELINGS = {
+    rest: EYE(11) + EYE(21) + `<path class="nb-line" d="M13.5 22.6q2.5 2.4 5 0"/>`,
+    glad: `<path class="nb-line" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="nb-ink" d="M12.6 21.6q3.4 4.6 6.8 0z"/>`,
+  };
   const noteBg = id => `<svg class="note-bg" viewBox="0 0 32 32" aria-hidden="true">` +
     `<rect class="nb-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="nb-body" x="1" y="4" width="30" height="27" rx="9"/>` +
     `<ellipse class="nb-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="nb-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
-    FEELINGS[(typeof id === "number" ? id : String(id).length) % FEELINGS.length] + `</svg>`;
+    FEELINGS[String(id).startsWith("snyvi:") ? "glad" : "rest"] + `</svg>`;
   /** The byline says whose work it came through: "via claude-code on api". */
   function noteBy(n) {
     return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
   }
+  let noteHtml = "";
   function renderNote() {
+    // snyvi's own lines come in by name; their words are filled in here.
+    for (const x of state.notes) {
+      const o = !x.text && /^snyvi:/.test(x.id) && own[x.id.slice(6)];
+      if (o) { x.text = o[0]; x.href = `/start#${o[1]}`; }
+    }
     const [n, ...trail] = noteGone ? [] : liveNotes();
     // Removed rather than emptied: `html[data-note]` matches an empty value
     // too, so writing "" left the mark blinking on every page from boot, note
@@ -174,11 +193,19 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     }
     noteShown = n.id;
     const by = noteBy(n);
-    noteEl.innerHTML =
+    const html =
       (trail.length ? `<ol class="note-trail">${trail.map(t => { const go = t.about ? ` data-about="${esc(t.about)}"` : t.href ? ` data-href="${esc(t.href)}"` : ""; return `<li>${go ? `<button type="button" class="note-go"${go}>` : ""}<span class="note-t">${esc(t.text)}</span><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span>${go ? "</button>" : ""}</li>`; }).join("")}` +
-        `<li class="note-all"><button type="button" data-note-all title="Close every aside · Undo for 4 s">Close all</button></li></ol>` : "") +
-      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" title="Open what this is about"` : n.href ? ` data-href="${esc(n.href)}" title="Read more"` : ""}>` +
-      noteBg(n.id) + `<button type="button" class="note-x" data-note-x title="Close · Undo for 4 s  Esc" aria-label="Close this aside">✕</button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who" title="${by}"><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
+        `<li class="note-all"><button type="button" data-note-all data-tip="Close every aside" data-tip-sub="Undo brings them back">Close all</button></li></ol>` : "") +
+      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" data-tip="Open its document"` : n.href ? ` data-href="${esc(n.href)}" data-tip="Read more"` : ""}>` +
+      noteBg(n.id) + `<button type="button" class="note-x" data-note-x data-tip="Close aside" data-key="esc" aria-label="Close this aside"><svg class="g-ico" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who"${by ? ` data-tip="${by}" data-tip-overflow data-tip-cut` : ""}><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
+    // The daemon's word that the card was seen redraws nothing: only its
+    // marks changed. When the words did change under a focused card, the
+    // focus goes back to the same control, so Tab carries on from there.
+    if (html !== noteHtml || !noteEl.querySelector(".note-now")) {
+      const a = document.activeElement, i = noteEl.contains(a) ? [...noteEl.querySelectorAll("button, [tabindex]")].indexOf(a) : -1;
+      noteEl.innerHTML = noteHtml = html;
+      if (i >= 0) noteEl.querySelectorAll("button, [tabindex]")[i]?.focus({ preventScroll: true });
+    }
     // A new note brings snyvi up from behind it for a moment, as a hover does.
     // A window in the background would play that to nobody, so it waits.
     if (arrived) { if (document.hidden) peekOwed = true; else peekNote(); }
@@ -232,19 +259,19 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); a.dataset.about ? showDoc(a.dataset.about, true) : showStart(true, a.dataset.href.slice(a.dataset.href.indexOf("#"))); }
   });
   /** Close asides: off the card at once, in every page once the daemon has
-   *  it, and the card holds the way back for GHOST_MS. Nothing is deleted. */
+   *  it, and the card holds the way back for UNDO_MS. Nothing is deleted. */
   function closeNotes(ids, byKey = false) {
     if (!ids.length) return;
     if (noteGone) noteSettle(noteGone);
     const g = { ids, clock: undoClock("#note .note-ghost", () => noteSettle(g)) };
     g.undo = () => undoNotes(g);
     state.notes = state.notes.map(n => ids.includes(n.id) ? { ...n, dismissed: true, seen: true } : n);
-    noteGone = g; holdUndo(g.undo);
+    noteGone = g; holdUndo(g.undo, () => noteSettle(g));
     renderNote();
     // A keyboard that closed it lands on the Undo, not on the page's start.
     // A pointer does not: a focus resting there would hold the clock.
     if (byKey) noteEl.querySelector("[data-note-undo]")?.focus({ preventScroll: true });
-    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", e); });
+    notesSay("dismiss", ids).catch(e => { if (noteGone === g) undoNotes(g, false); toast("Could not close the aside", { sub: e }); });
   }
   function noteSettle(g) {
     if (noteGone !== g) return;
@@ -284,6 +311,6 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     if (!r.ok) throw new Error(`${r.status}`);
   }
   // "3 min ago" stays true without anything arriving.
-  setInterval(() => { if (liveNotes().length && !noteGone && !noteEl.matches(":hover")) renderNote(); }, 60000);
+  setInterval(() => { if (liveNotes().length && !noteGone && !noteEl.matches(":hover, :focus-within")) renderNote(); }, 60000);
   return { render: renderNote };
 }

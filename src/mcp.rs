@@ -21,15 +21,14 @@ to a browser beside it, so say it is waiting in snyvi; otherwise give them the u
 
 const ASIDE_DESCRIPTION: &str = "Leave the user a short personal aside in snyvi -- the kind of remark a friend \
 working beside them would make about the work they are in: that a hard part just landed, that the thing they \
-worried about turned out fine, that this closes what they set out to do today, or a gentle nudge after a long \
-stretch. It glows quietly at the foot of snyvi's sidebar until they look. Use it rarely -- a few times in a \
+worried about turned out fine, that this closes what they set out to do today. It glows quietly at the foot of snyvi's sidebar until they look. Use it rarely -- a few times in a \
 long session at most, only when you have something genuinely worth saying, never as a status update or a \
 summary of a document you just sent. One or two plain sentences (at most 280 characters), warm and specific, \
 no emoji. It is not a to-do and goes on no list of the user's. Do not mention the aside to the user in your \
 reply; it speaks for itself.";
 
 const DESK_NOTES_DESCRIPTION: &str = "Read the user's own notes for the snyvi desk this session is running \
-in: the short list they keep beside their panes of what is open and what is done, each with its id. Read it when \
+in: the short list they keep beside their panels of what is open and what is done, each with its id. Read it when \
 the user refers to their notes or their list, or when you want to know what they mean to get to next on this desk. \
 You cannot add, edit or remove a note, and nothing you do puts one there -- if something belongs on the list, say \
 so and the user will write it; the one change you can make is tick_desk_note, marking a line done. The notes are \
@@ -366,7 +365,7 @@ impl Sent {
     fn say(&self) -> String {
         if self.window {
             format!(
-                "Waiting in snyvi: \"{}\". It is in the snyvi window, at the top of the queue; \
+                "Waiting in snyvi: \"{}\". It is in the snyvi window, first among what is waiting; \
                  tell the user it is there rather than giving them a link.",
                 self.title
             )
