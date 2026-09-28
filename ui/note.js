@@ -58,7 +58,7 @@ const CSS = `
 /* On hover the trail it counts is open above, and snyvi is peeking from that corner. */
 #note:hover .note-more, #note:focus-within .note-more, #note.peek .note-more { visibility: hidden; }
 #note[data-lit="1"] .note-now { background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  animation: note-glow 3.2s ease-in-out infinite; }
+  animation: note-glow 3.2s ease-in-out 3; }   /* three breaths, not for as long as it waits: an endless box-shadow is the page repainted every frame */
 #note[data-lit="1"] .note-now p { color: var(--fg); }
 #note[data-seen="1"]:not(:hover):not(:focus-within) .note-now p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); }
 #note[data-seen="1"]:not(:hover):not(:focus-within) .note-by { display: none; }
