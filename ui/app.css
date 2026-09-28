@@ -401,15 +401,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .brand-mark .bm-open { fill: var(--mascot-ink); }
 .brand-mark .bm-shut, .brand-mark .bm-glad, .brand-mark .bm-mouth { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
 .brand-mark .bm-shut, .brand-mark .bm-glad { display: none; }
-html[data-note] .brand-mark .bm-open { animation: bm-blink 4.6s infinite; }
-html[data-note="lit"] .brand-mark .bm-nub { animation: bm-ping 1.6s ease-in-out infinite; }
+/* A few blinks and pulses when the note comes, then the nub rests lit. Not
+   for as long as the note waits: that can be hours, and an endless animation
+   of a fill repaints the page on every display frame for all of them. */
+html[data-note] .brand-mark .bm-open { animation: bm-blink 4.6s 2; }
+html[data-note="lit"] .brand-mark .bm-nub { fill: color-mix(in srgb, var(--brand) 60%, #fff); animation: bm-ping 1.6s ease-in-out 4; }
 .brand-mark.hop svg { animation: bm-hop .9s cubic-bezier(.3,1.6,.5,1) 1; transform-origin: 50% 100%; }
 html[data-note-near] .brand-mark .bm-open { display: none; }
 html[data-note-near] .brand-mark .bm-glad { display: inline; }
 html[data-note-near] .brand-mark .bm-nub { opacity: 0; }
 html[data-note-near] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
 @keyframes bm-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
-@keyframes bm-ping { 0%, 100% { fill: var(--mascot-nub); } 50% { fill: color-mix(in srgb, var(--brand) 60%, #fff); } }
+@keyframes bm-ping { 50% { fill: var(--mascot-nub); } }
 @keyframes bm-hop { 0% { transform: none; } 35% { transform: translateY(-5px) scale(1.06, .94); } 60% { transform: translateY(0) scale(.94, 1.06); } 80% { transform: translateY(-1.5px); } 100% { transform: none; } }
 html[data-link="off"] .brand-mark .bm-body { opacity: .55; }
 html[data-link="off"] .brand-mark .bm-nub { transform: translateY(1.5px) scaleY(.7); }

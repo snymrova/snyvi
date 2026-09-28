@@ -21,11 +21,14 @@
 //! are not measurements but the line past which an exchange is a hang, and
 //! a line that does not move with the machine is a red build on the slowest
 //! one. See `Daemon::patience`.
+//!
+//! Between them, the hook rows run `snyvi hook` the way Claude Code does after
+//! a tool call, and hold it to what a turn can afford to wait.
 
 use crate::render;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -34,6 +37,9 @@ use std::time::{Duration, Instant};
 const MB: f64 = 1e6;
 
 pub fn run(check: bool) -> Result<()> {
+    if std::env::var_os(PEAK_PROBE).is_some() {
+        return peak_probe();
+    }
     // A multiplier, and only ever a sane one. It now scales the ceilings the
     // bench waits under as well as the budgets it prints, and
     // `Duration::from_secs_f64` panics on a negative, an infinity or a NaN --
@@ -48,8 +54,12 @@ pub fn run(check: bool) -> Result<()> {
         .filter(|f| f.is_finite() && (1.0..=10.0).contains(f))
         .unwrap_or(1.0);
     let shared = std::env::var_os("SNYVI_BENCH_SHARED").is_some();
+    // First, while the bench is small: on Linux a child's peak starts from
+    // what its parent held when it was spawned, so after the fixtures every
+    // hook would read as the bench's own 100 MB. See `reap`.
+    let mut failed = hook_rows(factor, shared)?;
     let fixtures = Fixtures::new();
-    let mut failed = render_rows(&fixtures, factor);
+    failed |= render_rows(&fixtures, factor);
     failed |= process_rows(&fixtures, factor, shared)?;
     if check && failed {
         bail!("bench: at least one case exceeded its budget");
@@ -167,6 +177,284 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
         );
     }
     failed
+}
+
+// ---------- the hook, as Claude Code runs it ----------
+
+/// Returns whether any row was over budget.
+///
+/// `snyvi hook` is installed on `PostToolUse` with the matcher `*`, so it runs
+/// after every tool call of every session, and the turn waits for it. Two
+/// calls: a shell command with a few lines of output, and one whose output is
+/// 2 MB, which Claude hands the hook whole on stdin. The clock runs from the
+/// spawn to the exit, which is what Claude waits for, and the case is timed at
+/// its 95th percentile: a hook that is quick on most calls and slow on one in
+/// twenty is slow on every turn of any length.
+///
+/// Each case runs in a directory of its own, so whatever is in it afterwards
+/// is what the hook wrote. A tool call is not news to anyone: it should write
+/// nothing.
+fn hook_rows(factor: f64, shared: bool) -> Result<bool> {
+    let exe = std::env::current_exe().context("locating snyvi binary")?;
+    let dir = std::env::temp_dir().join(format!("snyvi-bench-hook-{}", std::process::id()));
+    // Nobody listens here, so a hook that tried to reach a daemon would reach
+    // none -- never the reader's on 7777.
+    let port = free_port()?;
+    println!(
+        "\n{:<48} {:>9}   {:>9}{}",
+        "hook, after a tool call",
+        "value",
+        "budget",
+        if shared { "   (shared machine)" } else { "" }
+    );
+    let mut rows = Rows { failed: false };
+
+    let mut big = String::with_capacity(2 * 1024 * 1024 + 128);
+    let mut i = 0;
+    while big.len() < 2 * 1024 * 1024 {
+        // Quotes and a backslash on every line: output as a build prints it,
+        // and as the JSON that carries it has to escape it.
+        big.push_str(&format!(
+            "src/screen.rs:{i}:9: warning: \"unused\" in C:\\path, line {i}\n"
+        ));
+        i += 1;
+    }
+    let cases = [
+        (
+            "a tool call",
+            tool_call(&dir, "ls", "Cargo.toml\nsrc\nui\n"),
+            20,
+            5.0,
+            14.0,
+        ),
+        (
+            "a tool call with 2 MB of output",
+            tool_call(&dir, "cat build.log", &big),
+            10,
+            15.0,
+            // 16 at a single read of stdin; reading it straight into the
+            // parser holds ~13 but takes three times as long, and the turn
+            // waits on the clock, not the memory.
+            18.0,
+        ),
+    ];
+    let result = (|| -> Result<()> {
+        for (name, input, runs, ms, mb) in cases {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).context("creating the hook bench's directory")?;
+            let mut times = Vec::with_capacity(runs);
+            for _ in 0..runs {
+                times.push(run_hook(&exe, &dir, port, &input)?);
+            }
+            let mut peak: Option<u64> = None;
+            for _ in 0..3 {
+                peak = hook_peak(&exe, &dir, port, &input)?.map(|r| r.max(peak.unwrap_or(0)));
+            }
+            times.sort_by(f64::total_cmp);
+            let p95 = times[(runs * 95).div_ceil(100) - 1];
+            // Mostly process creation on a machine where that is slow, as the
+            // daemon's cold start is: printed and not enforced there.
+            rows.time_unless(&format!("{name}, p95 of {runs}"), p95, ms, factor, shared);
+            rows.memory(
+                &format!("{name}, peak resident"),
+                peak.map(|b| (b as f64 / MB, true)),
+                mb,
+            );
+            rows.nothing_written(&format!("{name}, files written"), &files_under(&dir));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result.map(|()| rows.failed)
+}
+
+/// A `PostToolUse` event as Claude Code sends one for a shell command.
+fn tool_call(dir: &Path, command: &str, stdout: &str) -> String {
+    serde_json::json!({
+        "session_id": "00000000-0000-4000-8000-000000000bec",
+        "transcript_path": dir.join("transcript.jsonl"),
+        "cwd": dir,
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": command, "description": "Run it" },
+        "tool_response": { "stdout": stdout, "stderr": "", "interrupted": false, "isImage": false },
+    })
+    .to_string()
+}
+
+/// `snyvi <sub>` on the bench's scratch directory and a port nobody is on.
+fn hook_command(exe: &Path, dir: &Path, port: u16, sub: &str) -> Command {
+    let mut c = Command::new(exe);
+    c.arg(sub)
+        // Not a panel's: the bench may well be running in one.
+        .env_remove("SNYVI_SESSION")
+        .env("SNYVI_DATA_DIR", dir.join("data"))
+        .env("SNYVI_CONFIG_DIR", dir.join("config"))
+        .env("SNYVI_PORT", port.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    c
+}
+
+/// Run `snyvi hook` on one event: the time from the spawn to its exit.
+fn run_hook(exe: &Path, dir: &Path, port: u16, input: &str) -> Result<f64> {
+    let t = Instant::now();
+    let mut child = hook_command(exe, dir, port, "hook")
+        .spawn()
+        .context("starting snyvi hook")?;
+    {
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        // A hook that stops reading early and exits is not a failure: that is
+        // fast, and the exit status below says whether it went well.
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    let status = child.wait().context("waiting for snyvi hook")?;
+    if !status.success() {
+        bail!("snyvi hook did not exit cleanly ({status})");
+    }
+    Ok(t.elapsed().as_secs_f64() * 1000.0)
+}
+
+/// Set on a `snyvi bench` that is only there to run one hook and say how
+/// much memory it took; see `hook_peak`.
+const PEAK_PROBE: &str = "SNYVI_BENCH_PEAK_PROBE";
+
+/// The peak resident set of `snyvi hook` on one event, in bytes, where it can
+/// be read.
+///
+/// Not the bench's own child: on Linux a child's peak starts from its
+/// parent's, and the bench is a snyvi as big as a hook before it has done
+/// anything. So a fresh `snyvi bench` that does nothing else runs the hook
+/// and prints its peak; see `peak_probe`.
+#[cfg(unix)]
+fn hook_peak(exe: &Path, dir: &Path, port: u16, input: &str) -> Result<Option<u64>> {
+    let mut probe = hook_command(exe, dir, port, "bench");
+    probe.env(PEAK_PROBE, "1").stdout(Stdio::piped());
+    let mut child = probe.spawn().context("starting the hook's memory probe")?;
+    {
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    let out = child
+        .wait_with_output()
+        .context("waiting for the hook's memory probe")?;
+    if !out.status.success() {
+        bail!("the hook's memory probe failed ({})", out.status);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().parse().ok())
+}
+
+#[cfg(not(unix))]
+fn hook_peak(_: &Path, _: &Path, _: u16, _: &str) -> Result<Option<u64>> {
+    Ok(None)
+}
+
+/// The probe's side: run the hook on this process's stdin and print its peak
+/// in bytes, or "-" where it cannot be told from this process's own.
+#[cfg(unix)]
+fn peak_probe() -> Result<()> {
+    let floor = spawn_floor();
+    let child = Command::new(std::env::current_exe().context("locating snyvi binary")?)
+        .arg("hook")
+        .env_remove(PEAK_PROBE)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("starting snyvi hook")?;
+    match reap(child, floor)? {
+        Some(b) => println!("{b}"),
+        None => println!("-"),
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn peak_probe() -> Result<()> {
+    bail!("the hook's memory probe runs on Unix only")
+}
+
+/// Wait for a child and return its peak resident set, in bytes, or None when
+/// that peak cannot be told from `floor`, the one it started with. `wait4` is the one call
+/// that gives a single child's, and only as it is reaped.
+#[cfg(unix)]
+fn reap(child: Child, floor: u64) -> Result<Option<u64>> {
+    let pid = child.id() as libc::pid_t;
+    let mut status = 0;
+    // SAFETY: an all-zero rusage is a valid one, and the pid is this
+    // process's own child, not yet waited for: std waits only when asked.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    loop {
+        // SAFETY: both pointers are to locals that outlive the call.
+        let r = unsafe { libc::wait4(pid, &mut status, 0, &mut usage) };
+        if r == pid {
+            break;
+        }
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::Interrupted {
+            return Err(e).context("waiting for snyvi hook");
+        }
+    }
+    if !(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0) {
+        bail!("snyvi hook did not exit cleanly (wait status {status})");
+    }
+    // Kilobytes on Linux, bytes on macOS.
+    let max = usage.ru_maxrss as u64;
+    let max = if cfg!(target_os = "macos") {
+        max
+    } else {
+        max * 1024
+    };
+    // A peak no higher than the one the child started with may be its
+    // parent's, and says nothing about the child.
+    Ok((max > floor).then_some(max))
+}
+
+/// The peak a child spawned now starts with, in bytes. Linux carries the
+/// parent's peak across the exec, so it is first brought down to what this
+/// process holds now.
+#[cfg(target_os = "linux")]
+fn spawn_floor() -> u64 {
+    // "5" resets this process's peak resident set to its current one.
+    let _ = std::fs::write("/proc/self/clear_refs", "5");
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("VmHWM:"))
+                .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
+        })
+        .map_or(u64::MAX, |kb| kb * 1024)
+}
+
+/// Elsewhere a child's peak is its own; this only guards against one that is
+/// not.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn spawn_floor() -> u64 {
+    0
+}
+
+/// Every file under `dir`, relative to it.
+fn files_under(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                todo.push(p);
+            } else if let Ok(rel) = p.strip_prefix(dir) {
+                out.push(rel.display().to_string());
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 // ---------- the daemon, as a process ----------
@@ -347,6 +635,22 @@ impl Rows {
             format!("{mb:.1} MB"),
             format!("{budget:.0} MB"),
             if ok { " ok" } else { " OVER" }
+        );
+    }
+
+    /// A count whose budget is none, naming what it found.
+    fn nothing_written(&mut self, name: &str, files: &[String]) {
+        let ok = files.is_empty();
+        self.failed |= !ok;
+        println!(
+            "{name:<48} {:>9}   {:>9}{}",
+            files.len(),
+            0,
+            if ok {
+                " ok".to_string()
+            } else {
+                format!(" OVER: {}", files.join(", "))
+            }
         );
     }
 

@@ -23,6 +23,7 @@ const SIZES = [["Small", 11.5, 15], ["Normal", 12.5, 16], ["Large", 14, 18], ["L
 let sizeAt = (() => { try { const i = SIZES.findIndex(([n]) => n === localStorage.getItem("snyvi.term-size")); return i < 0 ? 1 : i; } catch { return 1; } })();
 let LINE_PX = SIZES[sizeAt][2];   // a row's height, which the pane's CSS follows through --pn-line
 const KEEP_LINES = 6000;       // scrollback rows kept in the page; the daemon keeps 2 MB
+const CHUNK = 64;              // scrollback rows to a chunk, the unit it is put away and dropped in
 let ctx = null;                // what app.js handed `open`
 let sock = null, sockP = null, retry = 0;
 let deskId = null, focused = null, cellW = 7.5;
@@ -132,10 +133,39 @@ async function watch() {
   const ids = [...views.keys()], fresh = ids.filter(id => !views.get(id).asked);
   if (fresh.length) {
     say({ t: "watch", panes: ids.filter(id => views.get(id).asked) });
-    for (const id of fresh) { const v = views.get(id); v.asked = true; v.old.replaceChildren(); v.sb.replaceChildren(); }
+    for (const id of fresh) { const v = views.get(id); v.asked = true; clearRows(v, v.old); clearRows(v, v.sb); }
   }
   say({ t: "watch", panes: ids });
+  // A new socket knows nothing of which panes are out of sight.
+  if (fresh.length) paced = null;
+  pace();
 }
+
+/** A pane the reader cannot see: the window is hidden, a document is read
+ *  over the desk, or the grid had no room for it. Its frames are taken in
+ *  but not drawn (`paint`), and the daemon sends it one a second, not
+ *  sixty: a desk left behind a document used to cost as much as one in
+ *  view. */
+const seen = v => !document.hidden && reading == null && v.el.isConnected;
+let paced = null;
+function pace() {
+  const slow = [...views.values()].filter(v => !seen(v)).map(v => v.id).sort();
+  if (String(slow) === paced) return;
+  paced = String(slow);
+  say({ t: "pace", slow });
+}
+/** A pane back in sight, drawn as it now is: the canvas once whole, and the
+ *  text over it caught up soon, as after any frame. */
+function catchUp(v) {
+  if (!seen(v)) return;
+  if (v.behind) { v.behind = false; drawAll(v); if (v.pinned) v.body.scrollTop = v.body.scrollHeight; }
+  if (v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!ctx || deskId == null) return;
+  pace();
+  for (const v of views.values()) catchUp(v);
+});
 
 function receive(f) {
   const v = views.get(f.p);
@@ -153,10 +183,25 @@ function receive(f) {
     else { named(v); if (v.id === focused) meta(); }
   }
   else if (f.t === "old") {
+    const rows = f.lines.slice(-KEEP_LINES);
+    // Older lines of it, asked for as the reader scrolled up: they go on top,
+    // if they are still for the text this page holds.
+    if (f.have != null) {
+      if (v.old.asking && v.old.g === f.g && v.old.rows === f.have) { v.old.asking = false; v.old.more = f.more; prependRows(v, v.old, rows); }
+      return;
+    }
     // What the last run left, greyed: the scrollback is now the old text, and
-    // the new run starts with none of its own.
-    v.old.innerHTML = f.lines.map(l => `<div>${ctx.esc(l) || " "}</div>`).join("");
-    v.sb.replaceChildren();
+    // the new run starts with none of its own. It comes as its last lines; the
+    // rest is asked for when the reader scrolls up to it.
+    clearRows(v, v.old);
+    addRows(v, v.old, rows);
+    v.old.g = f.g; v.old.more = f.more;
+    clearRows(v, v.sb);
+  }
+  else if (f.t === "more") {
+    if (!v.sb.asking || v.sb.at !== f.before) return;
+    v.sb.asking = false; v.sb.at = f.sb0; v.sb.more = f.sbm;
+    prependRows(v, v.sb, f.sb);
   }
 }
 
@@ -193,12 +238,18 @@ function paint(v, f) {
   }
   // `clear` clears everything the reader could scroll to: the run before
   // this one, greyed above the scrollback, goes with it.
-  if (f.sbclear) { v.sb.replaceChildren(); v.old.replaceChildren(); }
-  if (f.gap) v.sb.insertAdjacentHTML("beforeend", `<div class="gap">⋯ ${f.gap.toLocaleString()} lines went by</div>`);
-  if (f.sb && f.sb.length) {
-    v.sb.insertAdjacentHTML("beforeend", f.sb.map(l => `<div${l.w ? ' data-w="1"' : ""}>${runsHtml(l.r || l) || " "}</div>`).join(""));
-    for (let n = v.sb.childElementCount - KEEP_LINES; n > 0; n--) v.sb.firstElementChild.remove();
-  }
+  if (f.sbclear) { clearRows(v, v.sb); clearRows(v, v.old); }
+  if (f.gap) addRows(v, v.sb, [{ gap: f.gap }]);
+  // A snapshot: the scrollback as it starts, which is its newest lines -- the
+  // rest is asked for as the reader scrolls up to it -- and never on top of
+  // what this page held, which a resync after falling behind would double.
+  if (f.sb0 != null) { clearRows(v, v.sb); v.sb.at = f.sb0; v.sb.more = f.sbm; }
+  if (f.sb && f.sb.length) addRows(v, v.sb, f.sb);
+  // Out of sight, the cells are kept and nothing is drawn: `catchUp` draws
+  // the pane whole when it is back.
+  const inSight = seen(v);
+  if (!inSight) v.behind = true;
+  if (f.up) up(v, f.up, inSight);
   if (f.r) {
     for (const [y, x0, runs] of f.r) {
       const row = v.cells[y];
@@ -211,14 +262,136 @@ function paint(v, f) {
         }
       }
       v.stale.add(y);
-      drawRow(v, y, x0, x);
+      if (inSight) drawRow(v, y, x0, x);
     }
   }
-  if (v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
+  if (inSight && v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
   if (f.c) v.cur = f.c;
   if (f.m) v.mode = f.m;
   cursor(v);
-  if (grows && v.pinned) v.body.scrollTop = v.body.scrollHeight;
+  // Kept at the bottom once a frame of the page, not once a frame of each
+  // pane: reading the height here was a layout forced on every frame that
+  // brought lines, four panes over, and up to 60 ms of a desk's return.
+  if (grows && v.pinned && !v.pinT) v.pinT = requestAnimationFrame(() => { v.pinT = 0; if (v.pinned) v.body.scrollTop = v.body.scrollHeight; });
+}
+
+/** A row of each box as HTML, from the line as it came: a scrollback line
+ *  (runs, or `{w, r}` for one that wrapped), a gap, or a line of old text. */
+const sbRow = l => l.gap ? `<div class="gap">⋯ ${l.gap.toLocaleString()} lines went by</div>`
+  : `<div${l.w ? ' data-w="1"' : ""}>${runsHtml(l.r || l) || " "}</div>`;
+const oldRow = l => `<div>${ctx.esc(l) || " "}</div>`;
+const fmtOf = (v, box) => box === v.old ? oldRow : sbRow;
+
+// ---------- the scrollback ----------
+
+/* A panel's scrollback is thousands of rows, and four panels of them as rows
+ * in the document were a million boxes -- every drawn character a layer of
+ * its own -- which WebKit took gigabytes and whole seconds a frame to lay
+ * out. So the rows go in chunks of CHUNK, and only the chunks near the view
+ * are in the document: the rest are their HTML, kept as a string, in an empty
+ * box as tall as they were. The oldest go a chunk at a time, not a row a
+ * frame. `box.rows` is how many a box holds. */
+
+/** A chunk's rows as HTML, made the first time it is needed: a chunk put
+ *  away keeps the lines as they came, and most of a snapshot is never
+ *  scrolled to. Building every row of four snapshots was a second of the
+ *  page's time on every return to a desk. */
+function chunkHtml(v, c) {
+  if (c.todo.length) { c.src += c.todo.map(fmtOf(v, c.parentElement)).join(""); c.todo = []; }
+  return c.src;
+}
+
+/** Add rows, each a line as it came (see `sbRow`), to the end of `v.sb` or
+ *  `v.old`. */
+function addRows(v, box, rows) {
+  const fmt = fmtOf(v, box);
+  for (let i = 0; i < rows.length;) {
+    let c = box.lastElementChild;
+    if (!c || c.n >= CHUNK) {
+      c = document.createElement("div");
+      c.className = "pn-pg";
+      c.n = 0; c.src = ""; c.todo = [];
+      // A snapshot is thousands of rows at once, and all but the last two
+      // chunks of it are out of sight: they start put away, not laid out
+      // first and put away after.
+      if (rows.length - i > 2 * CHUNK) { c.held = true; c.classList.add("held"); }
+      box.append(c);
+      v.io.observe(c);
+    }
+    const k = Math.min(rows.length - i, CHUNK - c.n), take = rows.slice(i, i + k);
+    c.n += k; i += k;
+    if (c.held) { c.todo.push(...take); c.style.setProperty("--n", c.n); }
+    else { const h = take.map(fmt).join(""); chunkHtml(v, c); c.src += h; c.insertAdjacentHTML("beforeend", h); }
+  }
+  box.rows = (box.rows || 0) + rows.length;
+  let gone = 0;
+  for (let c; (c = box.firstElementChild) && box.rows - c.n >= KEEP_LINES;) {
+    box.rows -= c.n; gone += c.n;
+    v.io.unobserve(c);
+    c.remove();
+    // Full: what was above the top that went is not asked for again, and an
+    // answer on its way would land above a hole.
+    box.more = 0; box.asking = false; box.at = null;
+  }
+  // A reader scrolled up stays on the line they were reading.
+  if (gone && !v.pinned) v.body.scrollTop -= gone * LINE_PX;
+}
+
+/** Put rows above the first of `box`'s: older lines, which the daemon sent
+ *  because the reader scrolled up to the top of what the page held. They
+ *  start put away, and the view stays on the line it was showing. */
+function prependRows(v, box, rows) {
+  if (!rows.length) return;
+  const b = v.body, h = b.scrollHeight;
+  let at = box.firstElementChild;
+  for (let end = rows.length; end > 0;) {
+    const c = document.createElement("div"), start = Math.max(0, end - CHUNK);
+    c.className = "pn-pg held";
+    c.held = true; c.n = end - start; c.src = ""; c.todo = rows.slice(start, end);
+    c.style.setProperty("--n", c.n);
+    box.insertBefore(c, at);
+    v.io.observe(c);
+    at = c; end = start;
+  }
+  box.rows = (box.rows || 0) + rows.length;
+  b.scrollTop = v.pinned ? b.scrollHeight : b.scrollTop + b.scrollHeight - h;
+}
+
+function clearRows(v, box) {
+  for (const c of box.children) v.io.unobserve(c);
+  box.replaceChildren();
+  box.rows = 0;
+  box.more = 0; box.asking = false; box.at = null;
+}
+
+/** A chunk out of reach is put away, unless the reader's selection is in it:
+ *  that would take the selection with it. The first chunk of a box coming
+ *  near, with more above it at the daemon, asks for the next of them. */
+function reach(v, entries) {
+  const sel = getSelection();
+  for (const { target: c, isIntersecting: near } of entries) {
+    if (near && c.held) { c.held = false; c.classList.remove("held"); c.innerHTML = chunkHtml(v, c); }
+    else if (!near && !c.held && !(sel.rangeCount && sel.containsNode(c, true))) {
+      c.held = true; c.style.setProperty("--n", c.n); c.classList.add("held"); c.replaceChildren();
+    }
+    const box = c.parentElement;
+    if (near && box && box.firstElementChild === c && box.more > 0 && !box.asking && box.rows < KEEP_LINES) {
+      box.asking = true;
+      const n = KEEP_LINES - box.rows;
+      if (box === v.old) say({ t: "more", p: v.id, old: box.g, before: box.rows, n });
+      else say({ t: "more", p: v.id, before: box.at, n });
+    }
+  }
+}
+
+/** The row before or after one in the scrollback, over a chunk's edge, while
+ *  that chunk is in the document. */
+const rowBefore = r => r.previousElementSibling || r.parentElement.previousElementSibling?.lastElementChild || null;
+const rowAfter = r => r.nextElementSibling || r.parentElement.nextElementSibling?.firstElementChild || null;
+
+function dropView(v) {
+  v.io.disconnect();
+  views.delete(v.id);
 }
 
 const bornOf = v => (v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1);
@@ -244,9 +417,21 @@ function cursor(v) {
 function rowHtml(row) {
   let out = "", text = "", key = null, at = null;
   const flush = () => { if (text) out += span(at, text, false); text = ""; };
-  for (const c of row) {
+  for (let i = 0; i < row.length; i++) {
+    const c = row[i];
     if (!c) continue;
-    if (c[4] === 2 || c[0] >= "\u2000") { flush(); key = null; out += span(c, c[0], true); continue; }
+    if (c[4] === 2 || c[0] >= "\u2000") {
+      flush(); key = null;
+      // A rule or a bar is one character many times over: one span for the
+      // run, its mask repeated across it, not a span and a layer for each.
+      let n = 1;
+      if (c[4] === 1 && DRAWN[c[0]]) {
+        for (let d; (d = row[i + n]) && d[0] === c[0] && d[1] === c[1] && d[2] === c[2] && d[3] === c[3];) n++;
+      }
+      out += span(c, n > 1 ? c[0].repeat(n) : c[0], true, n);
+      i += n - 1;
+      continue;
+    }
     const k = `${c[1]},${c[2]},${c[3]}`;
     if (k !== key) { flush(); key = k; at = c; }
     text += c[0];
@@ -260,15 +445,15 @@ const runsHtml = runs => {
   return rowHtml(row);
 };
 
-function span(c, text, own) {
-  const [, fg, bg, fl, w] = c;
+function span(c, text, own, run = 1) {
+  const [ch, fg, bg, fl, w] = c;
   const t = ctx.esc(text);
   let cls = (fl & 1 ? " b" : "") + (fl & 2 ? " d" : "") + (fl & 4 ? " i" : "") + (fl & 8 ? " u" : "") + (fl & 128 ? " s" : "") + (fl & 64 ? " h" : "");
-  if (own) cls += (w === 2 ? " x w" : " x") + (DRAWN[text] ? ` g g${text.charCodeAt(0).toString(16)}` : /[\ue000-\uf8ff]/.test(text) ? " nf" : "");
+  if (own) cls += (w === 2 ? " x w" : " x") + (DRAWN[ch] ? ` g g${ch.charCodeAt(0).toString(16)}${run > 1 ? " r" : ""}` : /[\ue000-\uf8ff]/.test(text) ? " nf" : "");
   if (!fg && !bg && !cls) return t;
   let f = color(fg), b = color(bg);
   if (fl & 32) { [f, b] = [b || "var(--pn-bg)", f || "var(--pn-fg)"]; }
-  const style = (f ? `color:${f};` : "") + (b ? `background:${b};` : "");
+  const style = (f ? `color:${f};` : "") + (b ? `background:${b};` : "") + (run > 1 ? `--r:${run};` : "");
   return `<span${cls ? ` class="${cls.slice(1)}"` : ""}${style ? ` style="${style}"` : ""}>${t}</span>`;
 }
 
@@ -299,6 +484,10 @@ for (let n = 1; n < 8; n++) {
   BLOCKS[String.fromCharCode(0x2590 - n)] = [[0, 0, n / 8, 1]];           // ▏ to ▉
 }
 const DRAWN = {}, MASK = {}, TINT = new Map();
+// Drawn characters that are the same all the way across the cell: a run of
+// one of them is its mask stretched over the run, one draw rather than one a
+// cell -- a frame's top edge is a couple of hundred `─`.
+const SPAN = new Set("─━▀█▔░▒▓▁▂▃▄▅▆▇");
 
 function drawn(W, H) {
   const t = Math.max(1, Math.round(W / 7)), cx = W / 2, cy = H / 2;
@@ -346,7 +535,7 @@ function drawn(W, H) {
   TINT.clear();
   for (const ch in MASK) DRAWN[ch] = MASK[ch].toDataURL("image/png");
   return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("${s}")}`).join("\n") +
-    `\n.pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
+    `\n.pn-body { --cw: ${W}px; } .pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
 }
 
 /* The colour the pane being painted had its prompt dressed in. snyvi wrote
@@ -432,18 +621,24 @@ function palette(v) {
   const col = n => snyviTheme.colour(n, v.body);
   const t = [];
   for (let i = 0; i < 16; i++) t.push(col(`--t${i}`));
-  v.pal = { t, accent: col("--accent"), bg: col("--pn-bg"), fg: col("--pn-fg"), font: getComputedStyle(v.body).fontFamily, fonts: new Map() };
+  v.pal = { t, accent: col("--accent"), bg: col("--pn-bg"), fg: col("--pn-fg"), font: getComputedStyle(v.body).fontFamily, fonts: new Map(), inks: new Map() };
   return v.pal;
 }
 
-/** `color`, for a canvas: the same colours, resolved. */
+/** `color`, for a canvas: the same colours, resolved -- and kept, since a
+ *  row asks for every cell's, and a truecolor one is a new string each time
+ *  it is worked out. The prompt's own colour is asked first, as it follows
+ *  the pane being drawn and not the number. */
 function ink(p, n) {
   if (!n) return "";
-  if (n >= 1 << 24) {
-    const c = n & 0xffffff;
-    return c === born ? p.accent : "#" + c.toString(16).padStart(6, "0");
+  if (n >= 1 << 24 && (n & 0xffffff) === born) return p.accent;
+  let s = p.inks.get(n);
+  if (s === undefined) {
+    s = n >= 1 << 24 ? "#" + (n & 0xffffff).toString(16).padStart(6, "0") : n <= 16 ? p.t[n - 1] : color(n);
+    if (p.inks.size > 4096) p.inks.clear();
+    p.inks.set(n, s);
   }
-  return n <= 16 ? p.t[n - 1] : color(n);
+  return s;
 }
 
 /** A font at a size, and where its baseline sits in a row: centred in the
@@ -497,11 +692,9 @@ function drawRow(v, y, a = 0, b = v.cols) {
   const g = v.g, row = v.cells[y], p = v.pal || palette(v), k = v.k;
   const top = Math.round(y * LINE_PX * k), h = Math.round((y + 1) * LINE_PX * k) - top;
   const X = i => Math.round(i * cellW * k);
-  const inks = c => {
-    let f = ink(p, c[1]), b = ink(p, c[2]);
-    if (c[3] & 32) [f, b] = [b || p.bg, f || p.fg];
-    return [f || p.fg, b];
-  };
+  // A cell's ink and ground, inverse swapping the two.
+  const fgOf = c => (c[3] & 32 ? ink(p, c[2]) || p.bg : ink(p, c[1]) || p.fg);
+  const bgOf = c => (c[3] & 32 ? ink(p, c[1]) || p.fg : ink(p, c[2]));
   const whole = a <= 0 && b >= row.length;
   const c0 = Math.max(0, a - 1), c1 = Math.min(row.length, b + 1);
   let s = Math.max(0, c0 - 2);
@@ -512,11 +705,11 @@ function drawRow(v, y, a = 0, b = v.cols) {
   for (let x = s; x < e; x++) {
     const c = row[x];
     if (!c) continue;
-    const b = inks(c)[1];
+    const b = bgOf(c);
     if (!b) continue;
     // A run of one ground is one rectangle, so no seam shows between cells.
     let n = x + c[4];
-    while (n < e && (!row[n] || (inks(row[n])[1] === b && (row[n][3] & 2) === (c[3] & 2)))) n += row[n] ? row[n][4] : 1;
+    while (n < e && (!row[n] || (bgOf(row[n]) === b && (row[n][3] & 2) === (c[3] & 2)))) n += row[n] ? row[n][4] : 1;
     g.globalAlpha = c[3] & 2 ? .6 : 1;
     g.fillStyle = b;
     g.fillRect(X(x), top, X(n) - X(x), h);
@@ -526,11 +719,14 @@ function drawRow(v, y, a = 0, b = v.cols) {
   for (let x = s; x < e;) {
     const c = row[x];
     if (!c) { x++; continue; }
-    const [f] = inks(c), fl = c[3];
+    const f = fgOf(c), fl = c[3];
     let n = x + c[4], text = c[0];
     const own = c[4] === 2 || c[0] >= "\u2000";
+    const same = r => r && r[4] === 1 && r[1] === c[1] && r[2] === c[2] && r[3] === fl;
     if (!own) {
-      while (n < e && row[n] && row[n][4] === 1 && row[n][0] < "\u2000" && row[n][1] === c[1] && row[n][2] === c[2] && row[n][3] === fl) text += row[n++][0];
+      while (n < e && same(row[n]) && row[n][0] < "\u2000") text += row[n++][0];
+    } else if (c[4] === 1 && SPAN.has(text)) {
+      while (n < e && same(row[n]) && row[n][0] === text) n++;
     }
     g.globalAlpha = fl & 2 ? .6 : 1;
     if (!(fl & 64) && text.trim()) {
@@ -552,6 +748,34 @@ function drawRow(v, y, a = 0, b = v.cols) {
   }
   g.globalAlpha = 1;
   if (!whole) g.restore();
+}
+
+/** The screen scrolled `k` rows: the grid, the text over the canvas and the
+ *  canvas all move up with it, the same steps as `shown` in src/screen.rs,
+ *  and the frame's rows then draw only what came in at the bottom. Before
+ *  this, output that scrolled redrew every row of the canvas, every frame. */
+function up(v, k, inSight) {
+  if (!v.rows || k >= v.rows) return;
+  v.cells.splice(0, k);
+  for (let i = 0; i < k; i++) v.cells.push(blankRow(v.cols));
+  // The text moves too, unless a selection is being dragged in it: then it
+  // all catches up once the button is let go, as it would anyway.
+  if (v.holding) for (let y = 0; y < v.rows; y++) v.stale.add(y);
+  else {
+    for (let i = 0; i < k; i++) { const d = v.scr.firstElementChild; d.textContent = ""; v.scr.append(d); }
+    v.stale = new Set([...v.stale].filter(y => y >= k).map(y => y - k));
+  }
+  if (!inSight) return;
+  // Moved by a whole number of device pixels only; a row that does not
+  // start on one would come out a pixel off, so that density draws whole.
+  const d = k * LINE_PX * v.k, W = v.cv.width, H = v.cv.height;
+  if (d !== Math.round(d)) { drawAll(v); return; }
+  const g = v.g;
+  g.save();
+  g.globalCompositeOperation = "copy";
+  g.drawImage(v.cv, 0, d, W, H - d, 0, 0, W, H - d);
+  g.restore();
+  g.clearRect(0, H - d, W, d);
 }
 
 /** Every row again: the size, the theme, the font or the density changed. */
@@ -676,6 +900,8 @@ function makeView(p) {
     offered: !!(p.status && p.status.offer),
   };
   const { body, start } = v;
+  // Chunks within a screen of the view, either way, are kept in the document.
+  v.io = new IntersectionObserver(e => reach(v, e), { root: body, rootMargin: "100% 0px" });
   if (first) firstPanel(v);
   v.g = v.cv.getContext("2d");
   watchLook();
@@ -1008,8 +1234,10 @@ function layout() {
     // a pane the grid had no room for, a pane moved -- keeps its pixels, but WebKit's
     // GPU canvas shows none of them until something draws on it: the pane
     // stood empty until a scroll. Drawn whole, it is shown whole.
-    for (const v of back) drawAll(v);
+    for (const v of back) v.behind = true;
   }
+  for (const v of shown) catchUp(v);
+  pace();
   if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
 }
@@ -1072,7 +1300,7 @@ function draw() {
  *  all, new ones made, gone ones dropped. Then the socket is told. */
 function sync(d) {
   const ids = new Set(d.panes.map(p => p.id));
-  for (const id of [...views.keys()]) if (!ids.has(id)) views.delete(id);
+  for (const v of [...views.values()]) if (!ids.has(v.id)) dropView(v);
   for (const p of d.panes) {
     const v = views.get(p.id);
     if (v) { v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
@@ -1157,13 +1385,13 @@ function linkAt(v, e) {
     }
     return { url: u.url, rects: rects.map(q => ({ left: r.left + q.x, top: r.top + q.y * LINE_PX, width: q.w, height: LINE_PX })) };
   }
-  const line = e.target.closest && e.target.closest(".pn-sb > div, .pn-old > div");
+  const line = e.target.closest && e.target.closest(".pn-pg > div");
   const hit = line && document.caretRangeFromPoint && document.caretRangeFromPoint(e.clientX, e.clientY);
   if (!hit || !line.contains(hit.startContainer)) return null;
   const lines = [line];
-  if (line.parentElement === v.sb) {
-    for (let p = line.previousElementSibling; p && p.dataset.w && lines.length < 5; p = p.previousElementSibling) lines.unshift(p);
-    for (let n = line; n.dataset.w && n.nextElementSibling && lines.length < 5; n = n.nextElementSibling) lines.push(n.nextElementSibling);
+  if (v.sb.contains(line)) {
+    for (let p = rowBefore(line); p && p.dataset.w && lines.length < 5; p = rowBefore(p)) lines.unshift(p);
+    for (let n = line; n.dataset.w && rowAfter(n) && lines.length < 5; n = rowAfter(n)) lines.push(rowAfter(n));
   }
   // The character under the pointer, counted from the first of the lines.
   let at = 0;
@@ -1576,8 +1804,11 @@ const WANT = "Plan what's next here and send it to snyvi";
 const waitSince = new Map();
 function waitingFirst(d) {
   if (!waitSince.has(d.id)) waitSince.set(d.id, Date.now());
-  const long = Date.now() - waitSince.get(d.id) > 300e3;
-  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true"></span>Waiting for the first one…</p>` +
+  const ago = Date.now() - waitSince.get(d.id), long = ago > 300e3;
+  // The rail is drawn again on every change of a panel's status, and the
+  // ring with it: started as far along as the wait is, so a redraw does not
+  // set its few turns going again.
+  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true" style="animation-delay:-${ago}ms"></span>Waiting for the first one…</p>` +
     `<p class="dk-ask">Ask Claude: <q>${WANT}</q> <button type="button" class="dk-sha" data-a="want-copy" data-c="${WANT}">copy</button></p>` +
     (long ? `<p class="dk-empty">Nothing yet? A Claude session started before snyvi was connected cannot see it: start a new one.</p>` : "") + `</div>`;
 }
@@ -2215,7 +2446,8 @@ export function open(c) {
   style();
   if (first) measure();
   if (deskId !== c.id) {
-    views.clear(); docList = []; docsAt = null; docsAll = false; forgetNotes(); hidePoints();
+    for (const v of [...views.values()]) dropView(v);
+    docList = []; docsAt = null; docsAll = false; forgetNotes(); hidePoints();
     focused = null; full = false;
   }
   deskId = c.id; reading = null;
@@ -2408,6 +2640,7 @@ export function update(desks) {
 export function aside(docId) {
   if (!ctx || deskId == null) return;
   reading = docId;
+  pace();
   delete ctx.root.dataset.full;
   hidePick();
   ctx.docEl.removeEventListener("click", click);
@@ -2419,7 +2652,7 @@ export function close() {
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
   deskId = null; reading = null;
-  views.clear();
+  for (const v of [...views.values()]) dropView(v);
   focused = null;
   docList = []; docsAt = null; docsAll = false;
   forgetNotes(); hidePoints();
@@ -2528,9 +2761,12 @@ const CSS = `
  * output first overflowed grew a scrollbar, lost a column to it, was resized
  * and cleared, lost the overflow, gave the column back -- and a busy program
  * kept that going every frame. */
-.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
-.pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
-.pn-sb > .gap { color: var(--fg-3); font-style: italic; }
+.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
+.pn-pg > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
+.pn-pg > .gap { color: var(--fg-3); font-style: italic; }
+/* A chunk of scrollback put away: no rows, the height they had. */
+.pn-pg { contain: content; }
+.pn-pg.held { height: calc(var(--n) * var(--pn-line)); contain: strict; }
 .pn-old { color: var(--fg-3); }
 /* The live screen on a layer of its own, and each row shut in on itself: a
  * spinner's frame repaints its row, not the pane or the panes beside it
@@ -2557,6 +2793,8 @@ const CSS = `
 .pn-body .nf { position: relative; font-size: 10px; }
 .pn-body .g { position: relative; -webkit-text-fill-color: transparent; }
 .pn-body .g::before { content: ""; position: absolute; inset: 0; background: currentColor; -webkit-mask: var(--g) 0 0 / 100% 100% no-repeat; mask: var(--g) 0 0 / 100% 100% no-repeat; }
+.pn-body .x.r { width: calc(var(--r) * var(--cw)); }
+.pn-body .g.r::before { -webkit-mask-size: var(--cw) 100%; mask-size: var(--cw) 100%; -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x; }
 /* The offer after an unplanned stop: over the top of the panel, in the
    waiting amber, out of the way of the prompt it would type into. */
 .pn-offer { position: absolute; left: 12px; right: 12px; top: 8px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
@@ -2578,7 +2816,10 @@ const CSS = `
 .dk-wait .dk-empty { display: flex; align-items: center; gap: 6px; }
 .dk-ask { margin: 2px 8px 6px; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
 .dk-ask q { color: var(--fg); }
-.dk-spin { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-3); border-right-color: transparent; animation: dk-spin 1.2s linear infinite; }
+/* A few turns and then still: a desk can wait days for its first document,
+ * and a ring that never stops turning cost the compositor 8% of a core the
+ * whole time -- behind a document, and on another desk too. */
+.dk-spin { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-3); border-right-color: transparent; animation: dk-spin 1.2s linear 3; }
 @keyframes dk-spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .dk-spin { animation: none; } }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }

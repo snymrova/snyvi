@@ -115,7 +115,7 @@ pub fn spawn_browse_watcher(app: Arc<App>) {
     tokio::spawn(async move {
         let mut tracker: Tracker<(String, String)> = Tracker::new();
         loop {
-            let watched = if app.events.receiver_count() == 0 {
+            let watched = if app.pages.load(std::sync::atomic::Ordering::Relaxed) == 0 {
                 Vec::new()
             } else {
                 app.browse.watched()
@@ -194,7 +194,7 @@ pub fn spawn_ui_watcher(app: Arc<App>) {
         let mut tracker: Tracker<&str> = Tracker::new();
         loop {
             // Nobody is reading: there is no one to tell, so do not stat.
-            if app.events.receiver_count() == 0 {
+            if app.pages.load(std::sync::atomic::Ordering::Relaxed) == 0 {
                 tokio::time::sleep(BROWSE_IDLE).await;
                 continue;
             }

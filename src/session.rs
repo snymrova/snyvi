@@ -22,7 +22,18 @@ pub fn record(paths: &Paths, cwd: &str, session_id: &str) {
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
     let now = crate::store::now();
-    map.insert(canon(cwd), json!({ "id": session_id, "at": now }));
+    let key = canon(cwd);
+    // The same session, recorded within the hour: nothing to write. `at` is
+    // only what the oldest are dropped by, and an hour does not change that.
+    if map.get(&key).is_some_and(|v| {
+        v.get("id").and_then(Value::as_str) == Some(session_id)
+            && v.get("at")
+                .and_then(Value::as_i64)
+                .is_some_and(|at| now - at < 3600)
+    }) {
+        return;
+    }
+    map.insert(key, json!({ "id": session_id, "at": now }));
     if map.len() > KEEP {
         let mut entries: Vec<(String, i64)> = map
             .iter()
@@ -33,8 +44,18 @@ pub fn record(paths: &Paths, cwd: &str, session_id: &str) {
             map.remove(&k);
         }
     }
+    // Through a file of this process's own and a rename: every session's
+    // hook writes here, and one that read the map half-written parsed it as
+    // empty and wrote that back, taking every other session's entry with it.
     let _ = std::fs::create_dir_all(&paths.config_dir);
-    let _ = std::fs::write(&file, Value::Object(map).to_string());
+    let tmp = paths
+        .config_dir
+        .join(format!("sessions.json.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, Value::Object(map).to_string()).is_ok()
+        && std::fs::rename(&tmp, &file).is_err()
+    {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 /// The most recent session recorded for this directory or one of its parents.
@@ -83,5 +104,25 @@ mod tests {
         );
         assert!(lookup(&paths, d.path.to_str().unwrap()).is_none());
         assert_eq!(workflow_key("abcdef12-3456-7890"), "claude abcdef12");
+        // The same session again leaves the file as it is; a new one in the
+        // same folder takes its place, and no file of the write is left over.
+        let file = d.path.join("sessions.json");
+        // (Spaced out by hand, as a rewrite would not leave it.)
+        let spaced = std::fs::read_to_string(&file)
+            .unwrap()
+            .replacen('{', "{ ", 1);
+        std::fs::write(&file, &spaced).unwrap();
+        record(&paths, proj.to_str().unwrap(), "abcdef12-3456-7890");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), spaced);
+        record(&paths, proj.to_str().unwrap(), "99999999-3456-7890");
+        assert_eq!(
+            lookup(&paths, proj.to_str().unwrap()).as_deref(),
+            Some("99999999-3456-7890")
+        );
+        assert!(!std::fs::read_dir(&d.path).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
     }
 }

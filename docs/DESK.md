@@ -182,10 +182,21 @@ Then the page sends:
 | `{"t":"watch","panes":[id…]}` | The panes this page shows. The list replaces the previous one. |
 | `{"t":"in","p":id,"d":"…"}` | Keys or a paste for a pane this socket watches |
 | `{"t":"size","p":id,"c":cols,"r":rows}` | The size this page draws the pane at |
+| `{"t":"more","p":id,"before":n,"n":max}` | Older scrollback, above line `before`, once the reader has scrolled up to the top of what the page holds |
+| `{"t":"more","p":id,"old":g,"before":have,"n":max}` | The same for the previous run's text: the lines above the `have` the page holds, if it is still run `g`'s |
 
 For each pane it starts to watch, the daemon sends a `status`, then an `old`
 if the pane has text from a previous run, then a full `frame`. After that it
-sends frames as the screen changes, at most one per frame:
+sends frames as the screen changes, at most one per frame.
+
+Neither the `old` nor the full `frame` carries everything. The `old` carries
+the last 64 KB of the previous run's text, with `g` (the run) and `more` (how
+many lines are left above). The `frame` carries the last 128 KB of scrollback,
+with `sb0` (the number of its first line) and `sbm` (how many lines are left
+above). A page asks for the rest with `more` as the reader scrolls up to it.
+The answer is an `old` with `have` set, or `{"t":"more","before":n,"sb":[…],
+"sb0":…,"sbm":…}`, and it goes on top. A snapshot used to be the whole 2 MB,
+and taking it in cost over a second on every desk switch.
 
 | Field of `frame` | Meaning |
 |---|---|
@@ -193,6 +204,7 @@ sends frames as the screen changes, at most one per frame:
 | `sbclear` | Empty the scrollback (`ESC [ 3 J`), and the greyed text of the run before it: `clear` clears everything |
 | `gap: n` | This many lines scrolled by without being sent |
 | `sb: [line…]` | Lines that left the top of the screen, oldest first; `{"w":1,"r":runs}` marks one that wrapped |
+| `up: k` | The screen scrolled: move every row up `k`, and blank the `k` at the bottom, before `r`. `shown` moved the same way, so `r` is what came in |
 | `r: [[y, x0, runs]…]` | Row `y` from column `x0`, as runs |
 | `c: [x, y, visible]` | The cursor |
 | `m: [appCursor, bracketedPaste, mouse, alt]` | The modes the page needs to encode keys, pastes, and the wheel: `mouse` is 0 off, 1 X10 reports, 2 SGR reports; `alt` is the alternate screen |
@@ -210,12 +222,22 @@ characters.
    and after it none. `screen::tests` runs the same check on every frame: a
    replica starts blank, applies the frames, and is compared cell for cell
    across 4,000 steps of hostile input with resizes in between.
-2. **No scroll op.** It saved 0.1% on the firehose test and nothing on the
-   others.
+2. **No scroll op, for the bytes.** It saved 0.1% on the firehose test and
+   nothing on the others. It came back as `up` for the drawing. The screen
+   is a canvas now, and every row sent is a row drawn, so output that
+   scrolled drew the whole canvas again, every frame. `up` is a hint the
+   daemon checks against the grid. Both sides move the same rows, and the
+   diff corrects anything it got wrong.
 3. **The frame is the governor.** A pane is diffed at most every 16 ms, or
    every 33 ms after a frame over 32 KB, so the bytes sent are bounded by
    the screen size, not by how fast a process writes. A page that falls
-   behind the broadcast gets a fresh snapshot instead of a backlog.
+   behind the broadcast gets a fresh snapshot instead of a backlog. A frame
+   also waits for a whole redraw. Output after a quiet spell is framed 4 ms
+   after it starts, not at the first read (`pane::SETTLE`). A synchronized
+   update (mode 2026, which Claude Code sends around each redraw) is framed
+   when it ends, or after 150 ms (`pane::SYNC_AT_MOST`). Before this, one
+   redraw could reach the page as a torn half and then the rest: two frames,
+   two paints.
 
 `permessage-deflate` would have saved 2–3× on real workloads, but it is **not
 used**, because the WebSocket library under axum does not implement it. On

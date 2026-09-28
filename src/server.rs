@@ -256,6 +256,11 @@ pub struct App {
     /// the way out costs the next page a socket. Reported so a probe can say
     /// that it does.
     pub streams: AtomicUsize,
+    /// Of those, the ones a page holds -- a tab or the window -- and not an
+    /// agent's `snyvi mcp`: what the watchers ask before they look at files
+    /// for a page to redraw. Counting every stream kept them awake for as
+    /// long as any Claude session was open.
+    pub pages: AtomicUsize,
     /// Which agents are here now, and how many of each: the MCP server holds
     /// an event stream under its client's name from `initialize` until its
     /// process ends, so this is exactly as live as the agent is, the way the
@@ -645,6 +650,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
         windows: AtomicUsize::new(0),
         streams: AtomicUsize::new(0),
+        pages: AtomicUsize::new(0),
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
@@ -2473,6 +2479,9 @@ impl StreamMark {
         window_version: Option<String>,
     ) -> StreamMark {
         app.streams.fetch_add(1, Ordering::Relaxed);
+        if agent.is_none() {
+            app.pages.fetch_add(1, Ordering::Relaxed);
+        }
         if window {
             app.windows.fetch_add(1, Ordering::Relaxed);
             // A window older than the update just applied wants: asked to
@@ -2506,6 +2515,9 @@ impl StreamMark {
 impl Drop for StreamMark {
     fn drop(&mut self) {
         self.app.streams.fetch_sub(1, Ordering::Relaxed);
+        if self.agent.is_none() {
+            self.app.pages.fetch_sub(1, Ordering::Relaxed);
+        }
         if self.window {
             let left = self
                 .app
@@ -3031,6 +3043,23 @@ enum Said {
     /// The size a pane is drawn at on this page.
     #[serde(rename = "size")]
     Size { p: String, c: u16, r: u16 },
+    /// Of the panes this page watches, the ones out of sight: a document read
+    /// over the desk, a hidden window, no room in the grid. They are framed
+    /// once a second rather than sixty times, and the page draws none of it
+    /// until they are back. Replaces the last one.
+    #[serde(rename = "pace")]
+    Pace { slow: Vec<String> },
+    /// Older scrollback, above line `before`, for a page scrolled up to the
+    /// top of what it holds -- or with `old`, the last run's text above the
+    /// `before` lines of it the page holds. At most `n` lines.
+    #[serde(rename = "more")]
+    More {
+        p: String,
+        before: usize,
+        n: usize,
+        #[serde(default)]
+        old: Option<u64>,
+    },
 }
 
 /// One pane's frames, from its broadcast to this socket. A page that falls so
@@ -3157,6 +3186,10 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
         String,
         (Arc<crate::pane::Live>, tokio::task::JoinHandle<()>),
     > = Default::default();
+    // The panes this page has out of sight, each one `pace(true)` owed a
+    // `pace(false)`: when the page says so, stops watching it, or goes --
+    // however it goes, which is why it is paid on drop.
+    let mut slowed = Slowed::default();
     loop {
         tokio::select! {
             // The daemon is going, and the page's reconnect is what tells the
@@ -3183,10 +3216,11 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
                             .filter(|id| matches!(app.store.pane(id), Ok(Some(_))))
                             .take(crate::desk::PER_DESK as usize)
                             .collect();
-                        watching.retain(|id, (_, task)| {
+                        watching.retain(|id, (live, task)| {
                             let keep = wanted.contains(id);
                             if !keep {
                                 task.abort();
+                                slowed.set(id, live, false);
                             }
                             keep
                         });
@@ -3212,12 +3246,57 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
                             live.resize(c, r);
                         }
                     }
+                    Said::Pace { slow } => {
+                        for (id, (live, _)) in &watching {
+                            slowed.set(id, live, slow.contains(id));
+                        }
+                    }
+                    // Straight back on this socket, not the pane's broadcast:
+                    // only this page asked. It lands above what the page holds,
+                    // so its order among the frames does not matter.
+                    Said::More { p, before, n, old } => {
+                        let Some((live, _)) = watching.get(&p) else { continue };
+                        let Some(f) = live.more(old, before, n.min(crate::screen::KEEP_LINES)) else { continue };
+                        if socket.send(Message::Text(f.into())).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         }
     }
     for (_, (_, task)) in watching {
         task.abort();
+    }
+}
+
+/// The panes one desk socket has told the daemon are out of sight, each owed
+/// a `pace(false)`. Paid as each comes back or stops being watched, and the
+/// rest when the socket's session ends -- by drop, so a session that ends
+/// some other way than its loop running out cannot leave a pane framed once
+/// a second for a page that has it in view.
+#[derive(Default)]
+struct Slowed(std::collections::HashMap<String, Arc<crate::pane::Live>>);
+
+impl Slowed {
+    fn set(&mut self, id: &str, live: &Arc<crate::pane::Live>, slow: bool) {
+        if slow == self.0.contains_key(id) {
+            return;
+        }
+        live.pace(slow);
+        if slow {
+            self.0.insert(id.to_string(), live.clone());
+        } else {
+            self.0.remove(id);
+        }
+    }
+}
+
+impl Drop for Slowed {
+    fn drop(&mut self) {
+        for live in self.0.values() {
+            live.pace(false);
+        }
     }
 }
 
