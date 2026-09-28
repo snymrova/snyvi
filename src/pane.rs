@@ -43,9 +43,23 @@ const SLOW_FRAME: Duration = Duration::from_millis(33);
 /// but nobody is drawing it, so a spinner in a panel on another desk costs one
 /// diff a second rather than sixty. A page that attaches is caught up at once.
 const UNWATCHED_FRAME: Duration = Duration::from_secs(1);
-/// How often a pane that has changed writes its text down, so a daemon that is
-/// killed rather than stopped loses at most this much of it.
+/// Output after a quiet spell is framed this long after it starts, not at the
+/// first read: a program's redraw arrives in several reads, and framing the
+/// first alone sent a torn half of it and then the rest -- two frames, two
+/// paints, for one redraw. Short enough that a key's echo does not lag.
+const SETTLE: Duration = Duration::from_millis(4);
+/// A synchronized update (mode 2026) is framed when it ends, or after this --
+/// what terminals that speak the mode hold one for at most, so a program that
+/// never ends its update is not frozen.
+const SYNC_AT_MOST: Duration = Duration::from_millis(150);
+/// How often a pane that has kept new lines writes its text down, so a daemon
+/// that is killed rather than stopped loses at most this much of them.
 const PERSIST_EVERY: Duration = Duration::from_secs(15);
+/// And a pane whose screen alone changed -- a spinner, a clock, an agent
+/// thinking -- this often: the whole text is written each time, up to the
+/// scrollback cap, and a working panel's screen is never still for fifteen
+/// seconds.
+const PERSIST_SCREEN_EVERY: Duration = Duration::from_secs(60);
 /// How often a running pane's folder is asked whether its tree is modified.
 /// This is the half of the prompt that costs a process (`crate::prompt` reads
 /// the branch itself, out of .git/HEAD), which is exactly why it happens here
@@ -162,7 +176,13 @@ pub const AGENT_STATES: [&str; 3] = ["working", "needs_you", "done"];
 
 struct Proc {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// What goes to the program: keys, pastes, the terminal's answers. Handed
+    /// to a thread that does the writing (`write_loop`), because a write to a
+    /// program that is not reading blocks, and it used to block holding the
+    /// pane's lock on one of the daemon's two workers -- stalling the frame
+    /// task, and the reader, which then could not drain the program's output
+    /// so that it would ever read again.
+    input: std::sync::mpsc::Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
 }
 
@@ -176,6 +196,12 @@ struct Inner {
     old: Vec<String>,
     /// Something changed since the text was last written down.
     unsaved: bool,
+    /// Of that, something more than the screen: lines kept, or the last run's
+    /// text gone or grown. Written at the next `PERSIST_EVERY`; a change to
+    /// the screen alone waits for `PERSIST_SCREEN_EVERY`.
+    unsaved_lines: bool,
+    /// When the text was last written down.
+    saved_at: Instant,
     /// Bumped by each start, so the threads of a process that has been
     /// replaced do not write into the one that replaced it.
     run: u64,
@@ -206,6 +232,7 @@ impl Inner {
         if self.screen.scrollback_cleared() && !self.old.is_empty() {
             self.old.clear();
             self.unsaved = true;
+            self.unsaved_lines = true;
         }
         self.screen.frame(id, &mut self.shown)
     }
@@ -219,6 +246,10 @@ pub struct Live {
     /// A page began watching: the frame task, idling at `UNWATCHED_FRAME`,
     /// stops waiting out the rest of its second.
     watched: Notify,
+    /// How many of the pages watching have this pane out of sight -- a
+    /// document read over the desk, a window hidden, no room in the grid. A
+    /// pane every watcher has out of sight is framed as if nobody watched.
+    slow: std::sync::atomic::AtomicUsize,
 }
 
 /// What `start` needs to know that is not the pane's own.
@@ -252,6 +283,10 @@ pub struct Panes {
     /// dots from. Held here rather than an `App`, so a pane can say it changed
     /// without knowing what a server is.
     events: broadcast::Sender<String>,
+    /// Held while a pane's text is built and written, and while one is
+    /// deleted, so the tick's write on its own thread never lands on top of a
+    /// close's, or brings back a file a discard has just removed.
+    writing: Mutex<()>,
     /// What each pane last said on that stream: `(running, blocked, agent)`.
     /// Forgotten with the pane.
     told: Mutex<HashMap<String, (bool, bool, &'static str)>>,
@@ -270,6 +305,7 @@ impl Panes {
             dir: data_dir.join("panes"),
             git: Mutex::new(HashMap::new()),
             events,
+            writing: Mutex::new(()),
             told: Mutex::new(HashMap::new()),
             marks: Mutex::new(Marks::default()),
             cwd_sink: Mutex::new(None),
@@ -282,7 +318,7 @@ impl Panes {
             loop {
                 tick.tick().await;
                 let Some(p) = weak.upgrade() else { return };
-                p.persist_all();
+                let _ = tokio::task::spawn_blocking(move || p.persist_all(false)).await;
             }
         });
         let weak = Arc::downgrade(&panes);
@@ -321,6 +357,8 @@ impl Panes {
                 },
                 old,
                 unsaved: false,
+                unsaved_lines: false,
+                saved_at: Instant::now(),
                 run: 0,
                 cwd: String::new(),
                 root: String::new(),
@@ -330,6 +368,7 @@ impl Panes {
             tx,
             wake: Notify::new(),
             watched: Notify::new(),
+            slow: std::sync::atomic::AtomicUsize::new(0),
         });
         live.insert(id.to_string(), l.clone());
         drop(live);
@@ -339,7 +378,10 @@ impl Panes {
 
     /// What each running pane's folder is on, asked of git and told to the
     /// pages that are watching. One question per folder per tick, and a folder
-    /// that answers slowly is asked less often: see `GIT_BACKOFF`.
+    /// that answers slowly is asked less often: see `GIT_BACKOFF`. Only for a
+    /// pane a page is watching: with no window open, or a desk nobody is
+    /// showing, it was a `git status` every three seconds for nobody. A pane
+    /// watched again is asked on the next tick.
     async fn git_tick(self: &Arc<Self>) {
         self.follow_folders();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
@@ -347,6 +389,9 @@ impl Panes {
         // the panes in it.
         let mut by_dir: HashMap<String, (bool, Vec<Arc<Live>>)> = HashMap::new();
         for l in live {
+            if l.tx.receiver_count() == 0 {
+                continue;
+            }
             if let Some((cwd, home)) = l.running_in() {
                 let e = by_dir.entry(cwd).or_default();
                 e.0 |= home;
@@ -673,28 +718,38 @@ impl Panes {
     /// store keeps the row for Undo, and a pane brought back shows its last
     /// screen, greyed, as after a restart.
     pub fn forget(&self, id: &str) {
+        self.let_go(id, true);
+    }
+
+    /// Forgotten, and its text deleted: closing a desk, or a closed pane
+    /// ended by `prune` or by its desk going. Not written down first -- it
+    /// would only be deleted.
+    pub fn discard(&self, id: &str) {
+        self.let_go(id, false);
+        let _w = self.writing.lock().unwrap();
+        let _ = std::fs::remove_file(self.text_path(id));
+    }
+
+    fn let_go(&self, id: &str, keep: bool) {
         let l = self.live.lock().unwrap().remove(id);
         if let Some(l) = l {
-            let text = {
-                let mut i = l.inner.lock().unwrap();
-                i.unsaved.then(|| {
-                    i.unsaved = false;
-                    keep_text(&i.old, i.screen.text())
-                })
-            };
-            if let Some(text) = text {
-                self.write_text(&l.id, &text);
+            if keep {
+                let _w = self.writing.lock().unwrap();
+                let text = {
+                    let mut i = l.inner.lock().unwrap();
+                    i.unsaved.then(|| {
+                        i.unsaved = false;
+                        i.unsaved_lines = false;
+                        keep_text(&i.old, i.screen.text())
+                    })
+                };
+                if let Some(text) = text {
+                    self.write_text(&l.id, &text);
+                }
             }
             l.stop();
         }
         self.told.lock().unwrap().remove(id);
-    }
-
-    /// Forgotten, and its text deleted: closing a desk, or a closed pane
-    /// ended by `prune` or by its desk going.
-    pub fn discard(&self, id: &str) {
-        self.forget(id);
-        let _ = std::fs::remove_file(self.text_path(id));
     }
 
     /// Every pane: stopped, forgotten, and its text gone. A reset.
@@ -704,6 +759,7 @@ impl Panes {
         for l in all {
             l.stop();
         }
+        let _w = self.writing.lock().unwrap();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 
@@ -711,26 +767,49 @@ impl Panes {
     pub fn shutdown(&self) {
         // Where each shell is, one last time, so each comes back there.
         self.follow_folders();
-        self.persist_all();
+        self.persist_all(true);
         let all: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in all {
             l.stop();
         }
     }
 
-    fn persist_all(&self) {
-        let all: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
-        for l in all {
+    /// Write down the text of every pane that is due (`PERSIST_EVERY`,
+    /// `PERSIST_SCREEN_EVERY`), or of every pane that changed at all. Blocking
+    /// work: the text is built under the pane's lock and written to disk, so
+    /// the tick runs it on a blocking thread, not on one of the two workers.
+    fn persist_all(&self, all: bool) {
+        let panes: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
+        for l in panes {
+            let _w = self.writing.lock().unwrap();
+            // Let go of while this waited: `let_go` wrote it down, or it was
+            // discarded and its file must stay gone.
+            if !self.holds(&l) {
+                continue;
+            }
             let text = {
                 let mut i = l.inner.lock().unwrap();
-                if !i.unsaved {
+                let due = all || i.unsaved_lines || i.saved_at.elapsed() >= PERSIST_SCREEN_EVERY;
+                if !i.unsaved || !due {
                     continue;
                 }
                 i.unsaved = false;
+                i.unsaved_lines = false;
+                i.saved_at = Instant::now();
                 keep_text(&i.old, i.screen.text())
             };
             self.write_text(&l.id, &text);
         }
+    }
+
+    /// Whether `l` is still this id's pane: one let go of has had its text
+    /// written down by `let_go`, or deleted, and must not be written again.
+    fn holds(&self, l: &Live) -> bool {
+        self.live
+            .lock()
+            .unwrap()
+            .get(&l.id)
+            .is_some_and(|m| std::ptr::eq(Arc::as_ptr(m), l))
     }
 
     fn text_path(&self, id: &str) -> PathBuf {
@@ -859,6 +938,44 @@ pub fn valid_id(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// How much of the last run's text a page is sent at once, as JSON: the end
+/// of it, which is what sits just above the new run. Older lines come as the
+/// reader scrolls up to them (`Live::more`).
+const OLD_BYTES: usize = 64 * 1024;
+
+/// The last run's text as a page is sent it: the newest lines of it, above
+/// the `have` it holds already when it asked for more, as many as fit in
+/// `OLD_BYTES` and `max`. `more` is how many are left above those, and `g`
+/// is the run it belongs to, for the page to ask with.
+fn old_frame(id: &str, old: &[String], run: u64, have: Option<usize>, max: usize) -> String {
+    let end = old.len().saturating_sub(have.unwrap_or(0));
+    let (mut from, mut size) = (end, 0);
+    while from > 0 && end - from < max {
+        let n = old[from - 1].len() + 3;
+        if size + n > OLD_BYTES && from < end {
+            break;
+        }
+        size += n;
+        from -= 1;
+    }
+    let mut out = String::with_capacity(size + 96);
+    out.push_str("{\"t\":\"old\",\"p\":");
+    screen::push_json_str(&mut out, id);
+    out.push_str(&format!(",\"g\":{run},\"more\":{from}"));
+    if let Some(h) = have {
+        out.push_str(&format!(",\"have\":{h}"));
+    }
+    out.push_str(",\"lines\":[");
+    for (k, l) in old[from..end].iter().enumerate() {
+        if k > 0 {
+            out.push(',');
+        }
+        screen::push_json_str(&mut out, l);
+    }
+    out.push_str("]}");
+    out
+}
+
 /// The previous run's text and this one's, joined and cut to the scrollback
 /// cap from the front, whole lines at a time.
 fn keep_text(old: &[String], now: Vec<String>) -> Vec<String> {
@@ -889,10 +1006,42 @@ impl Live {
         self.watched.notify_one();
         let mut first = vec![status_frame(&self.id, &i.status)];
         if !i.old.is_empty() {
-            first.push(serde_json::json!({ "t": "old", "p": self.id, "lines": i.old }).to_string());
+            first.push(old_frame(&self.id, &i.old, i.run, None, usize::MAX));
         }
         first.push(i.screen.snapshot(&self.id, &i.shown));
         (first, self.tx.subscribe())
+    }
+
+    /// A page watching this pane has it out of sight (`true`), or has it back
+    /// in sight: then it is caught up at once, as a page that attaches is.
+    /// Every `true` is matched by one `false`, which `server::desk_session`
+    /// owes when it stops watching.
+    pub fn pace(&self, slow: bool) {
+        use std::sync::atomic::Ordering;
+        if slow {
+            self.slow.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let _ = self
+                .slow
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            self.watched.notify_one();
+        }
+    }
+
+    /// Older scrollback, for a page scrolled up to the top of what it holds:
+    /// see `Screen::more`. With `old`, it is the last run's text instead, and
+    /// `before` is how many of its lines the page holds already; `run` says
+    /// which run's text that was, and a page asking about one that has since
+    /// been replaced is told nothing.
+    pub fn more(&self, old: Option<u64>, before: usize, max: usize) -> Option<String> {
+        let i = self.inner.lock().unwrap();
+        match old {
+            None => Some(i.screen.more(&self.id, before, max)),
+            Some(run) if run == i.run => {
+                Some(old_frame(&self.id, &i.old, i.run, Some(before), max))
+            }
+            Some(_) => None,
+        }
     }
 
     /// Keys from the reader, and only from the reader: this is called for a
@@ -900,9 +1049,8 @@ impl Live {
     /// received. It is also what un-blocks a pane -- the reader has answered.
     pub fn input(&self, bytes: &[u8], panes: &Panes) {
         let mut i = self.inner.lock().unwrap();
-        let Some(p) = i.proc.as_mut() else { return };
-        let _ = p.writer.write_all(bytes);
-        let _ = p.writer.flush();
+        let Some(p) = i.proc.as_ref() else { return };
+        let _ = p.input.send(bytes.to_vec());
         if i.status.blocked {
             i.status.blocked = false;
             i.status.blocked_since = None;
@@ -1004,7 +1152,7 @@ impl Live {
         let run = i.run;
         i.proc = Some(Proc {
             master: pair.master,
-            writer,
+            input: write_loop(writer, &self.id),
             killer,
         });
         i.status = Status {
@@ -1034,12 +1182,13 @@ impl Live {
         i.wrote = Instant::now();
         i.printing_since = i.wrote;
         i.unsaved = true;
+        i.unsaved_lines = true;
         panes.unmark(&self.id);
         let status = i.status.clone();
         let _ = self.tx.send(status_frame(&self.id, &status).into());
         if !i.old.is_empty() {
-            let old = serde_json::json!({ "t": "old", "p": self.id, "lines": i.old });
-            let _ = self.tx.send(old.to_string().into());
+            let old = old_frame(&self.id, &i.old, i.run, None, usize::MAX);
+            let _ = self.tx.send(old.into());
         }
         drop(i);
         panes.changed(&self.id, &status);
@@ -1091,9 +1240,18 @@ impl Live {
             i.status.agent = "";
             i.status.agent_since = None;
             i.unsaved = false;
+            i.unsaved_lines = false;
+            i.saved_at = Instant::now();
             (i.status.clone(), keep_text(&i.old, i.screen.text()))
         };
-        panes.write_text(&self.id, &text);
+        {
+            // A pane discarded is killed on its way out, and this runs after:
+            // writing here would bring back the file `discard` just deleted.
+            let _w = panes.writing.lock().unwrap();
+            if panes.holds(self) {
+                panes.write_text(&self.id, &text);
+            }
+        }
         let _ = self.tx.send(status_frame(&self.id, &status).into());
         panes.changed(&self.id, &status);
         self.wake.notify_one();
@@ -1108,6 +1266,27 @@ impl Live {
             drop(p);
         }
     }
+}
+
+/// The thread that writes a process's input, in the order it was sent. It
+/// ends, and closes its end of the PTY, when the process's `Proc` goes and
+/// with it the last sender -- or when a write fails, the program gone.
+fn write_loop(mut writer: Box<dyn Write + Send>, id: &str) -> std::sync::mpsc::Sender<Vec<u8>> {
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let _ = std::thread::Builder::new()
+        .name(format!("input {}", &id[..8.min(id.len())]))
+        .spawn(move || {
+            for bytes in rx {
+                if writer
+                    .write_all(&bytes)
+                    .and_then(|()| writer.flush())
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+    tx
 }
 
 fn read_loop(me: std::sync::Weak<Live>, mut reader: Box<dyn Read + Send>, run: u64) {
@@ -1128,12 +1307,17 @@ fn read_loop(me: std::sync::Weak<Live>, mut reader: Box<dyn Read + Send>, run: u
                 parser,
                 proc,
                 unsaved,
+                unsaved_lines,
                 wrote,
                 printing_since,
                 ..
             } = &mut *i;
+            let lines = screen.lines_ever();
             screen.feed(parser, &buf[..n]);
             *unsaved = true;
+            if screen.lines_ever() != lines || screen.scrollback_cleared() {
+                *unsaved_lines = true;
+            }
             let now = Instant::now();
             if now.saturating_duration_since(*wrote) >= busy_output() {
                 *printing_since = now;
@@ -1141,9 +1325,8 @@ fn read_loop(me: std::sync::Weak<Live>, mut reader: Box<dyn Read + Send>, run: u
             *wrote = now;
             if !screen.replies.is_empty() {
                 let replies = std::mem::take(&mut screen.replies);
-                if let Some(p) = proc.as_mut() {
-                    let _ = p.writer.write_all(&replies);
-                    let _ = p.writer.flush();
+                if let Some(p) = proc.as_ref() {
+                    let _ = p.input.send(replies);
                 }
             }
         }
@@ -1157,6 +1340,8 @@ fn read_loop(me: std::sync::Weak<Live>, mut reader: Box<dyn Read + Send>, run: u
 async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
     let mut last = Instant::now() - FRAME;
     let mut gap = FRAME;
+    // A synchronized update is open: the frame waits for its end, or this.
+    let mut hold: Option<Instant> = None;
     loop {
         let Some(l) = me.upgrade() else { return };
         // Waiting holds only the Notify, not the pane: a pane that has been
@@ -1166,12 +1351,17 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
             drop(l);
             async move { l2.wake.notified().await }
         };
+        let wait = hold.map_or(Duration::from_secs(30), |t| {
+            t.saturating_duration_since(Instant::now())
+        });
         tokio::select! {
             _ = notified => {}
-            _ = tokio::time::sleep(Duration::from_secs(30)) => continue,
+            _ = tokio::time::sleep(wait) => if hold.is_none() { continue },
         }
         let since = last.elapsed();
-        if since < gap {
+        if since >= gap && hold.is_none() {
+            tokio::time::sleep(SETTLE).await;
+        } else if since < gap {
             let Some(l) = me.upgrade() else { return };
             let watched = {
                 let l2 = l.clone();
@@ -1185,9 +1375,16 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
         }
         let Some(l) = me.upgrade() else { return };
         let mut i = l.inner.lock().unwrap();
+        hold = i.screen.holding(SYNC_AT_MOST);
+        if hold.is_some() {
+            continue;
+        }
         let frame = i.frame_now(&l.id);
         gap = match &frame {
-            _ if l.tx.receiver_count() == 0 => UNWATCHED_FRAME,
+            // Nobody watching, or everybody watching with it out of sight.
+            _ if l.tx.receiver_count() <= l.slow.load(std::sync::atomic::Ordering::Relaxed) => {
+                UNWATCHED_FRAME
+            }
             Some(f) if f.len() > HEAVY_FRAME => SLOW_FRAME,
             _ => FRAME,
         };
@@ -1689,6 +1886,54 @@ mod tests {
         assert!(snap.contains("late"), "{snap}");
     }
 
+    /// A discarded pane's text stays gone: its process is killed on the way
+    /// out, and the waiter that hears the exit must not write the file back.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_discarded_pane_is_not_written_back_by_its_exit() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-discard");
+        let (events, _) = broadcast::channel(16);
+        let panes = Panes::new(&dir.path, events);
+        let id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+        let live = panes.get(id);
+        let cwd = dir.path.to_string_lossy().to_string();
+        let said = dir.path.join("said");
+        let cmd = format!("printf 'hello\\n'; : > '{}'; sleep 5", said.display());
+        live.start(
+            Start {
+                cwd: &cwd,
+                root: &cwd,
+                cmd: &cmd,
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+                offer: false,
+            },
+            &panes,
+        )
+        .unwrap();
+        for _ in 0..100 {
+            if said.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(said.exists(), "the shell never started");
+        panes.discard(id);
+        // The waiter hears the kill within its 500 ms drain.
+        for _ in 0..30 {
+            if !live.inner.lock().unwrap().status.running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!live.inner.lock().unwrap().status.running, "never exited");
+        assert!(!panes.text_path(id).exists(), "the exit wrote it back");
+    }
+
     /// A pane started in a folder reached through a link has not moved when
     /// the kernel names the folder resolved: macOS's /var is /private/var.
     #[cfg(target_os = "linux")]
@@ -1717,8 +1962,10 @@ mod tests {
             &panes,
         )
         .unwrap();
-        for _ in 0..50 {
-            if live.shell_cwd().is_some() {
+        // Until the child is in it: between the fork and its chdir, the
+        // kernel names the parent's folder.
+        for _ in 0..100 {
+            if live.shell_cwd().is_some_and(|c| c.ends_with("/real")) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;

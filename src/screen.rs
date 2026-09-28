@@ -17,9 +17,14 @@
 //!    resize-and-clear on both sides: `shown` is blanked here and the frame
 //!    carries `sz`, which tells the page to blank its own. The spike found 564
 //!    desyncs before this rule and none after.
-//! 2. **No scroll op.** Detecting a shifted region and sending it as a move
-//!    earned 0.1% on the firehose and nothing anywhere else -- fast output
-//!    turns the screen over between frames, and slow output was already cheap.
+//! 2. **No scroll op for bytes' sake.** Detecting a shifted region and
+//!    sending it as a move earned 0.1% on the firehose and nothing anywhere
+//!    else -- fast output turns the screen over between frames, and slow
+//!    output was already cheap. It came back for the page's sake, as `up`:
+//!    the screen is drawn on a canvas now, and every row sent is a row drawn,
+//!    so a screen that scrolled one line was the whole canvas drawn again. It
+//!    is only a hint (`Screen::frame`): both sides move the same rows and the
+//!    diff puts right anything it got wrong.
 //! 3. **The frame is the governor.** A pane is diffed at most once a frame, so
 //!    what goes on the wire is bounded by the screen's size and not by how fast
 //!    a process writes: 369 KB/s in became 26 KB/s out.
@@ -30,6 +35,7 @@
 //! the reader's clipboard. `docs/DESK.md` has the list and why.
 
 use std::collections::VecDeque;
+use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 
 /// The most scrollback a pane keeps, in bytes, because bytes are the unit the
@@ -42,6 +48,16 @@ pub const SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
 /// rather than sending a megabyte a reader will never look at. The daemon's
 /// own scrollback keeps them all, up to its cap.
 const LINES_PER_FRAME: usize = 400;
+
+/// How much scrollback a snapshot carries, as JSON: the newest of it, which is
+/// what a reader coming back to a desk is looking at. The rest comes a page at
+/// a time as they scroll up to it (`Screen::more`). Sending all 2 MB on every
+/// desk switch cost the page over a second to take in.
+const SNAPSHOT_SB_BYTES: usize = 128 * 1024;
+/// And how much one page of older scrollback carries.
+pub const MORE_BYTES: usize = 128 * 1024;
+/// The most scrollback lines a page keeps, and so the most it asks for at once.
+pub const KEEP_LINES: usize = 6000;
 
 pub const BOLD: u16 = 1;
 pub const DIM: u16 = 2;
@@ -215,6 +231,18 @@ pub struct Screen {
     /// The page's copy of the scrollback is to be emptied: `ESC [ 3 J`.
     sb_cleared: bool,
     dropped: usize,
+    /// How many lines have ever left the front of `scrollback`, so that
+    /// `sb_first + i` names line `i` for as long as it is kept: a page asking
+    /// for what is above its oldest line says which line that is.
+    sb_first: usize,
+    /// How far the whole screen has scrolled up since the last frame, less
+    /// how far down: the frame's guess at `up`, which it checks against the
+    /// grid before it trusts it.
+    shifted: usize,
+    /// When the synchronized update now open began (mode 2026): the program is
+    /// part way through a redraw, and the pane holds its frame until the
+    /// update ends, so the page never draws half of one. See `holding`.
+    synced: Option<Instant>,
 }
 
 impl Screen {
@@ -252,6 +280,9 @@ impl Screen {
             pushed: Vec::new(),
             sb_cleared: false,
             dropped: 0,
+            sb_first: 0,
+            shifted: 0,
+            synced: None,
         }
     }
 
@@ -321,6 +352,7 @@ impl Screen {
         self.y = self.y.min(rows - 1);
         self.pending = false;
         self.tabs = (0..cols).map(|c| c % 8 == 0).collect();
+        self.shifted = 0;
         *shown = Shown::new(cols, rows);
     }
 
@@ -334,6 +366,17 @@ impl Screen {
         self.sb_cleared
     }
 
+    /// When a synchronized update still open should be framed anyway -- the
+    /// time it began plus `at_most` -- or `None` when there is none to wait
+    /// for. A program that opens one and never closes it (it crashed, it was
+    /// killed) is framed as ever once `at_most` is up, as every terminal that
+    /// speaks the mode does it.
+    pub fn holding(&self, at_most: std::time::Duration) -> Option<Instant> {
+        self.synced
+            .map(|t| t + at_most)
+            .filter(|&until| until > Instant::now())
+    }
+
     /// The rows that changed since `shown`, and whatever scrolled off in
     /// between, as one JSON frame -- or `None` if the page already holds this.
     /// `shown` is brought up to date in the same step.
@@ -342,6 +385,7 @@ impl Screen {
         let mut any = false;
         out.push_str("{\"t\":\"frame\",\"p\":");
         push_json_str(&mut out, pane);
+        let shifted = std::mem::take(&mut self.shifted);
         if shown.resized {
             shown.resized = false;
             out.push_str(&format!(",\"sz\":[{},{}]", self.cols, self.rows));
@@ -372,6 +416,30 @@ impl Screen {
                 self.keep_line(l);
             }
             any = true;
+        }
+        // The screen scrolled: `shown` moves up with it, and the page moves
+        // its copy up the same way, so the diff below is only the rows that
+        // came in at the bottom -- not every row, each one line on from where
+        // it was, which the page drew all over again on every frame of output.
+        // A hint, never a risk: both sides move the same rows, and the diff
+        // puts right whatever the guess got wrong. Taken only when it is a
+        // better start than where `shown` already is.
+        let k = shifted;
+        if k > 0 && k < self.rows && !shown.rows.is_empty() && shown.rows[0].len() == self.cols {
+            let stay = (0..self.rows)
+                .filter(|&y| self.grid[y] == shown.rows[y])
+                .count();
+            let moved = (0..self.rows - k)
+                .filter(|&y| self.grid[y] == shown.rows[y + k])
+                .count();
+            if moved > stay {
+                shown.rows.drain(..k);
+                shown
+                    .rows
+                    .extend(std::iter::repeat_n(vec![Cell::BLANK; self.cols], k));
+                out.push_str(&format!(",\"up\":{k}"));
+                any = true;
+            }
         }
         let mut rows = String::new();
         for (y, row) in self.grid.iter().enumerate() {
@@ -442,13 +510,18 @@ impl Screen {
             shown.cols,
             shown.rows.len()
         ));
-        for (i, l) in self.scrollback.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            push_line(&mut out, l);
-        }
-        out.push_str("],\"r\":[");
+        // Lines as well as bytes: 128 KB of empty lines is forty thousand rows
+        // for a page that keeps six.
+        let from = self.push_tail(
+            &mut out,
+            self.scrollback.len(),
+            SNAPSHOT_SB_BYTES,
+            KEEP_LINES,
+        );
+        out.push_str(&format!(
+            "],\"sb0\":{},\"sbm\":{from},\"r\":[",
+            self.sb_first + from
+        ));
         let mut first = true;
         for (y, row) in shown.rows.iter().enumerate() {
             if row.iter().all(|c| *c == Cell::BLANK) {
@@ -469,6 +542,55 @@ impl Screen {
             u8::from(v)
         ));
         out
+    }
+
+    /// Older scrollback for a page that has scrolled up to the top of what it
+    /// holds: at most `max` lines, and `MORE_BYTES` of them, ending just above
+    /// line `before` (`sb0` of the snapshot or of the last of these). `sbm` is
+    /// how many are left above those. Lines that have since gone from the
+    /// front are gone: the answer is then shorter, or empty.
+    pub fn more(&self, pane: &str, before: usize, max: usize) -> String {
+        let mut out = String::with_capacity(4096);
+        out.push_str("{\"t\":\"more\",\"p\":");
+        push_json_str(&mut out, pane);
+        out.push_str(&format!(",\"before\":{before},\"sb\":["));
+        let end = before
+            .saturating_sub(self.sb_first)
+            .min(self.scrollback.len());
+        let from = self.push_tail(&mut out, end, MORE_BYTES, max);
+        out.push_str(&format!(
+            "],\"sb0\":{},\"sbm\":{from}}}",
+            self.sb_first + from
+        ));
+        out
+    }
+
+    /// The kept lines just before position `end`, newest last, as many as fit
+    /// in `budget` bytes and `max` lines -- always at least one, if there is
+    /// one -- written into `out` comma-separated. Returns the position of the
+    /// first one written.
+    fn push_tail(&self, out: &mut String, end: usize, budget: usize, max: usize) -> usize {
+        let mut parts: Vec<String> = Vec::new();
+        let mut size = 0;
+        for l in self.scrollback.range(..end).rev() {
+            if parts.len() >= max {
+                break;
+            }
+            let mut one = String::new();
+            push_line(&mut one, l);
+            if size + one.len() + 1 > budget && !parts.is_empty() {
+                break;
+            }
+            size += one.len() + 1;
+            parts.push(one);
+        }
+        for (i, one) in parts.iter().rev().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(one);
+        }
+        end - parts.len()
     }
 
     /// The `m` of a frame: DECCKM, bracketed paste, the mouse (0 off, 1 X10
@@ -546,10 +668,20 @@ impl Screen {
         self.scrollback.push_back(l);
         while self.scrollback_bytes > SCROLLBACK_BYTES {
             match self.scrollback.pop_front() {
-                Some(old) => self.scrollback_bytes -= old.bytes(),
+                Some(old) => {
+                    self.scrollback_bytes -= old.bytes();
+                    self.sb_first += 1;
+                }
                 None => break,
             }
         }
+    }
+
+    /// How many lines have ever left the top of the screen, kept or since
+    /// dropped: a pane asks before and after a read, to know whether what it
+    /// writes down has more than the screen's changes in it.
+    pub fn lines_ever(&self) -> usize {
+        self.sb_first + self.scrollback.len() + self.pushed.len()
     }
 
     #[cfg(test)]
@@ -568,7 +700,11 @@ impl Screen {
     /// screen is scrollback; a TUI scrolling its own region is not history.
     fn scroll_up(&mut self, n: usize, history: bool) {
         let blank = self.blank();
-        for _ in 0..n.min(self.bottom - self.top + 1) {
+        let n = n.min(self.bottom - self.top + 1);
+        if self.top == 0 && self.bottom + 1 == self.rows {
+            self.shifted += n;
+        }
+        for _ in 0..n {
             let row = self.grid.remove(self.top);
             let w = self.wraps.remove(self.top);
             if history && self.top == 0 && self.stash.is_none() {
@@ -581,7 +717,11 @@ impl Screen {
 
     fn scroll_down(&mut self, n: usize) {
         let blank = self.blank();
-        for _ in 0..n.min(self.bottom - self.top + 1) {
+        let n = n.min(self.bottom - self.top + 1);
+        if self.top == 0 && self.bottom + 1 == self.rows {
+            self.shifted = self.shifted.saturating_sub(n);
+        }
+        for _ in 0..n {
             self.grid.remove(self.bottom);
             self.wraps.remove(self.bottom);
             self.grid.insert(self.top, vec![blank; self.cols]);
@@ -764,10 +904,12 @@ impl Screen {
         let scrollback = std::mem::take(&mut self.scrollback);
         let bytes = self.scrollback_bytes;
         let pushed = std::mem::take(&mut self.pushed);
+        let first = self.sb_first;
         *self = Screen::new(cols, rows);
         self.scrollback = scrollback;
         self.scrollback_bytes = bytes;
         self.pushed = pushed;
+        self.sb_first = first;
     }
 
     fn sgr(&mut self, params: &vte::Params) {
@@ -876,8 +1018,37 @@ impl Screen {
                 (true, 1000) | (true, 1002) | (true, 1003) => self.mouse = on,
                 (true, 1006) => self.mouse_sgr = on,
                 (true, 2004) => self.bracketed_paste = on,
+                (true, 2026) => {
+                    self.synced = if on {
+                        self.synced.or(Some(Instant::now()))
+                    } else {
+                        None
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// DECRQM for a private mode: 1 set, 2 reset, 0 one this does not know.
+    /// A program asks before it uses synchronized output, and one that is not
+    /// answered goes without -- or waits.
+    fn mode_report(&self, n: u16) -> u8 {
+        let on = match n {
+            1 => self.app_cursor,
+            7 => self.autowrap,
+            25 => self.cursor_visible,
+            47 | 1047 | 1049 => self.stash.is_some(),
+            1000 | 1002 | 1003 => self.mouse,
+            1006 => self.mouse_sgr,
+            2004 => self.bracketed_paste,
+            2026 => self.synced.is_some(),
+            _ => return 0,
+        };
+        if on {
+            1
+        } else {
+            2
         }
     }
 }
@@ -941,6 +1112,17 @@ impl vte::Perform for Screen {
             }
             ('c', [b'>']) => {
                 self.replies.extend_from_slice(b"\x1b[>0;0;0c");
+                return;
+            }
+            ('p', [b'?', b'$']) => {
+                let n = params
+                    .iter()
+                    .next()
+                    .and_then(|p| p.first().copied())
+                    .unwrap_or(0);
+                let v = self.mode_report(n);
+                self.replies
+                    .extend_from_slice(format!("\x1b[?{n};{v}$y").as_bytes());
                 return;
             }
             ('n', []) => {
@@ -1034,6 +1216,7 @@ impl vte::Perform for Screen {
                         }
                     }
                     3 => {
+                        self.sb_first += self.scrollback.len();
                         self.scrollback.clear();
                         self.scrollback_bytes = 0;
                         self.pushed.clear();
@@ -1318,6 +1501,12 @@ mod tests {
                     .collect();
                 self.sb.push(text);
             }
+            if let Some(k) = f.get("up").and_then(Value::as_u64) {
+                let k = k as usize;
+                self.rows.drain(..k);
+                let blank = vec![(' ', Attr::default()); self.cols];
+                self.rows.extend(std::iter::repeat_n(blank, k));
+            }
             for r in f.get("r").and_then(Value::as_array).into_iter().flatten() {
                 let y = r[0].as_u64().unwrap() as usize;
                 let mut x = r[1].as_u64().unwrap() as usize;
@@ -1462,6 +1651,26 @@ mod tests {
         let (mut s, mut p) = screen(10, 5);
         feed(&mut s, &mut p, "\x1b[3;4H\x1b[6n\x1b[c");
         assert_eq!(s.replies, b"\x1b[3;4R\x1b[?62;22c");
+    }
+
+    #[test]
+    fn a_synchronized_update_is_held_until_it_ends_or_runs_too_long() {
+        let (mut s, mut p) = screen(10, 2);
+        let long = std::time::Duration::from_secs(60);
+        feed(&mut s, &mut p, "\x1b[?2026$p");
+        assert_eq!(s.replies, b"\x1b[?2026;2$y");
+        s.replies.clear();
+        feed(&mut s, &mut p, "\x1b[?2026hab\x1b[?2026$p\x1b[?9999$p");
+        assert_eq!(s.replies, b"\x1b[?2026;1$y\x1b[?9999;0$y");
+        assert!(s.holding(long).is_some());
+        // Past its time it is framed anyway, and a second open does not
+        // restart the clock.
+        assert!(s.holding(std::time::Duration::ZERO).is_none());
+        feed(&mut s, &mut p, "\x1b[?2026h");
+        assert!(s.holding(std::time::Duration::ZERO).is_none());
+        feed(&mut s, &mut p, "cd\x1b[?2026l");
+        assert!(s.holding(long).is_none());
+        assert_eq!(row(&s, 0), "abcd");
     }
 
     #[test]
@@ -1628,6 +1837,64 @@ mod tests {
         late.agrees(&s).unwrap();
     }
 
+    /// A snapshot carries only the newest of a full scrollback, and the rest
+    /// comes a page at a time, each page joining the one below it exactly --
+    /// down to a scrollback whose oldest lines have already gone.
+    #[test]
+    fn a_snapshot_carries_the_newest_scrollback_and_the_rest_comes_on_request() {
+        let texts = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|l| {
+                    let runs = if l.is_object() { &l["r"] } else { l };
+                    runs.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|r| r[0].as_str().unwrap().to_string())
+                        .collect()
+                })
+                .collect()
+        };
+        let (mut s, mut p) = screen(200, 5);
+        let mut shown = Shown::new(200, 5);
+        let line = "z".repeat(190);
+        for i in 0..14_000 {
+            feed(&mut s, &mut p, &format!("{i:06} {line}\r\n"));
+            if i % 50 == 0 {
+                s.frame("p", &mut shown);
+            }
+        }
+        s.frame("p", &mut shown);
+        assert!(s.sb_first > 0, "the oldest lines have gone from the front");
+        let snap = s.snapshot("p", &shown);
+        assert!(snap.len() < SNAPSHOT_SB_BYTES + 8 * 1024, "{}", snap.len());
+        let v: Value = serde_json::from_str(&snap).unwrap();
+        let mut got = texts(&v["sb"]);
+        let (mut before, mut left) = (v["sb0"].as_u64().unwrap(), v["sbm"].as_u64().unwrap());
+        assert!(left > 0);
+        while left > 0 {
+            let m: Value = serde_json::from_str(&s.more("p", before as usize, 500)).unwrap();
+            let mut older = texts(&m["sb"]);
+            assert!(!older.is_empty() && older.len() <= 500);
+            assert_eq!(m["before"].as_u64(), Some(before));
+            older.extend(got);
+            got = older;
+            (before, left) = (m["sb0"].as_u64().unwrap(), m["sbm"].as_u64().unwrap());
+        }
+        let all: Vec<String> = s.scrollback.iter().map(Line::text).collect();
+        assert_eq!(got, all);
+        // Above the oldest line kept there is nothing, and a clear takes
+        // every line a page might still ask about.
+        let m: Value = serde_json::from_str(&s.more("p", s.sb_first, 10)).unwrap();
+        assert!(m["sb"].as_array().unwrap().is_empty());
+        let top = v["sb0"].as_u64().unwrap() as usize;
+        feed(&mut s, &mut p, "\x1b[3J");
+        let m: Value = serde_json::from_str(&s.more("p", top, 10)).unwrap();
+        assert!(m["sb"].as_array().unwrap().is_empty());
+        assert_eq!(m["sbm"].as_u64(), Some(0));
+    }
+
     /// The cap is bytes and it holds, and what goes is whole lines from the
     /// front -- which is the answer to "what happens mid-line".
     #[test]
@@ -1676,6 +1943,43 @@ mod tests {
         rep.apply(&f);
         rep.agrees(&s).unwrap();
         assert!(f.len() < 64 * 1024, "one frame, bounded: {}", f.len());
+    }
+
+    /// Output scrolling a full screen is sent as the move and the new rows,
+    /// not every row again; the page that moves its copy the same way agrees;
+    /// and a scroll that is undone before the frame is not sent as one.
+    #[test]
+    fn a_scrolled_screen_is_sent_as_the_move_and_the_new_rows() {
+        let (mut s, mut p) = screen(60, 20);
+        let mut shown = Shown::new(60, 20);
+        let mut rep = Replica::new();
+        for i in 0..40 {
+            feed(&mut s, &mut p, &format!("line {i} {}\r\n", "x".repeat(40)));
+        }
+        pump(&mut s, &mut shown, &mut rep);
+        feed(&mut s, &mut p, "line 40\r\nline 41\r\nline 42\r\n");
+        let f = s.frame("p", &mut shown).unwrap();
+        let v: Value = serde_json::from_str(&f).unwrap();
+        assert_eq!(v["up"].as_u64(), Some(3), "{f}");
+        let sent: Vec<u64> = v["r"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r[0].as_u64().unwrap())
+            .collect();
+        assert!(
+            sent.iter().all(|&y| y >= 16),
+            "only the rows that came in: {sent:?}"
+        );
+        rep.apply(&f);
+        rep.agrees(&s).unwrap();
+        // Up one and straight back down: nothing moved.
+        feed(&mut s, &mut p, "\x1b[S\x1b[T");
+        if let Some(f) = s.frame("p", &mut shown) {
+            assert!(!f.contains("\"up\""), "{f}");
+            rep.apply(&f);
+        }
+        rep.agrees(&s).unwrap();
     }
 
     /// An insert at the start of a wide character moves it right, whole: it
