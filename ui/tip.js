@@ -45,7 +45,7 @@ const CSS = `
 
 const FIRST_MS = 450, WARM_MS = 600, GAP = 8;
 
-export function init({ keyHint }) {
+export function init({ keyHint, since = performance.now() }) {
   const s = document.createElement("style"); s.textContent = CSS; document.head.append(s);
   const tip = Object.assign(document.createElement("div"), { id: "tip" });
   tip.setAttribute("role", "tooltip");
@@ -61,7 +61,8 @@ export function init({ keyHint }) {
     if (!name || t.classList.contains("said")) return null;
     if (t.hasAttribute("data-tip-overflow")) {
       const c = t.matches("[data-tip-cut]") ? t : t.querySelector("[data-tip-cut]") || t;
-      if (c.scrollWidth <= c.clientWidth + 1) return null;
+      // Cut short across (an ellipsis) or down (a line clamp).
+      if (c.scrollWidth <= c.clientWidth + 1 && c.scrollHeight <= c.clientHeight + 1) return null;
     }
     return name;
   }
@@ -111,11 +112,11 @@ export function init({ keyHint }) {
   }
 
   /** Shown at once while warm (one just hid), else after the first wait. */
-  function soon(t) {
+  function soon(t, wait = FIRST_MS) {
     clearTimeout(timer);
     if (t === el) return;
     if (performance.now() < warmUntil || el) return show(t);
-    timer = setTimeout(() => { if (t.isConnected && t.matches(":hover")) show(t); }, FIRST_MS);
+    timer = setTimeout(() => { if (t.isConnected && t.matches(":hover")) show(t); }, wait);
   }
 
   const target = e => e.target?.closest?.("[data-tip]");
@@ -153,7 +154,9 @@ export function init({ keyHint }) {
 
   // Loaded by the rest that asked for it: that one waits its turn like any other.
   const now = [...document.querySelectorAll(":hover")].pop()?.closest("[data-tip]");
-  if (now) soon(now);
+  // Its wait counts from the pointer's arrival, not from this load: the
+  // fetch is inside the 450 ms, not added to them.
+  if (now) soon(now, Math.max(0, FIRST_MS - (performance.now() - since)));
   const f = document.activeElement?.closest?.("[data-tip]");
   if (f && f.matches(":focus-visible")) { byKey = true; show(f); }
   return { hide, gone: t => { if (!t || t === el) hide(); } };

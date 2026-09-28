@@ -247,6 +247,16 @@ impl Store {
             // 1.7.1: where an agent's tick says the work went.
             "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''",
+            // 1.8: a closed desk is kept, with its notes, until prune.
+            "ALTER TABLE desks ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0",
+            // 1.8: where the work was left, and a tick's evidence and an
+            // agent's suggested line.
+            "ALTER TABLE desks ADD COLUMN left_off TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desks ADD COLUMN left_off_at INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE desks ADD COLUMN left_off_by TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desks ADD COLUMN left_off_about TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN done_evidence TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN suggested_by TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -571,7 +581,9 @@ impl Store {
     /// ✕ per document, so a file that was sent seven times goes with its seven
     /// versions. Removing only the newest would put the sixth in its place, and
     /// a delete that leaves a nearly identical row behind reads as one that did
-    /// not happen. Undo puts the same seven back.
+    /// not happen. Undo puts the same seven back. The page's ✕ goes through
+    /// `delete_versions`, which says how many went.
+    #[cfg(test)]
     pub fn delete(&self, id: &str) -> Result<bool> {
         Ok(self.delete_versions(id)? > 0)
     }
@@ -641,17 +653,22 @@ impl Store {
     /// prune takes it (`GET /api/removed`, the page's "Removed · Show"): the
     /// documents, one row per removal -- which is one row per lineage, named
     /// by its newest version, with how many went -- and, with `desks`, the
-    /// notes taken off a desk's list and the panels closed on one. Each row
+    /// notes taken off a desk's list, the panels closed on one and the desks closed. Each row
     /// carries the route that puts it back; the asides the daemon holds in
     /// memory are the server's to add.
     pub fn removed(&self, limit: usize, desks: bool) -> Result<Vec<Removed>> {
         let conn = self.conn.lock().unwrap();
         let mut out: Vec<Removed> = conn
             .prepare(
-                "SELECT d.id, d.title, p.name, d.deleted_at, COUNT(*), MAX(d.received_at)
-                 FROM docs d JOIN projects p ON p.id = d.project_id WHERE d.deleted_at != 0
-                 GROUP BY d.project_id, COALESCE(d.source_path, d.id), d.deleted_at
-                 ORDER BY d.deleted_at DESC LIMIT ?1",
+                // Named by its newest version: received_at counts whole
+                // seconds, so versions sent together tie on it, and
+                // insertion order breaks the tie, as `history` does.
+                "SELECT id, title, name, deleted_at, n FROM (
+                   SELECT d.id, d.title, p.name, d.deleted_at, COUNT(*) OVER w AS n,
+                          ROW_NUMBER() OVER (w ORDER BY d.received_at DESC, d.rowid DESC) AS k
+                   FROM docs d JOIN projects p ON p.id = d.project_id WHERE d.deleted_at != 0
+                   WINDOW w AS (PARTITION BY d.project_id, COALESCE(d.source_path, d.id), d.deleted_at))
+                 WHERE k = 1 ORDER BY deleted_at DESC LIMIT ?1",
             )?
             .query_map(params![limit as i64], |r| {
                 let id: String = r.get(0)?;
@@ -669,11 +686,40 @@ impl Store {
             .collect::<std::result::Result<_, _>>()?;
         if desks {
             for (desk, id, name, text, at) in desk::removed_notes(&conn, limit)? {
-                out.push(Removed { kind: "note", id: id.to_string(), title: text, from: name, desk: Some(desk), at, versions: 1,
-                    restore: format!("/api/desks/{desk}/notes/{id}/restore") });
+                out.push(Removed {
+                    kind: "note",
+                    id: id.to_string(),
+                    title: text,
+                    from: name,
+                    desk: Some(desk),
+                    at,
+                    versions: 1,
+                    restore: format!("/api/desks/{desk}/notes/{id}/restore"),
+                });
+            }
+            for (id, name, root, at) in desk::closed_desks(&conn, limit)? {
+                out.push(Removed {
+                    kind: "desk",
+                    id: id.to_string(),
+                    title: name,
+                    from: root,
+                    desk: Some(id),
+                    at,
+                    versions: 1,
+                    restore: format!("/api/desks/{id}/reopen"),
+                });
             }
             for (id, desk, name, label, at) in desk::closed_panes(&conn, limit)? {
-                out.push(Removed { kind: "panel", restore: format!("/api/panes/{id}/restore"), id, title: label, from: name, desk: Some(desk), at, versions: 1 });
+                out.push(Removed {
+                    kind: "panel",
+                    restore: format!("/api/panes/{id}/restore"),
+                    id,
+                    title: label,
+                    from: name,
+                    desk: Some(desk),
+                    at,
+                    versions: 1,
+                });
             }
         }
         out.sort_by(|a, b| b.at.cmp(&a.at));
@@ -1130,8 +1176,19 @@ impl Store {
         desk::layout(&self.conn.lock().unwrap(), id, col, row, full)
     }
 
-    pub fn delete_desk(&self, id: i64) -> Result<bool> {
-        desk::delete(&self.conn.lock().unwrap(), id)
+    /// Close a desk (`desk::close`): the ids of the panes it closed.
+    pub fn close_desk(&self, id: i64) -> Result<Option<Vec<String>>> {
+        desk::close(&mut self.conn.lock().unwrap(), id, now())
+    }
+
+    pub fn reopen_desk(&self, id: i64) -> Result<bool> {
+        desk::reopen(&mut self.conn.lock().unwrap(), id)
+    }
+
+    /// Closed desks older than `before` (`desk::prune_desks`), after their
+    /// panes (`prune_panes`), which is what removes the panes' text.
+    pub fn prune_desks(&self, before: i64, dry_run: bool) -> Result<Vec<(i64, String)>> {
+        desk::prune_desks(&self.conn.lock().unwrap(), before, dry_run)
     }
 
     pub fn pane(&self, id: &str) -> Result<Option<Placed>> {
@@ -1224,11 +1281,6 @@ impl Store {
         desk::rename_pane(&self.conn.lock().unwrap(), id, name)
     }
 
-    /// The closed panes of a desk (`desk::closed_on`).
-    pub fn closed_panes(&self, desk_id: i64) -> Result<Vec<String>> {
-        desk::closed_on(&self.conn.lock().unwrap(), desk_id)
-    }
-
     /// Closed panes older than `before` (`desk::prune_closed`); what `prune`
     /// ends beside the documents.
     pub fn prune_panes(&self, before: i64, dry_run: bool) -> Result<Vec<(String, String)>> {
@@ -1271,6 +1323,28 @@ impl Store {
         desk::restore_note(&self.conn.lock().unwrap(), desk_id, id)
     }
 
+    pub fn suggest_desk_note(&self, desk_id: i64, text: &str, by: &str) -> Result<desk::Suggested> {
+        desk::suggest_note(&mut self.conn.lock().unwrap(), desk_id, text, by, now())
+    }
+
+    pub fn keep_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
+        desk::keep_note(&self.conn.lock().unwrap(), desk_id, id)
+    }
+
+    /// Where the work on a desk was left (`desk::set_left_off`); `at` of 0 is
+    /// now. The one it replaced, for an Undo; `None` when there is no desk.
+    pub fn set_left_off(
+        &self,
+        desk_id: i64,
+        to: &desk::LeftOff,
+    ) -> Result<Option<Option<desk::LeftOff>>> {
+        let mut to = to.clone();
+        if to.at == 0 {
+            to.at = now();
+        }
+        desk::set_left_off(&self.conn.lock().unwrap(), desk_id, &to)
+    }
+
     /// What a reset would take, in the numbers the sentence says and the
     /// reader types back: the documents that can be seen, the projects they
     /// are in, how many of them are pinned, and the desks that go with them. A document already deleted is
@@ -1280,7 +1354,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row(
             "SELECT COUNT(*), COUNT(DISTINCT project_id), COALESCE(SUM(pinned), 0),
-                    (SELECT COUNT(*) FROM desks) FROM live_docs",
+                    (SELECT COUNT(*) FROM desks WHERE closed_at = 0) FROM live_docs",
             [],
             |r| {
                 Ok(Census {
@@ -1915,11 +1989,20 @@ mod tests {
     #[test]
     fn removed_lists_what_can_come_back_newest_first_one_row_per_removal() {
         let (s, _d) = temp_store();
-        s.insert(&new_id("1"), version_of("/p/S.md", "Script", "one", "w")).unwrap();
-        let newest = s.insert(&new_id("2"), version_of("/p/S.md", "Script v2", "two", "w")).unwrap();
-        let other = s.insert(&new_id("o"), new_doc("Notes", "elsewhere", "w")).unwrap();
-        s.insert(&new_id("k"), new_doc("Kept", "stays", "w")).unwrap();
-        assert!(s.removed(10, true).unwrap().is_empty(), "nothing removed, nothing listed");
+        s.insert(&new_id("1"), version_of("/p/S.md", "Script", "one", "w"))
+            .unwrap();
+        let newest = s
+            .insert(&new_id("2"), version_of("/p/S.md", "Script v2", "two", "w"))
+            .unwrap();
+        let other = s
+            .insert(&new_id("o"), new_doc("Notes", "elsewhere", "w"))
+            .unwrap();
+        s.insert(&new_id("k"), new_doc("Kept", "stays", "w"))
+            .unwrap();
+        assert!(
+            s.removed(10, true).unwrap().is_empty(),
+            "nothing removed, nothing listed"
+        );
 
         assert_eq!(s.delete_versions(&newest.id).unwrap(), 2);
         s.delete(&other.id).unwrap();
@@ -1928,16 +2011,32 @@ mod tests {
         assert!(s.remove_desk_note(desk.id, note.id).unwrap());
 
         let docs: Vec<_> = s.removed(10, false).unwrap();
-        assert!(docs.iter().all(|r| r.kind == "doc"), "no desk rows without the desk's gate");
-        assert_eq!(docs.len(), 2, "one row for the lineage, one for the other: {docs:?}");
-        let script = docs.iter().find(|r| r.versions == 2).expect("the lineage says how many went");
+        assert!(
+            docs.iter().all(|r| r.kind == "doc"),
+            "no desk rows without the desk's gate"
+        );
+        assert_eq!(
+            docs.len(),
+            2,
+            "one row for the lineage, one for the other: {docs:?}"
+        );
+        let script = docs
+            .iter()
+            .find(|r| r.versions == 2)
+            .expect("the lineage says how many went");
         assert_eq!(script.title, "Script v2", "named by its newest version");
         assert_eq!(script.restore, format!("/api/docs/{}/undelete", script.id));
 
         let all = s.removed(10, true).unwrap();
-        let n = all.iter().find(|r| r.kind == "note").expect("the removed note is listed");
+        let n = all
+            .iter()
+            .find(|r| r.kind == "note")
+            .expect("the removed note is listed");
         assert_eq!((n.title.as_str(), n.desk), ("ship it", Some(desk.id)));
-        assert_eq!(n.restore, format!("/api/desks/{}/notes/{}/restore", desk.id, note.id));
+        assert_eq!(
+            n.restore,
+            format!("/api/desks/{}/notes/{}/restore", desk.id, note.id)
+        );
         assert!(all.windows(2).all(|w| w[0].at >= w[1].at), "newest first");
 
         // Brought back, it leaves the list.

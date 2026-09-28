@@ -155,8 +155,9 @@ pub struct Status {
     pub ctx_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_size: Option<u64>,
+    /// The tokens in the context window now, exact where `ctx_pct` rounds.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ctx_in: Option<u64>,
+    pub ctx_used: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_at: Option<i64>,
 }
@@ -166,8 +167,18 @@ fn clear_context(s: &mut Status) {
     s.model.clear();
     s.ctx_pct = None;
     s.ctx_size = None;
-    s.ctx_in = None;
+    s.ctx_used = None;
     s.ctx_at = None;
+}
+
+/// A token count as the page writes it, reduced to what would change the
+/// text: thousands under a million ("412k"), tenths of a million above
+/// ("1.2M"), the two ranges kept apart.
+fn ctx_figure(used: Option<u64>) -> Option<u64> {
+    used.map(|n| match n {
+        0..1_000_000 => n / 1000,
+        _ => 1_000_000 + n / 100_000,
+    })
 }
 
 /// The states an agent reports through its hooks. `needs_you` is Claude's
@@ -207,6 +218,11 @@ struct Inner {
     run: u64,
     /// The folder the running process was started in, for the git tick.
     cwd: String,
+    /// When the process started, and whether its shell has been seen in
+    /// `cwd` since: between the fork and the child's `chdir` the kernel names
+    /// the daemon's own folder, and a tick that lands there is not a move.
+    started: Instant,
+    arrived: bool,
     /// The desk's own folder. git's `status` is asked only inside it: a
     /// repository's own config can name commands that `status` runs (a
     /// filter driver), and a shell can `cd` into any repository at all.
@@ -361,6 +377,8 @@ impl Panes {
                 saved_at: Instant::now(),
                 run: 0,
                 cwd: String::new(),
+                started: Instant::now(),
+                arrived: false,
                 root: String::new(),
                 wrote: Instant::now(),
                 printing_since: Instant::now(),
@@ -594,14 +612,29 @@ impl Panes {
     /// the terminal's folder report (OSC 7): that is text any program in the
     /// panel can print, and this folder decides where the daemon runs git.
     fn follow_folders(&self) {
+        // Long enough for any fork to reach its `chdir`, short enough that a
+        // shell that moves at once is still followed on the next tick.
+        const ARRIVE_WITHIN: Duration = Duration::from_secs(1);
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in live {
             let Some(now) = l.shell_cwd() else { continue };
             // The kernel answers with the folder resolved -- macOS's /var is
             // /private/var, and any folder reached through a link -- so the
             // one the pane was started in is not a move to where it is.
-            let was = l.inner.lock().unwrap().cwd.clone();
+            let (was, settling) = {
+                let i = l.inner.lock().unwrap();
+                (
+                    i.cwd.clone(),
+                    !i.arrived && i.started.elapsed() < ARRIVE_WITHIN,
+                )
+            };
             if was == now || same_folder(&was, &now) {
+                l.inner.lock().unwrap().arrived = true;
+                continue;
+            }
+            // Not there yet: the child has not reached its folder, and what
+            // the kernel names is where the daemon is.
+            if settling {
                 continue;
             }
             let s = {
@@ -659,39 +692,42 @@ impl Panes {
     }
 
     /// The model and the context window, as the status line in this pane last
-    /// said them. False when the pane is not running. Only a change is sent
-    /// on: the line runs after every reply, and most replies move the
-    /// percentage by less than one.
+    /// said them. `None` when the pane is not running; otherwise whether what
+    /// the reader sees changed. Only such a change is sent on: the line runs
+    /// after every reply, and most replies move the percentage by less than
+    /// one and the count by less than its figure shows (`ctx_figure`).
     pub fn set_context(
         &self,
         id: &str,
         model: &str,
         pct: Option<u8>,
         size: Option<u64>,
-        input: Option<u64>,
-    ) -> bool {
-        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
-            return false;
-        };
+        used: Option<u64>,
+    ) -> Option<bool> {
+        let l = self.live.lock().unwrap().get(id).cloned()?;
         let mut i = l.inner.lock().unwrap();
         if !i.status.running {
-            return false;
+            return None;
         }
         let st = &i.status;
-        if st.model == model && st.ctx_pct == pct && st.ctx_size == size {
-            i.status.ctx_in = input;
-            return true;
+        if st.model == model
+            && st.ctx_pct == pct
+            && st.ctx_size == size
+            && ctx_figure(st.ctx_used) == ctx_figure(used)
+        {
+            i.status.ctx_used = used;
+            return Some(false);
         }
         i.status.model = model.to_string();
         i.status.ctx_pct = pct;
         i.status.ctx_size = size;
-        i.status.ctx_in = input;
+        i.status.ctx_used = used;
         i.status.ctx_at = Some(crate::store::now());
         let s = i.status.clone();
         drop(i);
         let _ = l.tx.send(status_frame(&l.id, &s).into());
         self.changed(&l.id, &s);
-        true
+        Some(true)
     }
 
     /// Whether this pane has a process right now. Nothing is woken to answer.
@@ -718,34 +754,19 @@ impl Panes {
     /// store keeps the row for Undo, and a pane brought back shows its last
     /// screen, greyed, as after a restart.
     pub fn forget(&self, id: &str) {
-        self.let_go(id, true);
-    }
-
-    /// Forgotten, and its text deleted: closing a desk, or a closed pane
-    /// ended by `prune` or by its desk going. Not written down first -- it
-    /// would only be deleted.
-    pub fn discard(&self, id: &str) {
-        self.let_go(id, false);
-        let _w = self.writing.lock().unwrap();
-        let _ = std::fs::remove_file(self.text_path(id));
-    }
-
-    fn let_go(&self, id: &str, keep: bool) {
         let l = self.live.lock().unwrap().remove(id);
         if let Some(l) = l {
-            if keep {
-                let _w = self.writing.lock().unwrap();
-                let text = {
-                    let mut i = l.inner.lock().unwrap();
-                    i.unsaved.then(|| {
-                        i.unsaved = false;
-                        i.unsaved_lines = false;
-                        keep_text(&i.old, i.screen.text())
-                    })
-                };
-                if let Some(text) = text {
-                    self.write_text(&l.id, &text);
-                }
+            let _w = self.writing.lock().unwrap();
+            let text = {
+                let mut i = l.inner.lock().unwrap();
+                i.unsaved.then(|| {
+                    i.unsaved = false;
+                    i.unsaved_lines = false;
+                    keep_text(&i.old, i.screen.text())
+                })
+            };
+            if let Some(text) = text {
+                self.write_text(&l.id, &text);
             }
             l.stop();
         }
@@ -1111,6 +1132,8 @@ impl Live {
         let (mut cmd, born) = command(s.cmd, s.accent);
         cmd.cwd(s.cwd);
         i.cwd = s.cwd.to_string();
+        i.started = Instant::now();
+        i.arrived = false;
         i.root = s.root.to_string();
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -1618,6 +1641,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_context_count_moves_when_its_figure_would() {
+        let f = |n: u64| ctx_figure(Some(n));
+        assert_eq!(f(412_000), f(412_999), "412k either way");
+        assert_ne!(f(412_999), f(413_000));
+        assert_eq!(f(1_200_000), f(1_299_999), "1.2M either way");
+        assert_ne!(f(1_299_999), f(1_300_000));
+        assert_ne!(f(999_999), f(1_000_000), "999k is not 1.0M");
+        assert_ne!(f(10_000), f(1_000_000), "10k is not 1.0M");
+        assert_eq!(ctx_figure(None), None);
+    }
+
+    #[test]
     fn kept_text_is_cut_from_the_front_to_the_cap() {
         let old: Vec<String> = (0..10).map(|i| format!("old {i}")).collect();
         let big = "z".repeat(1024);
@@ -1884,54 +1919,6 @@ mod tests {
         let (first, _rx) = live.attach();
         let snap = first.last().unwrap();
         assert!(snap.contains("late"), "{snap}");
-    }
-
-    /// A discarded pane's text stays gone: its process is killed on the way
-    /// out, and the waiter that hears the exit must not write the file back.
-    #[cfg(unix)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_discarded_pane_is_not_written_back_by_its_exit() {
-        let dir = crate::store::tempdir::Dir::new("snyvi-pane-discard");
-        let (events, _) = broadcast::channel(16);
-        let panes = Panes::new(&dir.path, events);
-        let id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
-        let live = panes.get(id);
-        let cwd = dir.path.to_string_lossy().to_string();
-        let said = dir.path.join("said");
-        let cmd = format!("printf 'hello\\n'; : > '{}'; sleep 5", said.display());
-        live.start(
-            Start {
-                cwd: &cwd,
-                root: &cwd,
-                cmd: &cmd,
-                desk: "d",
-                slot: 1,
-                cols: 80,
-                rows: 10,
-                accent: "",
-                offer: false,
-            },
-            &panes,
-        )
-        .unwrap();
-        for _ in 0..100 {
-            if said.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        assert!(said.exists(), "the shell never started");
-        panes.discard(id);
-        // The waiter hears the kill within its 500 ms drain.
-        for _ in 0..30 {
-            if !live.inner.lock().unwrap().status.running {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(!live.inner.lock().unwrap().status.running, "never exited");
-        assert!(!panes.text_path(id).exists(), "the exit wrote it back");
     }
 
     /// A pane started in a folder reached through a link has not moved when

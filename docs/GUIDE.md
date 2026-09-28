@@ -276,11 +276,17 @@ Which installs are swapped, and which are only told:
 | a build under `target/` | never checked |
 
 Once the day's slot has opened with a version staged — at once, when
-`Check now` or `snyvi update` found it — a pill appears beside the agents
-count: `Restart to update · 1.6.3` (`Update ready` in a browser tab, which
-cannot restart anything). A click applies it as soon as the panels are
-quiet; while it waits the pill says how many it is waiting on, and About
-has `Now` and `Cancel`. Left alone, the pill turns amber after a day.
+`Check for updates` (⌘K, the mark's menu, Home, About) or `snyvi update`
+found it — a small dot appears on the mascot, and a card at the foot of the
+sidebar says `snyvi 1.6.3 is ready`, with *Update when quiet*, *Now* and
+*Later*. Nothing on the page moves for either. *Update when quiet* applies
+it as soon as the panels are quiet, and the card then names who it is
+waiting on: `ledger · panel 1 · Claude working 4 m`. *Now* with a panel busy
+says in the card whose work it would end before it does. *Later* puts this
+version off until tomorrow morning, in every window; a newer one is offered
+at once. Left alone, the dot turns amber after a day. A browser tab reads
+the card and presses nothing. An install snyvi only tells shows the lines
+to run, with a Copy button.
 
 Busy, for a restart: an agent mid-turn, or one waiting on you for an
 answer or a permission — an update never cuts off an approval. An agent
@@ -292,9 +298,10 @@ After the restart, every shell comes back with its old screen greyed
 above, and every Claude panel comes back with its conversation
 (`claude --resume`) the first time you look at its desk — not while
 nobody is there to see it. A panel you have not opened within five
-minutes of that first look shows the ↻ offer instead, for a day. The
-pill says `Updated to 1.6.3 · what's new` for the rest of that session,
-and a click opens About.
+minutes of that first look shows the ↻ offer instead, for a day. While
+snyvi restarts, a strip across the top of the page says so, and the page
+reloads onto the new version when it is back; then `Updated to 1.6.3`
+shows once, with *What's new*.
 
 Sooner than the daily slot, when you want it:
 
@@ -467,14 +474,18 @@ the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and three more inside a desk. `send_document` is
+That exposes two MCP tools, and five more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
-URL. `send_aside` is the small one, and [Asides](#asides) below says what it
-is for. `read_desk_notes`, `tick_desk_note` and `name_panel` are offered
-only to a Claude running in a desk's panel: one reads that desk's notes,
-one ticks one done, and one names the panel it runs in. The tool
-descriptions tell Claude when to use each; a line in your global
-`CLAUDE.md` helps it remember:
+URL, and its description tells Claude what snyvi can show and when to pick
+each -- Markdown with Mermaid for a plan, one self-contained HTML file for a
+mockup or a chart, an image or a recording, a PDF. `send_aside` is the small
+one, and [Asides](#asides) below says what it is for. Offered only to a
+Claude running in a desk's panel: `read_desk_notes` reads that desk's
+notes, `tick_desk_note` ticks one done (with the commit, the document and a
+link to where the work can be seen), `suggest_desk_note` offers a line you
+can keep or not, `leave_off` says in a sentence where the work stands, and
+`name_panel` names the panel it runs in. The tool descriptions tell Claude
+when to use each; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
 > send it to snyvi with send_document and give me the link.
@@ -488,6 +499,25 @@ hooks at the new place rather than leaving them failing quietly on
 every tool call. `snyvi status` ends with a line saying what is
 registered and whether it still points at a binary that exists, and
 `snyvi uninstall-claude` takes all of it back out.
+
+Inside a desk, three more things happen on their own. A Claude starting in
+a panel -- a new session, a resume, a `/clear`, a compaction, a fork -- is
+handed the *desk brief* before its first reply: which desk and panel it is
+in, the open notes, what was done lately and in which commit, the last
+document, and where the work was left. It is small (1.5 KB at most), it
+is context and not a request, and About has a switch for it. The session is
+named after its panel (`ledger · panel 2`) in `/resume`, unless you named it
+yourself. And a plan Claude asks you to approve lands in snyvi as it asks,
+rendered, with its diagrams drawn, while the approval waits in the panel;
+a revised plan is a new version of the same document. Outside a desk,
+plans land only with `--auto`.
+
+The server also offers four prompts, the loop's own commands, listed in the
+`/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
+finished and checked and says where the work was left, `plan` writes the
+plan as a document and waits, `catch-up` says where the desk stands in five
+lines, and `explain-back` says what was just done and why. Nothing is
+written into your `CLAUDE.md` for them.
 
 It also sets Claude Code's status line to `snyvi statusline`, which prints
 nothing and tells a desk panel which model it runs and how full its context
@@ -646,6 +676,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | p     | pin (kept by `prune`)                       |
 | n     | open the next document waiting              |
 | Del   | remove document (⌘/ctrl Z undoes it)        |
+| h     | home                                        |
 | i     | inbox                                       |
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
@@ -680,7 +711,9 @@ its context window is, amber from 85%.
 do: a folder, a file, a project, a document, a desk, a panel's head or its
 terminal, a document in a desk's rail, a note, a point. The top line names
 what the menu is for; what removes or closes comes last, in red, and Close
-desk asks a second time (Close panel does not: it keeps Undo). Each entry does what the row's own
+desk asks a second time, since it ends its panels' programs (Close panel does not: it keeps Undo).
+A closed desk keeps its notes, and Undo, or its row under "Removed · Show" in the Inbox, brings it
+back with them and with its panels, stopped, until `snyvi prune` ends it. Each entry does what the row's own
 button does -- Remove from inbox leaves the same Undo in the row as its ✕.
 The menu key or ⇧F10 opens it from the keyboard for whatever has the focus
 (inside a panel, only the menu key: ⇧F10 is the program's), arrow keys and
@@ -850,9 +883,12 @@ the source underneath it, exactly as the agent wrote it.
 
 ## Pages and PDFs
 
-An `.html` file opens as source, because in a repository the markup is
-usually what you want; `v` shows the page itself. A `.pdf` opens in the
-browser's own viewer, and `v` goes the other way.
+An `.html` file you browse in Folders opens as source, because in a
+repository the markup is usually what you want; `v` shows the page itself.
+A page an agent *sent* opens as the page, since that is what it was made to
+be seen as -- by `path`, or inline with `lang: "html"` -- and `v` shows its
+source. A `.pdf` opens in the browser's own viewer, and `v` goes the other
+way.
 
 A previewed page runs in an iframe sandboxed **without**
 `allow-same-origin`, so it has an opaque origin: its scripts run and the
@@ -915,6 +951,22 @@ width where its rows are still readable and one past which the document
 would be the pane that does not fit: 200 to 440 px for the sidebar, 180
 to 400 for the rail. Double-click the seam for the default. The seam is
 a Tab stop too, and the arrow keys move it. The width is kept.
+
+## Home
+
+The mark opens Home, at `/`: what needs you (a panel waiting on an answer,
+or "Nothing needs you"), the desks -- each with its panels, its open notes
+and where the work was left -- what is waiting to be read, what is left on
+every desk's list, Claude (how much of the account's five-hour and weekly
+windows is used, what the Claudes in panels are doing, the fullest context
+window), what came lately, and snyvi's own update card. It is one read of
+the daemon, and it follows what changes while it is open. A widget can be
+hidden; "2 hidden · Show" at the foot brings them back. The Inbox is at
+`/inbox`, and `i` still opens it. An empty library still opens on Welcome.
+
+A document opens where you left it, however you open it -- the tree, the
+queue, `n`, Home, ⌘K, after a restart -- and at the top once you have read
+to its end. The place is kept in this browser, for the last 200 documents.
 
 ## Arrivals
 

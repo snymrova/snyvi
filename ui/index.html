@@ -13,7 +13,7 @@
 <div id="app">
   <aside id="side" tabindex="-1">
     <div class="side-head" data-tauri-drag-region="deep">
-      <a class="brand" href="/" data-nav="inbox"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-wink" d="M8.6 17.8q2.4-3 4.8 0"/><g class="bm-love"><path transform="translate(11 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/><path transform="translate(21 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span><span class="bm-say" id="bm-say" hidden aria-hidden="true"></span></a>
+      <a class="brand" href="/" data-nav="home" data-tip="Home" data-key="h"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-wink" d="M8.6 17.8q2.4-3 4.8 0"/><g class="bm-love"><path transform="translate(11 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/><path transform="translate(21 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span><span class="bm-say" id="bm-say" hidden aria-hidden="true"></span></a>
       <a class="live" id="live" href="/connect" data-nav="connect" data-tip="No agent connected" aria-label="No agent connected">0</a><button class="upd" id="upd" type="button" aria-live="polite" hidden></button>
       <button class="icon" id="btn-search" data-tip="Search" data-key="mod+k" aria-label="Search">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -23,13 +23,13 @@
       </button>
     </div>
     <nav id="rail-nav" aria-label="Sidebar" aria-orientation="vertical">
-      <button class="icon" data-pop="inbox" data-ico="inbox" data-tip="Inbox" aria-label="Inbox"><b class="badge"></b></button>
+      <button class="icon" id="rail-search" data-ico="search" data-tip="Search" data-key="mod+k" aria-label="Search"></button>
+      <button class="icon" data-pop="inbox" data-ico="inbox" data-tip="Inbox" data-key="i" data-tip-sub="letter keys: Ctrl B turns them on" aria-label="Inbox"><b class="badge"></b></button>
       <button class="icon" data-pop="tree" data-ico="project" data-tip="Projects" aria-label="Projects"></button>
       <button class="icon" data-pop="desks" data-ico="desk" data-tip="Desks" aria-label="Desks"><b class="badge"></b></button>
       <button class="icon" data-pop="browse" data-ico="folder" data-tip="Folders" aria-label="Folders"></button>
       <a class="icon" id="rail-live" href="/connect" data-nav="connect" data-tip="No agent connected" aria-label="No agent connected"><i></i><b class="badge"></b></a>
-      <button class="icon" id="rail-note" data-pop="note" data-tip="Aside" aria-label="Aside"><i></i></button>
-      <button class="icon" id="rail-search" data-ico="search" data-tip="Search" data-key="mod+k" aria-label="Search"></button>
+      <button class="icon" id="rail-note" data-pop="note" data-tip="An aside is waiting" aria-label="An aside is waiting"><i></i></button>
     </nav>
     <div id="trees">
       <div id="inbox-row"></div>
@@ -94,23 +94,7 @@
     <ul id="palette-list" role="listbox"></ul>
   </div>
 </div>
-<div id="help" hidden>
-  <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1">
-    <div class="help-head">
-      <h2 class="dlg-title" id="help-title">Keyboard shortcuts</h2>
-      <button class="icon help-close" id="help-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-    </div>
-    <div class="help-body"></div>
-    <div class="help-foot">
-      <button class="text" id="btn-welcome">Welcome</button>
-      <button class="text" id="btn-start">How snyvi works</button>
-      <button class="text" id="btn-connect">Agents…</button>
-      <button class="text" id="btn-about">About snyvi</button>
-      <span class="help-gap"></span>
-      <button class="text" id="btn-reset">Reset snyvi…</button>
-    </div>
-  </div>
-</div>
+<div id="help" hidden></div>
 <div id="about" hidden></div>
 <div id="reset" hidden></div>
 <script id="boot" type="application/json">{{BOOT_JSON}}</script>

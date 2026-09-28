@@ -1,8 +1,11 @@
 //! Claude Code hooks. `PostToolUse`: when Claude writes or edits a Markdown
 //! file, send it. Zero agent cooperation needed. And inside a desk panel, every
 //! event that says what Claude is doing -- a prompt, a tool, a permission
-//! prompt, the end of a turn -- is told to the panel. Quiet on every path: a
-//! hook must never interrupt the session, so failures are swallowed and exit 0.
+//! prompt, the end of a turn -- is told to the panel; a session starting there
+//! is handed the desk brief (`crate::brief`) and named after its panel; and a
+//! plan Claude asks to have approved lands in snyvi while it waits for the
+//! answer. Quiet on every path: a hook must never interrupt the session, so
+//! failures are swallowed and exit 0.
 
 use crate::client;
 use crate::config::Paths;
@@ -38,13 +41,26 @@ struct Event {
     session_id: Str,
     tool_name: Str,
     tool_input: ToolInput,
+    /// Read only for `ExitPlanMode`, whose response carries the plan; any
+    /// other tool's output is skipped as it is read, like its input.
+    tool_response: ToolInput,
     notification_type: Str,
     message: Str,
+    /// SessionStart: startup, resume, clear, compact or fork.
+    source: Str,
+    /// SessionStart: the title the session already has, if any.
+    session_title: Str,
 }
 
+/// The few fields of a tool's input or response this reads. `plan` and
+/// `plan_file` are `ExitPlanMode`'s: Claude Code puts the plan and its file in
+/// the input it hands a hook (`plan`, `planFilePath`) and in the response
+/// (`plan`, `filePath`).
 #[derive(Default)]
 struct ToolInput {
     file_path: Str,
+    plan: Str,
+    plan_file: Str,
 }
 
 /// A string, or nothing for anything else, which is skipped as it is read.
@@ -118,17 +134,20 @@ impl<'de> Deserialize<'de> for ToolInput {
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("anything")
             }
-            // Only `file_path` is kept: a Write's whole file goes by unread.
+            // Only these are kept: a Write's whole file goes by unread.
             fn visit_map<A: serde::de::MapAccess<'de>>(
                 self,
                 mut a: A,
             ) -> Result<ToolInput, A::Error> {
                 let mut out = ToolInput::default();
                 while let Some(k) = a.next_key::<Str>()? {
-                    if k.get() == Some("file_path") {
-                        out.file_path = a.next_value()?;
-                    } else {
-                        a.next_value::<serde::de::IgnoredAny>()?;
+                    match k.get() {
+                        Some("file_path") => out.file_path = a.next_value()?,
+                        Some("plan") => out.plan = a.next_value()?,
+                        Some("planFilePath" | "filePath") => out.plan_file = a.next_value()?,
+                        _ => {
+                            a.next_value::<serde::de::IgnoredAny>()?;
+                        }
                     }
                 }
                 Ok(out)
@@ -184,10 +203,10 @@ pub fn run(paths: &Paths) -> Result<()> {
     // In a desk panel, the panel is told what the agent is doing and which
     // conversation it is, so it can offer that conversation back after Claude
     // or the daemon has gone. Outside one, nothing new happens.
-    if let Some(pane) = std::env::var("SNYVI_SESSION")
+    let pane = std::env::var("SNYVI_SESSION")
         .ok()
-        .filter(|v| crate::pane::valid_id(v))
-    {
+        .filter(|v| crate::pane::valid_id(v));
+    if let Some(pane) = &pane {
         let state = agent_state(&event);
         let session = event
             .session_id
@@ -195,8 +214,26 @@ pub fn run(paths: &Paths) -> Result<()> {
             .filter(|s| crate::desk::valid_session(s));
         let starting = name == "SessionStart";
         if state.is_some() || (starting && session.is_some()) {
-            client::agent_state(paths, &pane, state, session);
+            client::agent_state(paths, pane, state, session);
         }
+        // The desk brief, on every start -- a new session, a resume, a
+        // /clear, a compaction, a fork -- so what Claude knows about the desk
+        // comes back each time its context does. Claude's first reply waits
+        // for this: `client::brief` gives up after half a second, and then
+        // nothing is printed and Claude starts as it would have.
+        if starting {
+            if let Some((context, title)) = client::brief(paths, pane) {
+                if let Some(out) = session_start_output(&event, &context, &title) {
+                    println!("{out}");
+                }
+            }
+            return Ok(());
+        }
+    }
+    if event.tool_name.get() == Some("ExitPlanMode") && matches!(name, "PreToolUse" | "PostToolUse")
+    {
+        send_plan(paths, &event, pane.is_some());
+        return Ok(());
     }
     if name != "PostToolUse" {
         return Ok(());
@@ -225,6 +262,120 @@ pub fn run(paths: &Paths) -> Result<()> {
     let _ = client::send(paths, &payload);
     Ok(())
 }
+
+/// What a SessionStart hook prints: the brief as `additionalContext`, and the
+/// session named after its panel. Nothing when there is neither.
+///
+/// The title only where Claude Code applies one -- startup, resume, fork --
+/// and never over a name the reader gave: a title that is not one of ours
+/// ("ledger · panel 2") is theirs, from `--name` or `/rename`. One of ours is
+/// replaced, since a conversation resumed in another panel lives there now.
+fn session_start_output(event: &Event, context: &str, title: &str) -> Option<String> {
+    let titled = matches!(event.source.get(), Some("startup" | "resume" | "fork"))
+        && !title.is_empty()
+        && event
+            .session_title
+            .get()
+            .is_none_or(|t| t.trim().is_empty() || our_title(t));
+    if context.is_empty() && !titled {
+        return None;
+    }
+    let mut out = json!({ "hookEventName": "SessionStart" });
+    if !context.is_empty() {
+        out["additionalContext"] = json!(context);
+    }
+    if titled {
+        out["sessionTitle"] = json!(title);
+    }
+    Some(json!({ "hookSpecificOutput": out }).to_string())
+}
+
+/// A session title snyvi gave: "<desk> · panel <n>" (`crate::brief::title`).
+fn our_title(t: &str) -> bool {
+    t.rsplit_once(" · panel ").is_some_and(|(desk, n)| {
+        !desk.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
+    })
+}
+
+/// A plan Claude asked to have approved goes to snyvi, rendered, with its
+/// diagrams drawn, while the approval is still being asked: the PreToolUse
+/// entry runs before the dialog and in the background (`"async": true`), so
+/// it can never hold the dialog up. The already-installed PostToolUse entry
+/// sends it after approval instead, for an install that has not been given
+/// the PreToolUse one yet; where both are, the PreToolUse one did it.
+///
+/// Inside a panel, always. Anywhere else only for a reader who asked for
+/// every document Claude writes (`init-claude --auto`): the hook is in
+/// `~/.claude/settings.json`, and so runs for every Claude on the machine.
+///
+/// By its file, so a revised plan is a new version of the same document and
+/// the same row, not a new one each time; the plan's text when there is no
+/// file to read. The daemon files it under the desk or the project.
+fn send_plan(paths: &Paths, event: &Event, in_pane: bool) {
+    let pre = event.hook_event_name.get() == Some("PreToolUse");
+    if !in_pane && !auto_send() {
+        return;
+    }
+    if !pre && plan_hook_installed() {
+        return;
+    }
+    let from = if pre {
+        &event.tool_input
+    } else {
+        &event.tool_response
+    };
+    let file = from
+        .plan_file
+        .get()
+        .filter(|f| Path::new(f).is_file())
+        .map(str::to_string);
+    let content = from.plan.get().filter(|p| !p.trim().is_empty());
+    if file.is_none() && content.is_none() {
+        return;
+    }
+    let payload = Payload {
+        content: if file.is_none() {
+            content.map(str::to_string)
+        } else {
+            None
+        },
+        path: file,
+        lang: Some("md".into()),
+        cwd: event.cwd.get().map(str::to_string),
+        session: event.session_id.get().map(crate::session::workflow_key),
+        origin: Some("plan".into()),
+        sender: Some("claude-code".into()),
+        ..Default::default()
+    };
+    // Never a daemon started for it, and a bounded wait: in the background
+    // before approval, where a slow render costs nothing; after it, where
+    // Claude's turn waits, a short one.
+    let within = std::time::Duration::from_millis(if pre { 5000 } else { 1500 });
+    let _ = client::send_quick(paths, &payload, within);
+}
+
+/// Whether the PreToolUse entry for plans is installed, which is what makes
+/// the PostToolUse one stand aside. Read only on an ExitPlanMode.
+fn plan_hook_installed() -> bool {
+    settings_path()
+        .and_then(|p| read_settings(&p))
+        .map(|s| {
+            s.pointer("/hooks/PreToolUse")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|e| {
+                    e.get("matcher").and_then(Value::as_str) == Some(PLAN_MATCHER)
+                        && e.get("hooks")
+                            .and_then(Value::as_array)
+                            .is_some_and(|hs| hs.iter().any(ours))
+                })
+        })
+        .unwrap_or(false)
+}
+
+/// The tool whose calls the plan entry runs on.
+const PLAN_MATCHER: &str = "ExitPlanMode";
 
 /// What an event says the agent is doing, or nothing when it says nothing new.
 /// Empty is "gone": the session ended. A `PostToolUse` is `working` even
@@ -382,6 +533,12 @@ pub fn install_into(settings: &mut Value, command: &str, auto: bool) -> Result<(
     wanted.push((
         "PostToolUse",
         json!({ "matcher": "*", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
+    ));
+    // Plans land in snyvi as the approval is asked: in the background, so the
+    // dialog never waits on it (`send_plan`).
+    wanted.push((
+        "PreToolUse",
+        json!({ "matcher": PLAN_MATCHER, "hooks": [{ "type": "command", "command": command, "async": true, "timeout": 10 }] }),
     ));
     if auto {
         wanted.push((
@@ -672,6 +829,12 @@ mod tests {
         assert_eq!(post[1]["hooks"][0]["command"], "/opt/snyvi hook");
         // And it does not count as auto-send.
         assert!(!installed(&s).iter().any(|(e, _)| *e == "PostToolUse"));
+        // Plans: one entry, on ExitPlanMode only, in the background.
+        let pre = s["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1);
+        assert_eq!(pre[0]["matcher"], "ExitPlanMode");
+        assert_eq!(pre[0]["hooks"][0]["async"], true);
+        assert_eq!(pre[0]["hooks"][0]["command"], "/opt/snyvi hook");
         // Again, with the same binary: nothing to do.
         assert_eq!(
             install_into(&mut s, "/opt/snyvi hook", false).unwrap(),
@@ -746,13 +909,94 @@ mod tests {
             { "matcher": "Bash", "hooks": [{ "type": "command", "command": "other --x" }] } ] } });
         let mut s = before.clone();
         install_into(&mut s, "/opt/snyvi hook", true).unwrap();
-        assert_eq!(remove_from(&mut s), 7);
+        assert_eq!(remove_from(&mut s), 8);
         assert_eq!(s, before);
         // A file that had only ours goes back to having no hooks key at all.
         let mut s = json!({ "theme": "dark" });
         install_into(&mut s, "snyvi hook", true).unwrap();
-        assert_eq!(remove_from(&mut s), 7);
+        assert_eq!(remove_from(&mut s), 8);
         assert_eq!(s, json!({ "theme": "dark" }));
         assert_eq!(remove_from(&mut s), 0);
+    }
+
+    fn event(v: Value) -> Event {
+        serde_json::from_slice(v.to_string().as_bytes()).unwrap()
+    }
+
+    /// The brief goes in on every start; the title only where Claude Code
+    /// takes one, and never over a name the reader gave -- one of ours is
+    /// replaced, since the conversation may be in another panel now.
+    #[test]
+    fn a_session_start_is_handed_the_brief_and_named_after_its_panel() {
+        let out = |source: &str, title: Option<&str>| {
+            let mut v = json!({ "hook_event_name": "SessionStart", "source": source });
+            if let Some(t) = title {
+                v["session_title"] = json!(t);
+            }
+            session_start_output(&event(v), "the brief", "ledger · panel 2")
+                .map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"].clone())
+        };
+        for source in ["startup", "resume", "fork"] {
+            let o = out(source, None).unwrap();
+            assert_eq!(o["hookEventName"], "SessionStart");
+            assert_eq!(o["additionalContext"], "the brief", "{source}");
+            assert_eq!(o["sessionTitle"], "ledger · panel 2", "{source}");
+        }
+        for source in ["clear", "compact"] {
+            let o = out(source, None).unwrap();
+            assert_eq!(o["additionalContext"], "the brief", "{source}");
+            assert!(o.get("sessionTitle").is_none(), "{source}");
+        }
+        assert!(out("resume", Some("auth refactor"))
+            .unwrap()
+            .get("sessionTitle")
+            .is_none());
+        assert_eq!(
+            out("resume", Some("chores · panel 1")).unwrap()["sessionTitle"],
+            "ledger · panel 2"
+        );
+        assert_eq!(
+            out("startup", Some("  ")).unwrap()["sessionTitle"],
+            "ledger · panel 2"
+        );
+        // The brief turned off: nothing at all.
+        let off = event(json!({ "hook_event_name": "SessionStart", "source": "startup" }));
+        assert_eq!(session_start_output(&off, "", ""), None);
+        assert!(
+            our_title("a · b · panel 12") && !our_title("panel 2") && !our_title("x · panel two")
+        );
+    }
+
+    /// ExitPlanMode's plan and its file are read from the input a
+    /// PreToolUse hook gets and the response a PostToolUse one does; the
+    /// rest of either goes by unread.
+    #[test]
+    fn a_plan_is_read_from_the_input_and_from_the_response() {
+        let pre = event(
+            json!({ "hook_event_name": "PreToolUse", "tool_name": "ExitPlanMode",
+            "tool_input": { "plan": "# Ship it", "planFilePath": "/h/.claude/plans/ship.md", "allowedPrompts": [] } }),
+        );
+        assert_eq!(pre.tool_input.plan.get(), Some("# Ship it"));
+        assert_eq!(
+            pre.tool_input.plan_file.get(),
+            Some("/h/.claude/plans/ship.md")
+        );
+        let post = event(
+            json!({ "hook_event_name": "PostToolUse", "tool_name": "ExitPlanMode",
+            "tool_input": {}, "tool_response": { "plan": "# Ship it", "filePath": "/h/p.md", "isAgent": false } }),
+        );
+        assert_eq!(post.tool_response.plan.get(), Some("# Ship it"));
+        assert_eq!(post.tool_response.plan_file.get(), Some("/h/p.md"));
+        // Any other tool's output is not kept.
+        let read = event(
+            json!({ "hook_event_name": "PostToolUse", "tool_name": "Read",
+            "tool_response": { "file": { "content": "x".repeat(10_000) } } }),
+        );
+        assert_eq!(read.tool_response.plan.get(), None);
+        assert_eq!(
+            agent_state(&pre),
+            None,
+            "a PreToolUse says nothing new about the agent"
+        );
     }
 }

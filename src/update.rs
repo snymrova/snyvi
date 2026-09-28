@@ -500,7 +500,16 @@ pub struct State {
     /// The last check's failure, if it failed; shown in About and by the CLI,
     /// never as a pill.
     pub error: Option<String>,
+    /// "Later" on the update card: the offer of `snoozed_for` is not made
+    /// again before this. Here and not in a page, so every window agrees; a
+    /// newer version than the one put off is offered at once.
+    pub snoozed_until: Option<i64>,
+    pub snoozed_for: Option<String>,
 }
+
+/// The longest "Later" is kept: two days. A page asks for "tomorrow morning",
+/// which is always less; anything more is a page's mistake.
+pub const SNOOZE_MAX: i64 = 2 * 86400;
 
 /// One file the stager unpacked and hashed, in `<version>/staged.json`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -743,6 +752,22 @@ impl Updater {
 
     /// `snyvi update on|off`, and the switch in About. The environment's
     /// `off` cannot be turned on from here, and says so.
+    /// Put the offer off until `until` ("Later"), or bring it back (`None`):
+    /// only the version on offer now, so a newer one is not put off with it.
+    pub fn snooze(&self, until: Option<i64>, now: i64) -> Result<()> {
+        self.edit(|s| match until {
+            Some(t) => {
+                s.snoozed_until = Some(t.clamp(now, now + SNOOZE_MAX));
+                s.snoozed_for = s.ready.clone().or_else(|| s.available.clone());
+            }
+            None => {
+                s.snoozed_until = None;
+                s.snoozed_for = None;
+            }
+        });
+        Ok(())
+    }
+
     pub fn set_auto(&self, on: bool) -> Result<bool> {
         if let Some(dir) = self.switch.parent() {
             fs::create_dir_all(dir)?;
@@ -781,9 +806,17 @@ impl Updater {
         let stale = stale && self.channel != Channel::Dev;
         // What the pill draws: a version staged behind the floor is not news
         // yet; one that failed to start is, for a day.
+        // "Later": the version on offer, until the time the reader said. A
+        // newer one is news again at once, and a failure is never put off.
+        let offered = s.ready.clone().or_else(|| s.available.clone());
+        let snoozed = s.snoozed_until.is_some_and(|t| t > now)
+            && s.snoozed_for.is_some()
+            && s.snoozed_for == offered;
         let show = failed_recent
-            || ((s.asked || slot_open) && (s.ready.is_some() || (told && s.available.is_some())))
-            || stale;
+            || (!snoozed
+                && (((s.asked || slot_open)
+                    && (s.ready.is_some() || (told && s.available.is_some())))
+                    || stale));
         serde_json::json!({
             "channel": self.channel.name(),
             "auto": self.auto(),
@@ -804,6 +837,7 @@ impl Updater {
             "error": s.error,
             "how": self.how(),
             "show": show,
+            "snoozed_until": if snoozed { s.snoozed_until } else { None },
             "stale": stale,
             "prev": self.can_go_back(),
         })
@@ -2379,6 +2413,37 @@ mod tests {
             .as_bytes(),
         )
         .unwrap()
+    }
+
+    /// "Later" puts off the version on offer until the time given, in every
+    /// window, and no longer than two days; a newer version is offered at
+    /// once, and a failure to start is never put off.
+    #[test]
+    fn later_puts_off_this_version_and_not_the_next() {
+        let tmp = tempdir();
+        let exe = tmp.join("snyvi");
+        fs::write(&exe, b"x").unwrap();
+        let u = updater(&tmp, &exe, Fake::new());
+        u.edit(|s| {
+            s.ready = Some("9.9.9".into());
+            s.asked = true;
+        });
+        let now = 1_000_000;
+        assert_eq!(u.json(now, false)["show"], true);
+        u.snooze(Some(now + 3600), now).unwrap();
+        let j = u.json(now, false);
+        assert_eq!(
+            (j["show"].clone(), j["snoozed_until"].clone()),
+            (serde_json::json!(false), serde_json::json!(now + 3600))
+        );
+        assert_eq!(u.json(now + 3601, false)["show"], true, "only until then");
+        u.edit(|s| s.ready = Some("9.9.10".into()));
+        assert_eq!(u.json(now, false)["show"], true, "a newer version is news");
+        u.snooze(Some(now + 10 * 86400), now).unwrap();
+        assert_eq!(u.state().snoozed_until, Some(now + SNOOZE_MAX));
+        u.snooze(None, now).unwrap();
+        assert_eq!(u.json(now, false)["show"], true);
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

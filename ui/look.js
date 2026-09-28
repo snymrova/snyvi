@@ -22,6 +22,23 @@
  * over it, which is also what fetches this file. The labels are the folded
  * rail's icons' too. */
 const CSS = `
+/* The line the mascot says, beside the mark (openSay). */
+.bm-say { position: absolute; left: 28px; top: 50%; z-index: var(--z-tip);
+  font-family: var(--sans); font-size: var(--fs-small); font-weight: 500; letter-spacing: -.005em;
+  color: var(--accent); white-space: nowrap; max-width: 132px; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: 0; transform: translateY(calc(-50% + 4px));
+  transition: opacity var(--dur-quick) ease, transform .3s var(--ease-spring); }
+.bm-say.on { opacity: 1; transform: translateY(-50%); }
+/* Print, in 1.8: printing waits for a page long idle, and so does this. */
+@media print {
+  #side, #rail, #chrome, #toasts, #palette, #help, #about, #reset, #queue-bar, pre.code .copy { display: none !important; }
+  #app { display: block; }
+  #doc { max-width: none; padding: 0; }
+  .prose { font-size: 11.5pt; }
+  pre.code { white-space: pre-wrap; }
+}
+
 /* The beat each arrives on, capped: the last is in by --dur-instant, however
    many there are (docs/DESIGN.md §7.2). */
 .foot-rail > button:nth-child(2) { transition-delay: calc(var(--dur-instant) * .25); }
@@ -144,6 +161,9 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
     const f = FONTS.find(([k]) => k === (root.dataset.font || "")) || FONTS[0];
     // On a desk, Aa is the terminal's text size; the face there is always mono.
     const b = $("#btn-font");
+    // Dimmed, it says why it does nothing here (app.js paintControls); this
+    // chunk arriving on the Inbox must not paint over that.
+    if (b.classList.contains("dim")) return;
     if (onDesk()) { const t = desk().textSize(); b.dataset.tip = `Text size: ${t.name}`; b.dataset.tipSub = `click for ${t.next}`; return; }
     b.dataset.tip = `Font: ${f[1]}`; b.dataset.tipSub = "click for the next";
   }
@@ -275,5 +295,58 @@ export function init({ root, $, store, boot, toast, control, onDesk, desk, mmd, 
     else return;
     e.preventDefault(); e.stopPropagation();
   });
-  return { THEMES, slot, previewTheme, setTheme, loadThemes, paintFontBtn };
+  return { THEMES, slot, previewTheme, setTheme, loadThemes, paintFontBtn, openSay };
+}
+
+// ---------- snyvi answers: what it says when a reader rests on the mark ----------
+/** What it says, the face it says it with, and how often the line comes up.
+ *  The weights are the whole character. Most of what it says is "hi"; a
+ *  count when there is one worth giving; and "love you" seldom enough that
+ *  it still means something when it lands. A line whose text comes back
+ *  empty is not true right now -- no one is waiting, an agent is connected,
+ *  it is the middle of the afternoon -- and drops out of the draw.
+ *  Every one of them is short on purpose: the line is written where the
+ *  word "snyvi" is, and it has that much room and no more. */
+const SAYS = [
+  { t: "hi", w: 5 },
+  { t: "hey you", w: 3 },
+  { t: "still here", w: 2 },
+  { t: "hello again", w: 2, f: "glad" },
+  { t: "glad you're here", w: 2, f: "glad" },
+  { t: "love you", w: 1, f: "love" },
+  { t: "my favourite", w: 1, f: "love" },
+  { t: st => st.waiting ? `${st.waiting} waiting` : "", w: 4, f: "glad" },
+  { t: st => Object.keys(st.online).length ? "" : "no agents", w: 3 },
+  { t: () => { const h = new Date().getHours(); return h < 5 || h >= 23 ? "late one?" : h < 10 ? "morning" : ""; }, w: 3, f: "wink" },
+];
+/** The last few lines, so the same one does not come up twice running. */
+let saidLast = [];
+function pickSay({ root, state }) {
+  // The page cannot hear the daemon: the eyes are already shut, and this is
+  // where a reader who wonders why finds out.
+  if (root.dataset.link === "off") return { t: "not connected", f: "" };
+  const pool = [];
+  for (const s of SAYS) {
+    const t = typeof s.t === "function" ? s.t(state) : s.t;
+    if (!t || saidLast.includes(t)) continue;
+    for (let i = 0; i < s.w; i++) pool.push({ t, f: s.f || "" });
+  }
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : { t: "hi", f: "" };
+}
+export function openSay(c) {
+  const { root, sayEl, state, quiet } = c;
+  // A note still glowing is an agent waiting to be read. The agent has the
+  // floor until then, and snyvi does not talk over its own messenger.
+  // Quiet: the mascot speaks only when something is asked of it.
+  if (root.dataset.note || quiet()) return;
+  const s = pickSay(c);
+  saidLast = [s.t, ...saidLast].slice(0, 3);
+  sayEl.textContent = s.t;
+  sayEl.hidden = false;
+  void sayEl.offsetWidth;   // the resting state first, so the rise transitions
+  sayEl.classList.add("on");
+  // An empty face is still a face here: `html[data-say]` matching on the
+  // bare attribute is what stops the waiting blink and nods the head, and
+  // a line said with no expression wants both.
+  root.dataset.say = s.f;
 }

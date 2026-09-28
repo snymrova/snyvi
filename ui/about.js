@@ -21,68 +21,206 @@
 
 let wired = false;
 
-/* ---------- the update pill ----------
- * The pill in the sidebar's foot (#upd), from the daemon's `update` block.
- * Shown when the daemon says so -- the day's slot is open or the reader
- * asked, a version failed to start, the file on disk is newer than the
- * daemon -- while a restart waits for the panels to be quiet, and for one
- * session after an update landed, so a desk that came back is explained. A
- * click restarts onto the staged version once the panels are quiet; in a
- * tab, which holds no capability, on an install that is only told, or while
- * a restart waits, it opens About, which says what to run and holds Now and
- * Cancel. It was app.js's until 1.7.2; app.js fetches this file for it only
- * when there is something to say. */
-let upd = null, updWaiting = false, updFresh = null, updEl = null, uc = null;
+/* ---------- updates that ask ----------
+ * From the daemon's `update` block, four things, none of which moves
+ * anything on the page:
+ *
+ * - a 6 px dot on the mascot, which says there is something (`html[data-upd]`);
+ *   its words are the mark's tip and a live line for a screen reader (#upd);
+ * - the update card, laid over the foot of the sidebar above the aside card:
+ *   *Update when quiet*, *Now* and *Later*; who a restart waits on, by name;
+ *   a confirm in the card when *Now* would end a panel's work; the lines to
+ *   run for an install snyvi does not update itself. Home draws the same card
+ *   (`card`);
+ * - a strip over the top of the main area while snyvi restarts, not a modal:
+ *   the page reloads onto the new version when it is back;
+ * - "Updated to X", once per landing, as a toast whose action is what's new.
+ *
+ * "Later" is the daemon's (`snoozed_until`), so every window agrees. A tab
+ * holds no capability: it reads the card and presses nothing but About. */
+let upd = null, updWaiting = false, updFresh = null, updEl = null, uc = null, sure = false, cardEl = null;
+const later = () => {
+  // Tomorrow morning, in the reader's own time: 8 o'clock, at least an hour off.
+  const t = new Date(); t.setHours(8, 0, 0, 0);
+  if (t.getTime() < Date.now() + 3600e3) t.setDate(t.getDate() + 1);
+  return Math.floor(t.getTime() / 1000);
+};
+const since = t => { const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60)); return m < 1 ? "just now" : m < 60 ? `${m} m` : `${Math.round(m / 60)} h`; };
+/** Who a restart waits on, the way the rail names them. */
+const named = w => [w.desk && `${w.desk} · panel ${w.slot}`, w.agent === "needs_you" ? "waiting on you" : w.agent === "working" ? `Claude working${w.since ? ` ${since(w.since)}` : ""}` : "printing"].filter(Boolean).join(" · ");
+
+/** What the update block says now: the dot's class, one line, and the card's
+ *  state, or nothing. */
+function said(u) {
+  const { capability, plural, version } = uc;
+  const r = u && u.restart, w = (r && r.waiting) || [], n = r && r.waiting_on ? r.waiting_on.length : 0;
+  if (u && (u.restarting || (updWaiting && r && r.now))) return { dot: "waiting", line: `Restarting${u.ready ? ` to ${u.ready}` : ""}`, card: "restarting" };
+  if (r) return n ? { dot: "waiting", line: `Waiting on ${plural(n, "panel")}`, card: "waiting", w } : { dot: "waiting", line: "Waiting for a check…", card: "waiting", w };
+  if (!u || !u.show) return null;
+  if (u.failed_recent) return { dot: "failed", line: `${u.failed} did not start · kept ${version || ""}`.trim(), card: "failed" };
+  if (u.ready) return { dot: u.amber ? "amber" : "ready", line: capability ? `snyvi ${u.ready} is ready` : `Update ready · ${u.ready}`, card: "ready" };
+  if (u.available) return { dot: "ready", line: `snyvi ${u.available} is out`, card: "told" };
+  if (u.stale) return { dot: "ready", line: "A newer snyvi is on disk", card: "stale" };
+  return null;
+}
+
 function renderUpd() {
-  const u = upd, { capability, plural, version } = uc;
-  let text = "", cls = "", title = "";
-  const r = u && u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
-  if (u && (u.restarting || updWaiting)) { text = "Restarting"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
-  else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
-  else if (u && u.show) {
-    if (u.ready) { text = capability ? `Restart to update · ${u.ready}` : `Update ready · ${u.ready}`; cls = u.amber ? "amber" : ""; title = capability ? "Restarts once no panel is busy; Claude panels come back with their conversation" : "The window restarts it; About says more"; }
-    else if (u.failed_recent) { text = `${u.failed} did not start · kept ${version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
-    else if (u.available) { text = `${u.available} is out · how`; title = "This install is updated by hand; About says how"; }
-    else if (u.stale) { text = capability ? "Restart to update" : "Update ready"; title = "The snyvi on disk is newer than the one running"; }
-  }
-  // Updated: once per landing, kept for the page it was first shown on.
+  const u = upd, { version, toast, panel } = uc;
+  const s = said(u);
+  const root = document.documentElement;
+  if (s) root.dataset.upd = s.dot; else delete root.dataset.upd;
+  // The mark's tip carries the line; the card below it has the controls.
+  const brand = document.querySelector(".side-head .brand");
+  if (brand) { if (s) { brand.dataset.tip = "Home"; brand.dataset.tipSub = s.line; } else delete brand.dataset.tipSub; }
+  updEl.hidden = !s;
+  updEl.textContent = s ? s.line : "";
+  drawCard(s);
+  strip(s && s.card === "restarting" ? s.line : "");
+  // Updated: once per landing, kept for the page it was first shown on, as a
+  // toast whose action is the release notes.
   const at = u && u.last_applied;
-  if (!text && at && Date.now() / 1000 - at < 86400 && updFresh !== -1) {
+  if (!s && at && Date.now() / 1000 - at < 86400 && updFresh !== at) {
     let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
-    if (updFresh === at || seen !== String(at)) {
-      updFresh = at; try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
-      text = `Updated to ${version} · what's new`; cls = "quiet updated"; title = "About has the release notes";
+    updFresh = at;
+    if (seen !== String(at)) {
+      try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
+      toast(`Updated to ${version}`, { sub: "your panels came back as they were", action: { label: "What's new", run: () => panel("about") } });
     }
   }
-  updEl.hidden = !text;
-  if (!text) return;
-  // The why is a sentence, and a tip is a name: it is in the pill's
-  // aria-label and in About, where the pill leads (docs/DESIGN.md §3.4).
-  updEl.textContent = text; updEl.className = `upd ${cls}`.trim();
-  if (cls === "waiting") updEl.insertAdjacentHTML("afterbegin", DOTS);
-  updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
-  updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
 }
-/** The daemon's word, whichever came first -- it or the reply to the click:
- *  from here the pill says what it says. */
-export function pill(el, u, c) {
-  uc = c; upd = u; updWaiting = false;
-  if (!updEl) { updEl = el; el.addEventListener("click", clickUpd); }
-  renderUpd();
+
+/** The card's words and buttons for state `s`, into `el`. Home's snyvi widget
+ *  draws it too, with its own element. Returns false when there is nothing. */
+export function card(el, u, c) {
+  if (c) uc = c;
+  if (u !== undefined) upd = u;
+  const s = said(upd);
+  el.hidden = !s;
+  if (!s) { el.replaceChildren(); return false; }
+  const { capability, esc = x => String(x) } = uc;
+  const b = (label, act, cls = "") => `<button type="button" class="uc-b${cls ? " " + cls : ""}" data-uc="${act}">${label}</button>`;
+  let body = "", acts = "";
+  if (s.card === "ready" || s.card === "stale") {
+    body = `<p class="uc-sub">Claude panels come back with their conversation. <button type="button" class="uc-link" data-uc="notes">What's new</button></p>`;
+    acts = capability ? b("Update when quiet", "idle", "go") + b("Now", "now") + b("Later", "later") : `<p class="uc-sub">The snyvi window updates it.</p>`;
+  } else if (s.card === "waiting" && sure && s.w.length) {
+    // Now, with a panel busy, ends its work: said here, in the card, before
+    // it happens. The restart already waits for quiet, so "Wait" is a no.
+    body = `<p class="uc-sub">Now ends what ${s.w.length === 1 ? "this panel is" : "these panels are"} doing:</p><ul class="uc-who">${s.w.map(w => `<li>${esc(named(w))}</li>`).join("")}</ul>`;
+    acts = b("Restart now", "now-sure", "danger") + b("Wait for quiet", "wait");
+  } else if (s.card === "waiting") {
+    body = s.w.length ? `<ul class="uc-who">${s.w.map(w => `<li>${esc(named(w))}</li>`).join("")}</ul>` : `<p class="uc-sub">snyvi looks again in a moment.</p>`;
+    acts = capability ? b("Now", "now") + b("Cancel", "cancel") : "";
+  } else if (s.card === "restarting") {
+    body = `<p class="uc-sub">Back in a moment; this page reloads when it is.</p>`;
+  } else if (s.card === "told") {
+    const how = (upd.how || []).join("\n");
+    body = `<p class="uc-sub">This install is updated by hand:</p>` + (how ? `<div class="uc-how"><pre>${esc(how)}</pre><button type="button" class="uc-b" data-uc="copy">Copy</button></div>` : "");
+    acts = (capability ? b("Later", "later") : "") + b("About", "about");
+  } else if (s.card === "failed") {
+    body = `<p class="uc-sub">The version before was put back.</p>`;
+    acts = b("About", "about");
+  }
+  el.innerHTML = `<div class="uc" data-state="${s.card}" role="status"><p class="uc-t">${s.card === "waiting" || s.card === "restarting" ? DOTS : ""}${esc(s.line)}</p>${body}${acts ? `<div class="uc-acts">${acts}</div>` : ""}</div>`;
+  if (!el.dataset.ucWired) { el.dataset.ucWired = "1"; el.addEventListener("click", e => { const t = e.target.closest("[data-uc]"); if (t) act(t.dataset.uc, t, el); }); }
+  return true;
 }
-async function clickUpd() {
-  const u = upd, { capability, deskApi, toast, panel } = uc;
-  if (!u || u.restarting || updWaiting) return;
-  if (!u.restart && (u.ready || (u.stale && !u.failed_recent)) && capability) {
-    updWaiting = true; renderUpd();
-    // The daemon's `update` event says what the restart waits on; until
-    // it comes, this pill says Restarting.
-    try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
-    catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", { sub: e }); }
+
+async function act(what, btn, el) {
+  const u = upd, { deskApi, toast, panel, copied } = uc;
+  const redraw = () => { renderUpd(); if (el !== cardEl) card(el); };
+  const restart = async now => {
+    updWaiting = true; sure = false; redraw();
+    try {
+      const j = await deskApi("/api/restart", { when: now ? "now" : "idle", apply: !!u.ready });
+      if (!upd.restart) upd = { ...upd, restart: { apply: !!u.ready, now, waiting_on: j.waiting_on || [], waiting: j.waiting || [] } };
+    } catch (e) { toast("Could not restart", { sub: e, at: btn }); }
+    updWaiting = false; redraw();
+  };
+  if (what === "idle") return restart(false);
+  if (what === "now-sure") return restart(true);
+  if (what === "wait") { sure = false; return redraw(); }
+  if (what === "now") {
+    // Asked for when quiet first: with nothing busy that is at once, and
+    // with a panel busy the card says whose work Now would end.
+    if (!u.restart) await restart(false);
+    const w = (upd.restart && upd.restart.waiting) || [];
+    if (!w.length) return upd.restart ? restart(true) : undefined;
+    sure = true;
+    return redraw();
+  }
+  if (what === "cancel") {
+    try {
+      const res = await fetch("/api/restart", { method: "DELETE", headers: { "x-snyvi-capability": uc.capability } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      upd = { ...upd, restart: null }; sure = false; redraw();
+    } catch (e) { toast("Could not cancel", { sub: e, at: btn }); }
     return;
   }
-  if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }
-  panel("about");
+  if (what === "later") {
+    try { const j = await deskApi("/api/update/later", { until: later() }); upd = j.update; sure = false; redraw(); toast("Later", { sub: "snyvi asks again tomorrow morning", at: btn }); }
+    catch (e) { toast("Could not put it off", { sub: e, at: btn }); }
+    return;
+  }
+  if (what === "copy") return copied ? copied((u.how || []).join("\n"), btn) : navigator.clipboard?.writeText((u.how || []).join("\n"));
+  if (what === "notes" || what === "about") return panel("about");
+}
+
+/** The card at the sidebar's foot: over the tree, above the aside card, so
+ *  its coming and going moves nothing. The tree keeps room for both. */
+function drawCard(s) {
+  const side = document.getElementById("side");
+  if (!side) return;
+  if (!cardEl) {
+    cardEl = Object.assign(document.createElement("section"), { id: "upd-card", hidden: true });
+    cardEl.setAttribute("aria-label", "snyvi update");
+    side.insertBefore(cardEl, side.querySelector(".side-foot"));
+    const foot = side.querySelector(".side-foot");
+    const room = () => {
+      side.style.setProperty("--note-foot", `${foot ? foot.offsetHeight : 52}px`);
+      side.style.setProperty("--upd-h", `${cardEl.hidden ? 0 : cardEl.offsetHeight + 6}px`);
+    };
+    if (window.ResizeObserver) { const ro = new ResizeObserver(room); ro.observe(cardEl); if (foot) ro.observe(foot); }
+    cardEl.room = room;
+  }
+  if (!s || s.card !== "waiting") sure = false;
+  card(cardEl);
+  cardEl.room();
+}
+
+/** Over the top of the main area while snyvi restarts: a strip, not a modal,
+ *  and nothing under it moves. */
+function strip(text) {
+  let el = document.getElementById("restart-strip");
+  if (!text) { if (el) el.hidden = true; return; }
+  if (!el) {
+    el = Object.assign(document.createElement("div"), { id: "restart-strip", role: "status" });
+    (document.querySelector("main") || document.body).append(el);
+  }
+  el.hidden = false;
+  el.innerHTML = `${DOTS}<span>${text.replace(/[<&]/g, c => c === "<" ? "&lt;" : "&amp;")} · back in a moment</span>`;
+}
+
+/** Ctrl K, the mark's menu, Home and About: ask for the manifest now. The
+ *  answer is said where it was asked, and the card takes it from there. A
+ *  tab has no capability to ask with, so About says how. */
+export async function checkUpdates(at, c) {
+  if (!c.capability) return c.panel("about");
+  c.toast("Checking for updates…", { at, face: null });
+  let j;
+  try { j = await c.deskApi("/api/update/check", {}); }
+  catch (e) { return c.toast("Could not check for updates", { sub: e, at }); }
+  const u = j.update || {};
+  c.setUpd(u);
+  c.toast(u.ready ? `snyvi ${u.ready} is ready` : u.available ? `snyvi ${u.available} is out` : "snyvi is up to date", { sub: u.ready || u.available ? "the card in the sidebar has it" : c.version, at });
+}
+
+/** The daemon's word, whichever came first -- it or the reply to a press:
+ *  from here the dot, the card and the strip say what it says. */
+export function pill(el, u, c) {
+  uc = c; upd = u; updWaiting = false;
+  if (!updEl) updEl = el;
+  renderUpd();
 }
 
 /** Open a panel, building and wiring the boxes the first time. `which` is
@@ -147,6 +285,7 @@ const HELP = `
     <div class="hk"><span>Next / previous document</span><span class="keys"><kbd>j</kbd><i>/</i><kbd>k</kbd></span></div>
     <div class="hk"><span>Older / newer version</span><span class="keys"><kbd>[</kbd><i>/</i><kbd>]</kbd></span></div>
     <div class="hk"><span>The next document waiting</span><span class="keys"><kbd>n</kbd></span></div>
+    <div class="hk"><span>Home</span><span class="keys"><kbd>h</kbd></span></div>
     <div class="hk"><span>Inbox</span><span class="keys"><kbd>i</kbd></span></div>
     <div class="hk"><span>Back / forward</span><span class="keys">${kb("alt", "←")}<i>/</i><kbd>→</kbd></span></div>
     <div class="hk"><span>Go to a line</span><span class="keys">${kb("mod", "K")}<code>:120</code></span></div>
@@ -184,9 +323,37 @@ const HELP = `
 </div>
 `;
 
+/** The shortcuts card's box: in index.html until 1.8, and built here now,
+ *  since this is what fills it and opens it. */
+const HELP_BOX = `<div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1">
+    <div class="help-head">
+      <h2 class="dlg-title" id="help-title">Keyboard shortcuts</h2>
+      <button class="icon help-close" id="help-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div class="help-body"></div>
+    <div class="help-foot">
+      <button class="text" id="btn-welcome">Welcome</button>
+      <button class="text" id="btn-start">How snyvi works</button>
+      <button class="text" id="btn-connect">Agents…</button>
+      <button class="text" id="btn-about">About snyvi</button>
+      <span class="help-gap"></span>
+      <button class="text" id="btn-reset">Reset snyvi…</button>
+    </div>
+  </div>`;
+
 function fillHelp(d) {
-  const { help } = d;
+  const { help, closeDialog } = d;
   if (help.querySelector(".hk")) return;
+  if (!help.firstElementChild) {
+    help.innerHTML = HELP_BOX;
+    const on = (id, f) => help.querySelector(id).addEventListener("click", f);
+    on("#help-close", () => closeDialog(help));
+    on("#btn-about", () => d.panel("about"));
+    on("#btn-reset", () => d.panel("reset"));
+    on("#btn-connect", () => { closeDialog(help); d.showConnect(); });
+    on("#btn-start", () => { closeDialog(help); d.showStart(true, ""); });
+    on("#btn-welcome", () => { closeDialog(help); d.showWelcome(true); });
+  }
   help.querySelector(".help-body").innerHTML = HELP;
   // The native window adds its own rows (ui/frame.js) once these are in.
   help.dispatchEvent(new Event("snyvi:help"));
@@ -316,6 +483,7 @@ async function openAbout(d) {
   if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
   fact("Version", ver);
   fact("Updates", updateRow(a.update, d));
+  if (d.capability) fact("Desk brief", briefRow(d));
   fact("Binary", a.binary, "path");
   fact("Documents", a.data_dir, "path");
   fact("Settings", a.config_dir, "path");
@@ -350,6 +518,26 @@ function noReach(el, again) {
   b.addEventListener("click", again);
   el.replaceChildren("Could not reach snyvi", b);
   el.classList.add("no-reach");
+}
+
+/** Whether a Claude starting in a desk's panel is handed the desk brief --
+ *  where it is, the open notes, what was done, where the work was left --
+ *  as context before its first reply. The window's to change; a tab has no
+ *  desks, and no row. */
+function briefRow(d) {
+  const box = document.createElement("div"); box.className = "upd-row";
+  const say = document.createElement("span"); say.className = "upd-say";
+  const b = document.createElement("button"); b.type = "button"; b.className = "text";
+  const act = document.createElement("span"); act.className = "upd-act"; act.append(b);
+  box.append(say, act);
+  const draw = on => {
+    say.textContent = on ? "on · a Claude starting in a panel is told about its desk" : "off · Claude starts in a panel knowing nothing of its desk";
+    b.textContent = on ? "Turn off" : "Turn on";
+    b.onclick = async () => { try { draw((await d.deskApi("/api/brief", { on: !on })).on); } catch (e) { say.textContent = `Could not change it · ${d.sayErr(e).why}`; } };
+  };
+  say.textContent = "…";
+  d.deskApi("/api/brief").then(j => draw(j.on), () => { say.textContent = "snyvi did not answer"; });
+  return box;
 }
 
 function updateRow(u, d) {
@@ -672,7 +860,7 @@ export function start({ cap }) {
       `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
     sec("waiting", "What is waiting",
       `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the oldest and takes it off, so the next ${kb("n")} is the one after: one key, in the order they came. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. ${showLink("waiting")}</p>`,
-      `${kb("n")} the next one waiting · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("mod", "Z")} put it back`) +
+      `${kb("n")} the next one waiting · ${kb("h")} home · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("mod", "Z")} put it back`) +
     sec("versions", "Versions",
       `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +
       `<pre class="code diff start-sample" inert aria-hidden="true"><code><span class="ln hunk">@@ -3,2 +3,2 @@</span>\n<span class="ln del">-## The cache</span>\n<span class="ln del">-It lives beside each desk.</span>\n<span class="ln add">+## The cache, per project</span>\n<span class="ln add">+It is per project, not per desk.</span></code></pre>`,
@@ -723,17 +911,62 @@ button.start-sample.dk-put { color: var(--accent); }
 /* The about and reset boxes, which this file builds -- in app.css until 1.7.1, and nothing on screen used them before
  * this file was loaded, so they came here to leave first paint. */
 const CSS_MOVED = `
-/* The update pill, which this file draws (pill). */
-:root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
-:root[data-side="0"] #upd.quiet { display: none; }
-.upd { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 8px; border: 0; border-radius: var(--r-pill); background: var(--accent-bg); color: var(--accent); font: inherit; font-size: var(--fs-micro); font-weight: 600; line-height: 16px; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
-.upd[hidden] { display: none; }
-.upd:hover { color: var(--fg); }
-.upd.amber { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-.upd.failed { background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); }
-.upd.waiting { opacity: .7; }
-.upd.waiting[tabindex="-1"] { cursor: default; }
-.upd.quiet { background: none; color: var(--fg-3); font-weight: 500; }
+/* The dialogs, which this file fills and opens (1.8: out of first paint). */
+/* The overlay places the box 12vh down, so the cap leaves that and a little
+   below it: a box that outgrew the window would put its foot -- About,
+   Connect, Reset -- past the bottom edge, where no click can reach it. */
+.help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 84vh; overflow-y: auto; }
+.help-close { position: absolute; top: 12px; right: 12px; }
+/* One dialog title, every dialog's (docs/DESIGN.md §8): About, Reset and the
+   shortcuts card, whose head holds it beside its ✕. */
+.dlg-title { margin: 0 0 4px; font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.01em; color: var(--fg); }
+.help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: var(--fs-body-s); }
+.help-box dt { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-2); }
+.help-box dd { margin: 0; }
+.help-foot { display: flex; align-items: center; gap: 4px; }
+.help-gap { flex: 1; }
+
+/* The shortcuts card. A title row and the foot stay put; only the middle
+   scrolls, and on a normal screen it never has to. Each row is the meta
+   panel's own shape -- what it does, then the key, small and flat -- so
+   there is no key column to line up; the keys sit on the right edge. */
+#help .help-box { width: min(700px, 92vw); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-md); }
+.help-head { flex: none; display: flex; align-items: center; padding: 14px 14px 12px 24px; }
+.help-head .dlg-title { margin: 0; flex: 1; }
+#help .help-close { position: static; }
+#help .help-foot { flex: none; margin: 0; padding: 10px 14px 10px 16px; border-top: 1px solid var(--rule); background: var(--bg-side); }
+/* Updates (renderUpd): the dot on the mascot, the card over the sidebar's
+   foot, the strip over the main area. None of them is in the flow. */
+#upd { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); border: 0; white-space: nowrap; }
+html[data-upd] .brand-mark { position: relative; }
+html[data-upd] .brand-mark::after { content: ""; position: absolute; right: -3px; top: -2px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--bg-side); pointer-events: none; }
+html[data-upd="amber"] .brand-mark::after { background: var(--warn); }
+html[data-upd="failed"] .brand-mark::after { background: var(--danger); }
+html[data-upd="waiting"] .brand-mark::after { animation: upd-breathe 1.6s ease-in-out infinite; }
+@keyframes upd-breathe { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { html[data-upd="waiting"] .brand-mark::after { animation: none; } }
+#side > #upd-card { position: absolute; left: 8px; right: 8px; bottom: calc(var(--note-foot, 52px) + var(--note-h, 0px)); z-index: 4; margin: 0 0 6px; }
+:root[data-side="0"] #side > #upd-card { display: none; }
+:root:not([data-side="0"]) #app #side:has(> #upd-card:not([hidden])) #trees { padding-bottom: calc(8px + var(--note-h, 0px) + var(--upd-h, 0px)); }
+.uc { padding: 10px 12px; border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 6%, var(--bg-side)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--rule)); box-shadow: var(--shadow); font-size: var(--fs-small); }
+.uc[data-state="failed"] { border-color: color-mix(in srgb, var(--danger) 35%, var(--rule)); }
+.uc-t { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: 6px; }
+.uc-sub { margin: 4px 0 0; color: var(--fg-2); line-height: 1.4; }
+.uc-who { margin: 4px 0 0; padding: 0 0 0 14px; color: var(--fg-2); }
+.uc-who li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uc-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.uc-b { padding: 3px 9px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); font: inherit; color: var(--fg); cursor: pointer; }
+.uc-b:hover { border-color: var(--accent); }
+.uc-b.go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.uc-b.danger { border-color: var(--danger); color: var(--danger); }
+.uc-link { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
+.uc-link:hover { text-decoration: underline; }
+.uc-how { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; }
+.uc-how pre { flex: 1; min-width: 0; margin: 0; padding: 6px 8px; font-family: var(--mono); font-size: var(--fs-micro); line-height: 1.5; background: var(--code-bg); border-radius: var(--r-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+#restart-strip { position: fixed; top: 0; left: 0; right: 0; z-index: 50; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 12px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg)); border-bottom: 1px solid var(--rule); color: var(--fg); font-size: var(--fs-small); pointer-events: none; }
+#restart-strip[hidden] { display: none; }
 .about-box { width: min(560px, 92vw); }
 .about-box p { margin: 0 0 14px; font-size: var(--fs-body-s); color: var(--fg-2); }
 .about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }

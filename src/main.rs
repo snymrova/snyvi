@@ -1,6 +1,7 @@
 mod agents;
 mod aside;
 mod bench;
+mod brief;
 mod browse;
 mod capability;
 mod client;
@@ -454,6 +455,26 @@ fn main() -> Result<()> {
                 println!(
                     "{}{}",
                     plural(panels.len(), "closed panel"),
+                    if dry_run {
+                        " would be deleted"
+                    } else {
+                        " deleted"
+                    }
+                );
+            }
+            // Closed desks, after their panels: the cascade takes their notes
+            // and what is left of their rows, and the text went just above.
+            let desks = store.prune_desks(before, dry_run)?;
+            for (id, name) in &desks {
+                println!(
+                    "{} desk {id}  {name}",
+                    if dry_run { "would delete" } else { "deleted" }
+                );
+            }
+            if !desks.is_empty() {
+                println!(
+                    "{}{}",
+                    plural(desks.len(), "closed desk"),
                     if dry_run {
                         " would be deleted"
                     } else {

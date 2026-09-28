@@ -739,6 +739,13 @@ concept:
 | zoom in / out | svg ± | "+" (which also meant add), "−" |
 | pin | svg pin | "●" (which also meant running) |
 | search, maximise, back to the grid | svg | two drawings, text ⛶, ad-hoc glyphs |
+| desk | svg 2×2 panels | the terminal prompt |
+| terminal / shell | svg prompt | — (only for an actual shell) |
+
+A tool keeps its slot: each is 22 px in a row and 28 px in the chrome,
+there at rest and on hover alike. Hidden is opacity 0 in the slot, never
+`width: 0`, `display: none` or a negative margin; hover and focus change
+opacity and colour only.
 
 ---
 

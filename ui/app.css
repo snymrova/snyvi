@@ -330,16 +330,23 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] :is(.brand-name, .bm-say, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
 :root[data-side="0"] #btn-side-hide { margin: 0; }
+/* The mark in a box the size of the rail's icons, so it sits on their
+   centre line and not 4 px off it. */
+:root[data-side="0"] .side-head .brand { width: 28px; height: 28px; display: grid; place-items: center; align-self: center; margin: 0; }
 :root[data-side="0"] #btn-side-hide .pane { fill: none; }
 :root[data-side="0"] #trees { flex: none; padding: 0; overflow: visible; }
 :root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
 #rail-nav .icon { position: relative; flex: none; }
 #rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
-#rail-search { margin-top: auto; }
+/* On a desk, the Desks icon is where you are, as the current row is. */
+:root[data-view="desk"] #rail-nav [data-pop="desks"]:not(.on) { color: var(--fg); background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
 .badge { position: absolute; top: -4px; right: -6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-pill);
   font: 600 var(--fs-micro)/15px var(--sans); text-align: center; color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 2px var(--bg-side); }
 .badge:empty { display: none; }
 .badge.blk { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, var(--bg-side)); }
+/* Agents connected are live, not unread: the LED says so, and the figure
+   beside it is plain, so it can't be read as a second Inbox count. */
+.badge.live { color: var(--fg-2); background: none; box-shadow: none; }
 #rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
 #rail-live.on i { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
 :root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
@@ -451,13 +458,6 @@ html[data-say="love"] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
 .brand { position: relative; }
 .brand-name { transition: opacity var(--dur-quick) ease; }
 html[data-say] .brand-name { opacity: 0; }
-.bm-say { position: absolute; left: 28px; top: 50%; z-index: var(--z-tip);
-  font-family: var(--sans); font-size: var(--fs-small); font-weight: 500; letter-spacing: -.005em;
-  color: var(--accent); white-space: nowrap; max-width: 132px; overflow: hidden; text-overflow: ellipsis;
-  pointer-events: none;
-  opacity: 0; transform: translateY(calc(-50% + 4px));
-  transition: opacity var(--dur-quick) ease, transform .3s var(--ease-spring); }
-.bm-say.on { opacity: 1; transform: translateY(-50%); }
 /* How many agents hold a stream on the daemon now, and the way to the connect
    page. It was a row of its own, "Agents live", which spent a line of the
    sidebar on a number read rarely; it is a pill beside the brand now, the dot
@@ -581,7 +581,13 @@ html[data-link="off"] .live { visibility: hidden; }
 /* The row. */
 .s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg); font-weight: var(--fw-row); white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
 .s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--accent); }
+/* The current row: a tint and a 2 px bar in the accent, the text staying
+   ink. Solid accent text on a tint read as an alert, not as "you are here". */
+.s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+/* A folded project that holds the document on screen: the bar and the icon,
+   no tint, a quieter "in here". Colour only, so nothing moves. */
+.t-proj > summary.holds-current { box-shadow: inset 2px 0 0 var(--accent); }
+.t-proj > summary.holds-current > .r-ico { color: var(--accent); }
 .r-ico { flex: none; color: var(--fg-3); transition: color var(--t); }
 .s-row.active .r-ico, .t-desk > a.active .r-ico { color: var(--accent); }
 .s-row .title, .t-desks .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -597,10 +603,10 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    font grew with depth, so the deepest rows were the largest and the least
    indented at once. */
 .t-wf { margin: 2px 0 6px 24px; }
-.t-wf > .wf-name { font-size: var(--fs-micro); color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-wf > .wf-name { font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.t-doc a.active { background: var(--accent-bg); color: var(--accent); }
+.t-doc a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 /* No mark in front of a row: its icon is the mark. A read row's glyph is
    quiet, and centred on the line rather than sat on its baseline; a row
    waiting to be read has it in the accent, with its title in ink -- the
@@ -611,10 +617,12 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-doc a.new .title { color: var(--fg); font-weight: 600; }
 .t-queue { margin: 0 0 6px; }
 .t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
-.t-queue .t-label .n { margin-left: auto; background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: var(--fs-micro); }
+/* The count as a figure in the accent, not a filled pill: the bar over the
+   page is the one that interrupts, and this only says how many. */
+.t-queue .t-label .n { margin-left: auto; color: var(--accent); font-weight: 600; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 .t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
 .t-queue .t-more { margin-left: 8px; }
-.t-queue .t-more a { display: inline-block; font-size: var(--fs-micro); color: var(--fg-3); padding: 3px 6px; border-radius: var(--r-sm); }
+.t-queue .t-more a { display: inline-block; font-size: var(--fs-micro); color: var(--fg-2); padding: 3px 6px; border-radius: var(--r-sm); }
 .t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 /* What moved in the sidebar, said once. An arrival's row, or one an undo put
@@ -651,8 +659,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    past, not used, and closes when the ghost does. */
 .t-doc.held > a { opacity: .45; pointer-events: none; }
 .t-proj.leaving > summary { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
-.t-doc .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
-.t-doc .pin { color: var(--accent); flex: none; display: inline-flex; align-self: center; }
+.t-doc .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
+.t-doc .pin { color: var(--fg-2); flex: none; display: inline-flex; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
    kept out of the way until the row is under the cursor. The name takes the free
    space so the badge and the control sit at the edge. */
@@ -678,7 +686,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    document row would, and neither should read as one: what is behind a row the
    tree has not drawn is an offer, not a document. */
 .t-more { margin: 1px 0 2px 14px; }
-.t-more button { font: inherit; font-size: var(--fs-micro); color: var(--fg-3); background: none; border: 0; padding: 3px 6px; border-radius: var(--r-sm); cursor: pointer; }
+.t-more button { font: inherit; font-size: var(--fs-micro); color: var(--fg-2); background: none; border: 0; padding: 3px 6px; border-radius: var(--r-sm); cursor: pointer; }
 .t-more button:hover { background: var(--rule); color: var(--fg-2); }
 .t-more button:disabled { cursor: default; opacity: .5; }
 .t-wait { padding: 4px 8px 4px 14px; font-size: var(--fs-small); color: var(--fg-3); }
@@ -698,8 +706,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
 .t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
 .t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-.t-desks .dot.blk { color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; }
-.t-desks .k { min-width: 2ch; text-align: right; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
+.t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
+.t-desks .k { min-width: 2ch; text-align: right; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
 /* A row's ✕ -- delete a document, close a desk -- takes the place of what is
    at the row's end on hover. Armed, a desk's says Close? */
 /* Hidden by clipping rather than by `display: none`, which is what it was:
@@ -711,7 +719,12 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    two auto margins in a row split the slack between them, which put the
    dot and the count halfway along the row and a different halfway on each. */
 .row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: var(--fs-micro); line-height: 1; color: var(--fg-3); background: none; border-radius: var(--r-xs); cursor: pointer; }
-.t-proj > summary:is(:hover, :focus-visible) .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+/* A project row's tools each own a 22 px slot at the row's end, there at
+   rest and on hover alike: showing one is its opacity, never its width, so
+   the desk glyph beside the ✕ does not jump left when the pointer arrives. */
+.t-proj > summary > :is(.b-new, .row-x) { flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; overflow: visible; }
+.t-proj > summary > .row-x { margin-left: auto; opacity: 0; }
+.t-proj > summary:is(:hover, :focus-within) > .row-x, .row-x:focus-visible, .arming .row-x { opacity: 1; }
 /* On a desk's row and a document's, the tools stand over the row's end
    rather than in the row: coming out, they move nothing, and the title's
    ellipsis stays where it was. The end they cover keeps its place, unseen.
@@ -724,7 +737,12 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desk > a > .ren { right: 26px; }
 :is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
-:is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
+.t-doc > a:is(:hover, :has(:focus-visible)) :is(.k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
+/* A desk's ✕ has a slot of its own at the row's end, as a project's does:
+   hovering shows it and hides nothing, so the dot and the count beside it
+   stay where they are. Armed, "Close?" lays over the end as before. */
+.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0 -4px 0 0; display: grid; place-items: center; background: none; }
+.t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
 :is(.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
@@ -748,16 +766,15 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* The glyph is the one the Desks section uses, so what the button makes is
    named by its shape rather than by a plus that could mean any addition. */
 .b-new .r-ico { color: inherit; }
-summary:is(:hover, :focus-visible) > .b-new, .b-new:focus-visible { opacity: 1; }
+summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
 /* A project's glyph stays while the project has a desk: that is the row
    saying so, and the way to it. Its ✕ follows it rather than splitting the
    slack with it. */
 .b-new.has { opacity: 1; color: var(--fg-2); }
-/* A project with no desk yet shows the way to one, quietly, without a hover:
-   a desk for each project is the point, not a hidden extra. */
-.t-proj > summary > .b-new:not(.has) { opacity: .45; }
+/* A project with no desk yet keeps the slot, empty until the row is hovered,
+   and then says "New desk": half-lit at rest read as a fault, not a state. */
 .t-proj > summary > .b-new + .row-x { margin-left: 0; }
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; }
@@ -774,9 +791,9 @@ summary:is(:hover, :focus-visible) > .b-new, .b-new:focus-visible { opacity: 1; 
 .b-dir > details > summary:hover { background: var(--rule); color: var(--fg); }
 .b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
 .b-file a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.b-file a.active { background: var(--accent-bg); color: var(--accent); }
+.b-file a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
-.b-file .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); font-family: var(--mono); flex: none; }
+.b-file .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; }
 /* A previewed page is somebody else's design; give it the pane and no styling of ours. */
 /* One scroll region: the frame fills what is left of the pane, so the page itself
    does not also scroll behind it. */
@@ -965,19 +982,28 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    it reads as part of the page and not the chrome. Sticky like the find bar,
    so a reader deep in a long page still sees the count. */
 #queue-bar[hidden] { display: none; }
-#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; box-sizing: border-box; font-size: var(--fs-ui); }
+#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 0 48px; box-sizing: border-box; font-size: var(--fs-ui); }
 /* Its height is nothing, so a bar that appears mid-read lays over the page's
    top margin rather than pushing the text down under the reader; the find
-   bar makes room for it instead. */
+   bar makes room for it instead. The 10 px gap is the card's own offset:
+   padding on the bar would give it a height and push the page down, and a
+   margin on the card would collapse through the bar and do the same. */
 #queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
 /* On a desk the head is the desk's own row, and the bar lays over its
    middle, between the name and the buttons, as it did before the head. */
 :root[data-view="desk"] #queue-bar { top: 0; }
-#queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
+#queue-bar .qb { position: relative; top: 10px; display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
 /* snyvi at the front of the bar, holding what came: the toast's head, the
    size of the count's line, leaning in to the text it is holding up. Its
    feeling comes and goes with the count (app.js, `qbFeel`); at rest the
    head is still, and reads as the one that answers a click. */
+/* Marked all read: the same card, saying so, with its Undo and the drain
+   bar that says how long the Undo stands. */
+#queue-bar .qb.ghost { animation: none; }
+/* The Undo on the bar's own line, so the card keeps the bar's height. */
+#queue-bar .qb.ghost .t-undo { font-size: inherit; line-height: inherit; }
+#queue-bar .qb.ghost .qb-next { color: var(--fg-2); }
+#queue-bar .qb.ghost::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform var(--dur-instant) linear; }
 #queue-bar .qb-who { width: 22px; height: 22px; flex: none; display: block; margin-right: -2px; transform: rotate(-6deg); }
 #queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* The count changed under a bar that stayed: the new number settles in. */
@@ -1004,19 +1030,7 @@ kbd:not(.prose kbd) { display: inline-block; min-width: 18px; padding: 0 4px; fo
 mark.find { background: var(--mark); color: inherit; border-radius: var(--r-xs); }
 mark.find.cur { background: var(--accent); color: var(--on-accent); }
 
-/* split diff */
-.split { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--mono); font-size: var(--fs-ui); line-height: 1.6; border: 1px solid var(--rule); border-radius: var(--r-sm); overflow-x: auto; }
-.split > div { padding: 0 10px; white-space: pre; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.split .l { border-right: 1px solid var(--rule); }
-.split .full { grid-column: 1 / -1; }
-.split .meta { color: var(--fg-3); padding-top: .4em; }
-.split .hunk { color: var(--s-number); background: var(--code-bg); margin: .4em 0 .2em; }
-.split .add { background: var(--add); color: var(--add-fg); }
-.split .del { background: var(--del); color: var(--del-fg); }
-.split .add mark { background: color-mix(in srgb, var(--add-fg) 30%, transparent); color: inherit; border-radius: var(--r-xs); }
-.split .del mark { background: color-mix(in srgb, var(--del-fg) 30%, transparent); color: inherit; border-radius: var(--r-xs); }
-.split .empty { background: repeating-linear-gradient(45deg, transparent 0 6px, var(--rule) 6px 7px); }
-#doc:has(.split) { max-width: none; padding-left: 40px; padding-right: 40px; }
+/* A split diff's look is ui/diff.js's, which draws it. */
 
 /* mermaid.
    The server sends the source in a <pre class="mermaid">; the client swaps each
@@ -1041,7 +1055,6 @@ pre.mermaid::before { display: none; }
 .diff .del { background: var(--del); color: var(--del-fg); }
 .diff .hunk { color: var(--s-number); background: var(--code-bg); display: inline-block; min-width: 100%; margin: .6em 0 .2em; }
 .diff .meta { color: var(--fg-3); }
-.compare-note { color: var(--fg-3); font-size: var(--fs-ui); margin: -28px 0 28px; }
 
 /* syntax (compact classes from the renderer). Scoped to highlighted code,
    which is the only place the renderer writes them: the names are one or
@@ -1083,10 +1096,6 @@ pre.code .inv { color: var(--del-fg); }
 .inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
 .inbox-sec button + button { margin-left: 0; }
 /* Removed · Show, at the foot of the Inbox, and the rows it opens. */
-.inbox-removed { margin: 32px 0 0; }
-.inbox-removed > .t-away { width: auto; padding-left: 14px; }
-.inbox .rm { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title act" "sub act"; gap: 2px 16px; padding: 12px 14px; }
-.inbox .rm > .t-undo { grid-area: act; align-self: center; }
 .inbox-sec button:hover { background: var(--rule); color: var(--fg); }
 .inbox.waiting { margin-bottom: 8px; }
 .empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
@@ -1165,36 +1174,9 @@ pre.code .ln::before { cursor: pointer; }
    read at, because the face is the part being looked at, and `data-feel`
    says which face and what it does on landing.
    It is still `#toasts > .toast` with `.t`, `.s` and `button.act` in it,
-   which is what the bench and everything else reads. */
-#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; z-index: var(--z-toast);
-  align-items: flex-end; pointer-events: none; }
-#toasts[data-side="right"], #toasts[data-side="below"] { align-items: flex-start; }
-.toast { pointer-events: auto; position: relative;
-  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--rule); border-radius: var(--r-md);
-  box-shadow: var(--shadow); padding: 6px 12px 6px 7px; font-size: var(--fs-small); line-height: 1.3;
-  display: flex; align-items: center; gap: 8px; cursor: pointer; max-width: 288px;
-  animation: toast-in var(--dur-move) var(--ease-out); transform-origin: var(--from, 50% 100%); }
-.toast.out { opacity: 0; transform: scale(.97); transition: opacity var(--dur-quick) var(--ease-in), transform var(--dur-quick) var(--ease-in); }
-@keyframes toast-in { from { opacity: 0; transform: translate(var(--dx, 0), var(--dy, 8px)) scale(.92); } to { opacity: 1; transform: none; } }
-#toasts[data-side="right"] .toast { --dx: -12px; --dy: 0; --from: 0 50%; }
-#toasts[data-side="left"]  .toast { --dx: 12px;  --dy: 0; --from: 100% 50%; }
-#toasts[data-side="below"] .toast { --dx: 0; --dy: -10px; --from: 22px 0; }
-#toasts[data-side] .toast::before { content: ""; position: absolute; width: 8px; height: 8px;
-  background: var(--bg-raise); border: 1px solid var(--rule); transform: rotate(45deg); }
-#toasts[data-side="right"] .toast::before { left: -5px; top: var(--tail, 13px); border-top: 0; border-right: 0; }
-#toasts[data-side="left"]  .toast::before { right: -5px; top: var(--tail, 13px); border-bottom: 0; border-left: 0; }
-#toasts[data-side="below"] .toast::before { top: -5px; left: var(--tail-x, 16px); border-bottom: 0; border-right: 0; }
-.toast .say { min-width: 0; }
-.toast .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.toast .s { color: var(--fg-3); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The one thing an answer offers that has to be reached on purpose. */
-.toast .act { font: inherit; font-size: var(--fs-small); font-weight: 500; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 3px 9px; margin-left: 4px; cursor: pointer; flex: none; }
-.toast .act:hover { background: var(--bg-side); }
-.toast .act:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-/* An error has no face and no timer: it stays until its ✕. */
-.toast[role=alert] { padding-left: 12px; cursor: auto; }
-.toast .tx { border: 0; color: var(--fg-3); padding: 3px 4px; margin-left: 0; }
-
+   which is what the bench and everything else reads. Its look is in
+   ui/toast.js since 1.8, which draws it and is fetched the first time
+   snyvi has something to say. */
 /* snyvi itself: the logo's head, at the logo's geometry, in the colours the
    accent moves -- so the answer to a change of accent arrives wearing it.
    It leans towards the thing it is answering, and how it lands is the whole
@@ -1202,10 +1184,7 @@ pre.code .ln::before { cursor: pointer; }
    arrives all at once, sorry shakes its head, and love lets a heart go.
    The head (`.mk`) and its feelings (`[data-feel]`) are not the toast's
    alone: the queue bar wears the same one, so the rules are the head's. */
-.toast .who { width: 22px; height: 22px; flex: none; display: block; }
 .mk { display: block; width: 100%; height: 100%; overflow: visible; transform-origin: 50% 100%; }
-#toasts[data-side="right"] .toast .who { transform: rotate(-7deg); }
-#toasts[data-side="left"] .toast .who { transform: rotate(7deg); }
 .mk-body { fill: var(--mascot); }
 .mk-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; }
 .mk-ink { fill: var(--mascot-ink); }
@@ -1243,29 +1222,8 @@ pre.code .ln::before { cursor: pointer; }
 .palette-box { animation: none; }
 #palette-input { width: 100%; font: inherit; font-size: 16px; padding: 14px 18px; border: 0; background: transparent; color: inherit; outline: none; border-bottom: 1px solid var(--rule); }
 /* The palette's list is ui/palette.js's, and comes with it. */
-/* The overlay places the box 12vh down, so the cap leaves that and a little
-   below it: a box that outgrew the window would put its foot -- About,
-   Connect, Reset -- past the bottom edge, where no click can reach it. */
-.help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 84vh; overflow-y: auto; }
-.help-close { position: absolute; top: 12px; right: 12px; }
-/* One dialog title, every dialog's (docs/DESIGN.md §8): About, Reset and the
-   shortcuts card, whose head holds it beside its ✕. */
-.dlg-title { margin: 0 0 4px; font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.01em; color: var(--fg); }
-.help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: var(--fs-body-s); }
-.help-box dt { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-2); }
-.help-box dd { margin: 0; }
-.help-foot { display: flex; align-items: center; gap: 4px; }
-.help-gap { flex: 1; }
-
-/* The shortcuts card. A title row and the foot stay put; only the middle
-   scrolls, and on a normal screen it never has to. Each row is the meta
-   panel's own shape -- what it does, then the key, small and flat -- so
-   there is no key column to line up; the keys sit on the right edge. */
-#help .help-box { width: min(700px, 92vw); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-md); }
-.help-head { flex: none; display: flex; align-items: center; padding: 14px 14px 12px 24px; }
-.help-head .dlg-title { margin: 0; flex: 1; }
-#help .help-close { position: static; }
-#help .help-foot { flex: none; margin: 0; padding: 10px 14px 10px 16px; border-top: 1px solid var(--rule); background: var(--bg-side); }
+/* The dialogs' own look -- the shortcuts card, About, Reset -- is ui/about.js's, which fills
+   them and is fetched before any of them opens. */
 /* Buttons (docs/DESIGN.md §8): five kinds on one base, with one hover, one
    focus ring and one disabled look. The names markup already had are the
    kinds' too: \`.w-btn\` is primary, \`button.text\` is text. */
@@ -1289,15 +1247,6 @@ pre.code .ln::before { cursor: pointer; }
 .copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* The reset dialog: a sentence, a number, and a button that is dead until
  * the number is right. Red is spent here and nowhere else in the chrome. */
-
-/* ---------- print ---------- */
-@media print {
-  #side, #rail, #chrome, #toasts, #palette, #help, #about, #reset, #queue-bar, pre.code .copy { display: none !important; }
-  #app { display: block; }
-  #doc { max-width: none; padding: 0; }
-  .prose { font-size: 11.5pt; }
-  pre.code { white-space: pre-wrap; }
-}
 
 /* A long code block comes cut into chunks of 200 lines (render::chunk_code),
    so only the chunks near the screen are laid out. The height is a guess until

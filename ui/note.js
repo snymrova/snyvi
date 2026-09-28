@@ -64,6 +64,17 @@ const CSS = `
 #note[data-seen="1"]:not(:hover):not(:focus-within) .note-by { display: none; }
 #note[data-seen="1"]:not(:hover):not(:focus-within) .note-now { padding-top: 5px; padding-bottom: 5px; }
 
+/* In the sidebar the card is laid over the foot of the tree, not in the
+   column: its coming, going, glowing and folding to one line used to change
+   #trees' height, and every row in it moved (docs/DESIGN.md, no layout
+   shift). The tree keeps room under its last row the card's resting height,
+   so that row can still be scrolled clear of it; the room changes only while
+   the card is at rest, and only at the end of the list, where no row sits
+   below it to move. Folded, the card is the rail pop's, in its flow. */
+#side > #note { position: absolute; left: 0; right: 0; bottom: var(--note-foot, 52px); margin: 0; padding: 4px 8px 2px; z-index: 4;
+  background: var(--bg-side); }
+:root:not([data-side="0"]) #side:has(> #note:not([hidden])) #trees { padding-bottom: calc(8px + var(--note-h, 0px)); scroll-padding-bottom: var(--note-h, 0px); }
+
 @keyframes note-glow {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
   50% { box-shadow: 0 0 14px 0 color-mix(in srgb, var(--accent) 16%, transparent); }
@@ -125,6 +136,21 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
    *  one quiet line. The ones before it wait in a trail a hover away. Seen is
    *  the daemon's, so a glance in one window puts the glow out in all. */
   const noteEl = $("#note");
+  /** Where the card sits, and the room the tree keeps for it: the foot's
+   *  height, and the card's own at rest. Measured, since the foot's rows and
+   *  the card's lines are the fonts' and the theme's to decide. A card that
+   *  is hovered or focused has grown upward over the tree, and the room is
+   *  left as it was, so nothing under the pointer moves while it reads. */
+  const sideEl = $("#side"), footEl = $(".side-foot");
+  const room = () => {
+    if (!sideEl || noteEl.matches(":hover, :focus-within")) return;
+    const inSide = noteEl.parentElement === sideEl && !noteEl.hidden;
+    sideEl.style.setProperty("--note-foot", `${footEl ? footEl.offsetHeight : 52}px`);
+    sideEl.style.setProperty("--note-h", `${inSide ? noteEl.offsetHeight : 0}px`);
+  };
+  if (window.ResizeObserver) { const ro = new ResizeObserver(room); ro.observe(noteEl); if (footEl) ro.observe(footEl); }
+  noteEl.addEventListener("mouseleave", () => requestAnimationFrame(room));
+  noteEl.addEventListener("focusout", () => requestAnimationFrame(room));
   let noteLook = 0, notePeek = 0, noteShown = (state.notes.find(n => !n.dismissed) || {}).id || 0;
   /** An aside a reader just closed: the card stands where it was as one line
    *  holding the Undo, on the same drain as a removed document's row, and
@@ -176,7 +202,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
       noteEl.innerHTML = `<div class="t-ghost note-ghost" role="status" data-ids="${g.ids.join(",")}" style="--undo-left:${g.clock.left()}"><span class="title">${g.ids.length > 1 ? "Asides closed" : "Aside closed"}</span><button type="button" class="t-undo" data-note-undo>Undo</button></div>`;
       return;
     }
-    if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; return; }
+    if (!n) { noteEl.hidden = true; noteEl.innerHTML = ""; room(); return; }
     noteEl.hidden = false;
     noteEl.dataset.lit = n.lit && !n.seen ? "1" : "";
     noteEl.dataset.seen = n.seen ? "1" : "";
@@ -209,6 +235,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     // A new note brings snyvi up from behind it for a moment, as a hover does.
     // A window in the background would play that to nobody, so it waits.
     if (arrived) { if (document.hidden) peekOwed = true; else peekNote(); }
+    room();
   }
   let peekOwed = false;
   function peekNote() {

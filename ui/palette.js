@@ -124,6 +124,8 @@ function deskItems(q) {
  *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
  *  has no list of its own to read yet. */
 const COMMANDS = [
+  { cmd: "home", t: "Home", key: "h", s: "What needs you, the desks, and what is waiting" },
+  { cmd: "inbox", t: "Inbox", key: "i", s: "Every document, newest first" },
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
   { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
@@ -132,6 +134,8 @@ const COMMANDS = [
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
+  { cmd: "updates", t: "Check for updates", s: "Ask now, rather than at the next check" },
+  { cmd: "about", t: "About snyvi", s: "The version, where it keeps things, and updates" },
 ];
 function commandItems(q) {
   const m = /^\s*>\s*(.*)$/.exec(q);
@@ -207,7 +211,7 @@ function pick(it) {
   close();
   if (it.cmd) {
     const c = it.cmd;
-    c === "quiet" ? d.toggleQuiet() : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+    c === "home" ? d.showHome(true) : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
       : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
     return;
   }

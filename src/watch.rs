@@ -190,6 +190,10 @@ pub fn spawn_ui_watcher(app: Arc<App>) {
             "look.js",
             "note.js",
             "tip.js",
+            "home.js",
+            "toast.js",
+            "diff.js",
+            "browse.js",
         ];
         let mut tracker: Tracker<&str> = Tracker::new();
         loop {

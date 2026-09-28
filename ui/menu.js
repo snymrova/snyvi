@@ -240,14 +240,20 @@ async function newPanel(ctx, id) {
   } catch (e) { ctx.toast("Could not open a panel", { sub: e }); }
 }
 
-/** Close a desk and its panels; the asking twice is the caller's. */
+/** Close a desk and its panels, with Undo; the asking twice is the caller's. */
 async function dropDesk(ctx, id) {
   const { state } = ctx;
+  const name = state.desks?.desks.find(d => d.id === id)?.name || "the desk";
   try { await ctx.api(`/api/desks/${id}/delete`, {}); }
   catch (e) { ctx.toast("Could not close the desk", { sub: e }); return; }
   ctx.forget(id);
   await ctx.load();
   if (state.view === "desk" && state.deskId === id) ctx.show(null, true);
+  // Closed, not deleted: its notes wait on it until prune.
+  ctx.toast(`Closed ${name}`, { sub: "Its notes are kept", action: { label: "Undo", run: async () => {
+    try { await ctx.api(`/api/desks/${id}/reopen`, {}); } catch (e) { ctx.toast("Could not reopen the desk", { sub: e }); return; }
+    await ctx.load(); ctx.show(id, true);
+  } } });
 }
 
 /** What a right-click can be asked about, one list per kind of thing, and
@@ -271,6 +277,7 @@ function entries(ctx, el) {
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
+    { label: "Check for updates", run: at => ctx.checkUpdates(at) },
     { label: document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot", run: () => ctx.toggleQuiet() },
   ] };
   if (el.matches(".b-root > summary, .b-dir > details > summary")) {
@@ -414,10 +421,20 @@ const CSS = `
 #ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
 `;
 
-function install(ctx) {
+/** The look goes in with whichever comes first, a menu or a popover: the
+ *  rail's popover is styled here too, and a reader who folds the sidebar
+ *  may never have right-clicked. */
+let styled = false;
+function sheet() {
+  if (styled) return;
+  styled = true;
   const st = document.createElement("style");
   st.textContent = CSS;
   document.head.append(st);
+}
+
+function install(ctx) {
+  sheet();
   menu = document.createElement("div");
   menu.id = "ctx"; menu.hidden = true; menu.setAttribute("role", "menu");
   document.body.append(menu);
@@ -473,6 +490,7 @@ const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-
 const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
 let popBtn = null, popWired = false;
 export function pop(ctx, sec, btn) {
+  sheet();
   const popEl = $("#pop");
   if (!popWired) wirePop(popEl);
   if (root.dataset.pop === sec) { unpop(); return; }

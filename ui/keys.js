@@ -152,6 +152,7 @@ export function letter(e, c) {
     case "Delete": c.deleteCurrent(true); break;
     case "n": c.openNext(); break;
     case "i": c.showInbox(true); break;
+    case "h": c.showHome(true); break;
     case "w": c.wide(); break;
     case "z": c.wrap(); break;
     case "t": c.rail(); break;

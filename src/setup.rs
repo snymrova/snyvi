@@ -240,7 +240,11 @@ pub fn uninstall_claude_keeping(keeping: bool) -> Result<()> {
     let (path, n) = hook::uninstall()?;
     match n {
         0 => println!("No snyvi hooks in {}.", path.display()),
-        n => println!("Removed {} from {}.", crate::plural(n, "snyvi hook"), path.display()),
+        n => println!(
+            "Removed {} from {}.",
+            crate::plural(n, "snyvi hook"),
+            path.display()
+        ),
     }
     if let Some(path) = claude_md_remove()? {
         println!("Removed the snyvi line from {}.", path.display());
