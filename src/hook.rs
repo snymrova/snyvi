@@ -8,6 +8,7 @@ use crate::client;
 use crate::config::Paths;
 use crate::receive::Payload;
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -20,19 +21,165 @@ use std::path::{Path, PathBuf};
 /// written file is sent is not the entry's to say but `auto_send`'s.
 const STATUS_EVENTS: [&str; 4] = ["UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
 
+/// What of an event this reads. Everything else -- above all a tool's output,
+/// which can be megabytes, and a Write's whole file -- is skipped as it is
+/// read, never built into a value: this runs after every tool call of every
+/// session, and it used to parse all of it.
+///
+/// Every field is taken as it comes, and one of a shape nobody expected is
+/// only that field missing -- as it was when this read a `Value` -- never the
+/// whole event, which would leave a panel saying `needs_you` after it was
+/// answered.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Event {
+    hook_event_name: Str,
+    cwd: Str,
+    session_id: Str,
+    tool_name: Str,
+    tool_input: ToolInput,
+    notification_type: Str,
+    message: Str,
+}
+
+#[derive(Default)]
+struct ToolInput {
+    file_path: Str,
+}
+
+/// A string, or nothing for anything else, which is skipped as it is read.
+#[derive(Default)]
+struct Str(Option<String>);
+
+impl Str {
+    fn get(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+/// What `Str` and `ToolInput` do with a value that is not theirs: read it to
+/// its end and let it go.
+macro_rules! ignore_the_rest {
+    ($out:expr) => {
+        fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+            Ok($out)
+        }
+        fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+            Ok($out)
+        }
+        fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+            Ok($out)
+        }
+        fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+            Ok($out)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok($out)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut a: A,
+        ) -> Result<Self::Value, A::Error> {
+            while a.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+            Ok($out)
+        }
+    };
+}
+
+impl<'de> Deserialize<'de> for Str {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Str, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Str;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("anything")
+            }
+            fn visit_str<E>(self, s: &str) -> Result<Str, E> {
+                Ok(Str(Some(s.to_string())))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut a: A) -> Result<Str, A::Error> {
+                while a
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {}
+                Ok(Str(None))
+            }
+            ignore_the_rest!(Str(None));
+        }
+        d.deserialize_any(V)
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolInput {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<ToolInput, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = ToolInput;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("anything")
+            }
+            // Only `file_path` is kept: a Write's whole file goes by unread.
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> Result<ToolInput, A::Error> {
+                let mut out = ToolInput::default();
+                while let Some(k) = a.next_key::<Str>()? {
+                    if k.get() == Some("file_path") {
+                        out.file_path = a.next_value()?;
+                    } else {
+                        a.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                Ok(out)
+            }
+            fn visit_str<E>(self, _: &str) -> Result<ToolInput, E> {
+                Ok(ToolInput::default())
+            }
+            ignore_the_rest!(ToolInput::default());
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// What a reader holds. `read_to_end` doubles its buffer on the way, and
+/// under mimalloc every buffer it outgrew stays resident: 2 MB of tool output
+/// on stdin was 12 MB more at the peak. So a call's first 64 KB -- all of one
+/// in almost every case -- are read into a buffer of that size, and only what
+/// is longer gets room for 32 MB at once, which costs the pages it fills and
+/// not the rest, and grows as ever past that.
+fn read_all(mut r: impl Read) -> std::io::Result<Vec<u8>> {
+    const FIRST: usize = 64 << 10;
+    const ROOM: usize = 32 << 20;
+    let mut head = Vec::with_capacity(FIRST);
+    (&mut r).take(FIRST as u64).read_to_end(&mut head)?;
+    if head.len() < FIRST {
+        return Ok(head);
+    }
+    let mut all = Vec::with_capacity(ROOM);
+    all.extend_from_slice(&head);
+    drop(head);
+    r.read_to_end(&mut all)?;
+    Ok(all)
+}
+
 pub fn run(paths: &Paths) -> Result<()> {
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input)?;
-    let Ok(event) = serde_json::from_str::<Value>(&input) else {
+    // Read whole, then parsed from the bytes: `from_reader` skipped the
+    // output without holding it but went byte by byte, slower than the copy.
+    let input = read_all(std::io::stdin().lock())?;
+    let Ok(event) = serde_json::from_slice::<Event>(&input) else {
         return Ok(());
     };
-    // Any event carrying cwd and session_id keeps the session map fresh, so the MCP
-    // server can file its documents under the same workflow as the hook.
-    if let (Some(cwd), Some(sid)) = (
-        event.get("cwd").and_then(Value::as_str),
-        event.get("session_id").and_then(Value::as_str),
-    ) {
-        crate::session::record(paths, cwd, sid);
+    drop(input);
+    let name = event.hook_event_name.get().unwrap_or("");
+    // A session starting, or a prompt, keeps the session map fresh, so the
+    // MCP server can file its documents under the same workflow as the hook.
+    // Not a tool call: there are hundreds of those to a prompt, and the map
+    // does not change between them.
+    if matches!(name, "SessionStart" | "UserPromptSubmit") {
+        if let (Some(cwd), Some(sid)) = (event.cwd.get(), event.session_id.get()) {
+            crate::session::record(paths, cwd, sid);
+        }
     }
     // In a desk panel, the panel is told what the agent is doing and which
     // conversation it is, so it can offer that conversation back after Claude
@@ -43,25 +190,24 @@ pub fn run(paths: &Paths) -> Result<()> {
     {
         let state = agent_state(&event);
         let session = event
-            .get("session_id")
-            .and_then(Value::as_str)
+            .session_id
+            .get()
             .filter(|s| crate::desk::valid_session(s));
-        let starting = event.get("hook_event_name").and_then(Value::as_str) == Some("SessionStart");
+        let starting = name == "SessionStart";
         if state.is_some() || (starting && session.is_some()) {
             client::agent_state(paths, &pane, state, session);
         }
     }
-    if event.get("hook_event_name").and_then(Value::as_str) != Some("PostToolUse") {
+    if name != "PostToolUse" {
         return Ok(());
     }
-    let tool = event.get("tool_name").and_then(Value::as_str).unwrap_or("");
-    if !matches!(tool, "Write" | "Edit" | "MultiEdit" | "NotebookEdit") {
+    if !matches!(
+        event.tool_name.get().unwrap_or(""),
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit"
+    ) {
         return Ok(());
     }
-    let Some(file) = event
-        .pointer("/tool_input/file_path")
-        .and_then(Value::as_str)
-    else {
+    let Some(file) = event.tool_input.file_path.get() else {
         return Ok(());
     };
     if !wanted(Path::new(file)) || !auto_send() {
@@ -69,11 +215,8 @@ pub fn run(paths: &Paths) -> Result<()> {
     }
     let payload = Payload {
         path: Some(file.to_string()),
-        cwd: event.get("cwd").and_then(Value::as_str).map(str::to_string),
-        session: event
-            .get("session_id")
-            .and_then(Value::as_str)
-            .map(crate::session::workflow_key),
+        cwd: event.cwd.get().map(str::to_string),
+        session: event.session_id.get().map(crate::session::workflow_key),
         origin: Some("hook".into()),
         sender: Some("claude-code".into()),
         ..Default::default()
@@ -87,19 +230,18 @@ pub fn run(paths: &Paths) -> Result<()> {
 /// Empty is "gone": the session ended. A `PostToolUse` is `working` even
 /// straight after a permission prompt, which is exactly what clears
 /// `needs_you` once the reader has answered it.
-fn agent_state(event: &Value) -> Option<&'static str> {
-    match event.get("hook_event_name").and_then(Value::as_str)? {
+fn agent_state(event: &Event) -> Option<&'static str> {
+    match event.hook_event_name.get()? {
         "UserPromptSubmit" | "PostToolUse" => Some("working"),
         "Stop" => Some("done"),
         "SessionEnd" => Some(""),
         // A permission prompt needs the reader. The idle reminder a minute
         // after a turn ended does not: the turn is done, and says so already.
         "Notification" => {
-            let idle = event.get("notification_type").and_then(Value::as_str)
-                == Some("idle_prompt")
+            let idle = event.notification_type.get() == Some("idle_prompt")
                 || event
-                    .get("message")
-                    .and_then(Value::as_str)
+                    .message
+                    .get()
                     .is_some_and(|m| m.contains("waiting for your input"));
             (!idle).then_some("needs_you")
         }
@@ -418,6 +560,55 @@ pub fn remove_from(settings: &mut Value) -> usize {
 mod tests {
     use super::*;
 
+    /// Stdin is what was sent, byte for byte: an empty one, one either side
+    /// of the first read's size, and one that arrives a few bytes a read.
+    #[test]
+    fn stdin_is_read_whole_whatever_its_size() {
+        struct Dribble<'a>(&'a [u8]);
+        impl Read for Dribble<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = buf.len().min(self.0.len()).min(7);
+                buf[..n].copy_from_slice(&self.0[..n]);
+                self.0 = &self.0[n..];
+                Ok(n)
+            }
+        }
+        for len in [0, 1, (64 << 10) - 1, 64 << 10, (64 << 10) + 1, 700_001] {
+            let sent: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            assert_eq!(read_all(&sent[..]).unwrap(), sent, "{len}");
+            assert_eq!(read_all(Dribble(&sent)).unwrap(), sent, "{len} dribbled");
+        }
+    }
+
+    fn state_of(v: &Value) -> Option<&'static str> {
+        agent_state(&serde_json::from_slice(v.to_string().as_bytes()).unwrap())
+    }
+
+    /// A field of a shape nobody expected is that field missing, not the
+    /// event: the state still gets through, and so does a file to send.
+    #[test]
+    fn an_odd_field_does_not_cost_the_event() {
+        let odd = json!({ "hook_event_name": "PostToolUse", "cwd": null, "session_id": 7,
+            "tool_name": "Write", "message": ["a", { "b": 1 }],
+            "tool_input": { "content": "x".repeat(1000), "file_path": "/p/PLAN.md", "extra": [1, 2] } });
+        let e: Event = serde_json::from_slice(odd.to_string().as_bytes()).unwrap();
+        assert_eq!(agent_state(&e), Some("working"));
+        assert_eq!(e.tool_input.file_path.get(), Some("/p/PLAN.md"));
+        assert_eq!(e.cwd.get(), None);
+        assert_eq!(e.session_id.get(), None);
+        for input in [
+            json!(null),
+            json!("x"),
+            json!([1]),
+            json!({ "file_path": 3 }),
+        ] {
+            let ev = json!({ "hook_event_name": "PostToolUse", "tool_input": input });
+            let e: Event = serde_json::from_slice(ev.to_string().as_bytes()).unwrap();
+            assert_eq!(agent_state(&e), Some("working"));
+            assert_eq!(e.tool_input.file_path.get(), None);
+        }
+    }
+
     #[test]
     fn extension_filter() {
         assert!(wanted(Path::new("/p/PLAN.md")));
@@ -430,13 +621,13 @@ mod tests {
     #[test]
     fn each_event_says_what_the_agent_is_doing() {
         let ev = |e: &str| json!({ "hook_event_name": e });
-        assert_eq!(agent_state(&ev("UserPromptSubmit")), Some("working"));
-        assert_eq!(agent_state(&ev("PostToolUse")), Some("working"));
-        assert_eq!(agent_state(&ev("Stop")), Some("done"));
-        assert_eq!(agent_state(&ev("SessionEnd")), Some(""));
-        assert_eq!(agent_state(&ev("SessionStart")), None);
+        assert_eq!(state_of(&ev("UserPromptSubmit")), Some("working"));
+        assert_eq!(state_of(&ev("PostToolUse")), Some("working"));
+        assert_eq!(state_of(&ev("Stop")), Some("done"));
+        assert_eq!(state_of(&ev("SessionEnd")), Some(""));
+        assert_eq!(state_of(&ev("SessionStart")), None);
         assert_eq!(
-            agent_state(
+            state_of(
                 &json!({ "hook_event_name": "Notification", "notification_type": "permission_prompt",
                 "message": "Claude needs your permission to use Bash" })
             ),
@@ -444,13 +635,13 @@ mod tests {
         );
         // The idle reminder after a turn is not the reader being needed.
         assert_eq!(
-            agent_state(
+            state_of(
                 &json!({ "hook_event_name": "Notification", "notification_type": "idle_prompt" })
             ),
             None
         );
         assert_eq!(
-            agent_state(&json!({ "hook_event_name": "Notification",
+            state_of(&json!({ "hook_event_name": "Notification",
                 "message": "Claude is waiting for your input" })),
             None
         );
