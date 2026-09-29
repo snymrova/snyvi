@@ -264,6 +264,11 @@ impl Store {
             "ALTER TABLE desks ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE desks ADD COLUMN parked_at INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE desks ADD COLUMN parked_next TEXT NOT NULL DEFAULT ''",
+            // 1.10: when the reader took a document off its desk's list. The
+            // desk's list only: the library, the Inbox and search still have it.
+            "ALTER TABLE docs ADD COLUMN desk_off INTEGER NOT NULL DEFAULT 0",
+            // 1.10: pictures on a desk's line.
+            "ALTER TABLE desk_notes ADD COLUMN images TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1141,20 +1146,27 @@ impl Store {
     /// is this desk's own newest rather than the library's, because what a
     /// desk shows is what its panes sent -- a later version sent from the CLI
     /// does not belong to it, and must not take a row here away.
-    pub fn desk_docs(&self, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
+    ///
+    /// `off` is the other half: the ones the reader removed from the list,
+    /// newest removal first, for "N removed · Show". The head is found before
+    /// the removal is looked at, so removing a file's newest version does not
+    /// bring an older one up in its place; a new send is a new row, and shows.
+    pub fn desk_docs(&self, desk_id: i64, limit: usize, off: bool) -> Result<Vec<DeskDoc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
                  FROM live_docs d JOIN projects p ON p.id = d.project_id
-                 WHERE d.desk_id = ?1
+                 WHERE d.desk_id = ?1 AND d.desk_off {}
                    AND (d.source_path IS NULL
                         OR d.rowid = (SELECT d2.rowid FROM live_docs d2
                                       WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
                                         AND d2.source_path = d.source_path
                                       ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1))
-                 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?2",
-            )?
+                 ORDER BY {} d.received_at DESC, d.rowid DESC LIMIT ?2",
+                if off { "> 0" } else { "= 0" },
+                if off { "d.desk_off DESC," } else { "" },
+            ))?
             .query_map(params![desk_id, limit as i64], |r| {
                 Ok(DeskDoc {
                     id: r.get(0)?,
@@ -1170,6 +1182,16 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         Ok(rows)
+    }
+
+    /// Take a document off its desk's list (`off`), or put it back. False when
+    /// the document is not one this desk's panels sent.
+    pub fn set_desk_doc_off(&self, desk_id: i64, doc: &str, off: bool) -> Result<bool> {
+        let n = self.conn.lock().unwrap().execute(
+            "UPDATE docs SET desk_off = ?3 WHERE id = ?2 AND desk_id = ?1 AND deleted_at = 0",
+            params![desk_id, doc, if off { now() } else { 0 }],
+        )?;
+        Ok(n > 0)
     }
 
     pub fn create_desk(&self, root: &str, name: Option<&str>) -> Result<Desk> {
@@ -1321,6 +1343,14 @@ impl Store {
 
     pub fn tick_desk_note(&self, desk_id: i64, id: i64, tick: &desk::Tick) -> Result<bool> {
         desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
+    }
+
+    pub fn add_note_image(&self, desk_id: i64, id: i64, name: &str) -> Result<Option<Vec<String>>> {
+        desk::add_note_image(&self.conn.lock().unwrap(), desk_id, id, name)
+    }
+
+    pub fn set_note_images(&self, desk_id: i64, id: i64, images: &[String]) -> Result<bool> {
+        desk::set_note_images(&self.conn.lock().unwrap(), desk_id, id, images)
     }
 
     pub fn remove_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
@@ -1882,7 +1912,7 @@ mod tests {
 
         assert!(s.move_pane(desk.id, 1, 2).unwrap());
         let slot_of = |title: &str| {
-            s.desk_docs(desk.id, 40)
+            s.desk_docs(desk.id, 40, false)
                 .unwrap()
                 .into_iter()
                 .find(|d| d.title == title)
@@ -1928,7 +1958,7 @@ mod tests {
             .insert(&new_id("d"), from(&here, new_doc("Second", "ddd", "w")))
             .unwrap();
 
-        let docs = s.desk_docs(7, 40).unwrap();
+        let docs = s.desk_docs(7, 40, false).unwrap();
         assert_eq!(
             docs.iter().map(|d| d.title.as_str()).collect::<Vec<_>>(),
             ["Second", "First"]
@@ -1936,13 +1966,13 @@ mod tests {
         assert_eq!(docs[0].slot, 2);
         assert!(docs[0].unread);
         assert_eq!(docs[0].project, "p");
-        assert_eq!(s.desk_docs(8, 40).unwrap().len(), 1);
-        assert!(s.desk_docs(9, 40).unwrap().is_empty());
+        assert_eq!(s.desk_docs(8, 40, false).unwrap().len(), 1);
+        assert!(s.desk_docs(9, 40, false).unwrap().is_empty());
 
         s.mark_read(&last.id).unwrap();
-        assert!(!s.desk_docs(7, 40).unwrap()[0].unread);
+        assert!(!s.desk_docs(7, 40, false).unwrap()[0].unread);
         s.delete(&last.id).unwrap();
-        assert_eq!(s.desk_docs(7, 40).unwrap().len(), 1);
+        assert_eq!(s.desk_docs(7, 40, false).unwrap().len(), 1);
 
         // The same file again is the same row, not another: a pane rewriting
         // what it sent leaves the desk holding one of it.
@@ -1953,7 +1983,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            s.desk_docs(7, 40)
+            s.desk_docs(7, 40, false)
                 .unwrap()
                 .iter()
                 .map(|d| d.title.as_str())
@@ -1967,9 +1997,22 @@ mod tests {
             version_of("aaa", "First, elsewhere", "fff", "w"),
         )
         .unwrap();
-        let listed = s.desk_docs(7, 40).unwrap();
+        let listed = s.desk_docs(7, 40, false).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, again.id);
+
+        // Removed from the desk's list: gone from it, on the other half, and
+        // no older version comes up in its place. Undo puts it back.
+        assert!(s.set_desk_doc_off(7, &again.id, true).unwrap());
+        assert!(s.desk_docs(7, 40, false).unwrap().is_empty());
+        let off = s.desk_docs(7, 40, true).unwrap();
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].id, again.id);
+        // Another desk's document is not this desk's to remove.
+        assert!(!s.set_desk_doc_off(8, &again.id, true).unwrap());
+        assert!(s.set_desk_doc_off(7, &again.id, false).unwrap());
+        assert_eq!(s.desk_docs(7, 40, false).unwrap()[0].id, again.id);
+        assert!(s.desk_docs(7, 40, true).unwrap().is_empty());
     }
 
     /// A delete is gone from everywhere that reads the library and still on

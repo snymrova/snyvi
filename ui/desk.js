@@ -43,10 +43,20 @@ let docList = [], docsAt = null;
  *  section says so, with a Retry, rather than looking empty. */
 let docsOff = null, notesOff = null;
 const noReach = w => `<p class="no-reach" role="alert">Could not reach snyvi<button type="button" data-a="reload" data-w="${w}">Retry</button></p>`;
-/** The rail shows the latest few of those and names the rest; a click on
- *  the rest opens the whole list, for this desk, until it is left. */
-const DOCS_SHOWN = 8;
+/** The rail shows the latest thirty of those and names the rest; a click on
+ *  the rest opens the whole list, for this desk, until it is left. The list
+ *  is a box of its own height and scrolls inside it, so a long day of sends
+ *  never pushes the notes under it out of the rail. */
+const DOCS_SHOWN = 30;
 let docsAll = false;
+/** The ones the reader removed from this desk's list (the daemon's
+ *  `removed`), whether "N removed · Show" is open, and the row just removed
+ *  -- { at: desk id, x, i } -- which keeps its place, with its Undo, for
+ *  BACK_MS. Its own timer: a document's Undo and a note's are different rows. */
+let docOff = [], offShown = false, docGone = null, docTimer = 0;
+/** The document the list last scrolled into view, so the list is scrolled
+ *  to a document when it is opened and not at every redraw after. */
+let docSeen = null;
 /** The reader's own list for this desk, and which desk it belongs to. Not
  *  asides (`crate::aside`): those are an agent's sentences and the daemon
  *  forgets them. These are written here, ticked here, and kept in the database. */
@@ -63,10 +73,19 @@ let drawing = false;
 /** How long the offer to put a line back stands, matching the page's own undo. */
 const BACK_MS = 8000;
 let backTimer = 0;
-/** The done lines Clear done just took off -- { at: desk id, xs: [note] } --
+/** The done lines "Remove done notes" just took off -- { at: desk id, xs: [note] } --
  *  while their Undo stands. It shares backTimer with a single line's ✕: only
  *  the newest offer stands. */
 let cleared = null;
+/** Pictures on the notes: an object URL by file name -- a name is its
+ *  content's hash, so one fetch serves every draw after it -- or the fetch
+ *  on its way. The pictures pasted into the new-line field, waiting for Enter
+ *  to make the line they go on. And the picture just taken off a line --
+ *  { n: note id, was: its list before } -- with its Undo, for BACK_MS. */
+const imgUrls = new Map();
+let pending = [], imgGone = null, imgTimer = 0;
+/** The picture open whole over the page, while one is. */
+let lightbox = null;
 /** A panel just closed: its row stays in the rail for BACK_MS, greyed, with
  *  Undo -- { id, desk, name, said }. The daemon keeps the closed panel until
  *  `prune`; the row is only the offer. Only the newest close is offered. */
@@ -1698,6 +1717,8 @@ const ICO = {
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/>',
   tick: '<path d="M3.5 8.5l3 3 6-7"/>',
   again: '<path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3"/>',
+  plus: '<path d="M8 3.5v9M3.5 8h9"/>',
+  done: '<path d="M2.5 5l1.5 1.5L7 3.5M2.5 11l1.5 1.5L7 9.5M9.5 5h4M9.5 11h4"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
 /** The head's plus: drawn on the grid the page's own icon buttons use
@@ -1730,11 +1751,16 @@ function rail() {
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
   const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} open on every desk`;
   const why = noNew(d);
-  const dl = docsAt === d.id ? docList : [];
-  // The latest few, and always the one on the page: a document being read
+  const dl0 = docsAt === d.id ? docList : [];
+  // A row just removed keeps its place through a read that no longer has it.
+  const gone = docGone && docGone.at === d.id ? docGone.x : null;
+  const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
+  // The latest thirty, and always the one on the page: a document being read
   // is never the one the rail hides. The count names what is not shown.
   const shown = docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading);
   const rest = dl.length - shown.length;
+  const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
+  const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
   // A pane's row: the mark, the slot, the name -- and under the cursor, what
   // can be done to that pane: stopped or started, and closed. On the row
@@ -1756,40 +1782,76 @@ function rail() {
   // the list has to know that is what happened, and not a reader clicking
   // away, so the replacement says so while it is under way.
   drawing = true;
+  // The documents' own scroll, which a redraw would put back to the top.
+  const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
-    `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
+    `<div data-part="rail.panels"><div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" title="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div></div>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded. The row's
     // [n] says which panel sent it.
-    `<details class="dk-sec" data-sec="docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${dl.length ? `<span class="n">${dl.length}</span>` : ""}</summary>` +
+    `<details class="dk-sec" data-sec="docs" data-part="rail.docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${live.length ? `<span class="n">${live.length}${waiting ? ` · <b>${waiting} waiting</b>` : ""}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
-    // is while the desk is the page. Under the cursor, the path it was sent
-    // from, to copy -- the thing to hand back to the pane that sent it.
-    // Two lines of title, then who sent it and when: the panel by the name it
-    // was started with, which holds still, and not its title, which ticks.
-    (dl.length ? `<ul class="dk-docs">` + shown.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${x.id === reading ? "Back to the panels" : esc(x.title)}" data-tip-sub="${x.id === reading ? "click again" : `${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="dt"><span class="title">${esc(x.title)}</span><span class="by"><span class="slot">${esc(sentBy(vs, x.slot))}</span> · ${ctx.relShort(x.received_at)}${x.pinned ? ` · <span class="pin">pinned</span>` : ""}</span></span></a>` +
-      // Its tools: the path to copy, where there is one; and on the row of
-      // the document on the page, the way back to the panes. That row's
-      // tools stay in view rather than wait for the cursor.
-      ((x.source_path || x.id === reading) ? `<span class="dk-tools">` +
-        (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
-        (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
+    // is while the desk is the page. One line of title, then who sent it and
+    // when: the panel by the name it was started with, which holds still, and
+    // not its title, which ticks. The row on the page gets its second line.
+    (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") + `</ul>` +
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
-      : docsOff === d.id ? noReach("docs") : waitingFirst(d)) +
+      : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
+    // What the reader removed from this list, named, and there to open or put back.
+    (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
+      (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="dt"><span class="title">${esc(x.title)}</span></span></a>` +
+        `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "") +
     `</details>` + noteSec(d) + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); noteFocus(); }
+  if (drew) { vs.forEach(named); noteFocus(); docsScroll(docsTop); loadImgs(); }
   meta();
+}
+
+/** A document's row in the rail, or the row it leaves behind when it is
+ *  removed: the title, struck through, and its Undo where the ✕ was. */
+function docRow(x, gone, vs, esc) {
+  if (gone) return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.title)}</span><button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}">Undo</button></li>` + errLine(`d${x.id}`, esc);
+  const on = x.id === reading;
+  return `<li class="dk-doc${on ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="dt"><span class="title">${esc(x.title)}</span><span class="by"><span class="slot">${esc(sentBy(vs, x.slot))}</span> · ${ctx.relShort(x.received_at)}${x.pinned ? ` · <span class="pin">pinned</span>` : ""}</span></span></a>` +
+    // Its tools: the path to copy, where there is one; on the row of the
+    // document on the page, the way back to the panes, in view at rest; and
+    // the ✕ that takes it off this list -- this list only.
+    `<span class="dk-tools">` +
+    (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
+    (on ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") +
+    `<button type="button" data-a="doc-x" data-d="${esc(x.id)}" data-tip="Remove from this list" data-tip-sub="the Inbox keeps it" aria-label="Remove ${esc(x.title)} from this desk's list">${ico("x")}</button>` +
+    `</span></li>` + errLine(`d${x.id}`, esc);
+}
+
+/** The documents' box keeps where it was scrolled through a redraw, and
+ *  brings the document on the page into view when one is opened. */
+function docsScroll(top) {
+  const ul = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)");
+  if (!ul) return;
+  ul.scrollTop = top;
+  if (reading === docSeen) return;
+  docSeen = reading;
+  const on = ul.querySelector(".dk-doc.on");
+  if (!on) return;
+  const a = ul.getBoundingClientRect(), b = on.getBoundingClientRect();
+  if (b.top < a.top) ul.scrollTop -= a.top - b.top;
+  else if (b.bottom > a.bottom) ul.scrollTop += b.bottom - a.bottom;
+}
+
+/** Leaving a desk leaves its removed list, and a row's Undo, with it. */
+function forgetDocs() {
+  clearTimeout(docTimer);
+  docOff = []; offShown = false; docGone = null; docSeen = null;
 }
 
 /** The desk and its focused panel, in the pane under the rail: what the
@@ -1873,19 +1935,29 @@ function noteSec(d) {
   const left = mine.filter(x => !x.done && !x.gone && !x.suggested_by).length;
   const done = mine.filter(x => x.done && !x.gone).length;
   const rows = mine.map(x => noteRow(x, esc)).join("");
-  // Clearing the done half answers where it was asked, as a ✕ does: the
-  // button's own place holds the Undo until it runs out.
-  const clear = cleared && cleared.at === d.id
-    ? `<span class="dk-note gone dk-cleared"><span class="nm">${ctx.plural(cleared.xs.length, "done note")} taken off</span><button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span>`
-    : done ? `<button type="button" class="dk-new" data-a="note-clear" title="Take every ticked line off the list · nothing is deleted">Clear done</button>` : "";
-  return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
-    `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
+  // The section's two actions sit in its head, beside the count, where they
+  // are in view however long the list is: a new note, and removing the done
+  // half. Removing answers where it was asked, as a ✕ does: the head holds
+  // the Undo until it runs out. Beside the summary and not in it -- a button
+  // in a <summary> is a button in a button -- and laid over its right end,
+  // which keeps the room for them whether they show or not.
+  const undo = cleared && cleared.at === d.id;
+  const acts = undo
+    ? `<span class="dk-cleared" role="status">${cleared.xs.length} removed<button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span>`
+    : (done ? `<button type="button" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(done, "done note")} · Undo brings them back" aria-label="Remove done notes">${ico("done")}</button>` : `<span class="dk-act-room" aria-hidden="true"></span>`) +
+      `<button type="button" data-a="note-new" data-tip="New note" aria-label="New note">${ico("plus")}</button>`;
+  return `<div class="dk-notes-part${undo ? " undo" : ""}" data-part="rail.notes">` +
+    `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
+    `<summary class="t-label dk-lab" data-part="rail.notes.head" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
+    errLine("clear", esc, "p") +
     (rows ? `<ul class="dk-list">${rows}</ul>`
-      : noteField ? "" : notesOff === d.id ? noReach("notes") : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
+      : noteField ? "" : notesOff === d.id ? noReach("notes") : `<button type="button" class="dk-empty dk-first" data-a="note-new">What's the status of this project? A line here keeps it out of your head.</button>`) +
+    // The field for a new line opens at the end of the list, where the line
+    // will land.
     (noteField && noteField.kind === "new"
-      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}</div>`
-      : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>` + errLine("clear", esc, "p")) +
-    `</details>`;
+      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}` +
+        (pending.length ? `<span class="dk-pend" role="status">${ctx.plural(pending.length, "picture")} with this line<button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + `</div>` : "") +
+    `</details><span class="dk-sec-acts">${acts}</span></div>`;
 }
 
 /** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
@@ -1922,8 +1994,171 @@ function noteRow(x, esc) {
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
     (x.done && x.done_by ? byLine(x, esc) : "") +
+    (x.images?.length || (imgGone && imgGone.n === x.id) ? imgStrip(x, esc) : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
+}
+
+/* ---------- pictures on a line ----------
+ *
+ * A screenshot of the thing a line is about: pasted into the field, dropped
+ * on the row, or added from the row's menu. Small under the line's text, whole
+ * over the page on a click. The file stays when a picture comes off a line --
+ * that is an Undo, not a delete -- and an agent reading the notes is given
+ * each one as a file it can open.
+ */
+
+/** The pictures in a paste or a drop, of the four kinds the daemon keeps. */
+const images = dt => [...(dt?.files || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
+
+/** Under a line's text: its pictures, and the Undo of one just taken off. */
+function imgStrip(x, esc) {
+  const gone = imgGone && imgGone.n === x.id;
+  return `<span class="dk-imgs">` + (x.images || []).map((n, i) => {
+    const u = imgUrls.get(n);
+    return `<button type="button" class="dk-img" data-a="note-img" data-n="${x.id}" data-i="${i}" data-tip="Picture ${i + 1}" data-tip-sub="click to see it whole" aria-label="See picture ${i + 1} on ${esc(x.text)}"><img alt="" data-img="${esc(n)}"${typeof u === "string" ? ` src="${u}"` : ""}></button>`;
+  }).join("") +
+    (gone ? `<span class="dk-note gone dk-img-gone" role="status"><span class="nm">Picture removed</span><button type="button" class="dk-undo" data-a="img-back">Undo</button></span>` : "") + `</span>`;
+}
+
+/** Fetch the pictures the rail shows and has not got yet. An <img> cannot
+ *  carry the capability, so the bytes come through the page, once a name. */
+function loadImgs() {
+  const d = current();
+  if (!d) return;
+  for (const img of [...ctx.tocEl.querySelectorAll("img[data-img]:not([src])"), ...(lightbox ? lightbox.el.querySelectorAll("img[data-img]:not([src])") : [])]) {
+    const n = img.dataset.img, u = imgUrls.get(n);
+    if (typeof u === "string") { img.src = u; continue; }
+    if (u || !ctx.blob) continue;
+    imgUrls.set(n, ctx.blob(`/api/desks/${d.id}/note-images/${encodeURIComponent(n)}`).then(b => {
+      imgUrls.set(n, URL.createObjectURL(b));
+      for (const el of ctx.tocEl.querySelectorAll(`img[data-img="${window.CSS.escape(n)}"]`)) el.src = imgUrls.get(n);
+      const lb = lightbox?.el.querySelector(`img[data-img="${window.CSS.escape(n)}"]:not([src])`);
+      if (lb) lb.src = imgUrls.get(n);
+    }, () => imgUrls.delete(n)));
+  }
+}
+
+/** Put pictures on a line, one after another, and read the list back. A no
+ *  says so in the row, with what the daemon said. */
+async function putImages(id, fs) {
+  const d = current();
+  if (!d || !fs.length) return;
+  for (const f of fs) {
+    try { await ctx.api(`/api/desks/${d.id}/notes/${id}/image`, f, f.type); }
+    catch (e) {
+      // Its Retry reads the list again: the file itself is the reader's to paste again.
+      rowErr = { k: `n${id}`, why: `Could not add the picture · ${ctx.sayErr(e).why}`, raw: e.message, again: { a: "reload", w: "notes" } };
+      break;
+    }
+  }
+  await getNotes(d.id, true);
+}
+
+/** Take picture `i` off line `id`, leaving its Undo in the row. */
+async function dropImage(id, i) {
+  const d = current(), x = noteList.find(y => y.id === id);
+  if (!d || !x || !x.images?.[i]) return;
+  clearTimeout(imgTimer);
+  const was = x.images;
+  x.images = was.filter((_, k) => k !== i);
+  imgGone = { n: id, was };
+  imgTimer = setTimeout(() => { imgGone = null; if (current()) rail(); }, BACK_MS);
+  rail();
+  await told({ a: "img-x", n: String(id), i: String(i) }, `n${id}`, "Could not remove the picture", () => { clearTimeout(imgTimer); imgGone = null; x.images = was; },
+    () => ctx.api(`/api/desks/${d.id}/notes/${id}/images`, { images: x.images }));
+}
+
+/** The Undo: the line's pictures as they were. */
+async function imgBack() {
+  const d = current(), g = imgGone, x = g && noteList.find(y => y.id === g.n);
+  clearTimeout(imgTimer);
+  imgGone = null;
+  if (!d || !x) { if (current()) rail(); return; }
+  const now = x.images;
+  x.images = g.was;
+  rail();
+  if (await told({ a: "img-back" }, `n${x.id}`, "Could not put the picture back", () => { x.images = now; imgGone = g; },
+    () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/images`, { images: g.was }))) await getNotes(d.id, true);
+}
+
+/** A picture whole, over the page: the line it is on under it, ‹ and › to
+ *  the line's others, and the way to take it off the line. Esc, or a click
+ *  on the dark around it, closes it, and the focus goes back to the row. */
+function openLightbox(id, i, from) {
+  const x = noteList.find(y => y.id === id);
+  if (!x || !x.images?.length) return;
+  closeLightbox();
+  const el = document.createElement("div");
+  el.className = "dk-lb"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "A picture on a note");
+  lightbox = { el, id, i: Math.max(0, Math.min(i, x.images.length - 1)), from };
+  const show = () => {
+    const y = noteList.find(z => z.id === lightbox.id);
+    if (!y || !y.images?.length) return closeLightbox();
+    lightbox.i = Math.min(lightbox.i, y.images.length - 1);
+    const n = y.images[lightbox.i], u = imgUrls.get(n), many = y.images.length > 1;
+    el.innerHTML = `<figure><img alt="${ctx.esc(y.text)}" data-img="${ctx.esc(n)}"${typeof u === "string" ? ` src="${u}"` : ""}>` +
+      `<figcaption><span class="t">${ctx.esc(y.text)}</span>${many ? `<span class="k">${lightbox.i + 1} of ${y.images.length}</span>` : ""}` +
+      (many ? `<button type="button" data-lb="prev" aria-label="The picture before">‹</button><button type="button" data-lb="next" aria-label="The picture after">›</button>` : "") +
+      `<button type="button" data-lb="off">Remove from this note</button><button type="button" data-lb="close">Close</button></figcaption></figure>`;
+    if (typeof u !== "string") loadImgs();
+    el.querySelector("[data-lb=close]").focus();
+  };
+  lightbox.show = show;
+  el.addEventListener("click", e => {
+    const b = e.target.closest("[data-lb]");
+    if (!b) { if (e.target === el) closeLightbox(); return; }
+    const y = noteList.find(z => z.id === lightbox.id), k = b.dataset.lb;
+    if (k === "close") closeLightbox();
+    else if (k === "off") { const at = lightbox.i; closeLightbox(); dropImage(id, at); }
+    else if (y) { lightbox.i = (lightbox.i + (k === "next" ? 1 : y.images.length - 1)) % y.images.length; show(); }
+  });
+  el.addEventListener("keydown", e => {
+    // The desk gives keys to the focused panel; these are the picture's.
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); closeLightbox(); }
+    else if (e.key === "ArrowRight" || e.key === "ArrowLeft") el.querySelector(`[data-lb=${e.key === "ArrowRight" ? "next" : "prev"}]`)?.click();
+  });
+  document.body.append(el);
+  show();
+}
+function closeLightbox() {
+  if (!lightbox) return;
+  const { el, from } = lightbox;
+  lightbox = null;
+  el.remove();
+  if (from?.isConnected) from.focus({ preventScroll: true });
+}
+
+/** Pictures dropped on a line's row go on that line; dropped on the new-line
+ *  field, they wait for it. The row the drop would land on is marked. */
+function dragOver(e) {
+  if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+  const row = e.target.closest(".dk-note:not(.gone, .dk-sug)");
+  ctx.tocEl.querySelector(".dk-note.drop")?.classList.remove("drop");
+  if (!row || !ctx.tocEl.querySelector(".dk-notes")?.contains(row)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+  row.classList.add("drop");
+}
+function dragLeave(e) { if (!ctx.tocEl.contains(e.relatedTarget)) ctx.tocEl.querySelector(".dk-note.drop")?.classList.remove("drop"); }
+function dropped(e) {
+  const row = e.target.closest(".dk-note:not(.gone, .dk-sug)");
+  ctx.tocEl.querySelector(".dk-note.drop")?.classList.remove("drop");
+  if (!row) return;
+  const fs = images(e.dataTransfer);
+  e.preventDefault();
+  if (!fs.length) return;
+  if (row.classList.contains("new")) { pending = [...pending, ...fs]; rail(); return; }
+  const n = row.querySelector("[data-a=note-tick]")?.dataset.n;
+  if (n) putImages(+n, fs);
+}
+
+/** From the row's menu: the system's file picker, pictures only. */
+function pickImages(id) {
+  const inp = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp", multiple: true });
+  inp.addEventListener("change", () => putImages(id, images(inp)));
+  inp.click();
 }
 
 /** Copy a tick's commit, and say so where it is: the hash reads "copied" for
@@ -1972,6 +2207,7 @@ function waitingFirst(d) {
 function forgetNotes() {
   clearTimeout(backTimer);
   noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null;
+  clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
 
 /** This desk's list. Asked for once, unless a write says to look again. */
@@ -1985,7 +2221,7 @@ async function getNotes(id, again) {
   notesGet = null; notesOff = null;
   // The desk was swapped while this was in flight: its list is not this one's.
   if (id !== deskId) return;
-  // A read that lands between Clear done and the daemon hearing of it would
+  // A read that lands between Remove done notes and the daemon hearing of it would
   // put the cleared lines back for a moment.
   const off = cleared && cleared.at === id ? new Set(cleared.xs.map(x => x.id)) : null;
   // A line just taken off keeps its row and its Undo through a read: this
@@ -2033,8 +2269,19 @@ function noteFocus() {
     e.stopPropagation();
     // Shift+Enter is a new line in the card; Enter alone keeps it.
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveNote(true); }
-    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; noteErr = ""; rail(); }
+    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; noteErr = ""; pending = []; rail(); }
   });
+  // A picture pasted into the field: onto the line being rewritten at once,
+  // or held for the new line until Enter makes it.
+  inp.addEventListener("paste", e => {
+    const fs = images(e.clipboardData);
+    if (!fs.length) return;
+    e.preventDefault();
+    if (noteField && noteField.kind === "edit") putImages(noteField.id, fs);
+    else { pending = [...pending, ...fs]; rail(); }
+  });
+  // Its ✕ must not take the focus from the field: leaving the field keeps the line.
+  ctx.tocEl.querySelector("[data-a=pend-x]")?.addEventListener("mousedown", e => e.preventDefault());
   inp.addEventListener("blur", () => { if (!drawing) saveNote(false); });
   inp.focus();
   const at = Math.min(noteCaret, inp.value.length);
@@ -2045,10 +2292,13 @@ function noteFocus() {
  *  next one: a list is written in a run, not one visit per line. An emptied
  *  line is taken off, with its Undo, rather than kept blank. */
 async function saveNote(again) {
-  const f = noteField, text = noteDraft.trim(), d = current();
+  const f = noteField, d = current(), pics = f && f.kind === "new" ? pending : [];
+  // A line that is only a picture still needs words to be a line: these,
+  // until the reader writes their own.
+  const text = noteDraft.trim() || (pics.length ? "A picture" : "");
   if (!f || !d) return;
   noteField = again && f.kind === "new" ? { kind: "new" } : null;
-  noteDraft = ""; noteCaret = 0; noteErr = "";
+  noteDraft = ""; noteCaret = 0; noteErr = ""; if (f.kind === "new") pending = [];
   rail();
   if (f.kind === "new" && !text) return;
   // A line rewritten to nothing is a line taken off, which is what the ✕
@@ -2056,7 +2306,10 @@ async function saveNote(again) {
   // Undo brings back the text it had.
   if (!text) return act({ dataset: { a: "note-x", n: String(f.id) } });
   try {
-    if (f.kind === "new") await ctx.api(`/api/desks/${d.id}/notes`, { text });
+    if (f.kind === "new") {
+      const j = await ctx.api(`/api/desks/${d.id}/notes`, { text });
+      if (pics.length && j.note) await putImages(j.note.id, pics);
+    }
     else await ctx.api(`/api/desks/${d.id}/notes/${f.id}`, { text });
     await getNotes(d.id, true);
   } catch (e) {
@@ -2064,7 +2317,7 @@ async function saveNote(again) {
     // and the reason stands under it until the next key.
     const why = `Could not ${f.kind === "new" ? "add the note" : "keep the change"} · ${ctx.sayErr(e).why}`;
     if (d !== current()) return ctx.toast(why, text);
-    noteField = f; noteDraft = text; noteCaret = text.length; noteErr = why;
+    noteField = f; noteDraft = text; noteCaret = text.length; noteErr = why; if (f.kind === "new") pending = pics;
     rail();
   }
 }
@@ -2079,7 +2332,10 @@ export async function docs() {
   try { j = await ctx.api(`/api/desks/${id}/docs`); }
   catch { if (id === deskId) { docsOff = id; if (current()) rail(); } return; }
   if (id !== deskId) return;
-  docList = j.docs || []; docsAt = id; docsOff = null;
+  docList = j.docs || []; docOff = j.removed || []; docsAt = id; docsOff = null;
+  // The row holding an Undo is the same document as the one in the list,
+  // not a stale copy of it, so the draw can find it by identity.
+  if (docGone) { const x = docList.find(y => y.id === docGone.x.id); if (x) docGone.x = x; }
   if (current()) rail();
 }
 
@@ -2152,7 +2408,7 @@ function pointSec(vs) {
   const { esc } = ctx;
   const has = vs.filter(v => (points.get(v.id) || []).length || (pointSaid && pointSaid.p === v.id));
   if (!has.length) return "";
-  return `<div class="dk-points"><div class="t-label dk-lab" title="Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.">Points</div>` +
+  return `<div class="dk-points" data-part="rail.points"><div class="t-label dk-lab" title="Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.">Points</div>` +
     has.map(v => {
       const ps = points.get(v.id) || [], live = ps.filter(x => !x.gone).length;
       return `<ul class="dk-list">` + ps.map((x, i) => x.gone
@@ -2279,6 +2535,34 @@ async function act(b, byKey) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
+    // Off this desk's list, and back: the row keeps its place with an Undo,
+    // as a note's does, and the daemon is told after the rail has changed.
+    else if (a === "doc-x") {
+      const i = docList.findIndex(y => y.id === b.dataset.d), x = docList[i];
+      if (x) {
+        clearTimeout(docTimer);
+        if (docGone) { const g = docGone.x; docList = docList.filter(y => y !== g); if (!docOff.some(y => y.id === g.id)) docOff = [g, ...docOff]; }
+        docGone = { at: d.id, x, i: docList.indexOf(x) };
+        docTimer = setTimeout(() => {
+          if (docGone && docGone.x === x) { docGone = null; docList = docList.filter(y => y !== x); if (!docOff.some(y => y.id === x.id)) docOff = [x, ...docOff]; }
+          if (current()) rail();
+        }, BACK_MS);
+        rail();
+        if (byKey) ctx.tocEl.querySelector(`[data-a="doc-back"][data-d="${window.CSS.escape(x.id)}"]`)?.focus();
+        await told(b.dataset, `d${x.id}`, "Could not remove it", () => { clearTimeout(docTimer); docGone = null; },
+          () => ctx.api(`/api/desks/${d.id}/docs/${encodeURIComponent(x.id)}/remove`, {}));
+      }
+    } else if (a === "doc-back") {
+      const id = b.dataset.d, g = docGone && docGone.x.id === id ? docGone : null;
+      const x = g ? g.x : docOff.find(y => y.id === id);
+      if (x) {
+        if (g) { clearTimeout(docTimer); docGone = null; if (!docList.includes(x)) docList.splice(Math.min(g.i, docList.length), 0, x); }
+        else { docOff = docOff.filter(y => y !== x); docList = [...docList, x].sort((p, q) => q.received_at - p.received_at); }
+        rail();
+        if (await told(b.dataset, `d${id}`, "Could not put it back", () => { docList = docList.filter(y => y !== x); if (g) docGone = g; else docOff = [x, ...docOff]; },
+          () => ctx.api(`/api/desks/${d.id}/docs/${encodeURIComponent(id)}/restore`, {}))) docs();
+      }
+    } else if (a === "doc-offs") { offShown = !offShown; rail(); }
     else if (a === "reload") { if (b.dataset.w === "docs") { docsOff = null; docs(); } else { notesOff = null; getNotes(d.id, true); } }
     else if (a === "put" && v) put(v);
     else if (a === "again" && v) again(v);
@@ -2302,7 +2586,11 @@ async function act(b, byKey) {
     }
     // The list. Each of these draws first and tells the daemon after: on a
     // list, the thing that has to feel instant is the tick.
-    else if (a === "note-new") { noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; rail(); }
+    else if (a === "note-new") {
+      // From the head of a folded list: the list opens, and stays open.
+      if (secFolded("notes")) { try { localStorage.setItem(FOLD("notes"), "0"); } catch {} }
+      noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; rail();
+    }
     else if (a === "note-edit") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) { noteField = { kind: "edit", id: x.id }; noteDraft = x.text; noteCaret = x.text.length; rail(); }
@@ -2318,7 +2606,11 @@ async function act(b, byKey) {
         if (await told(b.dataset, `n${x.id}`, `Could not ${x.done ? "tick" : "untick"} this`, () => { x.done = !x.done; },
           () => ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done }))) { if (last && ctx.done) ctx.done(); await getNotes(d.id, true); }
       }
-    } else if (a === "note-sha" || a === "want-copy") copySha(b);
+    } else if (a === "note-img") openLightbox(+b.dataset.n, +b.dataset.i, b);
+    else if (a === "img-x") dropImage(+b.dataset.n, +b.dataset.i);
+    else if (a === "img-back") imgBack();
+    else if (a === "pend-x") { pending = []; rail(); }
+    else if (a === "note-sha" || a === "want-copy") copySha(b);
     else if (a === "note-doc") ctx.read(b.dataset.d);
     else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
     else if (a === "note-keep") {
@@ -2370,7 +2662,7 @@ async function act(b, byKey) {
         cleared = { at: d.id, xs };
         backTimer = setTimeout(() => { cleared = null; if (current()) rail(); }, BACK_MS);
         rail();
-        if (!(await told(b.dataset, "clear", "Could not clear the done notes", () => { clearTimeout(backTimer); cleared = null; noteList = was; },
+        if (!(await told(b.dataset, "clear", "Could not remove the done notes", () => { clearTimeout(backTimer); cleared = null; noteList = was; },
           () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {})))))) getNotes(d.id, true);
       }
     } else if (a === "note-unclear" && cleared) {
@@ -2625,7 +2917,11 @@ function detach() {
   ctx.docEl.removeEventListener("click", click);
   ctx.tocEl.removeEventListener("click", click);
   ctx.tocEl.removeEventListener("toggle", folded, true);
+  ctx.tocEl.removeEventListener("dragover", dragOver);
+  ctx.tocEl.removeEventListener("dragleave", dragLeave);
+  ctx.tocEl.removeEventListener("drop", dropped);
   ctx.metaEl.removeEventListener("click", click);
+  closeLightbox();
   document.removeEventListener("keydown", keys, true);
   document.removeEventListener("mouseup", pickUp);
   document.removeEventListener("keyup", pickKey);
@@ -2654,7 +2950,7 @@ export function open(c) {
   if (first) measure();
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
-    docList = []; docsAt = null; docsAll = false; forgetNotes(); hidePoints();
+    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); hidePoints();
     focused = null; full = false;
   }
   deskId = c.id; reading = null;
@@ -2667,6 +2963,9 @@ export function open(c) {
   ctx.docEl.addEventListener("click", click);
   ctx.tocEl.addEventListener("click", click);
   ctx.tocEl.addEventListener("toggle", folded, true);
+  ctx.tocEl.addEventListener("dragover", dragOver);
+  ctx.tocEl.addEventListener("dragleave", dragLeave);
+  ctx.tocEl.addEventListener("drop", dropped);
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
   // A passage selected in a document read over the desk can be kept as a
@@ -2783,7 +3082,8 @@ export function actions(el) {
     return { head: x.title, items: [
       { label: "Open", moves: 1, run: () => ctx.read(x.id) },
       x.source_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.source_path); ctx.toast("Copied", x.source_path); } },
-      { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } },
+      { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } }, R,
+      { label: "Remove from this list", run: () => act({ dataset: { a: "doc-x", d: x.id } }) },
     ] };
   }
   const point = el.closest(".dk-point");
@@ -2803,10 +3103,11 @@ export function actions(el) {
     return { head: x.text, items: [
       { label: "Edit", run: does("note-edit") },
       { label: x.done ? "Untick" : "Tick", run: does("note-tick") },
+      { label: "Add a picture…", run: () => pickImages(x.id) },
       ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
       ...(x.done && x.done_commit ? [{ label: "Copy commit", run: () => copySha(note.querySelector(".dk-sha")) }] : []), R,
-      { label: "Take off the list", danger: true, run: does("note-x") },
-      ...(noteList.some(y => y.done && !y.gone) ? [{ label: "Clear done", run: does("note-clear") }] : []),
+      { label: "Remove from the list", danger: true, run: does("note-x") },
+      ...(noteList.some(y => y.done && !y.gone) ? [{ label: "Remove done notes", run: does("note-clear") }] : []),
     ] };
   }
   return null;
@@ -2864,7 +3165,7 @@ export function close() {
   for (const v of [...views.values()]) dropView(v);
   focused = null;
   docList = []; docsAt = null; docsAll = false;
-  forgetNotes(); hidePoints();
+  forgetDocs(); forgetNotes(); hidePoints();
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
@@ -3058,8 +3359,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-lab { display: flex; align-items: baseline; padding-left: 8px; }
 .dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .dk-lab .n i { font-style: normal; }
+.dk-lab .n b { font-weight: inherit; color: var(--accent); }
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; }
-.dk-foot + .dk-sec { margin-top: 16px; }
+/* The rail's parts, one under the other, the same distance apart. */
+.dk-rail > * + * { margin-top: 16px; }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
  * lines -- and these are rows, so both are undone at #toc's own weight. */
 #toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }
@@ -3130,7 +3433,20 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-doc .dk-tools button { background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2); }
 .dk-doc.on .dk-tools button { color: var(--accent); opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
 .dk-doc .dk-tools button:hover { background: var(--accent); color: var(--on-accent); box-shadow: none; }
-.dk-docs .title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* One line of title, and two on the row being read: a list is for finding
+ * a row, and the one open is the one worth reading whole. */
+.dk-docs .title { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.dk-doc.on .title { -webkit-line-clamp: 2; }
+/* A box of its own height that scrolls inside the rail: thirty rows of a
+ * busy day never push the notes out of reach. */
+#toc .dk-docs { max-height: min(360px, 45vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* What the reader removed from the list: named in a line, and opened under
+ * it, each row with its Undo at rest. */
+#toc .dk-offs-line { margin: 4px 8px 0; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.dk-link { color: var(--fg-2); border-radius: 3px; }
+.dk-link:hover { color: var(--accent); }
+.dk-doc.off a { opacity: .7; }
+.dk-doc.off .dk-undo { margin-right: 3px; }
 .dk-docs .by .slot { font-size: inherit; color: inherit; }
 .dk-panes .slot::before { content: "["; } .dk-panes .slot::after { content: "]"; }
 .dk-docs .k { font-family: var(--mono); font-size: 10px; color: var(--fg-3); flex: none; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
@@ -3153,7 +3469,6 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * A line wraps rather than being cut. A pane's title is a name and a name that
  * does not fit can be shortened; a note is a sentence, and half of it is not a
  * smaller version of it. */
-.dk-sec + .dk-notes { margin-top: 16px; }
 .dk-note { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; border-radius: 6px; transition: background var(--t); }
 .dk-note:hover { background: var(--rule); }
 .dk-note { position: relative; }
@@ -3209,9 +3524,43 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
 .dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-/* Clear done's answer, in the foot beside + New note where the button was. */
-.dk-foot > .dk-cleared { flex: 1; min-width: 0; align-items: center; padding: 0 0 0 8px; }
-.dk-foot > .dk-cleared > .nm { text-decoration: none; }
+/* The list's head carries its two actions over the right end of the
+ * summary, in room the summary keeps for them, so nothing moves as they
+ * come and go -- and Remove done notes' answer, with its Undo, in their place. */
+.dk-notes-part { position: relative; }
+.dk-notes > summary { padding-right: 52px; }
+.dk-notes-part.undo .dk-notes > summary .n { visibility: hidden; }
+.dk-sec-acts { position: absolute; top: 5px; right: 0; display: flex; align-items: center; gap: 2px; }
+.dk-sec-acts > button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.dk-sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
+.dk-act-room { width: 20px; }
+.dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: 11px; color: var(--fg-3); background: var(--bg-side); animation: dk-fade 140ms ease-out; }
+/* A line's pictures: small, on a line of their own under its text, lined up
+ * with it -- the row grows by their height once, when one is added, and
+ * never under the pointer. */
+.dk-imgs { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 8px 6px 26px; }
+.dk-img { display: block; width: 44px; height: 32px; padding: 0; border-radius: 4px; overflow: hidden; background: var(--rule); box-shadow: 0 0 0 1px var(--rule-2); }
+.dk-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.dk-img:hover { box-shadow: 0 0 0 1.5px var(--accent); }
+.dk-imgs > .dk-img-gone { flex: 1; min-width: 0; padding: 0; }
+/* Pictures waiting on the new line, under its field. */
+.dk-pend { flex: 1 0 100%; display: flex; align-items: center; gap: 4px; padding: 0 8px 4px 26px; font-size: 11px; color: var(--fg-2); }
+.dk-pend button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; color: var(--fg-3); }
+.dk-pend button:hover { background: var(--rule-2); color: var(--fg); }
+/* The row a dragged picture would land on. */
+.dk-note.drop { background: var(--accent-bg); box-shadow: inset 0 0 0 1px var(--accent); }
+/* A picture whole, over the page. */
+.dk-lb { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; padding: 32px; background: var(--scrim); animation: dk-fade 120ms ease-out; }
+.dk-lb figure { margin: 0; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.dk-lb img { display: block; max-width: min(1400px, calc(100vw - 64px)); max-height: calc(100vh - 120px); object-fit: contain; border-radius: 6px; background: var(--bg-raise); box-shadow: var(--shadow); }
+.dk-lb figcaption { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px 6px 12px; border-radius: 8px; background: var(--bg-raise); box-shadow: var(--shadow); font-size: 12px; color: var(--fg-2); }
+.dk-lb figcaption .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.dk-lb figcaption .k { font-family: var(--mono); font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.dk-lb figcaption button { flex: none; padding: 3px 8px; border-radius: 4px; color: var(--fg-2); }
+.dk-lb figcaption button:hover { background: var(--rule-2); color: var(--fg); }
+/* An empty list's line is the way to its first note. */
+#toc .dk-first { display: block; text-align: left; cursor: text; }
+#toc .dk-first:hover { color: var(--fg-2); }
 /* ---------- points ----------
  * The control by a selection: small, on the page's raised ground, where the
  * selection ends. And the kept points under the panels, on the list's own
@@ -3220,7 +3569,6 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-pick { position: fixed; z-index: 30; padding: 4px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; color: var(--accent); background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2), 0 4px 14px rgb(0 0 0 / .18); animation: dk-fade 120ms ease-out; }
 .dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .dk-pick:disabled { cursor: default; }
-.dk-points { margin-top: 16px; }
 .dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .dk-put { color: var(--accent); }
 #toc .dk-said { margin-top: 4px; color: var(--fg-2); }

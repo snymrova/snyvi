@@ -1202,9 +1202,12 @@ pre.code .ln::before { cursor: pointer; }
 :root[data-wrap="1"] .kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln { padding-left: var(--gutter); text-indent: calc(-1 * var(--gutter)); }
 
 /* Capped and scrollable on its own, for a file with forty versions behind it:
-   the contents above it must never be squeezed out of the pane entirely. */
-#meta { flex: none; max-height: 50%; overflow-y: auto; margin-top: 28px; padding-right: 20px; color: var(--fg-3); line-height: 1.7; }
-#toc:empty + #meta { margin-top: 0; }
+   the contents above it must never be squeezed out of the pane entirely.
+   It has a place of its own, rail.foot: the foot of the rail, under a rule,
+   whatever the list above it holds -- a short list no longer pulls it up to
+   the middle of the rail, and a long one scrolls above it. */
+#meta { flex: none; max-height: 50%; overflow-y: auto; margin-top: auto; padding: 12px 20px 0 0; border-top: 1px solid var(--rule); color: var(--fg-3); line-height: 1.7; }
+#meta:empty { padding: 0; border-top: 0; }
 #meta .row { display: flex; gap: 8px; }
 #meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; flex: none; }
 /* Long folder and file names wrap inside the rail rather than running off it. */

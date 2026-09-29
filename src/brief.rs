@@ -195,6 +195,7 @@ mod tests {
             done_doc: String::new(),
             done_evidence: String::new(),
             suggested_by: String::new(),
+            images: Vec::new(),
         }
     }
 

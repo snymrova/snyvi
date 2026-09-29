@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   done_commit TEXT NOT NULL DEFAULT '',
   done_doc TEXT NOT NULL DEFAULT '',
   done_evidence TEXT NOT NULL DEFAULT '',
-  suggested_by TEXT NOT NULL DEFAULT ''
+  suggested_by TEXT NOT NULL DEFAULT '',
+  images TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
@@ -219,6 +220,28 @@ pub struct DeskNote {
     /// Keep and ✕, and on the list only once kept. The agent's name.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub suggested_by: String,
+    /// Pictures on the line -- a screenshot of the thing it is about -- by
+    /// file name in `note_images/` under the data dir (`NOTE_IMAGES`): the
+    /// content's hash and its extension, so the same picture is one file.
+    /// The agent's read (`pane_notes`) gets them as absolute paths.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+}
+
+/// Where a note's pictures are kept, under the data dir. Nothing here is
+/// removed when a picture comes off a line: taking it off is Undo-able, and a
+/// file shared by two lines is still the other's.
+pub const NOTE_IMAGES: &str = "note_images";
+/// How many pictures one line holds.
+pub const IMAGES_PER_NOTE: usize = 6;
+
+/// A picture's name as `note_images` holds it: 16 hex characters and one of
+/// the four extensions. Anything else never reaches a path.
+pub fn image_name_ok(name: &str) -> bool {
+    let Some((hash, ext)) = name.split_once('.') else { return false };
+    hash.len() == 16
+        && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && matches!(ext, "png" | "jpg" | "gif" | "webp")
 }
 
 /// A pane, which in this phase is a workspace row and no process.
@@ -929,7 +952,7 @@ pub fn clear(conn: &Connection) -> Result<()> {
 /// the row under the reader's cursor on every keystroke they finished.
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
-        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by FROM desk_notes
+        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -991,6 +1014,7 @@ pub fn add_note(
         done_doc: String::new(),
         done_evidence: String::new(),
         suggested_by: String::new(),
+        images: Vec::new(),
     }))
 }
 
@@ -1182,6 +1206,7 @@ pub fn suggest_note(
         done_doc: String::new(),
         done_evidence: String::new(),
         suggested_by: by,
+        images: Vec::new(),
     }))
 }
 
@@ -1308,7 +1333,48 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done_doc: r.get(6)?,
         done_evidence: r.get(7)?,
         suggested_by: r.get(8)?,
+        images: r.get::<_, String>(9)?.split_whitespace().map(String::from).collect(),
     })
+}
+
+/// Put one more picture on a line, at the end. `None` when there is no such
+/// line or it already holds `IMAGES_PER_NOTE`; the list it has now otherwise.
+pub fn add_note_image(conn: &Connection, desk_id: i64, id: i64, name: &str) -> Result<Option<Vec<String>>> {
+    let had: Option<String> = conn
+        .query_row(
+            "SELECT images FROM desk_notes WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+            params![desk_id, id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(had) = had else { return Ok(None) };
+    let mut list: Vec<String> = had.split_whitespace().map(String::from).collect();
+    if !list.iter().any(|n| n == name) {
+        list.push(name.to_string());
+    }
+    if !set_note_images(conn, desk_id, id, &list)? {
+        return Ok(None);
+    }
+    Ok(Some(list))
+}
+
+/// A line's pictures, replaced whole: an added one appended, a removed one
+/// left out, and Undo sending back the list it had. Names that are not a
+/// picture's are refused rather than kept. False when there is no such line.
+pub fn set_note_images(conn: &Connection, desk_id: i64, id: i64, images: &[String]) -> Result<bool> {
+    if images.len() > IMAGES_PER_NOTE || !images.iter().all(|n| image_name_ok(n)) {
+        return Ok(false);
+    }
+    let mut seen = Vec::new();
+    for n in images {
+        if !seen.contains(n) {
+            seen.push(n.clone());
+        }
+    }
+    Ok(conn.execute(
+        "UPDATE desk_notes SET images = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        params![desk_id, id, seen.join(" ")],
+    )? > 0)
 }
 
 /// The folder's own name, which is what the reader right-clicked and so what
@@ -1481,6 +1547,40 @@ mod tests {
         assert!(!remove_note(&conn, yours, n.id, 1).unwrap());
         assert_eq!(notes(&conn, mine).unwrap()[0].text, "mine");
         assert!(notes(&conn, yours).unwrap().is_empty());
+    }
+
+    /// A line's pictures: by name only, a name that is a picture's, each once,
+    /// up to the cap, on its own desk's lines; taking one off and Undo are
+    /// both the list set whole.
+    #[test]
+    fn a_line_holds_its_pictures_by_name_and_gives_them_back() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let yours = create(&conn, "/yours", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "this spacing", 0).unwrap().unwrap();
+        let a = "0123456789abcdef.png".to_string();
+        let b = "fedcba9876543210.webp".to_string();
+        assert_eq!(add_note_image(&conn, mine, n.id, &a).unwrap(), Some(vec![a.clone()]));
+        // The same picture twice is on the line once.
+        assert_eq!(add_note_image(&conn, mine, n.id, &a).unwrap(), Some(vec![a.clone()]));
+        assert_eq!(add_note_image(&conn, mine, n.id, &b).unwrap(), Some(vec![a.clone(), b.clone()]));
+        assert_eq!(notes(&conn, mine).unwrap()[0].images, [a.clone(), b.clone()]);
+        // Not across desks, and nothing that could be a path.
+        assert_eq!(add_note_image(&conn, yours, n.id, &a).unwrap(), None);
+        for bad in ["../../etc/passwd", "0123456789abcdef.svg", "0123456789ABCDEF.png", "abc.png", "0123456789abcdef"] {
+            assert!(!image_name_ok(bad), "{bad}");
+            assert!(!set_note_images(&conn, mine, n.id, &[bad.to_string()]).unwrap());
+        }
+        // One off, and Undo puts the list back as it was.
+        assert!(set_note_images(&conn, mine, n.id, &[b.clone()]).unwrap());
+        assert_eq!(notes(&conn, mine).unwrap()[0].images, [b.clone()]);
+        assert!(set_note_images(&conn, mine, n.id, &[a.clone(), b.clone()]).unwrap());
+        assert_eq!(notes(&conn, mine).unwrap()[0].images, [a.clone(), b]);
+        // The cap.
+        let many: Vec<String> = (0..=IMAGES_PER_NOTE).map(|i| format!("{i:016x}.png")).collect();
+        assert!(!set_note_images(&conn, mine, n.id, &many).unwrap());
+        assert!(set_note_images(&conn, mine, n.id, &many[..IMAGES_PER_NOTE]).unwrap());
+        assert_eq!(add_note_image(&conn, mine, n.id, &a).unwrap(), None, "a full line takes no more");
     }
 
     /// An agent ticks only: an open line on its own desk, once, with its name

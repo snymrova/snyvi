@@ -2693,6 +2693,10 @@ mod tests {
         fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
         let mut u = updater(&tmp, &exe, fake);
         u.key = Some(minisign_verify::PublicKey::decode(TEST_PUB).unwrap());
+        // On 1.0.0 whatever this build's own version is, so a bump past the
+        // fixture's 1.9.9 does not turn the check into "nothing newer".
+        u.running = semver::Version::parse("1.0.0").unwrap();
+        u.forget_current();
         let c = u.check(Ask::TIMER, None).unwrap();
         assert!(c.newer());
         assert_eq!(c.ready.as_deref(), Some("1.9.9"));

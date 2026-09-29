@@ -2856,6 +2856,13 @@
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
   }
+  /** A desk route's bytes, for what an <img> cannot fetch itself: it has no
+   *  header to carry the capability in. A picture on a note, drawn from these. */
+  async function deskBlob(path) {
+    const r = await fetch(path, { headers: { "x-snyvi-capability": capability } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.blob();
+  }
   /* Everything a folder or a desk can be *asked* to do waits for a pointer --
    * a right-click, the desk glyph on a row, the row that opens a folder, the
    * ✕ on a desk -- so it is ui/menu.js, fetched on the first such click and
@@ -3008,7 +3015,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3358,6 +3365,8 @@
       renderBrowse();
     });
     es.addEventListener("pinned", async () => { await refreshTree(); deskDocs(); });
+    // A document taken off a desk's list, or put back, in another window.
+    es.addEventListener("deskdocs", deskDocs);
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());

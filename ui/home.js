@@ -1,15 +1,19 @@
 /* Home: the page the mark opens, at `/`. The doorway to an evening's work.
  *
- * Four questions, in the order a maker asks them. Which project tonight, and
- * where was I? -- the Pick up card: the desk touched last (or the one the
- * reader keeps there), where it was left, what is open, what git says, one
- * button with Enter on it, and the other desks beside it with their age. Does
- * anything need me? -- one status line under the title, which the rail and
- * the sidebar answer too, so it is a line and not three boxes. Did I leave a
- * trail? -- Your days: what was ticked, sent, left off and committed, day by
- * day, and a week of it as a document on a button. Is this project alive? --
- * Projects: eight weeks of each desk, quietly, and "Park it?" for one that has
- * gone quiet. No streaks, no red, no scores: a hobby is not a KPI.
+ * A page for planning, so it looks ahead and not back: the desks, and what is
+ * open on each. Which project tonight, and where was I? -- the Pick up card:
+ * the desk touched last (or the one the reader keeps there), where it was
+ * left, its open notes, what git says, one button with Enter on it. What is
+ * open everywhere else? -- Desks: every other desk with where it was left and
+ * its first open notes, each tickable where it stands, and a line to add one
+ * without opening the desk. Does anything need me? -- one status line under
+ * the title, which the rail and the sidebar answer too, so it is a line and
+ * not three boxes. Is this project alive? -- Projects: eight weeks of each
+ * desk, quietly, and "Park it?" for one that has gone quiet. And the trail --
+ * what was ticked, sent, left off and committed, day by day -- is This week,
+ * folded at the foot, with the week as a document on a button: kept, and no
+ * longer what the page leads with. No streaks, no red, no scores: a hobby is
+ * not a KPI.
  *
  * One call (`GET /api/home`), drawn whole, and drawn again when the daemon
  * says something it shows has moved -- panes, a panel's context, the desks, a
@@ -37,16 +41,14 @@ const CSS = `
 .hm-status a:hover { color: var(--fg); text-decoration: underline; }
 .hm-status.ring .hm-ring { color: var(--warn); font-weight: 600; }
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
-/* Pick up and the log on the left, the side column beside both. */
-.hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); grid-template-rows: auto 1fr; grid-template-areas: "pick side" "days side"; gap: 32px 48px; align-items: start; }
-.hm-grid.no-days { grid-template-rows: auto; grid-template-areas: "pick side"; }
-.hm-grid.no-side { grid-template-columns: minmax(0, 1fr); grid-template-areas: "pick" "days"; }
+/* Pick up, the desks and the week on the left, the side column beside them. */
+.hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
+.hm-grid.no-side { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
 @container (max-width: 760px) {
-  .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "pick" "days" "side"; }
-  .hm-grid.no-days { grid-template-areas: "pick" "side"; }
-  .hm-grid.no-side { grid-template-areas: "pick" "days"; }
+  .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "side"; }
+  .hm-grid.no-side { grid-template-areas: "main"; }
 }
-.hm-grid > [data-w=days] { grid-area: days; }
+.hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
 .hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 /* A section: a label on a hairline, and space doing the rest. */
 .hm-w { min-width: 0; }
@@ -72,7 +74,7 @@ const CSS = `
 .hm-dot.work { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok), transparent 75%); }
 .hm-dot.need { background: var(--warn); }
 /* Pick up: the one card on the page. */
-.hm-pick { grid-area: pick; padding: 18px 20px 16px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow-1); min-width: 0; }
+.hm-pick { padding: 18px 20px 16px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow-1); min-width: 0; }
 .hm-pick > h2 { margin: 0 0 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); }
 .hm-pk-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
 .hm-pk-name { font-size: var(--fs-h3); font-weight: 650; letter-spacing: -.01em; color: var(--fg); text-decoration: none; }
@@ -85,10 +87,43 @@ const CSS = `
 .hm-pk-left a:hover { text-decoration-color: currentColor; }
 .hm-pk-left .fact { color: var(--fg-3); margin-left: 4px; }
 .hm-pk-left code, .hm-log code { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); }
-.hm-next { list-style: none; margin: 0 0 12px; padding: 0; font-size: var(--fs-ui); }
-.hm-next li { display: flex; gap: 8px; padding: 2px 0; min-width: 0; }
-.hm-next li::before { content: "○"; flex: none; color: var(--fg-3); }
-.hm-next li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A desk's open notes, each with the circle that ticks it where it stands. */
+.hm-next { list-style: none; margin: 0 0 8px; padding: 0; font-size: var(--fs-ui); }
+.hm-next li { display: flex; align-items: center; gap: 8px; min-height: 24px; min-width: 0; }
+.hm-nt-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-nt.done .hm-nt-t { color: var(--fg-3); text-decoration: line-through; }
+.hm-next .hm-s a { color: inherit; }
+.hm-next .hm-s a:hover { color: var(--fg); }
+.hm-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; padding: 0; border: 0; border-radius: 50%; background: none; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; cursor: pointer; transition: box-shadow var(--t), background var(--t); }
+.hm-tick::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; }
+.hm-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.hm-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
+.hm-tick svg { width: 9px; height: 9px; }
+.hm-err { color: var(--danger); }
+/* A line added from Home: the field in the list's own place, under it. */
+.hm-add { display: flex; align-items: center; gap: 10px; min-height: 24px; margin: 0 0 4px 20px; }
+.hm-add input { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-ui); padding: 3px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.hm-addb { display: block; min-height: 24px; margin: 0 0 4px 20px; color: var(--fg-3); }
+.hm-pick :is(.hm-addb, .hm-add) { margin-bottom: 12px; }
+.hm-next .hm-nt-more { padding-left: 20px; }
+/* Desks: every other desk, a block each, on the page's own ground. */
+.hm-dks { display: grid; gap: 20px; }
+.hm-dk { min-width: 0; }
+.hm-dk-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin: 0 0 4px; }
+.hm-dk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body-s); font-weight: 600; color: var(--fg); text-decoration: none; }
+.hm-dk-name:hover { text-decoration: underline; }
+.hm-dk-top .hm-dots { align-self: center; }
+.hm-dk-top .fact { color: var(--fg-3); }
+.hm-dk-top .hm-dk-n { margin-left: auto; }
+.hm-dk-left { margin: 0 0 4px; font-size: var(--fs-small); line-height: 1.55; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-dk-left b { font-weight: 500; color: var(--fg-3); margin-right: 6px; }
+.hm-dk .hm-next { margin: 0; }
+/* This week: the log, folded under the desks until it is asked for. */
+.hm-week > summary { list-style: none; cursor: pointer; }
+.hm-week > summary::-webkit-details-marker { display: none; }
+.hm-week > summary > .s-chev { margin-left: 2px; }
+.hm-week:not([open]) > summary { margin-bottom: 0; }
+.hm-week-act { margin: 0 0 12px; }
 .hm-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; margin: 0; font-size: var(--fs-small); color: var(--fg-2); }
 .hm-facts .fact { color: var(--fg); }
 .hm-git { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
@@ -158,7 +193,7 @@ a.hm-panels:hover { color: var(--fg); }
 /** The widgets that can be hidden, in the order they stand. Pick up cannot:
  *  it is what the page is for. */
 const WIDGETS = [
-  ["days", "Your days"],
+  ["desks", "Desks"],
   ["projects", "Projects"],
   ["claude", "Claude"],
   ["snyvi", "snyvi"],
@@ -176,6 +211,27 @@ let c = null, last = null, soon = 0, reading = 0, sheet = null;
 let parking = 0, parkDraft = "", parkFailed = false, justParked = 0, parkedT = 0;
 /** What the week's button last said, in its own place, for a while. */
 let weekSaid = null;
+/** A line being added from Home: the desk whose field is open, what is typed
+ *  in it (kept across the redraws an event brings), and why the last one was
+ *  refused. */
+let adding = 0, addDraft = "", addErr = "";
+/** The desks' order, taken once each time Home is shown: a line added or
+ *  ticked here touches its desk, and Home must not reshuffle under the
+ *  reader's hand for it. A desk new since then goes at the end. */
+let order = null;
+function byOrder(xs) {
+  if (!order) order = [...xs].sort((a, b) => b.touched - a.touched || b.id - a.id).map(d => d.id);
+  const at = id => { const i = order.indexOf(id); return i < 0 ? order.length : i; };
+  return [...xs].sort((a, b) => at(a.id) - at(b.id) || b.id - a.id);
+}
+/** Lines ticked (or unticked) from Home, by note id: { desk, text, i, done,
+ *  err, timer }. Each keeps its row, struck through, for TICK_MS -- long enough
+ *  to untick a slip -- through the reads that no longer list it. */
+const ticked = new Map();
+const TICK_MS = 6000;
+/** True while the page's HTML is being replaced: a field losing the focus
+ *  that way is not the reader leaving it. */
+let drawing = false;
 /** The log shows its first few days and a desk's first few lines; these are
  *  what the reader opened past that. */
 const DAYS_FIRST = 3, LINES_FIRST = 4;
@@ -190,6 +246,8 @@ const KNOWN = WIDGETS.map(w => w[0]);
 const hidden = () => { try { return JSON.parse(localStorage.getItem("snyvi.home.hidden") || "[]").filter(k => KNOWN.includes(k)); } catch { return []; } };
 const setHidden = xs => { try { localStorage.setItem("snyvi.home.hidden", JSON.stringify(xs)); } catch {} };
 const kept = () => { try { return +localStorage.getItem("snyvi.home.pick") || 0; } catch { return 0; } };
+const weekOpen = () => { try { return localStorage.getItem("snyvi.home.week") === "1"; } catch { return false; } };
+const setWeekOpen = on => { try { localStorage.setItem("snyvi.home.week", on ? "1" : "0"); } catch {} };
 const keep = id => { try { if (id) localStorage.setItem("snyvi.home.pick", id); else localStorage.removeItem("snyvi.home.pick"); } catch {} };
 
 /** Draw Home into the page. `ctx` is the page's: esc, rel, relShort, plural,
@@ -198,6 +256,7 @@ const keep = id => { try { if (id) localStorage.setItem("snyvi.home.pick", id); 
 export async function show(ctx) {
   c = ctx;
   style();
+  order = null;
   if (last) draw(last);
   await refresh();
 }
@@ -268,24 +327,27 @@ function group(xs, key) {
 function draw(j) {
   const { esc, plural } = c, hid = hidden();
   const w = (key, title, body, extra = "", act = "") => hid.includes(key) ? "" :
-    `<section class="hm-w" data-w="${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
+    `<section class="hm-w" data-w="${key}" data-part="home.${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
     `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="Show brings it back" aria-label="Hide ${esc(title)}">✕</button></div>${body}</section>`;
   const side = [
     w("projects", "Projects", projects(j), j.desks?.length ? ` <span class="n">${j.desks.length}</span>` : ""),
     w("claude", "Claude", claude(j)),
     w("snyvi", "snyvi", `<div class="hm-upd"></div>` + `<p class="hm-quiet hm-uptodate">snyvi ${esc(j.version || "")} · <button type="button" class="uc-link" data-hm="check">Check for updates</button></p>`),
   ].join("");
-  const days = w("days", "Your days", yourDays(j), "", weekButton(j));
+  const desks = j.desks ? w("desks", "Desks", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
   const n = hid.length;
-  const html = `<div class="hm"><header class="hm-head"><h1>Home</h1><span class="hm-v">${new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</span></header>` +
+  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</span></header>` +
     status(j) +
-    `<div class="hm-grid${!side ? " no-side" : !days ? " no-days" : ""}">${pick(j)}${days}${side ? `<div class="hm-side">${side}</div>` : ""}</div>` +
+    `<div class="hm-grid${!side ? " no-side" : ""}"><div class="hm-main">${pick(j)}${desks}${week(j)}</div>${side ? `<div class="hm-side">${side}</div>` : ""}</div>` +
     (n ? `<p class="hm-foot">${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button></p>` : "") + `</div>`;
   const a = document.activeElement;
-  const had = c.docEl.contains(a) && a.dataset.hm ? a.dataset.hm + (a.dataset.k || "") : null;
+  const key = b => b.dataset.hm + (b.dataset.k || "") + (b.dataset.n ? `:${b.dataset.n}` : "");
+  const had = c.docEl.contains(a) && a.dataset.hm ? key(a) : null;
+  drawing = true;
   c.docEl.innerHTML = html;
+  drawing = false;
   if (had) {
-    const el = [...c.docEl.querySelectorAll("[data-hm]")].find(b => b.dataset.hm + (b.dataset.k || "") === had);
+    const el = [...c.docEl.querySelectorAll("[data-hm]")].find(b => key(b) === had);
     el?.focus({ preventScroll: true });
     if (el?.tagName === "INPUT") el.setSelectionRange(el.value.length, el.value.length);
   }
@@ -317,7 +379,7 @@ function status(j) {
   }
   const w = windowLeft(j.quota?.five_hour);
   if (w) bits.push(`<span data-tip="Claude's five-hour window" data-tip-sub="${esc(w.text)}">5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
-  return `<p class="hm-status${ring ? " ring" : ""}">${bits.join(" · ")}</p>`;
+  return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
 }
 
 /** A branch, drawn as git's own mark: two commits and the line between. */
@@ -337,14 +399,14 @@ function dot(p) {
 /** The desk Pick up offers: the one the reader keeps there, else the one
  *  touched last. Parked desks are on the shelf, not here. */
 function pickOf(j) {
-  const live = (j.desks || []).filter(d => !d.parked || d.id === justParked).sort((a, b) => b.touched - a.touched || b.id - a.id);
+  const live = byOrder((j.desks || []).filter(d => !d.parked || d.id === justParked));
   const k = kept(), hero = live.find(d => d.id === k) || live[0];
   return { hero, rest: live.filter(d => d !== hero), isKept: !!hero && hero.id === k };
 }
 
 function pick(j) {
   const { esc, plural } = c;
-  const box = body => `<section class="hm-pick" aria-label="Pick up">${body}</section>`;
+  const box = body => `<section class="hm-pick" aria-label="Pick up" data-part="home.pick">${body}</section>`;
   if (!j.desks) return box(`<p class="hm-quiet">Desks are in the snyvi window; a browser tab cannot see them. Everything your agents sent is in <a href="/inbox" data-nav="inbox">the Inbox</a>.</p>`);
   if (!j.desks.length) return box(`<h2>Pick up</h2><p class="hm-quiet">No desks yet. A desk is one project: its folder, and up to four panels in it.</p><div class="hm-pk-go"><button type="button" class="btn btn-primary" data-hm="newdesk">+ New desk</button></div>`);
   const { hero: d, rest, isKept } = pickOf(j);
@@ -359,16 +421,15 @@ function pick(j) {
       : `<p class="hm-pk-left hm-quiet"><b>Left off</b>not said yet. A Claude on this desk says it at the end of a stretch, or write it in the desk's head.</p>`;
   // A list with nothing left open is a milestone said in numbers
   // (docs/DESIGN.md §3.2); a desk with no list yet is not.
-  const next = d.next.length
-    ? `<ul class="hm-next" aria-label="Open notes">${d.next.map(t => `<li><span>${esc(t)}</span></li>`).join("")}${d.open > d.next.length ? `<li class="hm-s"><span>and ${d.open - d.next.length} more</span></li>` : ""}</ul>`
-    : d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
+  const next = notesOf(d, 5) + addRow(d);
   const g = d.git;
   const git = g ? `<span class="hm-git" data-tip="What git says in ${esc(d.root || "the desk's folder")}" data-tip-sub="${g.last ? `last commit ${ago(g.last.at)}: ${esc(g.last.subject)}` : "no commits yet"}">${BRANCH}<span class="fact">${esc(g.branch || "no branch")}</span>` +
     `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${ago(g.last.at)}` : ""}</span></span>` : "";
   const panels = d.panes.map(p =>
     `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
-  const chips = rest.length ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
+  // The other desks, as chips, only while Desks below is hidden: it lists them.
+  const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
   return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span></div>` +
@@ -376,6 +437,62 @@ function pick(j) {
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
     (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Keep this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Kept here · Follow the last touched" : "Keep here"}</button>` : "") +
     `</div>` + chips);
+}
+
+/** A desk's first open notes, each with the circle that ticks it, then "and
+ *  N more" into the desk; a list with nothing left open says so in numbers
+ *  (docs/DESIGN.md §3.2). A line ticked here keeps its row for a moment. */
+function notesOf(d, max) {
+  const { esc } = c;
+  const rows = d.next.slice(0, max).map(n => ({ id: n.id, text: n.text, done: false, err: "" }));
+  for (const [id, t] of ticked) {
+    if (t.desk !== d.id) continue;
+    const r = rows.find(x => x.id === id);
+    if (r) { r.done = t.done; r.err = t.err; }
+    else rows.splice(Math.min(t.i, rows.length), 0, { id, text: t.text, done: t.done, err: t.err });
+  }
+  // A ticked line keeping its row holds its place: the next one waits for it
+  // to go rather than growing the list by a line, then shrinking it again.
+  for (let k = rows.length - 1; rows.length > max && k >= 0; k--) if (!ticked.has(rows[k].id)) rows.splice(k, 1);
+  const listed = rows.filter(r => d.next.some(n => n.id === r.id)).length;
+  const more = d.open - listed;
+  if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
+  return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
+    `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>` +
+    `<span class="hm-nt-t" data-tip="${esc(r.text)}" data-tip-overflow>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
+    (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
+}
+const TICK = `<svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>`;
+
+/** The way to add a line to a desk's list from here: a quiet "+ New note",
+ *  and the field in its place while it is open. Enter keeps the line and
+ *  leaves the field open for the next; Esc, or leaving it empty, closes it. */
+function addRow(d) {
+  const { esc } = c;
+  if (adding !== d.id) return `<button type="button" class="hm-link hm-addb" data-hm="addopen" data-k="${d.id}">+ New note</button>`;
+  return `<div class="hm-add"><input data-hm="add" data-k="${d.id}" maxlength="500" placeholder="What has to happen" aria-label="A new note on ${esc(d.name)}" value="${esc(addDraft)}" spellcheck="false">` +
+    (addErr ? `<span class="hm-s hm-err" role="alert">${esc(addErr)}</span>` : "") + `</div>`;
+}
+
+/** Every desk but the one in Pick up, most recently touched first: where it
+ *  was left, and what is open on it. Parked desks are on Projects' shelf. */
+function desksList(j) {
+  const { esc } = c;
+  const { rest } = pickOf(j);
+  if (!rest.length) return `<p class="hm-quiet">Your other desks show here, each with its open notes. One project, one desk.</p>`;
+  return `<div class="hm-dks">` + rest.map(d => `<div class="hm-dk">` +
+    `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}</div>` +
+    (d.left_off ? `<p class="hm-dk-left" data-tip="Left off" data-tip-sub="${esc(d.left_off.text)}"><b>Left off</b>${esc(d.left_off.text)}</p>` : "") +
+    notesOf(d, 3) + addRow(d) + `</div>`).join("") + `</div>`;
+}
+
+/** The log, folded at the foot of the page until it is opened, and kept
+ *  open or shut as the reader left it. */
+function week(j) {
+  if (!j.desks || !j.days) return "";
+  const act = weekButton(j);
+  return `<details class="hm-w hm-week" data-w="days" data-part="home.week"${weekOpen() ? " open" : ""}><summary class="hm-wh"><h2>This week</h2><span class="s-chev" aria-hidden="true"></span></summary>` +
+    (act ? `<p class="hm-week-act">${act}</p>` : "") + yourDays(j) + `</details>`;
 }
 
 /** What happened, day by day and desk by desk: lines ticked (with the commit
@@ -406,7 +523,7 @@ function weekButton(j) {
   const { esc } = c;
   if (!j.days?.length) return "";
   const said = weekSaid && weekSaid.until > Date.now() ? weekSaid.text : "";
-  return `<button type="button" class="hm-link hm-act" data-hm="week" data-tip="A document for each desk, in its own project" data-tip-sub="the last seven days, as they are here">${said ? esc(said) : "Send this week as a doc"}</button>`;
+  return `<button type="button" class="hm-link" data-hm="week" data-tip="A document for each desk, in its own project" data-tip-sub="the last seven days, as they are here">${said ? esc(said) : "Send this week as a doc"}</button>`;
 }
 
 /** One desk's rows on one day, newest first. A commit the agent named when it
@@ -479,7 +596,7 @@ function projects(j) {
   if (!j.desks) return `<p class="hm-quiet">Open the window to see your projects.</p>`;
   if (!j.desks.length) return `<p class="hm-quiet">Each desk shows here with its last eight weeks.</p>`;
   const now = Date.now() / 1000;
-  const live = j.desks.filter(d => !d.parked || d.id === justParked).sort((a, b) => b.touched - a.touched || b.id - a.id);
+  const live = byOrder(j.desks.filter(d => !d.parked || d.id === justParked));
   const shelf = j.desks.filter(d => d.parked && d.id !== justParked).sort((a, b) => b.parked.at - a.parked.at);
   const row = d => {
     const done = (j.days || []).filter(r => r.desk === d.id && r.kind === "tick" && r.at >= now - 7 * DAY).length;
@@ -551,6 +668,8 @@ function wire() {
     else if (k === "newdesk") c.newDesk(b);
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
     else if (k === "week") sendWeek(b);
+    else if (k === "tick") tickNote(id, +b.dataset.n);
+    else if (k === "addopen") { adding = id; addDraft = ""; addErr = ""; draw(last); c.docEl.querySelector("input[data-hm=add]")?.focus(); }
     else if (k === "days") { allDays = !allDays; draw(last); c.docEl.querySelector("[data-hm=days]")?.focus({ preventScroll: true }); }
     else if (k === "more") { const key = b.dataset.k; opened.has(key) ? opened.delete(key) : opened.add(key); draw(last); }
     else if (k === "park") { parking = id; parkDraft = ""; parkFailed = false; draw(last); c.docEl.querySelector("input[data-hm=next]")?.focus(); }
@@ -563,12 +682,68 @@ function wire() {
       soonRefresh();
     }
   });
-  el.addEventListener("input", e => { if (e.target.dataset?.hm === "next") parkDraft = e.target.value; });
+  el.addEventListener("input", e => {
+    if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
+    else if (e.target.dataset?.hm === "add") { addDraft = e.target.value; if (addErr) { addErr = ""; e.target.nextElementSibling?.remove(); } }
+  });
+  // The week stays as the reader left it, folded or open.
+  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); }, true);
+  // Leaving an empty field closes it; one with a line in it waits, as typed.
+  el.addEventListener("focusout", e => {
+    if (drawing || e.target.dataset?.hm !== "add" || addDraft.trim()) return;
+    setTimeout(() => { if (adding && !addDraft.trim() && !c.docEl.contains(document.activeElement?.closest?.(".hm-add") || null)) { adding = 0; addErr = ""; draw(last); } }, 0);
+  });
   el.addEventListener("keydown", e => {
+    if (e.target.dataset?.hm === "add") {
+      if (e.key === "Enter") { e.preventDefault(); addNote(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); adding = 0; addDraft = ""; addErr = ""; draw(last); }
+      return;
+    }
     if (e.target.dataset?.hm !== "next") return;
     if (e.key === "Enter") { e.preventDefault(); parkNow(+e.target.dataset.k); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); parking = 0; draw(last); }
   });
+}
+
+/** Tick a line where it stands, or untick one just ticked. The circle fills
+ *  at once and the daemon is told after; the row keeps its place, struck
+ *  through, for TICK_MS, and a no puts the circle back and says so in the row. */
+async function tickNote(desk, n) {
+  const d = last?.desks?.find(x => x.id === desk);
+  if (!d || !n) return;
+  const was = ticked.get(n), i = d.next.findIndex(x => x.id === n);
+  const text = was ? was.text : d.next[i]?.text;
+  if (text == null) return;
+  clearTimeout(was?.timer);
+  const rec = { desk, text, i: was ? was.i : Math.max(0, i), done: !(was && was.done), err: "", timer: 0 };
+  ticked.set(n, rec);
+  draw(last);
+  try { await c.deskApi(`/api/desks/${desk}/notes/${n}`, { done: rec.done }); }
+  catch { rec.done = !rec.done; rec.err = rec.done ? "Could not untick it" : "Could not tick it"; }
+  rec.timer = setTimeout(() => { if (ticked.get(n) === rec) { ticked.delete(n); if (last && c.view() === "home") draw(last); } }, TICK_MS);
+  if (last && c.view() === "home") draw(last);
+  soonRefresh();
+}
+
+/** Keep the line in the open field. It shows in the desk's list at once, and
+ *  the field stays open, empty, for the next: a list is written in a run. */
+async function addNote() {
+  const id = adding, text = addDraft.trim(), d = last?.desks?.find(x => x.id === id);
+  if (!id || !d) return;
+  if (!text) { adding = 0; addErr = ""; draw(last); return; }
+  addDraft = ""; addErr = "";
+  let r;
+  try { r = await c.deskApi(`/api/desks/${id}/notes`, { text }); }
+  catch (e) {
+    // What was typed is not lost to a no.
+    addDraft = text; addErr = `Could not add the note${/keeps \d+ notes/.test(e?.message || "") ? " · the desk is full" : ""}`;
+    draw(last); return;
+  }
+  if (r?.note && d.next.length < 5) d.next.push({ id: r.note.id, text: r.note.text });
+  if (r?.note) d.open += 1;
+  draw(last);
+  c.docEl.querySelector("input[data-hm=add]")?.focus();
+  soonRefresh();
 }
 
 /** Park the desk with what was typed: the row keeps its place and says so,
