@@ -273,13 +273,22 @@ mod tests {
         busy.stage_panel = "notes: #45".into();
         let mut mine = note(5, "home limit", false);
         mine.stage = "working".into();
-        let b = brief(&desk(2, None), 1, &[note(3, "icon", false), busy, mine], None, 0);
+        let b = brief(
+            &desk(2, None),
+            1,
+            &[note(3, "icon", false), busy, mine],
+            None,
+            0,
+        );
         assert!(
             b.contains("\nBeing worked on in another panel, so leave them to it: #4 (notes: #45)."),
             "{b}"
         );
         assert!(!b.contains("#5 ("), "{b}");
-        assert!(!brief(&desk(2, None), 1, &[note(3, "icon", false)], None, 0).contains("Being worked on"));
+        assert!(
+            !brief(&desk(2, None), 1, &[note(3, "icon", false)], None, 0)
+                .contains("Being worked on")
+        );
     }
 
     #[test]

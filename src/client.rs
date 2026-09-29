@@ -840,7 +840,14 @@ pub fn tick_desk_note(
 
 /// Say how far this agent has got with a note on its pane's desk:
 /// `mark_desk_note`. `about` is the plan's document id, needed with `planned`.
-pub fn mark_desk_note(paths: &Paths, pane: &str, note: i64, stage: &str, by: &str, about: &str) -> Result<Value> {
+pub fn mark_desk_note(
+    paths: &Paths,
+    pane: &str,
+    note: i64,
+    stage: &str,
+    by: &str,
+    about: &str,
+) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/notes/{note}/mark"),

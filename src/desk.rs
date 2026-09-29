@@ -294,9 +294,13 @@ pub const IMAGES_PER_NOTE: usize = 6;
 /// A picture's name as `note_images` holds it: 16 hex characters and one of
 /// the four extensions. Anything else never reaches a path.
 pub fn image_name_ok(name: &str) -> bool {
-    let Some((hash, ext)) = name.split_once('.') else { return false };
+    let Some((hash, ext)) = name.split_once('.') else {
+        return false;
+    };
     hash.len() == 16
-        && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         && matches!(ext, "png" | "jpg" | "gif" | "webp")
 }
 
@@ -1229,7 +1233,12 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
 /// the pane it was said from is still running that conversation.
 pub fn settle_stage(n: &mut DeskNote, live: bool) {
     if n.stage == "working" && !live {
-        n.stage = if n.stage_doc.is_empty() { "read" } else { "planned" }.into();
+        n.stage = if n.stage_doc.is_empty() {
+            "read"
+        } else {
+            "planned"
+        }
+        .into();
     }
 }
 
@@ -1427,7 +1436,11 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done_doc: r.get(6)?,
         done_evidence: r.get(7)?,
         suggested_by: r.get(8)?,
-        images: r.get::<_, String>(9)?.split_whitespace().map(String::from).collect(),
+        images: r
+            .get::<_, String>(9)?
+            .split_whitespace()
+            .map(String::from)
+            .collect(),
         stage: r.get(10)?,
         stage_by: r.get(11)?,
         stage_doc: r.get(12)?,
@@ -1440,7 +1453,12 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
 
 /// Put one more picture on a line, at the end. `None` when there is no such
 /// line or it already holds `IMAGES_PER_NOTE`; the list it has now otherwise.
-pub fn add_note_image(conn: &Connection, desk_id: i64, id: i64, name: &str) -> Result<Option<Vec<String>>> {
+pub fn add_note_image(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    name: &str,
+) -> Result<Option<Vec<String>>> {
     let had: Option<String> = conn
         .query_row(
             "SELECT images FROM desk_notes WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
@@ -1462,7 +1480,12 @@ pub fn add_note_image(conn: &Connection, desk_id: i64, id: i64, name: &str) -> R
 /// A line's pictures, replaced whole: an added one appended, a removed one
 /// left out, and Undo sending back the list it had. Names that are not a
 /// picture's are refused rather than kept. False when there is no such line.
-pub fn set_note_images(conn: &Connection, desk_id: i64, id: i64, images: &[String]) -> Result<bool> {
+pub fn set_note_images(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    images: &[String],
+) -> Result<bool> {
     if images.len() > IMAGES_PER_NOTE || !images.iter().all(|n| image_name_ok(n)) {
         return Ok(false);
     }
@@ -1658,17 +1681,37 @@ mod tests {
         let mut conn = db();
         let mine = create(&conn, "/mine", None, 0).unwrap().id;
         let yours = create(&conn, "/yours", None, 0).unwrap().id;
-        let n = add_note(&mut conn, mine, "this spacing", 0).unwrap().unwrap();
+        let n = add_note(&mut conn, mine, "this spacing", 0)
+            .unwrap()
+            .unwrap();
         let a = "0123456789abcdef.png".to_string();
         let b = "fedcba9876543210.webp".to_string();
-        assert_eq!(add_note_image(&conn, mine, n.id, &a).unwrap(), Some(vec![a.clone()]));
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &a).unwrap(),
+            Some(vec![a.clone()])
+        );
         // The same picture twice is on the line once.
-        assert_eq!(add_note_image(&conn, mine, n.id, &a).unwrap(), Some(vec![a.clone()]));
-        assert_eq!(add_note_image(&conn, mine, n.id, &b).unwrap(), Some(vec![a.clone(), b.clone()]));
-        assert_eq!(notes(&conn, mine).unwrap()[0].images, [a.clone(), b.clone()]);
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &a).unwrap(),
+            Some(vec![a.clone()])
+        );
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &b).unwrap(),
+            Some(vec![a.clone(), b.clone()])
+        );
+        assert_eq!(
+            notes(&conn, mine).unwrap()[0].images,
+            [a.clone(), b.clone()]
+        );
         // Not across desks, and nothing that could be a path.
         assert_eq!(add_note_image(&conn, yours, n.id, &a).unwrap(), None);
-        for bad in ["../../etc/passwd", "0123456789abcdef.svg", "0123456789ABCDEF.png", "abc.png", "0123456789abcdef"] {
+        for bad in [
+            "../../etc/passwd",
+            "0123456789abcdef.svg",
+            "0123456789ABCDEF.png",
+            "abc.png",
+            "0123456789abcdef",
+        ] {
             assert!(!image_name_ok(bad), "{bad}");
             assert!(!set_note_images(&conn, mine, n.id, &[bad.to_string()]).unwrap());
         }
@@ -1678,10 +1721,16 @@ mod tests {
         assert!(set_note_images(&conn, mine, n.id, &[a.clone(), b.clone()]).unwrap());
         assert_eq!(notes(&conn, mine).unwrap()[0].images, [a.clone(), b]);
         // The cap.
-        let many: Vec<String> = (0..=IMAGES_PER_NOTE).map(|i| format!("{i:016x}.png")).collect();
+        let many: Vec<String> = (0..=IMAGES_PER_NOTE)
+            .map(|i| format!("{i:016x}.png"))
+            .collect();
         assert!(!set_note_images(&conn, mine, n.id, &many).unwrap());
         assert!(set_note_images(&conn, mine, n.id, &many[..IMAGES_PER_NOTE]).unwrap());
-        assert_eq!(add_note_image(&conn, mine, n.id, &a).unwrap(), None, "a full line takes no more");
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &a).unwrap(),
+            None,
+            "a full line takes no more"
+        );
     }
 
     /// An agent ticks only: an open line on its own desk, once, with its name
@@ -1746,18 +1795,32 @@ mod tests {
         let mut conn = db();
         let mine = create(&conn, "/mine", None, 0).unwrap().id;
         let yours = create(&conn, "/yours", None, 0).unwrap().id;
-        let n = add_note(&mut conn, mine, "wire the route", 0).unwrap().unwrap();
+        let n = add_note(&mut conn, mine, "wire the route", 0)
+            .unwrap()
+            .unwrap();
         let get = |conn: &Connection| notes(conn, mine).unwrap()[0].clone();
 
-        assert!(!mark_note(&conn, yours, n.id, &mark("read", ""), 1).unwrap(), "not across desks");
-        assert!(!mark_note(&conn, mine, n.id, &mark("done", ""), 1).unwrap(), "done is the tick");
-        assert!(!mark_note(&conn, mine, n.id, &mark("planned", ""), 1).unwrap(), "a plan needs its document");
+        assert!(
+            !mark_note(&conn, yours, n.id, &mark("read", ""), 1).unwrap(),
+            "not across desks"
+        );
+        assert!(
+            !mark_note(&conn, mine, n.id, &mark("done", ""), 1).unwrap(),
+            "done is the tick"
+        );
+        assert!(
+            !mark_note(&conn, mine, n.id, &mark("planned", ""), 1).unwrap(),
+            "a plan needs its document"
+        );
         assert!(!mark_note(&conn, mine, n.id, &mark("planned", "not-an-id"), 1).unwrap());
         assert_eq!(get(&conn).stage, "");
 
         assert!(mark_note(&conn, mine, n.id, &mark("read", ""), 2).unwrap());
         let got = get(&conn);
-        assert_eq!((got.stage.as_str(), got.stage_by.as_str(), got.stage_at), ("read", "claude-code", 2));
+        assert_eq!(
+            (got.stage.as_str(), got.stage_by.as_str(), got.stage_at),
+            ("read", "claude-code", 2)
+        );
         assert_eq!(got.stage_pane, "", "only working keeps the pane");
 
         assert!(mark_note(&conn, mine, n.id, &mark("planned", "58155BA5FC"), 3).unwrap());
@@ -1765,8 +1828,14 @@ mod tests {
         // Working keeps the plan, and says where it is happening.
         assert!(mark_note(&conn, mine, n.id, &mark("working", ""), 4).unwrap());
         let got = get(&conn);
-        assert_eq!((got.stage.as_str(), got.stage_doc.as_str()), ("working", "58155ba5fc"));
-        assert_eq!((got.stage_pane.as_str(), got.stage_session.as_str()), ("p1", "s1"));
+        assert_eq!(
+            (got.stage.as_str(), got.stage_doc.as_str()),
+            ("working", "58155ba5fc")
+        );
+        assert_eq!(
+            (got.stage_pane.as_str(), got.stage_session.as_str()),
+            ("p1", "s1")
+        );
         // The conversation ends: back to planned. With no plan: read.
         let mut ended = got.clone();
         settle_stage(&mut ended, false);
@@ -1786,7 +1855,9 @@ mod tests {
         // reader's list yet.
         assert!(tick_note(&conn, mine, n.id, &by("claude-code"), 6).unwrap());
         assert!(!mark_note(&conn, mine, n.id, &mark("working", ""), 7).unwrap());
-        let Suggested::Note(s) = suggest_note(&mut conn, mine, "an idea", "claude-code", 8).unwrap() else {
+        let Suggested::Note(s) =
+            suggest_note(&mut conn, mine, "an idea", "claude-code", 8).unwrap()
+        else {
             panic!("suggested")
         };
         assert!(!mark_note(&conn, mine, s.id, &mark("read", ""), 9).unwrap());

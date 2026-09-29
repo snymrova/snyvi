@@ -614,7 +614,13 @@ fn say_notes(v: &Value) -> String {
             if done { "x" } else { " " }
         ));
         // A picture on the line: a file the agent can open and look at.
-        for p in n.get("images").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        for p in n
+            .get("images")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
             out.push_str(&format!("  picture: {p}\n"));
         }
     }
@@ -791,7 +797,8 @@ mod tests {
         assert!(say_notes(&v).contains("- [x] #4 fix hover (ticked by claude-code, in 90f09d6)\n"));
         // A line's pictures are named under it, as files to open.
         let p = json!({ "desk": "alpha", "notes": [{ "id": 5, "text": "this spacing", "done": false, "images": ["/d/note_images/0123456789abcdef.png"] }] });
-        assert!(say_notes(&p).contains("- [ ] #5 this spacing\n  picture: /d/note_images/0123456789abcdef.png\n"));
+        assert!(say_notes(&p)
+            .contains("- [ ] #5 this spacing\n  picture: /d/note_images/0123456789abcdef.png\n"));
     }
 
     /// A stage is one of three, on a line by its id; the list says each
@@ -802,7 +809,10 @@ mod tests {
         assert_eq!(spec["annotations"]["destructiveHint"], false);
         assert_eq!(spec["inputSchema"]["required"], json!(["id", "stage"]));
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
-        assert_eq!(spec["inputSchema"]["properties"]["stage"]["enum"], json!(["read", "planned", "working"]));
+        assert_eq!(
+            spec["inputSchema"]["properties"]["stage"]["enum"],
+            json!(["read", "planned", "working"])
+        );
         let v = json!({ "desk": "alpha", "notes": [
             { "id": 1, "text": "icon", "done": false, "stage": "read", "stage_by": "claude-code" },
             { "id": 2, "text": "foot", "done": false, "stage": "planned", "stage_doc": "58155ba5fc" },
@@ -812,10 +822,19 @@ mod tests {
         ]});
         let said = say_notes(&v);
         assert!(said.contains("- [ ] #1 icon (read)\n"), "{said}");
-        assert!(said.contains("- [ ] #2 foot (planned, plan 58155ba5fc)\n"), "{said}");
-        assert!(said.contains("- [ ] #3 limit (being worked on in panel 2)\n"), "{said}");
+        assert!(
+            said.contains("- [ ] #2 foot (planned, plan 58155ba5fc)\n"),
+            "{said}"
+        );
+        assert!(
+            said.contains("- [ ] #3 limit (being worked on in panel 2)\n"),
+            "{said}"
+        );
         assert!(said.contains("- [ ] #4 run (working)\n"), "{said}");
-        assert!(said.contains("- [x] #5 shipped\n"), "a done line has no stage: {said}");
+        assert!(
+            said.contains("- [x] #5 shipped\n"),
+            "a done line has no stage: {said}"
+        );
         // Told in the panel's instructions, in order.
         let i = instructions(true);
         assert!(i.find("mark it read").unwrap() < i.find("planned").unwrap());

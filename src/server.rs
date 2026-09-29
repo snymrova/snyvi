@@ -4284,7 +4284,11 @@ async fn add_note_image(
         }
     };
     if body.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "an empty image" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "an empty image" })),
+        )
+            .into_response();
     }
     let dir = app.paths.data_dir.join(crate::desk::NOTE_IMAGES);
     let name = format!("{}.{ext}", &blake3::hash(&body).to_hex()[..16]);
@@ -4355,8 +4359,23 @@ async fn note_image(
         Some("gif") => "image/gif",
         _ => "image/webp",
     };
-    match std::fs::read(app.paths.data_dir.join(crate::desk::NOTE_IMAGES).join(&name)) {
-        Ok(bytes) => ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, "private, max-age=31536000, immutable")], bytes).into_response(),
+    match std::fs::read(
+        app.paths
+            .data_dir
+            .join(crate::desk::NOTE_IMAGES)
+            .join(&name),
+    ) {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, kind),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -4923,13 +4942,20 @@ async fn pane_notes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -
     match app.store.desk_notes(placed.desk_id) {
         Ok(mut notes) => {
             settle_stages(&app, &mut notes);
-            for n in notes.iter_mut().filter(|n| n.stage == "working" && n.stage_pane == id) {
+            for n in notes
+                .iter_mut()
+                .filter(|n| n.stage == "working" && n.stage_pane == id)
+            {
                 n.stage_panel = "this panel".into();
             }
             // A line's pictures, as files the agent can open and look at.
             let dir = app.paths.data_dir.join(crate::desk::NOTE_IMAGES);
             for n in &mut notes {
-                n.images = n.images.iter().map(|x| dir.join(x).to_string_lossy().to_string()).collect();
+                n.images = n
+                    .images
+                    .iter()
+                    .map(|x| dir.join(x).to_string_lossy().to_string())
+                    .collect();
             }
             Json(json!({ "desk": placed.desk_name, "notes": notes })).into_response()
         }
