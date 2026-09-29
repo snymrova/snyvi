@@ -30,12 +30,6 @@ const CSS = `
 .note-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
   opacity: 0; transform: translate(12px, 26px) rotate(0deg); transition: opacity var(--dur-move) ease, transform .45s cubic-bezier(.3,1.5,.5,1); }
 #note:hover .note-bg, #note:focus-within .note-bg, #note.peek .note-bg { opacity: var(--mascot-peek); transform: rotate(-14deg); transition-delay: .12s; }
-.note-bg .nb-body { fill: var(--mascot); }
-.note-bg .nb-nub { fill: var(--mascot-nub); }
-.note-bg .nb-cheek { fill: var(--heart); }
-.note-bg .nb-ink { fill: var(--mascot-ink); }
-.note-bg .nb-shine { fill: var(--mascot-shine); }
-.note-bg .nb-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2; stroke-linecap: round; }
 /* Opened -- hovered or focused -- a read note wears the same warm card as
    the ones in the trail above it, so the stack reads as one voice. */
 #note:hover .note-now, #note:focus-within .note-now { background: var(--note-bg); border-color: var(--note-rule); }
@@ -125,7 +119,7 @@ const OWN = mod => ({
   "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
 });
 
-export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo }) {
+export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo, peek }) {
   const own = OWN(keyHint("mod+k"));
   const sheet = document.createElement("style");
   sheet.id = "note-drawn";
@@ -163,17 +157,10 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
   /** Behind the note, when a reader comes over: snyvi large and tilted,
    *  peeking up from the corner. At rest for an agent's aside; glad for
    *  snyvi's own first lines (docs/DESIGN.md §2.2) -- never a face picked by
-   *  id, and never a wink or hearts beside the words. The faces are the
-   *  mascot's `rest` and `glad`, at the size that keeps shine and cheeks. */
-  const EYE = x => `<ellipse class="nb-ink" cx="${x}" cy="16.5" rx="2.6" ry="3.3"/><circle class="nb-shine" cx="${x + 0.9}" cy="15.2" r="1"/>`;
-  const FEELINGS = {
-    rest: EYE(11) + EYE(21) + `<path class="nb-line" d="M13.5 22.6q2.5 2.4 5 0"/>`,
-    glad: `<path class="nb-line" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="nb-ink" d="M12.6 21.6q3.4 4.6 6.8 0z"/>`,
-  };
-  const noteBg = id => `<svg class="note-bg" viewBox="0 0 32 32" aria-hidden="true">` +
-    `<rect class="nb-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="nb-body" x="1" y="4" width="30" height="27" rx="9"/>` +
-    `<ellipse class="nb-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="nb-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
-    FEELINGS[String(id).startsWith("snyvi:") ? "glad" : "rest"] + `</svg>`;
+   *  id, and never a wink or hearts beside the words. The drawing is the
+   *  page's (`mascotPeek`): the one head, at the size that keeps its shine
+   *  and cheeks, so this chunk draws no face of its own. */
+  const noteBg = id => `<span class="note-bg">${peek(String(id).startsWith("snyvi:") ? "glad" : "rest")}</span>`;
   /** The byline says whose work it came through: "via claude-code on api". */
   function noteBy(n) {
     return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");

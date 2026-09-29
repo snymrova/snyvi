@@ -469,6 +469,9 @@ html[data-say] .brand-name { opacity: 0; }
 .live:hover { color: var(--fg); text-decoration: none; }
 .live.on { color: var(--fg-2); }
 .live.on::before { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
+/* None connected: a ring rather than a dot, the same size, so "0" does not
+   read as a light that is on. */
+.live:not(.on)::before { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
 /* The update pill's look is about.js's, which draws it (1.7.2). */
 /* The page cannot hear the daemon; a stale count is worse than none. */
 html[data-link="off"] .live { visibility: hidden; }
@@ -564,6 +567,23 @@ html[data-link="off"] .live { visibility: hidden; }
 #inbox-row .s-head { margin-top: 4px; }
 /* A folded section is only its head, so the next head sits close under it. */
 #trees.fold-inbox #desk-nav .s-head, #trees.fold-desks #browse-nav .s-head { margin-top: 2px; }
+/* The heads stay while their section scrolls under them. Desks and Folders
+   hold their own rows, so each head sticks inside its section and is pushed
+   off by the next; each section is opaque and above the one before, so it
+   slides over the Inbox's head rather than under it. The Inbox's projects
+   are a sibling of its head (the rail's popovers move them apart), so the
+   Inbox's head and All documents stick as one, at #trees' top, until Desks
+   covers them. flow-root keeps each head's margin inside its section, so
+   the section's background covers the gap too. Only at home in #trees: in a
+   rail popover each section is on its own. */
+/* Their layers are the column's own business: nothing they stack over
+   leaves #trees, so nothing outside it is covered. Not on the rail, where
+   #pop has to stand over the page. */
+:root:not([data-side="0"]) #trees { isolation: isolate; }
+#trees > :is(#inbox-row, #desk-nav, #browse-nav) { display: flow-root; background: var(--bg-side); }
+#trees > #inbox-row { position: sticky; top: 0; z-index: 1; }
+#trees > :is(#desk-nav, #browse-nav) { position: relative; z-index: 2; }
+#trees > :is(#desk-nav, #browse-nav) > .s-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-link { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 4px; padding: 0 8px; font: inherit; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: var(--r-sm); cursor: pointer; text-align: left; transition: color var(--t); }
 .s-link:hover { color: var(--fg-2); }
 .s-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -751,6 +771,34 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    nothing a reader put away can be lost by forgetting it was put away. */
 .t-away { display: block; width: 100%; text-align: left; padding: 4px 8px 4px 18px; margin-top: 2px; font-size: var(--fs-micro); color: var(--fg-3); border-radius: var(--r-sm); }
 .t-away:hover { background: var(--rule); color: var(--fg-2); }
+/* The quiet projects past the Inbox's cap (app.js, `inboxCap`), said in one
+   row on the rows' own grid: the icon column, "N more", the chevron that
+   folds it, and at the end how long they have been quiet. A step dimmer than
+   a project: it is the list's edge, not one of its things. */
+.t-quiet { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg-2); font-weight: var(--fw-row); white-space: nowrap; text-align: left; position: relative; transition: background var(--t), color var(--t); }
+.t-quiet:hover { background: var(--rule); color: var(--fg); transition-duration: 0s; }
+.t-quiet > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.t-quiet > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); opacity: 1; }
+.t-quiet[aria-expanded="false"] > .s-chev { transform: rotate(-45deg); }
+.t-quiet > .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); flex: none; }
+/* Something waiting in there, or the document on screen: the mark a folded
+   project gets, and "more" stays shut until it is clicked. */
+.t-quiet.new > .k, .t-quiet.new > .r-ico, .t-quiet.holds-current > .r-ico { color: var(--accent); }
+.t-quiet.holds-current { box-shadow: inset 2px 0 0 var(--accent); }
+/* A project nothing has come from in a week steps its name back, and one
+   with something waiting lights its icon, as a waiting row does. Colour
+   only: the list keeps its order and every row its place. */
+.t-proj.quiet > summary > .nm { color: var(--fg-2); }
+.t-proj > summary.new > .r-ico { color: var(--accent); }
+/* An idle desk's name steps back, so the live ones -- the dot, "needs you"
+   -- are what the eye finds. The desk on screen keeps its ink. */
+.t-desk > a:not(.active):not(:has(.dot)) > .title { color: var(--fg-2); }
+/* The same folder in the other sections, while one of its rows is under
+   the pointer (app.js, `twins`). */
+:is(.t-proj > summary, .b-root > summary, .t-desk > a).twin { background: color-mix(in srgb, var(--rule) 55%, transparent); }
+/* A row's fold chevron comes up a step under the pointer, so it reads as
+   something to press. */
+summary:is(:hover, :focus-visible) > .s-chev { color: var(--fg-2); }
 /* The offer to undo, standing in the row's own place and on the row's own
    grid: what the sidebar just did is said in the sidebar, where the click was,
    so the eye does not have to cross the window to a corner to find out. It is
@@ -772,7 +820,12 @@ summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
 /* A project's glyph stays while the project has a desk: that is the row
    saying so, and the way to it. Its ✕ follows it rather than splitting the
    slack with it. */
-.b-new.has { opacity: 1; color: var(--fg-2); }
+.b-new.has { opacity: 1; color: var(--fg-3); }
+/* …in the Desks rows' colours while its desk is doing something: a panel
+   running, or one waiting on the reader. Idle, it stays quiet, so it does
+   not read as a second desk row. */
+.b-new.has.on { color: var(--ok); }
+.b-new.has.blk { color: var(--warn); }
 /* A project with no desk yet keeps the slot, empty until the row is hovered,
    and then says "New desk": half-lit at rest read as a fault, not a state. */
 .t-proj > summary > .b-new + .row-x { margin-left: 0; }
@@ -972,7 +1025,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 .diff .ln::before { display: none !important; }
 /* Anything that is not prose wants the pane, not the reading measure. */
 #doc:has(.kind-code), #doc:has(.kind-text), #doc:has(.kind-diff),
-#doc:has(.kind-table), #doc:has(.kind-image), #doc:has(article.preview) { max-width: none; padding-left: 40px; padding-right: 40px; }
+#doc:has(.kind-table), #doc:has(.kind-image), #doc:has(article.preview), #doc:has(.hm) { max-width: none; padding-left: 40px; padding-right: 40px; }
 /* Maximise width: prose gives up its measure and uses the window. */
 :root[data-wide="1"] #doc { --doc-pad: 64px; max-width: none; }
 
@@ -1189,7 +1242,8 @@ pre.code .ln::before { cursor: pointer; }
 .mk-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; }
 .mk-ink { fill: var(--mascot-ink); }
 .mk-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
-.mk-love, .mk-puff { fill: var(--heart); }
+.mk-love, .mk-puff, .mk-cheek { fill: var(--heart); }
+.mk-shine { fill: var(--mascot-shine); }   /* the peek's alone: at 72 px the eyes keep their light */
 
 /* A face moves only for what happens a few times a day (docs/DESIGN.md
    §7.2): something arriving, the queue emptying, a small failure. The
@@ -1277,8 +1331,12 @@ pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block
 @keyframes dots { 30% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .dots i:nth-child(-n+2) { opacity: 1; } }
 :root[data-mascot="quiet"] :is(.mk, .mk *, .brand-mark *, .note-bg) { animation: none !important; transition: none !important; }
-:root[data-mascot="quiet"] :is(.bm-say, .note-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
+:root[data-mascot="quiet"] :is(.bm-say, .note-bg, .uc-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
 /* The last one waiting read: love, on the mark, once (app.js renderQueue). */
 html[data-cleared] .brand-mark .bm-open { display: none; }
 html[data-cleared] .brand-mark .bm-glad { display: inline; }
 html[data-cleared] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
+/* A desk's last open note ticked: glad, on the mark, with the hop the mark
+   already has for an aside's arrival (app.js markDone). Never on the desk. */
+html[data-done] .brand-mark .bm-open { display: none; }
+html[data-done] .brand-mark .bm-glad { display: inline; }

@@ -46,7 +46,7 @@ Seven imperatives. When two collide, the higher one wins.
    Undo window, **Removed · Show** still brings it back until prune. The
    only asks are closing a desk (it ends every panel at once) and Reset.
 5. **Instant, or it's a bug.** Every interaction takes under 100 ms, and
-   first paint is capped at 52 KB (`bench/bytes.mjs`). Motion is there to
+   first paint is capped at 54 KB (`bench/bytes.mjs`). Motion is there to
    explain, never to wait on.
 6. **Warm, and it only ever answers.** The personality lives in small
    moments the maker has earned. It never interrupts, never instructs,
@@ -78,8 +78,13 @@ voice (§3) and the mascot's behaviour. Accepted as written.
 **Anatomy** (icons/icon.svg, 32 grid). A rounded-square head (rx 9) with a
 nub on top, two tall oval eyes (at 11 and 21) with shine dots, pink cheeks,
 and a small smile. Below 48 px it drops the shine and cheeks. Every face,
-the 72 px aside peek included, is built from `FACES` and its parts (`EYE`,
-`UP`, `SMILE`, `HEART_EYE`) in one module. **Never redraw it freehand.**
+the 72 px peek included, is built from `FACES` and its parts (`EYE`, `UP`,
+`SMILE`, `HEART_EYE`) in one module: `mascotHead` for the face and mark
+slots, `mascotPeek` (the same, with shine and cheeks) for the peek, handed
+to the chunks that show them. **Never redraw it freehand.** The expression
+sheet, `docs/media/faces.svg`, is drawn from `FACES` by `bench/faces.mjs`;
+the two static pages with no stylesheet (the desktop's first frame, the
+daemon's 404) copy the paths and say so.
 
 **Colour:** `--mascot` (body, set per accent) · `--mascot-nub` = `--brand` ·
 `--mascot-ink` (eyes, mouth) · `--mascot-shine` (never a raw `#fff`) ·
@@ -92,8 +97,8 @@ become 22):
 |---|---|---|
 | mark | 20 px | the sidebar brand |
 | face | 22 px | toasts, the queue bar, ⌘K's "Nothing here yet" |
-| peek | 72 px, tilted | behind the aside card (the update card after 1.8) |
-| hero | 44 px | Welcome, the empty Inbox (Home after 1.8) |
+| peek | 72 px, tilted | behind the aside card and the sidebar's update card (not Home's copy) |
+| hero | 44 px | Welcome, the empty Inbox, the desktop's first frame (asleep), the daemon's 404 (oops) |
 | icon | 16–512 | app icon, favicon (redrawn per accent) |
 
 **The state machine.** The list of faces is closed:
@@ -101,7 +106,7 @@ become 22):
 ```mermaid
 stateDiagram-v2
   direction LR
-  rest --> glad: something went right<br/>(Welcome, theme chosen)
+  rest --> glad: something went right<br/>(Welcome, theme chosen, "Connected.",<br/>a desk's last open note ticked)
   rest --> whoa: something arrived
   rest --> oops: snyvi could not do it
   rest --> love: the waiting count reached 0 / rare hover line
@@ -113,12 +118,14 @@ stateDiagram-v2
   oops --> rest: 2.4 s
   love --> rest: 2.4 s
   wink --> rest: 2.4 s
-  rest --> blink: a note is waiting (loop)
+  rest --> blink: a note is waiting (two blinks, then the lit nub)
   blink --> rest: note read
 ```
 
-`rest` is `plain` in code until 1.8 renames it. `blink` becomes a lit nub
-under reduced motion or the quiet switch. `love` is the waiting count
+`blink` is two blinks and four pulses of the nub, then the nub stays lit
+for as long as the aside waits: a signal that outlives its welcome is every
+mascot's failure. It is the lit nub alone under reduced motion or the quiet
+switch. `love` is the waiting count
 reaching 0; `n` on an empty queue gets `rest`. On an aside hover the mark
 stays at rest and the peek speaks ("glad + heart" goes); the peek shows
 `rest`, or `glad` for snyvi's own first asides, never a face picked by id.
@@ -131,7 +138,10 @@ Adding a face means adding it to this diagram *and* to `FACES` in
 **It appears (earned moments):** empty states; first run and Welcome;
 something arriving; the queue emptying; a small failure snyvi is sorry
 about; the aside card; the hover line, only when you point at it;
-milestones (later: a rung ticked, a project shipped).
+milestones: a desk's last open note ticked, said by the mark in the
+sidebar with one hop and "Notes done · 5 of 5" on Home, never on the desk
+(later: a rung ticked, a project shipped); the daemon's own 404, which is
+snyvi's miss.
 
 **It never appears:**
 
@@ -161,6 +171,12 @@ words in its title**. `feelFor` goes in 1.8.
   mean something. A new line gets a weight.
 - **It never talks over an agent.** An unread agent aside silences snyvi's
   own lines.
+- **It answers what just happened, for an hour.** "all done" after a
+  desk's list is cleared, "now 1.9.0" after an update landed; then the
+  lines are the usual ones again.
+- **Outside the page, only when asked.** `snyvi hi` prints the face with
+  the version and the address, and is not in the help. Never in an
+  install's last line, never in a hook.
 
 This is how snyvi keeps the Mailchimp/GitHub "mascots never talk" rule: it
 doesn't *explain* anything, and it only *answers* you.
@@ -766,7 +782,7 @@ opacity and colour only.
  □ Motion tier         §7.2; transform/opacity only; reduced motion fades, never hides
  □ Keyboard            key or palette entry; focus returns; focus-visible ring
  □ Themes              looked at in Paper, Ink, Contrast (+ one accent other than Passion)
- □ Budget              bench/bytes.mjs ≤ 52 KB first paint; new code in a chunk
+ □ Budget              bench/bytes.mjs ≤ 54 KB first paint; new code in a chunk
  □ Bench rows          bench/ui.mjs row for the behaviour; screenshot row if visual
  □ Lint                bench/lint-ui.mjs: no count went up
 ```
@@ -840,7 +856,7 @@ once it lands, **`bench/lint-ui.baseline.json` is the running count**.
 | Words | 9 shortcut notations, ⌘ on Linux, no `keyHint()`; 4 ask-twice wordings; 5 names for Full view, 6 for making a desk; "panes" in MCP and `client.rs`; "daemon" and "capability" in maker text |
 | Tips, OS parts | 118 `title` sites, one button drawn two ways (open sidebar vs rail); 4 paragraph tooltips; placeholders, `<details>` markers, drag ghosts; 8 of 12 scrolling areas unstyled |
 | Components | 46 button styles; 7 kbd definitions; 5 SVG sets, none at 1.5 px, and text glyphs; `<button>` inside `<a>`/`<summary>` in 5 templates; 1 of 14 empty states on the component; 4 dialog title styles; full screen takes no focus |
-| Mascot | `feelFor` picks faces from title words; faces on desks, data loss and security; a freehand peek winking on two asides in three while the mark goes "glad + heart"; `love` wired backwards; `plain` for `rest`; no quiet switch |
+| Mascot | paid in 1.8 and 1.9: faces by kind, none on desks, data loss or security; one peek drawing (`mascotPeek`) behind the aside card and the update card; `love` on the queue reaching 0; `rest`; the quiet switch; the blink capped |
 | Motion | motion on 100+/day actions (opening a doc, ⌘K, the sidebar fold, `max-height`, the queue face); spring outside the mascot in 4 places; no working dots, two spinners, five "…ing…" texts |
 
 **Order:** one 1.8 branch, one push: this page; the lint; tokens and the

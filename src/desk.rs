@@ -61,7 +61,10 @@ CREATE TABLE IF NOT EXISTS desks (
   left_off TEXT NOT NULL DEFAULT '',
   left_off_at INTEGER NOT NULL DEFAULT 0,
   left_off_by TEXT NOT NULL DEFAULT '',
-  left_off_about TEXT NOT NULL DEFAULT ''
+  left_off_about TEXT NOT NULL DEFAULT '',
+  visited_at INTEGER NOT NULL DEFAULT 0,
+  parked_at INTEGER NOT NULL DEFAULT 0,
+  parked_next TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS panes (
   id TEXT PRIMARY KEY,
@@ -122,7 +125,43 @@ pub struct Desk {
     /// session starts from. `None` when no one has said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub left_off: Option<LeftOff>,
+    /// When the reader last opened this desk in the window, or 0 for never
+    /// since there was a column for it. Home's "last touched" starts here.
+    pub visited_at: i64,
+    /// Put on the shelf, with the step to pick it up by: out of Home's
+    /// pick-up and its chips until the reader takes it down again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parked: Option<Parked>,
     pub panes: Vec<Pane>,
+}
+
+/// A desk the reader put on the shelf, and the next step they wrote on the way
+/// out: "Park it?" asks for one, so a project coming back starts from a
+/// sentence rather than from nothing. Parked is not closed -- the desk, its
+/// panels and its notes are all where they were.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct Parked {
+    pub at: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next: String,
+}
+
+/// A line ticked off, with the desk it was on and when: what Home's log of
+/// the days is made of. Only the notes still on a list -- one the reader put
+/// away with ✕ is not work to show.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Done {
+    pub desk_id: i64,
+    pub text: String,
+    pub at: i64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub by: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub commit: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub doc: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub evidence: String,
 }
 
 /// One sentence on where the work was left -- "If the tests pass, ship the
@@ -314,8 +353,62 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         created_at: now,
         full_slot: 0,
         left_off: None,
+        visited_at: 0,
+        parked: None,
         panes: Vec::new(),
     })
+}
+
+/// The reader opened this desk. Written at most once a minute: the window
+/// says so on every draw of the desk, and a row rewritten on each is a write
+/// for nothing.
+pub fn visit(conn: &Connection, id: i64, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desks SET visited_at = ?2 WHERE id = ?1 AND closed_at = 0 AND visited_at < ?2 - 60",
+        params![id, now],
+    )? > 0)
+}
+
+/// Put a desk on the shelf with its next step, or take it down with `None`.
+/// The state it replaced is returned, for an Undo; `None` when there is no
+/// such desk.
+pub fn park(conn: &Connection, id: i64, to: Option<&Parked>) -> Result<Option<Option<Parked>>> {
+    let Some(desk) = get(conn, id)? else {
+        return Ok(None);
+    };
+    let (at, next) = match to {
+        Some(p) => (p.at, clip_to(&p.next, LEFT_OFF_CHARS)),
+        None => (0, String::new()),
+    };
+    conn.execute(
+        "UPDATE desks SET parked_at = ?2, parked_next = ?3 WHERE id = ?1",
+        params![id, at, next],
+    )?;
+    Ok(Some(desk.parked))
+}
+
+/// Every line ticked on an open desk since `since`, oldest first.
+pub fn done_since(conn: &Connection, since: i64) -> Result<Vec<Done>> {
+    let mut stmt = conn.prepare(
+        "SELECT n.desk_id, n.text, n.done_at, n.done_by, n.done_commit, n.done_doc, n.done_evidence
+         FROM desk_notes n JOIN desks d ON d.id = n.desk_id
+         WHERE n.done_at >= ?1 AND n.done_at != 0 AND n.removed_at = 0 AND d.closed_at = 0
+         ORDER BY n.done_at, n.id",
+    )?;
+    let rows = stmt
+        .query_map(params![since], |r| {
+            Ok(Done {
+                desk_id: r.get(0)?,
+                text: r.get(1)?,
+                at: r.get(2)?,
+                by: r.get(3)?,
+                commit: r.get(4)?,
+                doc: r.get(5)?,
+                evidence: r.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
 }
 
 /// Rename a desk. The name a reader typed is theirs: it is not numbered, and a
@@ -1267,7 +1360,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -1288,6 +1381,14 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
                 by: r.get(9)?,
                 about: r.get(10)?,
             })
+        },
+        visited_at: r.get(11)?,
+        parked: match r.get::<_, i64>(12)? {
+            0 => None,
+            at => Some(Parked {
+                at,
+                next: r.get(13)?,
+            }),
         },
         panes: Vec::new(),
     })
@@ -2171,5 +2272,78 @@ mod tests {
         );
         assert_eq!(get(&conn, d).unwrap().unwrap().left_off, Some(got));
         assert_eq!(set_left_off(&conn, 99, &first).unwrap(), None);
+    }
+
+    /// Opening a desk is written once a minute at most, and never on a
+    /// closed one.
+    #[test]
+    fn a_visit_is_written_at_most_once_a_minute() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        assert!(visit(&conn, d, 1_000).unwrap());
+        assert!(
+            !visit(&conn, d, 1_030).unwrap(),
+            "30 s later is the same visit"
+        );
+        assert_eq!(get(&conn, d).unwrap().unwrap().visited_at, 1_000);
+        assert!(visit(&conn, d, 1_061).unwrap());
+        assert_eq!(get(&conn, d).unwrap().unwrap().visited_at, 1_061);
+        close(&mut conn, d, 2_000).unwrap();
+        assert!(!visit(&conn, d, 5_000).unwrap());
+    }
+
+    /// A desk parks with its next step and comes down again, each handing
+    /// back what it was, for the Undo in the row.
+    #[test]
+    fn a_desk_parks_with_its_next_step_and_comes_down() {
+        let conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        assert_eq!(get(&conn, d).unwrap().unwrap().parked, None);
+        let to = Parked {
+            at: 50,
+            next: "Retry-After in\n whole seconds".into(),
+        };
+        assert_eq!(park(&conn, d, Some(&to)).unwrap(), Some(None));
+        let got = get(&conn, d).unwrap().unwrap().parked.unwrap();
+        assert_eq!(
+            (got.at, got.next.as_str()),
+            (50, "Retry-After in whole seconds")
+        );
+        assert_eq!(park(&conn, d, None).unwrap(), Some(Some(got)));
+        assert_eq!(get(&conn, d).unwrap().unwrap().parked, None);
+        assert_eq!(park(&conn, 99, None).unwrap(), None);
+    }
+
+    /// The log's ticks: since a time, oldest first, with what the agent said,
+    /// and never a line put away or a closed desk's.
+    #[test]
+    fn ticks_since_leave_out_what_was_put_away_and_closed_desks() {
+        let mut conn = db();
+        let d = create(&conn, "/w", None, 0).unwrap().id;
+        let gone = create(&conn, "/x", None, 0).unwrap().id;
+        let ids: Vec<i64> = ["old", "b", "a", "put away"]
+            .iter()
+            .map(|t| add_note(&mut conn, d, t, 0).unwrap().unwrap().id)
+            .collect();
+        set_note(&conn, d, ids[0], None, Some(true), 5).unwrap();
+        set_note(&conn, d, ids[1], None, Some(true), 30).unwrap();
+        let tick = Tick {
+            by: "claude-code".into(),
+            commit: "a41c2e9".into(),
+            ..Tick::default()
+        };
+        tick_note(&conn, d, ids[2], &tick, 20).unwrap();
+        set_note(&conn, d, ids[3], None, Some(true), 25).unwrap();
+        remove_note(&conn, d, ids[3], 26).unwrap();
+        let other = add_note(&mut conn, gone, "closed", 0).unwrap().unwrap().id;
+        set_note(&conn, gone, other, None, Some(true), 25).unwrap();
+        close(&mut conn, gone, 40).unwrap();
+        let got = done_since(&conn, 10).unwrap();
+        let texts: Vec<&str> = got.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(texts, ["a", "b"]);
+        assert_eq!(
+            (got[0].by.as_str(), got[0].commit.as_str(), got[0].at),
+            ("claude-code", "a41c2e9", 20)
+        );
     }
 }

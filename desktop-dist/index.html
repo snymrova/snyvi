@@ -1,1 +1,14 @@
-<!doctype html><meta charset="utf-8"><title>snyvi</title><p style="font:15px system-ui;padding:2em;color:#666">Starting snyvi…</p>
+<!doctype html><meta charset="utf-8"><title>snyvi</title>
+<!-- The window's first frame, before the daemon answers: snyvi asleep, the
+     face the sidebar's mark wears while there is no daemon to hear
+     (docs/DESIGN.md §2.2), at the hero's 44 px. It wakes on the page that
+     replaces this. The colours are the page's own tokens, written out, since
+     no stylesheet has arrived yet; nothing moves. -->
+<style>
+html{background:#faf9f6;color:#6b6660}
+@media(prefers-color-scheme:dark){html{background:#15181f;color:#8a8f99}}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+p{margin:0;font:13px system-ui,sans-serif;text-align:center}
+svg{display:block;width:44px;height:44px;margin:0 auto 14px}
+</style>
+<p><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="14" y="2" width="4" height="3.5" rx="1.75" fill="#8c0f26"/><rect x="1" y="4" width="30" height="27" rx="9" fill="#d9203b" opacity=".55"/><path d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0M13.5 23q2.5 2.2 5 0" fill="none" stroke="#38060f" stroke-width="2.2" stroke-linecap="round"/></svg>Starting snyvi…</p>

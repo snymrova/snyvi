@@ -321,7 +321,7 @@ async function bestOpen(cdp, sessionId, id, tries = TRIES) {
   let best = null;
   for (let i = 0; i < tries; i++) {
     const loaded = pageLoad(cdp, sessionId, "the inbox");
-    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` }, sessionId);
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/inbox` }, sessionId);
     await loaded;
     await sleep(300);          // the shell settles, so the click is not racing boot
     await gc(cdp, sessionId);
@@ -349,7 +349,7 @@ async function holdings(cdp, id) {
     await cdp.send("Performance.enable", { timeDomain: "timeTicks" }, sessionId);
     await cdp.send("HeapProfiler.enable", {}, sessionId);
     const loaded = pageLoad(cdp, sessionId, "the inbox, for the counts");
-    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` }, sessionId);
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/inbox` }, sessionId);
     await loaded;
     await sleep(300);
     const open = await evaluate(cdp, sessionId, call(openDoc, id));
@@ -435,7 +435,7 @@ async function main() {
     if (throttle > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle }, sessionId);
 
     const loaded = pageLoad(cdp, sessionId, "the inbox");
-    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` }, sessionId);
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/inbox` }, sessionId);
     await loaded;
 
     // One open each, in the order a reader would meet them, with the page's

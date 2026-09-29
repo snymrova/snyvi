@@ -91,6 +91,9 @@ pub struct TreeProject {
     pub docs: i64,
     /// Workflows in it, for the same reason `TreeWorkflow::total` exists.
     pub workflows: i64,
+    /// When its newest document arrived: what the Inbox's "more" row says the
+    /// projects past the cut have been quiet since.
+    pub latest: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -257,6 +260,10 @@ impl Store {
             "ALTER TABLE desks ADD COLUMN left_off_about TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE desk_notes ADD COLUMN done_evidence TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE desk_notes ADD COLUMN suggested_by TEXT NOT NULL DEFAULT ''",
+            // 1.9: when a desk was last opened, and a desk on the shelf.
+            "ALTER TABLE desks ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE desks ADD COLUMN parked_at INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE desks ADD COLUMN parked_next TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -906,7 +913,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(
-                "SELECT p.id, p.name, p.root, COUNT(d.id), COUNT(DISTINCT d.workflow_id)
+                "SELECT p.id, p.name, p.root, COUNT(d.id), COUNT(DISTINCT d.workflow_id), MAX(d.received_at)
                  FROM projects p JOIN head_docs d ON d.project_id = p.id
                  GROUP BY p.id ORDER BY MAX(d.received_at) DESC, p.id DESC",
             )?
@@ -917,6 +924,7 @@ impl Store {
                     root: r.get(2)?,
                     docs: r.get(3)?,
                     workflows: r.get(4)?,
+                    latest: r.get(5)?,
                 })
             })?
             .collect::<std::result::Result<_, _>>()?;
@@ -1329,6 +1337,41 @@ impl Store {
 
     pub fn keep_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
         desk::keep_note(&self.conn.lock().unwrap(), desk_id, id)
+    }
+
+    /// The reader opened a desk (`desk::visit`).
+    pub fn visit_desk(&self, id: i64) -> Result<bool> {
+        desk::visit(&self.conn.lock().unwrap(), id, now())
+    }
+
+    /// Park a desk with its next step, or take it down with `None`; what it
+    /// was, for an Undo. `None` when there is no desk.
+    pub fn park_desk(&self, id: i64, next: Option<&str>) -> Result<Option<Option<desk::Parked>>> {
+        let to = next.map(|n| desk::Parked {
+            at: now(),
+            next: n.to_string(),
+        });
+        desk::park(&self.conn.lock().unwrap(), id, to.as_ref())
+    }
+
+    /// Lines ticked on any open desk since `since` (`desk::done_since`).
+    pub fn desks_done_since(&self, since: i64) -> Result<Vec<desk::Done>> {
+        desk::done_since(&self.conn.lock().unwrap(), since)
+    }
+
+    /// What panes sent since `since`, every send and oldest first, as
+    /// `(desk, id, title, at)`: Home's log and the rhythm of each desk. Over
+    /// `live_docs`, so a version counts as the day's work it was.
+    pub fn desks_sent_since(&self, since: i64) -> Result<Vec<(i64, String, String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut st = conn.prepare(
+            "SELECT desk_id, id, title, received_at FROM live_docs
+             WHERE desk_id != 0 AND received_at >= ?1 ORDER BY received_at, rowid",
+        )?;
+        let rows = st.query_map(params![since], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// Where the work on a desk was left (`desk::set_left_off`); `at` of 0 is
