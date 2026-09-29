@@ -243,7 +243,7 @@
     const head = secHead("folders", "Folders");
     const rows = state.browse.filter(r => r.id !== shut?.r.id).map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary data-tip="${esc(r.path)}" data-tip-mono data-twin="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" data-tip="Close folder" data-tip-sub="nothing on disk is touched" aria-label="Close folder ${esc(r.name)}">${glyph("x")}</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary data-tip="${esc(r.path)}" data-tip-mono>${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" data-tip="Close folder" data-tip-sub="nothing on disk is touched" aria-label="Close folder ${esc(r.name)}">${glyph("x")}</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
     });
     // A folder just closed stands where it was, holding its Undo, as a
     // removed document's row does. A refused Undo says so in it.
@@ -810,7 +810,7 @@
       // A week with nothing from it steps the name back; something waiting
       // in it lights the icon, as a waiting row's does. Colour only.
       const quiet = p.latest && Date.now() / 1000 - p.latest > QUIET_S ? " quiet" : "", lit = waitingIn.has(String(p.id)) ? " new" : "";
-      return `<details class="t-proj${out ? " leaving" : ""}${quiet}" data-pid="${p.id}" ${open ? "open" : ""}><summary class="${lit.trim()}" data-tip="${esc(p.root)}" data-tip-mono data-twin="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>` +
+      return `<details class="t-proj${out ? " leaving" : ""}${quiet}" data-pid="${p.id}" ${open ? "open" : ""}><summary class="${lit.trim()}" data-tip="${esc(p.root)}" data-tip-mono>${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>` +
         (open ? projectRows(p) : "") + `</ul></details>`;
     };
     // Past the cap, "more" holds what the reader is not using. A project they
@@ -863,21 +863,6 @@
   try {
     document.fonts.ready.then(() => { fitFont = ""; renderTree(); markActive(); });
   } catch {}
-
-  /* One folder can be a project, a desk and a folder, in three sections.
-   * Resting on one of them lights the others faintly: the sidebar says they
-   * are one place without merging their rows. By folder, not by name, so two
-   * projects that are only named alike stay apart. */
-  let twinOf = null;
-  const twins = at => {
-    if (at === twinOf) return;
-    twinOf = at;
-    for (const el of treesEl.querySelectorAll(".twin")) el.classList.remove("twin");
-    if (!at) return;
-    for (const el of treesEl.querySelectorAll("[data-twin]")) if (el !== at && sameRoot(el.dataset.twin, at.dataset.twin)) el.classList.add("twin");
-  };
-  treesEl.addEventListener("pointerover", e => twins(e.target.closest("[data-twin]")));
-  treesEl.addEventListener("pointerleave", () => twins(null));
 
   /* The cap follows the room: the window's height, the waiting list growing
    * or going, a desk made or closed. Only a change in the cap draws the tree,
@@ -2981,7 +2966,7 @@
       const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
       const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
-      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}"${d.root ? ` data-twin="${esc(d.root)}"` : ""}>` +
+      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];

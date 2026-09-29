@@ -799,9 +799,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* An idle desk's name steps back, so the live ones -- the dot, "needs you"
    -- are what the eye finds. The desk on screen keeps its ink. */
 .t-desk > a:not(.active):not(:has(.dot)) > .title { color: var(--fg-2); }
-/* The same folder in the other sections, while one of its rows is under
-   the pointer (app.js, `twins`). */
-:is(.t-proj > summary, .b-root > summary, .t-desk > a).twin { background: color-mix(in srgb, var(--rule) 55%, transparent); }
 /* A row's fold chevron comes up a step under the pointer, so it reads as
    something to press. */
 summary:is(:hover, :focus-visible) > .s-chev { color: var(--fg-2); }

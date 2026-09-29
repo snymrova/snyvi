@@ -936,7 +936,7 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
@@ -974,11 +974,13 @@ function makeView(p) {
   hd.addEventListener("click", e => {
     if (e.target.closest(".pn-full")) { focused = v.id; zoom(); return; }
     if (e.target.closest(".pn-ren")) { renamePanel(v); return; }
+    const x = e.target.closest(".pn-x");
+    if (x) { closeAsked(v, x); return; }
     if (!v.dragged) body.focus();
     v.dragged = false;
   });
   // A double-click on the head, not the body: there it selects a word.
-  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren")) { focused = v.id; zoom(); } });
+  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren, .pn-x")) { focused = v.id; zoom(); } });
   hd.addEventListener("pointerdown", e => drag(v, e));
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
@@ -2775,6 +2777,19 @@ async function closePanel(v, byKey) {
   else if (next && (had || document.activeElement === document.body)) focusPane(next);
 }
 
+/** The head's ✕ asks first, in its own place: the first click turns it into
+ *  "Close?", the second closes, and it goes back to a ✕ after three seconds
+ *  untouched. The close is the rail's, so its Undo stands there as well. */
+function closeAsked(v, b) {
+  if (!b.dataset.armed) {
+    b.dataset.armed = "1"; b.dataset.tip = "Click again to close";
+    b.armT = setTimeout(() => { delete b.dataset.armed; b.dataset.tip = "Close panel"; }, 3000);
+    return;
+  }
+  clearTimeout(b.armT);
+  closePanel(v);
+}
+
 /** Undo a close. A desk that filled up in the meantime says so in the row,
  *  which keeps the rest of its time. */
 async function restorePanel(id) {
@@ -3288,13 +3303,19 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 :root[data-full] #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
 :root[data-full] #side, :root[data-full] #rail { display: none !important; }
 :root[data-full] #chrome #btn-rail { display: none !important; }
-.pn-full:hover, .pn-ren:hover { background: var(--rule-2); color: var(--fg); }
-/* The pen and full view, on every panel, in the grid and in full view alike:
-   two slots of their own at the head's end, quiet at rest and --fg under the
-   pointer, so neither comes and goes nor lands on the state beside it. */
-:is(.pn-ren, .pn-full) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.pn-full:hover, .pn-ren:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }
+/* The pen, full view and ✕, on every panel, in the grid and in full view
+   alike: three slots of their own at the head's end, quiet at rest and --fg
+   under the pointer, so none comes and goes nor lands on the state beside it. */
+:is(.pn-ren, .pn-full, .pn-x) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .pn-ren { margin-left: -2px; }
-.pn-full { margin-right: -4px; }
+.pn-x { margin-right: -4px; }
+/* Armed, the ✕ asks "Close?" over the head's end, to its left, rather than
+   growing and pushing the state along: nothing in the head moves. */
+.pn-x { position: relative; }
+.pn-x[data-armed], .pn-x[data-armed]:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--bg)); }
+.pn-x[data-armed]::before { content: "Close?"; position: absolute; right: 100%; top: 0; bottom: 0; display: grid; place-items: center; padding: 0 5px; border-radius: 4px 0 0 4px; font-size: 11px; font-weight: 600; background: inherit; }
+.pn-x[data-armed] { border-radius: 0 4px 4px 0; }
 .pn-head .ren-in { flex: 1; min-width: 60px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; outline: none; }
 .dk-head .icon:first-of-type { margin-left: auto; }
 .dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
@@ -3329,10 +3350,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
-/* The context window, after the state: quiet, warmer from 70%, the waiting
-   amber from 85%. The rail's row and the meta's line wear the same three. */
+/* The context window, before the state: quiet, warmer from 70%, the waiting
+   amber from 85%. The rail's row and the meta's line wear the same three.
+   Its kept room lies in the head's open middle, so the state sits against
+   the tools and the figure coming in moves neither. */
 .pn-ctx:not(.kept) { display: none; }
-.pn-ctx.kept { min-width: 11ch; text-align: right; }
+.pn-ctx.kept { min-width: 11ch; text-align: right; margin-left: auto; }
+.pn-ctx.kept + .pn-state { margin-left: 0; }
 .ctx { color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .ctx.warm { color: var(--fg-2); }
 .ctx.hot { color: var(--warn); font-weight: 600; }
