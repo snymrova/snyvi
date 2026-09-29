@@ -3017,10 +3017,9 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
                 .as_ref()
                 .and_then(|p| std::fs::metadata(p).ok())
                 .is_some_and(|m| m.len() > LARGE_RENDER as u64);
-        (
-            receive::receive(&app2.store, &app2.renderer, payload),
-            large,
-        )
+        let received = receive::receive(&app2.store, &app2.renderer, payload);
+        crate::platform::release_thread_memory();
+        (received, large)
     })
     .await;
     // After the render, not inside it: a trim over a heap that just held a
