@@ -153,6 +153,19 @@
    * reader, as the folds are: it is a view, not a fact about the library. */
   const away = saved("snyvi.away");
   const saveAway = () => save("snyvi.away", away);
+  /* The Inbox holds as many projects as the window has room for, with Desks
+   * and the Folders head still on screen under it, and says the rest in one
+   * "N more" row. Projects are newest first, so the cut is the quiet ones and
+   * nothing is re-sorted. The Inbox is then the same height whatever
+   * arrives: a new project pushes the oldest into "more", not Desks down the
+   * page. The row unfolds in place, and stays unfolded until it is clicked
+   * again; per reader, as the folds are. */
+  let moreOpen = store.get("snyvi.more") === "1";
+  /** The projects "more" holds right now, for the mark on it (`markActive`). */
+  let moreHidden = new Set();
+  /** The cap the last draw used, and whether it made room for the removed row,
+   *  so a resize that leaves the cap where it was draws nothing. */
+  let capSeen = null, awayRowSeen = false;
   /** The one just put away, while the offer to undo it is still standing. It
    *  keeps the row's place in the tree so the offer is where the click was --
    *  a toast in the far corner asks the eye to leave the sidebar to find out
@@ -176,6 +189,9 @@
     applyFolds();
     const open = !folded.has(key);
     for (const b of treesEl.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", open);
+    // A folded Desks leaves the Inbox room for more projects; the reader's
+    // click is what moves the page, so the cap follows it at once.
+    if (capSeen != null) { renderTree(); markActive(); }
   }
   /** Line icons, drawn at 16px on a 24px grid, stroked with the text. */
   const ICONS = {
@@ -193,6 +209,7 @@
     checks: '<path d="m2.5 12.5 4.5 4.5L16 8M11.5 16l1 1L21.5 8"/>',
     // The desk's own (fill, unfill, plus, play, again) come with desk.js.
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
+    more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
   };
   /** An icon at any size with the same 1.5 px line on screen: the drawings
    *  are on a 24 grid, so the stroke is scaled to the size asked for. */
@@ -226,7 +243,7 @@
     const head = secHead("folders", "Folders");
     const rows = state.browse.filter(r => r.id !== shut?.r.id).map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary data-tip="${esc(r.path)}" data-tip-mono>${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" data-tip="Close folder" data-tip-sub="nothing on disk is touched" aria-label="Close folder ${esc(r.name)}">${glyph("x")}</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary data-tip="${esc(r.path)}" data-tip-mono data-twin="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" data-tip="Close folder" data-tip-sub="nothing on disk is touched" aria-label="Close folder ${esc(r.name)}">${glyph("x")}</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
     });
     // A folder just closed stands where it was, holding its Undo, as a
     // removed document's row does. A refused Undo says so in it.
@@ -256,7 +273,9 @@
     for (const s of treeEl.querySelectorAll(".holds-current")) { s.classList.remove("holds-current"); s.removeAttribute("aria-current"); delete s.dataset.tipSub; }
     let held = null;
     if (!on && state.doc && state.deskBehind == null && state.view !== "desk" && state.view !== "inbox") {
-      held = treeEl.querySelector(`.t-proj[data-pid="${state.doc.project_id}"]:not([open]) > summary`);
+      held = treeEl.querySelector(`.t-proj[data-pid="${state.doc.project_id}"]:not([open]) > summary`) ||
+        // Past the cap, "more" is the row that holds it, and it stays shut.
+        (moreHidden.has(String(state.doc.project_id)) && !moreOpen ? treeEl.querySelector(".t-quiet") : null);
       if (held) { held.classList.add("holds-current"); held.setAttribute("aria-current", "location"); held.dataset.tipSub = `${state.doc.title || "the open document"} is in here · click to show it`; }
     }
     // Brought into the sidebar's view only when it is out of it, and only as
@@ -264,7 +283,10 @@
     const mark = on && treeEl.contains(on) ? on : held;
     if (mark && mark !== lastMark) {
       const port = treesEl.getBoundingClientRect(), box = mark.getBoundingClientRect();
-      if (box.height && (box.top < port.top || box.bottom > port.bottom)) treesEl.scrollTop += box.top < port.top ? box.top - port.top - 8 : box.bottom - port.bottom + 8;
+      // The section's head stands over the top of the column (sticky), so a
+      // row under it is not in view either.
+      const top = port.top + (treeEl.contains(mark) ? inboxRowEl.offsetHeight : 26);
+      if (box.height && (box.top < top || box.bottom > port.bottom)) treesEl.scrollTop += box.top < top ? box.top - top - 8 : box.bottom - port.bottom + 8;
     }
     lastMark = mark;
   }
@@ -285,13 +307,16 @@
    *  has one and goes to it, and waits for the pointer, as a folder's does,
    *  while it has none. The Inbox's project and the desk on its folder are
    *  the same project, and this is where the sidebar says so. */
+  /** The desk's live state on its project's row, in the Desks rows' colours:
+   *  a panel running, or one waiting on the reader. Idle says nothing. */
+  const deskState = d => { const m = mark3(d.panes); return m === "!" ? " blk" : m === "●" ? " on" : ""; };
   /** One folder however it was spelled: a trailing slash is not another place. */
   const sameRoot = (a, b) => !!a && !!b && a.replace(/(.)\/+$/, "$1") === b.replace(/(.)\/+$/, "$1");
   const projDeskBtn = p => {
     if (!capability || !p.root) return "";
     const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));
-    return d ? `<button type="button" class="b-new has" data-projdesk="${p.id}" data-tip="Show its desk" aria-label="Show desk ${esc(d.name)}">${icon("desk")}</button>`
-      : `<button type="button" class="b-new" data-projdesk="${p.id}" data-tip="New desk" aria-label="New desk for ${esc(p.name)}">${icon("desk")}</button>`;
+    return d ? `<button type="button" class="b-new has${deskState(d)}" data-projdesk="${p.id}" data-deskof="${d.id}" data-tip="Show its desk" aria-label="Show desk ${esc(d.name)}">${icon("desk", 14)}</button>`
+      : `<button type="button" class="b-new" data-projdesk="${p.id}" data-tip="New desk" aria-label="New desk for ${esc(p.name)}">${icon("desk", 14)}</button>`;
   };
 
   /** A project is drawn expanded when the reader left it that way, or when it
@@ -703,6 +728,32 @@
     t.splice(Math.min(g.projAt, t.length), 0, g.proj);
     return t;
   }
+  /** How many projects the Inbox shows before its "more" row: what fits
+   *  between what stands above the projects (the head, All documents, the
+   *  waiting list) and what must stay on screen below them (all of Desks,
+   *  and the Folders head). Measured, because each of those changes it;
+   *  never fewer than three. The whole list while the Inbox is folded or the
+   *  sidebar is its rail, where there is no column to fit. */
+  const ROW_H = 28, MIN_CAP = 3, QUIET_S = 7 * 86400;
+  function inboxCap(awayRow) {
+    const room = treesEl.clientHeight;
+    if (!room || root.dataset.side === "0" || folded.has("inbox")) return Infinity;
+    const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect(), fh = browseEl.querySelector(".s-head");
+    const above = at.top - port.top + treesEl.scrollTop;
+    const below = fh ? fh.getBoundingClientRect().bottom - at.bottom : 0;
+    // 8: #trees' own padding at the foot; the "more" row; the removed row.
+    const left = room - above - below - 8 - ROW_H - (awayRow ? 26 : 0);
+    return Math.max(MIN_CAP, Math.floor(left / ROW_H));
+  }
+  /** The row that holds the projects past the cap. It says how many, and how
+   *  long they have been quiet -- or, when one has something waiting, that. */
+  function moreRow(hidden) {
+    const waiting = state.queue.filter(d => moreHidden.has(String(d.project_id))).length;
+    const q = hidden[0].latest ? relShort(hidden[0].latest) : "";
+    const say = waiting ? `${waiting} waiting` : !q || q === "now" ? "" : /^\d/.test(q) ? `quiet ${q}` : `quiet since ${q}`;
+    const names = hidden.slice(0, 8).map(p => p.name).join(", ") + (hidden.length > 8 ? ` and ${hidden.length - 8} more` : "");
+    return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
+  }
   function renderTree() {
     const projects = heldTree();
     const total = state.tree.reduce((n, p) => n + p.docs, 0);
@@ -742,25 +793,35 @@
     }
     // No label: the projects hang under Inbox, which is what they are.
     let h = treeOff ? noReach("tree") : "";
-    let put = 0;
-    for (const p of projects) {
-      if (away.has(String(p.id))) {
-        // In its own place, at its own height, so nothing below it moves while
-        // the offer stands and nothing moves again when it is taken.
-        if (awayJust === String(p.id)) {
-          h += `<div class="t-back" role="status" style="--undo-left:${awayClock?.left() ?? 1}"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
-          continue;
-        }
-        put++;
-        continue;
-      }
+    const waitingIn = new Set(state.queue.map(d => String(d.project_id)));
+    const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
+    const put = projects.length - drawn.length;
+    const row = p => {
+      // In its own place, at its own height, so nothing below it moves while
+      // the offer stands and nothing moves again when it is taken.
+      if (awayJust === String(p.id)) return `<div class="t-back" role="status" style="--undo-left:${awayClock?.left() ?? 1}"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
       const open = projOpen(p);
       // The one held for a ghost closes with it.
       const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
-      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary data-tip="${esc(p.root)}" data-tip-mono>${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>`;
-      h += open ? projectRows(p) : "";
-      h += `</ul></details>`;
-    }
+      // A week with nothing from it steps the name back; something waiting
+      // in it lights the icon, as a waiting row's does. Colour only.
+      const quiet = p.latest && Date.now() / 1000 - p.latest > QUIET_S ? " quiet" : "", lit = waitingIn.has(String(p.id)) ? " new" : "";
+      return `<details class="t-proj${out ? " leaving" : ""}${quiet}" data-pid="${p.id}" ${open ? "open" : ""}><summary class="${lit.trim()}" data-tip="${esc(p.root)}" data-tip-mono data-twin="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>` +
+        (open ? projectRows(p) : "") + `</ul></details>`;
+    };
+    // Past the cap, "more" holds what the reader is not using. A project they
+    // have open, or whose row is offering an Undo, stays in view under it: a
+    // row never goes away from under a reading. One project past the cap is
+    // drawn rather than said, since "1 more" would take the same room.
+    awayRowSeen = put > 0;
+    const cap = capSeen = inboxCap(awayRowSeen);
+    const upto = drawn.length > cap + 1 ? cap : drawn.length;
+    const past = drawn.slice(upto);
+    const hidden = past.filter(p => !projOpen(p) && awayJust !== String(p.id) && !(gone && gone.proj === p));
+    moreHidden = new Set(hidden.map(p => String(p.id)));
+    for (const p of drawn.slice(0, upto)) h += row(p);
+    if (hidden.length) h += moreRow(hidden);
+    for (const p of past) if (moreOpen || !moreHidden.has(String(p.id))) h += row(p);
     // Counted from the tree rather than from the set, so a project that is
     // gone for some other reason is not offered back. While this row is here
     // nothing is stranded: whatever was put away is one click from returning.
@@ -797,6 +858,32 @@
    * the row ends in two ellipses. Measure again once it is here. */
   try {
     document.fonts.ready.then(() => { fitFont = ""; renderTree(); markActive(); });
+  } catch {}
+
+  /* One folder can be a project, a desk and a folder, in three sections.
+   * Resting on one of them lights the others faintly: the sidebar says they
+   * are one place without merging their rows. By folder, not by name, so two
+   * projects that are only named alike stay apart. */
+  let twinOf = null;
+  const twins = at => {
+    if (at === twinOf) return;
+    twinOf = at;
+    for (const el of treesEl.querySelectorAll(".twin")) el.classList.remove("twin");
+    if (!at) return;
+    for (const el of treesEl.querySelectorAll("[data-twin]")) if (el !== at && sameRoot(el.dataset.twin, at.dataset.twin)) el.classList.add("twin");
+  };
+  treesEl.addEventListener("pointerover", e => twins(e.target.closest("[data-twin]")));
+  treesEl.addEventListener("pointerleave", () => twins(null));
+
+  /* The cap follows the room: the window's height, the waiting list growing
+   * or going, a desk made or closed. Only a change in the cap draws the tree,
+   * and what changes then is which quiet projects "more" holds -- Desks stays
+   * where it was, which is the point of the cap. */
+  try {
+    let queued = false;
+    const recap = () => { queued = false; if (capSeen != null && inboxCap(awayRowSeen) !== capSeen) { renderTree(); markActive(); } };
+    const watch = new ResizeObserver(() => { if (!queued) { queued = true; requestAnimationFrame(recap); } });
+    for (const el of [treesEl, inboxRowEl, queueEl, $("#desk-nav")]) watch.observe(el);
   } catch {}
 
   /** What one project holds, fetched the first time it is expanded and kept
@@ -1030,6 +1117,13 @@
       // Inside a <summary>, the default action is toggling the project open.
       e.preventDefault(); e.stopPropagation();
       putAway(ax.dataset.away);
+      return;
+    }
+    if (e.target.closest("[data-quiet]")) {
+      e.preventDefault();
+      moreOpen = !moreOpen;
+      store.set("snyvi.more", moreOpen ? "1" : "0");
+      renderTree(); markActive();
       return;
     }
     const bk = e.target.closest("[data-back]");
@@ -1525,7 +1619,9 @@
    *  in place, then runs `init-claude` in the daemon. */
   async function connectClaude(b, done) {
     const m = await panelMod();
-    m.connectAsk(b, { sayErr, api: (path, body) => deskApi(path, body), done: (a, ok) => {
+    // "Connected." wears a face once, on the Agents page; a desk's panel is
+    // the work and gets the words alone (docs/DESIGN.md §2.3).
+    m.connectAsk(b, { sayErr, api: (path, body) => deskApi(path, body), mascotHead: state.view === "desk" ? null : mascotHead, done: (a, ok) => {
       if (a && state.view === "connect" && connectHtml) setTimeout(() => { if (state.view === "connect") docEl.innerHTML = connectHtml(a); }, 1600);
       done && done(a, ok);
     } });
@@ -1578,7 +1674,10 @@
    *  (about.js's `checkUpdates`). */
   const checkUpdates = at => panelMod().then(m => m.checkUpdates(at, { ...updCtx(), setUpd }), () => { panelLoading = null; });
   /** What the update surfaces need from the page: about.js's `pill` and `card`. */
-  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel });
+  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel, peek: mascotPeek, landed });
+  /** An update landed in the last hour (about.js): the hover line answers
+   *  with the version for that long (look.js's SAYS), and nothing opens. */
+  const landed = (v, at) => { state.landed = { v, at }; };
   function setUpd(u) {
     u = u && typeof u === "object" ? u : null;
     if ((u && (u.show || u.restart || u.restarting || Date.now() / 1e3 - (u.last_applied || 0) < 86400)) || !updEl.hidden)
@@ -1923,7 +2022,7 @@
     else delete root.dataset.note;
     if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
       noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock,
-        holdUndo: offer, dropUndo: unoffer });
+        holdUndo: offer, dropUndo: unoffer, peek: mascotPeek });
       noteMod.render();
     }, () => { noteLoading = null; });
   }
@@ -1954,6 +2053,21 @@
   brandEl.addEventListener("pointerleave", () => { clearTimeout(sayIn); closeSay(); });
   // Following the brand through to the inbox takes the bubble with it.
   brandEl.addEventListener("click", () => { clearTimeout(sayIn); closeSay(); });
+  /** A desk's last open note ticked (desk.js): the milestone of docs/DESIGN.md
+   *  §2.3, and a desk may carry no face, so it is the mark's -- glad, one
+   *  hop, for as long as a face's moment lasts. The hover line answers "all
+   *  done" for the next hour, and Home says the count. Rare by nature: it
+   *  is the end of a list, not of a line. */
+  function markDone() {
+    state.doneAt = Date.now();
+    if (quiet()) return;
+    const mark = $(".brand-mark");
+    root.dataset.done = "1";
+    mark.classList.remove("hop"); void mark.offsetWidth; mark.classList.add("hop");
+    clearTimeout(doneSettle);
+    doneSettle = setTimeout(() => { delete root.dataset.done; mark.classList.remove("hop"); }, 2400);
+  }
+  let doneSettle = 0;
 
   // ---------- live refresh ----------
   /** Where the reader is, as a block and an offset into it rather than a
@@ -2840,14 +2954,15 @@
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
       const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
       // The row's end says only what is unusual: a panel that needs you, a
-      // context window nearly full, more than one panel. A live desk is a
-      // dot and an idle one is nothing; the tip carries the rest.
+      // context window nearly full, three panels or more (two is what most
+      // desks have, so a 2 on every row told them apart by nothing). A live
+      // desk is a dot and an idle one is nothing; the tip carries the rest.
       const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
       const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
-      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
+      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}"${d.root ? ` data-twin="${esc(d.root)}"` : ""}>` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 1 ? `<span class="k">${n}</span>` : ""}</span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
@@ -2856,6 +2971,12 @@
     // row and let go on the new one would not be a click. So what changed
     // is written, and only that -- the mark column, the head -- and the list
     // is drawn whole only when a row itself is different.
+    // The desk glyph on each project's row follows its desk's state here,
+    // where the dots change, rather than by drawing the tree again.
+    for (const b of treeEl.querySelectorAll("[data-deskof]")) {
+      const d = list.find(x => String(x.id) === b.dataset.deskof);
+      if (d) b.className = "b-new has" + deskState(d);
+    }
     const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top + more && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
       deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + more + `</ul>`;
@@ -2887,7 +3008,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3311,6 +3432,14 @@
   const mascotHead = feel => `<svg class="mk" viewBox="0 0 32 32" aria-hidden="true">` +
     `<rect class="mk-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="mk-body" x="1" y="4" width="30" height="27" rx="9"/>` +
     (FACES[feel] || FACES.rest) + `</svg>`;
+  /* The same head at the 72 px peek's size, where it keeps the shine in its
+   * eyes and the blush the icon has (docs/DESIGN.md §2.2: below 48 px they
+   * go). One drawing for the aside card and the update card, so the peek is
+   * never a face drawn by hand in the chunk that shows it. */
+  const SHINE = { rest: [11, 21], whoa: [11, 21], wink: [21] };
+  const mascotPeek = feel => mascotHead(feel).replace("</svg>",
+    `<ellipse class="mk-cheek" cx="7.4" cy="21.8" rx="2.4" ry="1.5"/><ellipse class="mk-cheek" cx="24.6" cy="21.8" rx="2.4" ry="1.5"/>` +
+    (SHINE[FACES[feel] ? feel : "rest"] || []).map(x => `<circle class="mk-shine" cx="${x + 0.9}" cy="15.2" r="1"/>`).join("") + "</svg>");
   /* Where the reader acted, taken as they act (docs/DESIGN.md §4.2). A press
    * keeps its point and the control under it; a key keeps its moment, since
    * the answer to a key belongs at the focus, never at an idle pointer. An

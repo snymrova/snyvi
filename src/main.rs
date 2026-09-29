@@ -8,6 +8,7 @@ mod client;
 mod config;
 mod desk;
 mod desktop;
+mod git;
 mod hook;
 mod mcp;
 mod pane;
@@ -212,6 +213,9 @@ enum Cmd {
     },
     /// Show daemon status.
     Status,
+    /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
+    #[command(hide = true)]
+    Hi,
     /// Measure render speed on synthetic documents, and a daemon of its own: binary size, cold start, send, first byte, resident memory.
     Bench {
         /// Exit non-zero if any case exceeds its budget (SNYVI_BENCH_FACTOR scales budgets for slow CI runners).
@@ -550,6 +554,37 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Bench { check } => bench::run(check),
+        // The one place the mascot is in a terminal, and only when asked
+        // (docs/DESIGN.md §2.4): never in an install's last line, never in a
+        // hook. Awake when a daemon answers, asleep when none does.
+        Cmd::Hi => {
+            let h = client::health();
+            let up = h.is_some();
+            let running = h
+                .as_ref()
+                .and_then(|h| h.get("version").and_then(|v| v.as_str()))
+                .map(str::to_string);
+            let eyes = if up { "●  ●" } else { "-  -" };
+            println!("     ▪\n   ╭──────╮\n   │ {eyes} │\n   │  ‿   │\n   ╰──────╯");
+            match running {
+                Some(v) if v != server::VERSION => println!(
+                    "   snyvi {v} at {} · this binary is {}",
+                    config::base_url(),
+                    server::VERSION
+                ),
+                Some(_) => println!(
+                    "   snyvi {} at {} · here",
+                    server::VERSION,
+                    config::base_url()
+                ),
+                None => println!(
+                    "   snyvi {} · asleep; would listen at {}",
+                    server::VERSION,
+                    config::base_url()
+                ),
+            }
+            Ok(())
+        }
     }
 }
 

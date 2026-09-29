@@ -1994,9 +1994,16 @@ async function getNotes(id, again) {
   const was = notesAt === id ? noteList : [];
   const next = (j.notes || []).filter(x => !off || !off.has(x.id));
   was.forEach((x, i) => { if (x.gone && !next.some(y => y.id === x.id)) next.splice(Math.min(i, next.length), 0, x); });
+  // An agent, or another window, ticked the last open line: the milestone is
+  // the mark's to say, in the sidebar, never this rail's (docs/DESIGN.md
+  // §2.3). A tick here says it itself, below, before the list is read back.
+  const ticked = notesAt === id && was.some(stillOpen) && !next.some(stillOpen) && next.filter(x => x.done).length > was.filter(x => x.done).length;
   noteList = next; notesAt = id;
+  if (ticked && ctx.done) ctx.done();
   if (current()) rail();
 }
+/** A line still to do: not ticked, not on its way out, not a suggestion. */
+const stillOpen = x => !x.done && !x.gone && !x.suggested_by;
 
 /** A desk's list changed -- an agent ticked or suggested a line, or another
  *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --
@@ -2302,12 +2309,14 @@ async function act(b, byKey) {
     } else if (a === "note-tick") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) {
+        // The last open line, ticked: the mark says so once the daemon has it.
+        const last = stillOpen(x) && !noteList.some(y => y !== x && stillOpen(y));
         x.done = !x.done;
         rail();
         // The daemon owns the order -- a line just ticked goes to the end of
         // the done half -- so the list is read back rather than guessed at.
         if (await told(b.dataset, `n${x.id}`, `Could not ${x.done ? "tick" : "untick"} this`, () => { x.done = !x.done; },
-          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done }))) await getNotes(d.id, true);
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done }))) { if (last && ctx.done) ctx.done(); await getNotes(d.id, true); }
       }
     } else if (a === "note-sha" || a === "want-copy") copySha(b);
     else if (a === "note-doc") ctx.read(b.dataset.d);
@@ -2649,6 +2658,8 @@ export function open(c) {
     focused = null; full = false;
   }
   deskId = c.id; reading = null;
+  // Home's "last touched" and the desk it offers to pick up start here.
+  if (c.id != null) c.api(`/api/desks/${c.id}/visit`, {}).catch(() => {});
   keepPoints(c.desks);
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }

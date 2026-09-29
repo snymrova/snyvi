@@ -303,6 +303,10 @@ async function main() {
       const h7 = await health();
       row("with a page in front the card appears and nothing is applied", !!pill && h7.pid === asked.pid && pill.includes(v(7)),
         pill ? `card says ${JSON.stringify(pill)}; pid unchanged ${h7.pid === asked.pid}` : `no card with Now within 15 s (ready ${h7.update.ready}, show ${h7.update.show})`);
+      // Behind the card, snyvi at rest, the way it is behind an aside: the
+      // peek docs/DESIGN.md §2.2 promised the update card.
+      const peek = await evaluate(browser.cdp, sessionId, `(() => { const s = document.querySelector("#upd-card .uc-bg .mk"); return s ? (s.querySelector(".mk-cheek") ? "peek" : "no cheeks") : "none"; })()`);
+      row("snyvi peeks from behind the card", peek === "peek", peek === "peek" ? "the 72 px head with its cheeks, at rest" : `found ${peek}`);
       await evaluate(browser.cdp, sessionId, `document.querySelector('#upd-card [data-uc="now"]')?.click()`);
       const clicked = await until(async () => { const h = await health(); return h && h.pid !== asked.pid ? h : null; }, 80);
       row("its Now restarts onto the staged version", !!clicked && onDisk() === sha256(stamped(v(7))),

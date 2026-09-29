@@ -37,6 +37,10 @@ pub const BUILD_SHA: &str = env!("SNYVI_GIT_SHA");
 pub const BUILD_TARGET: &str = env!("SNYVI_TARGET");
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
+/// An address snyvi has nothing at: its own miss, so the page wears `oops`
+/// (docs/DESIGN.md §2.3) and offers Home. Static, with no word of the path
+/// asked for, so nothing a link carried reaches the page.
+const NOT_FOUND_HTML: &str = include_str!("../ui/404.html");
 const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
 const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 const BOOT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/boot.js"));
@@ -289,6 +293,9 @@ pub struct App {
     pub panes: Arc<crate::pane::Panes>,
     /// The last few lines agents left beside the work. See `crate::aside`.
     pub asides: crate::aside::Asides,
+    /// What git last said about each desk's folder, kept briefly: Home is
+    /// drawn again on every event it shows. See `crate::git`.
+    pub git: crate::git::Cache,
     /// The file this daemon was started from, as it was then. `current_exe`
     /// is not it once the file has been replaced under a running process --
     /// `/proc/self/exe` says `(deleted)`, a renamed bundle moves the answer
@@ -700,6 +707,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
         asides: Default::default(),
+        git: Default::default(),
         exe,
         started_at: crate::store::now(),
         restart: std::sync::Mutex::new(None),
@@ -828,6 +836,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         )
         .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
         .route("/api/desks/{id}/leftoff", post(desk_left_off))
+        .route("/api/desks/{id}/visit", post(visit_desk))
+        .route("/api/desks/{id}/park", post(park_desk))
+        .route("/api/desks/{id}/week", post(desk_week))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/restore", post(restore_pane))
@@ -863,6 +874,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/assets/toast.js", get(asset_toast))
         .route("/assets/diff.js", get(asset_diff))
         .route("/assets/browse.js", get(asset_browse))
+        .fallback(not_found)
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -1288,6 +1300,34 @@ fn escape_json_for_script(s: &str) -> String {
     s.replace("</", "<\\/")
 }
 
+/// Nothing at this address. The API answers with the status alone, as it
+/// did before there was a page; anything a browser would show gets the page.
+async fn not_found(State(app): S, uri: axum::http::Uri) -> Response {
+    if uri.path().starts_with("/api/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    not_found_page(&app)
+}
+
+/// The page, off disk under `SNYVI_UI_DIR` as every other file of the UI is.
+fn not_found_page(app: &App) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static(CSP),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+        ],
+        Html(app.ui.text("404.html", NOT_FOUND_HTML).into_owned()),
+    )
+        .into_response()
+}
+
 fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str) -> Response {
     // The build hash, for the one asset the client asks for itself rather than
     // through the markup: the Mermaid bundle.
@@ -1423,7 +1463,7 @@ async fn shell_welcome(State(app): S) -> Response {
 
 async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
     let Ok(Some(doc)) = app.store.get(&id) else {
-        return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>")).into_response();
+        return not_found_page(&app);
     };
     let body = app.store.html(&id).unwrap_or_default();
     let tree = app.store.projects().unwrap_or_default();
@@ -1445,66 +1485,250 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
 /// what differs is that a tab holds no capability, and the desk view says so
 /// in one sentence rather than drawing a grid that could never run anything.
 /// Home in one call: every desk with what its card shows, what is waiting,
-/// what came lately, the update, the agents and the account's quota. The desk
-/// half is behind the desk gate, as `/api/desks` is: a tab gets the rest, and
-/// a line saying desks are the window's.
+/// the update, the agents and the account's quota. The desk half is behind
+/// the desk gate, as `/api/desks` is: a tab gets the rest, and a line saying
+/// desks are the window's.
+///
+/// A desk's card is where the work stands -- when it was last touched, where
+/// it was left or else the last thing that happened on it, what is open, what
+/// git says in its folder -- and `days` is what happened on every desk over the
+/// last `DAYS_SHOWN` days, a row per tick, document, left-off line and commit,
+/// for the page to group by the reader's own days. `pulse` is each desk's
+/// active hours over git's `WEEKS`, for its rhythm. Git is read off the
+/// runtime, a folder at a time, and kept for half a minute (`crate::git`).
 async fn home(
     State(app): S,
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let desks = if refuse_desk(&app, &headers, &q).is_none() {
-        let list = app.store.desks().unwrap_or_default();
-        let cards: Vec<serde_json::Value> = list
-            .iter()
-            .map(|d| {
-                let notes = app.store.desk_notes(d.id).unwrap_or_default();
-                let open = notes.iter().filter(|n| !n.done && n.suggested_by.is_empty()).count();
-                let suggested = notes.iter().filter(|n| !n.done && !n.suggested_by.is_empty()).count();
-                let done = notes.iter().filter(|n| n.done).count();
-                let next: Vec<&str> = notes
-                    .iter()
-                    .filter(|n| !n.done && n.suggested_by.is_empty())
-                    .take(3)
-                    .map(|n| n.text.as_str())
-                    .collect();
-                let last = app.store.desk_docs(d.id, 1).unwrap_or_default().into_iter().next();
-                let panes: Vec<serde_json::Value> = d
-                    .panes
-                    .iter()
-                    .map(|p| {
-                        let st = app.panes.status(&p.id);
-                        json!({
-                            "id": p.id, "slot": p.slot, "name": p.name,
-                            "running": st.running, "agent": st.agent, "agent_since": st.agent_since,
-                            "blocked": st.blocked, "blocked_since": st.blocked_since,
-                            "title": st.title, "model": st.model,
-                            "ctx_pct": st.ctx_pct, "ctx_used": st.ctx_used, "ctx_size": st.ctx_size,
-                        })
-                    })
-                    .collect();
-                json!({
-                    "id": d.id, "name": d.name, "root": d.root, "left_off": d.left_off,
-                    "panes": panes, "open": open, "done": done, "suggested": suggested, "next": next,
-                    "last_doc": last.map(|x| json!({ "id": x.id, "title": x.title, "at": x.received_at })),
-                })
-            })
-            .collect();
-        json!(cards)
+    let gated = refuse_desk(&app, &headers, &q).is_none();
+    let app2 = app.clone();
+    let (desks, days) = if gated {
+        tokio::task::spawn_blocking(move || home_desks(&app2))
+            .await
+            .unwrap_or((serde_json::Value::Null, serde_json::Value::Null))
     } else {
-        serde_json::Value::Null
+        (serde_json::Value::Null, serde_json::Value::Null)
     };
     Json(json!({
         "desks": desks,
+        "days": days,
         "queue": app.store.queue(5).unwrap_or_default(),
         "waiting": waiting(&app),
-        "recent": app.store.inbox(8).unwrap_or_default(),
         "update": update_json(&app),
         "agents": app.online(),
         "quota": *app.quota.lock().unwrap_or_else(|e| e.into_inner()),
         "version": VERSION,
     }))
     .into_response()
+}
+
+/// How many days of rows Home's log is sent: a week, and the day before it,
+/// so "this week" is whole on any day it is read.
+const DAYS_SHOWN: i64 = 8;
+
+/// The desk half of Home, blocking: the store and git.
+fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
+    let now = crate::store::now();
+    let since = now - crate::git::WEEKS * 7 * 86_400;
+    let shown = now - DAYS_SHOWN * 86_400;
+    let list = app.store.desks().unwrap_or_default();
+    let done = app.store.desks_done_since(since).unwrap_or_default();
+    let sent = app.store.desks_sent_since(since).unwrap_or_default();
+    let mut days: Vec<serde_json::Value> = Vec::new();
+    let cards: Vec<serde_json::Value> = list
+        .iter()
+        .map(|d| {
+            let notes = app.store.desk_notes(d.id).unwrap_or_default();
+            let open = notes.iter().filter(|n| !n.done && n.suggested_by.is_empty()).count();
+            let notes_done = notes.iter().filter(|n| n.done).count();
+            let suggested = notes.iter().filter(|n| !n.done && !n.suggested_by.is_empty()).count();
+            let next: Vec<&str> = notes
+                .iter()
+                .filter(|n| !n.done && n.suggested_by.is_empty())
+                .take(3)
+                .map(|n| n.text.as_str())
+                .collect();
+            let last_doc = app.store.desk_docs(d.id, 1).unwrap_or_default().into_iter().next();
+            let git = app.git.read(std::path::Path::new(&d.root), now);
+            let ticks: Vec<&crate::desk::Done> = done.iter().filter(|t| t.desk_id == d.id).collect();
+            let docs: Vec<&(i64, String, String, i64)> = sent.iter().filter(|x| x.0 == d.id).collect();
+            let commits: &[crate::git::Commit] = git.as_deref().map(|g| g.commits.as_slice()).unwrap_or(&[]);
+
+            // The rows of the log.
+            for t in ticks.iter().filter(|t| t.at >= shown) {
+                days.push(json!({ "desk": d.id, "kind": "tick", "at": t.at, "text": t.text, "by": t.by,
+                    "commit": t.commit, "doc": t.doc, "evidence": t.evidence }));
+            }
+            for x in docs.iter().filter(|x| x.3 >= shown) {
+                days.push(json!({ "desk": d.id, "kind": "doc", "at": x.3, "id": x.1, "text": x.2 }));
+            }
+            for c in commits.iter().filter(|c| c.at >= shown) {
+                days.push(json!({ "desk": d.id, "kind": "commit", "at": c.at, "hash": c.hash, "text": c.subject }));
+            }
+            if let Some(l) = d.left_off.as_ref().filter(|l| l.at >= shown) {
+                days.push(json!({ "desk": d.id, "kind": "left", "at": l.at, "text": l.text, "by": l.by }));
+            }
+
+            // Its rhythm: the hours anything happened in, once each.
+            let mut pulse: Vec<i64> = ticks
+                .iter()
+                .map(|t| t.at)
+                .chain(docs.iter().map(|x| x.3))
+                .chain(commits.iter().map(|c| c.at))
+                .chain(d.left_off.iter().map(|l| l.at))
+                .filter(|&at| at >= since)
+                .map(|at| at - at.rem_euclid(3600))
+                .collect();
+            pulse.sort_unstable();
+            pulse.dedup();
+
+            // The last thing that happened, for a desk no one said Left off on.
+            let tick = ticks.last().map(|t| (t.at, json!({ "kind": "tick", "at": t.at, "text": t.text, "commit": t.commit })));
+            let doc = last_doc.as_ref().map(|x| (x.received_at, json!({ "kind": "doc", "at": x.received_at, "text": x.title, "id": x.id })));
+            let last = match (tick, doc) {
+                (Some(t), Some(x)) => Some(if t.0 >= x.0 { t.1 } else { x.1 }),
+                (t, x) => t.or(x).map(|p| p.1),
+            };
+
+            // Touched: opened, or anything that happened on it.
+            let touched = [
+                d.visited_at,
+                d.left_off.as_ref().map_or(0, |l| l.at),
+                last_doc.as_ref().map_or(0, |x| x.received_at),
+                ticks.last().map_or(0, |t| t.at),
+                git.as_deref().and_then(|g| g.last.as_ref()).map_or(0, |c| c.at),
+            ]
+            .into_iter()
+            .max()
+            .unwrap_or(0);
+
+            let panes: Vec<serde_json::Value> = d
+                .panes
+                .iter()
+                .map(|p| {
+                    let st = app.panes.status(&p.id);
+                    json!({
+                        "id": p.id, "slot": p.slot, "name": p.name,
+                        "running": st.running, "agent": st.agent, "agent_since": st.agent_since,
+                        "blocked": st.blocked, "blocked_since": st.blocked_since,
+                        "title": st.title, "model": st.model,
+                        "ctx_pct": st.ctx_pct, "ctx_used": st.ctx_used, "ctx_size": st.ctx_size,
+                    })
+                })
+                .collect();
+            json!({
+                "id": d.id, "name": d.name, "root": d.root, "left_off": d.left_off,
+                "visited_at": d.visited_at, "parked": d.parked, "touched": touched,
+                "panes": panes, "open": open, "done": notes_done, "suggested": suggested, "next": next,
+                "last": last, "git": git.as_deref(), "pulse": pulse,
+            })
+        })
+        .collect();
+    days.sort_by_key(|r| r["at"].as_i64().unwrap_or(0));
+    (json!(cards), json!(days))
+}
+
+/// The reader opened a desk: Home's "last touched" and the desk it offers to
+/// pick up are read from this.
+async fn visit_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.visit_desk(id) {
+        Ok(_) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct ParkBody {
+    /// Park with this next step; absent takes the desk down off the shelf.
+    #[serde(default)]
+    next: Option<String>,
+}
+
+/// Put a desk on the shelf with its next step, or take it down. What it was
+/// comes back, for the Undo in the row.
+async fn park_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<ParkBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.park_desk(id, b.next.as_deref()) {
+        Ok(Some(was)) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true, "was": was })).into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct WeekBody {
+    title: String,
+    content: String,
+}
+
+/// A week of a desk's log, as a document in the desk's own project: the
+/// page writes the markdown from the rows it drew, and the folder it is filed
+/// under is the desk's, never one the page names.
+async fn desk_week(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<WeekBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let payload = Payload {
+        content: Some(b.content),
+        title: Some(b.title.chars().take(200).collect()),
+        workflow: Some("Your days".into()),
+        lang: Some("md".into()),
+        cwd: Some(desk.root),
+        origin: Some("home".into()),
+        sender: Some("snyvi".into()),
+        ..Default::default()
+    };
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || {
+        receive::receive(&app2.store, &app2.renderer, payload)
+    })
+    .await
+    {
+        Ok(Ok(received)) => {
+            let doc = received.doc;
+            emit(
+                &app,
+                "doc",
+                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
+            );
+            Json(json!({ "ok": true, "id": doc.id })).into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
 }
 
 /// So nothing about a desk is in this answer: the page asks for it with the
@@ -5667,6 +5891,9 @@ mod tests {
             "async fn restore_desk_note(",
             "async fn keep_desk_note(",
             "async fn desk_left_off(",
+            "async fn visit_desk(",
+            "async fn park_desk(",
+            "async fn desk_week(",
             "async fn brief_setting(",
             "async fn set_brief_setting(",
             "async fn open_pane(",
@@ -5715,6 +5942,9 @@ mod tests {
             r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
             r#".route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))"#,
             r#".route("/api/desks/{id}/leftoff", post(desk_left_off))"#,
+            r#".route("/api/desks/{id}/visit", post(visit_desk))"#,
+            r#".route("/api/desks/{id}/park", post(park_desk))"#,
+            r#".route("/api/desks/{id}/week", post(desk_week))"#,
             r#".route("/api/brief", get(brief_setting).post(set_brief_setting))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
             r#".route("/api/panes/{id}/restore", post(restore_pane))"#,

@@ -168,6 +168,8 @@ mod tests {
             created_at: 0,
             full_slot: 0,
             left_off: left,
+            visited_at: 0,
+            parked: None,
             panes: (1..=panes as i64)
                 .map(|slot| Pane {
                     id: format!("{slot:032}"),

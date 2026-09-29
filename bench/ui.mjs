@@ -2072,10 +2072,13 @@ async function homeRows(cdp, base, token, arrive, tmp) {
   try {
     // Home and the Inbox, each at its own address.
     await p.goto(`${base}/#cap=${cap}`);
-    const home = await until(`!!document.querySelector(".hm [data-w=desks] .hm-desk")`);
-    const quiet = await p.ev(`document.querySelector(".hm [data-w=needs]")?.textContent || ""`);
-    rows.push(["the mark opens Home, with the desks on it", home && /Nothing needs you/.test(quiet),
-      !home ? "no Home, or no desk card on it" : `Needs you says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
+    const home = await until(`!!document.querySelector(".hm .hm-pick [data-hm-open]") && [...document.querySelectorAll(".hm a[data-desk]")].some(a => a.textContent.includes("home-bench"))`);
+    const quiet = await p.ev(`document.querySelector(".hm .hm-status")?.textContent || ""`);
+    rows.push(["the mark opens Home, with Pick up and a one-line status", home && /Nothing needs you/.test(quiet),
+      !home ? "no Home, no Pick up, or the desk is not on it" : `the status says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
+    // The page is a grid, not the reading measure.
+    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm [data-w=days]")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); return { hm: Math.round(hm), beside: !!days && !!side && !!pick && Math.abs(pick.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
+    rows.push(["Home takes the width, with the side column beside Pick up and the log", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up and Your days on the left, the side column beside them from the top" : "one column"}`]);
     await p.goto(`${base}/inbox#cap=${cap}`);
     const inbox = await until(`document.querySelector("#doc h1")?.textContent === "Inbox"`);
     rows.push(["the Inbox is at /inbox", inbox, inbox ? "its own page, its own address" : "no Inbox at /inbox"]);
@@ -2098,6 +2101,17 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     rows.push(["an agent's suggestion is a ghost row until it is kept", sug.status === 201 && ghost && keptRow,
       sug.status !== 201 ? `the suggestion was refused (${sug.status})` : !ghost ? "no ghost row with Keep" : keptRow ? "Keep made it a line of the reader's" : "Keep left it a suggestion"]);
 
+    // The kept line is the desk's only open one. Ticked by the agent, the
+    // list read back finds nothing open: the mark in the sidebar goes glad
+    // and hops, once, and the rail itself shows no face (docs/DESIGN.md §2.3).
+    const lineId = await p.ev(`[...document.querySelectorAll("#toc .dk-note [data-a=note-tick]")].find(b => /rollback note/.test(b.getAttribute("aria-label")))?.dataset.n || null`);
+    const ticked = lineId ? await post(`/api/desks/${d}/notes/${lineId}`, { done: true }) : { status: 0 };
+    const glad = ticked.status === 200 && await until(`document.documentElement.dataset.done === "1" && document.querySelector(".brand-mark").classList.contains("hop")`, 30);
+    const railFace = await p.ev(`!!document.querySelector("#toc .mk, #toc .brand-mark")`);
+    const settled = glad && await until(`!document.documentElement.dataset.done`, 40);
+    rows.push(["the last open note ticked: the mark hops glad, the desk shows no face", glad && !railFace && settled,
+      !lineId ? "the kept line is not in the rail" : ticked.status !== 200 ? `the tick was refused (${ticked.status})` : !glad ? "the mark did not go glad" : railFace ? "a face turned up in the rail" : !settled ? "the mark stayed glad past its moment" : "glad and a hop on the mark for 2.4 s, nothing in the rail"]);
+
     // The brief, and its off switch.
     const brief = await get(`/api/panes/${pane}/brief`, T);
     await post("/api/brief", { on: false });
@@ -2118,6 +2132,30 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     const outlived = notes.find(n => n.id === note.id);
     rows.push(["a closed desk keeps its notes and comes back with them", shut.json.ok && gone && !!listed && re.status === 200 && !!outlived && outlived.done,
       !gone ? "the desk is still listed after its close" : !listed ? "the Removed list has no row for it" : !outlived ? "its notes did not come back" : `${notes.length} notes back, the ticked one still ticked`]);
+
+    // Opening a desk is when it was last touched; a tick is in the log and
+    // the rhythm; a desk parks with its next step, and comes down again.
+    const t0 = Math.floor(Date.now() / 1000) - 2;
+    const seen = (await get("/api/home")).desks.find(x => x.id === d);
+    const tick = (await post(`/api/desks/${d}/notes`, { text: "Fail open on Redis errors" })).json.note;
+    await post(`/api/desks/${d}/notes/${tick.id}`, { done: true });
+    const hm = await get("/api/home");
+    const card = hm.desks.find(x => x.id === d);
+    const logged = (hm.days || []).some(r => r.desk === d && r.kind === "tick" && r.text === "Fail open on Redis errors");
+    rows.push(["opening a desk touches it, and a tick is in the log and the rhythm", seen && seen.visited_at >= t0 - 60 && card.touched >= t0 && logged && card.pulse.length > 0,
+      !seen?.visited_at ? "visited_at was not set by opening the desk" : !logged ? "the tick is not in the days" : `touched ${Math.floor(Date.now() / 1000) - card.touched} s ago, ${card.pulse.length} active hour(s)`]);
+    const parked = await post(`/api/desks/${d}/park`, { next: "Retry-After in whole seconds" });
+    const shelf = (await get("/api/home")).desks.find(x => x.id === d)?.parked;
+    const down = await post(`/api/desks/${d}/park`, {});
+    const unparked = (await get("/api/home")).desks.find(x => x.id === d);
+    rows.push(["a desk parks with its next step and comes down again", parked.status === 200 && shelf?.next === "Retry-After in whole seconds" && down.json.was?.next === shelf?.next && !unparked.parked,
+      !shelf ? "the desk did not park" : unparked.parked ? "it stayed parked" : "parked, then taken down with the step handed back"]);
+    const week = await post(`/api/desks/${d}/week`, { title: "home-bench · the week", content: "# home-bench · the week\n\n- ✓ Fail open on Redis errors\n" });
+    const filed = week.json.id && (await get(`/api/docs/${week.json.id}`, T));
+    rows.push(["a week of the log is a document in the desk's project", week.status === 200 && JSON.stringify(filed || {}).includes(week.json.id),
+      week.status !== 200 ? `refused (${week.status})` : "sent, and in the library"]);
+    const noCap = await fetch(`${base}/api/desks/${d}/park`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    rows.push(["parking is the window's, like every desk route", noCap.status >= 400, `a page with no capability gets ${noCap.status}`]);
 
     // An agent's inline HTML is a page.
     const html = await post("/api/docs", { content: "<!doctype html><title>Mock</title><h1 id=x>A mockup</h1>", lang: "html", title: "An inline mockup", cwd: tmp }, T);

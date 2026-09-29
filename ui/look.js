@@ -318,6 +318,12 @@ const SAYS = [
   { t: st => st.waiting ? `${st.waiting} waiting` : "", w: 4, f: "glad" },
   { t: st => Object.keys(st.online).length ? "" : "no agents", w: 3 },
   { t: () => { const h = new Date().getHours(); return h < 5 || h >= 23 ? "late one?" : h < 10 ? "morning" : ""; }, w: 3, f: "wink" },
+  // For an hour after a desk's last open note was ticked (app.js markDone):
+  // the milestone, answered, and nothing more said about it.
+  { t: st => st.doneAt && Date.now() - st.doneAt < 3600e3 ? "all done" : "", w: 4, f: "glad" },
+  // For an hour after an update landed (about.js): the maker who wonders
+  // what changed points at the face and finds out which snyvi this is.
+  { t: st => st.landed && Date.now() - st.landed.at < 3600e3 ? `now ${st.landed.v}` : "", w: 3 },
 ];
 /** The last few lines, so the same one does not come up twice running. */
 let saidLast = [];

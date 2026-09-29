@@ -954,15 +954,43 @@ a Tab stop too, and the arrow keys move it. The width is kept.
 
 ## Home
 
-The mark opens Home, at `/`: what needs you (a panel waiting on an answer,
-or "Nothing needs you"), the desks -- each with its panels, its open notes
-and where the work was left -- what is waiting to be read, what is left on
-every desk's list, Claude (how much of the account's five-hour and weekly
-windows is used, what the Claudes in panels are doing, the fullest context
-window), what came lately, and snyvi's own update card. It is one read of
-the daemon, and it follows what changes while it is open. A widget can be
-hidden; "2 hidden · Show" at the foot brings them back. The Inbox is at
-`/inbox`, and `i` still opens it. An empty library still opens on Welcome.
+The mark opens Home, at `/`: the way back into an evening's work.
+
+Under the title, one line says what needs you (a panel that rang, or a
+Claude asking), what is waiting to be read, whether a Claude is working,
+and how much of the account's five-hour window is left.
+
+**Pick up** is one desk, large: the one you touched last, or the one you
+keep there with *Keep here*. It says when you last touched it, where the
+work was left -- or, when no one said, the last thing that happened on it,
+marked *Last* -- the open notes, what git says in its folder (the branch,
+what is changed, what is not pushed, the last commit), and each panel in
+words. Enter opens it. The other desks sit beside it with their age.
+
+**Your days** is what happened, day by day and desk by desk: notes ticked
+(with the commit and the link the agent gave), documents sent, commits in
+the desk's folder, and where the work was left, each with its time. It
+shows the last three days with anything in them and a desk's first four
+lines; the rest are a click away. *Send this week as a doc*, on its
+heading, files the last seven days as a document in each desk's own
+project.
+
+**Projects** shows each desk's last eight weeks, a bar a week as tall as
+the days with work in them. A desk quiet for ten days offers *Park it?*:
+it asks for the next step, takes the desk out of Pick up, and keeps it on
+a Parked shelf with that step until you take it down. Nothing on a parked
+desk is closed.
+
+**Claude** has what is left of the five-hour and weekly windows, when that
+was read, and the fullest context window; a window past its reset is shown
+full again. **snyvi** has the update card.
+
+Git is read only in a desk's own folder, never in your home directory,
+read-only and with a two-second limit, and nothing leaves the machine.
+Home is one read of the daemon, and it follows what changes while it is
+open. A side widget can be hidden; "2 hidden · Show" at the foot brings
+them back. The Inbox is at `/inbox`, and `i` still opens it. An empty
+library still opens on Welcome.
 
 A document opens where you left it, however you open it -- the tree, the
 queue, `n`, Home, ⌘K, after a restart -- and at the top once you have read
@@ -1356,7 +1384,10 @@ macOS jobs add `SNYVI_BENCH_SHARED=1`, which prints the cold-start row
 without enforcing it, and it alone: the Windows runner takes 400 ms to
 create a process where a dev box takes 11, and how much of that is
 Windows and how much the runner is not yet known. The send, first-byte
-and render clocks are held on every desktop.
+and render clocks are held on every desktop. The binary size is held
+only where the build has the fat LTO that ships: the desktop, Windows and
+Intel Mac jobs turn it off to save build time, so there the row is
+printed with its budget in brackets.
 
 The same bench, on the three desktops CI builds for. These are the
 hosted runners' numbers, from one run each, and a runner is a slow and

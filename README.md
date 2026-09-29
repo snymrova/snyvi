@@ -105,6 +105,13 @@ snyvi init-claude --auto   # Claude Code
 snyvi init codex           # also cursor, claude-desktop, gemini, windsurf, vscode, zed
 ```
 
+## The face
+
+The one in the corner is snyvi, and the app icon is the same drawing. It
+has six faces and speaks only when spoken to. All six are in
+[docs/media/faces.svg](docs/media/faces.svg), MIT like the rest: use them
+for anything about snyvi.
+
 ## Private, and fast
 
 One static binary, listening on 127.0.0.1 only. No account, no telemetry.

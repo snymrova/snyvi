@@ -38,7 +38,7 @@ let wired = false;
  *
  * "Later" is the daemon's (`snoozed_until`), so every window agrees. A tab
  * holds no capability: it reads the card and presses nothing but About. */
-let upd = null, updWaiting = false, updFresh = null, updEl = null, uc = null, sure = false, cardEl = null;
+let upd = null, updWaiting = false, updFresh = null, updEl = null, uc = null, sure = false, cardEl = null, peekWas = null, peekUntil = 0, peekTimer = 0;
 const later = () => {
   // Tomorrow morning, in the reader's own time: 8 o'clock, at least an hour off.
   const t = new Date(); t.setHours(8, 0, 0, 0);
@@ -79,6 +79,7 @@ function renderUpd() {
   // Updated: once per landing, kept for the page it was first shown on, as a
   // toast whose action is the release notes.
   const at = u && u.last_applied;
+  if (!s && at && Date.now() / 1000 - at < 3600 && uc.landed) uc.landed(version, at * 1000);
   if (!s && at && Date.now() / 1000 - at < 86400 && updFresh !== at) {
     let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
     updFresh = at;
@@ -121,7 +122,12 @@ export function card(el, u, c) {
     body = `<p class="uc-sub">The version before was put back.</p>`;
     acts = b("About", "about");
   }
-  el.innerHTML = `<div class="uc" data-state="${s.card}" role="status"><p class="uc-t">${s.card === "waiting" || s.card === "restarting" ? DOTS : ""}${esc(s.line)}</p>${body}${acts ? `<div class="uc-acts">${acts}</div>` : ""}</div>`;
+  // snyvi behind the sidebar's card, as it is behind an aside (docs/DESIGN.md
+  // §2.2's peek): at rest, for the cards that offer something -- an update
+  // ready, one out, a newer binary on disk -- and not while it waits, restarts
+  // or failed. Home's copy of the card carries no face (§2.3).
+  const peek = el === cardEl && uc.peek && (s.card === "ready" || s.card === "stale" || s.card === "told") ? `<span class="uc-bg">${uc.peek("rest")}</span>` : "";
+  el.innerHTML = `<div class="uc" data-state="${s.card}" role="status">${peek}<p class="uc-t">${s.card === "waiting" || s.card === "restarting" ? DOTS : ""}${esc(s.line)}</p>${body}${acts ? `<div class="uc-acts">${acts}</div>` : ""}</div>`;
   if (!el.dataset.ucWired) { el.dataset.ucWired = "1"; el.addEventListener("click", e => { const t = e.target.closest("[data-uc]"); if (t) act(t.dataset.uc, t, el); }); }
   return true;
 }
@@ -186,6 +192,19 @@ function drawCard(s) {
   if (!s || s.card !== "waiting") sure = false;
   card(cardEl);
   cardEl.room();
+  // A card that has just come up brings snyvi up from behind it for a
+  // moment, as a new aside does; a window in the background plays it to
+  // nobody, and a redraw of the same card -- the daemon's next update event
+  // rebuilds it -- neither plays it again nor cuts it short.
+  const now = s && cardEl.querySelector(".uc-bg") ? s.card : null;
+  if (now && now !== peekWas && !document.hidden) {
+    peekUntil = Date.now() + 4200;
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => cardEl.querySelector(".uc")?.classList.remove("peek"), 4200);
+  }
+  const box = cardEl.querySelector(".uc");
+  if (box && now && Date.now() < peekUntil) { void box.offsetWidth; box.classList.add("peek"); }
+  peekWas = now;
 }
 
 /** Over the top of the main area while snyvi restarts: a strip, not a modal,
@@ -408,7 +427,9 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .w-ask-box p { margin: 0 0 10px; font-size: var(--fs-ui); line-height: 1.5; color: var(--fg-2); }
 .w-ask-act { display: flex; gap: 12px; align-items: center; }
 .w-said { margin: 0; font-size: var(--fs-ui); color: var(--fg-2); }
-.w-said.ok { color: var(--ok); }
+.w-said.ok { color: var(--ok); display: flex; align-items: center; gap: 8px; }
+.w-face { flex: none; width: 22px; height: 22px; }
+.w-face .mk { animation: mk-hop .62s var(--ease-spring) 1; }
 .w-said.bad { color: var(--danger); margin-bottom: 6px; }
 .help-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; padding: 4px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
 .help-col { display: flex; flex-direction: column; gap: 18px; align-content: start; }
@@ -756,7 +777,7 @@ export function connect(a, { esc, rel, cap }) {
 /** Connect Claude Code from the window, after saying what that writes. The
  *  ask replaces the button, in its place; so does the answer. `done` hears
  *  the agents as they are after it. */
-export function connectAsk(b, { api, done, sayErr }) {
+export function connectAsk(b, { api, done, sayErr, mascotHead }) {
   const box = b.closest(".w-connect") || b.parentElement;
   const was = box.innerHTML;
   box.innerHTML = `<div class="w-ask-box" role="group" aria-label="Connect Claude Code"><p>This adds snyvi to Claude Code: its MCP server in <code>~/.claude.json</code>, and hooks and a status line in <code>~/.claude/settings.json</code>, all run by this snyvi. A status line of your own is kept. <code>snyvi uninstall-claude</code> takes it all back out.</p>` +
@@ -777,7 +798,10 @@ export function connectAsk(b, { api, done, sayErr }) {
       const j = await api("/api/agents/claude/connect", {});
       const row = j.agents && j.agents.rows.find(r => r.id === "claude");
       const ok = j.ok && row && row.state === "connected";
-      box.innerHTML = ok ? `<p class="w-said ok">Connected. A Claude session started from now on sends here.</p>`
+      // The one moment on this page that earns a face (docs/DESIGN.md §2.3):
+      // it went right, once per machine, at the point of action. Glad, and
+      // the one hop a rare moment is allowed; the ask before it stays plain.
+      box.innerHTML = ok ? `<p class="w-said ok">${mascotHead ? `<span class="w-face">${mascotHead("glad")}</span>` : ""}<span>Connected. A Claude session started from now on sends here.</span></p>`
         : `<p class="w-said bad">It did not take. What it said:</p><pre class="cmd"><code>${(j.said || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</code></pre>`;
       done && done(j.agents, ok);
     } catch (e) { box.innerHTML = `<p class="w-said bad">Could not connect Claude Code · ${sayErr(e).why.replace(/[&<>]/g, "")}</p>`; }
@@ -949,8 +973,14 @@ html[data-upd="waiting"] .brand-mark::after { animation: upd-breathe 1.6s ease-i
 #side > #upd-card { position: absolute; left: 8px; right: 8px; bottom: calc(var(--note-foot, 52px) + var(--note-h, 0px)); z-index: 4; margin: 0 0 6px; }
 :root[data-side="0"] #side > #upd-card { display: none; }
 :root:not([data-side="0"]) #app #side:has(> #upd-card:not([hidden])) #trees { padding-bottom: calc(8px + var(--note-h, 0px) + var(--upd-h, 0px)); }
-.uc { padding: 10px 12px; border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 6%, var(--bg-side)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--rule)); box-shadow: var(--shadow); font-size: var(--fs-small); }
+.uc { position: relative; overflow: hidden; isolation: isolate; padding: 10px 12px; border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 6%, var(--bg-side)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--rule)); box-shadow: var(--shadow); font-size: var(--fs-small); }
 .uc[data-state="failed"] { border-color: color-mix(in srgb, var(--danger) 35%, var(--rule)); }
+/* The peek: 72 px, tilted, faint, rising from the card's corner -- the aside
+   card's own (note.js), and the words stay above it. */
+.uc > :not(.uc-bg) { position: relative; z-index: 1; }
+.uc-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
+  opacity: 0; transform: translate(12px, 26px) rotate(0deg); transition: opacity var(--dur-move) ease, transform .45s var(--ease-spring); }
+#upd-card:hover .uc-bg, #upd-card:focus-within .uc-bg, .uc.peek .uc-bg { opacity: var(--mascot-peek); transform: rotate(-14deg); transition-delay: .12s; }
 .uc-t { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: 6px; }
 .uc-sub { margin: 4px 0 0; color: var(--fg-2); line-height: 1.4; }
 .uc-who { margin: 4px 0 0; padding: 0 0 0 14px; color: var(--fg-2); }
