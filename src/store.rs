@@ -722,7 +722,7 @@ impl Store {
                 });
             }
         }
-        out.sort_by(|a, b| b.at.cmp(&a.at));
+        out.sort_by_key(|a| std::cmp::Reverse(a.at));
         out.truncate(limit);
         Ok(out)
     }

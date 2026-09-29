@@ -486,8 +486,11 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     let size = std::fs::metadata(&exe)?.len() as f64 / MB;
     // 15 MB until 1.7.0, when the daemon began updating itself: the manifest's
     // signature, the checksums, reading a tarball and a zip, and the icons
-    // `install-desktop` writes came to about half a megabyte.
-    rows.size("binary size, snyvi", size, 16.0);
+    // `install-desktop` writes came to about half a megabyte. 16 until 1.8.0:
+    // Home, the update card, the desk brief and suggested notes, and the
+    // design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
+    // 16.4 on Windows).
+    rows.size("binary size, snyvi", size, 16.5);
 
     // Three cold starts: the first also creates the database and the token,
     // and the two after it open what the first left, which is every start

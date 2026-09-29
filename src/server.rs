@@ -2173,7 +2173,7 @@ async fn removed_list(
             restore: "/api/notes/restore".into(),
         });
     }
-    items.sort_by(|a, b| b.at.cmp(&a.at));
+    items.sort_by_key(|a| std::cmp::Reverse(a.at));
     items.truncate(ROWS);
     Json(json!({ "items": items })).into_response()
 }
