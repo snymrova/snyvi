@@ -124,6 +124,12 @@ const yieldToBrowser = () =>
 /** Put something in the frame in place of the diagram: a label, a spinner, a
  *  button, an error. Replacing the frame's contents wholesale is what makes
  *  the states exclusive -- there is never a stale spinner under an SVG. */
+/** The working dots (app.css .dots), for a wait long enough to explain. */
+function mmdDots() {
+  const t = document.createElement("template");
+  t.innerHTML = `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+  return t.content.firstChild;
+}
 function mmdNote(fig, ...nodes) {
   const note = document.createElement("div");
   note.className = "mmd-note";
@@ -439,7 +445,7 @@ async function mmdRender(fig, token) {
     return;
   }
   // A spinner only once the wait is long enough to be worth explaining.
-  const slow = setTimeout(() => fig.classList.add("mmd-slow"), 150);
+  const slow = setTimeout(() => { fig.classList.add("mmd-slow"); const n = fig.querySelector(".mmd-note"); if (n && !n.querySelector(".dots")) n.prepend(mmdDots()); }, 150);
   const t0 = performance.now();
   try {
     const id = mmdRenderId(fig);
@@ -630,7 +636,8 @@ function mmdApply(fig) {
   if (toggle) {
     toggle.hidden = !v.shrunk && !zoomed;
     toggle.textContent = zoomed ? "Fit" : "100%";
-    toggle.title = zoomed ? "Fit the whole diagram  0" : "Show it at full size";
+    toggle.dataset.tip = zoomed ? "Fit the whole diagram" : "Show at full size";
+    zoomed ? (toggle.dataset.key = "0") : delete toggle.dataset.key;
   }
 }
 
@@ -679,19 +686,39 @@ function mmdActual(fig) {
  *  fault in any engine, and the figure is marked visible for good, since it
  *  is the one the reader is looking at. bench/webkit.py is where both were
  *  seen. */
-let mmdFullFrom = 0;   // where the document was, to put it back there
+let mmdFullFrom = 0, mmdOpener = null;   // where the document was, and who asked, to put both back
+/** The rest of the page while one diagram fills it: not there for the
+ *  keyboard or a screen reader either (docs/DESIGN.md §8, dialogs). */
+const mmdAround = on => { for (const s of ["#side", "#rail", "#chrome"]) { const el = document.querySelector(s); if (el) el.inert = on; } };
+/** The ⛶ says which way it goes, to the eye and to a screen reader. */
+function mmdPressed(fig, on) {
+  const b = fig.querySelector("[data-mmd=full]");
+  if (!b) return;
+  b.setAttribute("aria-pressed", String(on));
+  b.dataset.tip = on ? "Exit full screen" : "Fill the screen";
+  b.ariaLabel = b.dataset.tip;
+  return b;
+}
 function quiet(p) { if (p && p.catch) p.catch(() => {}); }   // a promise whose refusal is no news
 function mmdFull(fig) {
   const open = docEl.querySelector(".mmd[data-full]");
   if (open) { mmdUnfill(open); return; }
   mmdFullFrom = main.scrollTop;
+  mmdOpener = document.activeElement;
   fig.style.contentVisibility = "visible";
   fig.dataset.full = "1";
+  mmdAround(true);
+  // The focus goes with it: a key after this is the diagram's.
+  (mmdPressed(fig, true) || fig).focus({ preventScroll: true });
   mmdRefit();
   if (document.documentElement.requestFullscreen && !document.fullscreenElement) quiet(document.documentElement.requestFullscreen());
 }
 function mmdUnfill(fig) {
   delete fig.dataset.full;
+  mmdAround(false);
+  mmdPressed(fig, false);
+  if (mmdOpener?.isConnected) mmdOpener.focus({ preventScroll: true });
+  mmdOpener = null;
   main.scrollTo({ top: mmdFullFrom, behavior: "instant" });
   mmdRefit();
   if (document.fullscreenElement) quiet(document.exitFullscreen());
@@ -720,10 +747,10 @@ function mmdTools(fig) {
   const bar = document.createElement("div");
   bar.className = "mmd-tools";
   bar.innerHTML =
-    `<button type="button" data-mmd="out" title="Zoom out" aria-label="Zoom out">−</button>` +
-    `<button type="button" data-mmd="in" title="Zoom in  (double-click, or ⌘/ctrl + scroll)" aria-label="Zoom in">+</button>` +
-    `<button type="button" data-mmd="zoom" title="Show it at full size">100%</button>` +
-    `<button type="button" data-mmd="full" title="Fill the screen  f" aria-label="Fill the screen">⛶</button>`;
+    `<button type="button" data-mmd="out" data-tip="Zoom out" aria-label="Zoom out"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>` +
+    `<button type="button" data-mmd="in" data-tip="Zoom in" data-tip-sub="or double-click, or ${/Mac/.test(navigator.platform) ? "⌘" : "Ctrl"} + scroll" aria-label="Zoom in"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>` +
+    `<button type="button" data-mmd="zoom" data-tip="Show at full size">100%</button>` +
+    `<button type="button" data-mmd="full" data-tip="Fill the screen" data-key="f" aria-label="Fill the screen" aria-pressed="false"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>`;
   fig.appendChild(bar);
   mmdApply(fig);
 }
@@ -829,9 +856,17 @@ addEventListener("resize", () => {
 function mmdFail(fig, e) {
   fig.dataset.state = "error";
   fig.style.removeProperty("--mmd-reserve");
-  const msg = document.createElement("p");
+  const msg = document.createElement("div");   // it may hold the parser's dump, folded
   msg.className = "mmd-err";
-  msg.textContent = `This diagram could not be drawn — ${e && e.message ? e.message : e}`;
+  // The parser's first line says what went wrong; the rest of its dump is
+  // there for whoever wants it, folded.
+  const [first, ...rest] = String(e && e.message ? e.message : e).split("\n");
+  msg.textContent = `Could not draw this diagram · ${first}`;
+  if (rest.join("").trim()) {
+    const more = document.createElement("details"), sum = document.createElement("summary"), dump = document.createElement("pre");
+    sum.textContent = "What the parser said"; dump.textContent = rest.join("\n");
+    more.append(sum, dump); msg.append(more);
+  }
   const pre = document.createElement("pre");
   pre.className = "mmd-src";
   pre.textContent = fig.dataset.src;
@@ -851,7 +886,7 @@ docEl.addEventListener("click", e => {
   const fig = btn.closest(".mmd");
   if (!fig) return;
   fig.dataset.state = "queued";
-  mmdNote(fig, document.createTextNode("Drawing…"));
+  mmdNote(fig, mmdDots(), document.createTextNode("Drawing"));
   fig.classList.add("mmd-slow");
   mmdQueue.push(fig);
   mmdDrain();
@@ -890,7 +925,7 @@ const CSS_MOVED = `
 .mmd-frame svg { max-width: 100%; height: auto; }
 /* Once it has a viewport the frame owns the box and the SVG fills it, so the
    viewBox is the only thing that decides what is shown. */
-.mmd[data-zoom] .mmd-frame { overflow: hidden; border-radius: var(--radius); }
+.mmd[data-zoom] .mmd-frame { overflow: hidden; border-radius: var(--r-sm); }
 .mmd[data-zoom] .mmd-frame svg { width: 100%; height: 100%; max-width: none; display: block; }
 .mmd[data-zoom="in"] .mmd-frame { cursor: grab; }
 .mmd[data-grab] .mmd-frame { cursor: grabbing; }
@@ -899,14 +934,14 @@ const CSS_MOVED = `
    tree make. Always there for a reader on a touch screen, which has no hover. */
 .mmd-tools {
   position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px;
-  border-radius: var(--radius); background: var(--bg-raise); box-shadow: 0 1px 3px rgba(0,0,0,.18);
-  opacity: 0; transition: opacity .12s ease; pointer-events: none;
+  border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-1);
+  opacity: 0; transition: opacity var(--dur-quick) ease; pointer-events: none;
 }
 .mmd:hover .mmd-tools, .mmd:focus-within .mmd-tools, .mmd[data-full] .mmd-tools { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .mmd-tools { opacity: 1; pointer-events: auto; } }
 .mmd-tools button {
-  font-family: var(--sans); font-size: 12px; line-height: 1; color: var(--fg-2);
-  min-width: 26px; height: 24px; padding: 0 6px; border-radius: 5px; background: none;
+  font-family: var(--sans); font-size: var(--fs-small); line-height: 1; color: var(--fg-2);
+  min-width: 26px; height: 24px; padding: 0 6px; border-radius: var(--r-sm); background: none;
 }
 .mmd-tools button:hover { background: var(--rule); color: var(--fg); }
 .mmd-tools button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -918,37 +953,31 @@ const CSS_MOVED = `
    SVG's own text went; and on the way back it kept the figure at the size
    its placeholder had until the next scroll. A fixed box has neither fault in
    any engine. mmdFull in app.js. */
-.mmd[data-full] { position: fixed; inset: 0; z-index: 30; margin: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.mmd[data-full] { position: fixed; inset: 0; z-index: var(--z-over); margin: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
 .mmd[data-full] .mmd-frame { height: 100vh !important; width: 100vw; border-radius: 0; }
 /* Until the diagram lands the figure holds about the space it will want, so the
    text below it does not jump when it does. An estimate from the source, set by
    the client -- see mmdWeight in app.js. */
 .mmd:not([data-state="done"]) .mmd-frame {
   min-height: var(--mmd-reserve, 200px);
-  border-radius: var(--radius);
+  border-radius: var(--r-sm);
   background: linear-gradient(var(--code-bg), var(--code-bg));
 }
 .mmd[data-state="error"] .mmd-frame { min-height: 0; display: block; background: none; }
 .mmd-fail { padding: 2px 0; }
-.mmd-note { font-family: var(--sans); font-size: 12px; letter-spacing: .04em; color: var(--fg-3); text-align: center; padding: 10px; }
+.mmd-note { font-family: var(--sans); font-size: var(--fs-small); letter-spacing: .04em; color: var(--fg-3); text-align: center; padding: 10px; }
 /* The label is for a diagram that is about to appear; a reader who waits long
-   enough to wonder gets a spinner instead of a word that never changes. */
-.mmd-slow .mmd-note::before {
-  content: ""; display: block; width: 18px; height: 18px; margin: 0 auto 8px;
-  border: 2px solid var(--rule-2); border-top-color: var(--fg-3); border-radius: 50%;
-  animation: mmd-spin .7s linear infinite;
-}
-@keyframes mmd-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .mmd-slow .mmd-note::before { animation-duration: 2.4s; } }
+   enough to wonder gets the working dots above it (app.css .dots). */
+.mmd-note .dots { display: flex; justify-content: center; margin: 0 0 8px; }
 /* Over the cap: offered, not spent. */
-.mmd-ask { display: block; margin: 0 auto 8px; font-family: var(--sans); font-size: 13px; padding: 7px 14px; border-radius: var(--radius); background: var(--bg-raise); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.mmd-ask { display: block; margin: 0 auto 8px; font-family: var(--sans); font-size: var(--fs-ui); padding: 7px 14px; border-radius: var(--r-sm); background: var(--bg-raise); color: var(--fg); box-shadow: var(--shadow-1); }
 .mmd-ask:hover { color: var(--accent); }
 .mmd-why { display: block; }
 /* A source Mermaid could not parse is the one the reader most wants to read. */
-.mmd-err { font-family: var(--sans); font-size: 13px; color: var(--del-fg); margin: 0 0 8px; text-align: left; }
+.mmd-err { font-family: var(--sans); font-size: var(--fs-ui); color: var(--danger); margin: 0 0 8px; text-align: left; }
 /* Ligatures off, like every other code block: this is shown so the reader can
    see the characters the agent actually wrote, and JetBrains Mono draws \`-->\`
    as a single arrow, which is the one thing it must not do here. */
-.mmd-src { font-feature-settings: "calt" 0, "liga" 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; text-align: left; white-space: pre-wrap; background: var(--code-bg); border-radius: var(--radius); padding: 12px 14px; margin: 0; color: var(--fg-2); overflow-x: auto; }
+.mmd-src { font-feature-settings: "calt" 0, "liga" 0; font-family: var(--mono); font-size: var(--fs-small); line-height: 1.6; text-align: left; white-space: pre-wrap; background: var(--code-bg); border-radius: var(--r-sm); padding: 12px 14px; margin: 0; color: var(--fg-2); overflow-x: auto; }
 `;
 { const s = document.createElement("style"); s.textContent = CSS_MOVED; document.head.append(s); }

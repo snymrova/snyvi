@@ -256,8 +256,23 @@ async function goInbox() {
   const home = document.querySelector('[data-nav="inbox"], a.t-inbox');
   if (!home) return false;
   home.click();
-  for (let i = 0; i < 100 && location.pathname !== "/"; i++) await new Promise(r => setTimeout(r, 10));
-  return location.pathname === "/";
+  // The inbox has its own address since Home took "/", and its rows are
+  // drawn by a chunk (ui/home.js) that lands after the address changes.
+  const there = () => location.pathname === "/inbox" && !!document.querySelector("#doc a[data-id]");
+  for (let i = 0; i < 300 && !there(); i++) await new Promise(r => setTimeout(r, 10));
+  return there();
+}
+
+/** Every row the churn will click, in the sidebar. A document opened from
+ *  outside the tree leaves its project folded (only a click unfolds one), so
+ *  the three projects are unfolded here, once, the way a reader would. */
+async function unfold(ids) {
+  const all = () => ids.every(id => document.querySelector(`#tree a[data-id="${id}"]`));
+  for (let i = 0; i < 300 && !all(); i++) {
+    for (const s of document.querySelectorAll("#tree details.t-proj:not([open]) > summary, #tree details.t-proj[open] details:not([open]) > summary")) s.click();
+    await new Promise(r => setTimeout(r, 10));
+  }
+  return all();
 }
 
 /** Twenty opens, alternating, with nothing read back but the clock. What the
@@ -435,6 +450,7 @@ async function main() {
     // What holding the long one costs, counted where nothing else is held.
     const held = await holdings(cdp, ids.code);
     if (!(await evaluate(cdp, sessionId, call(goInbox)))) throw new Error("could not get back to the inbox");
+    if (!(await evaluate(cdp, sessionId, call(unfold, [ids.plan, ids.code, ids.note])))) throw new Error("the documents' rows never showed in the sidebar");
 
     // The heap, either side of twenty navigations, each one collected first
     // so what is measured is what the page is holding and not what it has

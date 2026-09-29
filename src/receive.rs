@@ -172,7 +172,15 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     // Keys are matched case-insensitively: "KSI pivot" and "ksi pivot" are one
     // workflow, not two. The title keeps whatever casing arrived first.
-    let (wf_name, wf_title) = match (&p.workflow, &p.session) {
+    // A plan the hook sent as Claude asked for approval (`crate::hook`) is
+    // filed under the desk it was made on, or its project: a plan is looked
+    // for by where the work is, not by which conversation wrote it.
+    let plan_home = (origin == "plan" && p.workflow.is_none()).then(|| {
+        from.as_ref()
+            .map(|o| o.name.clone())
+            .unwrap_or_else(|| proj.name.clone())
+    });
+    let (wf_name, wf_title) = match (plan_home.as_ref().or(p.workflow.as_ref()), &p.session) {
         (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
         (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.clone()),
         _ => ("manual".to_string(), "Sent manually".to_string()),

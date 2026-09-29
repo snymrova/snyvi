@@ -630,6 +630,26 @@ export async function status(label) {
       }
     };
     for (const token of tokens) read(token);
+    /* Pairs that are not a token on a surface: text on a fill, and the
+     * accent on its own wash, which sits over the sidebar. `bar` is a pair's
+     * own where the theme's is not its bar: Contrast holds the accent on its
+     * wash at 4.5 by design (themes.css says why). 1.7.2: these were the
+     * pairs the audit found under, and nothing measured them. */
+    const side = over(surface("--bg-side") || page, page), contrast = document.documentElement.dataset.theme === "contrast";
+    const pair = (fgT, bgT, name, bar) => {
+      let bg = surface(bgT), fg = colour(fgT);
+      if (!bg || !fg) { rows.push({ theme: label, token: name, surface: bgT, ratio: null }); return; }
+      if (bg.a < 1) bg = over(bg, bgT === "--accent-bg" ? side : page);
+      if (fg.a < 1) fg = over(fg, bg);
+      rows.push({ theme: label, token: name, surface: bgT, ratio: ratio(fg, bg), ...(bar ? { bar } : {}) });
+    };
+    for (const t of ["--fg-2", "--fg-3"]) for (const s of ["--bg", "--bg-side", "--bg-raise"]) pair(t, s, t);
+    pair("--on-accent", "--danger", "--on-accent");
+    const onAccent = (a = "") => {
+      pair("--on-accent", "--accent", `--on-accent${a}`);
+      pair("--accent", "--accent-bg", `--accent${a}`, contrast ? 4.5 : 0);
+    };
+    onAccent();
     /* And every accent, not only the default: a reader picks the theme and
      * the accent apart, so each of the eight has to hold on each theme. The
      * default alone was measured until 2026-09-25, and green on Paper's
@@ -638,12 +658,15 @@ export async function status(label) {
       root.dataset.accent = a;
       read("--accent", `--accent (${a})`);
       read("--s-keyword", `--s-keyword (${a})`);
+      onAccent(` (${a})`);
     }
   } finally {
     was ? (root.dataset.accent = was) : delete root.dataset.accent;
     probe.remove();
   }
-  const worst = rows.reduce((w, r) => (r.ratio === null ? { ...r, ratio: 0 } : (!w || r.ratio < w.ratio) ? r : w), null);
-  const theme = document.documentElement.dataset.theme;
-  return { theme, label, rows, worst, bar: theme === "contrast" ? 7 : 4.5 };
+  const theme = document.documentElement.dataset.theme, bar = theme === "contrast" ? 7 : 4.5;
+  // The worst is the one furthest under its own bar, which is the theme's
+  // unless the pair carries one.
+  const worst = rows.reduce((w, r) => (r.ratio === null ? { ...r, ratio: 0 } : (!w || r.ratio / (r.bar || bar) < w.ratio / (w.bar || bar)) ? r : w), null);
+  return { theme, label, rows, worst, bar };
 }

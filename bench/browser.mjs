@@ -143,6 +143,12 @@ async function main() {
       // it, and the continue that follows is refused. Nothing to do about that.
       else cdp.send("Fetch.continueRequest", { requestId: p.requestId }, sessionId).catch(() => {});
     });
+    // Back to the top first: a document reopens where it was left (app.js
+    // keepPlace), and the checks above left it at the held huge-flow, which
+    // queues nothing -- so the reload would open on no diagram to interrupt.
+    // The scroll's own save runs 400 ms later, hence the wait.
+    await evaluate(cdp, sessionId, `document.querySelector("#main").scrollTo({ top: 0, behavior: "instant" })`);
+    await sleep(600);
     // Without this the library comes from the tab's own cache and is never a
     // request at all, so there is nothing to hold and no window to open.
     await cdp.send("Network.enable", {}, sessionId);
@@ -474,7 +480,7 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
     console.log(`  ${"theme colours".padEnd(28)} FAIL ${status.length} of 8 themes were read back`);
   }
   for (const s of status) {
-    const w = s.worst, ok = !!w && w.ratio >= s.bar;
+    const w = s.worst, ok = !!w && w.ratio >= (w.bar || s.bar);
     failed ||= !ok;
     const why = !w ? "nothing was read" : `${s.rows.length} pairs at ${s.bar}:1, worst ${w.token} on ${w.surface} at ${w.ratio.toFixed(2)}:1`;
     console.log(`  ${`colours (${s.theme})`.padEnd(28)}${ok ? " ok  " : " FAIL"} ${why}`);

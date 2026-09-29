@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.7.1"
+version = "1.8.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -31,7 +31,7 @@ exclude = [
 # them. Bump it by hand, to the version being released, whenever the window's
 # own code changes: src/desktop.rs, src/bin/app.rs, tauri.conf.json, the frame.
 [package.metadata.snyvi]
-app_min = "1.7.0"
+app_min = "1.8.0"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }
@@ -55,6 +55,9 @@ html-escape = "0.2"
 similar = "2"
 ignore = "0.4"
 mimalloc = { version = "0.1", default-features = false }
+# Only for `mi_collect`: a render thread hands back what it freed before it
+# goes idle (platform::release_thread_memory). The same library mimalloc links.
+libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"] }
 toml_edit = "0.25.15"
 # A desk's panes: the PTY, the parser that cuts its output into calls, and how
 # wide a character is. The screen those calls draw on is snyvi's own, in
@@ -148,9 +151,10 @@ tauri-build = { version = "2", optional = true }
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
-# A panel's live folder: macOS answers `proc_pidinfo`, which std does not wrap.
-# Linux reads /proc and needs nothing.
-[target.'cfg(target_os = "macos")'.dependencies]
+# A panel's live folder: macOS answers `proc_pidinfo`, which std does not wrap
+# (Linux reads /proc). And on both, `snyvi bench` reads a hook's peak memory
+# with `wait4`, the one call that gives a single child's.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 # Only to create the daemon process directly, which is the one thing std's

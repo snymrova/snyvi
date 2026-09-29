@@ -932,6 +932,21 @@ mod tests {
 /// glibc only. musl, which the static Linux release is built with, returns
 /// large frees at once and has no such call; macOS and Windows have their own
 /// allocators. Everywhere else this does nothing.
+/// What the calling thread's heap freed goes back to the system now. The
+/// allocator is mimalloc on every platform (main.rs), and a pool thread that
+/// rendered a document keeps the pages it freed until it allocates again or
+/// retires -- and a retired thread's pages wait for another thread to take
+/// them over, which in an idle daemon is never. So the 1.8.0 candidate's
+/// settled row read 50 MB on one run and 69 on the next, the same binary and
+/// files, by which thread the render had landed on; with this, 25-33 every
+/// time. Called on the render thread itself, as its last act: it collects
+/// that thread's heap and nothing else, and costs a send no measurable time.
+pub fn release_thread_memory() {
+    // SAFETY: mi_collect takes no pointers; it frees only memory this
+    // thread's heap no longer uses, and is safe on any thread at any time.
+    unsafe { libmimalloc_sys::mi_collect(true) }
+}
+
 pub fn release_freed_memory() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {

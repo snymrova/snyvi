@@ -23,6 +23,7 @@ const SIZES = [["Small", 11.5, 15], ["Normal", 12.5, 16], ["Large", 14, 18], ["L
 let sizeAt = (() => { try { const i = SIZES.findIndex(([n]) => n === localStorage.getItem("snyvi.term-size")); return i < 0 ? 1 : i; } catch { return 1; } })();
 let LINE_PX = SIZES[sizeAt][2];   // a row's height, which the pane's CSS follows through --pn-line
 const KEEP_LINES = 6000;       // scrollback rows kept in the page; the daemon keeps 2 MB
+const CHUNK = 64;              // scrollback rows to a chunk, the unit it is put away and dropped in
 let ctx = null;                // what app.js handed `open`
 let sock = null, sockP = null, retry = 0;
 let deskId = null, focused = null, cellW = 7.5;
@@ -38,6 +39,10 @@ let full = false;
  *  they belong to -- so a desk swapped for another never shows the last
  *  one's list while its own is on the way. */
 let docList = [], docsAt = null;
+/** The desk whose documents, or whose notes, the daemon did not send: its
+ *  section says so, with a Retry, rather than looking empty. */
+let docsOff = null, notesOff = null;
+const noReach = w => `<p class="no-reach" role="alert">Could not reach snyvi<button type="button" data-a="reload" data-w="${w}">Retry</button></p>`;
 /** The rail shows the latest few of those and names the rest; a click on
  *  the rest opens the whole list, for this desk, until it is left. */
 const DOCS_SHOWN = 8;
@@ -50,7 +55,7 @@ let noteList = [], notesAt = null, notesGet = null;
  *  a line being rewritten in place. Held here rather than in the DOM because
  *  the rail is redrawn whole -- by a pane's status, by the clock every 30s --
  *  and a field that lived only in the page would be swept away mid-word. */
-let noteField = null, noteDraft = "", noteCaret = 0;
+let noteField = null, noteDraft = "", noteCaret = 0, noteErr = "";
 /** True only while the rail's HTML is being replaced. An element losing the
  *  focus that way is not a reader clicking away from it, and must not be read
  *  as one: without this, every redraw committed whatever was half-typed. */
@@ -83,6 +88,10 @@ let pickEl = null, pointSaid = null, saidTimer = 0, pointTimer = 0;
 const TYPED_MS = 2000;
 /** A word said under one pane's row, when a click on it could not be done. */
 let rowSaid = null, rowTimer = 0;
+/** The one refusal the rail is saying: in the row that asked (`k`), naming
+ *  the verb, with a Retry that is the same action again (`again`, the
+ *  button's data). It stands until the Retry or the next thing done here. */
+let rowErr = null;
 const views = new Map();       // pane id -> its view
 let clock = 0;
 
@@ -124,10 +133,39 @@ async function watch() {
   const ids = [...views.keys()], fresh = ids.filter(id => !views.get(id).asked);
   if (fresh.length) {
     say({ t: "watch", panes: ids.filter(id => views.get(id).asked) });
-    for (const id of fresh) { const v = views.get(id); v.asked = true; v.old.replaceChildren(); v.sb.replaceChildren(); }
+    for (const id of fresh) { const v = views.get(id); v.asked = true; clearRows(v, v.old); clearRows(v, v.sb); }
   }
   say({ t: "watch", panes: ids });
+  // A new socket knows nothing of which panes are out of sight.
+  if (fresh.length) paced = null;
+  pace();
 }
+
+/** A pane the reader cannot see: the window is hidden, a document is read
+ *  over the desk, or the grid had no room for it. Its frames are taken in
+ *  but not drawn (`paint`), and the daemon sends it one a second, not
+ *  sixty: a desk left behind a document used to cost as much as one in
+ *  view. */
+const seen = v => !document.hidden && reading == null && v.el.isConnected;
+let paced = null;
+function pace() {
+  const slow = [...views.values()].filter(v => !seen(v)).map(v => v.id).sort();
+  if (String(slow) === paced) return;
+  paced = String(slow);
+  say({ t: "pace", slow });
+}
+/** A pane back in sight, drawn as it now is: the canvas once whole, and the
+ *  text over it caught up soon, as after any frame. */
+function catchUp(v) {
+  if (!seen(v)) return;
+  if (v.behind) { v.behind = false; drawAll(v); if (v.pinned) v.body.scrollTop = v.body.scrollHeight; }
+  if (v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!ctx || deskId == null) return;
+  pace();
+  for (const v of views.values()) catchUp(v);
+});
 
 function receive(f) {
   const v = views.get(f.p);
@@ -145,10 +183,25 @@ function receive(f) {
     else { named(v); if (v.id === focused) meta(); }
   }
   else if (f.t === "old") {
+    const rows = f.lines.slice(-KEEP_LINES);
+    // Older lines of it, asked for as the reader scrolled up: they go on top,
+    // if they are still for the text this page holds.
+    if (f.have != null) {
+      if (v.old.asking && v.old.g === f.g && v.old.rows === f.have) { v.old.asking = false; v.old.more = f.more; prependRows(v, v.old, rows); }
+      return;
+    }
     // What the last run left, greyed: the scrollback is now the old text, and
-    // the new run starts with none of its own.
-    v.old.innerHTML = f.lines.map(l => `<div>${ctx.esc(l) || " "}</div>`).join("");
-    v.sb.replaceChildren();
+    // the new run starts with none of its own. It comes as its last lines; the
+    // rest is asked for when the reader scrolls up to it.
+    clearRows(v, v.old);
+    addRows(v, v.old, rows);
+    v.old.g = f.g; v.old.more = f.more;
+    clearRows(v, v.sb);
+  }
+  else if (f.t === "more") {
+    if (!v.sb.asking || v.sb.at !== f.before) return;
+    v.sb.asking = false; v.sb.at = f.sb0; v.sb.more = f.sbm;
+    prependRows(v, v.sb, f.sb);
   }
 }
 
@@ -180,17 +233,24 @@ function paint(v, f) {
     v.cells = Array.from({ length: v.rows }, () => blankRow(v.cols));
     v.scr.replaceChildren(...v.cells.map(() => document.createElement("div")));
     v.stale.clear();
+    v.drawn = null;
     v.scr.style.height = v.rows * LINE_PX + "px";
     sizeCanvas(v);
   }
   // `clear` clears everything the reader could scroll to: the run before
   // this one, greyed above the scrollback, goes with it.
-  if (f.sbclear) { v.sb.replaceChildren(); v.old.replaceChildren(); }
-  if (f.gap) v.sb.insertAdjacentHTML("beforeend", `<div class="gap">⋯ ${f.gap.toLocaleString()} lines went by</div>`);
-  if (f.sb && f.sb.length) {
-    v.sb.insertAdjacentHTML("beforeend", f.sb.map(l => `<div${l.w ? ' data-w="1"' : ""}>${runsHtml(l.r || l) || " "}</div>`).join(""));
-    for (let n = v.sb.childElementCount - KEEP_LINES; n > 0; n--) v.sb.firstElementChild.remove();
-  }
+  if (f.sbclear) { clearRows(v, v.sb); clearRows(v, v.old); }
+  if (f.gap) addRows(v, v.sb, [{ gap: f.gap }]);
+  // A snapshot: the scrollback as it starts, which is its newest lines -- the
+  // rest is asked for as the reader scrolls up to it -- and never on top of
+  // what this page held, which a resync after falling behind would double.
+  if (f.sb0 != null) { clearRows(v, v.sb); v.sb.at = f.sb0; v.sb.more = f.sbm; }
+  if (f.sb && f.sb.length) addRows(v, v.sb, f.sb);
+  // Out of sight, the cells are kept and nothing is drawn: `catchUp` draws
+  // the pane whole when it is back.
+  const inSight = seen(v);
+  if (!inSight) v.behind = true;
+  if (f.up) up(v, f.up, inSight);
   if (f.r) {
     for (const [y, x0, runs] of f.r) {
       const row = v.cells[y];
@@ -203,14 +263,137 @@ function paint(v, f) {
         }
       }
       v.stale.add(y);
-      drawRow(v, y, x0, x);
+      if (inSight) drawRow(v, y, x0, x);
     }
   }
-  if (v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
+  if (inSight && v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
+  if (CHECK && inSight) checked(v);
   if (f.c) v.cur = f.c;
   if (f.m) v.mode = f.m;
   cursor(v);
-  if (grows && v.pinned) v.body.scrollTop = v.body.scrollHeight;
+  // Kept at the bottom once a frame of the page, not once a frame of each
+  // pane: reading the height here was a layout forced on every frame that
+  // brought lines, four panes over, and up to 60 ms of a desk's return.
+  if (grows && v.pinned && !v.pinT) v.pinT = requestAnimationFrame(() => { v.pinT = 0; if (v.pinned) v.body.scrollTop = v.body.scrollHeight; });
+}
+
+/** A row of each box as HTML, from the line as it came: a scrollback line
+ *  (runs, or `{w, r}` for one that wrapped), a gap, or a line of old text. */
+const sbRow = l => l.gap ? `<div class="gap">⋯ ${l.gap.toLocaleString()} lines went by</div>`
+  : `<div${l.w ? ' data-w="1"' : ""}>${runsHtml(l.r || l) || " "}</div>`;
+const oldRow = l => `<div>${ctx.esc(l) || " "}</div>`;
+const fmtOf = (v, box) => box === v.old ? oldRow : sbRow;
+
+// ---------- the scrollback ----------
+
+/* A panel's scrollback is thousands of rows, and four panels of them as rows
+ * in the document were a million boxes -- every drawn character a layer of
+ * its own -- which WebKit took gigabytes and whole seconds a frame to lay
+ * out. So the rows go in chunks of CHUNK, and only the chunks near the view
+ * are in the document: the rest are their HTML, kept as a string, in an empty
+ * box as tall as they were. The oldest go a chunk at a time, not a row a
+ * frame. `box.rows` is how many a box holds. */
+
+/** A chunk's rows as HTML, made the first time it is needed: a chunk put
+ *  away keeps the lines as they came, and most of a snapshot is never
+ *  scrolled to. Building every row of four snapshots was a second of the
+ *  page's time on every return to a desk. */
+function chunkHtml(v, c) {
+  if (c.todo.length) { c.src += c.todo.map(fmtOf(v, c.parentElement)).join(""); c.todo = []; }
+  return c.src;
+}
+
+/** Add rows, each a line as it came (see `sbRow`), to the end of `v.sb` or
+ *  `v.old`. */
+function addRows(v, box, rows) {
+  const fmt = fmtOf(v, box);
+  for (let i = 0; i < rows.length;) {
+    let c = box.lastElementChild;
+    if (!c || c.n >= CHUNK) {
+      c = document.createElement("div");
+      c.className = "pn-pg";
+      c.n = 0; c.src = ""; c.todo = [];
+      // A snapshot is thousands of rows at once, and all but the last two
+      // chunks of it are out of sight: they start put away, not laid out
+      // first and put away after.
+      if (rows.length - i > 2 * CHUNK) { c.held = true; c.classList.add("held"); }
+      box.append(c);
+      v.io.observe(c);
+    }
+    const k = Math.min(rows.length - i, CHUNK - c.n), take = rows.slice(i, i + k);
+    c.n += k; i += k;
+    if (c.held) { c.todo.push(...take); c.style.setProperty("--n", c.n); }
+    else { const h = take.map(fmt).join(""); chunkHtml(v, c); c.src += h; c.insertAdjacentHTML("beforeend", h); }
+  }
+  box.rows = (box.rows || 0) + rows.length;
+  let gone = 0;
+  for (let c; (c = box.firstElementChild) && box.rows - c.n >= KEEP_LINES;) {
+    box.rows -= c.n; gone += c.n;
+    v.io.unobserve(c);
+    c.remove();
+    // Full: what was above the top that went is not asked for again, and an
+    // answer on its way would land above a hole.
+    box.more = 0; box.asking = false; box.at = null;
+  }
+  // A reader scrolled up stays on the line they were reading.
+  if (gone && !v.pinned) v.body.scrollTop -= gone * LINE_PX;
+}
+
+/** Put rows above the first of `box`'s: older lines, which the daemon sent
+ *  because the reader scrolled up to the top of what the page held. They
+ *  start put away, and the view stays on the line it was showing. */
+function prependRows(v, box, rows) {
+  if (!rows.length) return;
+  const b = v.body, h = b.scrollHeight;
+  let at = box.firstElementChild;
+  for (let end = rows.length; end > 0;) {
+    const c = document.createElement("div"), start = Math.max(0, end - CHUNK);
+    c.className = "pn-pg held";
+    c.held = true; c.n = end - start; c.src = ""; c.todo = rows.slice(start, end);
+    c.style.setProperty("--n", c.n);
+    box.insertBefore(c, at);
+    v.io.observe(c);
+    at = c; end = start;
+  }
+  box.rows = (box.rows || 0) + rows.length;
+  b.scrollTop = v.pinned ? b.scrollHeight : b.scrollTop + b.scrollHeight - h;
+}
+
+function clearRows(v, box) {
+  for (const c of box.children) v.io.unobserve(c);
+  box.replaceChildren();
+  box.rows = 0;
+  box.more = 0; box.asking = false; box.at = null;
+}
+
+/** A chunk out of reach is put away, unless the reader's selection is in it:
+ *  that would take the selection with it. The first chunk of a box coming
+ *  near, with more above it at the daemon, asks for the next of them. */
+function reach(v, entries) {
+  const sel = getSelection();
+  for (const { target: c, isIntersecting: near } of entries) {
+    if (near && c.held) { c.held = false; c.classList.remove("held"); c.innerHTML = chunkHtml(v, c); }
+    else if (!near && !c.held && !(sel.rangeCount && sel.containsNode(c, true))) {
+      c.held = true; c.style.setProperty("--n", c.n); c.classList.add("held"); c.replaceChildren();
+    }
+    const box = c.parentElement;
+    if (near && box && box.firstElementChild === c && box.more > 0 && !box.asking && box.rows < KEEP_LINES) {
+      box.asking = true;
+      const n = KEEP_LINES - box.rows;
+      if (box === v.old) say({ t: "more", p: v.id, old: box.g, before: box.rows, n });
+      else say({ t: "more", p: v.id, before: box.at, n });
+    }
+  }
+}
+
+/** The row before or after one in the scrollback, over a chunk's edge, while
+ *  that chunk is in the document. */
+const rowBefore = r => r.previousElementSibling || r.parentElement.previousElementSibling?.lastElementChild || null;
+const rowAfter = r => r.nextElementSibling || r.parentElement.nextElementSibling?.firstElementChild || null;
+
+function dropView(v) {
+  v.io.disconnect();
+  views.delete(v.id);
 }
 
 const bornOf = v => (v.status.accent ? parseInt(v.status.accent.slice(1), 16) : -1);
@@ -236,9 +419,21 @@ function cursor(v) {
 function rowHtml(row) {
   let out = "", text = "", key = null, at = null;
   const flush = () => { if (text) out += span(at, text, false); text = ""; };
-  for (const c of row) {
+  for (let i = 0; i < row.length; i++) {
+    const c = row[i];
     if (!c) continue;
-    if (c[4] === 2 || c[0] >= "\u2000") { flush(); key = null; out += span(c, c[0], true); continue; }
+    if (c[4] === 2 || c[0] >= "\u2000") {
+      flush(); key = null;
+      // A rule or a bar is one character many times over: one span for the
+      // run, its mask repeated across it, not a span and a layer for each.
+      let n = 1;
+      if (c[4] === 1 && DRAWN[c[0]]) {
+        for (let d; (d = row[i + n]) && d[0] === c[0] && d[1] === c[1] && d[2] === c[2] && d[3] === c[3];) n++;
+      }
+      out += span(c, n > 1 ? c[0].repeat(n) : c[0], true, n);
+      i += n - 1;
+      continue;
+    }
     const k = `${c[1]},${c[2]},${c[3]}`;
     if (k !== key) { flush(); key = k; at = c; }
     text += c[0];
@@ -252,15 +447,15 @@ const runsHtml = runs => {
   return rowHtml(row);
 };
 
-function span(c, text, own) {
-  const [, fg, bg, fl, w] = c;
+function span(c, text, own, run = 1) {
+  const [ch, fg, bg, fl, w] = c;
   const t = ctx.esc(text);
   let cls = (fl & 1 ? " b" : "") + (fl & 2 ? " d" : "") + (fl & 4 ? " i" : "") + (fl & 8 ? " u" : "") + (fl & 128 ? " s" : "") + (fl & 64 ? " h" : "");
-  if (own) cls += (w === 2 ? " x w" : " x") + (DRAWN[text] ? ` g g${text.charCodeAt(0).toString(16)}` : /[\ue000-\uf8ff]/.test(text) ? " nf" : "");
+  if (own) cls += (w === 2 ? " x w" : " x") + (DRAWN[ch] ? ` g g${ch.charCodeAt(0).toString(16)}${run > 1 ? " r" : ""}` : /[\ue000-\uf8ff]/.test(text) ? " nf" : "");
   if (!fg && !bg && !cls) return t;
   let f = color(fg), b = color(bg);
   if (fl & 32) { [f, b] = [b || "var(--pn-bg)", f || "var(--pn-fg)"]; }
-  const style = (f ? `color:${f};` : "") + (b ? `background:${b};` : "");
+  const style = (f ? `color:${f};` : "") + (b ? `background:${b};` : "") + (run > 1 ? `--r:${run};` : "");
   return `<span${cls ? ` class="${cls.slice(1)}"` : ""}${style ? ` style="${style}"` : ""}>${t}</span>`;
 }
 
@@ -291,6 +486,10 @@ for (let n = 1; n < 8; n++) {
   BLOCKS[String.fromCharCode(0x2590 - n)] = [[0, 0, n / 8, 1]];           // ▏ to ▉
 }
 const DRAWN = {}, MASK = {}, TINT = new Map();
+// Drawn characters that are the same all the way across the cell: a run of
+// one of them is its mask stretched over the run, one draw rather than one a
+// cell -- a frame's top edge is a couple of hundred `─`.
+const SPAN = new Set("─━▀█▔░▒▓▁▂▃▄▅▆▇");
 
 function drawn(W, H) {
   const t = Math.max(1, Math.round(W / 7)), cx = W / 2, cy = H / 2;
@@ -338,7 +537,7 @@ function drawn(W, H) {
   TINT.clear();
   for (const ch in MASK) DRAWN[ch] = MASK[ch].toDataURL("image/png");
   return Object.entries(DRAWN).map(([ch, s]) => `.pn-body .g${ch.charCodeAt(0).toString(16)}{--g:url("${s}")}`).join("\n") +
-    `\n.pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
+    `\n.pn-body { --cw: ${W}px; } .pn-body .x { width: ${W}px; text-align: center; } .pn-body .x.w { width: ${2 * W}px; }`;
 }
 
 /* The colour the pane being painted had its prompt dressed in. snyvi wrote
@@ -396,6 +595,22 @@ function rowText(row) {
  *  first, so a selection starts on what is drawn; and it waits while a
  *  button is held, so a selection being dragged is not written over. */
 const TEXT_MS = 1000;
+/* A check on the canvas, off unless `snyvi.paintcheck` is "1": what each
+ * cell was last drawn as, kept beside the grid, and compared with the grid
+ * after every frame. The first cell that differs is logged with its row,
+ * which is a row the canvas shows stale. */
+const CHECK = (() => { try { return localStorage.getItem("snyvi.paintcheck") === "1"; } catch { return false; } })();
+const sig = c => (c ? c.join("\u0001") : "");
+function checked(v) {
+  if (!v.drawn) return;
+  for (let y = 0; y < v.rows; y++) {
+    const row = v.cells[y], d = v.drawn[y];
+    for (let x = 0; x < v.cols; x++) if (sig(row[x]) !== (d ? d[x] : sig(blankRow(1)[0]))) {
+      console.warn(`[snyvi paint] pane ${v.id} row ${y} col ${x} is stale on the canvas`, row[x], d && d[x]);
+      return;
+    }
+  }
+}
 function textSoon(v) {
   v.textT = 0;
   if (v.holding) { v.textT = setTimeout(() => textSoon(v), TEXT_MS); return; }
@@ -424,18 +639,24 @@ function palette(v) {
   const col = n => snyviTheme.colour(n, v.body);
   const t = [];
   for (let i = 0; i < 16; i++) t.push(col(`--t${i}`));
-  v.pal = { t, accent: col("--accent"), bg: col("--pn-bg"), fg: col("--pn-fg"), font: getComputedStyle(v.body).fontFamily, fonts: new Map() };
+  v.pal = { t, accent: col("--accent"), bg: col("--pn-bg"), fg: col("--pn-fg"), font: getComputedStyle(v.body).fontFamily, fonts: new Map(), inks: new Map() };
   return v.pal;
 }
 
-/** `color`, for a canvas: the same colours, resolved. */
+/** `color`, for a canvas: the same colours, resolved -- and kept, since a
+ *  row asks for every cell's, and a truecolor one is a new string each time
+ *  it is worked out. The prompt's own colour is asked first, as it follows
+ *  the pane being drawn and not the number. */
 function ink(p, n) {
   if (!n) return "";
-  if (n >= 1 << 24) {
-    const c = n & 0xffffff;
-    return c === born ? p.accent : "#" + c.toString(16).padStart(6, "0");
+  if (n >= 1 << 24 && (n & 0xffffff) === born) return p.accent;
+  let s = p.inks.get(n);
+  if (s === undefined) {
+    s = n >= 1 << 24 ? "#" + (n & 0xffffff).toString(16).padStart(6, "0") : n <= 16 ? p.t[n - 1] : color(n);
+    if (p.inks.size > 4096) p.inks.clear();
+    p.inks.set(n, s);
   }
-  return n <= 16 ? p.t[n - 1] : color(n);
+  return s;
 }
 
 /** A font at a size, and where its baseline sits in a row: centred in the
@@ -489,11 +710,9 @@ function drawRow(v, y, a = 0, b = v.cols) {
   const g = v.g, row = v.cells[y], p = v.pal || palette(v), k = v.k;
   const top = Math.round(y * LINE_PX * k), h = Math.round((y + 1) * LINE_PX * k) - top;
   const X = i => Math.round(i * cellW * k);
-  const inks = c => {
-    let f = ink(p, c[1]), b = ink(p, c[2]);
-    if (c[3] & 32) [f, b] = [b || p.bg, f || p.fg];
-    return [f || p.fg, b];
-  };
+  // A cell's ink and ground, inverse swapping the two.
+  const fgOf = c => (c[3] & 32 ? ink(p, c[2]) || p.bg : ink(p, c[1]) || p.fg);
+  const bgOf = c => (c[3] & 32 ? ink(p, c[1]) || p.fg : ink(p, c[2]));
   const whole = a <= 0 && b >= row.length;
   const c0 = Math.max(0, a - 1), c1 = Math.min(row.length, b + 1);
   let s = Math.max(0, c0 - 2);
@@ -504,11 +723,11 @@ function drawRow(v, y, a = 0, b = v.cols) {
   for (let x = s; x < e; x++) {
     const c = row[x];
     if (!c) continue;
-    const b = inks(c)[1];
+    const b = bgOf(c);
     if (!b) continue;
     // A run of one ground is one rectangle, so no seam shows between cells.
     let n = x + c[4];
-    while (n < e && (!row[n] || (inks(row[n])[1] === b && (row[n][3] & 2) === (c[3] & 2)))) n += row[n] ? row[n][4] : 1;
+    while (n < e && (!row[n] || (bgOf(row[n]) === b && (row[n][3] & 2) === (c[3] & 2)))) n += row[n] ? row[n][4] : 1;
     g.globalAlpha = c[3] & 2 ? .6 : 1;
     g.fillStyle = b;
     g.fillRect(X(x), top, X(n) - X(x), h);
@@ -518,11 +737,14 @@ function drawRow(v, y, a = 0, b = v.cols) {
   for (let x = s; x < e;) {
     const c = row[x];
     if (!c) { x++; continue; }
-    const [f] = inks(c), fl = c[3];
+    const f = fgOf(c), fl = c[3];
     let n = x + c[4], text = c[0];
     const own = c[4] === 2 || c[0] >= "\u2000";
+    const same = r => r && r[4] === 1 && r[1] === c[1] && r[2] === c[2] && r[3] === fl;
     if (!own) {
-      while (n < e && row[n] && row[n][4] === 1 && row[n][0] < "\u2000" && row[n][1] === c[1] && row[n][2] === c[2] && row[n][3] === fl) text += row[n++][0];
+      while (n < e && same(row[n]) && row[n][0] < "\u2000") text += row[n++][0];
+    } else if (c[4] === 1 && SPAN.has(text)) {
+      while (n < e && same(row[n]) && row[n][0] === text) n++;
     }
     g.globalAlpha = fl & 2 ? .6 : 1;
     if (!(fl & 64) && text.trim()) {
@@ -544,6 +766,49 @@ function drawRow(v, y, a = 0, b = v.cols) {
   }
   g.globalAlpha = 1;
   if (!whole) g.restore();
+  if (CHECK) {
+    v.drawn ||= [];
+    const d = v.drawn[y] ||= Array(v.cols).fill(sig(blankRow(1)[0]));
+    for (let x = whole ? 0 : c0; x < (whole ? row.length : c1); x++) d[x] = sig(row[x]);
+  }
+}
+
+/** The screen scrolled `k` rows: the grid, the text over the canvas and the
+ *  canvas all move up with it, the same steps as `shown` in src/screen.rs,
+ *  and the frame's rows then draw only what came in at the bottom. Before
+ *  this, output that scrolled redrew every row of the canvas, every frame. */
+function up(v, k, inSight) {
+  if (!v.rows) return;
+  // The daemon never moves the whole screen, but a page that holds fewer
+  // rows than it does could be told to: that is every row blank, and the
+  // canvas with them, never the old paint left standing.
+  if (k >= v.rows) {
+    v.cells = Array.from({ length: v.rows }, () => blankRow(v.cols));
+    for (let y = 0; y < v.rows; y++) v.stale.add(y);
+    if (inSight) drawAll(v);
+    return;
+  }
+  v.cells.splice(0, k);
+  for (let i = 0; i < k; i++) v.cells.push(blankRow(v.cols));
+  // The text moves too, unless a selection is being dragged in it: then it
+  // all catches up once the button is let go, as it would anyway.
+  if (v.holding) for (let y = 0; y < v.rows; y++) v.stale.add(y);
+  else {
+    for (let i = 0; i < k; i++) { const d = v.scr.firstElementChild; d.textContent = ""; v.scr.append(d); }
+    v.stale = new Set([...v.stale].filter(y => y >= k).map(y => y - k));
+  }
+  if (!inSight) return;
+  // Moved by a whole number of device pixels only; a row that does not
+  // start on one would come out a pixel off, so that density draws whole.
+  const d = k * LINE_PX * v.k, W = v.cv.width, H = v.cv.height;
+  if (d !== Math.round(d)) { drawAll(v); return; }
+  const g = v.g;
+  g.save();
+  g.globalCompositeOperation = "copy";
+  g.drawImage(v.cv, 0, d, W, H - d, 0, 0, W, H - d);
+  g.restore();
+  g.clearRect(0, H - d, W, d);
+  if (CHECK && v.drawn) { v.drawn.splice(0, k); v.drawn.length = v.rows; }
 }
 
 /** Every row again: the size, the theme, the font or the density changed. */
@@ -645,9 +910,9 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" title="Rename  F2" aria-label="Rename this panel">✎</button><button type="button" class="pn-full" title="Full view  ⌃⌥Z" aria-label="Full view">⤢</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-state"></span><span class="pn-ctx"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
-    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Put this away" aria-label="Put this away">✕</button></div>` +
+    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
   // A new project desk's first panel, holding `claude` for the reader's Enter.
@@ -668,6 +933,8 @@ function makeView(p) {
     offered: !!(p.status && p.status.offer),
   };
   const { body, start } = v;
+  // Chunks within a screen of the view, either way, are kept in the document.
+  v.io = new IntersectionObserver(e => reach(v, e), { root: body, rootMargin: "100% 0px" });
   if (first) firstPanel(v);
   v.g = v.cv.getContext("2d");
   watchLook();
@@ -770,7 +1037,7 @@ async function paste(v, data) {
       const j = await ctx.api(`/api/panes/${v.id}/paste`, blob, blob.type);
       input(v, bracket(v, j.path));
       ctx.toast("Pasted as a document", j.path);
-    } catch (e) { ctx.toast("Could not paste the image", String(e)); }
+    } catch (e) { ctx.toast("Could not paste the image", e); }
     return;
   }
   const t = data.getData("text/plain");
@@ -784,6 +1051,17 @@ function fit(v) {
   const w = v.body.clientWidth - 12, h = v.body.clientHeight - 8;
   if (w <= 0 || h <= 0) return;
   const c = Math.max(2, Math.floor(w / cellW)), r = Math.max(1, Math.floor(h / LINE_PX));
+  // Whole rows only: what is left of the height below the last one goes to
+  // the bottom padding, with the top padding's 4 px, so a view kept at the
+  // bottom starts on a whole row and not on a sliver of scrollback cut under
+  // the head. Padding is inside the box, so the height measured above does
+  // not change with it.
+  const left = h - r * LINE_PX;
+  if (v.left !== left) {
+    v.left = left;
+    v.body.style.paddingBottom = 8 + left + "px";
+    if (v.pinned) v.body.scrollTop = v.body.scrollHeight;
+  }
   const size = `${c}x${r}`;
   if (size === v.size) return;
   v.size = size;
@@ -844,9 +1122,12 @@ async function run(v, cmd, quiet, again) {
     // A quiet `again` is this page's own resume after a restart (`marked`):
     // the daemon holds to it only while the mark does, and past it starts
     // `cmd` with the conversation offered -- a panel unshown for minutes.
+    const was = document.activeElement;
     const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, marked: !!quiet, cmd, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
-    if (!quiet) v.body.focus();
+    // The panel takes the keys -- unless the reader went somewhere else, a
+    // note, a name, while the daemon was starting it.
+    if (!quiet && (document.activeElement === was || document.activeElement === document.body)) v.body.focus();
   } catch (e) {
     // A conversation the daemon no longer has an id for -- the mark outlived
     // it -- is not worth a word: the shell is what the pane gets instead.
@@ -854,7 +1135,7 @@ async function run(v, cmd, quiet, again) {
     // Two windows on one desk both resume it, and the one that loses is told
     // "already running" -- which is the outcome it wanted. Anything else is
     // worth saying, even for a start nobody asked for: the folder may be gone.
-    else if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start", String(e));
+    else if (!quiet || !/already running/i.test(String(e))) ctx.toast("Could not start the panel", e);
   } finally {
     v.starting = false;
     v.resuming = false;
@@ -874,24 +1155,47 @@ const what = v => v.pane.name || v.status.title || v.status.cmd || v.pane.cmd ||
 const ctxPct = s => (s && s.ctx_pct != null ? s.ctx_pct : null);
 const ctxCls = p => (p >= 85 ? "ctx hot" : p >= 70 ? "ctx warm" : "ctx");
 const kTok = n => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
+/** The tokens in the window now: the daemon's exact count, or worked out
+ *  from the % for a daemon or a status line older than `ctx_used`. */
+const ctxUsed = s => s.ctx_used ?? (s.ctx_pct != null && s.ctx_size ? Math.round(s.ctx_pct * s.ctx_size / 100) : null);
+/** "92k / 1M"; "— / 1M" before the first reply and just after /compact,
+ *  when there is no count yet rather than an old one. */
+const ctxFig = s => { const u = ctxUsed(s); return s.ctx_size ? `${u == null ? "—" : kTok(u)} / ${kTok(s.ctx_size)}` : `${s.ctx_pct}%`; };
+const ctxTip = s => `${s.model ? s.model + " · " : ""}${ctxFig(s)} in its context window · ${s.ctx_pct}%`;
 /** The conversation this pane last had, when there is one and Claude is not
  *  in the pane now. Checked here too: it is about to be a command line. */
+/** Who sent a document on the rail: the panel in that slot by the name it
+ *  holds still under, or the slot alone once the panel is gone. */
+const sentBy = (vs, slot) => {
+  const v = vs.find(x => x.pane.slot === slot);
+  if (!v) return `[${slot}]`;
+  // What sends documents is an agent: a panel that has had a conversation
+  // says so, even while its shell is back at the prompt.
+  const agent = v.status.agent || v.pane.agent_session ? "claude" : "";
+  return `[${slot}] ${v.pane.name || agent || v.status.cmd || v.pane.cmd || "shell"}`;
+};
 const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
 
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
-  $(".pn-slot").textContent = `[${v.pane.slot}]`;
+  const sl = $(".pn-slot");
+  if (sl.textContent !== `[${v.pane.slot}]`) { sl.textContent = `[${v.pane.slot}]`; sl.dataset.tip = `Panel ${v.pane.slot}`; sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
   const c = $(".pn-cmd");
-  if (c) { c.textContent = what(v); c.title = v.pane.name && v.status.title ? v.status.title : ""; }
+  // Its title as the rail writes it: Claude Code puts its spinner's frame at
+  // the front (◑, ✳), and the state beside it already says it is working.
+  if (c) { c.textContent = short(v); v.pane.name && v.status.title ? (c.dataset.tip = v.status.title) : delete c.dataset.tip; }
   // The branch and whether the tree is modified: snyvi's own answer, not the
   // prompt's, so a pane whose shell it cannot dress says both too.
   $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";
   // An agent that reports through its hooks (Claude Code) says what it is
   // doing; anything else is only running, ringing, or ended.
+  // The context window, in the header only once it is filling (70%): its
+  // place is kept for as long as an agent is in the pane, so the figure
+  // coming in moves nothing beside it. The meta line has it always.
   const cp = ctxPct(s), cx = $(".pn-ctx");
-  cx.textContent = cp == null ? "" : `${cp}%`;
-  cx.className = "pn-ctx " + (cp == null ? "" : ctxCls(cp));
-  cx.title = cp == null ? "" : `${s.model ? s.model + " · " : ""}${cp}% of its context window${s.ctx_size ? ` (${kTok(s.ctx_size)})` : ""}${s.ctx_in ? ` · ${s.ctx_in.toLocaleString()} tokens in` : ""}`;
+  cx.textContent = cp == null || cp < 70 ? "" : ctxFig(s);
+  cx.className = "pn-ctx " + (cp == null ? "" : "kept " + ctxCls(cp));
+  if (cp == null) delete cx.dataset.tip; else cx.dataset.tip = ctxTip(s);
   if (s.agent) heardFrom(v);
   $(".pn-state").textContent = s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
   v.el.classList.toggle("blk", !!s.blocked);
@@ -974,7 +1278,7 @@ function layout() {
   if (full && all.length > 1) grid.dataset.zoom = "1"; else delete grid.dataset.zoom;
   // The window's too: the sidebar and the rail go while the desk is the page.
   if (full && all.length && reading == null) ctx.root.dataset.full = "1"; else delete ctx.root.dataset.full;
-  for (const v of all) { const b = v.el.querySelector(".pn-full"); if (b) { b.textContent = full ? "⤡" : "⤢"; b.title = full ? "Back to the grid  ⌃⌥Z" : "Full view  ⌃⌥Z"; } }
+  for (const v of all) { const b = v.el.querySelector(".pn-full"); if (b && b.dataset.full !== String(full)) { b.dataset.full = full; b.innerHTML = ctx.glyph(full ? "unfill" : "fill"); b.dataset.tip = full ? "Back to the grid" : "Full view"; b.ariaLabel = b.dataset.tip; } }
   const cols = shown.length > 1 ? 2 : 1, rows = shown.length > 2 ? 2 : 1;
   grid.style.gridTemplateColumns = cols === 2 ? `${d.col}fr ${1 - d.col}fr` : "1fr";
   grid.style.gridTemplateRows = rows === 2 ? `${d.row}fr ${1 - d.row}fr` : "1fr";
@@ -997,10 +1301,83 @@ function layout() {
     // a pane the grid had no room for, a pane moved -- keeps its pixels, but WebKit's
     // GPU canvas shows none of them until something draws on it: the pane
     // stood empty until a scroll. Drawn whole, it is shown whole.
-    for (const v of back) drawAll(v);
+    for (const v of back) v.behind = true;
   }
+  for (const v of shown) catchUp(v);
+  pace();
   if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
+  leftOffSlot(d);
+}
+
+/* Where the work on this desk was left: one quiet line in the head, in a slot
+ * that is there whether or not anything was said, so a line arriving, going
+ * or being rewritten moves nothing. An agent says it with `leave_off`; the
+ * reader rewrites it in place. Emptied, it is cleared, and the slot holds the
+ * Undo for BACK_MS, as a removed note's row does. */
+let leftField = null, leftGone = null, leftTimer = 0;
+function leftOffSlot(d) {
+  const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
+  if (!head) return;
+  let el = head.querySelector(".dk-left");
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-tabs").before(el); }
+  if (leftField === d.id && el.querySelector("input")) return;
+  const l = d.left_off;
+  if (leftGone && leftGone.desk === d.id) {
+    el.innerHTML = `<span class="dk-left-b" role="status"><span class="dk-left-k">Left off</span> cleared</span><button type="button" class="dk-undo" data-a="left-back">Undo</button>`;
+    return;
+  }
+  el.innerHTML = l
+    ? `<button type="button" class="dk-left-b" data-a="left-edit" data-tip="${esc(l.text)}" data-tip-sub="${esc(l.by || "you")} · ${ctx.relShort(l.at)} · click to rewrite" data-tip-overflow><span class="dk-left-k">Left off</span> ${esc(l.text)}</button>`
+    : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`;
+}
+
+/** The line, as a field in its own place. Enter or leaving it keeps what was
+ *  typed; Escape leaves it as it was. */
+function leftOffEdit(d) {
+  const el = ctx.docEl.querySelector(".dk-head .dk-left");
+  if (!el) return;
+  leftField = d.id;
+  const was = d.left_off ? d.left_off.text : "";
+  el.innerHTML = `<input class="dk-left-in" maxlength="200" spellcheck="false" aria-label="Where the work on this desk was left" placeholder="If the tests pass, ship it">`;
+  const inp = el.querySelector("input");
+  inp.value = was;
+  let done = false;
+  const end = async keep => {
+    if (done) return;
+    done = true; leftField = null;
+    const text = inp.value.trim();
+    if (!keep || text === was) { leftOffSlot(current() || d); return; }
+    let j;
+    try { j = await ctx.api(`/api/desks/${d.id}/leftoff`, { text }); }
+    catch (e) { ctx.toast("Could not save where you left off", e); leftOffSlot(current() || d); return; }
+    if (!text && j.was) {
+      clearTimeout(leftTimer);
+      leftGone = { desk: d.id, was: j.was };
+      leftTimer = setTimeout(() => { leftGone = null; const c = current(); if (c) leftOffSlot(c); }, BACK_MS);
+    }
+    await ctx.refresh();
+  };
+  inp.addEventListener("keydown", e => {
+    // The desk gives every other key to the shell in the focused panel.
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); end(true); }
+    else if (e.key === "Escape") { e.preventDefault(); end(false); }
+  });
+  inp.addEventListener("blur", () => end(true));
+  inp.focus();
+  inp.select();
+}
+
+/** Undo a clear: the line back as it was, its time and its author with it. */
+async function leftOffBack(d) {
+  const g = leftGone;
+  if (!g || g.desk !== d.id) return;
+  clearTimeout(leftTimer);
+  leftGone = null;
+  try { await ctx.api(`/api/desks/${d.id}/leftoff`, g.was); }
+  catch (e) { leftGone = g; ctx.toast("Could not bring it back", e); }
+  await ctx.refresh();
 }
 
 function tabs(d, all, shown) {
@@ -1009,19 +1386,28 @@ function tabs(d, all, shown) {
   // A pane out of sight that needs the reader says so on its tab, with the
   // rail's mark: full view never hides a pane that is waiting.
   const need = v => v.status.blocked || v.status.agent === "needs_you";
-  t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}"${!shown.includes(v) && need(v) ? ' title="Waiting on you"' : ""}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
-  t.title = full && all.length > 1 ? "Full view  ⌃⌥Z" : "";
+  // A number is the panel's slot and its key, so a tab says which, and why
+  // it is a tab: full view, or a window with no room for it.
+  const tip = v => shown.includes(v) ? `data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}"`
+    : `data-tip="${need(v) ? "Waiting on you" : `Panel ${v.pane.slot}`}" data-tip-sub="${full ? "full view shows one" : "not enough room"}" data-key="ctrl+alt+${v.pane.slot}"`;
+  t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}" ${tip(v)}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
   // The + goes quiet when there is no pane to add, and says why under the
   // cursor. At the desk's own cap the count sits beside it -- 4/4 -- which
   // is what ties the greyed + to the panes on the desk.
   const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d), j = ctx.desks;
   if (plus) {
-    plus.disabled = !!why;
-    plus.title = why ? `New panel · ${why}` : "New panel";
+    // Quiet rather than disabled, so the keyboard still reaches it and can
+    // hear why: the reason is a hidden line it points to (A4 draws it).
+    plus.classList.toggle("dim", !!why);
+    why ? plus.setAttribute("aria-disabled", "true") : plus.removeAttribute("aria-disabled");
+    plus.dataset.tip = "New panel"; why ? (plus.dataset.tipSub = why) : delete plus.dataset.tipSub;
+    let say = plus.nextElementSibling?.id === "dk-plus-why" ? plus.nextElementSibling : null;
+    if (!say) { say = Object.assign(document.createElement("span"), { id: "dk-plus-why", className: "vh" }); plus.after(say); plus.setAttribute("aria-describedby", say.id); }
+    say.textContent = why || "";
     let n = plus.previousElementSibling?.classList.contains("dk-cap") ? plus.previousElementSibling : null;
     const atCap = d.panes.length >= j.per_desk;
     if (atCap && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
-    if (n) { if (atCap) { n.textContent = `${d.panes.length}/${j.per_desk}`; n.title = why; } else n.remove(); }
+    if (n) { if (atCap) { n.textContent = `${d.panes.length}/${j.per_desk}`; n.dataset.tip = why; } else n.remove(); }
   }
 }
 
@@ -1037,8 +1423,8 @@ function draw() {
   }
   document.title = `${d.name} · desk`;
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon" data-a="new" title="New panel  ⌃⌥N" aria-label="New panel">${head("plus")}</button>` +
-    `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" title="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
+    `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
+    `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
@@ -1055,7 +1441,7 @@ function draw() {
  *  all, new ones made, gone ones dropped. Then the socket is told. */
 function sync(d) {
   const ids = new Set(d.panes.map(p => p.id));
-  for (const id of [...views.keys()]) if (!ids.has(id)) views.delete(id);
+  for (const v of [...views.values()]) if (!ids.has(v.id)) dropView(v);
   for (const p of d.panes) {
     const v = views.get(p.id);
     if (v) { v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
@@ -1140,13 +1526,13 @@ function linkAt(v, e) {
     }
     return { url: u.url, rects: rects.map(q => ({ left: r.left + q.x, top: r.top + q.y * LINE_PX, width: q.w, height: LINE_PX })) };
   }
-  const line = e.target.closest && e.target.closest(".pn-sb > div, .pn-old > div");
+  const line = e.target.closest && e.target.closest(".pn-pg > div");
   const hit = line && document.caretRangeFromPoint && document.caretRangeFromPoint(e.clientX, e.clientY);
   if (!hit || !line.contains(hit.startContainer)) return null;
   const lines = [line];
-  if (line.parentElement === v.sb) {
-    for (let p = line.previousElementSibling; p && p.dataset.w && lines.length < 5; p = p.previousElementSibling) lines.unshift(p);
-    for (let n = line; n.dataset.w && n.nextElementSibling && lines.length < 5; n = n.nextElementSibling) lines.push(n.nextElementSibling);
+  if (v.sb.contains(line)) {
+    for (let p = rowBefore(line); p && p.dataset.w && lines.length < 5; p = rowBefore(p)) lines.unshift(p);
+    for (let n = line; n.dataset.w && rowAfter(n) && lines.length < 5; n = rowAfter(n)) lines.push(rowAfter(n));
   }
   // The character under the pointer, counted from the first of the lines.
   let at = 0;
@@ -1201,7 +1587,7 @@ async function moveTo(v, slot) {
   const d = current();
   if (!d || slot === v.pane.slot) return;
   try { await ctx.api(`/api/desks/${d.id}/move`, { from: v.pane.slot, to: slot }); }
-  catch (e) { ctx.toast("Could not move the panel", String(e.message || e)); }
+  catch (e) { ctx.toast("Could not move the panel", e); }
 }
 
 /** A pane's head dragged onto another pane, or onto its tab, trades their
@@ -1356,7 +1742,7 @@ function rail() {
   // whichever pane happens to have the focus.
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
-    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}">` +
+    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
       `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
@@ -1364,7 +1750,7 @@ function rail() {
       (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" title="${run ? "Type claude --resume into the shell, for you to run" : "Resume the conversation this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
       `<button type="button" data-a="close" data-p="${v.id}" title="Close panel · Undo for 8 s  ⌃⌥W" aria-label="Close panel ${n}">${ico("x")}</button>` +
       `</span></li>` +
-      (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "");
+      (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc);
   };
   // Replacing the rail takes the focus off whatever had it. A field open on
   // the list has to know that is what happened, and not a reader clicking
@@ -1373,8 +1759,8 @@ function rail() {
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
     `<div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
-      ? `<li class="dk-note gone"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` : "") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new" data-a="new"${why ? ` disabled title="${esc(why)}"` : ""}>+ New panel</button>` +
+      ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
+    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" title="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
@@ -1384,7 +1770,9 @@ function rail() {
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. Under the cursor, the path it was sent
     // from, to copy -- the thing to hand back to the pane that sent it.
-    (dl.length ? `<ul class="dk-docs">` + shown.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" title="${x.id === reading ? "Click again to go back to the panels" : `${esc(x.title)} · ${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${x.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="slot" title="Sent from panel ${x.slot}">${x.slot}</span>${x.id === reading ? "" : `<span class="k">${ctx.relShort(x.received_at)}</span>`}</a>` +
+    // Two lines of title, then who sent it and when: the panel by the name it
+    // was started with, which holds still, and not its title, which ticks.
+    (dl.length ? `<ul class="dk-docs">` + shown.map(x => `<li class="dk-doc${x.id === reading ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${x.id === reading ? "Back to the panels" : esc(x.title)}" data-tip-sub="${x.id === reading ? "click again" : `${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${x.id === reading ? ` aria-current="page"` : ""}>${ico("doc")}<span class="dt"><span class="title">${esc(x.title)}</span><span class="by"><span class="slot">${esc(sentBy(vs, x.slot))}</span> · ${ctx.relShort(x.received_at)}${x.pinned ? ` · <span class="pin">pinned</span>` : ""}</span></span></a>` +
       // Its tools: the path to copy, where there is one; and on the row of
       // the document on the page, the way back to the panes. That row's
       // tools stay in view rather than wait for the cursor.
@@ -1393,7 +1781,7 @@ function rail() {
         (x.id === reading ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") + `</span>` : "") + `</li>`).join("") + `</ul>` +
       // The rest, named rather than listed: one row that opens them here.
       (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
-      : waitingFirst(d)) +
+      : docsOff === d.id ? noReach("docs") : waitingFirst(d)) +
     `</details>` + noteSec(d) + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
@@ -1411,18 +1799,14 @@ function meta() {
   if (!d) return;
   const { esc } = ctx, v = views.get(focused), s = v ? v.status : null;
   const since = !s ? "" : s.agent && s.agent_since ? `${s.agent.replace("_", " ")} ${ago(s.agent_since)}` : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
-  // The desk's own two actions sit on its name, under the cursor: renaming
-  // it and closing it are things done to the desk, and the name is where
-  // the desk is.
-  const top = `<div class="row dk-row"><b>Desk</b><span class="dk-nm">${esc(d.name)}</span><span class="dk-tools">` +
-    `<button type="button" data-a="rename" title="Rename desk" aria-label="Rename desk">${ico("pen")}</button>` +
-    sure("drop", "", "Close the desk and its panels", "Close desk", ico("x")) + `</span></div>` +
-    `<div class="row"><b>Folder</b><button type="button" class="dk-folder" data-a="reveal" title="Open ${esc(d.root)} in the file manager">${esc(tilde(d.root))}</button></div>`;
+  // The desk's name and folder are in its head, and renaming and closing it
+  // are on its ⋯: this pane is the focused panel's line, and nothing twice.
+  const top = "";
   const cp = ctxPct(s);
-  const low = v ? `<div class="row dk-pl"><b>Panel</b><span><span class="dk-slot">[${v.pane.slot}]</span>${s.model ? ` · ${esc(s.model)}` : s.pid ? ` · pid ${s.pid}` : ""}` +
-    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}" title="${s.ctx_in ? `${s.ctx_in.toLocaleString()} tokens in` : ""}">${cp}%${s.ctx_size ? ` of ${kTok(s.ctx_size)}` : ""}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
+  const low = v ? `<div class="row dk-pl"><span><span class="dk-slot" data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>${s.model ? ` ${esc(s.model)}` : s.pid ? ` pid ${s.pid}` : ""}` +
+    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}">${ctxFig(s)}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
     // The folder the panel's shell is in now, when it is not the desk's own.
-    ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" title="${esc(s.cwd || v.pane.cwd)}">${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
+    ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" data-tip="${esc(s.cwd || v.pane.cwd)}" data-tip-mono>${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
   // The panel's line ticks ("up 12s") on every frame that brings a status,
   // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
   // written alone while the rows above it are still the ones drawn here.
@@ -1485,8 +1869,8 @@ function noteSec(d) {
   // Asked for once per desk, from the draw that first needs it: the list is
   // small and it is not worth a round trip on every arrival the way the
   // documents are.
-  if (notesAt !== d.id) getNotes(d.id);
-  const left = mine.filter(x => !x.done && !x.gone).length;
+  if (notesAt !== d.id && notesOff !== d.id) getNotes(d.id);
+  const left = mine.filter(x => !x.done && !x.gone && !x.suggested_by).length;
   const done = mine.filter(x => x.done && !x.gone).length;
   const rows = mine.map(x => noteRow(x, esc)).join("");
   // Clearing the done half answers where it was asked, as a ✕ does: the
@@ -1497,12 +1881,19 @@ function noteSec(d) {
   return `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
     `<summary class="t-label dk-lab" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     (rows ? `<ul class="dk-list">${rows}</ul>`
-      : noteField ? "" : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
+      : noteField ? "" : notesOff === d.id ? noReach("notes") : `<p class="dk-empty">What's the status of this project? A line here keeps it out of your head.</p>`) +
     (noteField && noteField.kind === "new"
-      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>`) +
+      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}</div>`
+      : `<div class="dk-foot"><button type="button" class="dk-new" data-a="note-new">+ New note</button>${clear}</div>` + errLine("clear", esc, "p")) +
     `</details>`;
 }
+
+/** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
+const errLine = (k, esc, tag = "li") => rowErr && rowErr.k === k
+  ? `<${tag} class="dk-err" role="alert" title="${esc(rowErr.raw)}">${esc(rowErr.why)}<button type="button" class="dk-undo" data-a="retry">Retry</button></${tag}>` : "";
+
+/** Why the field is open again, after a save the daemon refused. */
+const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(noteErr)}</span>` : "";
 
 /** One line. A line being rewritten is a field in the row's own place, so the
  *  text does not move under the cursor as it becomes editable; a line just
@@ -1510,18 +1901,29 @@ function noteSec(d) {
  *  ✕ was rather than in a corner of the window. */
 function noteRow(x, esc) {
   if (x.gone) {
-    return `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span>` +
-      `<button type="button" class="dk-undo" data-a="note-back" data-n="${x.id}">Undo</button></li>`;
+    return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span>` +
+      `<button type="button" class="dk-undo" data-a="note-back" data-n="${x.id}">Undo</button></li>` + errLine(`n${x.id}`, esc);
   }
-  if (noteField && noteField.kind === "edit" && noteField.id === x.id) {
-    return `<li class="dk-note${x.done ? " done" : ""}"><span class="dk-tick ghost" aria-hidden="true"></span>` +
-      `<input class="dk-note-in" aria-label="This note" spellcheck="false"></li>`;
+  // An agent's suggestion: a ghost of a row, not on the list until kept.
+  // Keep and ✕ sit where a line's tools do, always shown, since a suggestion
+  // is a question and these are its two answers.
+  if (x.suggested_by) {
+    return `<li class="dk-note dk-sug"><span class="dk-tick ghost" aria-hidden="true"></span>` +
+      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="suggested by ${esc(x.suggested_by)} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
+      `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
+      `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
   }
-  return `<li class="dk-note${x.done ? " done" : ""}">` +
+  // A line is two lines at most; the whole of it is its tip, and rewriting
+  // it opens a card over the list, as tall as the text, while the row keeps
+  // its own two lines underneath: nothing below it moves either way.
+  const editing = noteField && noteField.kind === "edit" && noteField.id === x.id;
+  return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
-    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" title="${x.done_by ? `Ticked by ${esc(x.done_by)} · click to rewrite` : "Click to rewrite"}">${esc(x.text)}</button>` +
-    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" title="Take it off the list · nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
-    (x.done && x.done_by ? byLine(x, esc) : "") + `</li>`;
+    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
+    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
+    (x.done && x.done_by ? byLine(x, esc) : "") +
+    (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
+    `</li>` + errLine(`n${x.id}`, esc);
 }
 
 /** Copy a tick's commit, and say so where it is: the hash reads "copied" for
@@ -1542,7 +1944,11 @@ function copySha(b) {
 function byLine(x, esc) {
   const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" title="Copy ${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
   const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" title="Open what ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
-  return `<span class="dk-by"><span title="Ticked by ${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}</span>`;
+  // Where the finished work can be seen -- a PR, a deploy -- by its host.
+  let host = "";
+  try { host = x.done_evidence ? new URL(x.done_evidence).host.replace(/^www\./, "") : ""; } catch { host = ""; }
+  const ev = host ? `<button type="button" class="dk-ev" data-a="note-ev" data-u="${esc(x.done_evidence)}" data-tip="${esc(x.done_evidence)}" data-tip-sub="where the work can be seen">${esc(host)} ↗</button>` : "";
+  return `<span class="dk-by"><span title="Ticked by ${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}${ev}</span>`;
 }
 
 /** A desk with nothing sent yet waits for its first document, and says how
@@ -1552,8 +1958,11 @@ const WANT = "Plan what's next here and send it to snyvi";
 const waitSince = new Map();
 function waitingFirst(d) {
   if (!waitSince.has(d.id)) waitSince.set(d.id, Date.now());
-  const long = Date.now() - waitSince.get(d.id) > 300e3;
-  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true"></span>Waiting for the first one…</p>` +
+  const ago = Date.now() - waitSince.get(d.id), long = ago > 300e3;
+  // The rail is drawn again on every change of a panel's status, and the
+  // ring with it: started as far along as the wait is, so a redraw does not
+  // set its few turns going again.
+  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true" style="animation-delay:-${ago}ms"></span>Waiting for the first one…</p>` +
     `<p class="dk-ask">Ask Claude: <q>${WANT}</q> <button type="button" class="dk-sha" data-a="want-copy" data-c="${WANT}">copy</button></p>` +
     (long ? `<p class="dk-empty">Nothing yet? A Claude session started before snyvi was connected cannot see it: start a new one.</p>` : "") + `</div>`;
 }
@@ -1571,19 +1980,26 @@ async function getNotes(id, again) {
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
   let j;
-  try { j = await ctx.api(`/api/desks/${id}/notes`); } catch { notesGet = null; return; }
-  notesGet = null;
+  try { j = await ctx.api(`/api/desks/${id}/notes`); }
+  catch { notesGet = null; if (id === deskId) { notesOff = id; if (current()) rail(); } return; }
+  notesGet = null; notesOff = null;
   // The desk was swapped while this was in flight: its list is not this one's.
   if (id !== deskId) return;
   // A read that lands between Clear done and the daemon hearing of it would
   // put the cleared lines back for a moment.
   const off = cleared && cleared.at === id ? new Set(cleared.xs.map(x => x.id)) : null;
-  noteList = (j.notes || []).filter(x => !off || !off.has(x.id)); notesAt = id;
+  // A line just taken off keeps its row and its Undo through a read: this
+  // window's own write comes back to it as `desknotes`, and the row holding
+  // the offer must not vanish under the hand reaching for it.
+  const was = notesAt === id ? noteList : [];
+  const next = (j.notes || []).filter(x => !off || !off.has(x.id));
+  was.forEach((x, i) => { if (x.gone && !next.some(y => y.id === x.id)) next.splice(Math.min(i, next.length), 0, x); });
+  noteList = next; notesAt = id;
   if (current()) rail();
 }
 
-/** An agent ticked a line on a desk's list (`tick_desk_note`): read this
- *  desk's list again if it is that desk. A field being typed in is left be --
+/** A desk's list changed -- an agent ticked or suggested a line, or another
+ *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --
  *  the list is read, and the rail redraws around it, as after a tick here. */
 export function notesChanged(id) {
   if (ctx && id === deskId) getNotes(id, true);
@@ -1595,7 +2011,12 @@ function noteFocus() {
   const inp = ctx.tocEl.querySelector(".dk-note-in");
   if (!inp) return;
   inp.value = noteDraft;
-  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; });
+  // The card over a line being rewritten grows with its text, up to twelve
+  // lines, and scrolls after that; the list under it stays where it is.
+  const grow = () => { if (inp.tagName === "TEXTAREA") { inp.style.height = "auto"; inp.style.height = Math.min(inp.scrollHeight + 2, 12 * 18 + 8) + "px"; } };
+  grow();
+  inp.addEventListener("input", grow);
+  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; if (noteErr) { noteErr = ""; inp.nextElementSibling?.remove(); } });
   // Where the caret was, not the end of the line: the rail redraws on the
   // clock every 30 seconds, and a caret that jumped to the end each time
   // would make a long note impossible to correct in the middle.
@@ -1603,8 +2024,9 @@ function noteFocus() {
   inp.addEventListener("keydown", e => {
     // The desk gives every other key to the shell in the focused panel.
     e.stopPropagation();
-    if (e.key === "Enter") { e.preventDefault(); saveNote(true); }
-    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; rail(); }
+    // Shift+Enter is a new line in the card; Enter alone keeps it.
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveNote(true); }
+    else if (e.key === "Escape") { e.preventDefault(); noteField = null; noteDraft = ""; noteCaret = 0; noteErr = ""; rail(); }
   });
   inp.addEventListener("blur", () => { if (!drawing) saveNote(false); });
   inp.focus();
@@ -1614,20 +2036,30 @@ function noteFocus() {
 
 /** Keep what is in the field. `again` is Enter, which on a new line opens the
  *  next one: a list is written in a run, not one visit per line. An emptied
- *  line is taken off rather than kept blank, which is what the daemon does
- *  with an empty rewrite. */
+ *  line is taken off, with its Undo, rather than kept blank. */
 async function saveNote(again) {
   const f = noteField, text = noteDraft.trim(), d = current();
   if (!f || !d) return;
   noteField = again && f.kind === "new" ? { kind: "new" } : null;
-  noteDraft = ""; noteCaret = 0;
+  noteDraft = ""; noteCaret = 0; noteErr = "";
   rail();
   if (f.kind === "new" && !text) return;
+  // A line rewritten to nothing is a line taken off, which is what the ✕
+  // does: it goes the ✕'s way, so it leaves its ghost and its Undo, and the
+  // Undo brings back the text it had.
+  if (!text) return act({ dataset: { a: "note-x", n: String(f.id) } });
   try {
     if (f.kind === "new") await ctx.api(`/api/desks/${d.id}/notes`, { text });
     else await ctx.api(`/api/desks/${d.id}/notes/${f.id}`, { text });
     await getNotes(d.id, true);
-  } catch (e) { ctx.toast("Could not keep that note", String(e)); }
+  } catch (e) {
+    // What was typed is not lost to a no: the field opens again with it,
+    // and the reason stands under it until the next key.
+    const why = `Could not ${f.kind === "new" ? "add the note" : "keep the change"} · ${ctx.sayErr(e).why}`;
+    if (d !== current()) return ctx.toast(why, text);
+    noteField = f; noteDraft = text; noteCaret = text.length; noteErr = why;
+    rail();
+  }
 }
 
 /** The documents this desk's panes sent, for the rail. Fetched when the desk
@@ -1637,9 +2069,10 @@ export async function docs() {
   const id = deskId;
   if (id == null || !ctx) return;
   let j;
-  try { j = await ctx.api(`/api/desks/${id}/docs`); } catch { return; }
+  try { j = await ctx.api(`/api/desks/${id}/docs`); }
+  catch { if (id === deskId) { docsOff = id; if (current()) rail(); } return; }
   if (id !== deskId) return;
-  docList = j.docs || []; docsAt = id;
+  docList = j.docs || []; docsAt = id; docsOff = null;
   if (current()) rail();
 }
 
@@ -1716,7 +2149,7 @@ function pointSec(vs) {
     has.map(v => {
       const ps = points.get(v.id) || [], live = ps.filter(x => !x.gone).length;
       return `<ul class="dk-list">` + ps.map((x, i) => x.gone
-        ? `<li class="dk-note gone"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
+        ? `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
         : `<li class="dk-note dk-point"><span class="nm" title="${esc(x.from)}">${esc(x.text)}</span>` +
           `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" title="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
         (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" title="Type ${live === 1 ? "it" : "them"} into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
@@ -1776,15 +2209,26 @@ function again(v) {
   if (reading != null) ctx.go(deskId, true, n); else focusPane(v.id);
 }
 
-function forgetPoints() {
+/** Leaving a desk hides its points and keeps them: they are the reader's,
+ *  and coming back finds them where they were. A point whose Undo was still
+ *  standing goes, as any offer does once its row is left. They are kept by
+ *  panel, for the life of the page; only a panel that is no longer on any
+ *  desk takes its points with it (`keepPoints`). */
+function hidePoints() {
   hidePick();
   clearTimeout(saidTimer); clearTimeout(pointTimer);
-  points = new Map(); pointSaid = null;
+  pointSaid = null;
+  for (const [id, list] of points) { const k = list.filter(y => !y.gone); if (k.length) points.set(id, k); else points.delete(id); }
+}
+function keepPoints(desks) {
+  if (!desks) return;
+  const live = new Set(desks.desks.flatMap(d => d.panes.map(p => p.id)));
+  for (const id of points.keys()) if (!live.has(id)) points.delete(id);
 }
 
 // ---------- actions ----------
 
-async function act(b) {
+async function act(b, byKey) {
   const a = b.dataset.a, d = current(), v = views.get(b.dataset.p || focused);
   // Closing ends a process, and there is no undoing that: the first click
   // says what the second will do, in the control's own place.
@@ -1794,10 +2238,16 @@ async function act(b) {
     setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.innerHTML = was; b.title = title; } }, 3000);
     return;
   }
+  const e0 = rowErr;
+  rowErr = null;
+  if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (a === "make") ctx.make(b);
+    if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
+      // Pressed while it cannot: it says why, as ⌃⌥N does.
+      const why = noNew(d);
+      if (why) return ctx.toast("New panel", why);
       const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
       focused = j.pane.id;
       await ctx.refresh();
@@ -1808,15 +2258,21 @@ async function act(b) {
     } else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
     else if (a === "start" && v) run(v, v.start.querySelector("input").value);
     else if (a === "all") { for (const x of views.values()) if (!x.status.running) await run(x, x.status.cmd || x.pane.cmd || ""); }
-    else if (a === "close" && v) await closePanel(v);
+    else if (a === "close" && v) await closePanel(v, byKey);
     else if (a === "pane-back") await restorePanel(b.dataset.p);
     else if (a === "pane-rename" && v) renamePanel(v);
-    else if (a === "drop") { await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true); }
+    else if (a === "drop") {
+      // Closed, not deleted: its notes wait on it, and Undo brings it back
+      // with the panels that closed with it, stopped.
+      await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true);
+      ctx.toast(`Closed ${d.name}`, "Its notes are kept", null, { label: "Undo", run: async () => { await ctx.api(`/api/desks/${d.id}/reopen`, {}); await ctx.refresh(); ctx.go(d.id, true); } });
+    }
     else if (a === "rename") renameDesk(d);
     else if (a === "reveal") ctx.reveal({ desk: d.id });
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = true; rail(); }
+    else if (a === "reload") { if (b.dataset.w === "docs") { docsOff = null; docs(); } else { notesOff = null; getNotes(d.id, true); } }
     else if (a === "put" && v) put(v);
     else if (a === "again" && v) again(v);
     else if (a === "point-x" || a === "point-back") {
@@ -1834,6 +2290,7 @@ async function act(b) {
           }, BACK_MS);
         } else delete x.gone;
         rail();
+        if (byKey && x.gone) ctx.tocEl.querySelector(`[data-a="point-back"][data-p="${b.dataset.p}"][data-n="${b.dataset.n}"]`)?.focus();
       }
     }
     // The list. Each of these draws first and tells the daemon after: on a
@@ -1847,13 +2304,26 @@ async function act(b) {
       if (x) {
         x.done = !x.done;
         rail();
-        await ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done });
         // The daemon owns the order -- a line just ticked goes to the end of
         // the done half -- so the list is read back rather than guessed at.
-        await getNotes(d.id, true);
+        if (await told(b.dataset, `n${x.id}`, `Could not ${x.done ? "tick" : "untick"} this`, () => { x.done = !x.done; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { done: x.done }))) await getNotes(d.id, true);
       }
     } else if (a === "note-sha" || a === "want-copy") copySha(b);
     else if (a === "note-doc") ctx.read(b.dataset.d);
+    else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
+    else if (a === "note-keep") {
+      const x = noteList.find(y => y.id === +b.dataset.n);
+      if (x) {
+        const by = x.suggested_by;
+        x.suggested_by = "";
+        rail();
+        if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { x.suggested_by = by; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
+      }
+    }
+    else if (a === "left-edit") leftOffEdit(d);
+    else if (a === "left-back") leftOffBack(d);
     else if (a === "note-x") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) {
@@ -1868,7 +2338,10 @@ async function act(b) {
           if (current()) rail();
         }, BACK_MS);
         rail();
-        await ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {});
+        // A removal a key made leaves the hand on its Undo.
+        if (byKey) ctx.tocEl.querySelector(`[data-a="note-back"][data-n="${x.id}"]`)?.focus();
+        await told(b.dataset, `n${x.id}`, "Could not take it off", () => { clearTimeout(backTimer); delete x.gone; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {}));
       }
     } else if (a === "note-back") {
       const x = noteList.find(y => y.id === +b.dataset.n);
@@ -1876,46 +2349,73 @@ async function act(b) {
       if (x) {
         delete x.gone;
         rail();
-        await ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {});
-        await getNotes(d.id, true);
+        if (await told(b.dataset, `n${x.id}`, "Could not bring it back", () => { x.gone = true; },
+          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))) await getNotes(d.id, true);
       }
     } else if (a === "note-clear") {
       const xs = noteList.filter(y => y.done && !y.gone);
       if (xs.length) {
+        const was = noteList;
         clearTimeout(backTimer);
         noteList = noteList.filter(y => !y.done && !y.gone);
         cleared = { at: d.id, xs };
         backTimer = setTimeout(() => { cleared = null; if (current()) rail(); }, BACK_MS);
         rail();
-        await Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {})));
+        if (!(await told(b.dataset, "clear", "Could not clear the done notes", () => { clearTimeout(backTimer); cleared = null; noteList = was; },
+          () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/remove`, {})))))) getNotes(d.id, true);
       }
     } else if (a === "note-unclear" && cleared) {
-      const xs = cleared.xs;
+      const c = cleared, xs = c.xs;
       clearTimeout(backTimer);
       cleared = null;
       noteList = noteList.concat(xs);
       rail();
-      await Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {})));
-      await getNotes(d.id, true);
+      if (await told(b.dataset, "clear", "Could not bring them back", () => { noteList = noteList.filter(y => !xs.includes(y)); cleared = c; },
+        () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
-  } catch (e) { ctx.toast("Could not do that", String(e)); }
+  } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e); }
+}
+
+/** What each of the rail's other buttons was asked to do, for its error. */
+const VERB = { new: "open a new panel", stop: "stop the panel", start: "start the panel", all: "start the panels", drop: "close the desk",
+  copy: "copy it", put: "put the points in", again: "resume it", "pane-rename": "rename the panel" };
+
+/** The daemon, asked for what the rail already shows. A no puts back what
+ *  was changed (`back`) and says so in the row that asked (`k`), with a
+ *  Retry that does the same thing again (`again`, the button's data).
+ *  True when the daemon said yes. */
+async function told(again, k, why, back, call) {
+  try { await call(); return true; }
+  catch (e) {
+    back();
+    rowErr = { k, why, raw: e.message, again: { ...again } };
+    if (current()) rail();
+    return false;
+  }
 }
 
 /** Close a panel: its process stops, its row stays in the rail for BACK_MS
  *  with Undo, and the panels after it close up. Nothing asks first, since
  *  nothing is lost: the daemon keeps it until `prune`. */
-async function closePanel(v) {
+async function closePanel(v, byKey) {
   const d = current();
-  clearTimeout(closedTimer);
-  closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
-  closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
   // The keyboard goes on to a neighbour, if it was in the one that closed:
   // it is not left on nothing, typing into nowhere.
   const ps = d.panes, i = ps.findIndex(p => p.id === v.id), next = (ps[i + 1] || ps[i - 1] || {}).id;
   const had = v.el.contains(document.activeElement);
-  await ctx.api(`/api/panes/${v.id}/delete`, {});
+  // "Closed · Undo" is said once it is true: until the daemon has it, the
+  // panel's row says it is closing, and a no leaves it running.
+  v.closing = true; rail();
+  const ok = await told({ a: "close", p: v.id }, `p${v.id}`, `Could not close panel ${v.pane.slot}`, () => { v.closing = false; },
+    () => ctx.api(`/api/panes/${v.id}/delete`, {}));
+  if (!ok) return;
+  clearTimeout(closedTimer);
+  closedRow = { id: v.id, desk: d.id, name: `${v.pane.slot} ${short(v)}`, said: "" };
+  closedTimer = setTimeout(() => { closedRow = null; if (current()) rail(); }, BACK_MS);
   await ctx.refresh();
-  if (next && (had || document.activeElement === document.body)) focusPane(next);
+  // A key's close leaves the hand on the Undo; a pointer's, on a neighbour.
+  if (byKey) ctx.tocEl.querySelector("[data-a=pane-back]")?.focus();
+  else if (next && (had || document.activeElement === document.body)) focusPane(next);
 }
 
 /** Undo a close. A desk that filled up in the meantime says so in the row,
@@ -1927,8 +2427,8 @@ async function restorePanel(id) {
   try { await ctx.api(`/api/panes/${id}/restore`, {}); }
   catch (e) {
     keepStopped.delete(id);
-    if (!/holds/.test(String(e))) throw e;
-    c.said = "the desk filled up";
+    if (/holds/.test(String(e))) c.said = "the desk filled up";
+    else rowErr = { k: "closed", why: "Could not bring it back", raw: e.message, again: { a: "pane-back", p: id } };
     rail();
     return;
   }
@@ -1938,17 +2438,29 @@ async function restorePanel(id) {
   await ctx.refresh();
 }
 
+/** Why a field is open again: under it, until the next key. */
+function fieldErr(input, why) {
+  if (input.nextElementSibling?.classList.contains("field-err")) input.nextElementSibling.remove();
+  const p = Object.assign(document.createElement("span"), { className: "field-err", textContent: why });
+  p.setAttribute("role", "alert");
+  input.after(p);
+  input.addEventListener("input", () => p.remove(), { once: true });
+  input.addEventListener("blur", () => p.remove(), { once: true });
+}
+
 /** Name a panel, in its head, in place of the title its program sets. Empty
- *  gives the head back to the program. */
-function renamePanel(v) {
+ *  gives the head back to the program. A name refused comes back in the
+ *  field (`typed`), with why under it, as a note's does. */
+function renamePanel(v, typed, why) {
   // A panel the grid has no room for is brought up first: its head is where the name goes.
   if (!v.el.isConnected && reading == null) focusPane(v.id);
   const nm = v.el.querySelector(".pn-cmd");
   if (!nm || !v.el.isConnected) return;
-  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: v.pane.name || "", placeholder: short(v), spellcheck: false });
+  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: typed ?? (v.pane.name || ""), placeholder: short(v), spellcheck: false });
   input.setAttribute("aria-label", `Name of panel ${v.pane.slot}`);
   nm.replaceWith(input);
   input.focus(); input.select();
+  if (why) fieldErr(input, why);
   let done = false;
   const finish = async keep => {
     if (done) return;
@@ -1956,7 +2468,8 @@ function renamePanel(v) {
     const name = input.value.trim();
     input.replaceWith(nm);
     if (keep && name !== (v.pane.name || "")) {
-      try { await ctx.api(`/api/panes/${v.id}/rename`, { name }); v.pane.name = name; await ctx.refresh(); } catch (e) { ctx.toast("Could not rename", String(e)); }
+      try { await ctx.api(`/api/panes/${v.id}/rename`, { name }); v.pane.name = name; await ctx.refresh(); }
+      catch (e) { header(v); rail(); return renamePanel(v, name, `Could not rename · ${ctx.sayErr(e).why}`); }
     }
     header(v); rail();
     v.body.focus();
@@ -1969,21 +2482,27 @@ function renamePanel(v) {
   input.addEventListener("blur", () => finish(true));
 }
 
-function renameDesk(d) {
-  const nm = ctx.metaEl.querySelector(".dk-nm");
+/** The desk's name, rewritten where it is: in the desk's head. The meta
+ *  pane no longer says it twice. */
+function renameDesk(d, typed, why) {
+  const nm = ctx.docEl.querySelector(".dk-head .dk-name");
   if (!nm) return;
-  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: d.name, spellcheck: false });
+  const input = Object.assign(document.createElement("input"), { className: "ren-in", value: typed ?? d.name, spellcheck: false });
   input.setAttribute("aria-label", "Name of this desk");
   nm.replaceWith(input);
   input.focus(); input.select();
+  if (why) fieldErr(input, why);
   let done = false;
   const finish = async keep => {
     if (done) return;
     done = true;
     const name = input.value.trim();
     if (keep && name && name !== d.name) {
-      try { await ctx.api(`/api/desks/${d.id}/rename`, { name }); await ctx.refresh(); } catch (e) { ctx.toast("Could not rename", String(e)); }
+      try { await ctx.api(`/api/desks/${d.id}/rename`, { name }); await ctx.refresh(); }
+      // Refused: the field stays as typed, says why, and Enter asks again.
+      catch (e) { if (input.isConnected) { done = false; fieldErr(input, `Could not rename · ${ctx.sayErr(e).why}`); input.focus(); return; } return renameDesk(d, name, `Could not rename · ${ctx.sayErr(e).why}`); }
     }
+    if (input.isConnected) input.replaceWith(Object.assign(document.createElement("b"), { className: "dk-name", textContent: (current() || d).name }));
     rail();
   };
   input.addEventListener("keydown", e => {
@@ -2015,7 +2534,8 @@ function click(e) {
   // the panes back, the way the first put the document up.
   if (r) { e.preventDefault(); if (r.dataset.read === reading) ctx.go(deskId, true); else ctx.read(r.dataset.read); return; }
   const b = e.target.closest("[data-a]");
-  if (b && !b.disabled) act(b);
+  // `detail` is 0 for a click a key made: what it opens is then a keyboard's.
+  if (b && !b.disabled) act(b, !e.detail);
 }
 
 /** Full view, as the slot it shows, kept by the daemon for this desk. */
@@ -2066,7 +2586,7 @@ function keys(e) {
     e.preventDefault(); e.stopPropagation();
     if (e.code === "KeyN") { const why = noNew(d); if (why) ctx.toast("New panel", why); else act({ dataset: { a: "new" } }); }
     else if (!v) return;
-    else if (e.code === "KeyW") closePanel(v).catch(err => ctx.toast("Could not close it", String(err)));
+    else if (e.code === "KeyW") closePanel(v, true).catch(err => ctx.toast("Could not close the panel", err));
     else if (e.code === "KeyR") { if (v.status.running) ctx.api(`/api/panes/${v.id}/stop`, {}).catch(() => {}); else run(v, v.status.cmd || v.pane.cmd || ""); }
     else {
       const ps = d.panes, i = ps.findIndex(p => p.id === focused);
@@ -2106,17 +2626,30 @@ function detach() {
   hidePick();
 }
 
+/** The icons only a desk draws, added to the page's set when a desk opens
+ *  (app.js ICONS): first paint does not carry them. */
+const ICONS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  play: '<path d="M7 4.5v15l12-7.5z"/>',
+  again: '<path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"/><path d="M20 3.5v5h-5"/>',
+  fill: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  unfill: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+};
+
 export function open(c) {
   const first = !ctx;
   detach();
   ctx = c;
+  Object.assign(c.icons || {}, ICONS);
   style();
   if (first) measure();
   if (deskId !== c.id) {
-    views.clear(); docList = []; docsAt = null; docsAll = false; forgetNotes(); forgetPoints();
+    for (const v of [...views.values()]) dropView(v);
+    docList = []; docsAt = null; docsAll = false; forgetNotes(); hidePoints();
     focused = null; full = false;
   }
   deskId = c.id; reading = null;
+  keepPoints(c.desks);
   const d = current();
   if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
   draw();
@@ -2228,7 +2761,7 @@ export function actions(el) {
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,
-      { label: "Rename…", key: "F2", run: () => renamePanel(v) },
+      { label: "Rename…", key: "F2", moves: 1, run: () => renamePanel(v) },
       { label: "Close panel", key: "⌃⌥W", danger: true, run: does("close") },
     ] };
   }
@@ -2237,7 +2770,7 @@ export function actions(el) {
     const id = doc.querySelector("a[data-read]")?.dataset.read, x = docList.find(y => y.id === id);
     if (!x) return null;
     return { head: x.title, items: [
-      { label: "Open", run: () => ctx.read(x.id) },
+      { label: "Open", moves: 1, run: () => ctx.read(x.id) },
       x.source_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.source_path); ctx.toast("Copied", x.source_path); } },
       { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } },
     ] };
@@ -2288,6 +2821,7 @@ export const panels = () => views.size;
 export function update(desks) {
   if (!ctx) return;
   ctx.desks = desks;
+  keepPoints(desks);
   const d = current();
   // Behind a document, the page is not the desk's to draw: the rail is.
   if (reading != null) { if (d) { sync(d); rail(); } else { ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = ""; } return; }
@@ -2304,6 +2838,7 @@ export function update(desks) {
 export function aside(docId) {
   if (!ctx || deskId == null) return;
   reading = docId;
+  pace();
   delete ctx.root.dataset.full;
   hidePick();
   ctx.docEl.removeEventListener("click", click);
@@ -2315,10 +2850,10 @@ export function close() {
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
   deskId = null; reading = null;
-  views.clear();
+  for (const v of [...views.values()]) dropView(v);
   focused = null;
   docList = []; docsAt = null; docsAll = false;
-  forgetNotes(); forgetPoints();
+  forgetNotes(); hidePoints();
   detach();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }
@@ -2353,14 +2888,31 @@ const CSS = `
 :root[data-rail="0"] .dk-head, #app:has(#rail.empty) .dk-head { padding-right: 30px; }
 @media (max-width: 1100px) { .dk-head { padding-right: 30px; } }
 .dk-name { font-weight: 600; }
+/* Left off: the rest of the head's width, one line, cut with an ellipsis; its
+   whole text is its tip. The slot is there with nothing said, so its coming
+   moves nothing; empty, it shows only when the head is hovered or focused. */
+.dk-left { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.dk-left-b { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border: 0; border-radius: var(--r-sm);
+  background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); text-align: left; cursor: text; }
+button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
+.dk-left-k { color: var(--fg-3); }
+.dk-left-b.none { color: var(--fg-3); opacity: 0; }
+.dk-head:is(:hover, :focus-within) .dk-left-b.none { opacity: 1; }
+.dk-left-in { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-small); padding: 1px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+/* An agent's suggestion: a ghost row, quieter than a line of the reader's,
+   with its two answers always shown. */
+.dk-sug .nm { color: var(--fg-3); font-style: italic; }
+.dk-sug-tools { display: flex; gap: 2px; flex: none; }
+.dk-keep { padding: 0 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
+.dk-keep:hover { color: var(--fg); border-color: var(--accent); }
+.dk-ev { padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
+.dk-ev:hover { text-decoration: underline; }
 .dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
 .dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: 4px; }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }
-/* Full view: the one tab that is on carries a mark, so a full-size pane with
- * tabs beside it reads as full view and not as a window too narrow for two;
- * a tab out of sight that is waiting on the reader is amber, as the rail is. */
-.dk:has(.dk-grid[data-zoom="1"]) .dk-tabs button.on::after { content: " ⤢"; }
+/* A tab out of sight that is waiting on the reader is amber, as the rail is.
+ * The one that is on wears the accent; the pane's own ⤡ says full view. */
 .dk-tabs button.blk { color: var(--warn); font-weight: 600; }
 /* And the window gives the pane everything: no sidebar, no rail, and none of
  * the buttons that would bring them back -- ⤡ or ⌃⌥Z is the way out. The
@@ -2368,12 +2920,13 @@ const CSS = `
 :root[data-full] #app { grid-template-columns: 0 minmax(0,1fr) 0 !important; }
 :root[data-full] #side, :root[data-full] #rail { display: none !important; }
 :root[data-full] #chrome #btn-rail { display: none !important; }
-.pn-full { flex: none; align-self: center; width: 18px; height: 18px; margin: -2px -4px -2px 2px; display: grid; place-items: center; border-radius: 4px; font-size: 12px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
-.pn:hover .pn-full, .pn.on .pn-full, .pn-full:focus-visible, :root[data-full] .pn-full { opacity: 1; }
 .pn-full:hover, .pn-ren:hover { background: var(--rule-2); color: var(--fg); }
-/* The pen, beside ⤢: there only under the cursor, as the rows' tools are. */
-.pn-ren { flex: none; align-self: center; width: 18px; height: 18px; margin: -2px 0 -2px 4px; display: grid; place-items: center; border-radius: 4px; font-size: 11px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity var(--t), background var(--t); }
-.pn:hover .pn-ren, .pn-ren:focus-visible { opacity: 1; }
+/* The pen and full view, on every panel, in the grid and in full view alike:
+   two slots of their own at the head's end, quiet at rest and --fg under the
+   pointer, so neither comes and goes nor lands on the state beside it. */
+:is(.pn-ren, .pn-full) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.pn-ren { margin-left: -2px; }
+.pn-full { margin-right: -4px; }
 .pn-head .ren-in { flex: 1; min-width: 60px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; outline: none; }
 .dk-head .icon:first-of-type { margin-left: auto; }
 .dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
@@ -2410,7 +2963,8 @@ const CSS = `
 .pn-state { margin-left: auto; padding-left: 8px; }
 /* The context window, after the state: quiet, warmer from 70%, the waiting
    amber from 85%. The rail's row and the meta's line wear the same three. */
-.pn-ctx:empty { display: none; }
+.pn-ctx:not(.kept) { display: none; }
+.pn-ctx.kept { min-width: 11ch; text-align: right; }
 .ctx { color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .ctx.warm { color: var(--fg-2); }
 .ctx.hot { color: var(--warn); font-weight: 600; }
@@ -2424,10 +2978,13 @@ const CSS = `
  * output first overflowed grew a scrollbar, lost a column to it, was resized
  * and cleared, lost the overflow, gave the column back -- and a busy program
  * kept that going every frame. */
-.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
-.pn-old > div, .pn-sb > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
-.pn-sb > .gap { color: var(--fg-3); font-style: italic; }
-.pn-old { color: var(--fg-3); opacity: .7; }
+.pn-body { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; overflow-x: hidden; padding: 4px 6px; font-family: var(--pn-font); font-size: var(--pn-size); line-height: var(--pn-line); color: var(--pn-fg); outline: none; scrollbar-width: thin; scrollbar-gutter: stable; }
+.pn-pg > div, .pn-scr > div { white-space: pre; height: var(--pn-line); overflow: hidden; }
+.pn-pg > .gap { color: var(--fg-3); font-style: italic; }
+/* A chunk of scrollback put away: no rows, the height they had. */
+.pn-pg { contain: content; }
+.pn-pg.held { height: calc(var(--n) * var(--pn-line)); contain: strict; }
+.pn-old { color: var(--fg-3); }
 /* The live screen on a layer of its own, and each row shut in on itself: a
  * spinner's frame repaints its row, not the pane or the panes beside it
  * (docs/DESK-PAINT.md, Phase 2). */
@@ -2453,6 +3010,8 @@ const CSS = `
 .pn-body .nf { position: relative; font-size: 10px; }
 .pn-body .g { position: relative; -webkit-text-fill-color: transparent; }
 .pn-body .g::before { content: ""; position: absolute; inset: 0; background: currentColor; -webkit-mask: var(--g) 0 0 / 100% 100% no-repeat; mask: var(--g) 0 0 / 100% 100% no-repeat; }
+.pn-body .x.r { width: calc(var(--r) * var(--cw)); }
+.pn-body .g.r::before { -webkit-mask-size: var(--cw) 100%; mask-size: var(--cw) 100%; -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x; }
 /* The offer after an unplanned stop: over the top of the panel, in the
    waiting amber, out of the way of the prompt it would type into. */
 .pn-offer { position: absolute; left: 12px; right: 12px; top: 8px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
@@ -2470,11 +3029,14 @@ const CSS = `
 .pn-connect p { margin: 0 0 8px; line-height: 1.45; }
 .pn-connect p:last-child { margin: 0; }
 .pn-connect .ok { color: var(--ok); }
-.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
 .dk-wait .dk-empty { display: flex; align-items: center; gap: 6px; }
 .dk-ask { margin: 2px 8px 6px; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
 .dk-ask q { color: var(--fg); }
-.dk-spin { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-3); border-right-color: transparent; animation: dk-spin 1.2s linear infinite; }
+/* A few turns and then still: a desk can wait days for its first document,
+ * and a ring that never stops turning cost the compositor 8% of a core the
+ * whole time -- behind a document, and on another desk too. */
+.dk-spin { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-3); border-right-color: transparent; animation: dk-spin 1.2s linear 3; }
 @keyframes dk-spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .dk-spin { animation: none; } }
 .pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
@@ -2484,7 +3046,7 @@ const CSS = `
  * rows: a mark at the left, the name, and one fact at the right. */
 .dk-lab { display: flex; align-items: baseline; padding-left: 8px; }
 .dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.dk-lab .n i { font-style: normal; opacity: .6; }
+.dk-lab .n i { font-style: normal; }
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; }
 .dk-foot + .dk-sec { margin-top: 16px; }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
@@ -2501,10 +3063,12 @@ const CSS = `
 /* The desk's folder is the folder's own name, and a click opens it in the file manager. */
 .dk-folder { min-width: 0; padding: 0; text-align: left; font: inherit; color: inherit; overflow-wrap: anywhere; border-radius: 3px; }
 .dk-folder:hover { color: var(--accent); }
-.dk-pane:hover .dk-tools, .dk-doc:hover .dk-tools, .dk-note:hover .dk-tools, .dk-row:hover .dk-tools, .dk-tools:has(:focus-visible), .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
+:is(.dk-pane, .dk-doc, .dk-note, .dk-row):is(:hover, :focus-within) .dk-tools, .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
+.dk-sug-tools > button:not(.dk-keep) { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); }
+.dk-sug-tools > button:not(.dk-keep):hover { background: var(--rule-2); color: var(--fg); }
 .dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: var(--danger); }
 .dk-tools button[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
@@ -2521,19 +3085,23 @@ const CSS = `
 .dk-sec:not([open]) .s-chev { transform: rotate(-45deg); }
 .dk-sec > summary:hover { color: var(--fg-2); }
 .dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
-.dk-panes .on .slot { color: inherit; opacity: .7; }
+.dk-panes .on .slot { color: inherit; }
 .dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
 .dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: 12px; border-radius: 6px; }
-.dk-new:hover:not(:disabled) { color: var(--accent); }
-.dk-new:disabled { opacity: .5; cursor: default; }
+.dk-new:hover:not(:disabled, .dim) { color: var(--accent); }
+.dk-new:is(:disabled, .dim) { opacity: .5; cursor: default; }
+/* Said to a screen reader, not drawn: why a quiet control is quiet. */
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* The rest of the documents, as one row under the latest: the count is the
  * number the rail is not showing, so it changes as they arrive. */
 .dk-more { margin-top: 2px; font-variant-numeric: tabular-nums; }
 /* A document row: a page icon at the left, in the accent while the
  * document waits to be read, then the title, the pane it came from and its
  * age. */
-#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--fg-2); line-height: 1.5; white-space: nowrap; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
-.dk-docs a svg { flex: none; color: var(--fg-3); transition: color var(--t); }
+#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 6px; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--fg-2); line-height: 1.5; white-space: normal; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
+.dk-docs a svg { flex: none; margin-top: 2px; color: var(--fg-3); transition: color var(--t); }
+.dk-docs .dt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dk-docs .by { font-family: var(--mono); font-size: 10px; line-height: 1.5; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .dk-docs a.new svg { color: var(--accent); }
 .dk-docs a.new .title { color: var(--fg); font-weight: 550; }
 /* The row, and not the link, carries the hover and the mark, so the copy
@@ -2542,7 +3110,7 @@ const CSS = `
 .dk-doc:hover { background: var(--rule); }
 #toc .dk-docs li a:hover { color: var(--fg); text-decoration: none; }
 .dk-doc.on { background: var(--accent-bg); }
-#toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .slot, .dk-doc.on a .k { color: var(--accent); }
+#toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .by { color: var(--accent); }
 .dk-doc.on .dk-tools { width: auto; overflow: visible; padding-right: 3px; }
 /* A document row's tools are drawn as small keys, on their own ground: the
  * marked row shows them at rest, and two bare glyphs beside a title would
@@ -2550,11 +3118,10 @@ const CSS = `
 .dk-doc .dk-tools { gap: 3px; }
 .dk-doc .dk-tools button { background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2); }
 .dk-doc.on .dk-tools button { color: var(--accent); opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
-.dk-doc .dk-tools button:hover { background: var(--accent); color: var(--bg); box-shadow: none; }
-.dk-docs .title { overflow: hidden; text-overflow: ellipsis; }
-.dk-docs .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
-.dk-docs .slot { margin-left: auto; }
-.dk-panes .slot::before, .dk-docs .slot::before { content: "["; } .dk-panes .slot::after, .dk-docs .slot::after { content: "]"; }
+.dk-doc .dk-tools button:hover { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.dk-docs .title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.dk-docs .by .slot { font-size: inherit; color: inherit; }
+.dk-panes .slot::before { content: "["; } .dk-panes .slot::after { content: "]"; }
 .dk-docs .k { font-family: var(--mono); font-size: 10px; color: var(--fg-3); flex: none; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
 #toc .dk-empty { margin: 2px 8px 0; padding: 0; text-indent: 0; font-size: 12px; line-height: 1.5; color: var(--fg-3); }
 /* The desk's name carries its two tools; the row is a little taller than
@@ -2563,7 +3130,7 @@ const CSS = `
 #meta .dk-row .dk-nm { flex: 1; }
 #meta .dk-row .dk-tools { line-height: 1; }
 .dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
-.dk-make:hover { background: var(--accent); color: var(--bg); }
+.dk-make:hover { background: var(--accent); color: var(--on-accent); }
 /* ---------- the list ----------
  * A checklist, drawn on the same row grid as the panels and the documents
  * above it, so the three read as one rail and not as three widgets. The
@@ -2578,7 +3145,13 @@ const CSS = `
 .dk-sec + .dk-notes { margin-top: 16px; }
 .dk-note { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; border-radius: 6px; transition: background var(--t); }
 .dk-note:hover { background: var(--rule); }
-.dk-note > .nm { flex: 1; min-width: 0; text-align: left; padding: 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere; }
+.dk-note { position: relative; }
+.dk-note > .nm { flex: 1; min-width: 0; text-align: left; margin: 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* The card a line is rewritten in: over the row's text, the same left edge,
+   laid over the lines below rather than pushing them. */
+.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 19px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 19px; right: 4px; }
 .dk-note:hover > .nm { color: var(--fg); }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
@@ -2587,7 +3160,7 @@ const CSS = `
    line of its own under the text, lined up with it: the reader can untick
    it like any other. */
 .dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 26px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
-.dk-by > span { opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-by > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
 .dk-sha { padding: 0 3px; background: var(--rule); }
 .dk-sha[data-said] { color: var(--ok); }
@@ -2611,7 +3184,7 @@ const CSS = `
    room given only under the pointer rewrapped it -- the row changed height
    under the hand that was reaching for it. */
 .dk-note .dk-tools { align-self: flex-start; margin-top: 3px; width: auto; padding-right: 3px; opacity: 0; transition: opacity var(--t); }
-.dk-note:hover .dk-tools, .dk-note .dk-tools:has(:focus-visible), .dk-note .dk-tools:has([data-armed]) { opacity: 1; }
+.dk-note:is(:hover, :focus-within) .dk-tools, .dk-note .dk-tools:has([data-armed]) { opacity: 1; }
 .dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
 .dk-note-in:focus { outline: none; }
 .dk-note-in::placeholder { color: var(--fg-3); }
@@ -2619,6 +3192,9 @@ const CSS = `
    it back is where the ✕ was, which is where the eye already is. Nothing was
    deleted, so the row says the mildest true thing and says it quietly. */
 .dk-note.gone { color: var(--fg-3); font-size: 12px; padding: 4px 8px; animation: dk-fade 140ms ease-out; }
+/* A refusal, in the row that asked, with its Retry. */
+.dk-err { list-style: none; display: flex; align-items: baseline; gap: 6px; padding: 2px 8px 4px 26px; font-size: 11.5px; color: var(--danger); }
+.dk-pane.closing { opacity: .5; }
 .dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
 .dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -2631,7 +3207,7 @@ const CSS = `
  * row grid, a few lines each: a passage is quoted whole when it goes in, and
  * the rail only has to say which one it is. */
 .dk-pick { position: fixed; z-index: 30; padding: 4px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; color: var(--accent); background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2), 0 4px 14px rgb(0 0 0 / .18); animation: dk-fade 120ms ease-out; }
-.dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .dk-pick:disabled { cursor: default; }
 .dk-points { margin-top: 16px; }
 .dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }

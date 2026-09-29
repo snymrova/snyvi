@@ -21,15 +21,15 @@ let pill = null, sleep = null, dimT = 0, offT = 0, hinted = 0;
  * real pill is placed: `:is()` counts as its ID, so a class rule after it
  * could never have put the sample back in the flow. */
 const CSS = `
-#keymode { position: fixed; left: 50%; bottom: 20px; z-index: 30; transform: translateX(-50%); }
+#keymode { position: fixed; left: 50%; bottom: 20px; z-index: var(--z-toast); transform: translateX(-50%); }
 :is(#keymode, .keymode-sample) { pointer-events: none;
-  padding: 4px 11px; border-radius: 999px; font-size: 12px; color: var(--fg-2); background: var(--bg-raise);
-  border: 1px solid var(--rule); box-shadow: var(--shadow); opacity: 0; transition: opacity .2s; }
+  padding: 4px 11px; border-radius: var(--r-pill); font-size: var(--fs-small); color: var(--fg-2); background: var(--bg-raise);
+  border: 1px solid var(--rule); box-shadow: var(--shadow); opacity: 0; transition: opacity var(--dur-move); }
 .keymode-sample { display: inline-block; }
-:is(#keymode, .keymode-sample).show { opacity: 1; transition-duration: .12s; }
+:is(#keymode, .keymode-sample).show { opacity: 1; transition-duration: var(--dur-quick); }
 :is(#keymode, .keymode-sample).on::before { content: "●"; color: var(--accent); margin-right: 6px; }
 #keymode.dim { opacity: .45; transition-duration: 2s; }
-#keymode.hit { animation: key-hit .2s; }
+#keymode.hit { animation: key-hit var(--dur-move); }
 @keyframes key-hit { 50% { border-color: var(--accent); } }
 body.keys #main #chrome { box-shadow: 0 1px 0 var(--accent); }
 `;
@@ -80,7 +80,7 @@ export function on(done) {
   addEventListener("pointerdown", click, true);
   addEventListener("focusin", focus);
   pill.className = "show on";
-  pill.textContent = "Keys on · esc";
+  pill.textContent = "Keys on · Esc";
   idle();
 }
 
@@ -114,7 +114,7 @@ export function hint() {
   if (sleep || now - hinted < HINT_EVERY) return;
   hinted = now;
   pill.className = "show";
-  pill.textContent = "⌃B for keys";
+  pill.textContent = `${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for keys`;
   clearTimeout(offT);
   offT = setTimeout(() => { if (!sleep) pill.className = ""; }, HINT);
 }
@@ -149,9 +149,10 @@ export function letter(e, c) {
     case "/": c.openFind(); break;
     // Delete and not Backspace: a key a reader leans on while thinking is
     // not a key to lose a document to.
-    case "Delete": c.deleteCurrent(); break;
+    case "Delete": c.deleteCurrent(true); break;
     case "n": c.openNext(); break;
     case "i": c.showInbox(true); break;
+    case "h": c.showHome(true); break;
     case "w": c.wide(); break;
     case "z": c.wrap(); break;
     case "t": c.rail(); break;

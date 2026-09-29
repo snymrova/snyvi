@@ -38,6 +38,13 @@
 
   // ---------- helpers ----------
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  /** A POST, with a JSON body when there is one. Null is the daemon saying
+   *  nothing at all, which a refusal (a Response that is not ok) is not. */
+  /** A list the daemon did not send, said where the list goes -- never as the
+   *  list being empty -- with a Retry that loads it again (`data-retry`). */
+  const noReach = (what, tag = "p") => `<${tag} class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry="${what}">Retry</button></${tag}>`;
+  let treeOff = false, desksOff = false;
+  const post = (u, b) => fetch(u, b ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : { method: "POST" }).catch(() => null);
   const rel = ts => {
     const d = Date.now() / 1000 - ts;
     if (d < 45) return "just now";
@@ -77,7 +84,8 @@
    *  the next is usually the end of its title, and four rows reading
    *  "Session panes: the…" tell a reader nothing. The head takes the word
    *  boundary nearest 60% of the budget, the tail as many whole words as the
-   *  rest holds. The whole title stays in the row's `title`. */
+   *  rest holds. The whole title is the row's tip, which only a cut row has
+   *  (`cut`). */
   const mid = (t, px) => {
     t = String(t);
     if (!fitCtx || wide(t) <= px) return t;
@@ -92,6 +100,10 @@
     if (fwd > 0 && fwd - from < 8) from = fwd + 1;
     return out + t.slice(from).trimStart();
   };
+  /** A row's tip, only when its name had to be cut to fit (docs/DESIGN.md
+   *  §8.1): the whole name, and when it came. */
+  const cut = (d, shown) => shown === String(d.title) ? "" : ` data-tip="${esc(d.title)}" data-tip-sub="${fmt(d.received_at)}${waitingRow(d) ? " · waiting" : ""}"`;
+
   // One formatter, made once: `toLocaleString` with options builds a new one
   // per call, and the sidebar calls this for every row it draws.
   const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -146,12 +158,16 @@
    *  a toast in the far corner asks the eye to leave the sidebar to find out
    *  what the sidebar just did. Cleared by the timer, by the undo, or by the
    *  next one put away, which is the moment the offer stops being about it. */
-  let awayJust = null, awayTimer = 0;
+  let awayJust = null, awayClock = null, awayUndo = null;
   /** The document just removed, while its row still offers Undo: what it was,
    *  where its row stood (`where` "queue" or "proj", and the place in that
    *  list), and the clock. Captured at the click, because the refetch that
    *  follows no longer has the row to say where it was. One at a time. */
   let gone = null;
+  /** Whether the ghost can be seen: drawn, and not in a folded sidebar. */
+  const inView = g => g.drawn && root.dataset.side !== "0";
+  /** A folder just closed, whose ghost holds the Undo (`closeRoot`). */
+  let shut = null;
   const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
   function toggleFold(key) {
@@ -165,11 +181,23 @@
   const ICONS = {
     inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     project: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/>',
-    desk: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/>',
+    // A desk is panels, so it is drawn as four of them; the prompt is kept
+    // for a real shell, and a desk no longer looks like one.
+    desk: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.8"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.8"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.8"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.8"/>',
     folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/>',
     doc: '<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M9 13h6M9 16.5h6"/>',
+    // One glyph per concept (docs/DESIGN.md §8.3), drawn, never typed: a
+    // text ✕ or ✎ is drawn by each OS in its own font, at its own weight.
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    pen: '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/>',
+    checks: '<path d="m2.5 12.5 4.5 4.5L16 8M11.5 16l1 1L21.5 8"/>',
+    // The desk's own (fill, unfill, plus, play, again) come with desk.js.
+    pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
   };
-  const icon = (k, px = 16) => `<svg class="r-ico" viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
+  /** An icon at any size with the same 1.5 px line on screen: the drawings
+   *  are on a 24 grid, so the stroke is scaled to the size asked for. */
+  const icon = (k, px = 16, cls = "r-ico") => `<svg class="${cls}" viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="currentColor" stroke-width="${+(36 / px).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
+  const glyph = (k, px = 12) => icon(k, px, "g-ico");
   /** A section's head, as a Mac sidebar has them: a quiet label that folds
    *  what is under it, the same for all three, and nothing else. Whatever
    *  opens a page is a row. The chevron shows on hover, and stays while the
@@ -180,6 +208,9 @@
   /** Documents and files carry the document glyph, smaller and quieter
    *  than a row that holds things, so the left column is always an icon. */
   const docIco = () => icon("doc", 14);
+  /** Rows on their way: two bars where the rows will be (docs/DESIGN.md
+   *  §7.4), never a bare "…". They wait --sk-wait, so a fast answer shows none. */
+  const skRows = `<li class="t-wait"><span class="sk-bar" style="width:62%"></span></li><li class="t-wait"><span class="sk-bar" style="width:44%"></span></li>`;
   function secHead(key, name, tail = "") {
     const open = !folded.has(key);
     return `<div class="s-head" data-sec="${key}"><button type="button" class="s-link" data-fold="${key}" aria-expanded="${open}"><span class="s-nm">${name}</span>${chev}</button>${tail}</div>`;
@@ -189,14 +220,18 @@
    *  Its body always ends in a quiet "open a folder" row, so reading a folder is
    *  something the sidebar offers rather than a command a reader has to have heard of. */
   function renderBrowse() {
-    const ids = state.browse.map(r => r.id).join(",");
+    const ids = state.browse.map(r => r.id).join(",") + (shut ? `|${shut.r.id}${shut.err || ""}` : "");
     if (browseEl.dataset.ids === ids) return;
     browseEl.dataset.ids = ids;
     const head = secHead("folders", "Folders");
-    browseEl.innerHTML = head + `<div class="b-body s-body">` + state.browse.map(r => {
+    const rows = state.browse.filter(r => r.id !== shut?.r.id).map(r => {
       const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary title="${esc(r.path)}">${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" title="Close folder">✕</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
-    }).join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
+      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary data-tip="${esc(r.path)}" data-tip-mono>${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" data-tip="Close folder" data-tip-sub="nothing on disk is touched" aria-label="Close folder ${esc(r.name)}">${glyph("x")}</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
+    });
+    // A folder just closed stands where it was, holding its Undo, as a
+    // removed document's row does. A refused Undo says so in it.
+    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone"><div class="t-ghost b-ghost" role="status" style="--undo-left:${shut.clock.left()}">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
+    browseEl.innerHTML = head + `<div class="b-body s-body">` + rows.join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
     for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
   }
 
@@ -215,19 +250,37 @@
         : state.opening ? treeEl.querySelector(`a[data-id="${state.opening}"]`)
           : state.doc ? treeEl.querySelector(`a[data-id="${state.doc.id}"]`) : null;
     if (on) { on.classList.add("active"); on.setAttribute("aria-current", "page"); }
+    // The document on screen is in a project the reader has folded: the
+    // project's row says so, quieter than the row itself would, and the
+    // project stays folded until they click it.
+    for (const s of treeEl.querySelectorAll(".holds-current")) { s.classList.remove("holds-current"); s.removeAttribute("aria-current"); delete s.dataset.tipSub; }
+    let held = null;
+    if (!on && state.doc && state.deskBehind == null && state.view !== "desk" && state.view !== "inbox") {
+      held = treeEl.querySelector(`.t-proj[data-pid="${state.doc.project_id}"]:not([open]) > summary`);
+      if (held) { held.classList.add("holds-current"); held.setAttribute("aria-current", "location"); held.dataset.tipSub = `${state.doc.title || "the open document"} is in here · click to show it`; }
+    }
+    // Brought into the sidebar's view only when it is out of it, and only as
+    // far as it takes: moved by hand, since WebKitGTK may decline to scroll.
+    const mark = on && treeEl.contains(on) ? on : held;
+    if (mark && mark !== lastMark) {
+      const port = treesEl.getBoundingClientRect(), box = mark.getBoundingClientRect();
+      if (box.height && (box.top < port.top || box.bottom > port.bottom)) treesEl.scrollTop += box.top < port.top ? box.top - port.top - 8 : box.bottom - port.bottom + 8;
+    }
+    lastMark = mark;
   }
+  let lastMark = null;
 
   /** Both names are guesses — a directory name and a session's first document — so
    *  each carries the means to correct it, shown when the row is under the cursor. */
   const renameBtn = (what, id) =>
-    `<button class="ren" data-rename="${what}" data-id="${id}" title="Rename ${what}" aria-label="Rename ${what}">✎</button>`;
+    `<button class="ren" data-rename="${what}" data-id="${id}" data-tip="Rename" data-key="F2" aria-label="Rename ${what}">${glyph("pen")}</button>`;
 
   /** The ✕ on a project's row: the same glyph a folder's row carries, meaning
    *  the same thing -- this list stops showing it. Nothing on disk or in the
    *  library changes; the ghost row it leaves behind holds the Undo, and the
    *  row under the tree is the way back after that. */
   const awayBtn = p =>
-    `<button type="button" class="row-x" data-away="${p.id}" title="Remove from the sidebar · the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">✕</button>`;
+    `<button type="button" class="row-x" data-away="${p.id}" data-tip="Remove from the sidebar" data-tip-sub="the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">${glyph("x")}</button>`;
   /** A project's desk, from its row: the glyph stays lit while the project
    *  has one and goes to it, and waits for the pointer, as a folder's does,
    *  while it has none. The Inbox's project and the desk on its folder are
@@ -237,15 +290,15 @@
   const projDeskBtn = p => {
     if (!capability || !p.root) return "";
     const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));
-    return d ? `<button type="button" class="b-new has" data-projdesk="${p.id}" title="Show desk ${esc(d.name)}" aria-label="Show desk ${esc(d.name)}">${icon("desk")}</button>`
-      : `<button type="button" class="b-new" data-projdesk="${p.id}" title="New desk for ${esc(p.name)}" aria-label="New desk for ${esc(p.name)}">${icon("desk")}</button>`;
+    return d ? `<button type="button" class="b-new has" data-projdesk="${p.id}" data-tip="Show its desk" aria-label="Show desk ${esc(d.name)}">${icon("desk")}</button>`
+      : `<button type="button" class="b-new" data-projdesk="${p.id}" data-tip="New desk" aria-label="New desk for ${esc(p.name)}">${icon("desk")}</button>`;
   };
 
-  /** A project is drawn expanded when the reader left it that way, when the
-   *  document on screen is in it, or when it is the only one there is. Not
-   *  for a document read over a desk: it was opened from the desk's own
-   *  list, and the sidebar has no reason to move. */
-  const projOpen = p => openProjects.has(String(p.id)) || (state.doc && state.deskBehind == null && state.doc.project_id === p.id) || state.tree.length === 1 ||
+  /** A project is drawn expanded when the reader left it that way, or when it
+   *  is the only one there is. Only the reader's own click unfolds one: a
+   *  document opened from anywhere else -- the waiting bar, n, the Inbox,
+   *  Ctrl K -- marks its folded project (`markActive`) and moves nothing. */
+  const projOpen = p => openProjects.has(String(p.id)) || state.tree.length === 1 ||
     // The document on screen was removed and the page went to the inbox: its
     // project stays open while its row offers Undo.
     (gone && gone.where === "proj" && gone.pid === String(p.id));
@@ -256,13 +309,13 @@
     // Not "active": markActive puts that on, so the rows a reader moves between
     // draw the same and a move between two of them costs no redraw.
     const cls = waitingRow(d) ? "new" : "";
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}" title="${esc(d.title)} · ${fmt(d.received_at)}${waitingRow(d) ? " · waiting to be read" : ""}">${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" title="Pinned">●</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${cut(d, mid(d.title, roomFor(ago)))}>${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
   };
   /** The ✕ on a document's row takes it out of the inbox. It is said as a
    *  removal because that is what it is: the daemon keeps the document, and
-   *  the row stands where it was for GHOST_MS with the Undo in it. */
+   *  the row stands where it was for UNDO_MS with the Undo in it. */
   function removeBtn(d) {
-    return `<button type="button" class="row-x" data-deldoc="${d.id}" title="Remove from inbox · Undo for 4 s" aria-label="Remove ${esc(d.title)} from inbox">✕</button>`;
+    return `<button type="button" class="row-x" data-deldoc="${d.id}" data-tip="Remove" data-key="del" data-tip-sub="nothing is deleted" aria-label="Remove ${esc(d.title)}">${glyph("x")}</button>`;
   }
   /** The row a removed document leaves behind, at its height and in its
    *  place, so nothing below it moves while the offer stands. The bar along
@@ -271,8 +324,10 @@
   function ghostRow() {
     const g = gone;
     g.drawn = true;
-    const t = g.closing ? Date.now() - g.closing : ghostSpent(g);
-    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost">${docIco()}<span class="title">${esc(g.d.title)}</span><span class="k">removed</span><button type="button" class="t-undo" data-undoc>Undo</button></div></li>`;
+    const t = Date.now() - (g.closing || g.made);
+    // A refused Undo says so in the row and holds its clock: the button is
+    // its Retry. Pruned, there is nothing to retry, and the row just closes.
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost" role="status" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` data-tip="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed${g.versions > 1 ? ` · ${g.versions} versions` : ""}</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
   }
 
   // ---------- the queue ----------
@@ -307,7 +362,7 @@
       } catch {}
     }, 150);
   }
-  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" title="${esc(d.title)} · ${esc(d.project)} · ${fmt(d.received_at)}">${docIco()}<span class="title">${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
+  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" data-tip="${esc(d.title)}" data-tip-sub="${esc(d.project)} · ${fmt(d.received_at)}" data-tip-overflow>${docIco()}<span class="title" data-tip-cut>${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
@@ -364,7 +419,16 @@
   /** The section at the top of the sidebar and the bar above the document,
    *  both from the same rows. The bar is not drawn on the inbox, which lists
    *  the queue itself. */
-  let qbWas = 0, qbSettle = 0;   // the bar's count last drawn, and the face's way back to plain
+  let qbGhost = null;   // Mark all read, answered by the bar itself: { n, undo, clock }
+  let qbWas = 0, qbSettle = 0, waitedWas = 0;   // the bar's count last drawn, the face's way back to rest, and the count last seen
+  /** The quiet switch (docs/DESIGN.md §2.5): faces at rest, nothing moving. */
+  const quiet = () => root.dataset.mascot === "quiet";
+  /** The switch itself, from ⌘K and the mark's menu; boot.js puts it back. */
+  function toggleQuiet() {
+    const on = !quiet();
+    on ? (root.dataset.mascot = "quiet") : delete root.dataset.mascot;
+    store.set("snyvi.mascot", on ? "quiet" : "");
+  }
   function renderQueue() {
     queueIds = new Set(state.queue.map(d => d.id));
     // What has finished moving is dropped here, at the render, and not only
@@ -375,6 +439,10 @@
     for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
     const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
     badge('[data-pop="inbox"]', n);
+    // The last one waiting was read: the one moment snyvi shows love, on the
+    // mark, for as long as a face's moment lasts (§2.2).
+    if (!n && waitedWas && !quiet()) { root.dataset.cleared = "1"; setTimeout(() => delete root.dataset.cleared, 2400); }
+    waitedWas = n;
     // The rows state says, with the ones still closing put back where they
     // were, so a read takes its row out rather than the list snapping up.
     const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
@@ -387,10 +455,21 @@
     const held = gone && gone.where === "proj" && gone.qDoc && !queueIds.has(gone.id);
     if (held) rows.splice(Math.min(gone.qAt, rows.length), 0, queueRow(gone.qDoc, gone.closing ? " held leaving" : " held"));
     const empty = (!n || !head) && !left.length && !ghost && !held;
+    const onRow = queueEl.contains(document.activeElement) && document.activeElement.dataset.id;
     queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
       rows.join("") +
-      (n > shown ? `<li class="t-more"><a href="/" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
+      (n > shown ? `<li class="t-more"><a href="/inbox" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
+    // A keyboard on a row stays on it, as it does in the tree.
+    if (onRow) queueEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
     lastQueue = state.queue.slice(0, QUEUE_ROWS);
+    // Marked read from the bar: the bar says so and holds the Undo, in the
+    // same card at the same place, until the drain runs out (DESIGN §4.4).
+    if (qbGhost && state.view !== "inbox") {
+      queueBar.hidden = false;
+      if (!queueBar.querySelector(".qb.ghost")) queueBar.innerHTML = `<div class="qb ghost" role="status" style="--undo-left:${qbGhost.clock.left()}"><span class="qb-next">Marked ${qbGhost.n} read</span><button type="button" class="t-undo" data-q="undo">Undo<kbd>${esc(keyHint("mod+z"))}</kbd></button></div>`;
+      qbWas = 0;
+      return;
+    }
     const bar = n > 0 && !!head && state.view !== "inbox";
     queueBar.hidden = !bar;
     if (!bar) { queueBar.innerHTML = ""; qbWas = 0; return; }
@@ -398,14 +477,17 @@
     // ticks in place. It used to be rebuilt on every render, which re-ran the
     // rise for one more arrival, and twelve arrivals rose twelve times.
     const count = `${n} waiting`, next = `<b>${esc(head.title)}</b> · ${esc(head.project)}`;
-    const qb = queueBar.querySelector(".qb");
+    // The bar, not the Marked-read ghost that stood in its place: a ghost
+    // found here was taken for the bar, lost its words to the next title and
+    // threw on its missing count -- inside the Undo, before it could ask.
+    const qb = queueBar.querySelector(".qb:not(.ghost)");
     // The bar is snyvi holding what came for the reader, so it is snyvi's
     // face at the front of it: the same head that answers a click, at the
     // top of the page. It arrives wide-eyed and settles into a smile.
     if (!qb) {
       queueBar.innerHTML = `<div class="qb"><span class="qb-who"></span><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
-        `<button type="button" data-q="next">Open<kbd>n</kbd></button><a href="/" class="qb-all" data-nav="inbox">Show all</a>` +
-        `<button type="button" class="icon" data-q="clear" title="Mark all read" aria-label="Mark all read">✕</button></div>`;
+        `<button type="button" data-q="next" data-tip="Open the next one waiting" data-tip-sub="letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button></div>`;
       qbFeel("whoa");
       qbWas = n;
       return;
@@ -419,8 +501,9 @@
       const fresh = num.cloneNode(true);
       fresh.classList.add("tick");
       num.replaceWith(fresh);
-      // One more is a surprise; one fewer is a read, and it is glad of it.
-      qbFeel(n > qbWas ? "whoa" : "glad");
+      // One more is a surprise; one fewer is a read, which happens tens of
+      // times a day and moves nothing (docs/DESIGN.md §7.2).
+      if (n > qbWas) qbFeel("whoa");
     }
     qbWas = n;
   }
@@ -429,7 +512,7 @@
    *  node, so the same feeling twice running lands twice. */
   function qbFeel(feel) {
     const who = queueBar.querySelector(".qb-who");
-    if (!who) return;
+    if (!who || quiet()) return;
     clearTimeout(qbSettle);
     const fresh = who.cloneNode(false);
     fresh.dataset.feel = feel;
@@ -437,7 +520,7 @@
     who.replaceWith(fresh);
     qbSettle = setTimeout(() => {
       const w = queueBar.querySelector(".qb-who");
-      if (w) { delete w.dataset.feel; w.innerHTML = mascotHead("plain"); }
+      if (w) { delete w.dataset.feel; w.innerHTML = mascotHead("rest"); }
     }, 2400);
   }
 
@@ -459,7 +542,7 @@
    *  `n` is the one after; a reader drains the queue with one key. */
   function openNext() {
     const d = state.queue[0];
-    if (!d) { toast("Nothing waiting", "Every document that arrived has been opened.", null, null, { face: "love" }); return; }
+    if (!d) { toast("Nothing waiting", { sub: "every document that arrived has been opened" }); return; }
     showDoc(d.id, true);
   }
 
@@ -468,13 +551,35 @@
   async function clearQueue() {
     const n = state.waiting;
     if (!n) return;
+    // Where the bar stood, before the redraw takes it: the Undo goes there.
+    const at = rectOf(actedAt()), inBar = !queueBar.hidden && !!queueBar.querySelector(".qb:not(.ghost)");
+    const r = await post("/api/queue/clear");
+    const j = r?.ok && await r.json();
+    if (!j) return toast("Could not mark them read", { retry: clearQueue });
     depart(state.queue.map(d => d.id));
     state.queue = []; state.waiting = 0;
     unmarkRows(null);
     renderTree(); markActive();
     if (state.view === "inbox") showInbox(false);
-    try { await fetch("/api/queue/clear", { method: "POST" }); } catch {}
-    toast("Marked read", plural(n, "document"), null, null, { face: "glad" });
+    // The rows come back on the daemon's "restored", in every tab.
+    let endGhost = () => {};
+    const undo = async () => {
+      unoffer(undo);
+      endGhost();
+      if (!(await post("/api/queue/unread", { ids: j.ids }))?.ok) toast("Could not bring them back", { retry: undo });
+    };
+    // From the bar, the bar answers; from the Inbox page, which has no bar,
+    // the answer stands where the button was.
+    if (inBar) {
+      qbGhost?.clock.stop();
+      const g = qbGhost = { n, undo, clock: undoClock("#queue-bar .qb.ghost", () => endGhost()) };
+      endGhost = () => { if (qbGhost !== g) return; g.clock.stop(); qbGhost = null; unoffer(undo); renderQueue(); };
+      offer(undo, endGhost);
+      renderQueue();
+      return;
+    }
+    offer(undo, null);
+    toast(`Marked ${n} read`, { action: { label: "Undo", run: undo }, at });
   }
 
   /** Rows leaving the queue, told by the server: this tab's own opens come
@@ -493,11 +598,19 @@
   }
 
   document.addEventListener("click", e => {
+    const rt = e.target.closest("[data-retry]");
+    if (rt) {
+      e.preventDefault(); e.stopPropagation();
+      const w = rt.dataset.retry;
+      if (w === "dir") fillTree(rt.closest(".b-tree")); else if (w === "inbox") showInbox(false); else if (w === "home") showHome(false); else if (w === "tree") refreshTree(); else if (w === "desks") loadDesks();
+      return;
+    }
     const b = e.target.closest("[data-q]");
     if (!b) return;
     e.preventDefault();
     if (b.dataset.q === "next") openNext();
     else if (b.dataset.q === "clear") clearQueue();
+    else if (b.dataset.q === "undo") qbGhost?.undo();
   });
 
   /** The rows inside one project: its sessions, their documents, and — where a
@@ -515,11 +628,16 @@
    * session the open document is in is always whole, since `[` and `]` step
    * through it. */
   const SHOW_DOCS = 5, SHOW_ROWS = 8;
-  const wholeWf = w => liftedWorkflows.has(w.id) || (state.doc && state.doc.workflow_id === w.id);
+  const wholeWf = w => liftedWorkflows.has(w.id);
+  /** The document on screen, when it is in `w` and past the session's cap:
+   *  its own row rides under the capped ones, so the mark has a row to be on
+   *  without the whole session unfolding around it. */
+  const pastCap = (w, docs) => state.doc && state.deskBehind == null && state.doc.workflow_id === w.id && !docs.some(d => d.id === state.doc.id)
+    ? w.docs.find(d => d.id === state.doc.id) : null;
   function projectRows(p) {
     const pid = String(p.id);
     let wfs = state.sub.get(pid);
-    if (!wfs) return `<li class="t-wait">…</li>`;
+    if (!wfs) return skRows;
     const allWfs = liftedCaps.has(pid);
     // A removed document's row stands in its session until the offer goes.
     // Its session may have gone with it, when it was the only document there:
@@ -552,8 +670,8 @@
       const ghostHere = g && g.wf === w.id && !w.docs.some(d => d.id === g.id);
       const solo = ghostHere ? g.solo : w.total === 1 && w.docs.length === 1;
       const whole = wholeWf(w), docs = whole ? w.docs : w.docs.slice(0, SHOW_DOCS);
-      h += `<li class="t-wf${solo ? " solo" : ""}">${solo ? "" : `<div class="wf-name" title="${esc(w.key)}"><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div>`}<ul>`;
-      const drawn = docs.map(docRow);
+      h += `<li class="t-wf${solo ? " solo" : ""}">${solo ? "" : `<div class="wf-name" data-tip="${esc(w.key)}" data-tip-mono><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div>`}<ul>`;
+      const extra = pastCap(w, docs), drawn = (extra ? [...docs, extra] : docs).map(docRow);
       if (ghostHere) drawn.splice(Math.min(g.at, drawn.length), 0, ghostRow());
       h += drawn.join("");
       rows += docs.length;
@@ -591,12 +709,12 @@
     // A link, so the keyboard reaches it: a div with a click handler is a row
     // Tab walks straight past.
     inboxRowEl.innerHTML = secHead("inbox", "Inbox") +
-      `<a class="t-inbox s-row" href="/" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
+      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
     renderQueue();
     renderBrowse();
     renderDesks();
     if (!projects.length) {
-      treeEl.innerHTML = state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
+      treeEl.innerHTML = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
       return;
     }
     // Measured rather than assumed, because the gutter resizes the sidebar,
@@ -623,14 +741,14 @@
       if (d.dataset.pid) openProjects.add(d.dataset.pid);
     }
     // No label: the projects hang under Inbox, which is what they are.
-    let h = "";
+    let h = treeOff ? noReach("tree") : "";
     let put = 0;
     for (const p of projects) {
       if (away.has(String(p.id))) {
         // In its own place, at its own height, so nothing below it moves while
         // the offer stands and nothing moves again when it is taken.
         if (awayJust === String(p.id)) {
-          h += `<div class="t-back"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
+          h += `<div class="t-back" role="status" style="--undo-left:${awayClock?.left() ?? 1}"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
           continue;
         }
         put++;
@@ -639,7 +757,7 @@
       const open = projOpen(p);
       // The one held for a ghost closes with it.
       const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
-      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary title="${esc(p.root)}">${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>`;
+      h += `<details class="t-proj${out ? " leaving" : ""}" data-pid="${p.id}" ${open ? "open" : ""}><summary data-tip="${esc(p.root)}" data-tip-mono>${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>`;
       h += open ? projectRows(p) : "";
       h += `</ul></details>`;
     }
@@ -653,7 +771,11 @@
     // being edited -- clears `drawnTree`, so what is on screen is always what
     // this string describes when it is skipped.
     if (h !== drawnTree) {
+      // A keyboard on a ghost's Undo, or on a row, stays on it through the redraw.
+      const a = document.activeElement, onUndo = a?.matches(".t-gone .t-undo"), onRow = treeEl.contains(a) && a.dataset.id;
       treeEl.innerHTML = h;
+      if (onUndo) toUndo();
+      else if (onRow) treeEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
       drawnTree = h;
       treeTouched.takeRecords();
     }
@@ -739,7 +861,9 @@
    *  to a "…" under the reader. `only` narrows it to one project, which is what
    *  an arrival needs — nothing else in the library moved.  */
   async function refreshTree(only) {
-    try { state.tree = await (await fetch("/api/tree")).json(); } catch {}
+    const r = await fetch("/api/tree").catch(() => null), j = r?.ok && await r.json().catch(() => null);
+    treeOff = !Array.isArray(j);
+    if (!treeOff) state.tree = j;
     const pids = only != null ? [String(only)] : [...state.sub.keys()];
     await Promise.all(pids.filter(pid => state.sub.has(pid)).map(pid => fillProject(pid, true)));
     renderTree();
@@ -748,18 +872,18 @@
 
   const entryHtml = (rootId, e) => e.dir
     ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${icon("folder", 14)}<span class="nm">${esc(e.name)}</span>${chev}${plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
-    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" title="${esc(e.path)}">${docIco()}<span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
+    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" data-tip="${esc(e.path)}" data-tip-mono>${docIco()}<span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
 
   /** Fetch one directory level the first time its folder is opened. */
   async function fillTree(ul) {
     if (!ul || ul.dataset.loaded) return;
     ul.dataset.loaded = "1";
-    ul.innerHTML = `<li class="b-empty">…</li>`;
+    ul.innerHTML = skRows;
     const rootId = ul.dataset.root, path = ul.dataset.path || "";
     let entries;
-    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { ul.dataset.loaded = ""; return; }
-    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; return; }
-    if (!entries.length) { ul.innerHTML = `<li class="b-empty">empty</li>`; return; }
+    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch {}
+    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = noReach("dir", "li"); return; }
+    if (!entries.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
     ul.innerHTML = entries.map(e => entryHtml(rootId, e)).join("");
     markActive();
   }
@@ -783,7 +907,7 @@
       tpl.innerHTML = entryHtml(rootId, e);
       return tpl.content.firstElementChild;
     });
-    if (!nodes.length) { ul.innerHTML = `<li class="b-empty">empty</li>`; return; }
+    if (!nodes.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
     ul.replaceChildren(...nodes);
     markActive();
   }
@@ -878,8 +1002,13 @@
       // Inside the document's link: a click on the ✕ is not a click on the row.
       e.preventDefault(); e.stopPropagation();
       const id = dx.dataset.deldoc, proj = dx.closest(".t-proj");
-      const d = state.queue.find(x => x.id === id) || { id, title: dx.closest("a").title.split(" · ")[0], project_id: proj ? +proj.dataset.pid : null };
-      deleteDoc(d, dx);
+      const d = state.queue.find(x => x.id === id) || { id, title: dx.closest("a").querySelector(".title").textContent, project_id: proj ? +proj.dataset.pid : null };
+      deleteDoc(d, dx, !e.detail);
+      return;
+    }
+    if (e.target.closest("[data-reopen]")) {
+      e.preventDefault(); e.stopPropagation();
+      if (shut && Date.now() - shut.made > 350) shut.undo();
       return;
     }
     if (e.target.closest("[data-undoc]")) {
@@ -922,12 +1051,45 @@
     closeRoot(b.dataset.close);
   });
 
-  /** A folder off the Folders list: the ✕ on its row, and its menu's Close
-   *  folder. Nothing on disk is touched. */
+  /** A folder off the Folders list: the ✕ on its row, its menu's Close
+   *  folder, the meta pane's. Nothing on disk is touched. The daemon is
+   *  asked first, and a no is said beside the ✕ with a Retry; a yes leaves
+   *  the row's ghost with the Undo, which the daemon's reopen takes back. */
   async function closeRoot(id) {
-    try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
-    state.browse = state.browse.filter(r => r.id !== id);
+    const at = state.browse.findIndex(r => r.id === id), r = state.browse[at];
+    if (!r) return;
+    if (!(await post(`/api/browse/${id}/close`))?.ok) return toast(`Could not close ${r.name}`, { retry: () => closeRoot(id) });
+    shutSettle();
+    const s = shut = { r, at, made: Date.now(), clock: undoClock("#browse-nav .b-ghost", () => shutSettle()) };
+    offer(s.undo = () => reopenRoot(s), shutSettle);
+    state.browse = state.browse.filter(x => x.id !== id);
     if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else { renderTree(); markActive(); }
+  }
+  async function reopenRoot(s) {
+    if (shut !== s || s.asking) return;
+    s.clock.hold = true;
+    unoffer(s.undo);
+    s.asking = true;
+    const r = await post(`/api/browse/${s.r.id}/reopen`);
+    s.asking = false;
+    if (shut !== s) return;
+    if (!r?.ok) {
+      // Gone (410): the folder is not there to reopen, and the row closes.
+      s.dead = r?.status === 410;
+      s.err = s.dead ? "Could not reopen it · it is gone" : "Could not reopen it";
+      if (s.dead) { s.clock.hold = false; s.clock.again(); } else offer(s.undo, shutSettle);
+      return renderBrowse();
+    }
+    shut = null; s.clock.stop();
+    if (!state.browse.some(x => x.id === s.r.id)) state.browse.splice(s.at, 0, s.r);
+    renderBrowse();
+  }
+  function shutSettle() {
+    if (!shut) return;
+    shut.clock.stop();
+    unoffer(shut.undo);
+    shut = null;
+    renderBrowse();
   }
 
   /** Turn a name in the tree into a field, in place (menu.js, `rename`). */
@@ -944,7 +1106,14 @@
   /** Flat list of doc ids in sidebar order, for j/k. Read off the rows rather
    *  than out of the model, now that the model holds only what a reader has
    *  expanded: "next document" is the next one they can see. */
-  const order = () => [...treeEl.querySelectorAll("a[data-id]")].map(a => a.dataset.id);
+  const order = () => {
+    const drawn = [...treeEl.querySelectorAll("a[data-id]")].map(a => a.dataset.id);
+    // The document on screen is in a folded project, so its row is not drawn:
+    // j and k step through that project's documents as the page holds them.
+    if (!state.doc || drawn.includes(state.doc.id)) return drawn;
+    const wfs = state.sub.get(String(state.doc.project_id));
+    return wfs ? wfs.flatMap(w => w.docs.map(d => d.id)) : drawn;
+  };
   /** What `[` and `]` step through: the versions of the document on screen,
    *  newest first -- the same list the rail's Versions box shows, held whole
    *  whatever the sidebar's caps are.
@@ -965,9 +1134,12 @@
   };
 
   // ---------- preview ----------
-  /** Remember the choice per file, and start a PDF in the viewer since its source is bytes. */
+  /** Remember the choice per file, and start a PDF in the viewer since its source is bytes.
+   *  A page an agent sent (`d:`) opens as the page, since that is what it was
+   *  made to be seen as; one browsed in Folders (`b:`) opens as its source,
+   *  since there the reader is reading code. Either is one click from the other. */
   function setPreview(kind, url, key) {
-    if (state.previewKey !== key) { state.previewKey = key; state.previewOn = kind === "pdf"; }
+    if (state.previewKey !== key) { state.previewKey = key; state.previewOn = kind === "pdf" || (kind === "html" && key.startsWith("d:")); }
     state.preview = kind || null;
     state.previewUrl = url || null;
     if (!state.preview) state.previewOn = false;
@@ -1014,18 +1186,13 @@
    *  220 ms of a 300 ms open on a long plan. */
   let swapAnim = null;
   const still = matchMedia("(prefers-reduced-motion: reduce)");
+  /** A page coming in: opening documents is done a hundred times a day, so
+   *  it is an 80 ms fade and no movement, and nothing at all when a key did
+   *  it -- the keyboard's result is simply there (docs/DESIGN.md §7.2). */
   function swapIn() {
     if (swapAnim) swapAnim.cancel();
-    swapAnim = still.matches ? null : docEl.animate(
-      [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }],
-      { duration: 180, easing: "cubic-bezier(.2,.7,.2,1)" });
-  }
-
-  function docHtml(doc, body) {
-    let sub = `${esc(doc.project)} · ${esc(doc.workflow_title)}`;
-    if (doc.branch) sub += ` · <span class="branch">${esc(doc.branch)}</span>`;
-    sub += ` · ${fmt(doc.received_at)}`;
-    return `<header class="doc-head"><h1 class="doc-title">${esc(doc.title)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${doc.kind}">${body}</article>`;
+    const byKey = keyAt > (press?.t ?? -1e9);
+    swapAnim = still.matches || byKey ? null : docEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: "ease-out" });
   }
 
   async function fetchDoc(id) {
@@ -1113,7 +1280,7 @@
       pending(id, fromHistory);
       if (push) { history.pushState({ id, over: state.deskBehind, back }, "", `/d/${id}`); push = false; }
       overBar();
-      try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", String(e)); } return; }
+      try { j = await fetchDoc(id); } catch (e) { if (turn === opening) { state.opening = null; toast("Could not open document", { sub: e }); } return; }
       if (turn !== opening) return;
       state.opening = null;
     }
@@ -1134,7 +1301,10 @@
     document.title = j.doc.title;
     overBar();
     if (push) history.pushState({ id, over: state.deskBehind, back }, "", `/d/${id}`);
-    if (fromHistory && kept("id", id)) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
+    const was = !fromHistory && !location.hash && places()[placeKey(j.doc)];
+    if (fromHistory && kept("id", id)) placeAt(history.state.place);
+    else if (was && !was.end && was.i >= 0) placeAt(was);
+    else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
   }
 
@@ -1146,7 +1316,24 @@
    *  sees: the browser's own Back and Forward. */
   function leave() {
     const reading = (state.view === "doc" && state.doc && !state.comparing) || (browsing() && state.browsePath);
-    if (reading) history.replaceState({ ...(history.state || {}), place: placeOf() }, "", location.pathname + location.hash);
+    if (!reading) return;
+    const place = placeOf();
+    history.replaceState({ ...(history.state || {}), place }, "", location.pathname + location.hash);
+    if (state.view === "doc") keepPlace(state.doc, place);
+  }
+  /* Where each document was left, kept past this page: every way of opening
+   * one -- the tree, the queue, n, Home, Ctrl K, a restart -- goes back
+   * there, not only Back. By its file, so a new version keeps the place while
+   * that block is still there; the newest 200, in this viewer's storage,
+   * since a reading position is theirs. Read to the end, it opens at the top. */
+  const placeKey = d => d.source_path ? `${d.project_id}:${d.source_path}` : d.id;
+  const places = () => { try { return JSON.parse(localStorage.getItem("snyvi.place") || "{}"); } catch { return {}; } };
+  function keepPlace(d, p) {
+    const m = places(), end = main.scrollTop + main.clientHeight >= main.scrollHeight - 40;
+    m[placeKey(d)] = end || p.top < 40 ? { at: Date.now(), end: true } : { ...p, at: Date.now() };
+    const ks = Object.keys(m);
+    if (ks.length > 200) ks.sort((a, b) => m[a].at - m[b].at).slice(0, ks.length - 200).forEach(k => delete m[k]);
+    try { localStorage.setItem("snyvi.place", JSON.stringify(m)); } catch {}
   }
   let leaveTimer = 0;
   main.addEventListener("scroll", () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(leave, 400); }, { passive: true });
@@ -1158,102 +1345,64 @@
    *  a preview toggled, a split view -- starts at the top as it always did. */
   const kept = (key, value) => !!(history.state && history.state[key] === value && history.state.place);
 
-  function browseHtml(f, root) {
-    const sub = `${esc(root.name)} · ${esc(f.path)} · ${fmtSize(f.size)} · ${rel(f.modified)}`;
-    return `<header class="doc-head"><h1 class="doc-title">${esc(f.name)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${f.kind}">${f.html}</article>`;
-  }
-
-  async function showBrowse(rootId, path, push = true, fromHistory = false) {
-    path = path || "";
-    if (!path) {
-      // No file asked for and no README: show the folder's contents.
-      let entries = [], root = state.browse.find(r => r.id === rootId);
-      try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=`)).json(); } catch {}
-      if (push) leave();
-      offDesk();
-      state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
-      state.browseRoot = root || state.browseRoot; state.browsePath = "";
-      setPreview(null, null, `b:${rootId}:`);
-      document.title = root ? root.name : "snyvi";
-      if (push) history.pushState({ browse: rootId, path: "" }, "", `/b/${rootId}`);
-      docEl.innerHTML = `<div class="inbox-head"><h1>${esc(root ? root.name : "Folder")}</h1><p>${esc(root ? root.path : "")}</p></div><ul class="inbox">` +
-        entries.map(e => `<li><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}"><span class="title">${e.dir ? "▸ " : ""}${esc(e.name)}</span><span class="time">${e.dir ? "" : fmtSize(e.size)}</span></a></li>`).join("") + `</ul>`;
-      swapIn();
-      main.scrollTo({ top: 0, behavior: "instant" });
-      afterRender();
-      return;
-    }
-    let j;
-    try {
-      const r = await fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      j = await r.json();
-    } catch (e) { toast("Could not open file", String(e)); return; }
-    const back = push ? cameFrom() : null;
-    if (push) leave();
-    offDesk();
-    state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
-    state.browseRoot = j.root; state.browsePath = path;
-    setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
-    docEl.innerHTML = browseHtml(j.file, j.root);
-    swapIn();
-    applyPreview();
-    document.title = j.file.name;
-    if (push) history.pushState({ browse: rootId, path, back }, "", `/b/${rootId}/${path}`);
-    const restored = fromHistory && history.state.browse === rootId && kept("path", path);
-    if (restored) placeAt(history.state.place); else main.scrollTo({ top: 0, behavior: "instant" });
-    afterRender();
-    // A link into a file: `#L120` is marked and landed by afterRender, and a
-    // section is landed here -- the same two the document path lands, which
-    // this one did not. The browser's own fragment scroll is no use in either:
-    // it aims at blocks that are still placeholders. Nothing to land when the
-    // reader's own place has just been put back, or on a navigation inside the
-    // page, which carries no fragment.
-    if (!restored && location.hash.length > 1 && !lineHash()) jumpToHash();
+  /* A folder's page, and a file read from disk, are ui/browse.js's:
+   * fetched the first time one is opened, since most readers read what their
+   * agents sent. The rows in the sidebar's Folders are this file's. */
+  let browseMod = null, browseLoading = null;
+  const browseUse = () => (browseLoading ||= import(`/assets/browse.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (browseMod = m), e => { browseLoading = null; throw e; }));
+  const browseCtx = () => ({ state, docEl, metaEl, main, esc, rel, fmtSize, toast, leave, offDesk, setPreview, swapIn, applyPreview, afterRender, afterRefresh,
+    placeAt, placeOf, kept, cameFrom, jumpToHash, lineHash, browsing, previewButton, rawUrl });
+  function showBrowse(rootId, path, push = true, fromHistory = false) {
+    return browseUse().then(m => m.show(browseCtx(), rootId, path, push, fromHistory), e => toast("Could not open the folder", { sub: e }));
   }
 
   async function showInbox(push = true) {
     if (push) leave();
     offDesk();
     state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
+    const hm = homeUse().catch(() => null);
     let items = boot.inbox;
     if (!items || push) {
-      try { items = await (await fetch("/api/inbox?limit=60")).json(); } catch { items = []; }
+      const r = await fetch("/api/inbox?limit=60").catch(() => null);
+      items = r?.ok ? await r.json().catch(() => null) : null;
     }
     boot.inbox = null; boot.agents = null;
     // Nothing to read, and no desk yet: the page is Welcome -- which project
     // first -- at the inbox's own address. A window that has desks and no
-    // documents yet says where they will land.
-    let welcomeHtml = null;
-    if (!items.length) {
+    // documents yet says where they will land. Nothing *said* is not
+    // nothing there: that is its own line, never Welcome.
+    let welcomeHtml = items ? null : `<div class="inbox-head"><h1>Inbox</h1>${noReach("inbox")}</div>`;
+    if (items && !items.length) {
       if (capability && !state.desks) await loadDesks();
       if (!capability || !(state.desks && state.desks.desks.length)) welcomeHtml = await welcomePage();
     }
     document.title = "snyvi";
-    if (push) history.pushState({ inbox: true }, "", "/");
-    docEl.innerHTML = welcomeHtml != null ? welcomeHtml : inboxHtml(items);
+    if (push) history.pushState({ inbox: true }, "", "/inbox");
+    const m = welcomeHtml == null && await hm;
+    if (state.view !== "inbox") return;
+    if (welcomeHtml == null && !m) { homeLoading = null; welcomeHtml = `<div class="inbox-head"><h1>Inbox</h1>${noReach("inbox")}</div>`; }
+    docEl.innerHTML = welcomeHtml != null ? welcomeHtml : inboxHtml(items, m);
     if (push) swapIn();
     afterRender();
+    if (items?.length) removedLine(push);
     // The inbox lists every waiting row, and the page opened with the oldest
     // few: the rest come after the page is on screen, not before the sidebar is.
-    if (state.waiting > state.queue.length) {
+    if (items && state.waiting > state.queue.length) {
       try {
         const q = await (await fetch("/api/queue")).json();
-        if (Array.isArray(q) && state.view === "inbox") { state.queue = q; docEl.innerHTML = inboxHtml(items); renderTree(); markActive(); }
+        if (Array.isArray(q) && state.view === "inbox" && homeMod) { state.queue = q; docEl.innerHTML = inboxHtml(items, homeMod); renderTree(); markActive(); }
       } catch {}
     }
   }
 
-  function inboxHtml(items) {
-    const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
-    if (!items.length) return `<div class="inbox-head"><h1>Inbox</h1><p>What your agents write lands here, filed by project. Ask one in a desk for a plan.</p></div>`;
-    // What is waiting comes first, oldest first, so the landing page answers
-    // "what is new" before "what is there".
-    const n = state.waiting;
-    return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
-      (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the first<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
-      `<ul class="inbox">${items.map(row).join("")}</ul>`;
-  }
+  /** The Inbox's list is home.js's (`inboxHtml`), the chunk for the pages
+   *  that list, fetched alongside the list itself. */
+  const inboxHtml = (items, m) => m.inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown });
+
+  /* After the Undo has gone: "N removed · Show" at the foot of the Inbox,
+   * drawn by home.js (`removedLine`), the chunk for the pages that list. */
+  const homeUse = () => (homeLoading ||= import(`/assets/home.js${boot.v ? `?v=${boot.v}` : ""}`)).then(m => (homeMod = m));
+  const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------
   /* The page the empty library is, and the page `?` reaches once it is not:
@@ -1272,7 +1421,7 @@
   async function connectReady() {
     if (connectHtml) return;
     try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel, cap: !!capability })); }
-    catch (e) { panelLoading = null; toast("Could not open that page", String(e)); }
+    catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); }
   }
   async function showConnect(push = true) {
     if (push) leave();
@@ -1298,7 +1447,7 @@
     document.title = "How snyvi works · snyvi";
     if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
     let m;
-    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return; }
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); return; }
     // The first fetch of the chunk is a wait, and a click in it went elsewhere.
     if (state.view !== "start") return;
     docEl.innerHTML = m.start({ cap: !!capability });
@@ -1307,15 +1456,22 @@
     const sec = at && document.getElementById(at.slice(1));
     if (sec) sec.scrollIntoView({ block: "start" }); else main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
+    if (push) toHead(sec);
+  }
+  /** A page the reader went to puts the focus on its heading (or the
+   *  section it was sent to), so the keyboard starts where the eye does. */
+  function toHead(sec) {
+    const h = (sec || docEl).querySelector("h1, h2");
+    if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
   }
   /** Welcome: what snyvi is, and which project first. Its own address to
    *  come back to from Help; the empty library draws the same page at `/`. */
   let welcomePlaces = [];
   async function welcomePage() {
     let m;
-    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", String(e)); return ""; }
+    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); return ""; }
     welcomePlaces = capability ? deskPlaces() : [];
-    return m.welcome({ cap: !!capability, places: welcomePlaces, home: state.desks && state.desks.home, mascot: mascotHead("plain"), esc });
+    return m.welcome({ cap: !!capability, places: welcomePlaces, home: state.desks && state.desks.home, mascot: mascotHead("glad"), esc });
   }
   async function showWelcome(push = true) {
     if (push) leave();
@@ -1330,7 +1486,32 @@
     if (push) swapIn();
     main.scrollTo({ top: 0, behavior: "instant" });
     afterRender();
+    if (push) toHead();
   }
+  /** Home, at `/`: the page the mark opens. Drawn by home.js, a chunk, from
+   *  one call; the Inbox is at `/inbox`. */
+  let homeMod = null, homeLoading = null;
+  async function showHome(push = true) {
+    if (push) leave();
+    offDesk();
+    state.view = "home"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "snyvi";
+    if (push) history.pushState({ home: true }, "", "/");
+    // The sidebar now, from what the page came with: Home waits on its chunk
+    // and its numbers, and the tree is not Home's to hold up.
+    renderTree(); markActive();
+    try { await homeUse(); }
+    catch { homeLoading = null; if (state.view === "home") docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1>${noReach("home")}</div>`; return; }
+    if (state.view !== "home") return;
+    if (push) main.scrollTo({ top: 0, behavior: "instant" });
+    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates,
+      next: openNext, newDesk: b => act("make", null), notes: () => state.notes });
+    if (push) swapIn();
+    afterRender();
+  }
+  /** Something Home shows moved: read it again, soon. */
+  const homeTick = () => { if (state.view === "home" && homeMod) homeMod.soonRefresh(); };
+
   // Welcome's question, and Connect wherever it is offered.
   docEl.addEventListener("click", async e => {
     const b = e.target.closest("[data-w]");
@@ -1344,7 +1525,7 @@
    *  in place, then runs `init-claude` in the daemon. */
   async function connectClaude(b, done) {
     const m = await panelMod();
-    m.connectAsk(b, { api: (path, body) => deskApi(path, body), done: (a, ok) => {
+    m.connectAsk(b, { sayErr, api: (path, body) => deskApi(path, body), done: (a, ok) => {
       if (a && state.view === "connect" && connectHtml) setTimeout(() => { if (state.view === "connect") docEl.innerHTML = connectHtml(a); }, 1600);
       done && done(a, ok);
     } });
@@ -1375,9 +1556,11 @@
     const n = names.reduce((t, [, k]) => t + k, 0);
     liveEl.textContent = String(n);
     liveEl.classList.toggle("on", n > 0);
-    liveEl.title = n ? `${plural(n, "agent")} connected: ${names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ")}` : "No agent is connected";
+    // A status tip: the count as its name, who they are as its sub-line.
+    const tip = n ? `${plural(n, "agent")} connected` : "No agent connected", who = names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ");
     const rl = $("#rail-live");
-    rl.classList.toggle("on", n > 0); rl.dataset.label = liveEl.title; badge("#rail-live", n);
+    for (const el of [liveEl, rl]) { el.dataset.tip = tip; el.ariaLabel = tip; who ? (el.dataset.tipSub = who) : delete el.dataset.tipSub; }
+    rl.classList.toggle("on", n > 0); badge("#rail-live", n, " live");
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};
@@ -1386,102 +1569,57 @@
   }
   renderLive();
 
-  /** The update pill beside it, from the daemon's `update` block. Shown
-   *  when the daemon says so -- the day's slot is open or the reader asked,
-   *  a version failed to start, the file on disk is newer than the daemon --
-   *  while a restart waits for the panels to be quiet, and for one session
-   *  after an update landed, so a desk that came back is explained. A click
-   *  restarts onto the staged version once the panels are quiet; in a tab,
-   *  which holds no capability, on an install that is only told, or while a
-   *  restart waits, it opens About, which says what to run and holds Now
-   *  and Cancel. */
+  /** The update pill beside it (#upd). What it says and what a click on it
+   *  does are about.js's (`pill`), fetched only when there is something to
+   *  say: an update, a restart under way, or one that landed in the last day.
+   *  A page with nothing to say about updates never fetches it. */
   const updEl = $("#upd");
-  let upd = null, updWaiting = false, updFresh = null;
-  const DAY = 86400;
-  function renderUpd() {
-    const u = upd;
-    let text = "", cls = "", title = "";
-    const r = u && u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
-    if (u && (u.restarting || updWaiting)) { text = "Restarting…"; cls = "waiting"; title = "Claude panels come back with their conversation"; }
-    else if (r) { text = n ? `Waiting on ${plural(n, "panel")}` : "Restarting…"; cls = "waiting"; title = n ? `Restarts once ${n === 1 ? "it is" : "they are"} quiet; About has Now and Cancel` : ""; }
-    else if (u && u.show) {
-      if (u.ready) { text = capability ? `Restart to update · ${u.ready}` : `Update ready · ${u.ready}`; cls = u.amber ? "amber" : ""; title = capability ? "Restarts once no panel is busy; Claude panels come back with their conversation" : "The window restarts it; About says more"; }
-      else if (u.failed_recent) { text = `${u.failed} did not start · kept ${boot.version || ""}`.trim(); cls = "failed"; title = "The previous version was put back; About says more"; }
-      else if (u.available) { text = `${u.available} is out · how`; title = "This install is updated by hand; About says how"; }
-      else if (u.stale) { text = capability ? "Restart to update" : "Update ready"; title = "The snyvi on disk is newer than the one running"; }
-    }
-    // Updated: once per landing, kept for the page it was first shown on.
-    const at = u && u.last_applied;
-    if (!text && at && Date.now() / 1000 - at < DAY && updFresh !== -1) {
-      let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
-      if (updFresh === at || seen !== String(at)) {
-        updFresh = at; try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
-        text = `Updated to ${boot.version} · what's new`; cls = "quiet updated"; title = "About has the release notes";
-      }
-    }
-    updEl.hidden = !text;
-    if (!text) return;
-    updEl.textContent = text; updEl.className = `upd ${cls}`.trim(); updEl.title = title;
-    updEl.setAttribute("aria-label", title ? `${text}. ${title}` : text);
-    updEl.tabIndex = updWaiting || (u && u.restarting) ? -1 : 0;
-  }
+  /** Ctrl K, the mark's menu, Home and About: ask for the manifest now
+   *  (about.js's `checkUpdates`). */
+  const checkUpdates = at => panelMod().then(m => m.checkUpdates(at, { ...updCtx(), setUpd }), () => { panelLoading = null; });
+  /** What the update surfaces need from the page: about.js's `pill` and `card`. */
+  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel });
   function setUpd(u) {
-    upd = u && typeof u === "object" ? u : null;
-    // The daemon's word has come, whichever came first -- it or the reply to
-    // the click: from here the pill says what it says.
-    if (upd && (upd.restart || upd.restarting)) updWaiting = false;
-    renderUpd();
-  }
-  updEl.addEventListener("click", async () => {
-    const u = upd;
-    if (!u || u.restarting || updWaiting) return;
-    if (!u.restart && (u.ready || (u.stale && !u.failed_recent)) && capability) {
-      updWaiting = true; renderUpd();
-      // The daemon's `update` event says what the restart waits on; until
-      // it comes, this pill says Restarting.
-      try { await deskApi("/api/restart", { when: "idle", apply: !!u.ready }); if (upd && (upd.restart || upd.restarting)) { updWaiting = false; renderUpd(); } }
-      catch (e) { updWaiting = false; renderUpd(); toast("Could not restart", String(e)); }
-      return;
-    }
-    if (updEl.classList.contains("updated")) { updFresh = -1; renderUpd(); }
-    panel("about");
-  });
-
-  async function showCompare(aId, bId) {
-    const cur = state.doc;
-    const a = aId || state.previous, b = bId || (cur && cur.id);
-    if (!cur || !a) { toast("No previous version", "Nothing has been sent for this one before."); return; }
-    let j;
-    try { j = await (await fetch(`/api/compare/${a}/${b}${state.split ? "?view=split" : ""}`)).json(); } catch (e) { toast("Compare failed", String(e)); return; }
-    state.comparing = { a, b };
-    docEl.innerHTML = `<header class="doc-head"><h1 class="doc-title">${esc(cur.title)}</h1><p class="doc-sub">changes ${fmt(j.a.received_at)} → ${fmt(j.b.received_at)}${state.split ? " · split" : " · inline"}</p></header><article class="prose kind-diff">${j.html}</article>`;
-    swapIn();
-    main.scrollTo({ top: 0, behavior: "instant" });
-    buildToc(); renderMeta(true); enhanceCode();
+    u = u && typeof u === "object" ? u : null;
+    if ((u && (u.show || u.restart || u.restarting || Date.now() / 1e3 - (u.last_applied || 0) < 86400)) || !updEl.hidden)
+      panelMod().then(m => m.pill(updEl, u, updCtx()), () => { panelLoading = null; });
   }
 
+  /* A comparison of two versions, and a diff read split, are ui/diff.js's,
+   * fetched the first time either is asked for, with the split's look. */
+  let diffLoading = null;
+  const diffUse = () => (diffLoading ||= import(`/assets/diff.js${boot.v ? `?v=${boot.v}` : ""}`).catch(e => { diffLoading = null; throw e; }));
+  const diffCtx = () => ({ state, docEl, main, esc, fmt, toast, swapIn, buildToc, renderMeta, enhanceCode });
+  const showCompare = (a, b) => diffUse().then(m => m.compare(diffCtx(), a, b), e => toast("Could not compare the versions", { sub: e }));
   /** Replace the inline diff body of a diff document with the side-by-side rendering. */
-  async function applySplit() {
-    const art = docEl.querySelector("article.kind-diff");
-    if (!art || !state.doc) return;
-    try { const j = await (await fetch(`/api/docs/${state.doc.id}/split`)).json(); art.innerHTML = j.html; } catch {}
-  }
+  const applySplit = () => diffUse().then(m => m.split(diffCtx()), () => {});
 
   async function toggleSplit() {
     state.split = !state.split;
     store.set("snyvi.split", state.split ? "1" : "0");
     if (state.comparing) { await showCompare(state.comparing.a, state.comparing.b); return; }
     if (state.doc && state.doc.kind === "diff") { state.cache.delete(state.doc.id); await showDoc(state.doc.id, false); }
-    else toast("Split view", state.split ? "on, for diffs" : "off");
+    else toast("Split view", { sub: state.split ? "on, for diffs" : "off" });
   }
 
-  /** How long Undo is on the screen, and how long it answers to ⌘Z. */
-  const UNDO_MS = 8000;
-  /** How long a removed document's row stands with its Undo: long enough to
-   *  see what went and take it back, short enough that the list is settled
-   *  again before the eye has moved on. */
-  const GHOST_MS = 4000;
-  let undoing = null;
+  /** How long any Undo stands, and answers to ⌘Z: one window for every kind
+   *  (docs/DESIGN.md §4.4), long enough to see what went and take it back,
+   *  short enough that the list is settled before the eye has moved on. The
+   *  drain bar reads it as --undo-ms. */
+  const UNDO_MS = 6000;
+  root.style.setProperty("--undo-ms", UNDO_MS + "ms");
+
+  /* The one offer. Every kind of removal -- a document, a folder, a
+   * project, an aside, Mark all read, and a desk's notes and panels -- makes
+   * its Undo the one standing here, and ⌘Z calls only this. A new offer
+   * settles the last, whatever it was: two Undos on screen cannot both mean
+   * the last thing that happened. `settle` is how an offer ends early. */
+  let undoing = null, settling = null;
+  function offer(undo, settle) {
+    if (undoing && undoing !== undo) { const s = settling; undoing = settling = null; s?.(); }
+    undoing = undo; settling = settle;
+  }
+  const unoffer = f => { if (undoing === f) undoing = settling = null; };
 
   /** Remove now, ask nothing, and offer the way back.
    *
@@ -1490,9 +1628,11 @@
    *  nothing to do with -- and which had to be answered before anything else
    *  could happen. The daemon keeps the document until `prune` runs, so the
    *  seconds below are a real offer and not a hopeful one. */
-  async function deleteCurrent() {
-    if (state.doc) deleteDoc(state.doc);
+  async function deleteCurrent(byKey) {
+    if (state.doc) deleteDoc(state.doc, null, byKey);
   }
+  /** A removal a key made leaves the hand on its Undo, as an aside's does. */
+  const toUndo = () => treesEl.querySelector(".t-gone .t-undo")?.focus({ preventScroll: true });
 
   /** Where a document's row stands, as a place that outlives the row: the
    *  row that was clicked, or -- for the meta pane and Del, which have none --
@@ -1512,27 +1652,30 @@
     return null;
   }
 
-  /** The clock on a removed row is the bar's own animation: it drains in CSS,
-   *  stops there while a pointer or a focus rests on the row -- a reader
-   *  deciding is not a reader who has gone -- and its end ends the offer. So
-   *  the bar and the offer cannot disagree. A redraw asks the bar how far it
-   *  got and starts the new one there. Where nothing animates (reduced
-   *  motion, or no row to stand in) a plain timer does it. */
-  const stillMotion = matchMedia("(prefers-reduced-motion: reduce)");
-  function ghostSpent(g, el = document.querySelector("#trees .t-ghost")) {
-    const a = el && el.getAnimations ? el.getAnimations({ subtree: true }).find(x => x.animationName === "drain") : null;
-    const at = a && a.effect ? a.effect.getComputedTiming().progress : null;
-    if (a) g.spent = at == null ? GHOST_MS : Math.round(at * GHOST_MS);
-    return g.spent;
+  /** The clock on an Undo, the same in both motion modes. It stops while a
+   *  pointer or a focus rests on the offer (the element `sel` finds, wherever
+   *  a redraw has put it) -- a reader deciding is not a reader who has gone --
+   *  and while `hold` is set, which is an Undo being asked or refused. The
+   *  drain bar only draws what it says, through --undo-left, so the two
+   *  cannot disagree; under reduced motion the bar is still and still shows
+   *  what is left. `left()` is that fraction, for a row drawn again. */
+  function undoClock(sel, done, ms = UNDO_MS) {
+    let at = performance.now(), rest = ms;
+    const c = { hold: false, left: () => Math.max(0, rest / ms), stop: () => clearInterval(t), again() { rest = ms; } };
+    const t = setInterval(() => {
+      const now = performance.now(), el = document.querySelector(sel);
+      if (!c.hold && !el?.matches(":hover, :focus-within")) rest -= now - at;
+      at = now;
+      el?.style.setProperty("--undo-left", c.left());
+      if (rest <= 0) { c.stop(); done(); }
+    }, 100);
+    return c;
   }
-  treesEl.addEventListener("animationend", e => {
-    if (e.animationName === "drain" && gone && e.target.closest(".t-ghost")) ghostSettle(gone);
-  });
   /** The offer is over: the row closes where it stood, as a read one does. */
   function ghostSettle(g) {
     if (gone !== g || g.closing) return;
-    clearTimeout(g.timer);
-    if (undoing === g.undo) undoing = null;
+    g.clock.stop();
+    unoffer(g.undo);
     g.closing = Date.now();
     renderTree(); markActive();
     setTimeout(() => { if (gone === g) { gone = null; renderTree(); markActive(); } }, LEAVE_MS + 20);
@@ -1548,14 +1691,15 @@
    *  sidebar, which leaves the reader where they are unless that was it.
    *  The row turns into its ghost under the click, from what the page
    *  already holds, and the daemon is told after. */
-  async function deleteDoc(d, from = null) {
+  async function deleteDoc(d, from = null, byKey = false) {
     const here = !!state.doc && state.doc.id === d.id;
     const place = rowOf(d.id, from);
     if (place && place.doc) d = { ...place.doc, ...d, title: place.doc.title };
     // Only the newest offer stands: two rows both saying Undo cannot both mean
     // the last thing that happened.
-    if (gone) { clearTimeout(gone.timer); if (undoing === gone.undo) undoing = null; gone = null; }
-    const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), spent: 0, timer: 0, drawn: false, made: Date.now() };
+    if (gone) { gone.clock.stop(); unoffer(gone.undo); gone = null; }
+    const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), drawn: false, made: Date.now() };
+    g.clock = undoClock("#tree .t-gone .t-ghost, #queue .t-gone .t-ghost", () => ghostSettle(g));
     g.undo = () => undoGone(g);
     // What stands around the ghost stands with it until the offer ends, so
     // nothing above it moves the row out from under the pointer either: the
@@ -1575,28 +1719,33 @@
       if (w.docs.length < n) w.total = Math.max(0, w.total - 1);
     }
     gone = g;
-    undoing = g.undo;
+    offer(g.undo, () => ghostSettle(g));
     renderTree(); markActive();
-    if (!g.drawn || stillMotion.matches) g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
+    if (byKey) toUndo();
+    const turn = opening;
     try {
       const r = await fetch(`/api/docs/${d.id}/delete`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status}`);
+      // A file sent seven times went with its seven versions: the ghost says so.
+      g.versions = (await r.json().catch(() => ({}))).versions || 1;
       state.cache.delete(d.id);
       g.drawn = false;
       await refreshTree(d.project_id);
-      if (here) showInbox(true);
+      // Off the page it was on -- unless the Undo came first, or the reader
+      // opened something else while the daemon was answering.
+      if (here && gone === g && turn === opening) { await showInbox(true); if (byKey) toUndo(); }
       // No row to stand in -- the meta pane's button or Del, with the row not
       // drawn: the offer goes where the toast goes.
-      if (gone === g && !g.drawn) {
-        toast("Removed", d.title, null, { label: "Undo", run: g.undo }, { life: GHOST_MS });
-        clearTimeout(g.timer);
-        g.timer = setTimeout(() => ghostSettle(g), GHOST_MS);
+      if (gone === g && !inView(g)) {
+        toast("Removed", { sub: d.title + (g.versions > 1 ? ` · ${g.versions} versions` : ""), action: { label: "Undo", run: g.undo } });
+        g.clock.again();
+        if (byKey) $("#toasts .act")?.focus({ preventScroll: true });
       }
     } catch (e) {
-      if (gone === g) { clearTimeout(g.timer); gone = null; if (undoing === g.undo) undoing = null; }
+      if (gone === g) { g.clock.stop(); gone = null; unoffer(g.undo); }
       if (g.waiting) await refetchQueue();
       await refreshTree(d.project_id);
-      toast("Could not remove", String(e));
+      toast("Could not remove it", { sub: e });
     }
   }
 
@@ -1605,22 +1754,37 @@
    *  their list again -- so the list never closes up and opens again. */
   async function undoGone(g) {
     if (gone !== g || g.closing || g.back) return;
-    clearTimeout(g.timer);
-    g.back = true;
-    if (undoing === g.undo) undoing = null;
+    g.clock.hold = true;
+    g.back = true; g.err = "";
+    unoffer(g.undo);
     renderTree(); markActive();
+    const r = await post(`/api/docs/${g.id}/undelete`);
+    if (!r?.ok) {
+      // The offer stands: the ghost says what happened, in its own row, and
+      // its button (or ⌘Z) asks again. Only a newer offer takes it away.
+      if (gone !== g) return;
+      g.back = false;
+      g.dead = r?.status === 410;
+      g.err = g.dead ? "Could not undo · prune has deleted it" : "Could not bring it back";
+      // A refusal holds the clock; pruned, there is nothing to hold it for.
+      if (g.dead) { g.clock.hold = false; g.clock.again(); }
+      else offer(g.undo, () => ghostSettle(g));
+      renderTree(); markActive();
+      // No row to say it in: the toast the offer was made in says it instead.
+      if (!inView(g)) toast(g.err, { sub: g.d.title, retry: !g.dead && g.undo });
+      return;
+    }
     try {
-      const r = await fetch(`/api/docs/${g.id}/undelete`, { method: "POST" });
-      if (r.status === 410) { g.back = false; ghostSettle(g); return toast("Too late to undo", "it has been pruned"); }
-      if (!r.ok) throw new Error(`${r.status}`);
       wash([g.id]);
       if (g.waiting) await refetchQueue();
       await refreshTree(g.d.project_id);
       // The "restored" event puts the row back in every other tab.
       if (g.here) showDoc(g.id);
-    } catch (e) { toast("Could not undo", String(e)); }
-    if (gone === g) gone = null;
-    renderTree(); markActive();
+    } finally {
+      g.clock.stop();
+      if (gone === g) gone = null;
+      renderTree(); markActive();
+    }
   }
 
   /** Take a project out of the sidebar. Nothing is asked for and nothing is
@@ -1633,20 +1797,20 @@
     openProjects.delete(key);
     // Only the newest offer stands: two rows both saying Undo cannot both mean
     // the last thing that happened.
-    clearTimeout(awayTimer);
+    awayClock?.stop();
     awayJust = key;
-    awayTimer = setTimeout(() => {
-      if (awayJust !== key) return;
-      awayJust = null;
-      renderTree(); markActive();
-    }, UNDO_MS);
+    const undo = () => bringBack(key), settle = () => { unoffer(undo); if (awayJust !== key) return; awayClock.stop(); awayJust = null; renderTree(); markActive(); };
+    offer(awayUndo = undo, settle);
+    // The same clock as every ghost: it waits while the hand is on the row.
+    awayClock = undoClock("#tree .t-back", settle);
     renderTree(); markActive();
   }
 
   /** Put a project back in the sidebar: one by id, or every one of them when
    *  the row under the tree is the one clicked. */
   function bringBack(id) {
-    clearTimeout(awayTimer);
+    awayClock?.stop();
+    unoffer(awayUndo);
     awayJust = null;
     if (id) away.delete(String(id)); else away.clear();
     saveAway();
@@ -1695,6 +1859,20 @@
   /* The card is ui/note.js, fetched the first time there is an aside to show.
    * Until then the page keeps only the mark: `data-note` on the root, which
    * makes the logo blink and the rail's aside dot glow. */
+  /** A shortcut as this machine writes it (docs/DESIGN.md §3.4): glyphs on
+   *  macOS, words everywhere else, key names title-cased. "mod" is ⌘ on a
+   *  Mac and Ctrl elsewhere; "ctrl+alt+w" is ⌃⌥W or Ctrl Alt W. Every
+   *  shortcut the page shows is written through here. */
+  function keyHint(combo) {
+    const mac = /Mac/.test(navigator.platform);
+    return combo.split("+").map(k => {
+      const w = { mod: mac ? "⌘" : "Ctrl", ctrl: mac ? "⌃" : "Ctrl", alt: mac ? "⌥" : "Alt", shift: mac ? "⇧" : "Shift", esc: "Esc", del: "Del" }[k];
+      // A letter with a modifier is the key's cap (Ctrl K); alone it is the
+      // letter typed (n), as the help card writes it.
+      return w || (k.length > 1 ? k[0].toUpperCase() + k.slice(1) : combo.length > 1 ? k.toUpperCase() : k);
+    }).join(mac ? "" : " ");
+  }
+
   /** The asides on the card: the daemon keeps a closed one, flagged, for Undo. */
   const liveNotes = () => state.notes.filter(n => !n.dismissed);
   /* snyvi's own asides: five lines at five first moments, each once, each
@@ -1702,16 +1880,10 @@
    * agent's aside is unread, says at most one thing in ten minutes (the
    * daemon's own quiet for agents, aside.rs), and remembers what it said in
    * this browser (`snyvi.seen.*`, which Reset clears). Kept on the card's
-   * list with ids `snyvi:*`, which note.js never tells the daemon about. */
-  const cmdK = /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K";
-  const OWN = {
-    "first-doc": ["Your first document. What arrives stays, filed with its project: nothing scrolls away.", "arrives"],
-    "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
-    "second-desk": [`Got another project? Give it a desk too. ${cmdK} and its name goes between them.`, "desks"],
-    "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one waiting on you.", "desks"],
-    "blocked": ["A panel is waiting on you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
-    "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
-  };
+   * list with ids `snyvi:*`, which note.js never tells the daemon about.
+   * Their words are note.js's (OWN there), the only file that shows them:
+   * first paint carries only their names. */
+  const OWN = new Set(["first-doc", "two-waiting", "second-desk", "two-desks", "blocked", "version"]);
   const isOwn = n => String(n.id).startsWith("snyvi:");
   // By when each was said, newest first, as the daemon's list is: an agent's
   // aside after snyvi's line is the one the card shows, not a line behind it.
@@ -1722,7 +1894,7 @@
   let ownTimer = 0;
   const heldOwn = () => { try { return JSON.parse(store.get("snyvi.own.held") || "[]"); } catch { return []; } };
   function snyviSays(key) {
-    if (!OWN[key] || store.get(`snyvi.seen.${key}`)) return;
+    if (!OWN.has(key) || store.get(`snyvi.seen.${key}`)) return;
     const quiet = 600e3 - (Date.now() - (+store.get("snyvi.seen.at") || 0));
     if (quiet > 0 || state.notes.some(n => !n.dismissed && !n.seen)) {
       const held = heldOwn();
@@ -1733,8 +1905,7 @@
     }
     store.set("snyvi.own.held", JSON.stringify(heldOwn().filter(k => k !== key)));
     store.set(`snyvi.seen.${key}`, "1"); store.set("snyvi.seen.at", String(Date.now()));
-    const [text, sec] = OWN[key];
-    state.notes = [{ id: `snyvi:${key}`, text, sender: "", at: Date.now() / 1000, href: `/start#${sec}` }, ...state.notes.filter(n => !isOwn(n))];
+    state.notes = [{ id: `snyvi:${key}`, text: "", sender: "", at: Date.now() / 1000 }, ...state.notes.filter(n => !isOwn(n))];
     renderNote();
   }
   /** The first held moment, if the way is clear now; the rest keep waiting. */
@@ -1751,8 +1922,8 @@
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
     if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
-      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, closeSay, ghostSpent, stillMotion, GHOST_MS,
-        holdUndo: f => (undoing = f), dropUndo: f => { if (undoing === f) undoing = null; } });
+      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock,
+        holdUndo: offer, dropUndo: unoffer });
       noteMod.render();
     }, () => { noteLoading = null; });
   }
@@ -1764,55 +1935,9 @@
    *  only ever answers: nothing opens on its own, ever. A reader who comes
    *  over to the face and rests there gets one short line back. */
   const brandEl = $(".brand"), sayEl = $("#bm-say");
-  /** What it says, the face it says it with, and how often the line comes up.
-   *  The weights are the whole character. Most of what it says is "hi"; a
-   *  count when there is one worth giving; and "love you" seldom enough that
-   *  it still means something when it lands. A line whose text comes back
-   *  empty is not true right now -- no one is waiting, an agent is connected,
-   *  it is the middle of the afternoon -- and drops out of the draw.
-   *  Every one of them is short on purpose: the line is written where the
-   *  word "snyvi" is, and it has that much room and no more. */
-  const SAYS = [
-    { t: "hi", w: 5 },
-    { t: "hey you", w: 3 },
-    { t: "still here", w: 2 },
-    { t: "hello again", w: 2, f: "glad" },
-    { t: "good to see you", w: 2, f: "glad" },
-    { t: "love you", w: 1, f: "love" },
-    { t: "my favourite", w: 1, f: "love" },
-    { t: () => state.waiting ? `${state.waiting} waiting` : "", w: 4, f: "glad" },
-    { t: () => Object.keys(state.online).length ? "" : "no agents", w: 3 },
-    { t: () => { const h = new Date().getHours(); return h < 5 || h >= 23 ? "late one?" : h < 10 ? "morning" : ""; }, w: 3, f: "wink" },
-  ];
-  /** The last few lines, so the same one does not come up twice running. */
-  let saidLast = [], sayIn = 0, sayOut = 0;
-  function pickSay() {
-    // The page cannot hear the daemon: the eyes are already shut, and this is
-    // where a reader who wonders why finds out.
-    if (root.dataset.link === "off") return { t: "not connected", f: "" };
-    const pool = [];
-    for (const s of SAYS) {
-      const t = typeof s.t === "function" ? s.t() : s.t;
-      if (!t || saidLast.includes(t)) continue;
-      for (let i = 0; i < s.w; i++) pool.push({ t, f: s.f || "" });
-    }
-    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : { t: "hi", f: "" };
-  }
-  function openSay() {
-    // A note still glowing is an agent waiting to be read. The agent has the
-    // floor until then, and snyvi does not talk over its own messenger.
-    if (root.dataset.note) return;
-    const s = pickSay();
-    saidLast = [s.t, ...saidLast].slice(0, 3);
-    sayEl.textContent = s.t;
-    sayEl.hidden = false;
-    void sayEl.offsetWidth;   // the resting state first, so the rise transitions
-    sayEl.classList.add("on");
-    // An empty face is still a face here: `html[data-say]` matching on the
-    // bare attribute is what stops the waiting blink and nods the head, and
-    // a line said with no expression wants both.
-    root.dataset.say = s.f;
-  }
+  /** What it says, and when, is look.js's (`openSay`), fetched once the
+   *  page is idle: the lines, their weights, and the face each wears. */
+  let sayIn = 0, sayOut = 0;
   function closeSay() {
     sayEl.classList.remove("on");
     delete root.dataset.say;
@@ -1824,7 +1949,7 @@
     // way to Search, so it waits for a moment's rest before it says anything.
     if (e.pointerType === "touch") return;
     clearTimeout(sayIn);
-    sayIn = setTimeout(openSay, 260);
+    sayIn = setTimeout(() => useLook().then(l => { if (brandEl.matches(":hover")) l.openSay({ root, sayEl, state, quiet }); }, () => {}), 260);
   });
   brandEl.addEventListener("pointerleave", () => { clearTimeout(sayIn); closeSay(); });
   // Following the brand through to the inbox takes the bubble with it.
@@ -1886,27 +2011,7 @@
   }
 
   /** The browsed file on screen changed on disk. */
-  async function refreshBrowsed() {
-    if (!browsing() || !state.browsePath) return;
-    const rootId = state.browseRoot.id, path = state.browsePath;
-    let j;
-    try {
-      const r = await fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      j = await r.json();
-    } catch {
-      toast(`${path.split("/").pop()} is gone`, "removed or renamed on disk; showing the last version");
-      return;
-    }
-    // The reader moved on while this was in flight.
-    if (!browsing() || state.browseRoot.id !== rootId || state.browsePath !== path) return;
-    const place = placeOf();
-    setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
-    docEl.innerHTML = browseHtml(j.file, j.root);
-    applyPreview();
-    placeAt(place);
-    afterRefresh();
-  }
+  function refreshBrowsed() { if (browseMod) browseMod.refresh(browseCtx()); }
 
   // ---------- mermaid (a chunk, fetched with the first diagram) ----------
   /* The driver is ui/mmd.js, and none of it is on the wire until a document
@@ -1943,7 +2048,7 @@
     if (!h || h.length < 2) return;
     state.versions = h.map(d => d.id);
     const box = document.createElement("div"); box.id = "history";
-    box.innerHTML = `<h4>Versions · ${h.length}</h4>` + h.map(d => `<a href="/d/${d.id}" data-id="${d.id}" class="${d.id === state.doc.id ? "cur" : ""}" title="${esc(d.workflow_title)}">${fmt(d.received_at)}${d.pinned ? " ●" : ""}</a>`).join("");
+    box.innerHTML = `<h4>Versions · ${h.length}</h4>` + h.map(d => `<a href="/d/${d.id}" data-id="${d.id}" class="${d.id === state.doc.id ? "cur" : ""}" data-tip="${esc(d.workflow_title)}">${fmt(d.received_at)}${d.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("");
     metaEl.appendChild(box);
   }
 
@@ -1961,12 +2066,13 @@
     // fetch before focusing leaves the keys the reader is already typing in
     // the page's own shortcuts, where `p` pins the document and `Delete`
     // deletes it -- a query is not a command, and must never arrive as one.
+    const from = findBar.hidden ? document.activeElement : null;
     findBar.hidden = false;
     const input = $("#find-input");
     input.focus(); input.select();
     try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", String(e)); return; }
-    find.open({ $, docEl, bring });
+    catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", { sub: e }); return; }
+    find.open({ $, docEl, bring }, from);
   }
 
   // ---------- focus beacon for desktop notifications ----------
@@ -2004,7 +2110,7 @@
     const top = cur.offsetTop, bottom = top + cur.offsetHeight;
     const seen = tocEl.scrollTop, h = tocEl.clientHeight;
     if (top >= seen + 24 && bottom <= seen + h - 24) return;
-    tocEl.scrollTo({ top: Math.max(0, top - h / 2), behavior: now ? "instant" : "smooth" });
+    tocEl.scrollTo({ top: Math.max(0, top - h / 2), behavior: now || matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   }
 
   /** Call `track` on the frame after every scroll or resize, and once now.
@@ -2059,7 +2165,7 @@
         markCur(links, cur);
       });
     }
-    rail.classList.toggle("empty", state.view === "inbox" || state.view === "connect" || state.view === "start" || state.view === "welcome");
+    rail.classList.toggle("empty", state.view === "inbox" || state.view === "home" || state.view === "connect" || state.view === "start" || state.view === "welcome");
   }
 
   /* A contents entry is a hash link, and the browser's own handling of one
@@ -2235,7 +2341,7 @@
     const lines = pre ? pre.getElementsByClassName("ln") : [];
     if (!lines.length) return;
     tocEl.innerHTML = `<ul class="outline">` + items.map((o, i) =>
-      `<li class="d${o.depth + 1}"><a href="#" data-line="${o.line}" data-i="${i}" title="${esc(o.kind)} · line ${o.line}"><span class="ok ok-${o.kind}"></span>${esc(o.name)}</a></li>`
+      `<li class="d${o.depth + 1}"><a href="#" data-line="${o.line}" data-i="${i}" data-tip="${esc(o.kind)}" data-tip-sub="line ${o.line}"><span class="ok ok-${o.kind}"></span>${esc(o.name)}</a></li>`
     ).join("") + `</ul>`;
     const links = [...tocEl.querySelectorAll("a")];
     links.forEach(a => a.addEventListener("click", e => {
@@ -2321,8 +2427,8 @@
 
   function gotoLine(n) {
     const pre = codePre();
-    if (!pre) { toast("No line numbers here", "Line links work on code and text documents."); return; }
-    if (n > pre.querySelectorAll(".ln").length) { toast(`No line ${n}`, "The document is shorter than that."); return; }
+    if (!pre) { toast("No line numbers here", { sub: "line links work on code and text documents", face: null }); return; }
+    if (n > pre.querySelectorAll(".ln").length) { toast(`No line ${n}`, { sub: "the document is shorter than that", face: null }); return; }
     setLines(n, n, true);
   }
 
@@ -2345,8 +2451,7 @@
       const n = [...pre.querySelectorAll(".ln")].indexOf(ln) + 1;
       const prev = e.shiftKey && lineHash();
       setLines(prev ? Math.min(prev.a, n) : n, prev ? Math.max(prev.a, n) : n, false);
-      navigator.clipboard?.writeText(location.href);
-      toast("Link copied", location.pathname + location.hash);
+      copied(location.href, { x: e.clientX, y: e.clientY });
     });
   }
   window.addEventListener("hashchange", () => applyLineHash(true));
@@ -2361,7 +2466,7 @@
       ["Received", fmt(d.received_at)], ["Size", d.size > 1024 * 1024 ? (d.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(d.size / 1024)) + " KB"],
       d.lang ? ["Lang", d.lang] : null,
     ].filter(Boolean);
-    metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span title="${esc(v)}">${esc(v)}</span></div>`).join("") +
+    metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span data-tip="${esc(v)}" data-tip-overflow data-tip-cut>${esc(v)}</span></div>`).join("") +
       // Sent from a pane: which desk and which slot, and a way back to it.
       // A link and not adjacency, because a window can have three desks and
       // `[1]` alone would not say which.
@@ -2371,10 +2476,10 @@
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
       ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
       previewButton() +
-      `<button data-act="delete">Delete<kbd>Del</kbd></button>` +
+      `<button data-act="delete">Remove<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
-      (d.source_path ? `<button data-act="copypath" title="${esc(d.source_path)}">Copy path</button>` : "") +
-      (state.folder ? `<button data-act="terminal" title="${esc(state.folder)}">Open terminal here</button><button data-act="reveal" title="${esc(state.folder)}">Open in file manager</button>` : "") +
+      (d.source_path ? `<button data-act="copypath" data-tip="${esc(d.source_path)}" data-tip-mono>Copy path</button>` : "") +
+      (state.folder ? `<button data-act="terminal" data-tip="${esc(state.folder)}" data-tip-mono>Open terminal here</button><button data-act="reveal" data-tip="${esc(state.folder)}" data-tip-mono>Open in file manager</button>` : "") +
       `</div>`;
   }
   const rawUrl = (rootId, path) => `/api/browse/${rootId}/raw/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -2385,45 +2490,25 @@
     return `<button data-act="preview">${label}<kbd>v</kbd></button>`;
   }
 
-  function renderBrowseMeta() {
-    const r = state.browseRoot;
-    if (!r) { metaEl.innerHTML = ""; return; }
-    const p = state.browsePath;
-    const rows = [["Folder", r.name], p ? ["Path", p] : null].filter(Boolean);
-    metaEl.innerHTML = rows.map(([k, v]) => `<div class="row"><b>${k}</b><span title="${esc(v)}">${esc(v)}</span></div>`).join("") +
-      `<div class="actions">` +
-      previewButton() +
-      (p ? `<a href="${rawUrl(r.id, p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
-      `<button data-act="copybrowse">Copy path</button>` +
-      `<button data-act="terminal" title="${esc(r.path + (p ? "/" + p : ""))}">Open terminal here</button>` +
-      `<button data-act="reveal" title="${esc(r.path + (p ? "/" + p : ""))}">Open in file manager</button>` +
-      `<a href="/b/${r.id}" data-browse="${r.id}" data-path="">Folder contents</a>` +
-      `<button data-act="closebrowse">Close folder</button>` +
-      `</div>`;
-  }
+  function renderBrowseMeta() { if (browseMod) browseMod.meta(browseCtx()); }
 
   metaEl.addEventListener("click", async e => {
     const b = e.target.closest("[data-act]");
     if (!b) return;
     if (b.dataset.act === "compare") showCompare();
     if (b.dataset.act === "back") { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); }
-    if (b.dataset.act === "copypath") { navigator.clipboard?.writeText(state.doc.source_path); toast("Copied", state.doc.source_path); }
+    if (b.dataset.act === "copypath") copied(state.doc.source_path, b);
     if (b.dataset.act === "pin") togglePin();
     if (b.dataset.act === "split") toggleSplit();
     if (b.dataset.act === "preview") togglePreview();
-    if (b.dataset.act === "delete") deleteCurrent();
+    if (b.dataset.act === "delete") deleteCurrent(!e.detail);
     if (b.dataset.act === "copybrowse") {
       const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
-      navigator.clipboard?.writeText(full); toast("Copied", full);
+      copied(full, b);
     }
     if (b.dataset.act === "terminal") openTerminal();
     if (b.dataset.act === "reveal") openFolder();
-    if (b.dataset.act === "closebrowse") {
-      const id = state.browseRoot.id;
-      try { await fetch(`/api/browse/${id}/close`, { method: "POST" }); } catch {}
-      state.browse = state.browse.filter(r => r.id !== id);
-      showInbox(true);
-    }
+    if (b.dataset.act === "closebrowse") closeRoot(state.browseRoot.id);
   });
 
   /** Open the machine's own terminal where the reader is looking.
@@ -2441,29 +2526,27 @@
   const openTerminal = (body = here()) => act("terminal", body);
   const openFolder = (body = here()) => act("reveal", body);
 
-  async function togglePin() {
-    if (!state.doc) return;
-    const pinned = !state.doc.pinned;
-    try {
-      await fetch(`/api/docs/${state.doc.id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
-      state.doc.pinned = pinned; state.cache.delete(state.doc.id);
-      await refreshTree(state.doc.project_id);
-      renderMeta(false);
-      toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it", null, null, { face: pinned ? "glad" : "plain" });
-    } catch (e) { toast("Could not pin", String(e)); }
+  /** Pin or unpin a document: the meta pane's button, `p`, a row's menu.
+   *  The ● and the button's word are the answer, and only once the daemon
+   *  has said yes (rung 0). A refusal answers where it was asked: a menu
+   *  hands in where its item stood (`at`). */
+  async function pin(d, at) {
+    const pinned = !d.pinned;
+    const r = await post(`/api/docs/${d.id}/pin`, { pinned });
+    if (!r?.ok) return toast(`Could not ${pinned ? "pin" : "unpin"} it`, { sub: d.title, retry: () => pin(d, at), at });
+    d.pinned = pinned; state.cache.delete(d.id);
+    if (state.doc?.id === d.id) { state.doc.pinned = pinned; renderMeta(false); }
+    await refreshTree(d.project_id);
   }
+  const togglePin = () => state.doc && pin(state.doc);
 
   function enhanceCode() {
     for (const pre of docEl.querySelectorAll("pre.code")) {
       if (pre.querySelector(".copy")) continue;
       wireLines(pre);
       const b = document.createElement("button");
-      b.className = "copy"; b.textContent = "Copy"; b.title = "Copy code";
-      b.addEventListener("click", () => {
-        const text = [...pre.querySelectorAll(".ln")].map(l => l.textContent).join("\n") || pre.textContent;
-        navigator.clipboard?.writeText(text);
-        b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1200);
-      });
+      b.className = "copy"; b.textContent = "Copy";
+      b.addEventListener("click", () => copied([...pre.querySelectorAll(".ln")].map(l => l.textContent).join("\n") || pre.textContent, b));
       pre.appendChild(b);
     }
   }
@@ -2474,6 +2557,7 @@
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
     e.preventDefault();
     if (a.dataset.nav === "inbox") showInbox(true);
+    else if (a.dataset.nav === "home") showHome(true);
     else if (a.dataset.nav === "connect") showConnect(true);
     else if (a.dataset.nav === "start") showStart(true, a.hash || "");
     else if (a.dataset.nav === "welcome") showWelcome(true);
@@ -2518,13 +2602,14 @@
     if (d) { e.preventDefault(); showDoc(d[1], true); return; }
     const b = u.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) { e.preventDefault(); showBrowse(b[1], decodeURIComponent(b[2] || ""), true); return; }
-    if (u.pathname === "/") { e.preventDefault(); showInbox(true); return; }
+    if (u.pathname === "/") { e.preventDefault(); showHome(true); return; }
+    if (u.pathname === "/inbox") { e.preventDefault(); showInbox(true); return; }
     if (u.pathname === "/connect") { e.preventDefault(); showConnect(true); return; }
     e.preventDefault();
-    toast("Not a page in snyvi", href, null, {
+    toast("Not a page in snyvi", { sub: href, action: {
       label: "Open anyway",
       run: () => window.open(a.href, "_blank", "noopener"),
-    });
+    } });
   });
 
   document.addEventListener("mouseover", e => {
@@ -2546,7 +2631,8 @@
     if (location.pathname === "/welcome") return showWelcome(false);
     const k = location.pathname.match(/^\/desk\/(\d+)$/);
     if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
-    showInbox(false);
+    if (location.pathname === "/inbox") return showInbox(false);
+    showHome(false);
   });
 
   // ---------- live arrivals ----------
@@ -2646,7 +2732,7 @@
    * reader who never opens one pays for this block and no more. */
   const deskNav = $("#desk-nav");
   let desk = null, deskLoading = null, lastDesk = null;
-  const plusDesk = () => capability ? `<button class="b-new" data-newdesk title="New desk here" aria-label="New desk here">${icon("desk")}</button>` : "";
+  const plusDesk = () => capability ? `<button class="b-new" data-newdesk data-tip="New desk here" aria-label="New desk here">${icon("desk")}</button>` : "";
   /** A desk route, with the capability in the one place a page can put a
    *  secret on a request it composes: a header. */
   async function deskApi(path, body, type) {
@@ -2669,13 +2755,14 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, browseEl,
+    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl,
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
     load: () => loadDesks(),
     show: (id, push, slot) => showDesk(id, push, slot),
     browse: (root, path, push) => showBrowse(root, path, push),
     drawBrowse: () => renderBrowse(),
+    drawTree: () => renderTree(),
     forget: id => { if (lastDesk === id) lastDesk = null; },
     // What the context menu and the moves out of this file reach for: the
     // page's own functions, so the chunk runs the code a row's button runs.
@@ -2683,7 +2770,7 @@
     folderOf: el => folderOf(el),
     closeRoot: id => closeRoot(id),
     open: id => showDoc(id, true),
-    togglePin: () => togglePin(),
+    togglePin, pin,
     refreshTree: pid => refreshTree(pid),
     deleteDoc: d => deleteDoc(d),
     knownDocs,
@@ -2713,12 +2800,12 @@
    *  reader's to see: they pressed something and nothing happened otherwise. */
   async function act(what, ...args) {
     try { const m = await useActs(); return m[what](actsCtx, ...args); }
-    catch (e) { actsLoading = null; toast("Could not do that", String(e)); }
+    catch (e) { actsLoading = null; toast("Could not do that", { sub: e }); }
   }
 
   let deskRoots = "";
   async function loadDesks() {
-    if (capability) { try { state.desks = await deskApi("/api/desks"); } catch {} }
+    if (capability) { try { state.desks = await deskApi("/api/desks"); desksOff = false; } catch { desksOff = true; } }
     // A project's row says whether it has a desk; only a desk made, closed
     // or moved changes that, not the panes' dots, which change all day. The
     // tree draws the desks as it goes.
@@ -2743,23 +2830,25 @@
     if (state.desks) desksSeen = list.length;
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" title="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk title="New desk" aria-label="New desk">+</button>` : ""));
-    const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty" title="Desks run in the desktop window">Open the snyvi window to run desks</li>`
-        : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
+    const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" data-tip="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk data-tip="New desk" aria-label="New desk">+</button>` : ""));
+    const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
+        : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
     // One desk is one project; the second is when snyvi starts to earn its
     // place, so it is asked for, under the first, until there is one.
-    const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ Another project</button></li>` : "";
+    const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ New desk</button></li>` : "";
     const rows = list.map(d => {
-      const m = mark3(d.panes), has = d.panes.length > 0;
+      const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
       const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
-      // One row a desk, as the Inbox has one row a document: what the desk
-      // holds is said by its mark and its count, and shown by opening it.
-      // The mark and the count are one column at the row's end, drawn
-      // whether or not there is anything to say, so every row's line up.
+      // The row's end says only what is unusual: a panel that needs you, a
+      // context window nearly full, more than one panel. A live desk is a
+      // dot and an idle one is nothing; the tip carries the rest.
+      const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
+      const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
+      const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
-        `<span class="end">${fullest(d) == null ? "" : `<span class="ctx${fullest(d) >= 85 ? " hot" : ""}" title="The fullest context window on this desk">${fullest(d)}%</span>`}<span class="dot${m === "!" ? " blk" : m === "●" ? " on" : ""}" title="${say}">${m === "!" ? "!" : ""}</span><span class="k">${has ? d.panes.length : ""}</span></span>`,
-        `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" title="Close desk" aria-label="Close desk ${esc(d.name)}">✕</button>` : ""}</a></li>`];
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 1 ? `<span class="k">${n}</span>` : ""}</span>`,
+        `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
     // under the pointer must not be swapped for a copy of itself: it would
@@ -2790,15 +2879,15 @@
     renderTree(); markActive();
     if (!capability) {
       document.title = "Desks · snyvi";
-      docEl.innerHTML = `<div class="inbox-head"><h1>Desks</h1><p>Desks run in the snyvi desktop window. This is a browser tab, so it has no capability to start a process. Open the same address in the desktop app.</p></div><p><code>snyvi:/${esc(location.pathname)}</code></p>`;
+      docEl.innerHTML = `<div class="inbox-head"><h1>Desks</h1><p>Desks run in the snyvi desktop window. This is a browser tab, and a browser tab cannot start one. Open the same address in the desktop app.</p></div><p><code>snyvi:/${esc(location.pathname)}</code></p>`;
       tocEl.innerHTML = metaEl.innerHTML = ""; rail.classList.add("empty");
       return;
     }
     try { desk = await (deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { deskLoading = null; toast("Could not open the desk", String(e)); return; }
+    catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast, esc, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: sayTermSize, go: showDesk, swap: swapDesk, make: el => el ? askWhere(el, false) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -2876,7 +2965,7 @@
     overEl.firstChild.textContent = !on || state.opening ? "" : file ? state.browsePath.split("/").pop() : state.doc.title;
     if (!on) return;
     const to = backTo().name, label = `Back to ${to}`;
-    overX.title = `${label}  ${state.deskBehind != null ? "⌃`" : "Esc"}`;
+    overX.dataset.tip = label; overX.dataset.key = state.deskBehind != null ? "ctrl+`" : "esc";
     overX.setAttribute("aria-label", label);
   }
   overX.addEventListener("click", goBack);
@@ -2909,7 +2998,7 @@
    * browser's menu -- paste, spelling -- and so does a selection in a
    * document, for its Copy. Anywhere else in the window, WebKit's Back,
    * Forward and Reload are not snyvi's, and do not show. */
-  const MENU_AT = ".b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
+  const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
     ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone)";
   const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
   document.addEventListener("contextmenu", e => {
@@ -3020,7 +3109,6 @@
     // The updater's word: first on every stream, then whenever it changes.
     es.addEventListener("update", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
-      updWaiting = false;
       setUpd(j);
     });
     // An agent left a note, or a reader looked at one somewhere.
@@ -3084,15 +3172,15 @@
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
-        toast(d.title, `${d.project} · just now`, null, null, { at: null, face: "whoa" });
+        toast(d.title, { sub: `${d.project} · just now`, kind: "news" });
       }
       else if (superseded) {
         // The rail picks it up either way, so the offer is free to fade: a
         // reader who misses the button finds the new version at the top of
         // Versions, and `]` steps to it.
         renderHistory();
-        toast("A newer version arrived", d.title, null,
-          { label: "Read it", run: () => showDoc(d.id, true) }, { at: null, face: "whoa" });
+        toast("A newer version arrived", { sub: d.title, kind: "news",
+          action: { label: "Read it", run: () => showDoc(d.id, true) } });
       }
       else if (state.view === "inbox") showInbox(false);
     });
@@ -3120,13 +3208,14 @@
     });
     es.addEventListener("deleted", async ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const turn = opening;
       state.cache.delete(j.id);
       depart([j.id]);
       state.queue = state.queue.filter(d => d.id !== j.id);
       if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();
       deskDocs();
-      if (state.doc && state.doc.id === j.id) showInbox(true);
+      if (state.doc && state.doc.id === j.id) { if (turn === opening) showInbox(true); }
       else if (state.view === "inbox") showInbox(false);
     });
     // A delete that was taken back, in every tab and the window: the row is
@@ -3159,6 +3248,8 @@
       for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
       renderDesks();
     });
+    // Home shows a little of all of these; each one reads it again, soon.
+    for (const ev of ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored"]) es.addEventListener(ev, homeTick);
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {
       let j; try { j = JSON.parse(ev.data); } catch { return; }
@@ -3199,7 +3290,7 @@
   const SMILE = `<path class="mk-line" d="M13.5 23q2.5 2.2 5 0"/>`;
   const FACES = {
     // Open eyes, a small smile: heard you.
-    plain: EYE(11) + EYE(21) + SMILE,
+    rest: EYE(11) + EYE(21) + SMILE,
     // Eyes up, mouth open: the thing you wanted happened.
     glad: UP() + `<path class="mk-ink" d="M13 22.4q3 4 6 0z"/>`,
     // One eye up: said with a bit of mischief, for the lights and the like.
@@ -3219,129 +3310,102 @@
   /** snyvi's head at any size, in the accent it is wearing. */
   const mascotHead = feel => `<svg class="mk" viewBox="0 0 32 32" aria-hidden="true">` +
     `<rect class="mk-nub" x="14" y="0.5" width="4" height="5" rx="2"/><rect class="mk-body" x="1" y="4" width="30" height="27" rx="9"/>` +
-    (FACES[feel] || FACES.plain) + `</svg>`;
-  /** Nothing said this way is bad news, except the lines that are. They open
-   *  the same handful of ways, and the face should not be smiling at them. */
-  const feelFor = t => /^(could not|no |not |nothing|too late|never|failed)\b/i.test(t) || /\bis gone\b/i.test(t) ? "oops" : "plain";
-
-  /* Where the reader last acted, which is where they are looking. A pointer
-   * press is the honest signal; Enter or Space on something focused is the
-   * keyboard's version of the same. Both go stale quickly, so a reply that
-   * arrives long after a click -- an arrival off the stream, say -- is not
-   * mistaken for an answer to it and posted at a button nobody pressed. */
+    (FACES[feel] || FACES.rest) + `</svg>`;
+  /* Where the reader acted, taken as they act (docs/DESIGN.md §4.2). A press
+   * keeps its point and the control under it; a key keeps its moment, since
+   * the answer to a key belongs at the focus, never at an idle pointer. An
+   * answer that comes ten seconds after either answers nobody, and goes to
+   * the corner. A caller that knows better passes `at` itself -- a menu item's
+   * rect, taken before the menu closed; a control's, before a redraw. */
   const ACTABLE = "button, a, summary, [role='button'], .ln, .anchor";
-  let actEl = null, actAt = -1e9;
-  const actNote = el => { if (el) { actEl = el; actAt = performance.now(); } };
-  addEventListener("pointerdown", e => actNote(e.target?.closest?.(ACTABLE)), true);
-  addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") actNote(document.activeElement?.closest?.(ACTABLE)); }, true);
-  /** The anchor only counts while it is recent, still in the page, and on
-   *  screen: a button that has scrolled away is no better than the corner. */
-  function liveAct() {
-    if (!actEl || !actEl.isConnected || performance.now() - actAt > 3000) return null;
-    const r = actEl.getBoundingClientRect();
-    return r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth ? actEl : null;
-  }
-
-  const toastsEl = $("#toasts");
-  let toastAt = null;   // what the stack is currently pointing at
-  /** Put the stack beside `el`, on the side with room for it. A control in
-   *  the left rail answers to its right, one in the contents rail to its
-   *  left, and anything in the middle of the page answers just below itself,
-   *  which is the way the eye is already travelling after a click. */
-  function placeToasts(el) {
-    const s = toastsEl.style, box = 330, gap = 12;
-    const r = el && el.isConnected ? el.getBoundingClientRect() : null;
-    // A control that is not on screen -- the sidebar folded away, the button
-    // scrolled past -- is no better an address than the corner. This catches
-    // the ones handed in by name as well: `w` and `z` answer at the rail
-    // where the setting lives, but only while the rail is there to point at.
-    const shown = r && r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
-    toastAt = shown ? el : null;
-    if (!shown) { s.cssText = ""; delete toastsEl.dataset.side; return; }
-    const side = r.right + gap + box < innerWidth - 12 && r.left < innerWidth * 0.55 ? "right"
-      : r.left - gap - box > 12 ? "left" : "below";
-    s.right = s.left = "auto"; s.bottom = "auto";
-    if (side === "right") s.left = Math.round(r.right + gap) + "px";
-    else if (side === "left") s.right = Math.round(innerWidth - r.left + gap) + "px";
-    else s.left = Math.round(Math.max(12, Math.min(r.left, innerWidth - box - 12))) + "px";
-    // Centred on the thing it answers, or under it, by its own measured
-    // height; moved only as far as it takes to stay on the window. This held
-    // its top 96px off the bottom, a guess at the height, and every button
-    // low in the rail -- theme, accent, Aa -- was answered a button too high.
-    // The tail follows the button, so a nudged box still points at it.
-    const h = toastsEl.offsetHeight || 42, cy = r.top + r.height / 2;
-    const want = side === "below" ? r.bottom + gap : cy - h / 2;
-    const top = Math.round(Math.max(4, Math.min(want, innerHeight - h - 4)));
-    s.top = top + "px";
-    s.setProperty("--tail", Math.round(Math.max(8, Math.min(cy - top - 4, h - 16))) + "px");
-    toastsEl.dataset.side = side;
-  }
-  /* A button in the rail names itself on hover, in the very spot its answer
-   * comes up in. While the answer is up it is the better label of the two. */
-  const saidBy = el => el?.classList?.add("said");
-  // The window moving underneath takes the anchor with it.
-  let replaceFrame = 0;
-  const followAnchor = () => {
-    if (!toastAt || !said) return;
-    cancelAnimationFrame(replaceFrame);
-    replaceFrame = requestAnimationFrame(() => { if (toastAt && said) placeToasts(toastAt); });
-  };
-  addEventListener("resize", followAnchor);
-  addEventListener("scroll", followAnchor, true);
-
-  /* There is one of these at a time. Two of them is a pile of receipts, and
-   * a pile is read as a list -- which is the one thing this is not: it is a
-   * creature answering, and a creature says the next thing instead of the
-   * last one, in the place the next thing was asked. So a new answer takes
-   * the old one's place, wherever that was, and the old one is simply gone.
-   * Clicking the accent eight times running is eight bobs of the same head
-   * in eight colours, which is the setting itself, said. */
-  let said = null;
-  /** Clear whatever is being said now, without ceremony. */
-  function hush() {
-    if (!said) return;
-    clearTimeout(said.timer);
-    said.el.remove();
-    said.anchor?.classList?.remove("said");
-    said = null;
-  }
-
-  /** snyvi's answer, beside whatever was just pressed. `onClick` makes the
-   *  whole thing one; `action` ({label, run}) puts a button in it instead,
-   *  for the one thing an answer can offer that a reader must be able to
-   *  reach deliberately. `opts.at` overrides where it goes -- `null` sends it
-   *  to the corner -- and `opts.face` overrides how it is said. */
-  function toast(title, sub, onClick, action, opts = {}) {
-    const at = "at" in opts ? opts.at : liveAct();
-    hush();
-    const el = document.createElement("div");
-    el.className = "toast";
-    el.dataset.feel = opts.face || feelFor(title);
-    el.innerHTML = `<span class="who">${mascotHead(el.dataset.feel)}</span>` +
-      `<span class="say"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
-    if (action) {
-      const b = document.createElement("button");
-      b.type = "button"; b.className = "act"; b.textContent = action.label;
-      b.addEventListener("click", ev => { ev.stopPropagation(); hush(); action.run(); });
-      el.appendChild(b);
-    } else {
-      el.addEventListener("click", () => { hush(); onClick && onClick(); });
+  let press = null, keyAt = -1e9;
+  addEventListener("pointerdown", e => { press = { x: e.clientX, y: e.clientY, t: performance.now(), el: e.target?.closest?.(ACTABLE) }; }, true);
+  addEventListener("keydown", () => { keyAt = performance.now(); }, true);
+  /** Where the last act was: the focused control after a key (on a desk,
+   *  its panel's head); after a press, the control pressed, or the point it
+   *  stood at if a redraw has taken it. */
+  function actedAt() {
+    const pt = press?.t ?? -1e9;
+    if (performance.now() - Math.max(pt, keyAt) > 10000) return null;
+    if (keyAt > pt) {
+      const a = document.activeElement;
+      return a && a !== document.body ? a.closest(".pn")?.querySelector(".pn-head") || a : null;
     }
-    toastsEl.appendChild(el);
-    // Placed once it is in, so it is placed by the height it really has.
-    placeToasts(at);
-    const anchor = toastAt;
-    saidBy(anchor);
-    const life = opts.life || (action ? UNDO_MS : onClick ? 8000 : 3500);
-    // It fades where it stands, and only if it is still the one being said.
-    const mine = { el, anchor, timer: 0 };
-    mine.timer = setTimeout(() => {
-      el.classList.add("out");
-      mine.timer = setTimeout(() => { if (said === mine) { hush(); placeToasts(null); } }, 180);
-    }, life);
-    said = mine;
-    return el;
+    return press.el?.isConnected ? press.el : { x: press.x, y: press.y };
   }
+  /** An anchor as a rect: an element (while it is in the page), a DOMRect,
+   *  or a point. */
+  const rectOf = a => !a ? null : a instanceof Element ? (a.isConnected ? a.getBoundingClientRect() : null)
+    : "width" in a ? a : { left: a.x, right: a.x, top: a.y, bottom: a.y, width: 0, height: 0 };
+
+  /* The tip (docs/DESIGN.md §8.1) is ui/tip.js, fetched the first time a
+   * pointer comes over something with a `data-tip`, or Tab is first pressed:
+   * its first showing waits 450 ms, which covers the fetch. */
+  let tipMod = null, tipLoading = null;
+  const useTip = (since = performance.now()) => tipLoading ||= import(`/assets/tip.js${boot.v ? `?v=${boot.v}` : ""}`)
+    .then(m => (tipMod = m.init({ keyHint, since })), () => { tipLoading = null; });
+  document.addEventListener("pointerover", e => { if (!tipLoading && e.target.closest?.("[data-tip]")) useTip(); }, { passive: true });
+  document.addEventListener("keydown", e => { if (!tipLoading && e.key === "Tab") useTip(); });
+  /** An error, in words: `why` for the sub-line, `raw` (its own text, for
+   *  whoever needs the exact words) for the toast's title until 1.8's tip.
+   *  What snyvi's daemon said is shown as it said it; what the browser said
+   *  about the daemon is said the way a person would. */
+  function sayErr(e) {
+    const raw = String(e?.message ?? e).replace(/^Error: /, "");
+    return { raw, why: /dynamically imported|module script/i.test(raw) ? "part of snyvi did not load"
+      : /fetch|network|load failed/i.test(raw) ? "snyvi is not answering"
+      : /token|capabilit|\b40[13]\b/i.test(raw) ? "this window lost its link to snyvi · reopen it"
+      : /\b5\d\d\b/.test(raw) ? "something went wrong in snyvi"
+      : /\b(404|410)\b/.test(raw) ? "it is not there any more" : raw };
+  }
+
+  /** snyvi's answer (docs/DESIGN.md §4): toast(title, { sub, at, kind,
+   *  action, retry, face, life, go }), drawn by ui/toast.js -- fetched the
+   *  first time snyvi has something to say, since a page that is only read
+   *  says nothing. Where the reader acted is taken now, as they act, not
+   *  when the chunk lands; and what was said before it did is said in order. */
+  let toastMod = null, toastLoading = null;
+  function toast(title, o = {}) {
+    const at = "at" in o ? o.at : actedAt(), say = m => m.say(title, o, at);
+    if (toastMod) return void say(toastMod);
+    (toastLoading ||= import(`/assets/toast.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (toastMod = m.init({
+      toastsEl: $("#toasts"), esc, glyph, mascotHead, quiet, sayErr, rectOf, UNDO_MS,
+      tipGone: el => tipMod?.gone(el),
+      rest: () => { clearTimeout(qbSettle); const w = queueBar.querySelector(".qb-who[data-feel]"); if (w) { delete w.dataset.feel; w.innerHTML = mascotHead("rest"); } },
+    })), () => { toastLoading = null; })).then(m => m && say(m));
+  }
+  /** Clear whatever is being said now, without ceremony. */
+  const hush = () => toastMod?.hush();
+
+  /** A copy, answered in the control that copied (docs/DESIGN.md §3.4): it
+   *  waits for the clipboard to say yes, then the button reads "Copied" for
+   *  1.2 s. With no button left to say it in -- a menu has closed, a line
+   *  number was clicked -- a small "Copied" answers where the press was. */
+  async function copied(text, btn) {
+    try { await navigator.clipboard.writeText(text); }
+    catch { return toast("Could not copy", { sub: `select and press ${keyHint("mod+c")}`, at: btn }); }
+    if (!btn?.isConnected || btn.matches(".ln") || btn.dataset.copied) return toast("Copied", { sub: text, at: btn });
+    const was = btn.innerHTML;
+    btn.dataset.copied = 1; btn.textContent = "Copied";
+    setTimeout(() => { btn.innerHTML = was; delete btn.dataset.copied; }, 1200);
+  }
+  /** Ask twice (docs/DESIGN.md §3.4), the one way: the first press arms the
+   *  button -- it reads `label` ("Close desk?") and its tip says what the
+   *  second press does ("Ends 3 panels · click again") -- and ARM_MS puts it
+   *  back. True when this press is the second, and the thing should happen.
+   *  `text` is the part of the button that carries its words. */
+  const ARM_MS = 3000;
+  function armed(b, { label, sub, text = b }) {
+    if (b.dataset.armed) return true;
+    const was = text.innerHTML, tip = b.dataset.tipSub, li = b.closest("li");
+    b.dataset.armed = "1"; text.textContent = label; b.dataset.tipSub = `${sub} · click again`;
+    li?.classList.add("arming");
+    setTimeout(() => { if (b.isConnected && b.dataset.armed) { delete b.dataset.armed; text.innerHTML = was; tip ? (b.dataset.tipSub = tip) : delete b.dataset.tipSub; li?.classList.remove("arming"); } }, ARM_MS);
+    return false;
+  }
+  /** The old order of arguments, for desk.js until it is moved onto toast()'s
+   *  options with the rest of its sweep. */
+  const toast4 = (title, sub, go, action, o) => toast(title, { sub, go, action, ...o });
 
   // ---------- palette ----------
   /* ⌘K is ui/palette.js, fetched the first time it is asked for: the one box
@@ -3359,10 +3423,10 @@
     if (pal.hidden) { input.value = ""; openDialog(pal, input); }
     let lk;
     try { [palMod, lk] = await Promise.all([palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`), useLook()]); }
-    catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", String(e)); return; }
+    catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", { sub: e }); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, openHelp, places: deskPlaces });
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, openHelp, places: deskPlaces });
   }
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
@@ -3402,43 +3466,45 @@
       const b = btnOf(c), no = why(c);
       b.classList.toggle("dim", !!no);
       no ? b.setAttribute("aria-disabled", "true") : b.removeAttribute("aria-disabled");
-      if (no) b.dataset.label = `${NAMES[c]} · ${no}`;
+      if (no) { b.dataset.tip = NAMES[c]; b.dataset.tipSub = no; } else delete b.dataset.tipSub;
     }
-    if (!why("wide")) $("#btn-wide").dataset.label = onDesk() ? "Focused panel in full view · w" : "Maximise width · w";
-    if (!why("wrap")) $("#btn-wrap").dataset.label = "Wrap long lines · z";
+    if (!why("wide")) $("#btn-wide").dataset.tip = onDesk() ? "Focused panel in full view" : "Maximise width";
+    if (!why("wrap")) $("#btn-wrap").dataset.tip = "Wrap long lines";
     if (!why("font")) look?.paintFontBtn();
   }
   /** Run a control, or say why it does nothing here, beside its button. */
   const control = (c, run) => () => {
     const no = why(c);
-    no ? toast(NAMES[c], no, null, null, { at: btnOf(c) }) : run();
+    no ? toast(NAMES[c], { sub: no, face: null }) : run();
     paintControls();
   };
   // It is only seen while the column is open, so that is when it is painted.
   $(".foot-set").addEventListener("pointerenter", paintControls);
   $(".foot-set").addEventListener("focusin", paintControls);
+  /** A setting that is on or off says which, to the eye and to a reader. */
+  const pressed = (b, on) => { b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); };
   function toggleWide() {
-    if (onDesk()) { const z = desk.zoomOn(); toast("Width", z ? "the focused panel, in full view" : "all panels", null, null, { at: $("#btn-wide") }); return; }
+    if (onDesk()) { desk.zoomOn(); return; }
     const on = root.dataset.wide !== "1";
     on ? (root.dataset.wide = "1") : delete root.dataset.wide;
     store.set("snyvi.wide", on ? "1" : "0");
-    $("#btn-wide").classList.toggle("on", on);
+    pressed($("#btn-wide"), on);
   }
   $("#btn-wide").addEventListener("click", control("wide", toggleWide));
-  $("#btn-wide").classList.toggle("on", root.dataset.wide === "1");
+  pressed($("#btn-wide"), root.dataset.wide === "1");
 
   function toggleWrap() {
     const on = root.dataset.wrap !== "1";
     on ? (root.dataset.wrap = "1") : delete root.dataset.wrap;
     store.set("snyvi.wrap", on ? "1" : "0");
-    $("#btn-wrap").classList.toggle("on", on);
+    pressed($("#btn-wrap"), on);
   }
   $("#btn-wrap").addEventListener("click", control("wrap", toggleWrap));
-  $("#btn-wrap").classList.toggle("on", root.dataset.wrap === "1");
+  pressed($("#btn-wrap"), root.dataset.wrap === "1");
 
-  /** The terminal's text size, said beside Aa: after a click, or ⌃= ⌃- ⌃0 in
-   *  a panel. */
-  const sayTermSize = () => { paintControls(); toast("Text size", desk.textSize().name, null, null, { face: "glad", at: $("#btn-font") }); };
+  /** The terminal's text size, after Aa on a desk: the panels' text is the
+   *  answer, and Aa's label, under the hand, names the size. */
+  const sayTermSize = paintControls;
   // ---------- dialogs: focus goes in, stays in, and comes back ----------
   const appEl = $("#app"), help = $("#help"), aboutDlg = $("#about"), resetDlg = $("#reset");
   const dialogs = [pal, help, aboutDlg, resetDlg];
@@ -3474,10 +3540,11 @@
     }
   }, true);
   help.addEventListener("click", e => { if (e.target === help) closeDialog(help); });
-  $("#help-close").addEventListener("click", () => closeDialog(help));
   /* The card opens at once with its title and foot; its rows of keys ride
    * with the about chunk (ui/about.js) and are put in the first time. */
-  function openHelp() { openDialog(help, help.firstElementChild); if (!help.querySelector(".hk")) panel("help"); }
+  /** The shortcuts card opens filled: about.js fills it and carries its
+   *  look, so the first `?` waits the moment it takes to arrive. */
+  async function openHelp() { if (!help.querySelector(".hk")) await panel("help"); openDialog(help, help.firstElementChild); }
   $("#btn-help").addEventListener("click", openHelp);
 
   // ---------- the rocket: a game, over the sidebar and nowhere else ----------
@@ -3490,9 +3557,9 @@
   gameBtn.addEventListener("click", async () => {
     if (game?.isOpen()) { game.close(); return; }
     // The sky is the sidebar, and a rail is 44 px of it.
-    if (root.dataset.side === "0") { toast("Asteroids", sideNarrow.matches ? "needs a wider window" : "needs the sidebar open · \\", null, null, { at: gameBtn }); return; }
+    if (root.dataset.side === "0") { toast("Asteroids", { sub: sideNarrow.matches ? "needs a wider window" : `needs the sidebar open · ${keyHint("\\")}`, face: null }); return; }
     try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
-    catch (e) { gameLoading = null; toast("Could not start the game", String(e)); return; }
+    catch (e) { gameLoading = null; toast("Could not start the game", { sub: e }); return; }
     gameBtn.classList.add("on");
     game.open($("#side"), { back: gameBtn, onClose: () => gameBtn.classList.remove("on") });
   });
@@ -3505,14 +3572,11 @@
   async function panel(which) {
     let m;
     try { m = await panelMod(); }
-    catch (e) { panelLoading = null; toast("Could not open that panel", String(e)); return; }
-    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural, rel, capability, deskApi });
+    catch (e) { panelLoading = null; toast("Could not open that panel", { sub: e }); return; }
+    m.open(which, { $, openDialog, closeDialog, help, aboutDlg, resetDlg, plural, rel, capability, deskApi, sayErr, panel, showConnect, showStart, showWelcome });
   }
-  $("#btn-about").addEventListener("click", () => panel("about"));
-  $("#btn-reset").addEventListener("click", () => panel("reset"));
-  $("#btn-connect").addEventListener("click", () => { closeDialog(help); showConnect(); });
-  $("#btn-start").addEventListener("click", () => { closeDialog(help); showStart(true, ""); });
-  $("#btn-welcome").addEventListener("click", () => { closeDialog(help); showWelcome(true); });
+  // The shortcuts card's box, and its foot's buttons, are built and wired
+  // by about.js (`fillHelp`), the first time it opens.
 
   // ---------- the contents on a narrow window ----------
   /* Past 1100 px the rail stops fitting beside the document and becomes a
@@ -3568,9 +3632,7 @@
    * still reach it. One at a time; Esc, a click outside it, a link followed
    * in it and `\` close it. The numbers on the icons are the ones the
    * sections say: waiting, panels waiting on you, agents connected. */
-  const railNav = $("#rail-nav"), popEl = $("#pop");
-  const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
-  const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+  const railNav = $("#rail-nav");
   ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
   for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
   /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
@@ -3578,53 +3640,13 @@
     const b = document.querySelector(`#rail-nav ${sel} .badge`);
     if (b) { b.textContent = n ? String(n) : ""; b.className = "badge" + cls; }
   }
-  let popBtn = null;
-  function openPop(sec, btn) {
-    if (root.dataset.pop === sec) { closePop(); return; }
-    closePop(false);
-    root.dataset.pop = sec; popBtn = btn;
-    btn.classList.add("on"); btn.setAttribute("aria-expanded", "true");
-    popEl.setAttribute("aria-label", btn.getAttribute("aria-label"));
-    popEl.append(...POPS[sec].map(id => $(id)));
-    popEl.hidden = false;
-    // Drawn while folded, the titles were cut to a column that was not there.
-    if (sec === "tree") renderTree();
-    // Level with the icon, and moved only as far as it takes to stay on the
-    // window, the way a toast answers a control in the rail.
-    const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
-    popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
-    (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
-  }
-  /** Put the section back where it lives. `back` gives the focus to its icon. */
-  function closePop(back = true) {
-    const sec = root.dataset.pop;
-    if (!sec) return false;
-    delete root.dataset.pop;
-    popEl.hidden = true;
-    // Each back before the first section that follows it in #trees' order,
-    // whatever else is still at home: the end is not its place.
-    for (const id of POPS[sec]) {
-      if (id === "#note") { sideEl.insertBefore($(id), $(".side-foot")); continue; }
-      const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
-      treesEl.insertBefore($(id), after || popEl);
-    }
-    const b = popBtn; popBtn = null;
-    b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
-    if (back && b?.isConnected) b.focus({ preventScroll: true });
-    return true;
-  }
-  // The aside's section empties when its last line goes, and its icon with
-  // it: the popover goes too, and a keyboard that was in it lands on the
-  // rail rather than on nothing.
-  new MutationObserver(() => {
-    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
-    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
-    closePop(false);
-    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
-  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
+  /* What the popover does -- open, close, what closes it -- is menu.js's
+   * (`pop`, `unpop`), fetched on the first press of a rail icon: a reader
+   * whose sidebar is never folded never pays for it. Open means loaded. */
+  const closePop = (back = true) => !!root.dataset.pop && acts.unpop(back);
   railNav.addEventListener("click", e => {
     const b = e.target.closest("[data-pop]");
-    if (b) openPop(b.dataset.pop, b);
+    if (b) useActs().then(m => m.pop(actsCtx, b.dataset.pop, b));
     else if (e.target.closest("#rail-search")) openPalette();
   });
   // A toolbar: the arrows walk it, Tab leaves it.
@@ -3634,14 +3656,9 @@
     all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
     e.preventDefault();
   });
-  // Following a link in it is being done with it; opening a row's fold is not.
-  popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => closePop()); });
-  // The context menu is on <body>, but a row's menu is the popover's own: an
-  // action there (Rename, Remove with its Undo) happens in the row, in here.
-  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) closePop(false); }, true);
   function paintSideBtn() {
     const b = $("#btn-side-hide"), slim = root.dataset.side === "0";
-    b.title = slim ? "Show sidebar  \\" : "Hide sidebar  \\";
+    b.dataset.tip = slim ? "Show sidebar" : "Hide sidebar";
     b.setAttribute("aria-label", slim ? "Show sidebar" : "Hide sidebar");
   }
   // Narrow, the sidebar is its rail; wide again, it is what the reader left it.
@@ -3655,66 +3672,10 @@
   sideFits();
 
   // ---------- the panes' widths ----------
-  /* Each pane's edge drags, between a floor where its rows stop being
-   * readable and a ceiling past which the document would be the pane that
-   * does not fit. The width goes into the custom property the grid already
-   * reads, so every rule that knows the pane's width follows, and into
-   * storage, which boot.js applies before first paint. Double-click puts the
-   * default back; for a keyboard the arrow keys move it and Home and End
-   * take it to either limit. */
-  const PANES = [
-    { el: sideEl, prop: "--side-w", key: "snyvi.side-w", min: 200, max: 440, dflt: 264, sign: 1 },
-    { el: rail, prop: "--rail-w", key: "snyvi.rail-w", min: 180, max: 400, dflt: 232, sign: -1 },
-  ];
-  for (const pane of PANES) {
-    const g = pane.el.querySelector(".gutter");
-    const width = () => parseFloat(getComputedStyle(root).getPropertyValue(pane.prop)) || pane.dflt;
-    const set = w => {
-      w = Math.round(Math.max(pane.min, Math.min(pane.max, w)));
-      root.style.setProperty(pane.prop, `${w}px`);
-      g.setAttribute("aria-valuenow", w);
-      return w;
-    };
-    g.setAttribute("aria-valuenow", width());
-    g.addEventListener("pointerdown", e => {
-      if (e.button !== 0) return;
-      const x0 = e.clientX, w0 = width();
-      let w = w0;
-      g.setPointerCapture(e.pointerId);
-      root.dataset.resizing = "1";
-      const move = ev => { w = set(w0 + pane.sign * (ev.clientX - x0)); };
-      const up = () => {
-        delete root.dataset.resizing;
-        g.removeEventListener("pointermove", move);
-        g.removeEventListener("pointerup", up);
-        g.removeEventListener("pointercancel", up);
-        store.set(pane.key, String(w));
-      };
-      g.addEventListener("pointermove", move);
-      g.addEventListener("pointerup", up);
-      g.addEventListener("pointercancel", up);
-      e.preventDefault();
-    });
-    g.addEventListener("dblclick", () => {
-      root.style.removeProperty(pane.prop);
-      store.del(pane.key);
-      g.setAttribute("aria-valuenow", pane.dflt);
-    });
-    g.addEventListener("keydown", e => {
-      const step = e.shiftKey ? 64 : 16;
-      const to = e.key === "ArrowRight" ? width() + pane.sign * step
-        : e.key === "ArrowLeft" ? width() - pane.sign * step
-          : e.key === "Home" ? pane.min : e.key === "End" ? pane.max : null;
-      if (to === null) return;
-      // At once, as a drag is: the fold's easing would trail a held key.
-      root.dataset.resizing = "1";
-      store.set(pane.key, String(set(to)));
-      void $("#app").offsetWidth;
-      delete root.dataset.resizing;
-      e.preventDefault();
-      e.stopPropagation();
-    });
-  }
+  /* Dragging a pane's edge, and its keys, are look.js's: the edge fetches it
+   * when the hand comes over it or the focus lands on it, which is before
+   * any press can. */
+  for (const g of document.querySelectorAll(".gutter")) for (const ev of ["pointerenter", "focus"]) g.addEventListener(ev, () => useLook().catch(() => {}), { once: true });
 
   // ---------- the key mode ----------
   // The single letters sleep until ⌃B wakes them. A viewer sits beside the
@@ -3740,7 +3701,7 @@
 
   /* What the letters act on, handed to keys.js with each one. */
   const keyCtx = { state, browsing, browseEl, showBrowse, order, siblings, showDoc, showCompare, togglePin, toggleSplit, togglePreview,
-    openFind, deleteCurrent, openNext, showInbox, rawUrl, mmd: () => mmd,
+    openFind, deleteCurrent, openNext, showInbox, showHome, rawUrl, mmd: () => mmd,
     wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
     rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
     side: () => closePop() || fold("side") };
@@ -3776,9 +3737,8 @@
       swapDesk();
       return;
     }
-    // Undo, for as long as the toast offering it is on the screen. The hand
-    // goes here before it goes to the button, and a delete is the only thing
-    // in a viewer there is anything to undo.
+    // Undo: the one offer standing, whatever kind it is (offer()). The hand
+    // goes here before it goes to the button.
     if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "z" || e.key === "Z") && undoing) {
       e.preventDefault();
       undoing();
@@ -3798,17 +3758,22 @@
   if (state.view === "doc" && state.doc) {
     // Opened from a link -- an agent's, or the notification's -- so it is read.
     markRead(state.doc.id);
+    // A page or a PDF opens as itself here too, not only from the sidebar.
+    setPreview(boot.preview, boot.preview_url, "d:" + state.doc.id); applyPreview();
     document.title = state.doc.title; afterRender(); history.replaceState({ id: state.doc.id }, "", location.pathname + location.hash);
     // A link to a section: the browser's own fragment scroll aimed at a
     // placeholder, the same way a smooth scroll does. Land it properly.
     if (location.hash && !lineHash()) jumpToHash();
+    // Opened afresh -- a restart, a link -- it goes back to where it was left.
+    else if (!location.hash) { const was = places()[placeKey(state.doc)]; if (was && !was.end && was.i >= 0) placeAt(was); }
   }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
   else if (state.view === "start") { history.replaceState({ start: true }, "", "/start" + location.hash); showStart(false); }
   else if (state.view === "welcome") { history.replaceState({ welcome: true }, "", "/welcome"); showWelcome(false); }
   else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
-  else { showInbox(false); history.replaceState({ inbox: true }, "", "/"); }
+  else if (state.view === "home") { history.replaceState({ home: true }, "", "/"); showHome(false); }
+  else { showInbox(false); history.replaceState({ inbox: true }, "", location.pathname === "/" ? "/" : "/inbox"); }
   connect();
   loadDesks();
 })();

@@ -1,6 +1,7 @@
 mod agents;
 mod aside;
 mod bench;
+mod brief;
 mod browse;
 mod capability;
 mod client;
@@ -29,6 +30,13 @@ mod store;
 mod strip;
 mod update;
 mod watch;
+
+/// "1 panel", "3 panels": a count in words, never "panel(s)"
+/// (docs/DESIGN.md §3.1). Regular plurals only, which is every word it is
+/// asked for.
+pub(crate) fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
 
 use anyhow::{Context, Result};
 
@@ -421,8 +429,8 @@ fn main() -> Result<()> {
                 );
             }
             println!(
-                "{} document(s){}",
-                gone.len(),
+                "{}{}",
+                plural(gone.len(), "document"),
                 if dry_run {
                     " would be deleted"
                 } else {
@@ -445,8 +453,28 @@ fn main() -> Result<()> {
             }
             if !panels.is_empty() {
                 println!(
-                    "{} closed panel(s){}",
-                    panels.len(),
+                    "{}{}",
+                    plural(panels.len(), "closed panel"),
+                    if dry_run {
+                        " would be deleted"
+                    } else {
+                        " deleted"
+                    }
+                );
+            }
+            // Closed desks, after their panels: the cascade takes their notes
+            // and what is left of their rows, and the text went just above.
+            let desks = store.prune_desks(before, dry_run)?;
+            for (id, name) in &desks {
+                println!(
+                    "{} desk {id}  {name}",
+                    if dry_run { "would delete" } else { "deleted" }
+                );
+            }
+            if !desks.is_empty() {
+                println!(
+                    "{}{}",
+                    plural(desks.len(), "closed desk"),
                     if dry_run {
                         " would be deleted"
                     } else {

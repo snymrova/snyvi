@@ -28,7 +28,7 @@ let picking = false;
  *  so a tab is told where it can be done instead. */
 export async function pick(ctx, forDesk = false) {
   const { capability, state, toast, browseEl } = ctx;
-  if (!capability) { toast("Folders open from the snyvi window", "Or from a terminal: snyvi browse <folder>"); return; }
+  if (!capability) { toast("Folders open from the snyvi window", { sub: "or from a terminal · snyvi browse <folder>", face: null }); return; }
   if (picking) return;
   picking = true;
   browseEl.classList.add("picking");
@@ -36,7 +36,7 @@ export async function pick(ctx, forDesk = false) {
     const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } });
     if (r.status === 204) return;   // closed without a choice
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { toast("Could not open a folder", j.error || `HTTP ${r.status}`); return; }
+    if (!r.ok) { toast("Could not open a folder", { sub: new Error(j.error || `${r.status}`) }); return; }
     if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
     ctx.drawBrowse();
     // Kept under Folders either way: it is a folder the reader works in now.
@@ -45,7 +45,7 @@ export async function pick(ctx, forDesk = false) {
     const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
     if (d) d.open = true;
     ctx.browse(j.root.id, "", true);
-  } catch (e) { toast("Could not open a folder", String(e)); }
+  } catch (e) { toast("Could not open a folder", { sub: e }); }
   finally { picking = false; browseEl.classList.remove("picking"); }
 }
 
@@ -65,10 +65,10 @@ export async function make(ctx, f) {
       const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude" } : {});
       if (claude) ctx.hold(p.pane.id);
       else await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
-    } catch (e) { toast("The desk is made, but its shell did not start", String(e)); }
+    } catch (e) { toast("Could not start the new desk's shell", { sub: e }); }
     await ctx.load();
     ctx.show(j.desk.id, true);
-  } catch (e) { toast("Could not make a desk", String(e)); }
+  } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 
 /** Whether `claude` can run here: on the daemon's PATH, or set up (which
@@ -95,31 +95,41 @@ export async function projectDesk(ctx, pid) {
  *  is no undoing that, so the first click asks and the second closes, as Close
  *  desk does in the desk's own rail. */
 export async function drop(ctx, b) {
-  if (!b.dataset.armed) {
-    b.dataset.armed = "1"; b.textContent = "Close?"; b.title = "Close the desk and its panels: click again";
-    const li = b.closest("li"); li.classList.add("arming");
-    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "✕"; b.title = "Close desk"; li.classList.remove("arming"); } }, 3000);
-    return;
-  }
-  await dropDesk(ctx, +b.dataset.dropdesk);
+  if (ctx.armed(b, { label: "Close desk?", sub: ends(ctx, +b.dataset.dropdesk) })) await dropDesk(ctx, +b.dataset.dropdesk);
+}
+/** What closing a desk ends, in the words the ask uses: "Ends 3 panels". */
+function ends(ctx, id) {
+  const n = ctx.state.desks?.desks.find(d => d.id === id)?.panes.length || 0;
+  return n ? `Ends ${n} panel${n === 1 ? "" : "s"}` : "Nothing is running on it";
 }
 
 /** Turn a name in the tree into a field, in place. Enter and blur keep what was
  *  typed, Escape abandons it; the label goes back the moment either happens, so
  *  the tree is never left holding an input. */
-export function rename(ctx, holder, what, id) {
+/** Why a field is open again: under it, until the next key. */
+function fieldErr(input, why) {
+  const p = Object.assign(document.createElement("span"), { className: "field-err", textContent: why });
+  p.setAttribute("role", "alert");
+  input.after(p);
+  input.addEventListener("input", () => p.remove(), { once: true });
+  input.addEventListener("blur", () => p.remove(), { once: true });
+}
+
+/** A name typed and refused comes back in the field (`typed`), with why. */
+export function rename(ctx, holder, what, id, typed, why) {
   const { toast } = ctx;
   const label = holder.querySelector(":scope > .nm");
   if (!label || holder.querySelector("input.ren-in")) return;
   const before = label.textContent, cls = label.className;
   const input = document.createElement("input");
   input.className = "ren-in";
-  input.value = before;
-  input.spellcheck = false;
+  input.value = typed ?? before;
+  input.spellcheck = false; input.autocomplete = "off";
   input.setAttribute("aria-label", `Name of this ${what}`);
   label.replaceWith(input);
   holder.classList.add("renaming");
   input.focus(); input.select();
+  if (why) fieldErr(input, why);
 
   let settled = false;
   const finish = async keep => {
@@ -149,7 +159,8 @@ export function rename(ctx, holder, what, id) {
       }
     } catch (e) {
       label.textContent = before;
-      toast("Could not rename", String(e));
+      if (holder.isConnected) rename(ctx, holder, what, id, next, `Could not rename · ${ctx.sayErr(e).why}`);
+      else toast(`Could not rename ${before}`, { sub: e });
     }
   };
   // The app answers single keys, and Escape closes find and the palette.
@@ -170,9 +181,9 @@ export async function terminal(ctx, body) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));
-    if (r.ok) toast("Terminal", j.dir || "opened");
-    else toast("No terminal", j.error || `${r.status}`);
-  } catch (e) { toast("No terminal", String(e)); }
+    // The terminal opening is the answer; only a refusal is said.
+    if (!r.ok) toast("Could not open a terminal", { sub: new Error(j.error || `${r.status}`) });
+  } catch (e) { toast("Could not open a terminal", { sub: e }); }
 }
 /** The same place, in the file manager -- Files, Finder, Explorer. The same
  *  ids go over and the daemon resolves them the same way; a desk's folder
@@ -180,16 +191,15 @@ export async function terminal(ctx, body) {
 export async function reveal(ctx, body) {
   const { toast } = ctx;
   try {
-    const j = body.desk != null ? await ctx.api("/api/reveal", body) : await (async () => {
+    await (body.desk != null ? ctx.api("/api/reveal", body) : (async () => {
       const r = await fetch("/api/reveal", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || `${r.status}`);
-      return j;
-    })();
-    toast("Opened", j.dir || "the folder");
-  } catch (e) { toast("Could not open the folder", e.message || String(e)); }
+    })());
+    // The file manager opening is the answer; only a refusal is said.
+  } catch (e) { toast("Could not open the folder", { sub: e }); }
 }
 
 /** A document the page holds, wherever it is: on screen, waiting, or in a
@@ -203,20 +213,12 @@ function docById(ctx, id) {
   return null;
 }
 
-/** Pin or unpin any document, as `p` does the one on screen. */
-async function pin(ctx, id) {
-  const { state, toast } = ctx;
-  if (state.doc && state.doc.id === id) return ctx.togglePin();
-  const d = docById(ctx, id) || await fetch(`/api/docs/${id}`).then(r => r.json()).catch(() => null);
-  if (!d) return;
-  const pinned = !d.pinned;
-  try {
-    const r = await fetch(`/api/docs/${id}/pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned }) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    d.pinned = pinned; state.cache.delete(id);
-    await ctx.refreshTree(d.project_id);
-    toast(pinned ? "Pinned" : "Unpinned", pinned ? "Kept by prune" : "Prune may remove it", null, null, { face: pinned ? "glad" : "plain" });
-  } catch (e) { toast("Could not pin", String(e)); }
+/** Pin or unpin any document, as `p` does the one on screen: app.js's
+ *  `pin`, with where the item stood, since the menu has gone by the answer. */
+async function pin(ctx, id, at) {
+  const { state } = ctx;
+  const d = (state.doc?.id === id && state.doc) || docById(ctx, id) || await fetch(`/api/docs/${id}`).then(r => r.json()).then(j => j.doc).catch(() => null);
+  if (d) ctx.pin(d, at);
 }
 
 /** Off the inbox, as the row's ✕ does: through that ✕ when the row has one,
@@ -226,7 +228,7 @@ function remove(ctx, id, el) {
   if (x) x.click(); else ctx.deleteDoc(docById(ctx, id) || { id, title: ctx.knownDocs.get(id)?.title || "Document" });
 }
 
-function copy(ctx, text) { navigator.clipboard?.writeText(text); ctx.toast("Copied", text); }
+
 
 /** A panel on a desk, started, and the desk shown: the desk's own +. */
 async function newPanel(ctx, id) {
@@ -235,17 +237,23 @@ async function newPanel(ctx, id) {
     await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     await ctx.load();
     ctx.show(id, true);
-  } catch (e) { ctx.toast("Could not open a panel", String(e.message || e)); }
+  } catch (e) { ctx.toast("Could not open a panel", { sub: e }); }
 }
 
-/** Close a desk and its panels; the asking twice is the caller's. */
+/** Close a desk and its panels, with Undo; the asking twice is the caller's. */
 async function dropDesk(ctx, id) {
   const { state } = ctx;
+  const name = state.desks?.desks.find(d => d.id === id)?.name || "the desk";
   try { await ctx.api(`/api/desks/${id}/delete`, {}); }
-  catch (e) { ctx.toast(`Could not close the desk: ${e.message}`); return; }
+  catch (e) { ctx.toast("Could not close the desk", { sub: e }); return; }
   ctx.forget(id);
   await ctx.load();
   if (state.view === "desk" && state.deskId === id) ctx.show(null, true);
+  // Closed, not deleted: its notes wait on it until prune.
+  ctx.toast(`Closed ${name}`, { sub: "Its notes are kept", action: { label: "Undo", run: async () => {
+    try { await ctx.api(`/api/desks/${id}/reopen`, {}); } catch (e) { ctx.toast("Could not reopen the desk", { sub: e }); return; }
+    await ctx.load(); ctx.show(id, true);
+  } } });
 }
 
 /** What a right-click can be asked about, one list per kind of thing, and
@@ -264,9 +272,14 @@ async function dropDesk(ctx, id) {
  *  one of them is on the page. */
 const RULE = "rule";
 function entries(ctx, el) {
-  const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: () => copy(ctx, text) });
+  const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const term = body => capability && { label: "Open terminal here", run: () => terminal(ctx, body) };
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
+  // snyvi's own mark: the one setting that is about snyvi itself.
+  if (el.matches(".brand-mark")) return { head: "snyvi", items: [
+    { label: "Check for updates", run: at => ctx.checkUpdates(at) },
+    { label: document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot", run: () => ctx.toggleQuiet() },
+  ] };
   if (el.matches(".b-root > summary, .b-dir > details > summary")) {
     const f = ctx.folderOf(el);
     if (!f) return null;
@@ -274,7 +287,7 @@ function entries(ctx, el) {
     const root = el.matches(".b-root > summary");
     return { head: f.abs.split("/").pop() || f.abs, items: [
       capability && { label: "New desk here", run: () => make(ctx, f) },
-      ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, run: () => ctx.show(d.id, true) })) : []),
+      ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })) : []),
       capability && RULE,
       term({ root: f.root, path: f.path }), files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
       root && RULE, root && { label: "Close folder", danger: true, run: () => ctx.closeRoot(f.root) },
@@ -283,7 +296,7 @@ function entries(ctx, el) {
   if (el.matches("a[data-browse]")) {
     const root = el.dataset.browse, path = el.dataset.path || "", r = ctx.state.browse.find(x => x.id === root), abs = r ? r.path + (path ? "/" + path : "") : "";
     return { head: path.split("/").pop() || abs, items: [
-      { label: "Open", run: () => ctx.browse(root, path, true) }, RULE,
+      { label: "Open", moves: 1, run: () => ctx.browse(root, path, true) }, RULE,
       term({ root, path }), files({ root, path }), abs && copyIt(abs, "Copy path"),
     ] };
   }
@@ -293,21 +306,20 @@ function entries(ctx, el) {
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
-      ...here.map(d => ({ label: `Show desk ${d.name}`, run: () => ctx.show(d.id, true) })),
-      capability && p.root && RULE,
+      ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
+      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
       term({ project: pid }), files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
-      { label: "Rename…", key: "F2", run: () => rename(ctx, el, "project", pid) },
-      { label: "Remove from sidebar", danger: true, run: () => ctx.putAway(pid) },
+      { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
     ] };
   }
   if (el.matches("a[data-id]")) {
     const id = el.dataset.id, d = docById(ctx, id), path = d && d.source_path;
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
-      { label: "Open", run: () => ctx.open(id) },
-      { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: () => pin(ctx, id) }, RULE,
+      { label: "Open", moves: 1, run: () => ctx.open(id) },
+      { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
       term({ doc: id }), files({ doc: id }), RULE,
-      { label: "Remove from inbox", key: "Del", danger: true, run: () => remove(ctx, id, el) },
+      { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }
   // A desk's row in the sidebar, and the ⋯ at the end of the desk's own
@@ -319,12 +331,12 @@ function entries(ctx, el) {
     if (!d || !capability) return null;
     return { head: d.name, items: [
       !here && { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? "⌃⌥N" : "", run: () => newPanel(ctx, id) },
+      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
-      dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => dk.zoomOn() }, RULE,
+      dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
+      { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) }, RULE,
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
-      { label: "Rename…", key: here ? "" : "F2", run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      { label: "Close desk", danger: true, sure: true, run: () => dropDesk(ctx, id) },
+      { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }
   // `+ New desk`, wherever it is -- the Desks head, the empty Desks row, the
@@ -334,10 +346,10 @@ function entries(ctx, el) {
     if (!capability) return null;
     const places = ctx.places();
     return { head: "New desk in…", items: [
-      ...places.map(f => ({ label: f.name, run: () => make(ctx, f) })),
+      ...places.map(f => ({ label: f.name, moves: 1, run: () => make(ctx, f) })),
       places.length && RULE,
       { label: "Another folder…", run: () => pick(ctx, true) },
-      { label: "A shell in your home folder", run: () => make(ctx, null) },
+      { label: "A shell in your home folder", moves: 1, run: () => make(ctx, null) },
     ] };
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;
@@ -353,8 +365,11 @@ export function open(ctx, el, x, y, byKey = false) {
   if (!items.some(e => e !== RULE)) return false;
   if (!menu) install(ctx);
   shown = items;
-  opener = byKey ? document.activeElement : null;
-  menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? "<hr>"
+  // Where the focus goes back to when the menu goes: what had it, for a
+  // key; for a pointer, the row that was right-clicked (or the nearest
+  // thing in it that takes focus), so a keyboard picks up where it was.
+  opener = byKey ? document.activeElement : el.closest("a[href], button, summary, [tabindex]") || el;
+  menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? `<hr role="separator">`
     : `<button type="button" role="menuitem" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.key ? `<kbd>${ctx.esc(e.key)}</kbd>` : ""}</button>`).join("");
   menu.hidden = false;
   // Below the point when it fits, above it when it does not, and scrolled
@@ -383,25 +398,43 @@ const close = (back = false) => {
 /** The menu's look, with the menu: a page that never right-clicks never
  *  pays for it (bench/bytes.mjs). Theme tokens only, so every theme has it. */
 const CSS = `
-#ctx { position: fixed; z-index: 40; min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: 13px; transform-origin: 0 0; animation: ctx-in 80ms ease-out; }
+/* The folded sidebar's popover: it only ever opens through pop() below. */
+#pop { position: fixed; left: 50px; top: 8px; z-index: var(--z-pop); width: var(--side-w); max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain;
+  padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
+  animation: sheet-l var(--dur-quick) var(--ease-out); }
+#pop > #note { margin: 6px 0 0; }
+#pop > :first-child .s-head { margin-top: 4px; }
+@media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
+#ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
 @keyframes ctx-in { from { opacity: 0; transform: scale(.97); } }
 @media (prefers-reduced-motion: reduce) { #ctx { animation: none; } }
 /* What the menu acts on, named at its top: a right-click in a busy grid
    says which panel it meant. */
-#ctx .ctx-head { padding: 4px 10px 5px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
-#ctx button { display: flex; align-items: baseline; gap: 16px; width: 100%; text-align: left; padding: 5px 10px; border-radius: 5px; color: var(--fg-2); }
+#ctx .ctx-head { padding: 4px 10px 5px; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
+#ctx button { display: flex; align-items: baseline; gap: 16px; width: 100%; text-align: left; padding: 5px 10px; border-radius: var(--r-sm); color: var(--fg-2); }
 #ctx button > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#ctx button kbd { flex: none; font-family: var(--mono); font-size: 11px; color: var(--fg-3); background: none; border: 0; padding: 0; }
-#ctx button:hover, #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
+#ctx button kbd { flex: none; min-width: 0; color: var(--fg-3); background: none; border: 0; padding: 0; }
+#ctx button:hover { background: var(--rule); }
+#ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
 #ctx button.danger { color: var(--danger); }
 #ctx button.danger:hover, #ctx button.danger:focus, #ctx button[data-armed] { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 #ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
 `;
 
-function install(ctx) {
+/** The look goes in with whichever comes first, a menu or a popover: the
+ *  rail's popover is styled here too, and a reader who folds the sidebar
+ *  may never have right-clicked. */
+let styled = false;
+function sheet() {
+  if (styled) return;
+  styled = true;
   const st = document.createElement("style");
   st.textContent = CSS;
   document.head.append(st);
+}
+
+function install(ctx) {
+  sheet();
   menu = document.createElement("div");
   menu.id = "ctx"; menu.hidden = true; menu.setAttribute("role", "menu");
   document.body.append(menu);
@@ -410,15 +443,18 @@ function install(ctx) {
     if (!it) return;
     // Ending a process asks twice, in its own place: the entry says what the
     // next click does, and goes back after three seconds.
-    if (it.sure && !b.dataset.armed) {
-      b.dataset.armed = "1";
-      b.firstElementChild.textContent = `${it.label}? · click again`;
-      setTimeout(() => { if (b.isConnected && b.dataset.armed) { delete b.dataset.armed; b.firstElementChild.textContent = it.label; } }, 3000);
-      return;
-    }
-    close();
-    Promise.resolve().then(() => it.run()).catch(err => ctx.toast("Could not do that", String(err)));
+    if (it.sure && !ctx.armed(b, { label: `${it.label}?`, sub: it.sure, text: b.firstElementChild })) return;
+    // Where the item stood, taken before the menu goes: an answer that has
+    // no control left to stand beside stands there (`pin`).
+    const at = b.getBoundingClientRect();
+    // The focus goes back where the menu came from, unless the entry moves
+    // it itself -- renaming, opening, going to a desk (`moves`).
+    close(!it.moves);
+    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").toLowerCase()}`, { sub: err, at }));
   });
+  // The item under the pointer is the one with the focus: one row lit, and
+  // Enter acts on it.
+  menu.addEventListener("pointermove", e => { const b = e.target.closest("button"); if (b && b !== document.activeElement) b.focus({ preventScroll: true }); });
   menu.addEventListener("keydown", e => {
     const bs = [...menu.querySelectorAll("button")], at = bs.indexOf(document.activeElement);
     const go = i => bs[(i + bs.length) % bs.length].focus();
@@ -438,6 +474,94 @@ function install(ctx) {
   document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target)) close(); }, true);
   addEventListener("blur", () => close());
   addEventListener("resize", () => close());
+}
+
+/* ---------- the rail's popovers ----------
+ * With the sidebar folded to its rail, each icon opens its section in #pop,
+ * beside the rail: the section's own element, moved in, and moved back to
+ * its place when the popover closes. Every renderer writes by id, so what
+ * arrives while it is open lands in the popover; #pop is inside #trees, so
+ * the clicks the tree delegates still reach it. One at a time; Esc, a click
+ * outside it, a link followed in it and `\` close it. app.js's until 1.7.2:
+ * it is fetched on the first press of a rail icon, and a reader whose
+ * sidebar is never folded never pays for it. */
+const $ = s => document.querySelector(s), root = document.documentElement;
+const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
+const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+let popBtn = null, popWired = false;
+export function pop(ctx, sec, btn) {
+  sheet();
+  const popEl = $("#pop");
+  if (!popWired) wirePop(popEl);
+  if (root.dataset.pop === sec) { unpop(); return; }
+  unpop(false);
+  root.dataset.pop = sec; popBtn = btn;
+  btn.classList.add("on"); btn.setAttribute("aria-expanded", "true");
+  popEl.setAttribute("aria-label", btn.getAttribute("aria-label"));
+  popEl.append(...POPS[sec].map(id => $(id)));
+  popEl.hidden = false;
+  // Drawn while folded, the titles were cut to a column that was not there.
+  if (sec === "tree") ctx.drawTree();
+  // Level with the icon, and moved only as far as it takes to stay on the
+  // window, the way a toast answers a control in the rail.
+  const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
+  popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
+  (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
+}
+/** Put the section back where it lives. `back` gives the focus to its icon. */
+export function unpop(back = true) {
+  const sec = root.dataset.pop, popEl = $("#pop"), treesEl = $("#trees");
+  if (!sec) return false;
+  delete root.dataset.pop;
+  popEl.hidden = true;
+  // Each back before the first section that follows it in #trees' order,
+  // whatever else is still at home: the end is not its place.
+  for (const id of POPS[sec]) {
+    if (id === "#note") { $("#side").insertBefore($(id), $(".side-foot")); continue; }
+    const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
+    treesEl.insertBefore($(id), after || popEl);
+  }
+  const b = popBtn; popBtn = null;
+  b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
+  if (back && b?.isConnected) b.focus({ preventScroll: true });
+  return true;
+}
+function wirePop(popEl) {
+  popWired = true;
+  const railNav = $("#rail-nav");
+  // The menu's keys: the arrows walk its rows, Home and End go to its ends,
+  // a letter to the next row that starts with it. Tabbing out of it closes it.
+  popEl.addEventListener("keydown", e => {
+    if (e.target.closest("input") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const bs = [...popEl.querySelectorAll("a[href], button, summary")].filter(x => x.offsetParent), at = bs.indexOf(document.activeElement), n = bs.length;
+    const go = i => bs[(i + n) % n]?.focus();
+    if (e.key === "ArrowDown") go(at + 1);
+    else if (e.key === "ArrowUp") go(at - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(-1);
+    // Letters and digits find a row; every other key -- \, Escape, ? --
+    // is the page's, as it is outside the popover.
+    else if (/^[a-z0-9]$/i.test(e.key)) {
+      const k = e.key.toLowerCase();
+      for (let j = 1; j <= n; j++) { const b = bs[(at + j) % n]; if (b.textContent.trim().toLowerCase().startsWith(k)) { b.focus(); break; } }
+    } else return;
+    e.preventDefault(); e.stopPropagation();
+  });
+  popEl.addEventListener("focusout", e => { const t = e.relatedTarget; if (t && !popEl.contains(t) && !t.closest("#ctx")) unpop(false); });
+  // The aside's section empties when its last line goes, and its icon with
+  // it: the popover goes too, and a keyboard that was in it lands on the
+  // rail rather than on nothing.
+  new MutationObserver(() => {
+    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
+    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
+    unpop(false);
+    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
+  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
+  // Following a link in it is being done with it; opening a row's fold is not.
+  popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => unpop()); });
+  // The context menu is on <body>, but a row's menu is the popover's own: an
+  // action there (Rename, Remove with its Undo) happens in the row, in here.
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) unpop(false); }, true);
 }
 
 /** Shut the menu from outside, which is what Escape does everywhere else on

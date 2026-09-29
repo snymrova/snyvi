@@ -692,6 +692,16 @@ fn announce_start() {
 
 pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
     ensure_daemon()?;
+    send_within(paths, payload, Duration::from_secs(30))
+}
+
+/// A send from a hook that must not start a daemon or wait long: a plan
+/// (`crate::hook::send_plan`). Nothing is sent when no daemon is up.
+pub fn send_quick(paths: &Paths, payload: &Payload, within: Duration) -> Result<Value> {
+    send_within(paths, payload, within)
+}
+
+fn send_within(paths: &Paths, payload: &Payload, within: Duration) -> Result<Value> {
     // Inside a snyvi pane, what is sent says so. Every transport -- `send`,
     // `watch`, the hook, the MCP server -- comes through here, and each one
     // started in a pane inherited the variable from it.
@@ -711,7 +721,7 @@ pub fn send(paths: &Paths, payload: &Payload) -> Result<Value> {
     let mut resp = ureq::post(&format!("{}/api/docs", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
-        .timeout_global(Some(Duration::from_secs(30)))
+        .timeout_global(Some(within))
         .http_status_as_error(false)
         .build()
         .send_json(payload)
@@ -764,7 +774,13 @@ pub fn agent_context(paths: &Paths, pane: &str, seen: &crate::statusline::Seen) 
         .send_json(serde_json::json!({
             "session": seen.session,
             "model": seen.model,
-            "ctx": { "pct": seen.pct, "size": seen.size, "input": seen.input },
+            "ctx": {
+                "pct": seen.pct,
+                "size": seen.size,
+                "input": seen.input,
+                "used": seen.used,
+            },
+            "limits": { "five_hour": seen.five_hour, "seven_day": seen.seven_day },
         }));
 }
 
@@ -804,11 +820,12 @@ pub fn tick_desk_note(
     by: &str,
     commit: &str,
     about: &str,
+    evidence: &str,
 ) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/notes/{note}/tick"),
-        serde_json::json!({ "by": by, "commit": commit, "about": about }),
+        serde_json::json!({ "by": by, "commit": commit, "about": about, "evidence": evidence }),
     )?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
@@ -831,6 +848,63 @@ pub fn name_panel(paths: &Paths, pane: &str, name: &str) -> Result<()> {
     )?;
     match resp.status().as_u16() {
         200 => Ok(()),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// The desk brief for a Claude starting in this pane, and the title its
+/// session takes (`crate::brief`): (context, title), either empty when there
+/// is nothing to say. Asked from the SessionStart hook, which Claude's first
+/// reply waits on, so on `agent_state`'s terms: never starts a daemon, half a
+/// second at most, and nothing at all on any failure.
+pub fn brief(paths: &Paths, pane: &str) -> Option<(String, String)> {
+    let token = config::read_token(paths)?;
+    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/brief", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(500)))
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .ok()?;
+    if resp.status().as_u16() != 200 {
+        return None;
+    }
+    let v: Value = resp.body_mut().read_json().ok()?;
+    let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    Some((s("context"), s("title")))
+}
+
+/// Say where the work on this pane's desk was left: `leave_off`.
+pub fn leave_off(paths: &Paths, pane: &str, text: &str, about: &str, by: &str) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/leftoff"),
+        serde_json::json!({ "text": text, "about": about, "by": by }),
+    )?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        400 => bail!("{}", said(&mut resp)),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// Suggest a line for this pane's desk's list: `suggest_desk_note`.
+pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/suggest"),
+        serde_json::json!({ "text": text, "by": by }),
+    )?;
+    match resp.status().as_u16() {
+        201 => Ok(resp.body_mut().read_json()?),
+        400 | 409 => bail!("{}", said(&mut resp)),
         404 => {
             bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
         }

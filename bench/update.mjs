@@ -281,8 +281,9 @@ async function main() {
     row("snyvi update off means no check, not only no apply", off.update.auto === false && served.manifest === before && off.update.ready == null && off.pid === asked.pid,
       `auto ${off.update.auto}; manifest reads ${served.manifest - before} while off; ${out.trim()}`);
 
-    // With a page in front, the update is not applied on its own: the pill
-    // says it, and a click restarts onto it. The page opens before the
+    // With a page in front, the update is not applied on its own: the card
+    // in the sidebar says it (and #upd, its line for a screen reader), and
+    // its Now restarts onto it. The page opens before the
     // checks resume, so the hotfix above finds someone here.
     let chrome = null;
     try { chrome = NO_BROWSER ? null : chromePath(); } catch { chrome = null; }
@@ -296,28 +297,29 @@ async function main() {
       await loaded;
       await cli("update", "on").catch(() => {});
       const pill = await until(async () => {
-        const t = await evaluate(browser.cdp, sessionId, `(() => { const e = document.getElementById("upd"); return e && !e.hidden ? e.textContent : ""; })()`);
-        return t && /Restart to update/.test(t) ? t : null;
+        const t = await evaluate(browser.cdp, sessionId, `(() => { const e = document.getElementById("upd"); return e && !e.hidden && document.querySelector('#upd-card [data-uc="now"]') ? e.textContent : ""; })()`);
+        return t && /is ready/.test(t) ? t : null;
       }, 60);
       const h7 = await health();
-      row("with a page in front the pill appears and nothing is applied", !!pill && h7.pid === asked.pid && pill.includes(v(7)),
-        pill ? `pill says ${JSON.stringify(pill)}; pid unchanged ${h7.pid === asked.pid}` : `no pill within 15 s (ready ${h7.update.ready}, show ${h7.update.show})`);
-      await evaluate(browser.cdp, sessionId, `document.getElementById("upd").click()`);
+      row("with a page in front the card appears and nothing is applied", !!pill && h7.pid === asked.pid && pill.includes(v(7)),
+        pill ? `card says ${JSON.stringify(pill)}; pid unchanged ${h7.pid === asked.pid}` : `no card with Now within 15 s (ready ${h7.update.ready}, show ${h7.update.show})`);
+      await evaluate(browser.cdp, sessionId, `document.querySelector('#upd-card [data-uc="now"]')?.click()`);
       const clicked = await until(async () => { const h = await health(); return h && h.pid !== asked.pid ? h : null; }, 80);
-      row("a click on the pill restarts onto the staged version", !!clicked && onDisk() === sha256(stamped(v(7))),
+      row("its Now restarts onto the staged version", !!clicked && onDisk() === sha256(stamped(v(7))),
         clicked ? `pid ${asked.pid} → ${clicked.pid}; on disk is ${onDisk() === sha256(stamped(v(7))) ? "the release" : "not the release"}` : "no new process in 20 s");
-      // The page reloads onto the new build, which says what happened once.
+      // The page reloads onto the new build, which says what happened once,
+      // in a toast.
       // Every release here is this one binary with bytes on the end, so the
       // number it names is the one the new daemon reports, not v(7).
       const landed = await until(async () => {
-        const t = await evaluate(browser.cdp, sessionId, `(() => { const e = document.getElementById("upd"); return e && !e.hidden ? e.textContent : ""; })()`).catch(() => "");
-        return t && /^Updated to/.test(t) ? t : null;
+        const t = await evaluate(browser.cdp, sessionId, `[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).find(t => /Updated to/.test(t)) || ""`).catch(() => "");
+        return t || null;
       }, 80);
       row("the page back on the new build says it was updated", !!landed && !!clicked && landed.includes(clicked.version),
-        landed ? `pill says ${JSON.stringify(landed)}` : "no \"Updated to\" pill in 20 s");
+        landed ? `toast says ${JSON.stringify(landed)}` : "no \"Updated to\" toast in 20 s");
     } else {
       await cli("update", "on").catch(() => {});
-      row("with a page in front the pill appears", true, "skipped: no Chromium here (--no-browser, or none installed)");
+      row("with a page in front the card appears", true, "skipped: no Chromium here (--no-browser, or none installed)");
     }
 
     // A window from before 1.7 says `window=1` and no number. After an

@@ -81,6 +81,18 @@ const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
 /// The aside card at the sidebar's foot, fetched when there is an aside to
 /// show: a reader no agent has spoken to never pays for it.
 const NOTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/note.js"));
+/// The tip every control names itself with (docs/DESIGN.md §8.1), fetched on
+/// the first pointer resting on one, or the first Tab.
+const TIP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/tip.js"));
+/// Home, the page the mark opens: fetched when it is first shown, so a
+/// reader who goes straight to a document never pays for it.
+const HOME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/home.js"));
+/// The toast, fetched the first time snyvi has something to say.
+const TOAST_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/toast.js"));
+/// A comparison and a split diff, fetched the first time either is asked for.
+const DIFF_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/diff.js"));
+/// A folder's page and a file read from disk, fetched when one is opened.
+const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 /// Every theme but Paper and Ink, fetched once the page is idle: first paint
 /// carries only the two defaults, and boot.js paints a returning reader's
 /// own theme from a copy it kept, so the window opens as fast as it can.
@@ -205,6 +217,11 @@ impl Ui {
             ("palette.js", PALETTE_JS),
             ("look.js", LOOK_JS),
             ("note.js", NOTE_JS),
+            ("tip.js", TIP_JS),
+            ("home.js", HOME_JS),
+            ("toast.js", TOAST_JS),
+            ("diff.js", DIFF_JS),
+            ("browse.js", BROWSE_JS),
         ] {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -252,6 +269,11 @@ pub struct App {
     /// the way out costs the next page a socket. Reported so a probe can say
     /// that it does.
     pub streams: AtomicUsize,
+    /// Of those, the ones a page holds -- a tab or the window -- and not an
+    /// agent's `snyvi mcp`: what the watchers ask before they look at files
+    /// for a page to redraw. Counting every stream kept them awake for as
+    /// long as any Claude session was open.
+    pub pages: AtomicUsize,
     /// Which agents are here now, and how many of each: the MCP server holds
     /// an event stream under its client's name from `initialize` until its
     /// process ends, so this is exactly as live as the agent is, the way the
@@ -298,6 +320,9 @@ pub struct App {
     /// The `update` block last sent, so the watcher's tick sends it again
     /// only when something in it moved. See `emit_update_if_changed`.
     update_sent: std::sync::Mutex<String>,
+    /// The account's rate-limit windows, as the last status line in a panel
+    /// said them: account-wide, so the latest is the one. Home's quota.
+    pub quota: std::sync::Mutex<Option<serde_json::Value>>,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -505,15 +530,40 @@ fn drop_restart_marker(paths: &Paths) {
 /// The pending restart as the pill and About see it: `restart_json`
 /// without its clock, so the block only changes when what it says does.
 fn pending_json(app: &App) -> serde_json::Value {
-    match *app.restart.lock().unwrap() {
-        Some(p) => json!({
-            "apply": p.apply,
-            "back": p.back,
-            "now": p.now,
-            "waiting_on": if p.now { vec![] } else { app.panes.busy() },
-        }),
+    let pending = *app.restart.lock().unwrap();
+    match pending {
+        Some(p) => {
+            let busy = if p.now { vec![] } else { app.panes.busy() };
+            json!({
+                "apply": p.apply,
+                "back": p.back,
+                "now": p.now,
+                "waiting": waiting_named(app, &busy),
+                "waiting_on": busy,
+            })
+        }
         None => serde_json::Value::Null,
     }
+}
+
+/// Who a restart is waiting for, by the names the reader knows them by:
+/// "ledger · panel 1 · Claude working", and since when. `waiting_on` stays
+/// the bare ids, which the CLI and the benches read.
+fn waiting_named(app: &App, ids: &[String]) -> Vec<serde_json::Value> {
+    ids.iter()
+        .map(|id| {
+            let st = app.panes.status(id);
+            let placed = app.store.pane(id).ok().flatten();
+            json!({
+                "pane": id,
+                "desk": placed.as_ref().map(|p| p.desk_name.clone()),
+                "desk_id": placed.as_ref().map(|p| p.desk_id),
+                "slot": placed.as_ref().map(|p| p.pane.slot),
+                "agent": st.agent,
+                "since": st.agent_since.or(st.since),
+            })
+        })
+        .collect()
 }
 
 /// The pending restart, as health and `snyvi restart` see it.
@@ -613,6 +663,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         h.update(PALETTE_JS.as_bytes());
         h.update(LOOK_JS.as_bytes());
         h.update(NOTE_JS.as_bytes());
+        h.update(TIP_JS.as_bytes());
+        h.update(HOME_JS.as_bytes());
+        h.update(TOAST_JS.as_bytes());
+        h.update(DIFF_JS.as_bytes());
+        h.update(BROWSE_JS.as_bytes());
         h.update(VERSION.as_bytes());
         h.update(MERMAID_JS_GZ);
         h.finalize().to_hex()[..8].to_string()
@@ -640,6 +695,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         last_focus: std::sync::Mutex::new(Instant::now() - std::time::Duration::from_secs(60)),
         windows: AtomicUsize::new(0),
         streams: AtomicUsize::new(0),
+        pages: AtomicUsize::new(0),
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
@@ -653,6 +709,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
+        quota: Default::default(),
     });
     if let Some(u) = &app.update {
         if u.channel == crate::update::Channel::Dev {
@@ -681,6 +738,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
 
     let router = Router::new()
         .route("/", get(shell_home))
+        .route("/inbox", get(shell_inbox))
+        .route("/api/home", get(home))
         .route("/connect", get(shell_connect))
         .route("/start", get(shell_start))
         .route("/welcome", get(shell_welcome))
@@ -709,8 +768,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/docs/{id}/read", post(mark_read))
         .route("/api/queue", get(queue))
         .route("/api/queue/clear", post(clear_queue))
+        .route("/api/queue/unread", post(unread))
         .route("/api/docs/{id}/delete", post(delete_doc))
         .route("/api/docs/{id}/undelete", post(undelete_doc))
+        .route("/api/removed", get(removed_list))
         .route("/api/docs/{id}/history", get(history))
         .route("/api/projects/{id}/rename", post(rename_project))
         .route("/api/workflows/{id}/rename", post(rename_workflow))
@@ -727,12 +788,14 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/restart", post(restart).delete(cancel_restart))
         .route("/api/update/check", post(update_check))
         .route("/api/update/auto", post(update_auto))
+        .route("/api/update/later", post(update_later))
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/terminal", post(terminal))
         .route("/api/reveal", post(reveal))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/pick", post(browse_pick))
         .route("/api/browse/{id}/close", post(browse_close))
+        .route("/api/browse/{id}/reopen", post(browse_reopen))
         .route("/api/browse/{id}/tree", get(browse_tree))
         .route("/api/browse/{id}/file", get(browse_file))
         .route("/api/browse/{id}/raw", get(browse_raw))
@@ -750,6 +813,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/desks/{id}/layout", post(desk_layout))
         .route("/api/desks/{id}/move", post(move_pane))
         .route("/api/desks/{id}/delete", post(delete_desk))
+        .route("/api/desks/{id}/reopen", post(reopen_desk))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/desks/{id}/docs", get(desk_docs))
         .route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))
@@ -762,6 +826,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
             "/api/desks/{id}/notes/{note}/restore",
             post(restore_desk_note),
         )
+        .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
+        .route("/api/desks/{id}/leftoff", post(desk_left_off))
+        .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/restore", post(restore_pane))
         .route("/api/panes/{id}/rename", post(rename_pane))
@@ -771,6 +838,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/panes/{id}/notes", get(pane_notes))
         .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
         .route("/api/panes/{id}/name", post(pane_name))
+        .route("/api/panes/{id}/brief", get(pane_brief))
+        .route("/api/panes/{id}/leftoff", post(pane_left_off))
+        .route("/api/panes/{id}/suggest", post(pane_suggest_note))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -788,6 +858,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/assets/palette.js", get(asset_palette))
         .route("/assets/look.js", get(asset_look))
         .route("/assets/note.js", get(asset_note))
+        .route("/assets/tip.js", get(asset_tip))
+        .route("/assets/home.js", get(asset_home))
+        .route("/assets/toast.js", get(asset_toast))
+        .route("/assets/diff.js", get(asset_diff))
+        .route("/assets/browse.js", get(asset_browse))
         .with_state(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -1288,7 +1363,22 @@ fn doc_html(doc: &Doc, body: &str) -> String {
     )
 }
 
+/// `/`: Home, the page the mark opens -- what needs the reader, the desks,
+/// what is waiting, the update. An empty library is still Welcome, which the
+/// Inbox's view draws, so it keeps that view.
 async fn shell_home(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let empty = app.store.inbox(1).map(|i| i.is_empty()).unwrap_or(true);
+    if empty {
+        return shell_inbox(State(app)).await;
+    }
+    let boot = json!({ "view": "home", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "snyvi")
+}
+
+/// The Inbox, at `/inbox` since `/` became Home: every document, newest
+/// first, with what is waiting at the top.
+async fn shell_inbox(State(app): S) -> Response {
     let tree = app.store.projects().unwrap_or_default();
     let inbox = app.store.inbox(50).unwrap_or_default();
     // A single project is shown expanded, so its rows are wanted on this page
@@ -1343,13 +1433,80 @@ async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response {
     // The project this document is in is the one the sidebar opens on, so it
     // arrives with the page rather than a moment after it.
     let sub = subtree(&app, doc.project_id, Some(doc.workflow_id));
-    let boot = json!({ "view": "doc", "tree": tree, "sub": sub, "doc": doc, "previous": previous, "folder": folder, "browse": app.browse.list(), "version": VERSION });
+    // A page or a PDF is framed on a cold load as on an open from the
+    // sidebar (`doc_json`): the page needs to know it is one.
+    let preview = render::preview_kind(&doc_ext(&doc));
+    let boot = json!({ "view": "doc", "tree": tree, "sub": sub, "doc": doc, "previous": previous, "folder": folder, "browse": app.browse.list(), "version": VERSION,
+        "preview": preview, "preview_url": preview.map(|_| format!("/api/docs/{id}/blob")) });
     shell(&app, boot, &doc_html(&doc, &body), &title)
 }
 
 /// A desk, by its address. The page is the same page in a window and a tab --
 /// what differs is that a tab holds no capability, and the desk view says so
 /// in one sentence rather than drawing a grid that could never run anything.
+/// Home in one call: every desk with what its card shows, what is waiting,
+/// what came lately, the update, the agents and the account's quota. The desk
+/// half is behind the desk gate, as `/api/desks` is: a tab gets the rest, and
+/// a line saying desks are the window's.
+async fn home(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let desks = if refuse_desk(&app, &headers, &q).is_none() {
+        let list = app.store.desks().unwrap_or_default();
+        let cards: Vec<serde_json::Value> = list
+            .iter()
+            .map(|d| {
+                let notes = app.store.desk_notes(d.id).unwrap_or_default();
+                let open = notes.iter().filter(|n| !n.done && n.suggested_by.is_empty()).count();
+                let suggested = notes.iter().filter(|n| !n.done && !n.suggested_by.is_empty()).count();
+                let done = notes.iter().filter(|n| n.done).count();
+                let next: Vec<&str> = notes
+                    .iter()
+                    .filter(|n| !n.done && n.suggested_by.is_empty())
+                    .take(3)
+                    .map(|n| n.text.as_str())
+                    .collect();
+                let last = app.store.desk_docs(d.id, 1).unwrap_or_default().into_iter().next();
+                let panes: Vec<serde_json::Value> = d
+                    .panes
+                    .iter()
+                    .map(|p| {
+                        let st = app.panes.status(&p.id);
+                        json!({
+                            "id": p.id, "slot": p.slot, "name": p.name,
+                            "running": st.running, "agent": st.agent, "agent_since": st.agent_since,
+                            "blocked": st.blocked, "blocked_since": st.blocked_since,
+                            "title": st.title, "model": st.model,
+                            "ctx_pct": st.ctx_pct, "ctx_used": st.ctx_used, "ctx_size": st.ctx_size,
+                        })
+                    })
+                    .collect();
+                json!({
+                    "id": d.id, "name": d.name, "root": d.root, "left_off": d.left_off,
+                    "panes": panes, "open": open, "done": done, "suggested": suggested, "next": next,
+                    "last_doc": last.map(|x| json!({ "id": x.id, "title": x.title, "at": x.received_at })),
+                })
+            })
+            .collect();
+        json!(cards)
+    } else {
+        serde_json::Value::Null
+    };
+    Json(json!({
+        "desks": desks,
+        "queue": app.store.queue(5).unwrap_or_default(),
+        "waiting": waiting(&app),
+        "recent": app.store.inbox(8).unwrap_or_default(),
+        "update": update_json(&app),
+        "agents": app.online(),
+        "quota": *app.quota.lock().unwrap_or_else(|e| e.into_inner()),
+        "version": VERSION,
+    }))
+    .into_response()
+}
+
 /// So nothing about a desk is in this answer: the page asks for it with the
 /// capability, or cannot.
 async fn shell_desk(State(app): S, Path(id): Path<i64>) -> Response {
@@ -1512,6 +1669,51 @@ async fn asset_note(State(app): S) -> Response {
         "application/javascript; charset=utf-8",
         "note.js",
         NOTE_JS,
+    )
+}
+/// The tip, on the same terms: asked for when a control is first rested on.
+async fn asset_tip(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "tip.js",
+        TIP_JS,
+    )
+}
+/// Home, on the same terms: asked for when Home is first shown.
+async fn asset_home(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "home.js",
+        HOME_JS,
+    )
+}
+/// The toast, on the same terms: asked for the first time something is said.
+async fn asset_toast(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "toast.js",
+        TOAST_JS,
+    )
+}
+/// The comparison and the split diff, on the same terms.
+async fn asset_diff(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "diff.js",
+        DIFF_JS,
+    )
+}
+/// A folder's page and a file from disk, on the same terms.
+async fn asset_browse(State(app): S) -> Response {
+    asset(
+        &app,
+        "application/javascript; charset=utf-8",
+        "browse.js",
+        BROWSE_JS,
     )
 }
 /// The other themes, on the same terms: the page asks once it is idle.
@@ -1801,11 +2003,8 @@ async fn doc_json(State(app): S, Path(id): Path<String>) -> Response {
             let previous = app.store.previous(&doc).ok().flatten().map(|p| p.id);
             // A stored page or PDF is framed from its own bytes. Only the one file was
             // snapshotted, so unlike browse mode there are no sibling assets to load.
-            let preview = doc
-                .source_path
-                .as_deref()
-                .map(render::ext_of)
-                .and_then(|e| render::preview_kind(&e));
+            // Sent as `content` with `lang: "html"`, it is a page all the same.
+            let preview = render::preview_kind(&doc_ext(&doc));
             Json(json!({
                 "doc": doc,
                 "html": doc_html(&doc, &body),
@@ -1836,15 +2035,29 @@ async fn doc_raw(State(app): S, Path(id): Path<String>) -> Response {
 /// A stored document's bytes, as they arrived. This is how an image document's
 /// `<img>` gets its picture and a video's player its frames; the content type
 /// comes from the source file's name so the browser knows what it is.
+/// What a stored document is, by extension: its file's, or for one sent as
+/// `content`, the `lang` it was sent with -- which is how an agent's inline
+/// HTML page is a page and not its source.
+fn doc_ext(doc: &crate::store::Doc) -> String {
+    match (doc.source_path.as_deref(), doc.lang.as_deref()) {
+        (Some(p), _) => render::ext_of(p),
+        (None, Some(l)) => l.trim().to_ascii_lowercase(),
+        (None, None) => String::new(),
+    }
+}
+
 async fn doc_blob(State(app): S, Path(id): Path<String>, req: HeaderMap) -> Response {
     let Ok(Some(doc)) = app.store.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let mime = doc
-        .source_path
-        .as_deref()
-        .map(|p| mime_guess::from_path(p).first_or_octet_stream().to_string())
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+    let ext = doc_ext(&doc);
+    let mime = if ext.is_empty() {
+        "application/octet-stream".to_string()
+    } else {
+        mime_guess::from_ext(&ext)
+            .first_or_octet_stream()
+            .to_string()
+    };
     let mut headers = HeaderMap::new();
     if let Ok(v) = HeaderValue::from_str(&mime) {
         headers.insert(header::CONTENT_TYPE, v);
@@ -1854,13 +2067,7 @@ async fn doc_blob(State(app): S, Path(id): Path<String>, req: HeaderMap) -> Resp
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=31536000"),
     );
-    protect(
-        &mut headers,
-        &doc.source_path
-            .as_deref()
-            .map(render::ext_of)
-            .unwrap_or_default(),
-    );
+    protect(&mut headers, &ext);
     serve_file(&app.store.src_path(&id), headers, &req).await
 }
 
@@ -1924,18 +2131,51 @@ async fn history(State(app): S, Path(id): Path<String>) -> Response {
 /// Delete at once, and say nothing first. The page offers Undo for a few
 /// seconds; the document is on disk until `prune` runs either way.
 async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
-    match app.store.delete(&id) {
-        Ok(true) => {
+    match app.store.delete_versions(&id) {
+        Ok(n) if n > 0 => {
             emit(
                 &app,
                 "deleted",
                 json!({ "id": id, "waiting": waiting(&app) }),
             );
-            Json(json!({ "ok": true })).into_response()
+            Json(json!({ "ok": true, "versions": n })).into_response()
         }
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
+}
+
+/// What can still come back after its Undo has gone, newest first until
+/// prune takes it: the page's "Removed · Show" (docs/DESIGN.md §4.4). The
+/// desk rows -- notes off a list, closed panels -- only for a page holding
+/// the desk capability, the gate every desk route has; without it the list
+/// is the documents and the asides, which any page can already see.
+async fn removed_list(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    const ROWS: usize = 100;
+    let desks = refuse_desk(&app, &headers, &q).is_none();
+    let mut items = match app.store.removed(ROWS, desks) {
+        Ok(v) => v,
+        Err(e) => return err(e),
+    };
+    for a in app.asides.list().into_iter().filter(|a| a.dismissed) {
+        items.push(crate::store::Removed {
+            kind: "aside",
+            id: a.id.to_string(),
+            title: a.text,
+            from: a.sender.unwrap_or_default(),
+            desk: None,
+            at: a.at,
+            versions: 1,
+            restore: "/api/notes/restore".into(),
+        });
+    }
+    items.sort_by_key(|a| std::cmp::Reverse(a.at));
+    items.truncate(ROWS);
+    Json(json!({ "items": items })).into_response()
 }
 
 /// The other half of Undo. Gone means pruned, which is the one delete that
@@ -2047,9 +2287,11 @@ async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) 
         p.now
     };
     let waiting_on = if now { vec![] } else { app.panes.busy() };
+    let waiting = waiting_named(&app, &waiting_on);
     app.restart_wake.notify_one();
     emit_update(&app);
-    Json(json!({ "ok": true, "waiting_on": waiting_on, "version": VERSION })).into_response()
+    Json(json!({ "ok": true, "waiting_on": waiting_on, "waiting": waiting, "version": VERSION }))
+        .into_response()
 }
 
 /// Call off a restart that is waiting for quiet: `snyvi restart --cancel`,
@@ -2130,16 +2372,25 @@ async fn update_check(
     emit_update(&app);
     app.restart_wake.notify_one();
     match r {
-        Ok(Ok(c)) => Json(json!({
-            "ok": true,
-            "running": c.running.to_string(),
-            "latest": c.latest.to_string(),
-            "newer": c.newer(),
-            "ready": c.ready,
-            "told": c.told,
-            "update": update_json(&app),
-        }))
-        .into_response(),
+        Ok(Ok(c)) => {
+            // A person asking is a person who wants to hear: a "Later" on
+            // the version found is off.
+            if b.lift {
+                if let Some(u) = &app.update {
+                    let _ = u.snooze(None, crate::store::now());
+                }
+            }
+            Json(json!({
+                "ok": true,
+                "running": c.running.to_string(),
+                "latest": c.latest.to_string(),
+                "newer": c.newer(),
+                "ready": c.ready,
+                "told": c.told,
+                "update": update_json(&app),
+            }))
+            .into_response()
+        }
         Ok(Err(e)) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "error": format!("{e:#}"), "update": update_json(&app) })),
@@ -2176,6 +2427,40 @@ async fn update_auto(State(app): S, headers: HeaderMap, Json(b): Json<UpdateAuto
         Ok(auto) => {
             emit_update(&app);
             Json(json!({ "ok": true, "auto": auto, "update": update_json(&app) })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct LaterBody {
+    /// Until when, in seconds since the epoch: the page says "tomorrow
+    /// morning" in the reader's own time. Absent brings the offer back.
+    #[serde(default)]
+    until: Option<i64>,
+}
+
+/// "Later" on the update card: the offer of this version waits until then,
+/// in every window, since it is the daemon's word the windows draw from.
+async fn update_later(State(app): S, headers: HeaderMap, Json(b): Json<LaterBody>) -> Response {
+    if !capable(&app, &headers) && !authorized(&app, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "missing or invalid token" })),
+        )
+            .into_response();
+    }
+    let Some(u) = &app.update else {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "this daemon does not update itself" })),
+        )
+            .into_response();
+    };
+    match u.snooze(b.until, crate::store::now()) {
+        Ok(()) => {
+            emit_update(&app);
+            Json(json!({ "ok": true, "update": update_json(&app) })).into_response()
         }
         Err(e) => err(e),
     }
@@ -2222,6 +2507,14 @@ struct ResetBody {
 ///
 /// A same-origin POST is accepted beside the token, as `terminal` explains:
 /// the page has no token, and the dialog is the page's.
+/// "1 document", "3 documents": the reset refusals are read by a person.
+fn docs(n: i64) -> String {
+    format!("{n} document{}", if n == 1 { "" } else { "s" })
+}
+fn pinned_docs(n: i64) -> String {
+    format!("{n} pinned document{}", if n == 1 { "" } else { "s" })
+}
+
 async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> Response {
     if !from_this_page(&headers) && !authorized(&app, &headers) {
         return (
@@ -2238,7 +2531,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         return (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": format!("the library has changed: {} document(s) now, not {}; look again", census.documents, b.documents),
+                "error": format!("the library has changed: {} now, not {}", docs(census.documents), b.documents),
                 "census": census,
             })),
         )
@@ -2248,7 +2541,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         return (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": format!("the desks have changed: {} now, not {}; look again", census.desks, b.desks),
+                "error": format!("the desks have changed: {} now, not {}", census.desks, b.desks),
                 "census": census,
             })),
         )
@@ -2258,7 +2551,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
         return (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": format!("{} pinned document(s) would go with it; say so", census.pinned),
+                "error": format!("{} would go with it", pinned_docs(census.pinned)),
                 "census": census,
             })),
         )
@@ -2278,6 +2571,7 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
     for root in app.browse.list() {
         app.browse.close(&root.id);
     }
+    app.browse.forget_closed();
     let _ = std::fs::remove_file(app.paths.config_dir.join("sessions.json"));
     let _ = std::fs::remove_file(app.paths.config_dir.join("folders.json"));
     match config::rotate_token(&app.paths) {
@@ -2413,6 +2707,9 @@ impl StreamMark {
         window_version: Option<String>,
     ) -> StreamMark {
         app.streams.fetch_add(1, Ordering::Relaxed);
+        if agent.is_none() {
+            app.pages.fetch_add(1, Ordering::Relaxed);
+        }
         if window {
             app.windows.fetch_add(1, Ordering::Relaxed);
             // A window older than the update just applied wants: asked to
@@ -2446,6 +2743,9 @@ impl StreamMark {
 impl Drop for StreamMark {
     fn drop(&mut self) {
         self.app.streams.fetch_sub(1, Ordering::Relaxed);
+        if self.agent.is_none() {
+            self.app.pages.fetch_sub(1, Ordering::Relaxed);
+        }
         if self.window {
             let left = self
                 .app
@@ -2660,7 +2960,26 @@ async fn clear_queue(State(app): S) -> Response {
             if !ids.is_empty() {
                 emit(&app, "read", json!({ "ids": ids, "waiting": 0 }));
             }
-            Json(json!({ "ok": true, "n": ids.len() })).into_response()
+            Json(json!({ "ok": true, "n": ids.len(), "ids": ids })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct IdsBody {
+    ids: Vec<String>,
+}
+
+/// Mark all read, taken back: the ids `clear_queue` answered with wait again.
+/// Every tab hears it as a restore, which refetches the queue and the tree.
+async fn unread(State(app): S, Json(b): Json<IdsBody>) -> Response {
+    match app.store.mark_unread(&b.ids) {
+        Ok(back) => {
+            if !back.is_empty() {
+                emit(&app, "restored", json!({ "waiting": waiting(&app) }));
+            }
+            Json(json!({ "ok": true, "n": back.len() })).into_response()
         }
         Err(e) => err(e),
     }
@@ -2698,10 +3017,9 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
                 .as_ref()
                 .and_then(|p| std::fs::metadata(p).ok())
                 .is_some_and(|m| m.len() > LARGE_RENDER as u64);
-        (
-            receive::receive(&app2.store, &app2.renderer, payload),
-            large,
-        )
+        let received = receive::receive(&app2.store, &app2.renderer, payload);
+        crate::platform::release_thread_memory();
+        (received, large)
     })
     .await;
     // After the render, not inside it: a trim over a heap that just held a
@@ -2952,6 +3270,23 @@ enum Said {
     /// The size a pane is drawn at on this page.
     #[serde(rename = "size")]
     Size { p: String, c: u16, r: u16 },
+    /// Of the panes this page watches, the ones out of sight: a document read
+    /// over the desk, a hidden window, no room in the grid. They are framed
+    /// once a second rather than sixty times, and the page draws none of it
+    /// until they are back. Replaces the last one.
+    #[serde(rename = "pace")]
+    Pace { slow: Vec<String> },
+    /// Older scrollback, above line `before`, for a page scrolled up to the
+    /// top of what it holds -- or with `old`, the last run's text above the
+    /// `before` lines of it the page holds. At most `n` lines.
+    #[serde(rename = "more")]
+    More {
+        p: String,
+        before: usize,
+        n: usize,
+        #[serde(default)]
+        old: Option<u64>,
+    },
 }
 
 /// One pane's frames, from its broadcast to this socket. A page that falls so
@@ -3078,6 +3413,10 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
         String,
         (Arc<crate::pane::Live>, tokio::task::JoinHandle<()>),
     > = Default::default();
+    // The panes this page has out of sight, each one `pace(true)` owed a
+    // `pace(false)`: when the page says so, stops watching it, or goes --
+    // however it goes, which is why it is paid on drop.
+    let mut slowed = Slowed::default();
     loop {
         tokio::select! {
             // The daemon is going, and the page's reconnect is what tells the
@@ -3104,10 +3443,11 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
                             .filter(|id| matches!(app.store.pane(id), Ok(Some(_))))
                             .take(crate::desk::PER_DESK as usize)
                             .collect();
-                        watching.retain(|id, (_, task)| {
+                        watching.retain(|id, (live, task)| {
                             let keep = wanted.contains(id);
                             if !keep {
                                 task.abort();
+                                slowed.set(id, live, false);
                             }
                             keep
                         });
@@ -3133,12 +3473,57 @@ async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
                             live.resize(c, r);
                         }
                     }
+                    Said::Pace { slow } => {
+                        for (id, (live, _)) in &watching {
+                            slowed.set(id, live, slow.contains(id));
+                        }
+                    }
+                    // Straight back on this socket, not the pane's broadcast:
+                    // only this page asked. It lands above what the page holds,
+                    // so its order among the frames does not matter.
+                    Said::More { p, before, n, old } => {
+                        let Some((live, _)) = watching.get(&p) else { continue };
+                        let Some(f) = live.more(old, before, n.min(crate::screen::KEEP_LINES)) else { continue };
+                        if socket.send(Message::Text(f.into())).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         }
     }
     for (_, (_, task)) in watching {
         task.abort();
+    }
+}
+
+/// The panes one desk socket has told the daemon are out of sight, each owed
+/// a `pace(false)`. Paid as each comes back or stops being watched, and the
+/// rest when the socket's session ends -- by drop, so a session that ends
+/// some other way than its loop running out cannot leave a pane framed once
+/// a second for a page that has it in view.
+#[derive(Default)]
+struct Slowed(std::collections::HashMap<String, Arc<crate::pane::Live>>);
+
+impl Slowed {
+    fn set(&mut self, id: &str, live: &Arc<crate::pane::Live>, slow: bool) {
+        if slow == self.0.contains_key(id) {
+            return;
+        }
+        live.pace(slow);
+        if slow {
+            self.0.insert(id.to_string(), live.clone());
+        } else {
+            self.0.remove(id);
+        }
+    }
+}
+
+impl Drop for Slowed {
+    fn drop(&mut self) {
+        for live in self.0.values() {
+            live.pace(false);
+        }
     }
 }
 
@@ -3419,10 +3804,10 @@ async fn desk_docs(
 /// of a desk, so what someone wrote on theirs is as unreachable from a tab as
 /// their panes are.
 ///
-/// None of the four writes below tells the other windows. A list is typed into
-/// one window at a time, a keystroke is not an event worth waking every page
-/// for, and the rail asks again whenever its desk is drawn -- the same trade
-/// `desk_layout` makes for a divider being dragged.
+/// Every write below tells the other windows (`desknotes`), as an agent's tick
+/// does: Home counts every desk's list, and a second window on the same desk
+/// was showing a list that another had changed. A write is a line committed --
+/// Enter, a tick, a ✕ -- never a keystroke, so it is not an event per key.
 async fn desk_notes(
     State(app): S,
     headers: HeaderMap,
@@ -3453,7 +3838,10 @@ async fn add_desk_note(
         // list -- because the page has just been told the count and can say
         // which it is; the daemon repeating it would be two sources for one
         // sentence.
-        Ok(Some(note)) => (StatusCode::CREATED, Json(json!({ "note": note }))).into_response(),
+        Ok(Some(note)) => {
+            notes_moved(&app, id);
+            (StatusCode::CREATED, Json(json!({ "note": note }))).into_response()
+        }
         Ok(None) => (
             StatusCode::CONFLICT,
             Json(json!({ "error": format!("a desk keeps {} notes", crate::desk::NOTES_PER_DESK) })),
@@ -3476,7 +3864,10 @@ async fn set_desk_note(
         return no;
     }
     match app.store.set_desk_note(id, note, b.text.as_deref(), b.done) {
-        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
@@ -3495,7 +3886,10 @@ async fn remove_desk_note(
         return no;
     }
     match app.store.remove_desk_note(id, note) {
-        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
@@ -3511,9 +3905,110 @@ async fn restore_desk_note(
         return no;
     }
     match app.store.restore_desk_note(id, note) {
-        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
+    }
+}
+
+/// Keep an agent's suggestion: it is an ordinary line of the reader's from
+/// here. Its ✕ is `remove_desk_note`, as any row's.
+async fn keep_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.keep_desk_note(id, note) {
+        Ok(true) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A desk's list changed: every window that shows it -- its rail, Home --
+/// asks for it again. The desk's id and nothing of what is on it, for the
+/// reason `desks_moved` gives: the stream reaches tabs too.
+fn notes_moved(app: &App, desk: i64) {
+    emit(app, "desknotes", json!({ "desk": desk }));
+}
+
+/// The reader writes, rewrites or clears where the work on a desk was left,
+/// in the desk's head. The answer carries the one it replaced, `was`, which
+/// the page's Undo sends back as it came -- its time and its author with it.
+async fn desk_left_off(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<crate::desk::LeftOff>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.set_left_off(id, &b) {
+        Ok(Some(was)) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true, "was": was })).into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// Whether a Claude starting in a panel is handed the desk brief: on unless
+/// the reader turned it off in About. A file, not a row: the hook's route
+/// reads it on every session start, and it is the daemon's own setting.
+fn brief_on(app: &App) -> bool {
+    !app.paths.config_dir.join("brief-off").exists()
+}
+
+async fn brief_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    Json(json!({ "on": brief_on(&app) })).into_response()
+}
+
+#[derive(Deserialize)]
+struct BriefBody {
+    on: bool,
+}
+
+async fn set_brief_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<BriefBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let flag = app.paths.config_dir.join("brief-off");
+    let done = if b.on {
+        match std::fs::remove_file(&flag) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    } else {
+        std::fs::create_dir_all(&app.paths.config_dir).and_then(|_| std::fs::write(&flag, b""))
+    };
+    match done {
+        Ok(()) => Json(json!({ "on": brief_on(&app) })).into_response(),
+        Err(e) => err(e.into()),
     }
 }
 
@@ -3595,20 +4090,35 @@ async fn delete_desk(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let mut panes: Vec<String> = app
-        .store
-        .desk(id)
-        .ok()
-        .flatten()
-        .map(|d| d.panes.into_iter().map(|p| p.id).collect())
-        .unwrap_or_default();
-    // Its closed panes go with it, before the cascade forgets which they were.
-    panes.extend(app.store.closed_panes(id).unwrap_or_default());
-    match app.store.delete_desk(id) {
-        Ok(true) => {
+    // Closed, not deleted (`desk::close`): its panes stop and keep their
+    // text, as a closed panel's does, and its notes stay on it, until prune.
+    match app.store.close_desk(id) {
+        Ok(Some(panes)) => {
             for p in &panes {
-                app.panes.discard(p);
+                app.panes.forget(p);
             }
+            desks_moved(&app);
+            Json(json!({ "ok": true, "restore": format!("/api/desks/{id}/reopen") }))
+                .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A closed desk back, with its notes and the panels that closed with it,
+/// stopped: the Undo on a close, and its row in the Removed list.
+async fn reopen_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.reopen_desk(id) {
+        Ok(true) => {
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
@@ -3858,6 +4368,18 @@ struct AgentBody {
     model: Option<String>,
     #[serde(default)]
     ctx: Option<CtxBody>,
+    /// The account's rate-limit windows, from the status line
+    /// (`crate::statusline::Limit`): Home's quota.
+    #[serde(default)]
+    limits: Option<LimitsBody>,
+}
+
+#[derive(Deserialize, Default)]
+struct LimitsBody {
+    #[serde(default)]
+    five_hour: Option<crate::statusline::Limit>,
+    #[serde(default)]
+    seven_day: Option<crate::statusline::Limit>,
 }
 
 #[derive(Deserialize, Default)]
@@ -3866,8 +4388,14 @@ struct CtxBody {
     pct: Option<f64>,
     #[serde(default)]
     size: Option<u64>,
+    /// `total_input_tokens`. A line from before `used` sent only this; it
+    /// stands in, as it does in the line itself when there is no
+    /// `current_usage`.
     #[serde(default)]
     input: Option<u64>,
+    /// The tokens in the window now (`crate::statusline::Seen::used`).
+    #[serde(default)]
+    used: Option<u64>,
 }
 
 /// What the agent in a pane is doing, told by its hook (`snyvi hook`, run by
@@ -3907,16 +4435,32 @@ async fn pane_agent(
             .pct
             .filter(|p| p.is_finite())
             .map(|p| p.clamp(0.0, 100.0).round() as u8);
-        live = app.panes.set_context(
+        let changed = app.panes.set_context(
             &id,
             &crate::statusline::clean(b.model.as_deref().unwrap_or("")),
             pct,
             c.size.filter(|s| *s > 0),
-            c.input,
+            c.used.or(c.input),
         );
+        live = changed.is_some();
+        // A light event of its own, only when the figure a reader sees moved:
+        // Home shows the fullest window, and the `panes` event stays about
+        // running and waiting, so a quiet page stays quiet.
+        if changed == Some(true) {
+            emit(&app, "ctx", json!({ "pane": id }));
+        }
     }
     if !live {
         return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Some(l) = &b.limits {
+        if l.five_hour.is_some() || l.seven_day.is_some() {
+            *app.quota.lock().unwrap_or_else(|e| e.into_inner()) = Some(json!({
+                "five_hour": l.five_hour,
+                "seven_day": l.seven_day,
+                "at": crate::store::now(),
+            }));
+        }
     }
     if let Some(session) = &b.session {
         if let Ok(true) = app.store.set_pane_session(&id, session) {
@@ -3970,6 +4514,9 @@ struct TickBody {
     /// A document the agent sent about the work, by its id.
     #[serde(default)]
     about: String,
+    /// Where the finished work can be seen: a PR, a deploy, a store page.
+    #[serde(default)]
+    evidence: String,
 }
 
 /// An agent ticks a line on its own desk's list: `tick_desk_note`. The same
@@ -3997,7 +4544,7 @@ async fn pane_tick_note(
         Err(e) => return err(e),
     };
     let b = body.map(|Json(b)| b).unwrap_or_default();
-    let (commit, doc) = (b.commit.trim(), b.about.trim());
+    let (commit, doc, evidence) = (b.commit.trim(), b.about.trim(), b.evidence.trim());
     // Said wrong, it is said back rather than dropped: the agent can tick
     // again with the hash `git log` printed, and the line is still open.
     if !commit.is_empty() && !crate::desk::commit_ok(commit) {
@@ -4016,10 +4563,18 @@ async fn pane_tick_note(
         )
             .into_response();
     }
+    if !evidence.is_empty() && !crate::desk::evidence_ok(evidence) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "evidence must be an http or https URL, one line, at most 500 characters" })),
+        )
+            .into_response();
+    }
     let tick = crate::desk::Tick {
         by: b.by,
         commit: commit.into(),
         doc: doc.into(),
+        evidence: evidence.into(),
     };
     match app.store.tick_desk_note(placed.desk_id, note, &tick) {
         Ok(true) => {
@@ -4062,6 +4617,153 @@ async fn pane_name(
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// The running pane `id`, placed on its desk, for the routes an agent reaches
+/// from inside it: the token, a pane id of the right shape, a pane that is
+/// running -- which a pane only is while its program is -- and then its row.
+/// The answer to refuse with otherwise.
+fn agent_pane(
+    app: &App,
+    headers: &HeaderMap,
+    id: &str,
+) -> Result<crate::desk::Placed, Box<Response>> {
+    if !authorized(app, headers) {
+        return Err(Box::new(StatusCode::UNAUTHORIZED.into_response()));
+    }
+    if !crate::pane::valid_id(id) {
+        return Err(Box::new(StatusCode::BAD_REQUEST.into_response()));
+    }
+    if !app.panes.is_running(id) {
+        return Err(Box::new(StatusCode::NOT_FOUND.into_response()));
+    }
+    match app.store.pane(id) {
+        Ok(Some(p)) => Ok(p),
+        Ok(None) => Err(Box::new(StatusCode::NOT_FOUND.into_response())),
+        Err(e) => Err(Box::new(err(e))),
+    }
+}
+
+/// The desk brief for a Claude starting in this pane (`crate::brief`): what
+/// the SessionStart hook hands it as context, and the session's title. The
+/// gate the list has, and only this pane's own desk. Empty when the reader
+/// turned the brief off, so the hook says nothing.
+async fn pane_brief(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    if !brief_on(&app) {
+        return Json(json!({ "context": "", "title": "" })).into_response();
+    }
+    let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let notes = app.store.desk_notes(desk.id).unwrap_or_default();
+    let docs = app.store.desk_docs(desk.id, 1).unwrap_or_default();
+    let last = docs.first().map(|d| crate::brief::LastDoc {
+        id: &d.id,
+        title: &d.title,
+        at: d.received_at,
+    });
+    let now = crate::store::now();
+    Json(json!({
+        "context": crate::brief::brief(&desk, placed.pane.slot, &notes, last, now),
+        "title": crate::brief::title(&desk, placed.pane.slot),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize, Default)]
+struct AgentLeftOffBody {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    about: String,
+    /// The agent's name, as its MCP client gave it.
+    #[serde(default)]
+    by: String,
+}
+
+/// An agent says where it left the work on its own desk: `leave_off`. The
+/// one it replaced stays reachable from the desk head's Undo, as a reader's
+/// edit does; an agent cannot clear one, only say the next.
+async fn pane_left_off(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<AgentLeftOffBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    if b.text.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "leave_off needs a sentence" })),
+        )
+            .into_response();
+    }
+    let by = if b.by.trim().is_empty() {
+        "an agent".to_string()
+    } else {
+        b.by
+    };
+    let to = crate::desk::LeftOff {
+        text: b.text,
+        at: 0,
+        by,
+        about: b.about,
+    };
+    match app.store.set_left_off(placed.desk_id, &to) {
+        Ok(Some(_)) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct SuggestBody {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    by: String,
+}
+
+/// An agent suggests a line for its own desk's list: `suggest_desk_note`. It
+/// shows as a ghost row with Keep and ✕, and is on the list only once kept.
+async fn pane_suggest_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<SuggestBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    match app.store.suggest_desk_note(placed.desk_id, &b.text, &b.by) {
+        Ok(crate::desk::Suggested::Note(note)) => {
+            notes_moved(&app, placed.desk_id);
+            (StatusCode::CREATED, Json(json!({ "note": note, "desk": placed.desk_name }))).into_response()
+        }
+        Ok(crate::desk::Suggested::Empty) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "suggest_desk_note needs a line of text" })),
+        )
+            .into_response(),
+        Ok(crate::desk::Suggested::Full) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk already has {} suggestions waiting for the user (or its list is full); wait until they keep or remove one", crate::desk::SUGGESTIONS_PER_DESK) })),
+        )
+            .into_response(),
+        Ok(crate::desk::Suggested::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }
@@ -4397,6 +5099,18 @@ async fn browse_close(State(app): S, Path(id): Path<String>) -> Response {
     }
 }
 
+/// Close folder, taken back. Only a folder closed in this run comes back, so
+/// a page with no token can undo its own close and open nothing else.
+async fn browse_reopen(State(app): S, Path(id): Path<String>) -> Response {
+    match app.browse.reopen(&id) {
+        Some(root) => {
+            emit(&app, "browse", json!({ "roots": app.browse.list() }));
+            Json(json!({ "root": root })).into_response()
+        }
+        None => StatusCode::GONE.into_response(),
+    }
+}
+
 async fn browse_tree(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
     match app.browse.entries(&id, q.path.as_deref().unwrap_or("")) {
         Ok(entries) => Json(entries).into_response(),
@@ -4709,8 +5423,8 @@ fn err(e: anyhow::Error) -> Response {
 mod tests {
     use super::{
         desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-        BOOT_JS, DESK_JS, FIND_JS, FRAME_JS, GAME_JS, INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS,
-        MMD_JS, NOTE_JS, PALETTE_JS,
+        BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML,
+        KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, TIP_JS, TOAST_JS,
     };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -4944,12 +5658,17 @@ mod tests {
             "async fn desk_layout(",
             "async fn move_pane(",
             "async fn delete_desk(",
+            "async fn reopen_desk(",
             "async fn desk_docs(",
             "async fn desk_notes(",
             "async fn add_desk_note(",
             "async fn set_desk_note(",
             "async fn remove_desk_note(",
             "async fn restore_desk_note(",
+            "async fn keep_desk_note(",
+            "async fn desk_left_off(",
+            "async fn brief_setting(",
+            "async fn set_brief_setting(",
             "async fn open_pane(",
             "async fn close_pane(",
             "async fn restore_pane(",
@@ -4987,12 +5706,16 @@ mod tests {
             r#".route("/api/desks/{id}/layout", post(desk_layout))"#,
             r#".route("/api/desks/{id}/move", post(move_pane))"#,
             r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
+            r#".route("/api/desks/{id}/reopen", post(reopen_desk))"#,
             r#".route("/api/desks/{id}/panes", post(open_pane))"#,
             r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
             r#".route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))"#,
             r#".route("/api/desks/{id}/notes/{note}", post(set_desk_note))"#,
             r#".route("/api/desks/{id}/notes/{note}/remove", post(remove_desk_note))"#,
             r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
+            r#".route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))"#,
+            r#".route("/api/desks/{id}/leftoff", post(desk_left_off))"#,
+            r#".route("/api/brief", get(brief_setting).post(set_brief_setting))"#,
             r#".route("/api/panes/{id}/delete", post(close_pane))"#,
             r#".route("/api/panes/{id}/restore", post(restore_pane))"#,
             r#".route("/api/panes/{id}/rename", post(rename_pane))"#,
@@ -5087,7 +5810,7 @@ mod tests {
         assert_eq!(APP_JS.matches("import(`/assets/desk.js").count(), 1);
         let import = APP_JS.find("import(`/assets/desk.js").unwrap();
         let sentence = APP_JS
-            .find("This is a browser tab, so it has no capability")
+            .find("This is a browser tab, and a browser tab cannot start one")
             .expect("a tab is told why there is no desk");
         let refusal = APP_JS[..sentence]
             .rfind("if (!capability)")
@@ -5130,14 +5853,18 @@ mod tests {
     #[test]
     fn the_page_asks_for_the_panels_only_when_one_is_opened() {
         assert_eq!(APP_JS.matches("import(`/assets/about.js").count(), 1);
-        let import = APP_JS.find("import(`/assets/about.js").unwrap();
-        for button in [r##"$("#btn-about")"##, r##"$("#btn-reset")"##] {
-            let press = APP_JS
-                .find(button)
-                .unwrap_or_else(|| panic!("{button} is a button a panel is behind"));
+        // Since 1.8 the two buttons are in the shortcuts card, which the
+        // chunk builds and wires when it first opens: the page has neither.
+        for button in [r##"on("#btn-about""##, r##"on("#btn-reset""##] {
             assert!(
-                import < press,
-                "the press reaches the import, not the other way"
+                ABOUT_JS.contains(button),
+                "{button} is wired where the card is built"
+            );
+        }
+        for button in [r##"$("#btn-about")"##, r##"$("#btn-reset")"##] {
+            assert!(
+                !APP_JS.contains(button),
+                "{button} belongs to the chunk now"
             );
         }
         assert!(
@@ -5246,6 +5973,11 @@ mod tests {
             ("palette.js", PALETTE_JS),
             ("look.js", LOOK_JS),
             ("note.js", NOTE_JS),
+            ("tip.js", TIP_JS),
+            ("home.js", HOME_JS),
+            ("toast.js", TOAST_JS),
+            ("diff.js", DIFF_JS),
+            ("browse.js", BROWSE_JS),
         ] {
             for (i, _) in src.match_indices("$(\"#") {
                 let rest = &src[i + 4..];
@@ -5289,6 +6021,11 @@ mod tests {
             "PALETTE_JS",
             "LOOK_JS",
             "NOTE_JS",
+            "TIP_JS",
+            "HOME_JS",
+            "TOAST_JS",
+            "DIFF_JS",
+            "BROWSE_JS",
         ] {
             assert!(
                 block.contains(chunk),

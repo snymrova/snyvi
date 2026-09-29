@@ -100,6 +100,11 @@ async function main() {
     const both = [claude, shell].sort();
     row("a restart asked for waits on every busy panel", asked.status === 200 && JSON.stringify(asked.json.waiting_on) === JSON.stringify(both),
       asked.status !== 200 ? `POST /api/restart answered ${asked.status}` : `waiting on ${asked.json.waiting_on.length} of 2`);
+    // 1.8: and names them, the way the update card says who it waits on.
+    const who = (asked.json && asked.json.waiting) || [];
+    const wc = who.find(x => x.pane === claude);
+    row("and says who, by desk and panel", who.length === 2 && !!wc && wc.slot >= 1 && typeof wc.desk === "string" && wc.agent === "working",
+      JSON.stringify(who.map(x => `${x.desk} · panel ${x.slot} · ${x.agent || "printing"}`)));
     // The quiet window passes: the shell is quiet, the agent is still
     // mid-turn, and the daemon is the same process.
     await sleep((QUIET_S + 1) * 1000);
@@ -172,11 +177,16 @@ async function main() {
     // has just printed, and the restart goes anyway.
     const h3 = await health();
     let out = "";
+    const t0 = Date.now();
     try { out = cli("restart", "--now"); } catch (e) { out = `exit ${e.status}: ${e.stderr}`; }
     // Asked more than once: the first request after a restart can go out on
     // a kept-alive connection to the process that has just left.
     const h4 = await until(async () => { const h = await health(); return h && h.pid !== h3.pid ? h : null; }, 20);
+    const took = Date.now() - t0;
     row("snyvi restart --now skips the wait", !!h4 && h4.pid !== h3.pid && /running on/.test(out), `${out.trim().split("\n").pop()}; pid ${h3 && h3.pid} → ${h4 && h4.pid}`);
+    // The strip over the page says "back in a moment": a restart is that, a
+    // few seconds from the ask to the new process answering, not a minute.
+    row("a restart is back in a moment", !!h4 && took < 5000, `${(took / 1000).toFixed(1)} s from the ask to the new daemon answering`);
 
     // 1.7.1: a shell that moved comes back where it moved to, and a stop
     // nobody planned -- `snyvi stop`, a signal, a reboot -- offers the Claude

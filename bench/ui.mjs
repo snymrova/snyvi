@@ -18,6 +18,7 @@
  *
  *   node bench/ui.mjs            report
  *   node bench/ui.mjs --check    and exit non-zero if a row fails
+ *   node bench/ui.mjs --only "a desk|folder"   only the sections whose name it matches
  *
  * Counts and positions only, no clocks, so every row is enforced on every
  * machine. Chromium is driven the way browser.mjs drives it, over the
@@ -218,37 +219,45 @@ async function main() {
     await p.goto(url);
 
     const sections = [];
-    sections.push(["the rail, 1280 px wide", await railRows(p, url, md, send)]);
-    sections.push(["narrow windows", await narrowRows(p, url)]);
-    sections.push(["the sidebar, folded to its rail", await sideRailRows(p, url, arrive)]);
-    sections.push(["by keyboard", await keyboardRows(p, url)]);
-    sections.push(["the panes' edges", await widthRows(p, url)]);
-    sections.push(["a diagram, filled", await diagramRows(p, diagramUrl)]);
-    sections.push(["arrivals, while reading", await queueRows(p, url, arrive)]);
-    sections.push(["a delete, and the way back", await deleteRows(p, arrive)]);
-    sections.push(["the ✕ over what is read", await backRows(p, browsed)]);
-    sections.push(["an aside, closed", await asideRows(p, base, token)]);
-    sections.push(["a folder, in the file manager", await revealRows(p, browsed, folder, tmp)]);
-    sections.push(["a link into a folder", await browseRows(p, browsed)]);
-    sections.push(["a link out of a document", await docLinkRows(p, base, token, first.doc.id)]);
-    sections.push(["the socket a page holds", await socketRows(p, url, base, browsed)]);
-    sections.push(["a window to hand a link to", await windowRows(p, url, base, mcpSend)]);
-    sections.push(["a link that opens in the window", await linkRows(p, url, base, env, tmp, token, stub, mcpSend)]);
-    sections.push(["what moves, and for how long", await motionRows(p, url, arrive)]);
-    sections.push(["desks that hold still", await deskRows(cdp, base, token)]);
-    sections.push(["a desk for each project", await projectDeskRows(cdp, base, token, tmp)]);
-    sections.push(["panels: full view, moved, linked, and their menus", await panelRows(cdp, base, token)]);
-    sections.push(["answers beside their buttons", await answerRows(url, tmp)]);
-    sections.push(["every control, in every view", await controlRows(cdp, p, url, browsed, base, token)]);
-    sections.push(["the first frame, in the reader's theme", await firstFrameRows(p, url)]);
-    sections.push(["the about box", await aboutRows(p, url)]);
-    sections.push(["the first ten minutes", await startRows(p, url, arrive, base)]);
-    sections.push(["connecting an agent", await connectRows(p, url, home, env)]);
-    sections.push(["an agent that is here", await presenceRows(p, url, base, env, tmp)]);
+    // `--only <pattern>` runs the sections whose name it matches, for work on one.
+    const only = flag("--only") && new RegExp(flag("--only"));
+    const section = async (name, rows) => { if (!only || only.test(name)) sections.push([name, await rows()]); };
+    await section("the rail, 1280 px wide", () => railRows(p, url, md, send));
+    await section("narrow windows", () => narrowRows(p, url));
+    await section("the sidebar, folded to its rail", () => sideRailRows(p, url, arrive));
+    await section("by keyboard", () => keyboardRows(p, url));
+    await section("the panes' edges", () => widthRows(p, url));
+    await section("a diagram, filled", () => diagramRows(p, diagramUrl));
+    await section("arrivals, while reading", () => queueRows(p, url, arrive));
+    await section("a delete, and the way back", () => deleteRows(p, arrive));
+    await section("nothing lost when snyvi says no", () => lossRows(p, base, token, arrive, browsed));
+    await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
+    await section("the ✕ over what is read", () => backRows(p, browsed));
+    await section("an aside, closed", () => asideRows(p, base, token));
+    await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
+    await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
+    await section("a link into a folder", () => browseRows(p, browsed));
+    await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
+    await section("the socket a page holds", () => socketRows(p, url, base, browsed));
+    await section("a window to hand a link to", () => windowRows(p, url, base, mcpSend));
+    await section("a link that opens in the window", () => linkRows(p, url, base, env, tmp, token, stub, mcpSend));
+    await section("what moves, and for how long", () => motionRows(p, url, arrive));
+    await section("desks that hold still", () => deskRows(cdp, base, token));
+    await section("a desk for each project", () => projectDeskRows(cdp, base, token, tmp));
+    await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
+    await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
+    await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
+    await section("answers beside their buttons", () => answerRows(url, tmp));
+    await section("every control, in every view", () => controlRows(cdp, p, url, browsed, base, token));
+    await section("the first frame, in the reader's theme", () => firstFrameRows(p, url));
+    await section("the about box", () => aboutRows(p, url));
+    await section("the first ten minutes", () => startRows(p, url, arrive, base));
+    await section("connecting an agent", () => connectRows(p, url, home, env));
+    await section("an agent that is here", () => presenceRows(p, url, base, env, tmp));
     // Last, because it takes the library with it.
-    sections.push(["a reset, and the friction on it", await resetRows(p, url, arrive)]);
+    await section("a reset, and the friction on it", () => resetRows(p, url, arrive));
     // And after it, because it takes the daemon.
-    sections.push(["a daemon that stops, and the page that follows", await stopRows(p, base, tmp, env, second)]);
+    await section("a daemon that stops, and the page that follows", () => stopRows(p, base, tmp, env, second));
 
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
@@ -288,6 +297,8 @@ const KEYS = {
   ArrowDown: { key: "ArrowDown", code: "ArrowDown", vk: 40 },
   ArrowUp: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
   Delete: { key: "Delete", code: "Delete", vk: 46 },
+  "⇧F10": { key: "F10", code: "F10", vk: 121, shift: true },
+  "⇧Tab": { key: "Tab", code: "Tab", vk: 9, shift: true },
   "?": { key: "?", code: "Slash", vk: 191, text: "?", shift: true },
   "/": { key: "/", code: "Slash", vk: 191, text: "/" },
   "\\": { key: "\\", code: "Backslash", vk: 220, text: "\\" },
@@ -342,6 +353,13 @@ class Driver {
     await sleep(200);
   }
   async clickOn(selector) { const at = await this.ui("center", selector); await this.click(at.x, at.y); }
+  /** A right-click, which is what opens a row's menu with the pointer. */
+  async rightClickOn(selector) {
+    const { x, y } = await this.ui("center", selector);
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, this.s);
+    for (const type of ["mousePressed", "mouseReleased"]) await this.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "right", clickCount: 1 }, this.s);
+    await sleep(250);
+  }
   /** Rest the pointer on something, for what only opens under one. */
   async hoverOn(selector) {
     const at = await this.ui("center", selector);
@@ -389,6 +407,27 @@ class Driver {
 /* ---------- the rows ---------- */
 
 const within = (v, lo, hi) => v !== null && v >= lo && v <= hi;
+/** The daemon saying no, once. The next request the page makes with `method`
+ *  to a path matching `path` is answered with `status` and `body` without
+ *  reaching the daemon, and `fetch` is the page's own again. A status of 0 is
+ *  no answer at all, the way a fetch to a stopped daemon fails. What happens
+ *  to the page after a no is what the rows that use this read; `refused(p)`
+ *  says whether the no was ever asked for, so a row cannot pass by never
+ *  having been refused. A navigation takes it off with everything else. */
+const refuse = (p, method, path, status = 500, body = { error: "refused by the bench" }) => p.ev(`(() => {
+  const real = window.fetch, re = new RegExp(${JSON.stringify(path.source)});
+  window.__refused = false;
+  window.fetch = function (u, o) {
+    const at = new URL(u instanceof Request ? u.url : u, location.href).pathname;
+    if (((o && o.method) || "GET").toUpperCase() !== ${JSON.stringify(method)} || !re.test(at)) return real.apply(this, arguments);
+    window.fetch = real;
+    window.__refused = true;
+    return ${status} ? Promise.resolve(new Response(${JSON.stringify(JSON.stringify(body))}, { status: ${status}, headers: { "content-type": "application/json" } }))
+      : Promise.reject(new TypeError("Failed to fetch"));
+  };
+  return 1;
+})()`);
+const refused = p => p.ev("window.__refused === true");
 /** Everything a row read, on stderr, for when a row fails and the sentence is not enough. */
 const dbg = (name, o) => { if (process.env.SNYVI_UI_DEBUG) console.error(`  [${name}] ${JSON.stringify(o)}`); };
 
@@ -485,7 +524,7 @@ async function railRows(p, url, md, send) {
   const asleepAt = await keyState();
   await p.press("k", { raw: true }); await sleep(300);
   const asleep = await keyState();
-  rows.push(["a letter asleep does nothing, and says why", !asleep.on && asleep.title === asleepAt.title && /show/.test(asleep.pill) && asleep.says === "⌃B for keys",
+  rows.push(["a letter asleep does nothing, and says why", !asleep.on && asleep.title === asleepAt.title && /show/.test(asleep.pill) && /^(⌃B|Ctrl B) for keys$/.test(asleep.says),
     asleep.title !== asleepAt.title ? "k moved without ⌃B" : `pill "${asleep.says}" (${asleep.pill})`]);
   await p.press("b", { ctrl: true }); await sleep(200);
   const woke = await keyState();
@@ -493,7 +532,7 @@ async function railRows(p, url, md, send) {
   const moved = await keyState();
   await p.press("j", { raw: true }); await sleep(500);
   const movedBack = await keyState();
-  rows.push(["⌃B wakes the letters, and they stay awake", woke.on && /on/.test(woke.pill) && woke.says === "Keys on · esc" && moved.title !== woke.title && movedBack.title === woke.title && movedBack.on,
+  rows.push(["⌃B wakes the letters, and they stay awake", woke.on && /on/.test(woke.pill) && woke.says === "Keys on · Esc" && moved.title !== woke.title && movedBack.title === woke.title && movedBack.on,
     !woke.on ? "⌃B did nothing" : moved.title === woke.title ? "k after ⌃B did nothing" : movedBack.title !== woke.title ? "the second letter did not act" : `pill "${woke.says}", k then j, still awake`]);
   await p.press("Escape");
   const escaped = await keyState();
@@ -741,7 +780,10 @@ async function keyboardRows(p, url) {
 
   // Tab from the top of the page, noting where focus lands each time, until
   // it comes back round or runs out.
-  await p.ev(`document.activeElement.blur(); window.__ui.scrollMain(0)`);
+  // From the top: the sidebar (tabindex -1) takes the focus and gives it up,
+  // which puts Tab's starting point before the brand whatever a section
+  // before this one left focused -- a same-page goto does not reload.
+  await p.ev(`document.activeElement.blur(); document.querySelector("#side").focus(); document.activeElement.blur(); window.__ui.scrollMain(0)`);
   const seen = [];
   for (let i = 0; i < 160; i++) {
     await p.press("Tab");
@@ -1034,7 +1076,7 @@ async function queueRows(p, url, arrive) {
  *  delete the daemon keeps until `prune` runs. The confirmation it replaces
  *  was a `window.confirm`, which the native window draws as the toolkit's own
  *  dialog -- and which would hang every row below, since a blocked page
- *  answers nothing. 1.6: the Undo stands in the row's own place, for 4 s,
+ *  answers nothing. 1.6: the Undo stands in the row's own place, for 6 s (1.8's one window),
  *  with a bar that drains, and no toast says "Deleted". */
 async function deleteRows(p, arrive) {
   const rows = [];
@@ -1077,13 +1119,13 @@ async function deleteRows(p, arrive) {
       !g2 ? "no ghost row" : t2 ? `a toast came too: "${t2.text}"` : inPlace ? `at the row's own place, ${g2.h} px high` : `the row was at y ${was.y}, ${was.h} px; the ghost is at y ${g2.y}, ${g2.h} px`]);
     // Resting on it stops the clock.
     await p.hoverOn("#trees .t-ghost");
-    await sleep(4600);
+    await sleep(6600);
     const held = !!(await ghost());
-    rows.push(["resting on it stops the clock", held, held ? "still offering Undo after 4.6 s under the pointer" : "it went while the pointer was on it"]);
+    rows.push(["resting on it stops the clock", held, held ? "still offering Undo after 6.6 s under the pointer" : "it went while the pointer was on it"]);
     await p.pointerAway();
-    await sleep(4800);
+    await sleep(6800);
     const settled = !(await ghost());
-    rows.push(["and off it, the offer ends", settled, settled ? "the row closed once the 4 s had run" : "the ghost is still there"]);
+    rows.push(["and off it, the offer ends", settled, settled ? "the row closed once the 6 s had run" : "the ghost is still there"]);
   } else rows.push(["the ✕ leaves its Undo in the row", false, "the document's row is not in the sidebar"]);
 
   await p.reload();
@@ -1091,6 +1133,364 @@ async function deleteRows(p, arrive) {
   const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);
   rows.push(["a removal a reload agrees with", stillGone && found === 0,
     !stillGone ? "the inbox lists it again after the reload" : found ? `search still finds ${found}` : "gone from the inbox and from search, because the daemon did it"]);
+  return rows;
+}
+
+/** 1.8, the design system (docs/DESIGN.md) as behaviour: every control names
+ *  itself in snyvi's tip and never the OS's title; an answer stands where it
+ *  was asked, and gives the tip way; one Undo stands at a time, across kinds,
+ *  with its drain; a removal says how many versions went; after the window,
+ *  Removed · Show still brings it back; the quiet switch keeps. */
+async function designRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const tipOn = () => p.ev(`(() => { const t = document.querySelector("#tip.on"); return t ? t.textContent : null; })()`);
+  await p.goto(url);
+  await p.pointerAway();
+
+  // No title anywhere: the OS would draw its own box over snyvi's.
+  await p.press("?");
+  await until(`!document.querySelector("#help").hidden`);
+  const titled = await p.ev(`[...document.querySelectorAll("[title]")].filter(e => e.tagName !== "IFRAME" && e.tagName !== "TITLE").map(e => e.id || e.className || e.tagName).slice(0, 5)`);
+  await p.press("Escape");
+  rows.push(["no element in ui/ has a title", titled.length === 0, titled.length ? `still titled: ${titled.join(", ")}` : "the page and the shortcuts card name everything by tip"]);
+
+  // The tip, on the keyboard's focus as well as the pointer's rest.
+  let tabbed = null;
+  for (let i = 0; i < 20 && !tabbed; i++) {
+    await p.press("Tab");
+    tabbed = await p.ev(`document.activeElement?.dataset?.tip || null`);
+  }
+  await sleep(300);
+  const onFocus = await tipOn();
+  rows.push(["tip shows on focus", !!tabbed && !!onFocus && onFocus.startsWith(tabbed),
+    !tabbed ? "Tab reached no control with a tip" : !onFocus ? `focus on "${tabbed}" and no tip` : `"${onFocus}"`]);
+  await p.ev(`document.activeElement?.blur()`);
+
+  // An answer at the control takes the tip's place: wrap on the Inbox is
+  // dimmed, and a click says why, beside it.
+  await p.goto(`${new URL(url).origin}/inbox`);
+  await p.hoverOn(".foot-set");
+  await p.hoverOn("#btn-wrap");
+  await sleep(700);
+  const before = await tipOn();
+  await p.clickOn("#btn-wrap");
+  await sleep(300);
+  const after = { tip: await tipOn(), toast: await p.ev(`document.querySelector("#toasts .toast")?.textContent || null`) };
+  rows.push(["tip hides when a toast anchors to the same control", !!before && !after.tip && !!after.toast,
+    !before ? "no tip while resting on wrap" : after.tip ? `the tip stayed: "${after.tip}"` : !after.toast ? "no answer came" : `"${after.toast}" beside it, and the tip gave way`]);
+  await p.pointerAway();
+
+  // A menu's answer stands where its item stood: the menu has gone.
+  await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
+  await until(`!!document.querySelector("#tree a[data-id]")`);
+  await p.rightClickOn("#tree a[data-id]");
+  await until(`!document.querySelector("#ctx").hidden`);
+  const item = await p.ev(`(() => { const b = [...document.querySelectorAll("#ctx button")].find(b => /^Copy link/.test(b.textContent)); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: [r.left, r.top, r.right, r.bottom] }; })()`);
+  if (item) {
+    await p.click(item.x, item.y);
+    await sleep(300);
+    const t = await p.ev(`(() => { const t = document.querySelector("#toasts .toast"); if (!t) return null; const r = t.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; })()`);
+    const gap = t ? Math.max(0, t[0] - item.r[2], item.r[0] - t[2]) + Math.max(0, t[1] - item.r[3], item.r[1] - t[3]) : null;
+    rows.push(["menu Copy link → answer at the menu item's place", gap !== null && gap <= 20,
+      gap === null ? "no answer came" : `${Math.round(gap)} px from where the item stood`]);
+  } else rows.push(["menu Copy link → answer at the menu item's place", false, "the document's menu has no Copy link"]);
+  await p.press("Escape");
+
+  // One Undo, whatever kind: a document, then a project, and ⌘Z brings the
+  // project -- the newest offer -- back.
+  const d1 = await arrive();
+  await p.goto(`${new URL(url).origin}/d/${d1.id}`);
+  await until(`!!document.querySelector("#tree .t-proj")`);
+  await p.pointerAway();
+  await p.press("Delete");
+  await until(`!!document.querySelector("#trees .t-ghost")`);
+  const drain = await p.ev(`(g => g && getComputedStyle(g, "::after").content !== "none")(document.querySelector("#trees .t-ghost"))`);
+  const pid = await p.ev(`document.querySelector("#tree .t-proj")?.dataset.pid || null`);
+  if (pid) {
+    await p.hoverOn(`#tree .t-proj[data-pid="${pid}"] > summary`);
+    await p.clickOn(`#tree .t-proj[data-pid="${pid}"] > summary [data-away]`);
+    await until(`!!document.querySelector("#tree .t-back")`);
+    const backDrain = await p.ev(`(g => g && getComputedStyle(g, "::after").content !== "none" && g.getAttribute("role") === "status")(document.querySelector("#tree .t-back"))`);
+    rows.push(["every ghost has a drain bar", drain && backDrain, !drain ? "the document's ghost has none" : !backDrain ? "the project's way back has none, or no status role" : "a document's and a project's"]);
+    await p.press("z", { ctrl: true });
+    const projBack = await until(`!!document.querySelector('#tree .t-proj[data-pid="${pid}"]') && !document.querySelector("#tree .t-back")`);
+    const docGhost = await p.ev(`!!document.querySelector("#trees .t-ghost")`);
+    rows.push(["remove a doc, then a project, ⌘Z → the project comes back", projBack && !docGhost,
+      !projBack ? "⌘Z did not bring the project back" : docGhost ? "and the document's offer still stands beside it" : "the newest offer, and the document's had settled"]);
+  } else rows.push(["remove a doc, then a project, ⌘Z → the project comes back", false, "no project row to remove"]);
+
+  // A file sent three times goes with its three versions, and says so.
+  const name = "lineage.md";
+  let last = null;
+  for (const n of [1, 2, 3]) last = await arrive({ name, body: `# Lineage\n\nVersion ${n}.\n` });
+  await p.goto(`${new URL(url).origin}/d/${last.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  const three = await until(`/3 versions/.test(document.querySelector("#trees .t-ghost")?.textContent || document.querySelector("#toasts .toast")?.textContent || "")`, 30);
+  rows.push(["lineage ghost says 3 versions", three, three ? "removed · 3 versions" : `it says "${await p.ev(`document.querySelector("#trees .t-ghost")?.textContent || ""`)}"`]);
+
+  // Past the window, Removed · Show still has it, with an Undo.
+  await p.pointerAway();
+  await sleep(6800);
+  await p.goto(`${new URL(url).origin}/inbox`);
+  const shown = await until(`!!document.querySelector(".inbox-removed .t-away")`, 30);
+  if (shown) {
+    await p.clickOn(".inbox-removed .t-away");
+    const row = await p.ev(`[...document.querySelectorAll(".inbox-removed .rm")].findIndex(r => /Lineage/.test(r.textContent) && /3 versions/.test(r.textContent))`);
+    if (row >= 0) await p.clickOn(`.inbox-removed li:nth-child(${row + 1}) .t-undo`);
+    const back = row >= 0 && await p.ev(`fetch("/api/docs/${last.id}").then(r => r.ok)`);
+    rows.push(["remove, wait past the window, Show, Undo → back", back, row < 0 ? "the lineage is not in the list" : back ? "the document is back, all three versions" : "the Undo did not bring it back"]);
+  } else rows.push(["remove, wait past the window, Show, Undo → back", false, "no Removed · Show at the Inbox's foot"]);
+
+  // The quiet switch keeps: ⌘K > Quiet mascot, then a reload.
+  await p.press("k", { ctrl: true });
+  await p.type(">quiet");
+  await sleep(300);
+  await p.press("Enter");
+  await p.reload();
+  const quiet = await p.ev(`document.documentElement.dataset.mascot === "quiet"`);
+  await p.ev(`localStorage.removeItem("snyvi.mascot"); delete document.documentElement.dataset.mascot; 1`);
+  rows.push(["the quiet switch keeps across a reload", quiet, quiet ? "set from ⌘K, and boot.js put it back" : "not quiet after the reload"]);
+  return rows;
+}
+
+/** 1.7.2: what the reader did is never lost to a refusal. Each row makes the
+ *  daemon say no once (`refuse`), and reads that the page says so where the
+ *  thing was done and still holds what it held: an error stays until its ✕,
+ *  and news that comes meanwhile waits behind it rather than taking its place. */
+async function lossRows(p, base, token, arrive, browsed) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const said = () => p.ev(`(() => { const t = document.querySelector("#toasts .toast"); return t ? { text: t.querySelector(".t").textContent, alert: t.getAttribute("role") === "alert", face: !!t.querySelector(".who") } : null; })()`);
+  const waiting = () => p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.length)`);
+
+  // Mark all read, refused: the queue is still there, and the page says so.
+  const a = await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read.\n" });
+  await arrive({ name: "loss-b.md", body: "# Loss B\n\nOne that waits.\n" });
+  await p.goto(`${origin}/d/${a.id}`);
+  await p.pointerAway();
+  await until(`!document.querySelector("#queue-bar").hidden`);
+  const before = await waiting();
+  await refuse(p, "POST", /^\/api\/queue\/clear$/);
+  await p.clickOn("#queue-bar [data-q=clear]");
+  await sleep(300);
+  const t1 = await said(), bar1 = await p.ev(`!document.querySelector("#queue-bar").hidden`), w1 = await waiting();
+  rows.push(["mark all read refused → queue still there", await refused(p) && !!t1?.alert && !t1.face && bar1 && w1 === before,
+    !(await refused(p)) ? "the click never asked the daemon" : !t1 ? "nothing was said" : !t1.alert ? `it said "${t1.text}", as if it had worked` : t1.face ? "the error wears a face" : !bar1 ? "the queue bar went anyway" : `"${t1.text}", no face, the bar and ${w1} waiting still there`]);
+
+  // News while the error stands: a newer version of the open document.
+  await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read, again.\n" });
+  await sleep(1500);
+  const t2 = await said();
+  await p.clickOn("#toasts .toast .tx");
+  const news = await until(`/newer version/.test(document.querySelector("#toasts .toast .t")?.textContent || "")`, 20);
+  rows.push(["error toast survives an arrival", t2?.alert && news,
+    !t2?.alert ? `the arrival took its place: "${t2?.text}"` : news ? "the error stayed until its ✕, and then the arrival was said" : "the arrival was dropped, not held"]);
+
+  // Mark all read, done: the bar that was clicked says so and holds the
+  // Undo; it holds against news too, and brings them back.
+  await p.clickOn("#queue-bar [data-q=clear]");
+  await sleep(300);
+  const barSays = () => p.ev(`document.querySelector("#queue-bar .qb.ghost .qb-next")?.textContent || null`);
+  const t3 = await barSays();
+  await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read, a third time.\n" });
+  await sleep(1500);
+  const t4 = await barSays();
+  rows.push(["Marked read · Undo survives an arrival", /^Marked \d+ read$/.test(t3 || "") && t4 === t3,
+    !t3 ? "the bar said nothing" : !/^Marked \d+ read$/.test(t3) ? `the bar said "${t3}"` : t4 !== t3 ? `the arrival took its place: "${t4}"` : `"${t3} · Undo" is still in the bar after the arrival`]);
+  await p.clickOn("#queue-bar [data-q=undo]");
+  const back = await until(`fetch("/api/queue").then(r => r.json()).then(q => q.length >= ${before})`, 30);
+  rows.push(["and its Undo puts them back", back, back ? `${before} waiting again` : `${await waiting()} waiting, not ${before}`]);
+
+  // Folded to its rail, the sidebar has no row to hold the ghost: the Undo is
+  // in the toast, and it brings the document back to the page it was on.
+  await p.wide();
+  if (await p.ev(`document.documentElement.dataset.side !== "0"`)) await p.press("\\");
+  const tucked = await arrive({ name: "loss-folded.md", body: "# Loss folded\n\nRemoved with the sidebar folded.\n" });
+  await p.goto(`${origin}/d/${tucked.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  const offered = await until(`document.querySelector("#toasts .toast .t")?.textContent === "Removed" && document.querySelector("#toasts .toast .act")?.textContent === "Undo"`);
+  let home = false;
+  if (offered) { await p.clickOn("#toasts .toast .act"); home = await until(`document.title === ${JSON.stringify(tucked.title)}`); await sleep(600); home = home && await p.ev(`document.title === ${JSON.stringify(tucked.title)}`); }
+  rows.push(["sidebar folded → Remove's Undo is in the toast, and brings it back", offered && home,
+    !offered ? `the toast says "${await p.ev(`document.querySelector("#toasts .toast .t")?.textContent || "nothing"`)}"` : !home ? `the Undo landed on "${await p.ev("document.title")}"` : "Removed · Undo, and the document is open again"]);
+  await p.press("\\");
+  await until(`document.documentElement.dataset.side !== "0"`);
+
+  // A removal's Undo, refused: the ghost stays, says so, and offers Retry.
+  const ghost = () => p.ev(`(() => { const g = document.querySelector("#trees .t-ghost"); return g ? { text: g.querySelector(".title").textContent, btn: g.querySelector(".t-undo")?.textContent || null } : null; })()`);
+  const doomed = await arrive({ name: "loss-undo.md", body: "# Loss undo\n\nRemoved, and wanted back.\n" });
+  await p.goto(`${origin}/d/${doomed.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  // The ghost, and then the tree drawn again as the daemon's word on the
+  // removal comes back: a press across that redraw is lost.
+  await until(`!!document.querySelector("#trees .t-ghost .t-undo")`);
+  await sleep(500);
+  await refuse(p, "POST", /\/undelete$/);
+  await p.clickOn("#trees .t-ghost .t-undo");
+  // The refusal comes back, and only then is there a Retry to press.
+  await until(`/^Could not/.test(document.querySelector("#trees .t-ghost .title")?.textContent || "")`);
+  const g1 = await ghost();
+  rows.push(["undo refused → ghost and Undo still there", await refused(p) && g1?.text === "Could not bring it back" && g1.btn === "Retry",
+    !(await refused(p)) ? "the Undo never asked the daemon" : !g1 ? "the ghost went, and its Undo with it" : `the ghost reads "${g1.text}" with ${g1.btn ? `"${g1.btn}"` : "no button"}`]);
+  await p.clickOn("#trees .t-ghost .t-undo");
+  const again = await until(`document.title === ${JSON.stringify(doomed.title)}`);
+  rows.push(["undo refused → Retry brings it back", again, again ? "the second ask was answered, and the document is open again" : `landed on "${await p.ev("document.title")}"`]);
+
+  // Pin, refused: no ●, and the button still offers to pin.
+  await p.pointerAway();
+  await until(`!!document.querySelector("#meta [data-act=pin]")`);
+  // The meta pane is drawn again as the page settles on a document; a click
+  // across a redraw is lost, so the row waits for it to hold still. The rail
+  // scrolls on its own; the button is brought into it, as a reader would.
+  for (let last = "", i = 0; i < 20; i++) { const now = await p.ev(`document.querySelector("#meta").innerHTML`); if (now === last) break; last = now; await sleep(250); }
+  await p.ev(`document.querySelector("#meta [data-act=pin]")?.scrollIntoView({ block: "center" })`);
+  await refuse(p, "POST", /\/pin$/);
+  await p.clickOn("#meta [data-act=pin]");
+  await sleep(400);
+  const pinned = await p.ev(`({ btn: document.querySelector("#meta [data-act=pin]")?.firstChild?.textContent.trim(), dot: !!document.querySelector('#trees a[data-id="${doomed.id}"] .pin'), err: document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null })`);
+  rows.push(["pin refused → no ●, button still reads Pin", await refused(p) && pinned.btn === "Pin" && !pinned.dot && /^Could not pin/.test(pinned.err || ""),
+    !(await refused(p)) ? "the button never asked the daemon" : pinned.btn !== "Pin" ? `the button reads "${pinned.btn}"` : pinned.dot ? "the row has its ● anyway" : !pinned.err ? "nothing said it failed" : `still "Pin", no ●, and "${pinned.err}"`]);
+  await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
+
+  // Close folder: a ghost with its Undo where the row was, and the Undo
+  // opens the same folder again. Refused, the row stays and says so.
+  const root = browsed.replace(/^.*\/b\//, "").replace(/\/.*$/, "");
+  const open = () => p.ev(`fetch("/api/browse").then(r => r.text()).then(t => t.includes(${JSON.stringify(root)}))`);
+  const rowOf = `#browse-nav .b-root[data-root="${root}"]`;
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`!!document.querySelector(${JSON.stringify(rowOf)})`);
+  await p.hoverOn(`${rowOf} > summary`);
+  await p.clickOn(`${rowOf} [data-close]`);
+  await sleep(500);
+  const shut = await p.ev(`(() => { const g = document.querySelector("#browse-nav .b-ghost"); return g ? g.textContent : null; })()`), closed = !(await open());
+  if (shut) await p.clickOn("#browse-nav .b-ghost [data-reopen]");
+  const reopened = !!shut && await until(`!!document.querySelector(${JSON.stringify(rowOf)})`) && await open();
+  rows.push(["close folder → ghost; Undo reopens it", closed && !!shut && reopened,
+    !closed ? "the daemon still has the folder open" : !shut ? "the row went with no ghost" : reopened ? `"${shut}", and the Undo opened the same folder again` : "the Undo did not bring the folder back"]);
+  await p.pointerAway();
+  await sleep(300);
+  await refuse(p, "POST", /\/close$/);
+  await p.hoverOn(`${rowOf} > summary`);
+  await p.clickOn(`${rowOf} [data-close]`);
+  await sleep(400);
+  const kept = await p.ev(`!!document.querySelector(${JSON.stringify(rowOf)})`), no = await p.ev(`document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null`);
+  rows.push(["close folder refused → row stays, with the error", await refused(p) && kept && /^Could not close/.test(no || ""),
+    !(await refused(p)) ? "the ✕ never asked the daemon" : !kept ? "the row went anyway" : !no ? "nothing said it failed" : `the row is there, and beside its ✕: "${no}"`]);
+  await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
+
+  // The Inbox, not sent: a line that says so, with its Retry -- not Welcome,
+  // which is what an empty library looks like.
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await refuse(p, "GET", /^\/api\/inbox$/);
+  await p.clickOn(".t-inbox");
+  await sleep(500);
+  const inbox = await p.ev(`({ line: document.querySelector("#doc .no-reach")?.textContent || null, welcome: (document.querySelector("#doc h1")?.textContent || "") !== "Inbox", list: !!document.querySelector("#doc ul.inbox") })`);
+  if (inbox.line) await p.clickOn("#doc .no-reach [data-retry]");
+  const listed = !!inbox.line && await until(`!!document.querySelector("#doc ul.inbox")`);
+  rows.push(["inbox fetch refused → Retry line, not Welcome", await refused(p) && !!inbox.line && !inbox.welcome && listed,
+    !(await refused(p)) ? "the Inbox never asked the daemon" : inbox.welcome ? "the page is Welcome, as if the library were empty" : !inbox.line ? "nothing says it could not load" : listed ? `"${inbox.line}", and the Retry brought the list` : "the Retry did not bring the list"]);
+
+  // An aside's Undo, refused: the daemon still holds it closed, so the card
+  // must not show it again; it shows the ghost, saying so.
+  const say = async text => {
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent" }) });
+    return (await r.json()).note;
+  };
+  const aside = await say("An aside whose Undo will be refused.");
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(aside.text)}`);
+  await p.hoverOn("#note .note-now");
+  await sleep(300);
+  await p.clickOn("#note .note-x");
+  await sleep(500);   // past the first moments, when a second click is the double-click's, not an Undo
+  await refuse(p, "POST", /^\/api\/notes\/restore$/);
+  await p.clickOn("#note [data-note-undo]");
+  await sleep(300);
+  const card = await p.ev(`(() => { const g = document.querySelector("#note .note-ghost"); return g ? g.textContent : document.querySelector("#note .note-now p")?.textContent || null; })()`);
+  const still = (await (await fetch(`${base}/api/notes`)).json()).notes.find(n => n.id === aside.id)?.dismissed === true;
+  rows.push(["aside undo refused → card still shows the ghost", await refused(p) && /Could not bring it back/.test(card || "") && still,
+    !(await refused(p)) ? "the Undo never asked the daemon" : !/Could not bring it back/.test(card || "") ? `the card reads "${card}"` : "the ghost says so, and the daemon still has it closed"]);
+  await p.pointerAway();
+  return rows;
+}
+
+/** 1.7.2: a keyboard is never left on nothing. A menu gives the focus back
+ *  to the row it came from, however it was opened and however it closed. */
+async function reachRows(p, base, token, arrive) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const d = await arrive({ name: "reach.md", body: "# Reach\n\nA row to open a menu on.\n" });
+  const row = `#trees a[data-id="${d.id}"]`;
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`!!document.querySelector(${JSON.stringify(row)})`);
+
+  // By key: ⇧F10 on the row, `p` to Pin, Enter. The focus is on the row again.
+  await p.ev(`document.querySelector(${JSON.stringify(row)}).focus()`);
+  await p.press("⇧F10", { raw: true });
+  const opened = await until(`!document.querySelector("#ctx")?.hidden`, 20);
+  await p.press("p", { raw: true });
+  await p.press("Enter");
+  await sleep(400);
+  const back = await p.ui("at", row);
+  rows.push(["menu item by Enter → focus on the row it was opened from", opened && back,
+    !opened ? "⇧F10 opened no menu" : back ? "Pin ran, and the focus is on the row" : `the focus is on ${JSON.stringify(await p.ui("focus"))}`]);
+  // Unpinned again, the same way, so the library is as it was.
+  await p.press("⇧F10", { raw: true }); await p.press("u", { raw: true }); await p.press("Enter"); await sleep(300);
+
+  // By pointer: a right-click, then Esc. The focus is on the row.
+  await p.ev(`document.activeElement?.blur()`);
+  await p.rightClickOn(row);
+  const menu = await until(`!document.querySelector("#ctx")?.hidden`, 20);
+  await p.press("Escape");
+  await sleep(200);
+  const esc = await p.ui("at", row);
+  rows.push(["Esc after right-click → focus back", menu && esc,
+    !menu ? "the right-click opened no menu" : esc ? "the menu went, and the focus is on the row that was right-clicked" : `the focus is on ${JSON.stringify(await p.ui("focus"))}`]);
+  await p.pointerAway();
+
+  // Del: the removal leaves the hand on its Undo, and Enter takes it back.
+  const del = await arrive({ name: "reach-del.md", body: "# Reach del\n\nRemoved by a key.\n" });
+  await p.goto(`${origin}/d/${del.id}`);
+  await p.pointerAway();
+  await p.press("Delete");
+  await sleep(500);
+  const onUndo = await p.ui("at", ".t-gone .t-undo");
+  if (onUndo) await p.press("Enter");
+  const undone = onUndo && await until(`document.title === ${JSON.stringify(del.title)}`);
+  rows.push(["Del on a row → focus on Undo; Enter brings it back", !!undone,
+    !onUndo ? `the focus is on ${JSON.stringify(await p.ui("focus"))}, not the Undo` : undone ? "the hand was on the Undo, and Enter brought the document back" : "Enter on the Undo did not bring it back"]);
+
+  // An older aside in the trail is reached by Tab and opened by Enter.
+  const say = async (text, about) => {
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent", ...(about ? { about } : {}) }) });
+    return (await r.json()).note;
+  };
+  await say("The first older aside, about the reach document.", d.id);
+  await say("The second older aside, about it too.", d.id);
+  const now = await say("The newest aside, on the card.");
+  await p.goto(`${origin}/`);
+  await p.pointerAway();
+  await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(now.text)}`);
+  await p.ev(`document.querySelector("#note .note-now").focus()`);
+  await sleep(500);
+  await p.press("⇧Tab", { raw: true });   // Close all
+  await p.press("⇧Tab", { raw: true });   // the aside nearest the card, the first one sent
+  const on = await p.ev(`document.activeElement?.closest(".note-trail li")?.querySelector(".note-t")?.textContent || null`);
+  await p.press("Enter");
+  const went = await until(`document.title === ${JSON.stringify(d.title)}`);
+  rows.push(["Tab reaches an older aside in the trail; Enter opens it", /first older aside/.test(on || "") && went,
+    !on ? `Tab went to ${JSON.stringify(await p.ui("focus"))}, not the trail` : !/first older aside/.test(on) ? `Tab reached "${on}"` : went ? "reached, and Enter opened the document it is about" : `Enter left the page on "${await p.ev("document.title")}"`]);
+  await p.pointerAway();
   return rows;
 }
 
@@ -1105,12 +1505,18 @@ async function backRows(p, browsed) {
   const where = () => p.ev("location.pathname");
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   const bar = () => p.ev(`(() => { const o = document.querySelector("#chrome .over"), x = o.querySelector(".over-x"), r = x.getBoundingClientRect();
-    return { shown: !o.hidden && r.width > 0, title: x.title }; })()`);
+    return { shown: !o.hidden && r.width > 0, title: x.dataset.tip || "" }; })()`);
 
-  await p.goto(`${origin}/`);
+  await p.goto(`${origin}/inbox`);
   await p.pointerAway();
   const onInbox = await bar();
-  await p.clickOn(".inbox a[data-id]");
+  // j walks the rows a reader can see: the projects are opened, as a reader
+  // would, and the Inbox entry opened is the one highest in the tree, so two
+  // j's have somewhere to go whatever the sections before this one sent.
+  await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
+  await until(`document.querySelectorAll("#tree a[data-id]").length >= 3`);
+  const top = await p.ev(`[...document.querySelectorAll("#tree a[data-id]")].map(a => a.dataset.id).find(id => document.querySelector('.inbox a[data-id="' + id + '"]')) || ""`);
+  await p.clickOn(top ? `.inbox a[data-id="${top}"]` : ".inbox a[data-id]");
   await until(`location.pathname.startsWith("/d/")`);
   const first = await where(), b1 = await bar();
   await p.press("j"); await until(`location.pathname !== ${JSON.stringify(first)}`);
@@ -1118,9 +1524,9 @@ async function backRows(p, browsed) {
   await p.press("j"); await until(`location.pathname !== ${JSON.stringify(second)}`);
   const read = new Set([first, second, await where()]).size;
   rows.push(["every document has the ✕", !onInbox.shown && b1.shown && /Back to Inbox/.test(b1.title),
-    onInbox.shown ? "the Inbox has one too" : !b1.shown ? "a document opened from the Inbox has none" : `its tooltip reads "${b1.title}"`]);
+    onInbox.shown ? "the Inbox has one too" : !b1.shown ? "a document opened from the Inbox has none" : `its tip reads "${b1.title}"`]);
   await p.clickOn("#chrome .over-x");
-  const home = await until(`location.pathname === "/" && !!document.querySelector(".inbox")`);
+  const home = await until(`location.pathname === "/inbox" && !!document.querySelector(".inbox")`);
   rows.push(["and it goes back past what j read", home && read === 3,
     read !== 3 ? `j read ${read} documents, not 3` : home ? "three documents read, one click, the Inbox" : `landed on ${await where()}`]);
 
@@ -1138,7 +1544,7 @@ async function backRows(p, browsed) {
   await p.goto(`${origin}${first}`);
   await p.pointerAway();
   await p.clickOn("#chrome .over-x");
-  const deep = await until(`location.pathname === "/"`);
+  const deep = await until(`location.pathname === "/inbox"`);
   rows.push(["a deep link goes to the Inbox", deep, deep ? "no screen behind it, so the Inbox" : `landed on ${await where()}`]);
 
   await p.goto(`${origin}${first}`);
@@ -1148,14 +1554,14 @@ async function backRows(p, browsed) {
   await p.press("Escape"); await sleep(200);
   const stayed = await p.ev(`document.querySelector("#palette").hidden && location.pathname === ${JSON.stringify(first)}`);
   await p.press("Escape");
-  const esc = await until(`location.pathname === "/"`);
+  const esc = await until(`location.pathname === "/inbox"`);
   rows.push(["Esc takes one thing down at a time", pal && stayed && esc,
     !pal ? "⌃K opened no palette" : !stayed ? `the first Esc left the page for ${await where()}` : esc ? "the first Esc shut the palette, the second went to the Inbox" : "the second Esc stayed on the document"]);
   return rows;
 }
 
 /** An aside can be closed: the ✕ on its card, or Esc on it, and the card
- *  stands as one line holding the Undo for 4 s, as a removed document's row
+ *  stands as one line holding the Undo for 6 s, as a removed document's row
  *  does. The daemon only flags it, so Undo is real, and a closed one is
  *  closed in every page. The next aside takes the card once the offer ends. */
 async function asideRows(p, base, token) {
@@ -1206,8 +1612,8 @@ async function asideRows(p, base, token) {
 
   await p.pointerAway();
   await p.ev(`document.activeElement?.blur()`);
-  const next = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(older.text)}`, 70);
-  rows.push(["when the offer ends, the next aside has the card", next, next ? "the older aside, after 4 s" : `the card reads ${JSON.stringify(await card())}`]);
+  const next = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(older.text)}`, 90);
+  rows.push(["when the offer ends, the next aside has the card", next, next ? "the older aside, after 6 s" : `the card reads ${JSON.stringify(await card())}`]);
 
   await say("One more, so there is a trail to close.");
   await until(`!!document.querySelector("#note .note-all")`);
@@ -1242,7 +1648,7 @@ async function revealRows(p, browsed, folder, tmp) {
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   const opened = join(tmp, "opened");
   const origin = await p.ev("location.origin");
-  await p.goto(`${origin}/`);
+  await p.goto(`${origin}/inbox`);
   await p.clickOn(".inbox a[data-id]");
   await until(`location.pathname.startsWith("/d/")`);
   const inDoc = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
@@ -1637,6 +2043,120 @@ async function deskRows(cdp, base, token) {
   return rows;
 }
 
+/** 1.8's second half: Home at `/` and the Inbox at `/inbox`; a desk closed
+ *  with its notes and brought back; Left off, set, shown in the desk's head,
+ *  cleared and undone; an agent's suggestion kept; the brief a Claude
+ *  starting in a panel is handed, and its off switch; an agent's HTML sent
+ *  inline opening as a page; the aside card laid over the tree so nothing in
+ *  it moves; and a document reopened where it was left. In a tab of its own,
+ *  with the capability. */
+async function homeRows(cdp, base, token, arrive, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" }, T = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => { const r = await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) }); return { status: r.status, json: await r.json().catch(() => ({})) }; };
+  const get = async (path, h = H) => (await fetch(base + path, { headers: h })).json().catch(() => ({}));
+  const made = await post("/api/desks", { name: "home-bench" });
+  const d = made.json.desk ? made.json.desk.id : made.json.id;
+  const pane = (await post(`/api/desks/${d}/panes`)).json.pane.id;
+  // By full path: the daemon's PATH here leaves out any directory holding a
+  // snyvi-app, which on an installed machine is /usr/bin -- and a pane whose
+  // program is not found is not running, which is what an agent's routes ask.
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  await post(`/api/panes/${pane}/start`, { cmd: `${sleepBin} 300` });
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  try {
+    // Home and the Inbox, each at its own address.
+    await p.goto(`${base}/#cap=${cap}`);
+    const home = await until(`!!document.querySelector(".hm [data-w=desks] .hm-desk")`);
+    const quiet = await p.ev(`document.querySelector(".hm [data-w=needs]")?.textContent || ""`);
+    rows.push(["the mark opens Home, with the desks on it", home && /Nothing needs you/.test(quiet),
+      !home ? "no Home, or no desk card on it" : `Needs you says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
+    await p.goto(`${base}/inbox#cap=${cap}`);
+    const inbox = await until(`document.querySelector("#doc h1")?.textContent === "Inbox"`);
+    rows.push(["the Inbox is at /inbox", inbox, inbox ? "its own page, its own address" : "no Inbox at /inbox"]);
+
+    // Left off: said by the reader, shown in the head, cleared and undone.
+    const set = await post(`/api/desks/${d}/leftoff`, { text: "If the tests pass, ship the migration" });
+    await p.goto(`${base}/desk/${d}#cap=${cap}`);
+    const head = await until(`/ship the migration/.test(document.querySelector(".dk-head .dk-left")?.textContent || "")`);
+    const cleared = await post(`/api/desks/${d}/leftoff`, { text: "" });
+    const back = cleared.json.was && (await post(`/api/desks/${d}/leftoff`, cleared.json.was)).status === 200;
+    const kept = (await get("/api/desks")).desks.find(x => x.id === d)?.left_off;
+    rows.push(["Left off is one line in the desk's head, and a clear comes back", set.status === 200 && head && back && kept && kept.text === "If the tests pass, ship the migration" && kept.at === cleared.json.was.at,
+      !head ? "the head does not show it" : !back ? "the clear handed nothing back to undo with" : "shown, cleared, and put back with its own time"]);
+
+    // A suggestion from the agent in the panel: a ghost row until kept.
+    const sug = await post(`/api/panes/${pane}/suggest`, { text: "Write the rollback note", by: "bench-agent" }, T);
+    const ghost = await until(`!!document.querySelector("#toc .dk-sug [data-a=note-keep]")`);
+    if (ghost) await p.clickOn("#toc .dk-sug [data-a=note-keep]");
+    const keptRow = ghost && await until(`!document.querySelector("#toc .dk-sug") && [...document.querySelectorAll("#toc .dk-note .nm")].some(n => /rollback note/.test(n.textContent))`);
+    rows.push(["an agent's suggestion is a ghost row until it is kept", sug.status === 201 && ghost && keptRow,
+      sug.status !== 201 ? `the suggestion was refused (${sug.status})` : !ghost ? "no ghost row with Keep" : keptRow ? "Keep made it a line of the reader's" : "Keep left it a suggestion"]);
+
+    // The brief, and its off switch.
+    const brief = await get(`/api/panes/${pane}/brief`, T);
+    await post("/api/brief", { on: false });
+    const off = await get(`/api/panes/${pane}/brief`, T);
+    await post("/api/brief", { on: true });
+    rows.push(["a Claude starting in the panel is told about its desk", /home-bench/.test(brief.context || "") && /Left off/.test(brief.context || "") && /rollback note/.test(brief.context || "") && brief.title === "home-bench · panel 1" && off.context === "",
+      `"${(brief.context || "").split("\n")[0].slice(0, 70)}…", titled "${brief.title}"; off says ${JSON.stringify(off.context)}`]);
+
+    // A desk closed with its notes, and brought back.
+    const note = (await post(`/api/desks/${d}/notes`, { text: "a line that must outlive the close" })).json.note;
+    await post(`/api/desks/${d}/notes/${note.id}`, { done: true });
+    await post(`/api/panes/${pane}/stop`);
+    const shut = await post(`/api/desks/${d}/delete`);
+    const listed = (await get("/api/removed")).items.find(x => x.kind === "desk" && x.id === String(d));
+    const gone = !(await get("/api/desks")).desks.some(x => x.id === d);
+    const re = listed ? await post(listed.restore) : { status: 0 };
+    const notes = (await get(`/api/desks/${d}/notes`)).notes || [];
+    const outlived = notes.find(n => n.id === note.id);
+    rows.push(["a closed desk keeps its notes and comes back with them", shut.json.ok && gone && !!listed && re.status === 200 && !!outlived && outlived.done,
+      !gone ? "the desk is still listed after its close" : !listed ? "the Removed list has no row for it" : !outlived ? "its notes did not come back" : `${notes.length} notes back, the ticked one still ticked`]);
+
+    // An agent's inline HTML is a page.
+    const html = await post("/api/docs", { content: "<!doctype html><title>Mock</title><h1 id=x>A mockup</h1>", lang: "html", title: "An inline mockup", cwd: tmp }, T);
+    await p.goto(`${base}/d/${html.json.id}`);
+    const framed = await until(`!!document.querySelector("#doc .preview iframe")`);
+    rows.push(["an HTML page sent as content opens as the page", framed, framed ? "framed, its source one click away" : "it opened as its source"]);
+
+    // The aside card over the tree: nothing in the tree moves when it comes.
+    await p.goto(`${base}/inbox`);
+    await sleep(400);
+    const before = await p.ev(`(() => { const t = document.querySelector("#trees"); return { h: t.getBoundingClientRect().height, top: [...t.querySelectorAll("a")].slice(-1)[0]?.getBoundingClientRect().top }; })()`);
+    await post("/api/notes", { text: "An aside over the tree.", sender: "bench-agent" }, T);
+    await until(`!document.querySelector("#note").hidden && !!document.querySelector("#note .note-now")`);
+    await sleep(400);
+    const after = await p.ev(`(() => { const t = document.querySelector("#trees"); return { h: t.getBoundingClientRect().height, top: [...t.querySelectorAll("a")].slice(-1)[0]?.getBoundingClientRect().top }; })()`);
+    rows.push(["an aside arriving moves nothing in the tree", before.h === after.h && before.top === after.top,
+      before.h === after.h && before.top === after.top ? "the tree's height and its last row stayed where they were" : `#trees ${before.h} → ${after.h} px, last row ${before.top} → ${after.top}`]);
+
+    // A long document reopened from the Inbox opens where it was left.
+    const long = await arrive({ name: "long-read.md", body: "# Long\n\n" + Array.from({ length: 120 }, (_, i) => `Paragraph ${i + 1}, to be read past.`).join("\n\n") + "\n" });
+    await p.goto(`${base}/d/${long.id}`);
+    await until(`!!document.querySelector("#doc .prose p")`);
+    await p.ev(`(() => { const m = document.querySelector("#main") || document.querySelector("main"); m.scrollTo({ top: m.scrollHeight / 2, behavior: "instant" }); return 1; })()`);
+    await sleep(700);
+    await p.goto(`${base}/inbox`);
+    await until(`!!document.querySelector(".inbox a[data-id='${long.id}']")`);
+    await p.clickOn(`.inbox a[data-id='${long.id}']`);
+    await until(`location.pathname === "/d/${long.id}"`);
+    await sleep(500);
+    const at = await p.ev(`(document.querySelector("#main") || document.querySelector("main")).scrollTop`);
+    rows.push(["a document opens where it was left", at > 200, `${Math.round(at)} px down on reopening from the Inbox`]);
+  } finally {
+    await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${d}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** A desk is for a project. `+ New desk` asks where before it makes anything,
  *  the Inbox's project is among the answers and the home folder is the last;
  *  the project, chosen, is a desk on its folder named for it; and its row in
@@ -1691,6 +2211,155 @@ async function projectDeskRows(cdp, base, token, tmp) {
   return rows;
 }
 
+/** 1.7.2, on a desk: a note or a name the daemon refused is back in its
+ *  field with the reason under it; the rail puts back what it changed when
+ *  the daemon says no, and says which thing failed, in that thing's row. In
+ *  a tab of its own, with the capability, as `deskRows` is. */
+async function deskLossRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "refusals" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const pane = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  await post(`/api/desks/${desk}/notes`, { text: "a line to tick" });
+  const d2 = await post("/api/desks", { name: "refusals-b" }), other = d2.desk ? d2.desk.id : d2.id;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const field = sel => p.ev(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); return i ? { value: i.value, err: i.parentElement.querySelector(".field-err")?.textContent || null, focused: document.activeElement === i } : null; })()`);
+  // The desks' list can redraw between finding a row and the click on it,
+  // and a click that lands on the section's head folds it: a switch waits for
+  // the row to be there, opens the section if it is folded, and is asked
+  // again until the page is on that desk.
+  const toDesk = async id => {
+    for (let i = 0; i < 3; i++) {
+      if (await p.ev(`document.querySelector("#trees").classList.contains("fold-desks")`)) await p.clickOn('#trees [data-fold="desks"]');
+      await until(`(() => { const a = document.querySelector('#desk-nav a[data-desk="${id}"]'); return !!a && a.getBoundingClientRect().height > 0; })()`, 30);
+      await p.clickOn(`#desk-nav a[data-desk="${id}"]`);
+      if (await until(`location.pathname === "/desk/${id}"`, 30)) return true;
+    }
+    return false;
+  };
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`!!document.querySelector("#toc [data-a=note-new]")`);
+
+    // A new note, refused: the text is back in the field, and why is under it.
+    const typed = "a line the daemon will not keep";
+    await p.clickOn("#toc [data-a=note-new]");
+    await until(`!!document.querySelector("#toc .dk-note-in")`);
+    await p.type(typed);
+    await until(`document.querySelector("#toc .dk-note-in")?.value === ${JSON.stringify(typed)}`);
+    await refuse(p, "POST", /\/notes$/, 400, { error: "a desk holds 50 notes" });
+    await p.press("Enter");
+    await sleep(400);
+    const f1 = await field("#toc .dk-note-in");
+    rows.push(["note save refused → text back in the field", await refused(p) && f1?.value === typed && /^Could not add the note/.test(f1.err || ""),
+      !(await refused(p)) ? "Enter never asked the daemon" : !f1 ? "the field closed, and the text with it" : f1.value !== typed ? `the field holds "${f1.value}"` : !f1.err ? "the text is back, but nothing says why" : `"${f1.value}", and under it "${f1.err}"`]);
+    await p.press("Escape");
+
+    // The desk's name, refused: the typed name is back in the field. Rename
+    // is on the ⋯ at the end of the desk's head, and the name is edited
+    // where it stands in the head.
+    await p.clickOn(".dk-head [data-desk-menu]");
+    await until(`!document.querySelector("#ctx")?.hidden`, 20);
+    await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.startsWith("Rename"))`)}"]`);
+    await until(`!!document.querySelector(".dk-head .ren-in")`);
+    await p.type("a name the daemon refuses");
+    await refuse(p, "POST", /\/rename$/, 400, { error: "that name is taken" });
+    await p.press("Enter");
+    await sleep(400);
+    const f2 = await field(".dk-head .ren-in");
+    rows.push(["rename refused → typed name back in the field", await refused(p) && f2?.value === "a name the daemon refuses" && /^Could not rename/.test(f2.err || ""),
+      !(await refused(p)) ? "Enter never asked the daemon" : !f2 ? "the field closed, and the name with it" : f2.value !== "a name the daemon refuses" ? `the field holds "${f2.value}"` : !f2.err ? "the name is back, but nothing says why" : `"${f2.value}", and under it "${f2.err}"`]);
+    await p.press("Escape");
+
+    // A tick, refused: the box is unticked again, and the row says so.
+    const err = () => p.ev(`[...document.querySelectorAll("#toc .dk-err")].map(e => e.firstChild.textContent)`);
+    await until(`!!document.querySelector("#toc [data-a=note-tick]")`);
+    await refuse(p, "POST", /\/notes\/\d+$/);
+    await p.clickOn("#toc [data-a=note-tick]");
+    await sleep(400);
+    const tick = await p.ev(`document.querySelector("#toc [data-a=note-tick]")?.getAttribute("aria-checked")`), e1 = await err();
+    rows.push(["tick refused → unticked again", await refused(p) && tick === "false" && e1.includes("Could not tick this"),
+      !(await refused(p)) ? "the tick never asked the daemon" : tick !== "false" ? "the box stayed ticked" : !e1.length ? "nothing said it failed" : `unticked, and the row says "${e1.join(" / ")}"`]);
+
+    // An edit that empties the line takes it off the ✕'s way: a ghost with
+    // its Undo, and the Undo brings the words back.
+    await p.clickOn("#toc [data-a=note-edit]");
+    await until(`!!document.querySelector("#toc .dk-note-in")`);
+    await p.ev(`document.querySelector("#toc .dk-note-in").select()`);
+    await p.press("Delete");
+    await p.press("Enter");
+    await sleep(400);
+    const ghost = await p.ev(`(() => { const g = document.querySelector("#toc .dk-note.gone"); return g ? { text: g.querySelector(".nm").textContent, undo: !!g.querySelector("[data-a=note-back]") } : null; })()`);
+    if (ghost?.undo) await p.clickOn("#toc .dk-note.gone [data-a=note-back]");
+    const back = ghost?.undo && await until(`document.querySelector("#toc [data-a=note-edit]")?.textContent === "a line to tick"`);
+    rows.push(["empty edit → ghost with Undo; Undo brings the text back", !!back,
+      !ghost ? "the line went with no ghost" : !ghost.undo ? `the ghost "${ghost.text}" offers no Undo` : back ? `"${ghost.text} · Undo", and the Undo put the words back` : "the Undo did not bring the line back"]);
+
+    // A close, refused: the panel is still in its row, running, and no
+    // "Closed · Undo" was ever said.
+    await until(`!!document.querySelector("#toc .dk-pane [data-a=close]")`);
+    await refuse(p, "POST", /^\/api\/panes\/[^/]+\/delete$/);
+    await p.hoverOn("#toc .dk-pane");
+    await p.clickOn("#toc .dk-pane [data-a=close]");
+    await sleep(500);
+    const shut = await p.ev(`({ row: !!document.querySelector("#toc .dk-pane.run:not(.closing)"), closed: [...document.querySelectorAll("#toc .dk-panes .dk-note.gone")].some(r => /Closed/.test(r.textContent)) })`), e2 = await err();
+    rows.push(["close refused → panel row running, no Closed row", await refused(p) && shut.row && !shut.closed && e2.includes("Could not close panel 1"),
+      !(await refused(p)) ? "the ✕ never asked the daemon" : !shut.row ? "the panel's row is gone or still closing" : shut.closed ? "a Closed · Undo row was drawn anyway" : !e2.length ? "nothing said it failed" : `still running, and its row says "${e2.join(" / ")}"`]);
+
+    // Another desk's notes, not sent: a line that says so, not the prompt
+    // an empty list gets.
+    await refuse(p, "GET", /\/notes$/);
+    await toDesk(other);
+    await until(`location.pathname === "/desk/${other}"`);
+    await sleep(500);
+    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes .dk-empty") })`);
+    if (notes.line) await p.clickOn("#toc .dk-notes .no-reach [data-a=reload]");
+    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-empty")`);
+    rows.push(["notes fetch refused → Retry line, not the empty prompt", await refused(p) && !!notes.line && !notes.prompt && prompt,
+      !(await refused(p)) ? "the desk never asked for its notes" : notes.prompt ? "the empty prompt, as if the list were empty" : !notes.line ? "nothing says the notes did not load" : prompt ? `"${notes.line}", and the Retry read the (empty) list` : "the Retry did not read the list"]);
+
+    // A point kept from a document this desk's panel sent is still there
+    // after going to another desk and back.
+    await fetch(`${base}/api/docs`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ content: "# A passage to keep\n\nThis line is worth keeping as a point for the panel that sent it.\n", title: "A passage to keep", pane }) });
+    await toDesk(desk);
+    const listed = await until(`!!document.querySelector("#toc a[data-read]")`, 150);
+    let kept = false, survived = false;
+    if (listed) {
+      await p.clickOn("#toc a[data-read]");
+      await until(`!!document.querySelector("#doc .prose p")`);
+      const at = await p.ui("center", "#doc .prose p");
+      await p.drag(at.x - 150, at.y, 300);
+      if (await until(`!!document.querySelector(".dk-pick")`, 20)) {
+        await p.clickOn(".dk-pick");
+        kept = await until(`!!document.querySelector("#toc .dk-points")`, 20);
+      }
+      if (kept) {
+        await toDesk(other);
+        await toDesk(desk);
+        survived = await until(`!!document.querySelector("#toc .dk-points")`, 20);
+      }
+    }
+    rows.push(["points survive switching desk and back", survived,
+      !listed ? "the panel's document is not in the desk's rail" : !kept ? "no point could be kept from it" : survived ? "the point is in the rail after another desk and back" : "the point went with the switch"]);
+  } finally {
+    await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${other}/delete`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** 1.6's desk: a panel in full view fills the window and comes back; a head
  *  dragged onto another panel trades their places, and so does ⌃⌥⇧ and an
  *  arrow, the daemon renumbering them; a link a program printed opens on a
@@ -1730,9 +2399,11 @@ async function panelRows(cdp, base, token) {
     // its context window is -- is in the panel's head, amber from 85%.
     const told = await fetch(`${base}/api/panes/${pa}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: 87.4, size: 200000, input: 174800 } }) });
-    const ctxShown = await until(`document.querySelector('${P(pa)} .pn-ctx')?.textContent === "87%"`, 30);
-    const ctxLook = await q.ev(`({ hot: !!document.querySelector('${P(pa)} .pn-ctx.hot'), title: document.querySelector('${P(pa)} .pn-ctx')?.title || "", row: document.querySelector('.dk-pane:has([data-focus="${pa}"]) .ctx')?.textContent || "" })`);
-    rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && ctxLook.row === "87%",
+    // The head gives the tokens against the window, the model and the % in
+    // its tip; the rail's row, which has less room, the %.
+    const ctxShown = await until(`document.querySelector('${P(pa)} .pn-ctx')?.textContent === "175k / 200k"`, 30);
+    const ctxLook = await q.ev(`({ hot: !!document.querySelector('${P(pa)} .pn-ctx.hot'), title: document.querySelector('${P(pa)} .pn-ctx')?.dataset.tip || "", row: document.querySelector('.dk-pane:has([data-focus="${pa}"]) .ctx')?.textContent || "" })`);
+    rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && /87(\.4)?%/.test(ctxLook.title) && ctxLook.row === "87%",
       told.status !== 204 ? `the route answered ${told.status}` : !ctxShown ? "the head never showed it" : !ctxLook.hot ? "87% is not amber" : !ctxLook.row ? "the rail's row does not show it" : `"${ctxLook.title}", amber, and in the rail`]);
 
     // Full view, from the head's button, and back by the key.
@@ -1826,14 +2497,14 @@ async function panelRows(cdp, base, token) {
     rows.push(["an agent's tick shows in the rail, with its name", byAgent && again.status === 409,
       !tk.ok ? `the tick answered ${tk.status}` : !byAgent ? "the rail never showed it" : again.status !== 409 ? `a second tick answered ${again.status}` : "done, \"bench-agent\" at its end, and a second tick refused"]);
 
-    // A sidebar document's menu: Remove from inbox leaves the row's own Undo.
+    // A sidebar document's menu: Remove leaves the row's own Undo.
     const doc = await q.ev(`document.querySelector("#trees a[data-id]")?.dataset.id || ""`);
     if (doc) {
       await rightOn(`#trees a[data-id="${doc}"]`);
       const dm = await q.ev(menu);
-      await pick("Remove from inbox");
+      await q.ev(`[...document.querySelectorAll("#ctx button")].find(b => b.firstChild?.textContent === "Remove")?.click(); 1`); await sleep(300);
       const ghost = await until(`!!document.querySelector("#trees [data-undoc]")`, 20);
-      rows.push(["a document's menu removes it, with the row's Undo", !!dm && dm.items.includes("Remove from inboxDel") && ghost,
+      rows.push(["a document's menu removes it, with the row's Undo", !!dm && dm.items.includes("RemoveDel") && ghost,
         !dm ? "no menu on the row" : !ghost ? "no Undo in the row" : `${dm.items.length} entries, and the row holds its Undo`]);
       if (ghost) { await q.clickOn("#trees [data-undoc]"); await sleep(300); }
     } else rows.push(["a document's menu", false, "no document row in the sidebar to try it on"]);
@@ -1907,16 +2578,22 @@ async function answerRows(url, tmp) {
   await p.pointerAway();
   rows.push(["the column is filled while open", /rgba\(0, 0, 0, 0\)|transparent/.test(fill) && !/rgba\(0, 0, 0, 0\)|transparent/.test(open),
     `at rest ${fill}, open ${open}`]);
+  // 1.8: the setting changing is the answer, and the button's own tip, under
+  // the hand, names what it is now (docs/DESIGN.md §4.1) -- no toast.
   for (const [id, name] of [["#btn-theme", "theme"], ["#btn-accent", "accent"], ["#btn-font", "Aa"]]) {
     await p.hoverOn(".foot-set");
+    await p.hoverOn(id);
+    await sleep(600);   // the tip's chunk comes with the first rest on a control
+    const was = await p.ev(`document.querySelector(${JSON.stringify(id)}).dataset.tip`);
     await p.clickOn(id);
     await sleep(450);
-    const m = await p.ev(`(() => { const t = document.querySelector("#toasts .toast"), b = document.querySelector(${JSON.stringify(id)});
-      if (!t) return null; const r = t.getBoundingClientRect(), s = b.getBoundingClientRect();
-      return { toast: r.top + r.height / 2, button: s.top + s.height / 2, h: r.height }; })()`);
-    const off = m ? Math.abs(m.toast - m.button) : null;
-    rows.push([`${name}'s answer beside it`, off !== null && off <= 3,
-      m === null ? "no answer came up" : `its centre ${Math.round(m.toast)} px, the button's ${Math.round(m.button)} px, ${off.toFixed(1)} px apart`]);
+    const m = await p.ev(`(() => { const t = document.querySelector("#tip.on"), b = document.querySelector(${JSON.stringify(id)});
+      const toast = !!document.querySelector("#toasts .toast");
+      if (!t) return { toast }; const r = t.getBoundingClientRect(), s = b.getBoundingClientRect();
+      return { toast, text: t.textContent, tip: r.top + r.height / 2, button: s.top + s.height / 2 }; })()`);
+    const off = m.tip != null ? Math.abs(m.tip - m.button) : null;
+    rows.push([`${name}'s answer is its tip, beside it`, !m.toast && off !== null && off <= 3 && m.text && !m.text.startsWith(was),
+      m.toast ? "a toast came up as well" : off === null ? "no tip after the click" : m.text.startsWith(was) ? `the tip still reads "${m.text}"` : `"${m.text}", its centre ${Math.round(m.tip)} px, the button's ${Math.round(m.button)} px`]);
     await p.pointerAway();
     await p.ev(restore);
     // Gone before the next press: at the foot of a short window an answer
@@ -1948,7 +2625,7 @@ async function controlRows(cdp, p, url, browsed, base, token) {
       await drv.clickOn(id);
       await sleep(250);
       const after = await drv.ev(read);
-      const dim = await drv.ev(`(() => { const b = document.querySelector(${JSON.stringify(id)}); return b.classList.contains("dim") ? { label: b.dataset.label, said: document.querySelector("#toasts .toast .s")?.textContent || "" } : null; })()`);
+      const dim = await drv.ev(`(() => { const b = document.querySelector(${JSON.stringify(id)}); return b.classList.contains("dim") ? { label: [b.dataset.tip, b.dataset.tipSub].filter(Boolean).join(" · "), said: document.querySelector("#toasts .toast .s")?.textContent || "" } : null; })()`);
       const ok = dim ? !!dim.said && dim.label.endsWith(dim.said) && after === before : after !== before;
       rows.push([`${c} on ${view}`, ok, dim ? `dimmed: "${dim.label}"${after !== before ? ", and it changed something anyway" : ""}` : after !== before ? "it changed what it sets" : "not dimmed, and it changed nothing"]);
       // Back as it was: a second press for the toggles; Aa's steps are keys.
@@ -1967,7 +2644,7 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   await p.goto(`${browsed}/code.rs`);
   await sleep(400);
   await walk(p, "a code file");
-  await p.goto(base + "/");
+  await p.goto(base + "/inbox");
   await walk(p, "the inbox");
 
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
@@ -2140,6 +2817,31 @@ async function motionRows(p, url, arrive) {
   const quiet = await anims();
   await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "" }] }, p.s);
   rows.push(["reduced motion means none", quiet.length === 0, quiet.length ? `${quiet.length} still running: ${[...new Set(quiet.map(a => a.name))].join(", ")}` : "no animation on the page at all"]);
+
+  // None, and nothing lost to it: what used to show only by fading in (the
+  // skeleton) still shows, and an Undo's clock still stops under the hand.
+  const media = v => p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: v }] }, p.s);
+  await media("reduce");
+  const sk = await p.ev(`(() => { const b = document.createElement("span"); b.className = "sk-bar"; document.body.append(b); const o = +getComputedStyle(b).opacity; b.remove(); return o; })()`);
+  await media("");
+  rows.push(["skeleton visible under reduced motion", sk > 0.03, sk > 0.03 ? `the bars rest at ${sk}` : `the bars are at ${sk}: the wait shows nothing`]);
+  const origin = await p.ev("location.origin"), held = {};
+  for (const mode of ["reduce", ""]) {
+    await media(mode);
+    const d = await arrive();
+    await p.goto(`${origin}/d/${d.id}`);
+    await p.pointerAway();
+    await p.press("Delete");
+    for (let i = 0; i < 40 && !(await p.ev(`!!document.querySelector("#trees .t-ghost .t-undo")`)); i++) await sleep(100);
+    await sleep(500);
+    await p.ev(`document.querySelector("#trees .t-ghost .t-undo")?.focus()`);
+    await sleep(6000);
+    held[mode || "full"] = await p.ev(`!!document.querySelector("#trees .t-ghost .t-undo")`);
+    await p.ev(`document.activeElement?.blur()`);
+  }
+  await media("");
+  rows.push(["ghost Undo still there after 6 s with focus on it, both motion modes", held.reduce && held.full,
+    held.reduce && held.full ? "the clock held while the focus rested on the Undo, with motion and without" : `gone after 6 s under focus with ${[!held.reduce && "reduced motion", !held.full && "full motion"].filter(Boolean).join(" and ")}`]);
   void second;
   return rows;
 }
@@ -2311,7 +3013,8 @@ async function connectRows(p, url, home, env) {
 async function presenceRows(p, url, base, env, tmp) {
   const rows = [];
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
-  const live = () => p.ev(`(e => ({ n: e.textContent, on: e.classList.contains("on"), title: e.title }))(document.querySelector("#live"))`);
+  // What it says is its tip now: the count's name, and who, under it.
+  const live = () => p.ev(`(e => ({ n: e.textContent, on: e.classList.contains("on"), title: [e.dataset.tip, e.dataset.tipSub].filter(Boolean).join(" · ") }))(document.querySelector("#live"))`);
   const health = async () => (await (await fetch(`${base}/api/health`)).json());
 
   await p.goto(url);
@@ -2357,9 +3060,11 @@ async function resetRows(p, url, arrive) {
     offered ? "one line at the foot of the help box, no key, no button in the chrome" : "no Reset in the help box"]);
 
   await p.clickOn("#btn-reset");
-  const opened = await until(`!document.querySelector("#reset").hidden && /This removes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
+  const opened = await until(`!document.querySelector("#reset").hidden && /This deletes \\d+ documents? in/.test(document.querySelector("#reset-say").textContent)`);
   const census = await p.ev(`fetch("/api/reset").then(r => r.json())`);
   const focused = await p.ui("at", "#reset-n");
+  const tt = await p.ev(`(() => { const h = document.querySelector("#reset-title"); return { t: getComputedStyle(h).textTransform, s: h.textContent }; })()`);
+  rows.push(["reset title in sentence case", tt.t === "none" && tt.s === "Reset snyvi", tt.t === "none" ? `"${tt.s}"` : `drawn ${tt.t}`]);
   rows.push(["the dialog says what goes", opened && focused && (await say()).includes(`${census.documents} document`) && (await say()).includes("Agents stay") && await goDisabled(),
     !opened ? "the dialog did not open, or said nothing" : !focused ? "focus is not in the number field" : `"${await say()}", the button dead, the cursor in the field`]);
 
@@ -2373,7 +3078,7 @@ async function resetRows(p, url, arrive) {
   await arrive();
   await sleep(300);
   await p.press("Enter");
-  const refused = await until(`!document.querySelector("#reset-err").hidden && /has changed/.test(document.querySelector("#reset-err").textContent)`);
+  const refused = await until(`!document.querySelector("#reset-err").hidden && /^Could not reset · 1 document arrived since you looked · type \\d+$/.test(document.querySelector("#reset-err").textContent)`);
   const stillHere = !(await p.ev(`document.querySelector("#reset").hidden`)) && (await p.ev(`fetch("/api/reset").then(r => r.json()).then(c => c.documents)`)) === census.documents + 1;
   const reasked = (await say()).includes(`${census.documents + 1} document`) && await goDisabled();
   rows.push(["a stale number is refused", refused && stillHere && reasked,

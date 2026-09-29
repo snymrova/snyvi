@@ -18,9 +18,9 @@
  */
 
 const CSS = `
-.win { position: fixed; top: 14px; right: 10px; z-index: 10; display: flex; gap: 2px; }
+.win { position: fixed; top: 14px; right: 10px; z-index: var(--z-sticky); display: flex; gap: 2px; }
 .win[hidden] { display: none; }
-.wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.wb { display: grid; place-items: center; width: 30px; height: 28px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .wb:hover { background: var(--rule); color: var(--fg); }
 .wb-close:hover { background: #c0392b; color: #fff; }
 .win .wb-restore, .win[data-max="1"] .wb-max { display: none; }
@@ -29,9 +29,10 @@ const CSS = `
 /* Room for the buttons where the rail is not there to hold them: in the
    document's head, and in a desk's header, when the rail is folded, has
    nothing in it, or is a sheet -- the desk's already leaves the rail
-   button 30px, and the three want 102px more. */
+   button 30px, and the three want 102px more. A panel in full view hides
+   the rail without folding it, so it asks for the same room. */
 :root[data-frame="page"][data-rail="0"] #chrome, :root[data-frame="page"]:has(#rail.empty) #chrome { padding-right: 112px; }
-:root[data-frame="page"][data-view="desk"][data-rail="0"] .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 132px; }
+:root[data-frame="page"][data-view="desk"]:is([data-rail="0"], [data-full]) .dk-head, :root[data-frame="page"][data-view="desk"]:has(#rail.empty) .dk-head { padding-right: 132px; }
 :root[data-frame="mac"] .side-head { padding-left: 84px; }
 /* Folded to its rail the sidebar is narrower than the traffic lights: its
    icons start under them, and the page's bar starts after them. */
@@ -45,9 +46,9 @@ const CSS = `
 
 const svg = (d, cls) => `<svg${cls ? ` class="${cls}"` : ""} viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">${d}</svg>`;
 const BUTTONS =
-  `<button class="wb" data-win="min" title="Minimise" aria-label="Minimise window">${svg('<path d="M1.5 6.5h9"/>')}</button>` +
-  `<button class="wb" data-win="max" title="Maximise" aria-label="Maximise window">${svg('<rect x="1.5" y="1.5" width="9" height="9" rx="1.2"/>', "wb-max")}${svg('<path d="M3.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8.5"/><rect x="1.5" y="3.5" width="7" height="7" rx="1"/>', "wb-restore")}</button>` +
-  `<button class="wb wb-close" data-win="close" title="Close" aria-label="Close window">${svg('<path d="M2 2l8 8M10 2l-8 8"/>')}</button>`;
+  `<button class="wb" data-win="min" data-tip="Minimise" aria-label="Minimise window">${svg('<path d="M1.5 6.5h9"/>')}</button>` +
+  `<button class="wb" data-win="max" data-tip="Maximise" aria-label="Maximise window">${svg('<rect x="1.5" y="1.5" width="9" height="9" rx="1.2"/>', "wb-max")}${svg('<path d="M3.5 3.5V2.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8.5"/><rect x="1.5" y="3.5" width="7" height="7" rx="1"/>', "wb-restore")}</button>` +
+  `<button class="wb wb-close" data-win="close" data-tip="Close" aria-label="Close window">${svg('<path d="M2 2l8 8M10 2l-8 8"/>')}</button>`;
 
 /* The desk's keys, in the help box. A desk exists only in the window, so
  * the keys for one are the window's to tell of, in the box the `?` opens
@@ -72,7 +73,7 @@ const HELP =
 export function frame(root, $) {
   const tauri = window.__TAURI_INTERNALS__;
   if (!tauri) return;
-  const win = cmd => tauri.invoke("plugin:window|" + cmd);
+  const win = (cmd, args) => tauri.invoke("plugin:window|" + cmd, args);
   return win("is_maximized").then(max => {
     const s = document.createElement("style");
     s.id = "frame-css";
@@ -91,11 +92,23 @@ export function frame(root, $) {
     el.innerHTML = BUTTONS;
     document.body.append(el);
     const wb = w => el.querySelector(`[data-win=${w}]`), btn = wb("max");
-    const show = m => { el.dataset.max = m ? "1" : "0"; btn.title = m ? "Restore" : "Maximise"; btn.setAttribute("aria-label", m ? "Restore window" : "Maximise window"); };
+    // Full screen is not maximised, and the desktop refuses a maximise
+    // while it lasts, so the square there would do nothing. A diagram's fill
+    // asks the engine for it, the desktop's own key gives it, and a page
+    // reloaded under it forgets it ever asked -- the window only knows the
+    // screen it fills. There the button is Restore, and leaves it.
+    const whole = () => !!document.fullscreenElement || (innerWidth >= screen.width && innerHeight >= screen.height);
+    const show = m => {
+      const f = !m && whole(), tip = f ? "Leave full screen" : m ? "Restore" : "Maximise";
+      el.dataset.max = m || f ? "1" : "0"; el.dataset.full = f ? "1" : "0";
+      btn.dataset.tip = tip; btn.setAttribute("aria-label", f ? tip : tip + " window");
+    };
     const refresh = () => win("is_maximized").then(show, () => {});
     show(max);
     wb("min").addEventListener("click", () => win("minimize"));
-    btn.addEventListener("click", () => win("toggle_maximize").then(refresh));
+    btn.addEventListener("click", () => el.dataset.full !== "1" ? win("toggle_maximize").then(refresh)
+      : document.fullscreenElement ? document.exitFullscreen().catch(() => {})
+      : win("set_fullscreen", { value: false }).then(refresh, () => {}));
     wb("close").addEventListener("click", () => win("close"));
     window.addEventListener("resize", refresh);
   }, () => {});

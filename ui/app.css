@@ -41,7 +41,7 @@
   --bg-raise: #ffffff;
   --fg: #1f1d1a;
   --fg-2: #5c574f;
-  --fg-3: #8a8378;
+  --fg-3: #736c61;
   --rule: #e6e2da;
   --rule-2: #d8d3c9;
   /* The accent, picked with the swatch in the sidebar's foot. Each choice is
@@ -68,6 +68,7 @@
   --mascot-nub: var(--brand);
   --heart: #f0607e;
   --mascot-peek: .22;   /* how far the mascot behind a note comes forward, hovered */
+  --mascot-shine: #fff;   /* the light in its eyes */
   --code-bg: #f3f1ec;
   --mark: #fde68a;
   --add: #dcfce7; --add-fg: #166534;
@@ -102,8 +103,34 @@
   --rail-w: 232px;
   --head-h: 52px;   /* the document's head: the brand row's height, so the panes' tops agree */
   --measure: 70ch;
-  --radius: 6px;
-  --t: 140ms cubic-bezier(.2,.7,.2,1);
+
+  /* The scales (docs/DESIGN.md §6.2, §7.1). Components read these, never a
+     number: bench/lint-ui.mjs counts every px font size, z-index and raw
+     duration outside this block, and the count only goes down. Type: seven
+     chrome steps; prose has its own size per reading face. */
+  --fs-micro: 11px; --fs-small: 12px; --fs-ui: 13px; --fs-body-s: 14px;
+  --fs-h3: 20px; --fs-h2: 26px; --fs-h1: 34px; --fs-read: 17px;
+  --fw-row: 450;   /* the one named exception: sidebar rows, the most-read chrome */
+  /* Space: a 4-point scale, with 10 and 20 kept as steps. */
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 10px; --sp-6: 12px;
+  --sp-7: 16px; --sp-8: 20px; --sp-9: 24px; --sp-10: 32px; --sp-11: 48px;
+  /* Radius: focus rings and kbd · rows, buttons, inputs, tips · menus,
+     popovers, cards, dialogs, toasts · counts and pills. */
+  --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-pill: 999px;
+  /* Layers, named. A local 0-5 inside one component is allowed. Toasts sit
+     above dialogs, so an answer is never hidden by the dialog that asked. */
+  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-tip: 50; --z-toast: 60; --z-over: 70;
+  /* Motion: instant for what happens a hundred times a day, quick by
+     default, move for what travels; the spring is the mascot's alone.
+     Exits take the in-curve and about a fifth less time. */
+  --dur-instant: 80ms; --dur-quick: 140ms; --dur-move: 220ms; --dur-moment: 700ms;
+  --ease-out: cubic-bezier(.2,.7,.2,1); --ease-in: cubic-bezier(.4,0,1,1); --ease-spring: cubic-bezier(.3,1.6,.5,1);
+  --t: var(--dur-quick) var(--ease-out);
+  --undo-ms: 6000ms;   /* UNDO_MS in app.js writes it; this is the default */
+  /* Elevation: a raised card · a popover, menu, tip or toast · a dialog.
+     The middle one is --shadow, the name every theme already sets. */
+  --shadow-1: 0 1px 3px rgba(30, 25, 15, .1);
+  --shadow-3: 0 18px 60px rgba(30, 25, 15, .22), 0 2px 6px rgba(30, 25, 15, .1);
 }
 /* Under a system asking for more contrast, Paper keeps its ground and
    darkens its lighter inks and rules to 7:1: a light theme at that bar is
@@ -127,7 +154,7 @@
   --fg-3: rgba(255,255,255,.47);
   --rule: rgba(255,255,255,.08);
   --rule-2: rgba(255,255,255,.14);
-  --wash: 16%;
+  --wash: 13%;   /* the most that keeps Passion on it at 4.5:1 */
   --wash-on: transparent;
   --kw: 100%;
   --mascot-peek: .16;
@@ -136,6 +163,8 @@
   --add: rgba(74,222,128,.14); --add-fg: #86efac;
   --del: rgba(248,113,113,.14); --del-fg: #fca5a5;
   --shadow: 0 10px 40px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
+  --shadow-1: 0 1px 3px rgba(0,0,0,.4);
+  --shadow-3: 0 18px 60px rgba(0,0,0,.6), 0 2px 6px rgba(0,0,0,.4);
   --scrim: rgba(0, 0, 0, .5);
   --ok: #5bd984;
   --warn: #e6a23c;
@@ -171,6 +200,11 @@
 :root, [data-theme] {
   --accent: light-dark(color-mix(in srgb, var(--accent-l), #000 var(--deepen)), color-mix(in srgb, var(--accent-d), #fff var(--lift)));
   --accent-bg: color-mix(in srgb, var(--accent) var(--wash), var(--wash-on));
+  /* Text and marks on an accent fill: the ground, which clears 4.5:1 on
+     every accent in every theme (lowest 4.96). White fails every dark one. */
+  --on-accent: var(--bg);
+  --focus: var(--accent);   /* the one focus ring */
+  --led-glow: 0 0 6px color-mix(in srgb, var(--ok) 60%, transparent);   /* the only glow: a live LED's */
   --mascot-ink: color-mix(in srgb, var(--brand) 40%, #000);
   --s-keyword: color-mix(in srgb, var(--accent) var(--kw), #000);
   --s-tag: var(--s-keyword);
@@ -188,14 +222,14 @@ html { height: 100%; }
 body {
   margin: 0; height: 100%;
   background: var(--bg); color: var(--fg);
-  font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  font-family: var(--sans); font-size: var(--fs-ui); line-height: 1.5;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
   font-feature-settings: "cv11", "ss01", "calt";
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: .15em; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-xs); }
 ::selection { background: var(--accent-bg); }
 
 /* ---------- layout ---------- */
@@ -205,7 +239,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   display: grid; height: 100%;
   grid-template-columns: var(--side-c) minmax(0, 1fr) var(--rail-w);
   grid-template-areas: "side main rail";
-  transition: grid-template-columns 160ms ease;
 }
 :root { --side-c: var(--side-w); }
 :root[data-side="0"] { --side-c: 44px; }
@@ -233,16 +266,16 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    lands on. The two buttons in #chrome exist for the same widths. */
 @media (max-width: 1100px) {
   #app { grid-template-columns: var(--side-c) minmax(0,1fr) 0 !important; }
-  #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: 20; box-shadow: var(--shadow); padding: 44px 0 20px 16px; }
+  #rail { display: none; position: fixed; inset: 0 0 0 auto; width: min(88vw, 320px); z-index: var(--z-rail); box-shadow: var(--shadow); padding: 44px 0 20px 16px; }
   #btn-rail-hide { top: 10px; left: 12px; }
-  :root[data-sheet="rail"] #rail { display: flex; animation: sheet-r 160ms cubic-bezier(.2,.7,.2,1); }
+  :root[data-sheet="rail"] #rail { display: flex; animation: sheet-r var(--dur-quick) var(--ease-out); }
   #chrome #btn-rail { display: inline-grid; }
   #app:has(#rail.empty) #btn-rail { display: none; }
   #rail .gutter { display: none; }
 }
 @keyframes sheet-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
 @keyframes sheet-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-#scrim { position: fixed; inset: 0; z-index: 15; background: var(--scrim); display: none; }
+#scrim { position: fixed; inset: 0; z-index: calc(var(--z-rail) - 1); background: var(--scrim); display: none; }
 :root[data-sheet] #scrim { display: block; }
 /* ---------- the document's head ----------
    A bar across the top of the document pane, the brand row's height, that
@@ -252,7 +285,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    Sticky, in the page's own colour, so at rest it is the top margin and no
    more; once the reader has scrolled, a rule at its foot is the edge the
    text disappears under, instead of a button floating over a line. */
-#chrome { position: sticky; top: 0; z-index: 10; box-sizing: border-box; height: var(--head-h); display: flex; align-items: start; gap: 8px; padding: 14px 10px 10px; background: var(--bg); box-shadow: 0 1px 0 transparent; transition: box-shadow var(--t); }
+#chrome { position: sticky; top: 0; z-index: var(--z-sticky); box-sizing: border-box; height: var(--head-h); display: flex; align-items: start; gap: 8px; padding: 14px 10px 10px; background: var(--bg); box-shadow: 0 1px 0 transparent; transition: box-shadow var(--t); }
 #main.scrolled #chrome { box-shadow: 0 1px 0 var(--rule); }
 #chrome .icon { display: none; }
 #chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; }
@@ -265,9 +298,9 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    own <h1> is right under it, and it would say the title twice. */
 #chrome .over { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 28px; padding-left: 6px; }
 #chrome .over[hidden] { display: none; }
-#chrome .over-t { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .24s cubic-bezier(.2,.7,.2,1); }
+#chrome .over-t { flex: 1; min-width: 0; font-size: var(--fs-body-s); font-weight: 600; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transform: translateY(6px); transition: opacity var(--dur-move), transform var(--dur-move) var(--ease-out); }
 #main.scrolled #chrome .over-t { opacity: 1; transform: none; }
-#chrome .over-x { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+#chrome .over-x { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 #chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
@@ -297,31 +330,30 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] :is(.brand-name, .bm-say, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
 :root[data-side="0"] #btn-side-hide { margin: 0; }
+/* The mark in a box the size of the rail's icons, so it sits on their
+   centre line and not 4 px off it. */
+:root[data-side="0"] .side-head .brand { width: 28px; height: 28px; display: grid; place-items: center; align-self: center; margin: 0; }
 :root[data-side="0"] #btn-side-hide .pane { fill: none; }
 :root[data-side="0"] #trees { flex: none; padding: 0; overflow: visible; }
 :root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
-:root[data-side="0"] #upd:not([hidden]) { width: 10px; height: 10px; padding: 0; margin: 0; font-size: 0; }
-:root[data-side="0"] #upd.quiet { display: none; }
 #rail-nav .icon { position: relative; flex: none; }
 #rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
-#rail-search { margin-top: auto; }
-.badge { position: absolute; top: -4px; right: -6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
-  font: 700 10px/15px var(--sans); text-align: center; color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 2px var(--bg-side); }
+/* On a desk, the Desks icon is where you are, as the current row is. */
+:root[data-view="desk"] #rail-nav [data-pop="desks"]:not(.on) { color: var(--fg); background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+.badge { position: absolute; top: -4px; right: -6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-pill);
+  font: 600 var(--fs-micro)/15px var(--sans); text-align: center; color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 2px var(--bg-side); }
 .badge:empty { display: none; }
 .badge.blk { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, var(--bg-side)); }
+/* Agents connected are live, not unread: the LED says so, and the figure
+   beside it is plain, so it can't be read as a second Inbox count. */
+.badge.live { color: var(--fg-2); background: none; box-shadow: none; }
 #rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
-#rail-live.on { color: var(--accent); }
-#rail-live.on i, :root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
+#rail-live.on i { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
+:root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
 #rail-note { display: none; }
 #side:has(#note:not([hidden])) #rail-note { display: inline-grid; }
-#pop { position: fixed; left: 50px; top: 8px; z-index: 20; width: var(--side-w); max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain;
-  padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow);
-  animation: sheet-l 160ms cubic-bezier(.2,.7,.2,1); }
-#pop > #note { margin: 6px 0 0; }
-#pop > :first-child .s-head { margin-top: 4px; }
 @media (max-width: 760px) {
   #btn-side-hide { display: none; }
-  #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; }
   :root[data-pop] #scrim { display: block; }
 }
 #btn-rail-hide { position: absolute; top: 14px; left: 8px; z-index: 1; }
@@ -339,10 +371,23 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main { grid-area: main; }
 #rail { grid-area: rail; }
 #main { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
-/* The panes' own scrollbars: there when a list is longer than the pane, and
-   no wider than they need to be. The document keeps the browser's. */
-#trees, #toc, #meta { scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
-@media (prefers-reduced-motion: reduce) { #main, #toc { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
+/* Parts the OS would draw, drawn once, snyvi's way (docs/DESIGN.md §8.2).
+   Every scrolling list in the chrome has the same thin bar -- there when a
+   list is longer than its place, and no wider than it needs to be -- and the
+   document keeps the browser's. A placeholder is faint ink; a row dragged
+   is not a link picture; a native control left anywhere wears the accent. */
+#trees, #toc, #meta, #pop, #ctx, #palette-list, .help-body { scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
+::placeholder { color: var(--fg-3); opacity: 1; }
+:is(#side, #rail, #pop) a { -webkit-user-drag: none; }
+:is(#side, #pop) summary { list-style: none; }
+:is(#side, #pop) summary::-webkit-details-marker { display: none; }
+/* Words for a screen reader where the eye has a colour: a running dot, a
+   waiting mark (docs/DESIGN.md §5.2, colour is never the only signal). */
+/* A drawn glyph in a button: an icon the size of the text it stands in for. */
+.g-ico { display: block; flex: none; }
+#history .g-ico { display: inline-block; vertical-align: -1px; color: var(--accent); }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { #main, #toc { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* ---------- sidebar ---------- */
 .side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 16px; }
@@ -363,15 +408,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .brand-mark .bm-open { fill: var(--mascot-ink); }
 .brand-mark .bm-shut, .brand-mark .bm-glad, .brand-mark .bm-mouth { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
 .brand-mark .bm-shut, .brand-mark .bm-glad { display: none; }
-html[data-note] .brand-mark .bm-open { animation: bm-blink 4.6s infinite; }
-html[data-note="lit"] .brand-mark .bm-nub { animation: bm-ping 1.6s ease-in-out infinite; }
+/* A few blinks and pulses when the note comes, then the nub rests lit. Not
+   for as long as the note waits: that can be hours, and an endless animation
+   of a fill repaints the page on every display frame for all of them. */
+html[data-note] .brand-mark .bm-open { animation: bm-blink 4.6s 2; }
+html[data-note="lit"] .brand-mark .bm-nub { fill: color-mix(in srgb, var(--brand) 60%, #fff); animation: bm-ping 1.6s ease-in-out 4; }
 .brand-mark.hop svg { animation: bm-hop .9s cubic-bezier(.3,1.6,.5,1) 1; transform-origin: 50% 100%; }
 html[data-note-near] .brand-mark .bm-open { display: none; }
 html[data-note-near] .brand-mark .bm-glad { display: inline; }
 html[data-note-near] .brand-mark .bm-nub { opacity: 0; }
 html[data-note-near] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
 @keyframes bm-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
-@keyframes bm-ping { 0%, 100% { fill: var(--mascot-nub); } 50% { fill: color-mix(in srgb, var(--brand) 60%, #fff); } }
+@keyframes bm-ping { 50% { fill: var(--mascot-nub); } }
 @keyframes bm-hop { 0% { transform: none; } 35% { transform: translateY(-5px) scale(1.06, .94); } 60% { transform: translateY(0) scale(.94, 1.06); } 80% { transform: translateY(-1.5px); } 100% { transform: none; } }
 html[data-link="off"] .brand-mark .bm-body { opacity: .55; }
 html[data-link="off"] .brand-mark .bm-nub { transform: translateY(1.5px) scaleY(.7); }
@@ -408,41 +456,23 @@ html[data-say="love"] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
    thing it is: snyvi only ever answers, so it only ever borrows its own line.
    Short lines only, then: it has the width between the mark and the count. */
 .brand { position: relative; }
-.brand-name { transition: opacity .16s ease; }
+.brand-name { transition: opacity var(--dur-quick) ease; }
 html[data-say] .brand-name { opacity: 0; }
-.bm-say { position: absolute; left: 28px; top: 50%; z-index: 29;
-  font-family: var(--sans); font-size: 12.5px; font-weight: 500; letter-spacing: -.005em;
-  color: var(--accent); white-space: nowrap; max-width: 132px; overflow: hidden; text-overflow: ellipsis;
-  pointer-events: none;
-  opacity: 0; transform: translateY(calc(-50% + 4px));
-  transition: opacity .16s ease, transform .3s cubic-bezier(.3,1.6,.5,1); }
-.bm-say.on { opacity: 1; transform: translateY(-50%); }
 /* How many agents hold a stream on the daemon now, and the way to the connect
    page. It was a row of its own, "Agents live", which spent a line of the
    sidebar on a number read rarely; it is a pill beside the brand now, the dot
    saying what the number counts and the tooltip naming who. The id and the
    tooltip stay: bench/ui.mjs reads both. */
 .side-head .brand { margin-right: auto; }
-.live { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 7px; border-radius: 999px; background: var(--rule); color: var(--fg-3); font-size: 11px; font-weight: 600; line-height: 16px; transition: background var(--t), color var(--t); }
+.live { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--rule); color: var(--fg-3); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; transition: background var(--t), color var(--t); }
 .live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .6; }
 .live:hover { color: var(--fg); text-decoration: none; }
-.live.on { color: var(--accent); background: var(--accent-bg); }
-.live.on::before { opacity: 1; }
-/* The update pill, beside the agents count: drawn from the daemon's `update`
-   event, shown only once the day's slot is open or the reader asked, quiet
-   for a day and amber after. A click restarts onto the staged version when
-   the panels are quiet; a told-only install's pill opens About instead. */
-.upd { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 8px; border: 0; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font: inherit; font-size: 11px; font-weight: 600; line-height: 16px; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
-.upd[hidden] { display: none; }
-.upd:hover { color: var(--fg); }
-.upd.amber { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-.upd.failed { background: var(--del); color: var(--del-fg); }
-.upd.waiting { opacity: .7; }
-.upd.waiting[tabindex="-1"] { cursor: default; }
-.upd.quiet { background: none; color: var(--fg-3); font-weight: 500; }
+.live.on { color: var(--fg-2); }
+.live.on::before { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
+/* The update pill's look is about.js's, which draws it (1.7.2). */
 /* The page cannot hear the daemon; a stale count is worse than none. */
 html[data-link="off"] .live { visibility: hidden; }
-.icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
 .icon.on { color: var(--accent); background: var(--accent-bg); }
 /* A control that means nothing in this view: faded, still focusable, and
@@ -450,8 +480,8 @@ html[data-link="off"] .live { visibility: hidden; }
    on reads as off on a desk, where it does nothing. */
 .icon.dim, .icon.dim:hover { color: color-mix(in srgb, var(--fg-3) 45%, transparent); background: none; cursor: default; }
 /* Drawn in the face it has picked, so the button says which one it is. */
-.icon .aa { font-size: 13px; font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
-:root[data-font="mono"] .icon .aa { font-size: 11px; letter-spacing: -.06em; }
+.icon .aa { font-size: var(--fs-ui); font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
+:root[data-font="mono"] .icon .aa { font-size: var(--fs-micro); letter-spacing: -.06em; }
 
 .side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
 .side-foot { position: relative; }
@@ -462,7 +492,7 @@ html[data-link="off"] .live { visibility: hidden; }
    is so the button does not sit perfectly still while everything around it
    changes colour. */
 .icon .sw { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 12%, transparent); transition: background var(--t); }
-.icon.flick .sw { animation: sw-flick .34s cubic-bezier(.3,1.5,.5,1) 1; }
+.icon.flick .sw { animation: sw-flick var(--dur-move) var(--ease-out) 1; }
 @keyframes sw-flick { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 /* The footer's last line held five icons and a hint, and every one of them was
    a control a reader sets once and never touches again -- the accent, the
@@ -489,17 +519,17 @@ html[data-link="off"] .live { visibility: hidden; }
    The -6px is the column's own 1px border and 5px of padding, which puts the
    switch back over that footprint to the pixel. */
 .foot-set { position: relative; width: 28px; height: 28px; }
-.foot-rail { position: absolute; left: -6px; bottom: -6px; z-index: 28;
+.foot-rail { position: absolute; left: -6px; bottom: -6px; z-index: var(--z-pop);
   display: flex; flex-direction: column-reverse; align-items: center; gap: 2px; padding: 5px;
-  border-radius: 10px; border: 1px solid transparent; background: transparent;
+  border-radius: var(--r-md); border: 1px solid transparent; background: transparent;
   /* Closed, the column is still there, invisible and the height of all of it.
      It must not take the clicks meant for the note it hangs over -- so it
      passes them through until it opens, and the switch takes its own. */
   pointer-events: none;
-  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease; }
+  transition: border-color var(--dur-move) ease, background-color var(--dur-move) ease, box-shadow var(--dur-move) ease; }
 .foot-rail .keep { pointer-events: auto; }
 .foot-set:hover .foot-rail, .foot-set:focus-within .foot-rail, .foot-rail:has(> button.said) {
-  border-color: var(--rule); background: var(--bg-raise); box-shadow: 0 4px 14px rgba(0,0,0,.12); pointer-events: auto; }
+  border-color: var(--rule); background: var(--bg-raise); box-shadow: var(--shadow); pointer-events: auto; }
 /* Each control arrives a beat after the one below it, so the column reads as
    one thing unfolding rather than five appearing at once. The switch is not
    among them: it was already there. It is held out by a class and not by its
@@ -507,36 +537,10 @@ html[data-link="off"] .live { visibility: hidden; }
    the rule below that fades the others in, which left the column opening on
    nothing at all. */
 .foot-rail > button:not(.keep) { opacity: 0; transform: translateY(4px); pointer-events: none;
-  transition: opacity .14s ease, transform .2s cubic-bezier(.3,1.5,.5,1); }
+  transition: opacity var(--dur-quick) ease, transform var(--dur-move) cubic-bezier(.3,1.5,.5,1); }
 .foot-set:hover .foot-rail > button, .foot-set:focus-within .foot-rail > button { opacity: 1; transform: none; pointer-events: auto; }
-.foot-rail > button:nth-child(2) { transition-delay: .02s; }
-.foot-rail > button:nth-child(3) { transition-delay: .05s; }
-.foot-rail > button:nth-child(4) { transition-delay: .08s; }
-.foot-rail > button:nth-child(5) { transition-delay: .11s; }
-.foot-rail > button:nth-child(6) { transition-delay: .14s; }
-.foot-rail > button:nth-child(7) { transition-delay: .17s; }
-/* What each one is, said beside it. These were `title`s, and the browser drew
-   them where it liked -- over the column, on its own schedule, covering the
-   very icons a reader was looking down to read. The name belongs next to the
-   column, not on top of it, and there is room to the right for all of them.
-   `aria-label` is what a screen reader was using all along; only the drawing
-   of it has changed. */
-.foot-rail > button { position: relative; }
-.foot-rail > button::after, #rail-nav > .icon::after { content: attr(data-label);
-  position: absolute; left: calc(100% + 9px); top: 50%; transform: translate(-3px, -50%); z-index: 32;
-  padding: 3px 8px; border-radius: 7px; background: var(--bg-raise); border: 1px solid var(--rule);
-  font-family: var(--sans); font-size: 11px; line-height: 1.35; font-weight: 500; color: var(--fg-2);
-  white-space: nowrap; pointer-events: none; opacity: 0;
-  transition: opacity .12s ease, transform .18s ease; }
-.foot-rail > button:hover::after, .foot-rail > button:focus-visible::after, #rail-nav > .icon:not(.on):is(:hover, :focus-visible)::after { opacity: 1; transform: translateY(-50%); }
-/* snyvi answers a press in that same strip of space to the right, which is
-   the point of answering there -- so while it is talking, the label steps
-   aside rather than being talked over. */
-.foot-rail > button.said::after { opacity: 0 !important; }
-/* And the column holds itself open for as long as it is being answered: the
-   pointer has usually left by then, and a tail pointing at the space where a
-   button used to be is worse than no tail at all. */
-.foot-rail:has(> button.said) > button { opacity: 1; transform: none; pointer-events: auto; }
+/* The beat each one arrives on, its label beside it, and the column held
+   open while it is answered are look.js's, which wires these buttons. */
 /* Nothing hovers on a touch screen, so there the row stays as it was. */
 @media (hover: none) {
   .foot-set { width: auto; height: auto; }
@@ -546,9 +550,9 @@ html[data-link="off"] .live { visibility: hidden; }
     background: none; border: 0; box-shadow: none; pointer-events: auto; }
   .foot-rail > button { opacity: 1; transform: none; pointer-events: auto; }
 }
-.icon .qm { font-family: var(--sans); font-size: 14px; font-weight: 600; }
+.icon .qm { font-family: var(--sans); font-size: var(--fs-body-s); font-weight: 600; }
 
-#trees { overflow-y: auto; padding: 0 8px 8px; font-size: 13px; flex: 1; min-height: 0; }
+#trees { overflow-y: auto; padding: 0 8px 8px; font-size: var(--fs-ui); flex: 1; min-height: 0; }
 #tree ul { list-style: none; margin: 0; padding: 0; }
 /* Sections, as a Mac sidebar draws them. A head is a quiet label that folds
    what is under it -- the same for Inbox, Desks and Folders -- with its
@@ -560,44 +564,49 @@ html[data-link="off"] .live { visibility: hidden; }
 #inbox-row .s-head { margin-top: 4px; }
 /* A folded section is only its head, so the next head sits close under it. */
 #trees.fold-inbox #desk-nav .s-head, #trees.fold-desks #browse-nav .s-head { margin-top: 2px; }
-.s-link { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 4px; padding: 0 8px; font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: 6px; cursor: pointer; text-align: left; transition: color var(--t); }
+.s-link { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 4px; padding: 0 8px; font: inherit; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: var(--r-sm); cursor: pointer; text-align: left; transition: color var(--t); }
 .s-link:hover { color: var(--fg-2); }
 .s-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
 .s-head:hover .s-chev, .s-link:focus-visible .s-chev, .s-link[aria-expanded="false"] .s-chev { opacity: 1; }
 .s-link[aria-expanded="false"] .s-chev { transform: rotate(-45deg); }
-.s-add { flex: none; display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-3); font-size: 16px; font-weight: 400; line-height: 1; border-radius: 5px; opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
-.s-head:hover .s-add, .s-add:focus-visible, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
+.s-add { flex: none; display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-3); font-size: 16px; font-weight: 400; line-height: 1; border-radius: var(--r-sm); opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
+.s-head:is(:hover, :focus-within) .s-add, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
 .s-add:hover { background: var(--rule); color: var(--fg); }
-.s-blk { flex: none; margin-right: 4px; color: var(--warn); font-size: 11px; font-weight: 700; }
+.s-blk { flex: none; margin-right: 4px; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; }
 :root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
-.s-empty { padding: 5px 8px 5px 8px; font-size: 12px; color: var(--fg-3); }
+.s-empty { padding: 5px 8px 5px 8px; font-size: var(--fs-small); color: var(--fg-3); }
 
 /* The row. */
-.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--fg); font-weight: 450; white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
+.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg); font-weight: var(--fw-row); white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
 .s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--accent); }
+/* The current row: a tint and a 2 px bar in the accent, the text staying
+   ink. Solid accent text on a tint read as an alert, not as "you are here". */
+.s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+/* A folded project that holds the document on screen: the bar and the icon,
+   no tint, a quieter "in here". Colour only, so nothing moves. */
+.t-proj > summary.holds-current { box-shadow: inset 2px 0 0 var(--accent); }
+.t-proj > summary.holds-current > .r-ico { color: var(--accent); }
 .r-ico { flex: none; color: var(--fg-3); transition: color var(--t); }
 .s-row.active .r-ico, .t-desk > a.active .r-ico { color: var(--accent); }
 .s-row .title, .t-desks .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.s-row .n { margin-left: auto; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.s-row .n { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 /* A row that holds something folds it with the section heads' chevron,
    right after its name: shown on hover and on focus, and kept while the row
    is folded, pointing at the name, so a folded row says so at rest. */
 summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
 summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
 details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
-.t-proj > summary::-webkit-details-marker { display: none; }
 /* The ladder: each level's icons hang under its parent's name, 32px in,
    as .b-tree next door compounds it. It was once six a level -- and the
    font grew with depth, so the deepest rows were the largest and the least
    indented at once. */
 .t-wf { margin: 2px 0 6px 24px; }
-.t-wf > .wf-name { font-size: 11px; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
+.t-wf > .wf-name { font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.t-doc a.active { background: var(--accent-bg); color: var(--accent); }
+.t-doc a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 /* No mark in front of a row: its icon is the mark. A read row's glyph is
    quiet, and centred on the line rather than sat on its baseline; a row
    waiting to be read has it in the accent, with its title in ink -- the
@@ -605,13 +614,15 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    either -- and the open row is lit whole. */
 :is(.t-doc a, .b-file a) > .r-ico { align-self: center; opacity: .75; }
 :is(.t-doc a.new, .t-doc a.active, .b-file a.active) > .r-ico { color: var(--accent); opacity: 1; }
-.t-doc a.new .title { color: var(--fg); font-weight: 550; }
+.t-doc a.new .title { color: var(--fg); font-weight: 600; }
 .t-queue { margin: 0 0 6px; }
 .t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
-.t-queue .t-label .n { margin-left: auto; background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: 10px; }
+/* The count as a figure in the accent, not a filled pill: the bar over the
+   page is the one that interrupts, and this only says how many. */
+.t-queue .t-label .n { margin-left: auto; color: var(--accent); font-weight: 600; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 .t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
 .t-queue .t-more { margin-left: 8px; }
-.t-queue .t-more a { display: inline-block; font-size: 11px; color: var(--fg-3); padding: 3px 6px; border-radius: 5px; }
+.t-queue .t-more a { display: inline-block; font-size: var(--fs-micro); color: var(--fg-2); padding: 3px 6px; border-radius: var(--r-sm); }
 .t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 /* What moved in the sidebar, said once. An arrival's row, or one an undo put
@@ -620,33 +631,36 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    was, 140 ms, before the list moves up into its place. Both start at a
    negative delay when the tree is rebuilt under them (see `moment` in
    app.js), so a rebuild never plays them again. */
-.wash { animation: land 700ms ease-out; border-radius: 6px; }   /* on the row itself, where its moment is; /start's Show me too */
-@media (prefers-reduced-motion: reduce) { .wash { outline: 2px solid var(--accent); outline-offset: 1px; } }
-.t-doc.leaving, .t-queue.leaving .t-label { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
-@keyframes leave { from { opacity: 1; max-height: 32px; } to { opacity: 0; max-height: 0; } }
+.wash { animation: land 700ms ease-out; border-radius: var(--r-sm); }   /* on the row itself, where its moment is; /start's Show me too */
+@media (prefers-reduced-motion: reduce) { .wash, .prose .flash { outline: 2px solid var(--focus); outline-offset: 1px; } }
+.t-doc.leaving, .t-queue.leaving .t-label { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
+/* A row leaving fades where it stands; its place goes when it does. Never
+   an animated height: that is layout, every frame (docs/DESIGN.md §7.2). */
+@keyframes leave { to { opacity: 0; } }
 /* A removed document's row, standing where it was on the row's own grid, so
    nothing below it moves: the title dims, says "removed", and holds the Undo.
-   The bar along its foot drains over the time the offer stands (GHOST_MS in
-   app.js) and stops while a pointer or a focus rests on the row. `--t` starts
-   both where the last draw left them, so a redraw never plays them again. */
-.t-ghost { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: 6px; color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
-.t-gone:not(.leaving) > .t-ghost { animation: ghost-in 120ms ease-out both; animation-delay: var(--t, 0ms); }
+   The bar along its foot is the time the offer has left: app.js's clock
+   (undoClock) writes it into --undo-left, and stops while a pointer or a
+   focus rests on the row. The bar only moves in a short transition between
+   the clock's ticks, so under reduced motion it is still and still says
+   what is left. `--t` starts the row's fade where the last draw left it, so
+   a redraw never plays it again. */
+.t-ghost { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: var(--r-sm); color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
+.t-gone:not(.leaving) > .t-ghost { animation: ghost-in var(--dur-quick) ease-out both; animation-delay: var(--t, 0ms); }
 @keyframes ghost-in { from { color: var(--fg-2); } }
 .t-ghost > .r-ico { align-self: center; opacity: .4; }
 .t-ghost > .title { min-width: 0; }
-.t-gone > .t-ghost > .k { margin-left: 0; font-family: inherit; font-size: 11px; }
+.t-gone > .t-ghost > .k { margin-left: 0; font-family: inherit; font-size: var(--fs-micro); }
 .t-ghost > .t-undo { margin-left: auto; align-self: center; padding: 2px 7px; }
-.t-ghost::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; animation: drain 4000ms linear forwards; animation-delay: var(--t, 0ms); }
-.t-ghost:is(:hover, :focus-within)::after, .t-gone.back .t-ghost::after { animation-play-state: paused; }
-@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+:is(.t-ghost, .t-back)::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform var(--dur-instant) linear; }
 .t-gone.leaving { animation-delay: var(--t, 0ms); }
 /* What stands around a ghost only for its sake -- the same document's row in
    Waiting, a project that left with its last document -- is there to be read
    past, not used, and closes when the ghost does. */
 .t-doc.held > a { opacity: .45; pointer-events: none; }
-.t-proj.leaving > summary { animation: leave 140ms cubic-bezier(.2,.7,.2,1) forwards; overflow: hidden; pointer-events: none; }
-.t-doc .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
-.t-doc .pin { color: var(--accent); font-size: 7px; flex: none; align-self: center; }
+.t-proj.leaving > summary { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
+.t-doc .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
+.t-doc .pin { color: var(--fg-2); flex: none; display: inline-flex; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
    kept out of the way until the row is under the cursor. The name takes the free
    space so the badge and the control sit at the edge. */
@@ -656,22 +670,29 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 :is(.t-proj, .b-root) > summary > .nm, .b-dir > details > summary > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-proj > summary > .ren { margin-left: auto; }
 .t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
-.ren { color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; letter-spacing: 0; }
+.ren { color: var(--fg-3); font-size: var(--fs-micro); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; flex: none; letter-spacing: 0; }
 .t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
 .ren:hover { background: var(--rule-2); color: var(--fg); }
 /* The field shows the name as stored, not as the summary styles it. */
-.ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 1px 4px; }
+.ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: var(--r-xs); padding: 1px 4px; }
 .ren-in:focus { outline: none; }
+/* Why a field is open again (a rename, a note): under it, until the next key. */
+.field-err { position: absolute; left: 8px; top: 100%; z-index: 5; padding: 2px 6px; border-radius: var(--r-xs); background: var(--bg-raise); box-shadow: var(--shadow); color: var(--danger); font-size: var(--fs-micro); white-space: nowrap; }
+:has(> .field-err) { position: relative; }
+/* A list the daemon did not send, in its own place, with its Retry. */
+.no-reach { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; color: var(--fg-2); font-size: var(--fs-small); list-style: none; }
+.no-reach button { color: var(--accent); font: inherit; font-weight: 500; }
 /* Past a cap, and while a project's rows are on their way. Both sit where a
    document row would, and neither should read as one: what is behind a row the
    tree has not drawn is an offer, not a document. */
 .t-more { margin: 1px 0 2px 14px; }
-.t-more button { font: inherit; font-size: 11px; color: var(--fg-3); background: none; border: 0; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.t-more button { font: inherit; font-size: var(--fs-micro); color: var(--fg-2); background: none; border: 0; padding: 3px 6px; border-radius: var(--r-sm); cursor: pointer; }
 .t-more button:hover { background: var(--rule); color: var(--fg-2); }
 .t-more button:disabled { cursor: default; opacity: .5; }
-.t-wait { padding: 4px 8px 4px 14px; font-size: 12px; color: var(--fg-3); }
-.t-empty { padding: 24px 12px; color: var(--fg-3); font-size: 13px; line-height: 1.6; }
-.t-empty code { font-family: var(--mono); font-size: 12px; background: var(--rule); padding: 1px 5px; border-radius: 4px; }
+.t-wait { padding: 4px 8px 4px 14px; font-size: var(--fs-small); color: var(--fg-3); }
+.t-wait .sk-bar { height: 8px; margin: 6px 0; }
+.t-empty { padding: 24px 12px; color: var(--fg-3); font-size: var(--fs-ui); line-height: 1.6; }
+.t-empty code { font-family: var(--mono); font-size: var(--fs-small); background: var(--rule); padding: 1px 5px; border-radius: var(--r-xs); }
 
 /* desks: the row, the flat list under it, the + on a folder, and the folder
    menu -- the only ways a desk is reached. The desk view itself is styled by
@@ -681,12 +702,12 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    count, right-aligned. Both were laid out only when there was something to
    show, so the dot on one row sat where the count did on the next. */
 .t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
-.t-desks .ctx { font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
 .t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
 .t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-.t-desks .dot.blk { color: var(--warn); font-size: 11px; font-weight: 700; line-height: 1; }
-.t-desks .k { min-width: 2ch; text-align: right; font-size: 10px; font-family: var(--mono); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
+.t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
+.t-desks .k { min-width: 2ch; text-align: right; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
 /* A row's ✕ -- delete a document, close a desk -- takes the place of what is
    at the row's end on hover. Armed, a desk's says Close? */
 /* Hidden by clipping rather than by `display: none`, which is what it was:
@@ -697,8 +718,13 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* No auto margin at rest: the row's end column already carries one, and
    two auto margins in a row split the slack between them, which put the
    dot and the count halfway along the row and a different halfway on each. */
-.row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: 11px; line-height: 1; color: var(--fg-3); background: none; border-radius: 4px; cursor: pointer; }
-.t-proj > summary:hover .row-x, .row-x:focus-visible, .arming .row-x { width: auto; margin-left: auto; padding: 2px 4px; overflow: visible; }
+.row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: var(--fs-micro); line-height: 1; color: var(--fg-3); background: none; border-radius: var(--r-xs); cursor: pointer; }
+/* A project row's tools each own a 22 px slot at the row's end, there at
+   rest and on hover alike: showing one is its opacity, never its width, so
+   the desk glyph beside the ✕ does not jump left when the pointer arrives. */
+.t-proj > summary > :is(.b-new, .row-x) { flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; overflow: visible; }
+.t-proj > summary > .row-x { margin-left: auto; opacity: 0; }
+.t-proj > summary:is(:hover, :focus-within) > .row-x, .row-x:focus-visible, .arming .row-x { opacity: 1; }
 /* On a desk's row and a document's, the tools stand over the row's end
    rather than in the row: coming out, they move nothing, and the title's
    ellipsis stays where it was. The end they cover keeps its place, unseen.
@@ -709,63 +735,65 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 :is(.t-doc, .t-desk) > a.active { --row: var(--accent-bg); }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 6px; width: auto; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 .t-desk > a > .ren { right: 26px; }
-:is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
+:is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
-:is(.t-doc, .t-desk) > a:is(:hover, :has(:focus-visible)) :is(.end, .k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
+.t-doc > a:is(:hover, :has(:focus-visible)) :is(.k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
+/* A desk's ✕ has a slot of its own at the row's end, as a project's does:
+   hovering shows it and hides nothing, so the dot and the count beside it
+   stay where they are. Armed, "Close?" lays over the end as before. */
+.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0 -4px 0 0; display: grid; place-items: center; background: none; }
+.t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
 :is(.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
 /* The way back, under the tree while anything is out of it: quiet, because it
    is a state of the list rather than something to do, and always there, so
    nothing a reader put away can be lost by forgetting it was put away. */
-.t-away { display: block; width: 100%; text-align: left; padding: 4px 8px 4px 18px; margin-top: 2px; font-size: 11px; color: var(--fg-3); border-radius: 6px; }
+.t-away { display: block; width: 100%; text-align: left; padding: 4px 8px 4px 18px; margin-top: 2px; font-size: var(--fs-micro); color: var(--fg-3); border-radius: var(--r-sm); }
 .t-away:hover { background: var(--rule); color: var(--fg-2); }
 /* The offer to undo, standing in the row's own place and on the row's own
    grid: what the sidebar just did is said in the sidebar, where the click was,
    so the eye does not have to cross the window to a corner to find out. It is
    the row's ghost -- dimmed, no icon, no chevron -- and it holds the list
    still while it stands, so taking the offer moves nothing. */
-.t-back { color: var(--fg-3); font-size: 12px; }
-.t-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
+.t-back { position: relative; color: var(--fg-3); font-size: var(--fs-small); }
+.t-undo { flex: none; font-size: var(--fs-micro); line-height: 1; padding: 3px 7px; border-radius: var(--r-xs); color: var(--accent); }
 .t-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .row-x[data-armed] { color: var(--danger); font-weight: 600; }
 .row-x[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 :is(.t-doc, .t-desk) > a > .row-x[data-armed]:hover { background: linear-gradient(color-mix(in srgb, var(--danger) 12%, transparent) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
-.b-new { margin-left: auto; display: inline-flex; align-items: center; color: var(--fg-3); line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; flex: none; }
+.b-new { margin-left: auto; display: inline-flex; align-items: center; color: var(--fg-3); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; flex: none; }
 /* The glyph is the one the Desks section uses, so what the button makes is
    named by its shape rather than by a plus that could mean any addition. */
 .b-new .r-ico { color: inherit; }
-summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
+summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
 /* A project's glyph stays while the project has a desk: that is the row
    saying so, and the way to it. Its ✕ follows it rather than splitting the
    slack with it. */
 .b-new.has { opacity: 1; color: var(--fg-2); }
-/* A project with no desk yet shows the way to one, quietly, without a hover:
-   a desk for each project is the point, not a hidden extra. */
-.t-proj > summary > .b-new:not(.has) { opacity: .45; }
+/* A project with no desk yet keeps the slot, empty until the row is hovered,
+   and then says "New desk": half-lit at rest read as a fault, not a state. */
 .t-proj > summary > .b-new + .row-x { margin-left: 0; }
 /* browse: folders read straight from disk */
-.t-label { padding: 8px 10px 2px; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
-.b-root > summary::-webkit-details-marker { display: none; }
+.t-label { padding: 8px 10px 2px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; }
 .b-root > summary:hover { background: var(--rule); color: var(--fg); }
-.b-close { margin-left: auto; color: var(--fg-3); font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; }
-.b-root > summary:hover .b-close { opacity: 1; }
+.b-close { margin-left: auto; color: var(--fg-3); font-size: var(--fs-micro); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; }
+.b-root > summary:is(:hover, :focus-visible) .b-close { opacity: 1; }
 .b-close:hover { background: var(--rule-2); color: var(--fg); }
 .b-close:focus-visible { opacity: 1; }
 /* Each level hangs its icons under its parent's name. */
 .b-tree { list-style: none; margin: 0; padding: 0 0 0 20px; }
 .b-root > .b-tree { padding-left: 24px; }   /* under a 16px glyph and its 8px gap; deeper, a 14px one and 6 */
-.b-tree .b-empty { padding: 3px 10px; color: var(--fg-3); font-size: 12px; font-style: italic; }
-.b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.b-dir > details > summary::-webkit-details-marker { display: none; }
+.b-tree .b-empty { padding: 3px 10px; color: var(--fg-3); font-size: var(--fs-small); font-style: italic; }
+.b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: var(--r-sm); color: var(--fg-2); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .b-dir > details > summary:hover { background: var(--rule); color: var(--fg); }
-.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
+.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
 .b-file a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.b-file a.active { background: var(--accent-bg); color: var(--accent); }
+.b-file a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 .b-file .title { overflow: hidden; text-overflow: ellipsis; }
-.b-file .k { margin-left: auto; font-size: 10px; color: var(--fg-3); font-family: var(--mono); flex: none; }
+.b-file .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; }
 /* A previewed page is somebody else's design; give it the pane and no styling of ours. */
 /* One scroll region: the frame fills what is left of the pane, so the page itself
    does not also scroll behind it. */
@@ -773,10 +801,10 @@ summary:hover > .b-new, .b-new:focus-visible { opacity: 1; }
 #doc:has(article.preview) { display: flex; flex-direction: column; height: calc(100% - var(--head-h)); padding-top: 8px; padding-bottom: 24px; }
 #doc:has(article.preview) .doc-head { margin-bottom: 20px; flex: none; }
 article.preview { margin: 0; padding: 0; flex: 1 1 auto; min-height: 360px; }
-article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: var(--radius); background: #fff; display: block; }
+article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule); border-radius: var(--r-sm); background: #fff; display: block; }
 
 .browse-image, .doc-image { text-align: center; margin: 1.5em 0; }
-.browse-image img, .doc-image img { border-radius: var(--radius); max-width: 100%; height: auto; }
+.browse-image img, .doc-image img { border-radius: var(--r-sm); max-width: 100%; height: auto; }
 
 /* ---------- document ---------- */
 #doc { --doc-pad: 48px; max-width: calc(var(--measure) + 96px); margin: 0 auto; padding: 8px var(--doc-pad) 120px; }
@@ -784,9 +812,9 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
    Not on a refresh in place -- a file being watched is saved every few seconds,
    and a body that blinked on each save would be worse than one that moved. */
 .doc-head { margin-bottom: 40px; }
-.doc-title { font-size: 34px; line-height: 1.15; letter-spacing: -.022em; font-weight: 650; margin: 0 0 10px; text-wrap: balance; font-family: var(--head, var(--sans)); }
-.doc-sub { color: var(--fg-3); font-size: 13px; margin: 0; }
-.doc-sub .branch { font-family: var(--mono); font-size: 12px; }
+.doc-title { font-size: var(--fs-h1); line-height: 1.15; letter-spacing: -.022em; font-weight: 650; margin: 0 0 10px; text-wrap: balance; font-family: var(--head, var(--sans)); }
+.doc-sub { color: var(--fg-3); font-size: var(--fs-ui); margin: 0; }
+.doc-sub .branch { font-family: var(--mono); font-size: var(--fs-small); }
 
 /* ---------- the shape of a document that is still coming ----------
    A click is answered in its own frame: the title the row already knew, and
@@ -796,9 +824,9 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
    Nothing here is measured or restored: it is the page saying "heard you". */
 :root { --sk-wait: 200ms; }
 .sk-bar {
-  display: block; height: .72em; margin: .93em 0; border-radius: 5px;
-  background: var(--fg); opacity: 0;
-  animation: sk-in .28s ease var(--sk-wait) forwards, sk-breathe 1.9s ease-in-out calc(var(--sk-wait) + .28s) infinite;
+  display: block; height: .72em; margin: .93em 0; border-radius: var(--r-sm);
+  background: var(--fg); opacity: .07;
+  animation: sk-in .28s ease var(--sk-wait) both, sk-breathe 1.9s ease-in-out calc(var(--sk-wait) + .28s) infinite;
 }
 .sk-gap { display: block; height: 1.5em; }   /* the air between two paragraphs */
 .doc-title.sk { display: flex; align-items: center; height: 39px; }
@@ -806,16 +834,15 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .doc-sub.sk { height: 17px; }
 .doc-sub .sk-bar { height: 11px; margin: 0; }
 .sk-body { max-width: var(--measure, none); }
-@keyframes sk-in { to { opacity: .07; } }
+/* The bars rest visible; the fade in is an extra, so with no motion at
+   all the waiting still shows. */
+@keyframes sk-in { from { opacity: 0; } }
 @keyframes sk-breathe { 50% { opacity: .13; } }
-@media (prefers-reduced-motion: reduce) {
-  /* The waiting still has to show; only the breathing goes. */
-  .sk-bar { animation: sk-in .28s ease var(--sk-wait) forwards; }
-}
 
-.prose { font-family: var(--body); font-size: 17px; line-height: 1.65; }
-:root[data-font="serif"] .prose { font-size: 18px; }
-:root[data-font="mono"] .prose { font-size: 15px; line-height: 1.7; }
+.prose { font-family: var(--body); font-size: var(--fs-read); line-height: 1.65; }
+:root[data-font="serif"] { --fs-read: 18px; }
+:root[data-font="mono"] { --fs-read: 15px; }
+:root[data-font="mono"] .prose { line-height: 1.7; }
 .prose > * { content-visibility: auto; contain-intrinsic-size: auto 60px; }
 /* Not the headings: they are few and cheap, and the containment that comes
    with content-visibility clips to the box, which is where the `#` beside a
@@ -862,23 +889,23 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose li { margin: .3em 0; }
 .prose li > p { margin-bottom: .4em; }
 .prose li.task-list-item, .prose li:has(> input[type=checkbox]) { list-style: none; margin-left: -1.4em; padding-left: 1.6em; position: relative; }
-.prose input[type=checkbox] { position: absolute; left: 0; top: .45em; appearance: none; width: 14px; height: 14px; border: 1.5px solid var(--rule-2); border-radius: 4px; background: var(--bg-raise); pointer-events: none; }
+.prose input[type=checkbox] { position: absolute; left: 0; top: .45em; appearance: none; width: 14px; height: 14px; border: 1.5px solid var(--rule-2); border-radius: var(--r-xs); background: var(--bg-raise); pointer-events: none; }
 .prose input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
-.prose input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.prose input[type=checkbox]:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .prose li:has(> input:checked) { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--rule-2); }
 .prose blockquote { margin: 1.4em 0; padding: .1em 0 .1em 1.2em; border-left: 2px solid var(--accent); color: var(--fg-2); }
 .prose blockquote p:last-child { margin-bottom: 0; }
 .prose hr { border: 0; border-top: 1px solid var(--rule); margin: 3em auto; width: 40%; }
-.prose img { max-width: 100%; height: auto; border-radius: var(--radius); display: block; margin: 1.5em auto; }
+.prose img { max-width: 100%; height: auto; border-radius: var(--r-sm); display: block; margin: 1.5em auto; }
 .prose strong { font-weight: 650; }
-.prose mark { background: var(--mark); color: inherit; padding: 0 .15em; border-radius: 2px; }
-.prose kbd { font-family: var(--mono); font-size: .8em; border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: 4px; padding: .05em .4em; }
+.prose mark { background: var(--mark); color: inherit; padding: 0 .15em; border-radius: var(--r-xs); }
+.prose kbd { font-family: var(--mono); font-size: .8em; border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: var(--r-xs); padding: .05em .4em; }
 .prose sup a { font-size: .75em; font-weight: 600; }
 .prose .footnotes { margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--rule); font-size: .9em; color: var(--fg-2); }
 .prose .footnotes ol { padding-left: 1.4em; }
 .prose dl dt { font-weight: 600; margin-top: 1em; }
 .prose dl dd { margin: .2em 0 0 1.2em; }
-.prose details { border: 1px solid var(--rule); border-radius: var(--radius); padding: .5em 1em; margin: 1.2em 0; }
+.prose details { border: 1px solid var(--rule); border-radius: var(--r-sm); padding: .5em 1em; margin: 1.2em 0; }
 .prose summary { cursor: pointer; font-weight: 600; }
 
 /* tables */
@@ -899,7 +926,7 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose table.data tbody tr:hover td { background: var(--code-bg); }
 
 /* alerts (GitHub style) */
-.prose .markdown-alert { margin: 1.4em 0; padding: .8em 1.1em; border-radius: var(--radius); border-left: 3px solid var(--fg-3); background: var(--code-bg); }
+.prose .markdown-alert { margin: 1.4em 0; padding: .8em 1.1em; border-radius: var(--r-sm); border-left: 3px solid var(--fg-3); background: var(--code-bg); }
 .prose .markdown-alert p:last-child { margin: 0; }
 .prose .markdown-alert-title { font-family: var(--sans); font-weight: 600; font-size: .85em; letter-spacing: .04em; text-transform: uppercase; margin-bottom: .4em; color: var(--fg-2); }
 .prose .markdown-alert-note { border-color: var(--info); } .prose .markdown-alert-note .markdown-alert-title { color: var(--info); }
@@ -909,18 +936,17 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .prose .markdown-alert-caution { border-color: var(--danger); } .prose .markdown-alert-caution .markdown-alert-title { color: var(--danger); }
 
 /* inline code */
-.prose code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: .12em .38em; border-radius: 4px; font-feature-settings: "calt" 0, "liga" 0; }
+.prose code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: .12em .38em; border-radius: var(--r-xs); font-feature-settings: "calt" 0, "liga" 0; }
 .prose pre code { background: none; padding: 0; font-size: inherit; }
 
 /* code blocks, in prose and standalone */
-pre.code { position: relative; font-family: var(--mono); font-size: 13.5px; line-height: 1.6; background: var(--code-bg); border-radius: var(--radius); padding: 14px 0; margin: 1.5em 0; overflow-x: auto; tab-size: 4; font-feature-settings: "calt" 0, "liga" 0; }
+pre.code { position: relative; font-family: var(--mono); font-size: var(--fs-ui); line-height: 1.6; background: var(--code-bg); border-radius: var(--r-sm); padding: 14px 0; margin: 1.5em 0; overflow-x: auto; tab-size: 4; font-feature-settings: "calt" 0, "liga" 0; }
 pre.code code { display: block; min-width: max-content; counter-reset: ln; } /* reset lives inside the content-visibility subtree, or style containment hides it */
-pre.code::before { content: attr(data-lang); position: absolute; top: 8px; right: 12px; font-family: var(--sans); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-3); opacity: 0; transition: opacity var(--t); pointer-events: none; }
+pre.code::before { content: attr(data-lang); position: absolute; top: 8px; right: 12px; font-family: var(--sans); font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); opacity: 0; transition: opacity var(--t); pointer-events: none; }
 pre.code:hover::before { opacity: 1; }
-pre.code .copy { position: absolute; top: 6px; right: 8px; opacity: 0; transition: opacity var(--t); font-family: var(--sans); font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--bg-raise); color: var(--fg-2); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+pre.code .copy { opacity: 0; transition: opacity var(--t); }
 pre.code:hover .copy { opacity: 1; }
 pre.code:hover:has(.copy)::before { opacity: 0; }
-pre.code .copy:hover { color: var(--fg); }
 pre.code .copy:focus-visible { opacity: 1; }
 /* No pointer to hover with: everything that waits for one is simply there,
    the way the diagram tools already are. */
@@ -941,7 +967,7 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 
 /* standalone code / text / diff documents */
 .kind-code, .kind-text, .kind-diff { font-family: var(--mono); }
-.kind-code pre.code, .kind-text pre.code, .kind-diff pre.code { margin: 0; background: transparent; padding: 0; font-size: 13px; }
+.kind-code pre.code, .kind-text pre.code, .kind-diff pre.code { margin: 0; background: transparent; padding: 0; font-size: var(--fs-ui); }
 .kind-code pre.code, .kind-text pre.code { --num-pad: 0px; }   /* the pane already insets these */
 .diff .ln::before { display: none !important; }
 /* Anything that is not prose wants the pane, not the reading measure. */
@@ -956,53 +982,55 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    it reads as part of the page and not the chrome. Sticky like the find bar,
    so a reader deep in a long page still sees the count. */
 #queue-bar[hidden] { display: none; }
-#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; box-sizing: border-box; font-size: 13px; }
+#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 0 48px; box-sizing: border-box; font-size: var(--fs-ui); }
 /* Its height is nothing, so a bar that appears mid-read lays over the page's
    top margin rather than pushing the text down under the reader; the find
-   bar makes room for it instead. */
+   bar makes room for it instead. The 10 px gap is the card's own offset:
+   padding on the bar would give it a height and push the page down, and a
+   margin on the card would collapse through the bar and do the same. */
 #queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
 /* On a desk the head is the desk's own row, and the bar lays over its
    middle, between the name and the buttons, as it did before the head. */
 :root[data-view="desk"] #queue-bar { top: 0; }
-#queue-bar .qb { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 5px 5px 9px; animation: rise 160ms cubic-bezier(.2,.7,.2,1); }
+#queue-bar .qb { position: relative; top: 10px; display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
 /* snyvi at the front of the bar, holding what came: the toast's head, the
    size of the count's line, leaning in to the text it is holding up. Its
    feeling comes and goes with the count (app.js, `qbFeel`); at rest the
    head is still, and reads as the one that answers a click. */
-#queue-bar .qb-who { width: 21px; height: 21px; flex: none; display: block; margin-right: -2px; transform: rotate(-6deg); }
+/* Marked all read: the same card, saying so, with its Undo and the drain
+   bar that says how long the Undo stands. */
+#queue-bar .qb.ghost { animation: none; }
+/* The Undo on the bar's own line, so the card keeps the bar's height. */
+#queue-bar .qb.ghost .t-undo { font-size: inherit; line-height: inherit; }
+#queue-bar .qb.ghost .qb-next { color: var(--fg-2); }
+#queue-bar .qb.ghost::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform var(--dur-instant) linear; }
+#queue-bar .qb-who { width: 22px; height: 22px; flex: none; display: block; margin-right: -2px; transform: rotate(-6deg); }
 #queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* The count changed under a bar that stayed: the new number settles in. */
-#queue-bar .qb-n.tick { animation: tick 180ms cubic-bezier(.2,.7,.2,1); }
+#queue-bar .qb-n.tick { animation: tick var(--dur-move) var(--ease-out); }
 @keyframes tick { from { opacity: 0; transform: translateY(-4px); } }
 #queue-bar .qb-next { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
-#queue-bar .qb-next b { font-weight: 550; color: var(--fg); }
-#queue-bar button:not(.icon), #queue-bar .qb-all { flex: none; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
+#queue-bar .qb-next b { font-weight: 600; color: var(--fg); }
+#queue-bar button:not(.icon), #queue-bar .qb-all { flex: none; padding: 4px 10px; border-radius: var(--r-sm); color: var(--fg-2); transition: background var(--t), color var(--t); }
 #queue-bar button:not(.icon):hover, #queue-bar .qb-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-#queue-bar kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
+/* One key cap for the whole chrome (docs/DESIGN.md §8): the queue bar, the
+   Inbox, the meta pane, the help and How snyvi works. A document's own kbd
+   is the document's; a menu's and a tip's are boxless, keys on the right. */
+kbd:not(.prose kbd) { display: inline-block; min-width: 18px; padding: 0 4px; font: 500 var(--fs-micro)/16px var(--mono); text-align: center; white-space: nowrap;
+  color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: var(--r-xs); }
+:is(#queue-bar, .inbox-sec, #meta .actions) kbd { margin-left: 6px; }
 #queue-bar .icon { width: 26px; height: 26px; }
 #find[hidden] { display: none; }
 #find { position: sticky; top: var(--head-h); z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }
 #find > * { background: var(--bg-raise); }
-#find-input { flex: 1; font: inherit; font-size: 14px; padding: 7px 12px; border: 1px solid var(--rule-2); border-radius: 6px; color: inherit; outline: none; box-shadow: var(--shadow); }
+#find-input { flex: 1; font: inherit; font-size: var(--fs-body-s); padding: 7px 12px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); color: inherit; outline: none; box-shadow: var(--shadow); }
 #find-input:focus { border-color: var(--accent); }
-#find-count { font-size: 12px; color: var(--fg-3); padding: 0 6px; font-variant-numeric: tabular-nums; background: none; }
+#find-count { font-size: var(--fs-small); color: var(--fg-3); padding: 0 6px; font-variant-numeric: tabular-nums; background: none; }
 #find .icon { border: 1px solid var(--rule); }
-mark.find { background: var(--mark); color: inherit; border-radius: 2px; }
-mark.find.cur { background: var(--accent); color: #fff; }
+mark.find { background: var(--mark); color: inherit; border-radius: var(--r-xs); }
+mark.find.cur { background: var(--accent); color: var(--on-accent); }
 
-/* split diff */
-.split { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--mono); font-size: 13px; line-height: 1.6; border: 1px solid var(--rule); border-radius: var(--radius); overflow-x: auto; }
-.split > div { padding: 0 10px; white-space: pre; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.split .l { border-right: 1px solid var(--rule); }
-.split .full { grid-column: 1 / -1; }
-.split .meta { color: var(--fg-3); padding-top: .4em; }
-.split .hunk { color: var(--s-number); background: var(--code-bg); margin: .4em 0 .2em; }
-.split .add { background: var(--add); color: var(--add-fg); }
-.split .del { background: var(--del); color: var(--del-fg); }
-.split .add mark { background: rgba(34,197,94,.35); color: inherit; border-radius: 2px; }
-.split .del mark { background: rgba(239,68,68,.35); color: inherit; border-radius: 2px; }
-.split .empty { background: repeating-linear-gradient(45deg, transparent 0 6px, var(--rule) 6px 7px); }
-#doc:has(.split) { max-width: none; padding-left: 40px; padding-right: 40px; }
+/* A split diff's look is ui/diff.js's, which draws it. */
 
 /* mermaid.
    The server sends the source in a <pre class="mermaid">; the client swaps each
@@ -1010,13 +1038,13 @@ mark.find.cur { background: var(--accent); color: #fff; }
    is never shown to the reader. The rule below is what covers the gap on a page
    whose script has not run yet -- and the whole of it if scripting is off, where
    the source is the only thing there is to show. */
-pre.mermaid { background: transparent; text-align: center; padding: 8px 0; overflow: visible; font-family: var(--mono); font-size: 12.5px; color: var(--fg-3); white-space: pre-wrap; }
+pre.mermaid { background: transparent; text-align: center; padding: 8px 0; overflow: visible; font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); white-space: pre-wrap; }
 pre.mermaid::before { display: none; }
 
 
 /* history */
 #history { margin-top: 20px; }
-#history h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
+#history h4 { margin: 0 0 4px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; }
 #history a { display: block; padding: 2px 0; color: var(--fg-2); font-variant-numeric: tabular-nums; }
 #history a.cur { color: var(--accent); }
 #history a:hover { color: var(--accent); text-decoration: none; }
@@ -1027,7 +1055,6 @@ pre.mermaid::before { display: none; }
 .diff .del { background: var(--del); color: var(--del-fg); }
 .diff .hunk { color: var(--s-number); background: var(--code-bg); display: inline-block; min-width: 100%; margin: .6em 0 .2em; }
 .diff .meta { color: var(--fg-3); }
-.compare-note { color: var(--fg-3); font-size: 13px; margin: -28px 0 28px; }
 
 /* syntax (compact classes from the renderer). Scoped to highlighted code,
    which is the only place the renderer writes them: the names are one or
@@ -1054,27 +1081,28 @@ pre.code .inv { color: var(--del-fg); }
 
 /* ---------- inbox ---------- */
 .inbox-head { margin-bottom: 28px; }
-.inbox-head h1 { font-size: 26px; letter-spacing: -.02em; font-weight: 650; margin: 0 0 4px; }
-.inbox-head p { color: var(--fg-3); margin: 0; font-size: 14px; }
+.inbox-head h1 { font-size: var(--fs-h2); letter-spacing: -.02em; font-weight: 650; margin: 0 0 4px; }
+.inbox-head p { color: var(--fg-3); margin: 0; font-size: var(--fs-body-s); }
 .inbox { list-style: none; margin: 0; padding: 0; }
-.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: 8px; color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
+.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
 .inbox li a:hover { background: var(--bg-side); text-decoration: none; }
-.inbox .title { grid-area: title; font-weight: 550; font-size: 15.5px; letter-spacing: -.005em; }
-.inbox .time { grid-area: time; font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.inbox .sub { grid-area: sub; font-size: 12.5px; color: var(--fg-3); }
+.inbox .title { grid-area: title; font-weight: 600; font-size: var(--fs-body-s); letter-spacing: -.005em; }
+.inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.inbox .sub { grid-area: sub; font-size: var(--fs-small); color: var(--fg-3); }
 .inbox .sub b { font-weight: 500; color: var(--fg-2); }
 .inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
-.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; margin: 30px 0 4px; }
-.inbox-sec .n { background: var(--accent); color: #fff; border-radius: 9px; padding: 0 7px; line-height: 17px; letter-spacing: 0; font-size: 11px; }
-.inbox-sec button { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12.5px; color: var(--fg-2); padding: 3px 8px; border-radius: 5px; }
+.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; margin: 32px 0 4px; }
+.inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 7px; line-height: 17px; font-variant-numeric: tabular-nums; font-size: var(--fs-micro); }
+.inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
 .inbox-sec button + button { margin-left: 0; }
+/* Removed · Show, at the foot of the Inbox, and the rows it opens. */
 .inbox-sec button:hover { background: var(--rule); color: var(--fg); }
-.inbox-sec kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 6px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
 .inbox.waiting { margin-bottom: 8px; }
 .empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
-.empty-state h1 { font-size: 22px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
-.empty-state p { margin: 0 0 18px; font-size: 15px; }
-.empty-state pre { text-align: left; font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 12px 16px; border-radius: var(--radius); display: inline-block; margin: 0; }
+.empty-state h1 { font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
+.empty-state p { margin: 0 0 18px; font-size: var(--fs-body-s); }
+.empty-state .hero .mk { display: block; width: 44px; height: 44px; margin: 0 auto 16px; }
+.empty-state pre { text-align: left; font-family: var(--mono); font-size: var(--fs-ui); background: var(--code-bg); padding: 12px 16px; border-radius: var(--r-sm); display: inline-block; margin: 0; }
 
 /* ---------- rail ---------- */
 /* Two things live in the rail and they scroll apart. The contents can be
@@ -1083,7 +1111,7 @@ pre.code .inv { color: var(--del-fg); }
    screen, so "Pin" and "Compare with previous" were a scroll away on exactly
    the documents worth pinning and comparing. The contents scroll on their own
    now, in the room the actions leave, and the actions stay put. */
-#rail { padding: 60px 0 20px 8px; overflow: hidden; font-size: 12.5px; }
+#rail { padding: 60px 0 20px 8px; overflow: hidden; font-size: var(--fs-small); }
 #toc { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; padding: 14px 20px 14px 0; scroll-behavior: smooth; }
 /* Entries that have scrolled out fade at the edges rather than being cut mid-line.
    The padding is the fade's height, so an unscrolled list has nothing in it. */
@@ -1102,7 +1130,7 @@ pre.code .inv { color: var(--del-fg); }
 #toc .outline .ok-type { background: var(--s-type); }
 #toc .outline .ok-impl { background: var(--s-keyword); transform: rotate(45deg); }
 #toc .outline .ok-mod { background: var(--s-string); }
-#toc .outline li a { font-family: var(--mono); font-size: 11.5px; }
+#toc .outline li a { font-family: var(--mono); font-size: var(--fs-small); }
 pre.code .ln { scroll-margin-top: calc(var(--head-h) + 76px); }
 pre.code .ln.flash { background: var(--accent-bg); }
 /* A line the URL points at (#L12, #L12-L20) stays marked while it is being read;
@@ -1131,7 +1159,6 @@ pre.code .ln::before { cursor: pointer; }
 #meta .actions { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 #meta .actions button, #meta .actions a { color: var(--fg-2); padding: 3px 0; }
 #meta .actions button:hover, #meta .actions a:hover { color: var(--accent); text-decoration: none; }
-#meta .actions kbd { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-left: 8px; border: 1px solid var(--rule-2); border-radius: 3px; padding: 0 4px; line-height: 14px; display: inline-block; }
 
 /* ---------- what snyvi says back ----------
    A box at the bottom-right corner is a message left at an address nobody is
@@ -1147,33 +1174,9 @@ pre.code .ln::before { cursor: pointer; }
    read at, because the face is the part being looked at, and `data-feel`
    says which face and what it does on landing.
    It is still `#toasts > .toast` with `.t`, `.s` and `button.act` in it,
-   which is what the bench and everything else reads. */
-#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; z-index: 30;
-  align-items: flex-end; pointer-events: none; }
-#toasts[data-side="right"], #toasts[data-side="below"] { align-items: flex-start; }
-.toast { pointer-events: auto; position: relative;
-  background: var(--bg-raise); color: var(--fg); border: 1px solid var(--rule); border-radius: 11px;
-  box-shadow: var(--shadow); padding: 6px 12px 6px 7px; font-size: 12.5px; line-height: 1.3;
-  display: flex; align-items: center; gap: 8px; cursor: pointer; max-width: 288px;
-  animation: toast-in 260ms cubic-bezier(.2,1.3,.4,1); transform-origin: var(--from, 50% 100%); }
-.toast.out { opacity: 0; transform: scale(.97); transition: opacity 160ms ease, transform 160ms ease; }
-@keyframes toast-in { from { opacity: 0; transform: translate(var(--dx, 0), var(--dy, 8px)) scale(.92); } to { opacity: 1; transform: none; } }
-#toasts[data-side="right"] .toast { --dx: -12px; --dy: 0; --from: 0 50%; }
-#toasts[data-side="left"]  .toast { --dx: 12px;  --dy: 0; --from: 100% 50%; }
-#toasts[data-side="below"] .toast { --dx: 0; --dy: -10px; --from: 22px 0; }
-#toasts[data-side] .toast::before { content: ""; position: absolute; width: 8px; height: 8px;
-  background: var(--bg-raise); border: 1px solid var(--rule); transform: rotate(45deg); }
-#toasts[data-side="right"] .toast::before { left: -5px; top: var(--tail, 13px); border-top: 0; border-right: 0; }
-#toasts[data-side="left"]  .toast::before { right: -5px; top: var(--tail, 13px); border-bottom: 0; border-left: 0; }
-#toasts[data-side="below"] .toast::before { top: -5px; left: 16px; border-bottom: 0; border-right: 0; }
-.toast .say { min-width: 0; }
-.toast .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.toast .s { color: var(--fg-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The one thing an answer offers that has to be reached on purpose. */
-.toast .act { font: inherit; font-size: 11.5px; font-weight: 550; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: 6px; padding: 3px 9px; margin-left: 4px; cursor: pointer; flex: none; }
-.toast .act:hover { background: var(--bg-side); }
-.toast .act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
+   which is what the bench and everything else reads. Its look is in
+   ui/toast.js since 1.8, which draws it and is fetched the first time
+   snyvi has something to say. */
 /* snyvi itself: the logo's head, at the logo's geometry, in the colours the
    accent moves -- so the answer to a change of accent arrives wearing it.
    It leans towards the thing it is answering, and how it lands is the whole
@@ -1181,26 +1184,24 @@ pre.code .ln::before { cursor: pointer; }
    arrives all at once, sorry shakes its head, and love lets a heart go.
    The head (`.mk`) and its feelings (`[data-feel]`) are not the toast's
    alone: the queue bar wears the same one, so the rules are the head's. */
-.toast .who { width: 23px; height: 23px; flex: none; display: block; }
 .mk { display: block; width: 100%; height: 100%; overflow: visible; transform-origin: 50% 100%; }
-#toasts[data-side="right"] .toast .who { transform: rotate(-7deg); }
-#toasts[data-side="left"] .toast .who { transform: rotate(7deg); }
 .mk-body { fill: var(--mascot); }
 .mk-nub { fill: var(--mascot-nub); transform-origin: 16px 5px; transform-box: view-box; }
 .mk-ink { fill: var(--mascot-ink); }
 .mk-line { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
 .mk-love, .mk-puff { fill: var(--heart); }
 
-[data-feel="plain"] .mk, [data-feel="wink"] .mk { animation: mk-nod .52s cubic-bezier(.3,1.6,.5,1) 1; }
-[data-feel="glad"] .mk, [data-feel="love"] .mk { animation: mk-hop .62s cubic-bezier(.3,1.7,.5,1) 1; }
+/* A face moves only for what happens a few times a day (docs/DESIGN.md
+   §7.2): something arriving, the queue emptying, a small failure. The
+   answers to clicks -- rest, glad, wink -- change the face and keep still. */
+[data-feel="love"] .mk { animation: mk-hop .62s var(--ease-spring) 1; }
 [data-feel="whoa"] .mk { animation: mk-pop .5s cubic-bezier(.2,1.8,.4,1) 1; }
 [data-feel="oops"] .mk { animation: mk-shake .46s ease-in-out 1; }
 /* The antenna is the part with no face on it, so it carries the rest of the
    feeling: it swings behind a hop and droops when the answer is a no. */
-[data-feel="glad"] .mk-nub, [data-feel="love"] .mk-nub { animation: mk-swing .62s cubic-bezier(.3,1.5,.5,1) 1; }
+[data-feel="love"] .mk-nub { animation: mk-swing .62s cubic-bezier(.3,1.5,.5,1) 1; }
 [data-feel="oops"] .mk-nub { transform: translateY(1.4px) rotate(-14deg); }
-.mk-puff { transform-box: view-box; transform-origin: 26px 8px; animation: mk-puff 1.5s cubic-bezier(.3,.7,.4,1) .18s 1 both; }
-@keyframes mk-nod { 0%, 100% { transform: none; } 45% { transform: translateY(-1.6px) scale(1.03, .98); } }
+.mk-puff { transform-box: view-box; transform-origin: 26px 8px; animation: mk-puff 1.5s cubic-bezier(.3,.7,.4,1) var(--dur-move) 1 both; }
 @keyframes mk-hop { 0% { transform: none; } 32% { transform: translateY(-4px) scale(1.06, .94); } 62% { transform: translateY(0) scale(.95, 1.05); } 82% { transform: translateY(-1px); } 100% { transform: none; } }
 @keyframes mk-pop { 0% { transform: scale(.62); } 55% { transform: scale(1.12); } 100% { transform: none; } }
 @keyframes mk-shake { 0%, 100% { transform: none; } 20% { transform: rotate(-7deg); } 50% { transform: rotate(6deg); } 80% { transform: rotate(-3deg); } }
@@ -1212,47 +1213,40 @@ pre.code .ln::before { cursor: pointer; }
 }
 
 /* ---------- palette / help ---------- */
-#palette, #help, #about, #reset { position: fixed; inset: 0; background: var(--scrim); z-index: 40; display: grid; place-items: start center; padding-top: 12vh; }
+/* A native control snyvi has not drawn itself still wears the accent. */
+:root { accent-color: var(--accent); }
+#palette, #help, #about, #reset { position: fixed; inset: 0; background: var(--scrim); z-index: var(--z-dialog); display: grid; place-items: start center; padding-top: 12vh; }
 #palette[hidden], #help[hidden], #about[hidden], #reset[hidden] { display: none; }
-.palette-box, .help-box { width: min(620px, 92vw); background: var(--bg-raise); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; animation: rise 140ms cubic-bezier(.2,.7,.2,1); }
+.palette-box, .help-box { width: min(620px, 92vw); background: var(--bg-raise); border-radius: var(--r-md); box-shadow: var(--shadow-3); overflow: hidden; animation: rise var(--dur-move) var(--ease-out); }
+/* ⌘K is pressed a hundred times a day: it is there, not arriving (§7.2). */
+.palette-box { animation: none; }
 #palette-input { width: 100%; font: inherit; font-size: 16px; padding: 14px 18px; border: 0; background: transparent; color: inherit; outline: none; border-bottom: 1px solid var(--rule); }
 /* The palette's list is ui/palette.js's, and comes with it. */
-/* The overlay places the box 12vh down, so the cap leaves that and a little
-   below it: a box that outgrew the window would put its foot -- About,
-   Connect, Reset -- past the bottom edge, where no click can reach it. */
-.help-box { padding: 18px 22px 20px; position: relative; outline: none; max-height: 84vh; overflow-y: auto; }
-.help-close { position: absolute; top: 12px; right: 12px; }
-.help-box h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-3); }
-.help-box dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
-.help-box dt { font-family: var(--mono); font-size: 12.5px; color: var(--fg-2); }
-.help-box dd { margin: 0; }
-.help-foot { display: flex; align-items: center; gap: 4px; }
-.help-gap { flex: 1; }
-
-/* The shortcuts card. A title row and the foot stay put; only the middle
-   scrolls, and on a normal screen it never has to. Each row is the meta
-   panel's own shape -- what it does, then the key, small and flat -- so
-   there is no key column to line up; the keys sit on the right edge. */
-#help .help-box { width: min(700px, 92vw); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; }
-.help-head { flex: none; display: flex; align-items: center; padding: 14px 14px 12px 24px; }
-.help-head h2 { margin: 0; flex: 1; font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg); }
-#help .help-close { position: static; }
-#help .help-foot { flex: none; margin: 0; padding: 10px 14px 10px 16px; border-top: 1px solid var(--rule); background: var(--bg-side); }
-#help .help-foot button.text:hover { background: var(--rule); }
-button.text { font: inherit; font-size: 13px; color: var(--fg-2); background: transparent; border: 0; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
-button.text:hover { color: var(--fg); background: var(--bg-side); }
-button.text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The dialogs' own look -- the shortcuts card, About, Reset -- is ui/about.js's, which fills
+   them and is fetched before any of them opens. */
+/* Buttons (docs/DESIGN.md §8): five kinds on one base, with one hover, one
+   focus ring and one disabled look. The names markup already had are the
+   kinds' too: \`.w-btn\` is primary, \`button.text\` is text. */
+.btn, .w-btn, button.text { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: var(--fs-ui); font-weight: 500; line-height: 1.2;
+  padding: 6px 12px; border: 1px solid transparent; border-radius: var(--r-sm); color: var(--fg); background: none; cursor: pointer; }
+:is(.btn, .w-btn, button.text):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+:is(.btn, .w-btn, button.text):is(:disabled, [aria-disabled="true"]) { opacity: .45; cursor: default; }
+.btn-primary, .w-btn { color: var(--on-accent); background: var(--accent); font-weight: 600; }
+:is(.btn-primary, .w-btn):not(:disabled):hover { background: color-mix(in srgb, var(--accent), var(--fg) 12%); }
+.btn-secondary { border-color: var(--rule-2); }
+.btn-text, button.text { color: var(--fg-2); padding: 4px 8px; }
+:is(.btn-secondary, .btn-text, button.text):not(:disabled):hover { color: var(--fg); background: var(--rule); }
+/* Danger is an outline until it is armed, or is the one thing a dialog does. */
+.btn-danger { color: var(--danger); border-color: var(--danger); }
+.btn-danger:is([data-armed], .fill) { color: var(--on-accent); background: var(--danger); }
+.btn-danger:is([data-armed], .fill):not(:disabled):hover { background: color-mix(in srgb, var(--danger), var(--fg) 12%); }
+/* The copy button in a block of code or a command: one of them. */
+.copy { position: absolute; top: 6px; right: 8px; font: 500 var(--fs-micro) var(--sans); padding: 3px 8px; border: 0; border-radius: var(--r-xs);
+  background: var(--bg-raise); color: var(--fg-2); box-shadow: var(--shadow-1); cursor: pointer; }
+.copy:hover { color: var(--fg); }
+.copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* The reset dialog: a sentence, a number, and a button that is dead until
  * the number is right. Red is spent here and nowhere else in the chrome. */
-
-/* ---------- print ---------- */
-@media print {
-  #side, #rail, #chrome, #toasts, #palette, #help, #about, #reset, #queue-bar, pre.code .copy { display: none !important; }
-  #app { display: block; }
-  #doc { max-width: none; padding: 0; }
-  .prose { font-size: 11.5pt; }
-  pre.code { white-space: pre-wrap; }
-}
 
 /* A long code block comes cut into chunks of 200 lines (render::chunk_code),
    so only the chunks near the screen are laid out. The height is a guess until
@@ -1262,5 +1256,29 @@ pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block
 
 /* Folders is always in the sidebar, with its + for the desktop's folder dialog. */
 .picking .b-empty { color: var(--accent); cursor: progress; }
-.b-empty { display: block; width: 100%; height: 28px; text-align: left; padding: 0 8px 0 18px; font-size: 12px; color: var(--fg-3); border-radius: 6px; }
+.b-empty { display: block; width: 100%; height: 28px; text-align: left; padding: 0 8px 0 18px; font-size: var(--fs-small); color: var(--fg-3); border-radius: var(--r-sm); }
 .b-empty:hover { background: var(--rule); color: var(--fg-2); }
+
+/* ---------- where the mascot never is, and the quiet switch ----------
+   On a desk the panels are the work: no face in a toast or the queue bar
+   there (docs/DESIGN.md §2.3). The quiet switch (§2.5, ⌘K and the mark's
+   menu) keeps every face at rest and nothing of it moving: no hops, blinks,
+   hearts, hover lines or peek; a waiting aside is the nub, lit. */
+:root[data-view="desk"] :is(.toast .who, #queue-bar .qb-who) { display: none; }
+
+/* Working: the one mark for a process under way (docs/DESIGN.md §7.4) --
+   three dots, the light walking along them, beside a word that says what.
+   Content that is coming is a skeleton instead. Under reduced motion the
+   dots stand still at two of three, which still reads as "under way". */
+.dots { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: middle; }
+.dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .3; animation: dots calc(var(--dur-moment) * 2) var(--ease-out) infinite; }
+.dots i:nth-child(2) { animation-delay: var(--dur-quick); }
+.dots i:nth-child(3) { animation-delay: calc(var(--dur-quick) * 2); }
+@keyframes dots { 30% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dots i:nth-child(-n+2) { opacity: 1; } }
+:root[data-mascot="quiet"] :is(.mk, .mk *, .brand-mark *, .note-bg) { animation: none !important; transition: none !important; }
+:root[data-mascot="quiet"] :is(.bm-say, .note-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
+/* The last one waiting read: love, on the mark, once (app.js renderQueue). */
+html[data-cleared] .brand-mark .bm-open { display: none; }
+html[data-cleared] .brand-mark .bm-glad { display: inline; }
+html[data-cleared] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }

@@ -36,6 +36,24 @@ pub struct Seen {
     pub size: Option<u64>,
     /// `context_window.total_input_tokens`.
     pub input: Option<u64>,
+    /// The tokens in the window now: `current_usage`'s input, cache writes
+    /// and cache reads (its output is not in the window yet). Before the
+    /// first call and right after `/compact` there is no `current_usage`, and
+    /// `total_input_tokens` stands in.
+    pub used: Option<u64>,
+    /// `rate_limits.five_hour` and `seven_day`: how much of the account's
+    /// window is used, 0 to 100, and when it resets (Unix seconds). Only for
+    /// a Pro or Max account, and only after the session's first reply; either
+    /// may be absent. The spend limit a gateway sets is not read.
+    pub five_hour: Option<Limit>,
+    pub seven_day: Option<Limit>,
+}
+
+/// One rate-limit window, as the status line gives it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Limit {
+    pub used: f64,
+    pub resets_at: i64,
 }
 
 /// Read the payload. Every field is optional, as it is in Claude Code's own
@@ -43,6 +61,17 @@ pub struct Seen {
 pub fn read(v: &Value) -> Seen {
     let s = |p: &str| v.pointer(p).and_then(Value::as_str).map(str::to_string);
     let n = |p: &str| v.pointer(p).and_then(Value::as_f64);
+    let tokens = |p: &str| {
+        n(p).filter(|x| x.is_finite() && *x >= 0.0)
+            .map(|x| x as u64)
+    };
+    let now = [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ]
+    .map(|k| tokens(&format!("/context_window/current_usage/{k}")));
+    let input = tokens("/context_window/total_input_tokens");
     let agent = s("/agent/name").filter(|a| !a.trim().is_empty());
     let model = s("/model/display_name").unwrap_or_default();
     let model = match agent {
@@ -60,10 +89,29 @@ pub fn read(v: &Value) -> Seen {
         size: n("/context_window/context_window_size")
             .filter(|x| x.is_finite() && *x > 0.0)
             .map(|x| x as u64),
-        input: n("/context_window/total_input_tokens")
-            .filter(|x| x.is_finite() && *x >= 0.0)
-            .map(|x| x as u64),
+        input,
+        used: match now.iter().any(Option::is_some) {
+            true => Some(now.iter().flatten().sum()),
+            false => input,
+        },
+        five_hour: limit(v, "five_hour"),
+        seven_day: limit(v, "seven_day"),
     }
+}
+
+fn limit(v: &Value, window: &str) -> Option<Limit> {
+    let used = v
+        .pointer(&format!("/rate_limits/{window}/used_percentage"))
+        .and_then(Value::as_f64)
+        .filter(|p| p.is_finite())?;
+    let resets_at = v
+        .pointer(&format!("/rate_limits/{window}/resets_at"))
+        .and_then(Value::as_f64)
+        .filter(|t| t.is_finite() && *t > 0.0)? as i64;
+    Some(Limit {
+        used: used.clamp(0.0, 100.0),
+        resets_at,
+    })
 }
 
 /// A name for one line of a head: printable, one line, short.
@@ -220,6 +268,11 @@ mod tests {
         assert_eq!(s.size, Some(200_000));
         assert_eq!(s.input, Some(86_120));
         assert_eq!(
+            s.used,
+            Some(86_120),
+            "no current_usage: the total stands in"
+        );
+        assert_eq!(
             s.session.as_deref(),
             Some("f94bace6-1a2b-4c3d-8e9f-0123456789ab")
         );
@@ -239,6 +292,66 @@ mod tests {
         assert_eq!(s.model, "reviewer · Fable5.1");
         assert_eq!(s.pct, Some(100));
         assert_eq!(s.size, None);
+        assert_eq!(s.five_hour, None);
+    }
+
+    /// The account's rate-limit windows, when the line carries them; one can
+    /// be there without the other, and one that makes no sense is not kept.
+    #[test]
+    fn the_rate_limit_windows_are_read_when_they_are_there() {
+        let s = read(&json!({ "rate_limits": {
+            "five_hour": { "used_percentage": 23.5, "resets_at": 1738425600 },
+            "seven_day": { "used_percentage": "lots", "resets_at": 1738857600 },
+            "spend_limit": { "used_percentage": 62.8, "resets_at": 1740787200 }
+        }}));
+        assert_eq!(
+            s.five_hour,
+            Some(Limit {
+                used: 23.5,
+                resets_at: 1738425600
+            })
+        );
+        assert_eq!(s.seven_day, None);
+        let over = read(
+            &json!({ "rate_limits": { "seven_day": { "used_percentage": 140, "resets_at": 5 } } }),
+        );
+        assert_eq!(
+            over.seven_day,
+            Some(Limit {
+                used: 100.0,
+                resets_at: 5
+            })
+        );
+    }
+
+    #[test]
+    fn the_window_now_is_input_and_cache_not_output() {
+        let window = |current: Value| {
+            json!({ "context_window": {
+                "total_input_tokens": 15500,
+                "total_output_tokens": 1200,
+                "context_window_size": 200000,
+                "used_percentage": 8,
+                "remaining_percentage": 92,
+                "current_usage": current,
+            }})
+        };
+        let s = read(&window(json!({
+            "input_tokens": 8500,
+            "output_tokens": 1200,
+            "cache_creation_input_tokens": 5000,
+            "cache_read_input_tokens": 2000
+        })));
+        assert_eq!(s.used, Some(15_500));
+        // Before the first call, and right after /compact.
+        assert_eq!(read(&window(Value::Null)).used, Some(15_500));
+        let s = read(&json!({ "context_window": {
+            "total_input_tokens": 40_000,
+            "current_usage": null
+        }}));
+        assert_eq!(s.used, Some(40_000), "the total stands in");
+        let s = read(&json!({ "model": { "display_name": "Fable 5.1" } }));
+        assert_eq!(s.used, None);
     }
 
     #[test]

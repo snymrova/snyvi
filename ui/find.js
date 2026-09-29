@@ -24,8 +24,11 @@ let marks = [], idx = -1, timer = null;
 const SKIP = "script,style,.copy,svg,.mmd-note";
 
 /** Put the bar up, wiring it the first time. */
-export function open(deps) {
+/** What had the focus before the bar opened, which closing gives it back to. */
+let from = null;
+export function open(deps, was) {
   if (!d) { d = deps; wire(); }
+  if (was) from = was;
   const { $ } = d;
   $("#find").hidden = false;
   const input = $("#find-input");
@@ -66,9 +69,12 @@ export function refresh() {
 
 export function close() {
   if (!d) return;
+  const back = d.$("#find").contains(document.activeElement);
   d.$("#find").hidden = true;
   clear();
   d.$("#find-input").value = "";
+  if (back && from?.isConnected && from !== document.body) from.focus({ preventScroll: true });
+  from = null;
 }
 
 function run(q) {

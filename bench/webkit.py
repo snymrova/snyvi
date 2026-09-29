@@ -22,13 +22,28 @@ these rows are what says it still does.
     xvfb-run -a python3 bench/webkit.py            report
     xvfb-run -a python3 bench/webkit.py --check    and exit non-zero on a fault
     xvfb-run -a python3 bench/webkit.py --desk     only what a working desk costs
+    xvfb-run -a python3 bench/webkit.py --desk-hidden --desk-scroll --idle --daemon
 
-The last row is a measurement rather than a check: four panels on a desk,
+The desk row is a measurement rather than a check: four panels on a desk,
 each drawing bench/tui-load.mjs, and what the web process spends painting
 them (docs/DESK-PAINT.md). Xvfb draws with llvmpipe, so the number is not the
 window's; the same row before and after a change is what it is for. `--ui
 <dir>` serves the page from disk rather than the binary, so a change to ui/
 is measured without a build, and `--seconds <n>` samples for longer than 10.
+
+The rest are what the desk row never sees, because it never looks away,
+scrolls or waits. `--desk-hidden` is the same desk at work while the reader
+is not looking at it -- a document read over it, another desk, the window
+hidden -- and each of those is a check: a page with nothing to show spends
+next to nothing, and the daemon slows what it sends. `--desk-scroll` is a
+desk whose output goes by, until each panel holds the page's 6000 rows of
+scrollback, and then what it costs to come back to it: the snapshots, and
+how long they take to draw. `--idle` is the library with nothing happening,
+and then with a note nobody has read, which must not cost more. Every row
+here also says what the daemon spent over the same seconds. `--daemon` is the
+daemon on its own: with nothing at all happening, for a minute; with a desk at
+work and no window on it; and whether a redraw that reaches it in two writes
+inside a synchronized update goes on to the page as one frame.
 
 Needs the distribution's Python with its GObject bindings, the WebKitGTK
 introspection data, xdotool for the one gesture the page cannot fake -- the
@@ -65,9 +80,29 @@ CHECK = "--check" in args
 BIN = os.path.abspath(args[args.index("--bin") + 1] if "--bin" in args else "./target/release/snyvi")
 PORT = "7798"  # 7796 and 7797 are the Chromium benches
 DESK_ONLY = "--desk" in args
+DESK_HIDDEN = "--desk-hidden" in args
+DESK_SCROLL = "--desk-scroll" in args
+IDLE = "--idle" in args
+DAEMON = "--daemon" in args
 UI = os.path.abspath(args[args.index("--ui") + 1]) if "--ui" in args else None
 SECONDS = int(args[args.index("--seconds") + 1]) if "--seconds" in args else 10
 LOAD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tui-load.mjs")
+# The most a page showing nothing that moves may cost, as a share of one core
+# of the whole web process: nothing, give or take what Xvfb spends keeping a
+# window. A desk out of view is held to it, and so is an idle library.
+QUIET = 2.0
+# And the daemon, which draws nothing: a share of one core, with nothing
+# happening at all, and with four panels at work that no page is watching.
+DAEMON_IDLE = 0.5
+DAEMON_UNWATCHED = 1.0
+IDLE_SECONDS = 60
+# Coming back to a desk whose panels are full: each panel's snapshot drawn
+# within this many ms of its arriving, and none of them bigger than this many
+# KB. The four arrive together and are drawn one after another, so the last
+# shows several of these after the switch: that is printed, not enforced.
+ATTACH_MS = 150
+SNAPSHOT_KB = 256
+KEEP_LINES = 6000  # the page's scrollback, ui/desk.js
 
 
 def flowchart(n):
@@ -152,8 +187,13 @@ GO = """(() => { window.__go = null; (async () => {
 
   main.scrollTo({ top: 0, behavior: 'instant' });
   await wait(200);
-  const open = document.querySelector('#btn-find');
-  if (open) open.click();
+  // Find is `/` with the letters awake (Ctrl+B), as a reader opens it: the
+  // toolbar button this once clicked is gone, and the bar is a chunk.
+  const key = (k, o = {}) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+  key('b', { code: 'KeyB', ctrlKey: true });
+  await wait(600);
+  key('/');
+  await wait(600);
   const input = document.querySelector('#find-input');
   input.value = 'needle_far_down';
   input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -183,7 +223,9 @@ class View:
             Gtk.main_iteration_do(False)
             time.sleep(0.005)
 
-    def js(self, expr):
+    def js(self, expr, timeout=30):
+        """The value of `expr`, or TimeoutError when the page is too busy to
+        answer at all -- a row that fails, not a bench that hangs."""
         res = {}
 
         def done(v, r):
@@ -194,7 +236,10 @@ class View:
             res["done"] = True
 
         self.view.evaluate_javascript(expr, -1, None, None, None, done)
+        end = time.time() + timeout
         while "done" not in res:
+            if time.time() > end:
+                raise TimeoutError(f"the page did not answer in {timeout} s")
             Gtk.main_iteration_do(False)
             time.sleep(0.005)
         return res["v"]
@@ -286,10 +331,34 @@ def threads(pid):
 # are canvases, and how many frames reached the page -- so a number that falls
 # because frames stopped arriving says so. Frames are counted as the desk
 # parses them: a live screen on a canvas writes no rows into the page to count.
+#
+# A snapshot is the frame with the grid's size near its head. While
+# `window.__snap` is set, each one is counted and measured. The handler that
+# parses it draws it before it returns, so a microtask queued at the parse
+# runs when that panel is drawn: `each` is the longest of those. `done` is
+# when the last was drawn, from the switch.
 DESK_WATCH = """(() => {
   window.__frames = 0;
+  if (window.__watching) return 1;
+  window.__watching = 1;
   const parse = JSON.parse;
-  JSON.parse = function (t) { if (typeof t === 'string' && t.startsWith('{"t":"frame"')) window.__frames++; return parse.apply(this, arguments); };
+  JSON.parse = function (t) {
+    if (typeof t === 'string' && t.startsWith('{"t":"frame"')) {
+      window.__frames++;
+      const s = window.__snap;
+      if (s && t.lastIndexOf('"sz":', 80) > 0) {
+        const t1 = performance.now();
+        queueMicrotask(() => {
+          const now = performance.now();
+          s.each = Math.max(s.each, now - t1);
+          s.done = Math.max(s.done, now - s.t0);
+          const b = new TextEncoder().encode(t).length;
+          s.n++; s.bytes += b; s.big = Math.max(s.big, b);
+        });
+      }
+    }
+    return parse.apply(this, arguments);
+  };
   return 1;
 })()"""
 DESK_SEEN = """JSON.stringify({ panes: document.querySelectorAll('.dk .pn').length,
@@ -299,72 +368,413 @@ DESK_SEEN = """JSON.stringify({ panes: document.querySelectorAll('.dk .pn').leng
   frames: window.__frames || 0 })"""
 
 
-def desk_row(env, base):
-    """Four panels at work on one desk, and the web process's CPU while it
-    draws them: the mean and the 95th percentile of one-second samples, as a
-    percentage of one core."""
+def capability(env, base):
+    """The daemon's token, and a window's capability with the header that carries it."""
     token = open(f"{env['SNYVI_CONFIG_DIR']}/token").read().strip()
     cap = post(base, "/api/capability", {}, {"authorization": f"Bearer {token}"})["capability"]
-    H = {"x-snyvi-capability": cap}
-    d = post(base, "/api/desks", {"name": "paint"}, H)
-    desk = (d.get("desk") or d)["id"]
-    node = shutil.which("node") or "node"
-    for _ in range(4):
-        pane = post(base, f"/api/desks/{desk}/panes", {}, H)["pane"]["id"]
-        post(base, f"/api/panes/{pane}/start", {"cmd": f"{node} {LOAD}"}, H)
+    return token, cap, {"x-snyvi-capability": cap}
 
-    before = web_processes()
-    # A window the size of a screen, as the desk is usually worked in.
-    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+
+def make_desk(base, H, name, cmd=None, panes=4):
+    """A desk, and `panes` panels on it running `cmd` (none without one): the
+    desk's id and the panels'."""
+    d = post(base, "/api/desks", {"name": name}, H)
+    desk, ids = (d.get("desk") or d)["id"], []
+    for _ in range(panes if cmd else 0):
+        ids.append(post(base, f"/api/desks/{desk}/panes", {}, H)["pane"]["id"])
+        post(base, f"/api/panes/{ids[-1]}/start", {"cmd": cmd}, H)
+    return desk, ids
+
+
+def stop(base, H, panes):
+    """Stop a row's panels, so the rows after it measure a daemon with nothing
+    of this one's still running."""
+    for pane in panes:
+        try:
+            post(base, f"/api/panes/{pane}/stop", {}, H)
+        except OSError:
+            pass
+
+
+def daemon_pid(base):
+    with urllib.request.urlopen(base + "/api/health") as r:
+        return json.loads(r.read())["pid"]
+
+
+def working(v, n=4):
+    """Wait for `n` panels to be drawing the load; what the desk shows either way."""
     seen = {}
     for _ in range(150):
         seen = json.loads(v.js(DESK_SEEN))
-        if seen["working"] == 4:
+        if seen["working"] == n:
             break
         v.wait(100)
-    if seen.get("working") != 4:
-        v.win.destroy()
-        return ("a desk of 4 at work", False, f"{seen.get('panes', 0)} panels open, {seen.get('working', 0)} drawing the load")
-    v.wait(3000)
+    return seen
+
+
+def resident_gb(pid):
+    """A process's resident set, in GB, or None once it is gone."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            kb = next(int(line.split()[1]) for line in f if line.startswith("VmRSS:"))
+        return kb / 1e6
+    except (OSError, StopIteration):
+        return None
+
+
+def one_new(before):
+    """The web process a new view started, or None if it is not exactly one."""
     procs = web_processes() - before
-    if len(procs) != 1:
-        v.win.destroy()
-        return ("a desk of 4 at work", False, f"found {len(procs)} new web processes, expected one")
-    pid = procs.pop()
+    return procs.pop() if len(procs) == 1 else None
+
+
+def go(v, path, state=None):
+    """Move the page the way Back and Forward do, which is the route the page
+    takes for every place it can be: history, then `popstate`."""
+    v.js(f"history.pushState({json.dumps(state)}, '', {json.dumps(path)}); "
+         "dispatchEvent(new PopStateEvent('popstate', { state: history.state })); 1")
+
+
+def until(v, expr, tries=100):
+    for _ in range(tries):
+        if v.js(expr) == "true":
+            return True
+        v.wait(100)
+    return False
+
+
+def measure(v, pid, dpid):
+    """The web process's CPU while the page goes on as it is: the mean and the
+    95th percentile of one-second samples, as a percentage of one core, the
+    main thread's share, the frames that reached the page, and the daemon's
+    CPU over the same seconds."""
     hz = os.sysconf("SC_CLK_TCK")
-    v.js(DESK_WATCH)
+    v.js("window.__frames = 0")
     # For a profile of what it measures: the web process's pid, written to
     # this file once sampling begins, for a `perf record -p` to wait on.
     if os.environ.get("SNYVI_DESK_PID"):
         with open(os.environ["SNYVI_DESK_PID"], "w") as f:
             f.write(str(pid))
-    stat = f"/proc/{pid}/stat"
-    first, t0 = threads(pid), time.monotonic()
+    stat, dstat = f"/proc/{pid}/stat", f"/proc/{dpid}/stat"
+    first, d0, t0 = threads(pid), cpu_ticks(dstat), time.monotonic()
     samples, last, t = [], cpu_ticks(stat), t0
     for _ in range(SECONDS):
         v.wait(1000)
         now, nt = cpu_ticks(stat), time.monotonic()
         samples.append(100 * (now - last) / hz / (nt - t))
         last, t = now, nt
-    end, span = threads(pid), time.monotonic() - t0
-    seen = json.loads(v.js(DESK_SEEN))
-    v.win.destroy()
+    end, d1, span = threads(pid), cpu_ticks(dstat), time.monotonic() - t0
+    frames = int(v.js("window.__frames || 0") or 0)
+    try:
+        anims = json.loads(v.js(ANIMS) or "[]")
+    except (TimeoutError, ValueError):
+        anims = []
     pct = lambda ticks: 100 * ticks / hz / span  # noqa: E731
-    main = pct(end[pid][1] - first.get(pid, ("", 0))[1])
     others = {}
     for tid, (name, ticks) in end.items():
         if tid != pid:
             others[name] = others.get(name, 0) + ticks - first.get(tid, (name, 0))[1]
-    top = ", ".join(f"{n} {pct(k):.0f}%" for n, k in sorted(others.items(), key=lambda x: -x[1])[:3] if pct(k) >= 1)
-    mean = sum(samples) / len(samples)
-    p95 = sorted(samples)[max(0, math.ceil(0.95 * len(samples)) - 1)]
-    fps = seen["frames"] / span
+    return {
+        "main": pct(end[pid][1] - first.get(pid, ("", 0))[1]),
+        "mean": sum(samples) / len(samples),
+        "p95": sorted(samples)[max(0, math.ceil(0.95 * len(samples)) - 1)],
+        "top": ", ".join(f"{n} {pct(k):.0f}%" for n, k in sorted(others.items(), key=lambda x: -x[1])[:3] if pct(k) >= 1),
+        "fps": frames / span,
+        "daemon": pct(d1 - d0),
+        "anims": anims,
+    }
+
+
+# What is animating at the end of a measurement, so a quiet row that is not
+# quiet says what moves.
+ANIMS = """JSON.stringify([...new Set(document.getAnimations().filter(a => a.playState === 'running').map(a => {
+  const t = a.effect && a.effect.target, c = t ? (t.getAttribute && t.getAttribute('class')) || t.tagName : '?';
+  return (a.animationName || a.transitionProperty || 'script') + ' on ' + c;
+}))])"""
+
+
+def cost(m):
     # A saturated process draws fewer frames at the same CPU, so the cost of
     # one frame on the main thread is the number that cannot hide.
-    return ("a desk of 4 at work", True,
-            f"main thread {main:.0f}% of a core, {10 * main / max(fps, 0.1):.2f} ms per frame "
-            f"({fps:.0f}/s); whole process {mean:.0f}%, p95 {p95:.0f}% ({top}); "
-            f"{seen['drawn']} live canvases, panes {seen['size']} px")
+    return (f"main thread {m['main']:.0f}% of a core, {10 * m['main'] / max(m['fps'], 0.1):.2f} ms per frame "
+            f"({m['fps']:.0f}/s); whole process {m['mean']:.0f}%, p95 {m['p95']:.0f}% ({m['top']}); "
+            f"daemon {m['daemon']:.1f}%")
+
+
+def quiet(name, m, what=""):
+    """A row held to QUIET: the page shows nothing that moves."""
+    return (name, m["mean"] <= QUIET,
+            f"whole process {m['mean']:.1f}%, p95 {m['p95']:.1f}%, main thread {m['main']:.1f}% "
+            f"(at most {QUIET:.0f}%); {m['fps']:.1f} frames/s reach the page; daemon {m['daemon']:.1f}%"
+            + (f"; {what}" if what else "")
+            + (f"; threads {m['top']}" if m["top"] and m["mean"] > QUIET else "")
+            + (f"; running: {', '.join(m['anims'])}" if m["anims"] else ""))
+
+
+def desk_row(env, base):
+    """Four panels at work on one desk, and the web process's CPU while it
+    draws them."""
+    _, cap, H = capability(env, base)
+    node = shutil.which("node") or "node"
+    desk, panes = make_desk(base, H, "paint", f"{node} {LOAD}")
+    dpid = daemon_pid(base)
+    before = web_processes()
+    # A window the size of a screen, as the desk is usually worked in.
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+    try:
+        seen = working(v)
+        if seen.get("working") != 4:
+            return ("a desk of 4 at work", False, f"{seen.get('panes', 0)} panels open, {seen.get('working', 0)} drawing the load")
+        v.wait(3000)
+        pid = one_new(before)
+        if pid is None:
+            return ("a desk of 4 at work", False, "not exactly one new web process")
+        v.js(DESK_WATCH)
+        m = measure(v, pid, dpid)
+        seen = json.loads(v.js(DESK_SEEN))
+        return ("a desk of 4 at work", True, f"{cost(m)}; {seen['drawn']} live canvases, panes {seen['size']} px")
+    finally:
+        v.win.destroy()
+        stop(base, H, panes)
+
+
+def desk_hidden_rows(env, base, doc):
+    """The same desk at work, then out of view three ways, and each of those
+    held to QUIET. The panels go on working the whole time: what is measured
+    is what the page and the daemon spend on screens nobody can see."""
+    _, cap, H = capability(env, base)
+    node = shutil.which("node") or "node"
+    desk, panes = make_desk(base, H, "hidden", f"{node} {LOAD}")
+    other, _ = make_desk(base, H, "elsewhere")
+    dpid = daemon_pid(base)
+    before = web_processes()
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+    rows = []
+    try:
+        seen = working(v)
+        if seen.get("working") != 4:
+            return [("a desk out of view", False, f"{seen.get('panes', 0)} panels open, {seen.get('working', 0)} drawing the load")]
+        v.wait(3000)
+        pid = one_new(before)
+        if pid is None:
+            return [("a desk out of view", False, "not exactly one new web process")]
+        v.js(DESK_WATCH)
+        rows.append(("the desk in view, to compare", True, cost(measure(v, pid, dpid))))
+
+        # A document read over the desk, as one opened from its rail is: the
+        # desk steps aside and keeps its sockets, so coming back is a redraw
+        # (desk.js, aside()).
+        go(v, f"/d/{doc}", {"over": desk})
+        ok = until(v, "!!document.querySelector('#doc .prose') && !document.querySelector('.dk .pn') "
+                      "&& document.documentElement.dataset.view !== 'desk'")
+        # What the desk behind costs, not the switch: a document opening
+        # spends its first few seconds settling (its fonts, its figures, the
+        # rail's entrance), whatever is behind it.
+        v.wait(5000)
+        rows.append(quiet("behind a document", measure(v, pid, dpid)) if ok
+                    else ("behind a document", False, "the document never replaced the desk"))
+
+        go(v, f"/desk/{desk}")
+        working(v)
+        go(v, f"/desk/{other}")
+        ok = until(v, f"location.pathname === '/desk/{other}' && !!document.querySelector('.dk') && !document.querySelector('.dk .pn')")
+        v.wait(5000)
+        rows.append(quiet("on another desk", measure(v, pid, dpid)) if ok
+                    else ("on another desk", False, "the other desk never opened"))
+
+        go(v, f"/desk/{desk}")
+        working(v)
+        v.wait(1000)
+        # Unmapped, which is as hidden as a window gets without a window
+        # manager to minimize it: the engine says so to the page.
+        v.win.hide()
+        v.wait(1500)
+        hidden = v.js("document.hidden")
+        rows.append(quiet("the window hidden", measure(v, pid, dpid), f"document.hidden is {hidden}"))
+        v.win.show_all()
+    finally:
+        v.win.destroy()
+        stop(base, H, panes)
+    return rows
+
+
+# The rows each panel's scrollback holds, in the document or put away (ui/desk.js, addRows).
+SB_SEEN = "JSON.stringify([...document.querySelectorAll('.dk .pn-sb')].map(s => s.rows || 0))"
+# And the rows each panel's scrollback holds in all: those, and the ones the
+# daemon has above them that the page asks for as the reader scrolls up.
+SB_HELD = "JSON.stringify([...document.querySelectorAll('.dk .pn-sb')].map(s => (s.rows || 0) + (s.more || 0)))"
+
+
+def desk_scroll_rows(env, base):
+    """A desk of four whose output goes by, once each panel holds the page's
+    full scrollback; then away to another desk and back, which is every
+    switch, reconnect and new window: each panel is sent whole."""
+    _, cap, H = capability(env, base)
+    node = shutil.which("node") or "node"
+    desk, panes = make_desk(base, H, "scroll", f"{node} {LOAD} --scroll 20")
+    other, _ = make_desk(base, H, "elsewhere")
+    dpid = daemon_pid(base)
+    before = web_processes()
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+    rows = []
+    try:
+        seen = working(v)
+        if seen.get("working") != 4:
+            return [("a desk of 4 scrolling", False, f"{seen.get('panes', 0)} panels open, {seen.get('working', 0)} drawing the load")]
+        # 6500 lines at 200 a frame is a few seconds of fill; two minutes is
+        # a page that cannot keep up, and it says how big it got meanwhile.
+        sb, end = [], time.time() + 120
+        while time.time() < end:
+            try:
+                sb = json.loads(v.js(SB_HELD))
+            except TimeoutError:
+                break
+            if len(sb) == 4 and min(sb) >= KEEP_LINES:
+                break
+            v.wait(100)
+        if len(sb) != 4 or min(sb) < KEEP_LINES:
+            gb = [g for g in map(resident_gb, web_processes() - before) if g is not None]
+            size = f"; the web process holds {max(gb):.1f} GB" if gb else ""
+            return [("a desk of 4 scrolling", False,
+                     f"the scrollback reached {sb or 'no answer'} rows, not {KEEP_LINES} in each, in 2 minutes{size}")]
+        v.wait(2000)
+        pid = one_new(before)
+        if pid is None:
+            return [("a desk of 4 scrolling", False, "not exactly one new web process")]
+        v.js(DESK_WATCH)
+        m = measure(v, pid, dpid)
+        rows.append(("a desk of 4 scrolling", True,
+                     f"{cost(m)}; {KEEP_LINES}+ rows of scrollback in each, {min(json.loads(v.js(SB_SEEN)))}+ of them in the page"))
+
+        go(v, f"/desk/{other}")
+        until(v, f"location.pathname === '/desk/{other}' && !document.querySelector('.dk .pn')")
+        v.wait(1000)
+        v.js("window.__snap = { n: 0, bytes: 0, big: 0, each: 0, done: 0, t0: performance.now() }; 1")
+        go(v, f"/desk/{desk}")
+        until(v, "window.__snap.n >= 4", 150)
+        v.wait(1000)
+        snap = json.loads(v.js("JSON.stringify(window.__snap)"))
+        ok = snap["n"] >= 4 and snap["each"] <= ATTACH_MS and snap["big"] <= SNAPSHOT_KB * 1024
+        rows.append(("back to it: 4 panels' snapshots", ok,
+                     f"{snap['n']} snapshots, {snap['bytes'] / 1024:.0f} KB, the largest {snap['big'] / 1024:.0f} KB; "
+                     f"each drawn within {snap['each']:.0f} ms, the last {snap['done']:.0f} ms after the switch "
+                     f"(at most {ATTACH_MS} ms and {SNAPSHOT_KB} KB each)"))
+        # A snapshot is the newest of the scrollback; the rest comes as the
+        # reader scrolls up to it.
+        # Said by what is left above, not by the rows, which the output going
+        # by grows anyway.
+        left = "(document.querySelector('.dk .pn-sb').more || 0)"
+        had = [json.loads(v.js(SB_SEEN))[0], int(v.js(left))]
+        # With its scroll event at once, as a reader's scroll has: the page
+        # keeps a panel at the bottom until it hears it was scrolled, and the
+        # output going by would put it back before the event came.
+        v.js("(b => { b.scrollTop = 0; b.dispatchEvent(new Event('scroll')); })(document.querySelector('.dk .pn-body')); 1")
+        more = had[1] > 0 and until(v, f"{left} < {had[1]}", 50)
+        now = [json.loads(v.js(SB_SEEN))[0], int(v.js(left))]
+        rows.append(("scrolled to its top: older lines come", more,
+                     f"{had[0]} rows with {had[1]} above at the daemon, then {now[0]} with {now[1]} within 5 s"))
+    except TimeoutError as e:
+        gb = [g for g in map(resident_gb, web_processes() - before) if g is not None]
+        size = f"; the web process holds {max(gb):.1f} GB" if gb else ""
+        rows.append(("back to it: 4 panels' snapshots" if rows else "a desk of 4 scrolling", False, f"{e}{size}"))
+    finally:
+        v.win.destroy()
+        stop(base, H, panes)
+    return rows
+
+
+def idle_rows(env, base):
+    """The library with nothing happening, and then with an agent's note that
+    nobody has read. Both are held to QUIET: a note is news, not an animation
+    that runs for as long as the reader is away."""
+    token, _, _ = capability(env, base)
+    dpid = daemon_pid(base)
+    before = web_processes()
+    v = View(base + "/", (1280, 900))
+    rows = []
+    try:
+        until(v, "document.readyState === 'complete'")
+        v.wait(3000)
+        pid = one_new(before)
+        if pid is None:
+            return [("the library, idle", False, "not exactly one new web process")]
+        note = v.js("document.documentElement.dataset.note || 'none'")
+        rows.append(quiet("the library, idle", measure(v, pid, dpid), f"note {note}"))
+
+        post(base, "/api/notes", {"text": "The bench left this, and nobody has read it.", "sender": "bench"},
+             {"authorization": f"Bearer {token}"})
+        ok = until(v, "!!document.documentElement.dataset.note && !!document.querySelector('#note')")
+        # The face perks up when a note comes -- two blinks, four pulses, under
+        # ten seconds (app.css) -- and the row is what it costs after that.
+        v.wait(10000)
+        note = v.js("document.documentElement.dataset.note || 'none'")
+        rows.append(quiet("an unread note, idle", measure(v, pid, dpid), f"note {note}") if ok
+                    else ("an unread note, idle", False, "the note never reached the page"))
+    finally:
+        v.win.destroy()
+    return rows
+
+
+def daemon_cpu(dpid, seconds):
+    """The daemon's CPU over `seconds`, as a share of one core. Its panels'
+    programs are processes of their own and are not counted."""
+    hz, stat = os.sysconf("SC_CLK_TCK"), f"/proc/{dpid}/stat"
+    d0, t0 = cpu_ticks(stat), time.monotonic()
+    time.sleep(seconds)
+    return 100 * (cpu_ticks(stat) - d0) / hz / (time.monotonic() - t0)
+
+
+def daemon_rows(env, base):
+    """The daemon with no page on it: first with nothing happening, which
+    is most of its life, then with a desk at work that nobody is watching,
+    which is a window closed on one. And a redraw that arrives in two writes,
+    watched: inside a synchronized update it is one frame, not a torn half
+    and then the rest."""
+    _, cap, H = capability(env, base)
+    node = shutil.which("node") or "node"
+    dpid = daemon_pid(base)
+    rows = []
+    time.sleep(3)
+    pct = daemon_cpu(dpid, IDLE_SECONDS)
+    rows.append(("the daemon, nothing happening", pct <= DAEMON_IDLE,
+                 f"{pct:.2f}% of a core over {IDLE_SECONDS} s (at most {DAEMON_IDLE}%)"))
+
+    desk, panes = make_desk(base, H, "unwatched", f"{node} {LOAD}")
+    try:
+        time.sleep(3)
+        pct = daemon_cpu(dpid, SECONDS)
+        rows.append(("the daemon, 4 panels at work and no window", pct <= DAEMON_UNWATCHED,
+                     f"{pct:.2f}% of a core (at most {DAEMON_UNWATCHED}%); the watched desk's row says what it is with one"))
+    finally:
+        stop(base, H, panes)
+
+    for sync in (False, True):
+        flag = " --split --sync" if sync else " --split"
+        desk, panes = make_desk(base, H, "sync" if sync else "split", f"{node} {LOAD}{flag}")
+        before = web_processes()
+        v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+        name = "a redraw in two writes, synchronized" if sync else "a redraw in two writes, to compare"
+        try:
+            seen = working(v)
+            if seen.get("working") != 4:
+                rows.append((name, False, f"{seen.get('panes', 0)} panels open, {seen.get('working', 0)} drawing the load"))
+                continue
+            v.wait(3000)
+            pid = one_new(before)
+            if pid is None:
+                rows.append((name, False, "not exactly one new web process"))
+                continue
+            v.js(DESK_WATCH)
+            m = measure(v, pid, dpid)
+            # Ten ticks a second in each of four panels (tui-load.mjs).
+            per = m["fps"] / 40
+            rows.append((name, per <= 1.25 if sync else True,
+                         f"{per:.2f} frames a redraw ({m['fps']:.0f}/s for 40 redraws/s)"
+                         + (" (at most 1.25)" if sync else "") + f"; {cost(m)}"))
+        finally:
+            v.win.destroy()
+            stop(base, H, panes)
+    return rows
 
 
 # The two rows below need a real key press, which only xdotool can send. It
@@ -494,6 +904,7 @@ def canvas_rows(env, base):
         rows.append(("every theme redraws the canvas", not off, "; ".join(off) or f"the red ground follows all {len(themes)}"))
     finally:
         v.win.destroy()
+        stop(base, H, [pane])
     return rows
 
 
@@ -523,8 +934,18 @@ def main():
         out = subprocess.run([BIN, "send", path], env=env, cwd=tmp, capture_output=True, text=True).stdout
         url = next(w for w in out.split() if w.startswith("http"))
         base = url.split("/d/")[0] if "/d/" in url else "/".join(url.split("/")[:3])
-        if DESK_ONLY:
-            rows.append(desk_row(env, base))
+        doc = url.rsplit("/d/", 1)[-1].split("#")[0].split("?")[0]
+        if DESK_ONLY or DESK_HIDDEN or DESK_SCROLL or IDLE or DAEMON:
+            if DAEMON:
+                rows += daemon_rows(env, base)
+            if IDLE:
+                rows += idle_rows(env, base)
+            if DESK_ONLY:
+                rows.append(desk_row(env, base))
+            if DESK_HIDDEN:
+                rows += desk_hidden_rows(env, base, doc)
+            if DESK_SCROLL:
+                rows += desk_scroll_rows(env, base)
             return report(rows)
         v = View(url)
         v.wait(1500)
@@ -619,7 +1040,11 @@ def main():
                      f"the match {deep['find']['top']} px away"))
         v.win.destroy()
         rows += canvas_rows(env, base)
+        rows += idle_rows(env, base)
         rows.append(desk_row(env, base))
+        rows += desk_hidden_rows(env, base, doc)
+        rows += desk_scroll_rows(env, base)
+        rows += daemon_rows(env, base)
     finally:
         subprocess.run([BIN, "stop"], env=env, capture_output=True)
         shutil.rmtree(tmp, ignore_errors=True)

@@ -81,15 +81,17 @@ const WINDOW_MARK: &str = concat!("window=", env!("CARGO_PKG_VERSION"));
 /// The window commands the page is allowed, and no others. The frame is the
 /// page's: it drags the window by its own header row (Tauri's own handler
 /// answers a `data-tauri-drag-region` attribute with the first two commands)
-/// and draws the three buttons a title bar had (the next four). The last is
-/// for `FRAME_CHECK` below.
-const PAGE_WINDOW_COMMANDS: [&str; 7] = [
+/// and draws the three buttons a title bar had (the next five: leaving full
+/// screen too, which the desktop will not maximise out of). The last is for
+/// `FRAME_CHECK` below.
+const PAGE_WINDOW_COMMANDS: [&str; 8] = [
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
+    "core:window:allow-set-fullscreen",
     "core:window:allow-set-decorations",
 ];
 
