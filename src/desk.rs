@@ -1250,7 +1250,8 @@ pub const SUGGESTIONS_PER_DESK: i64 = 3;
 /// What came of an agent suggesting a line.
 #[derive(Debug, PartialEq)]
 pub enum Suggested {
-    Note(DeskNote),
+    /// Boxed: a line with its stages is far bigger than the other answers.
+    Note(Box<DeskNote>),
     /// As many waiting as a desk holds, or the list is full.
     Full,
     Empty,
@@ -1304,13 +1305,13 @@ pub fn suggest_note(
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
-    Ok(Suggested::Note(DeskNote {
+    Ok(Suggested::Note(Box::new(DeskNote {
         id,
         text,
         created_at: now,
         suggested_by: by,
         ..DeskNote::default()
-    }))
+    })))
 }
 
 /// The reader keeps a suggestion: it is an ordinary line of theirs from here,
