@@ -1355,7 +1355,7 @@ not in it.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|
-| Binary size, `snyvi`                        | 16.2 MB     | 16.5 MB |
+| Binary size, `snyvi`                        | 16.6 MB     | 17 MB  |
 | Daemon cold start, to first health          | 11 to 14 ms | 100 ms |
 | Daemon resident, three documents in, settled | 40 MB      | 60 MB  |
 | Daemon resident, after a 1 MB document and a 100k-line file, settled | 57 to 72 MB | 100 MB |
