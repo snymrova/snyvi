@@ -489,7 +489,8 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     // `install-desktop` writes came to about half a megabyte. 16 until 1.8.0:
     // Home, the update card, the desk brief and suggested notes, and the
     // design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
-    // 16.4 on Windows).
+    // 16.4 on Windows). 16.5 until 1.10.0: pictures on notes, note stages and
+    // the Home of desks and notes took the musl build to 16.6 MB.
     //
     // What ships is built with fat LTO (release.yml). A CI job that turns it
     // off to save build time (the desktops, Windows, Intel Mac) measures a
@@ -497,7 +498,7 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     // there the row is printed and not enforced.
     let lto_off = std::env::var("CARGO_PROFILE_RELEASE_LTO")
         .is_ok_and(|v| matches!(v.as_str(), "off" | "false"));
-    rows.size("binary size, snyvi", size, 16.5, lto_off);
+    rows.size("binary size, snyvi", size, 17.0, lto_off);
 
     // Three cold starts: the first also creates the database and the token,
     // and the two after it open what the first left, which is every start
