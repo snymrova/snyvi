@@ -269,6 +269,13 @@ impl Store {
             "ALTER TABLE docs ADD COLUMN desk_off INTEGER NOT NULL DEFAULT 0",
             // 1.10: pictures on a desk's line.
             "ALTER TABLE desk_notes ADD COLUMN images TEXT NOT NULL DEFAULT ''",
+            // 1.10: how far an agent has got with a line, short of done.
+            "ALTER TABLE desk_notes ADD COLUMN stage TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN stage_doc TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN stage_at INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE desk_notes ADD COLUMN stage_pane TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desk_notes ADD COLUMN stage_session TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1343,6 +1350,10 @@ impl Store {
 
     pub fn tick_desk_note(&self, desk_id: i64, id: i64, tick: &desk::Tick) -> Result<bool> {
         desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
+    }
+
+    pub fn mark_desk_note(&self, desk_id: i64, id: i64, mark: &desk::Mark) -> Result<bool> {
+        desk::mark_note(&self.conn.lock().unwrap(), desk_id, id, mark, now())
     }
 
     pub fn add_note_image(&self, desk_id: i64, id: i64, name: &str) -> Result<Option<Vec<String>>> {

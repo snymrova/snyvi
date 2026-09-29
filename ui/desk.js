@@ -1726,6 +1726,7 @@ const ICO = {
   again: '<path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3"/>',
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   done: '<path d="M2.5 5l1.5 1.5L7 3.5M2.5 11l1.5 1.5L7 9.5M9.5 5h4M9.5 11h4"/>',
+  pic: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.75" cy="6.25" r="1.1"/><path d="M2.5 11.5l3.5-3.5 2.5 2.5 2-2 3 3"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
 /** The head's plus: drawn on the grid the page's own icon buttons use
@@ -1966,8 +1967,10 @@ function noteSec(d) {
     // The field for a new line opens at the end of the list, where the line
     // will land.
     (noteField && noteField.kind === "new"
-      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">${noteSays(esc)}` +
-        (pending.length ? `<span class="dk-pend" role="status">${ctx.plural(pending.length, "picture")} with this line<button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + `</div>` : "") +
+      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><span class="dk-stage" aria-hidden="true"></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
+        // Pictures waiting on the line: the picture mark a line wears, with
+        // their count, and the ✕ that leaves them out.
+        (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>` : "") +
     `</details><span class="dk-sec-acts">${acts}</span></div>`;
 }
 
@@ -2002,10 +2005,11 @@ function noteRow(x, esc) {
   const editing = noteField && noteField.kind === "edit" && noteField.id === x.id;
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
+    stageMark(x, esc) +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
+    picMark(x, esc) +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
     (x.done && x.done_by ? byLine(x, esc) : "") +
-    (x.images?.length || (imgGone && imgGone.n === x.id) ? imgStrip(x, esc) : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }
@@ -2022,14 +2026,42 @@ function noteRow(x, esc) {
 /** The pictures in a paste or a drop, of the four kinds the daemon keeps. */
 const images = dt => [...(dt?.files || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
 
-/** Under a line's text: its pictures, and the Undo of one just taken off. */
-function imgStrip(x, esc) {
-  const gone = imgGone && imgGone.n === x.id;
-  return `<span class="dk-imgs">` + (x.images || []).map((n, i) => {
-    const u = imgUrls.get(n);
-    return `<button type="button" class="dk-img" data-a="note-img" data-n="${x.id}" data-i="${i}" data-tip="Picture ${i + 1}" data-tip-sub="click to see it whole" aria-label="See picture ${i + 1} on ${esc(x.text)}"><img alt="" data-img="${esc(n)}"${typeof u === "string" ? ` src="${u}"` : ""}></button>`;
-  }).join("") +
-    (gone ? `<span class="dk-note gone dk-img-gone" role="status"><span class="nm">Picture removed</span><button type="button" class="dk-undo" data-a="img-back">Undo</button></span>` : "") + `</span>`;
+/** At the end of a line's text: that it has pictures, and how many, in one
+ *  small mark that opens them whole. While one just taken off can still be
+ *  put back, the mark is its Undo, in the same room. */
+function picMark(x, esc) {
+  const n = x.images?.length || 0;
+  if (imgGone && imgGone.n === x.id) {
+    return `<button type="button" class="dk-pic back" data-a="img-back" data-tip="Put the picture back" data-tip-sub="it came off this note" aria-label="Put the picture back on ${esc(x.text)}">${ico("back")}</button>`;
+  }
+  if (!n) return "";
+  return `<button type="button" class="dk-pic" data-a="note-img" data-n="${x.id}" data-i="0" data-tip="${ctx.plural(n, "picture")}" data-tip-sub="click to see ${n > 1 ? "them" : "it"} whole" aria-label="See the ${ctx.plural(n, "picture")} on ${esc(x.text)}">${ico("pic")}${n > 1 ? `<span class="c">${n}</span>` : ""}</button>`;
+}
+
+/** How far an agent has got with a line, as it said with mark_desk_note --
+ *  read, planned, working -- and nothing once the line is done. Working
+ *  holds only while the panel that said it has its agent at work: the
+ *  moment that agent goes quiet the line is back at its plan, before the
+ *  list is read again. */
+function stageOf(x) {
+  if (x.done || !x.stage) return "";
+  if (x.stage !== "working") return x.stage;
+  return views.get(x.stage_pane)?.status?.agent ? "working" : x.stage_doc ? "planned" : "read";
+}
+
+/** The stage's mark, in a slot every line keeps before its text, so a line
+ *  that is picked up does not step right. The plan's mark opens the plan. */
+function stageMark(x, esc) {
+  const st = stageOf(x), by = esc(x.stage_by || "an agent");
+  if (st === "planned" && x.stage_doc) {
+    return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}</button>`;
+  }
+  if (st === "working") {
+    const at = x.stage_panel ? ` in ${esc(x.stage_panel)}` : "";
+    return `<span class="dk-stage working" role="img" data-tip="${by} is working on it${at}" aria-label="${by} is working on it${at}"></span>`;
+  }
+  if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
+  return `<span class="dk-stage" aria-hidden="true"></span>`;
 }
 
 /** Fetch the pictures the rail shows and has not got yet. An <img> cannot
@@ -2066,18 +2098,20 @@ async function putImages(id, fs) {
   await getNotes(d.id, true);
 }
 
-/** Take picture `i` off line `id`, leaving its Undo in the row. */
+/** Take picture `i` off line `id`. Its Undo is where the ✕ was, in the
+ *  picture's own view, and in the line's picture mark once that is closed. */
 async function dropImage(id, i) {
   const d = current(), x = noteList.find(y => y.id === id);
   if (!d || !x || !x.images?.[i]) return;
   clearTimeout(imgTimer);
   const was = x.images;
   x.images = was.filter((_, k) => k !== i);
-  imgGone = { n: id, was };
-  imgTimer = setTimeout(() => { imgGone = null; if (current()) rail(); }, BACK_MS);
-  rail();
+  imgGone = { n: id, was, at: i };
+  imgTimer = setTimeout(() => { imgGone = null; if (current()) rail(); lightbox?.show(); }, BACK_MS);
+  rail(); lightbox?.show();
   await told({ a: "img-x", n: String(id), i: String(i) }, `n${id}`, "Could not remove the picture", () => { clearTimeout(imgTimer); imgGone = null; x.images = was; },
     () => ctx.api(`/api/desks/${d.id}/notes/${id}/images`, { images: x.images }));
+  lightbox?.show();
 }
 
 /** The Undo: the line's pictures as they were. */
@@ -2088,7 +2122,8 @@ async function imgBack() {
   if (!d || !x) { if (current()) rail(); return; }
   const now = x.images;
   x.images = g.was;
-  rail();
+  if (lightbox?.id === x.id) lightbox.i = g.at;
+  rail(); lightbox?.show();
   if (await told({ a: "img-back" }, `n${x.id}`, "Could not put the picture back", () => { x.images = now; imgGone = g; },
     () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/images`, { images: g.was }))) await getNotes(d.id, true);
 }
@@ -2105,15 +2140,20 @@ function openLightbox(id, i, from) {
   lightbox = { el, id, i: Math.max(0, Math.min(i, x.images.length - 1)), from };
   const show = () => {
     const y = noteList.find(z => z.id === lightbox.id);
-    if (!y || !y.images?.length) return closeLightbox();
-    lightbox.i = Math.min(lightbox.i, y.images.length - 1);
-    const n = y.images[lightbox.i], u = imgUrls.get(n), many = y.images.length > 1;
-    el.innerHTML = `<figure><img alt="${ctx.esc(y.text)}" data-img="${ctx.esc(n)}"${typeof u === "string" ? ` src="${u}"` : ""}>` +
-      `<figcaption><span class="t">${ctx.esc(y.text)}</span>${many ? `<span class="k">${lightbox.i + 1} of ${y.images.length}</span>` : ""}` +
+    if (!y) return closeLightbox();
+    const imgs = y.images || [], gone = imgGone && imgGone.n === y.id;
+    // The last one taken off: the view stays, holding its Undo, until it
+    // is closed or the Undo runs out.
+    if (!imgs.length && !gone) return closeLightbox();
+    lightbox.i = Math.max(0, Math.min(lightbox.i, imgs.length - 1));
+    const n = imgs[lightbox.i], u = n && imgUrls.get(n), many = imgs.length > 1;
+    const back = gone ? `<span class="lb-gone" role="status">Picture removed<button type="button" class="dk-undo" data-lb="undo">Undo</button></span>` : "";
+    el.innerHTML = `<figure${n ? "" : ` class="none"`}>` + (n ? `<img alt="${ctx.esc(y.text)}" data-img="${ctx.esc(n)}"${typeof u === "string" ? ` src="${u}"` : ""}>` : "") +
+      `<figcaption><span class="t">${ctx.esc(y.text)}</span>${many ? `<span class="k">${lightbox.i + 1} of ${imgs.length}</span>` : ""}` +
       (many ? `<button type="button" data-lb="prev" aria-label="The picture before">‹</button><button type="button" data-lb="next" aria-label="The picture after">›</button>` : "") +
-      `<button type="button" data-lb="off">Remove from this note</button><button type="button" data-lb="close">Close</button></figcaption></figure>`;
-    if (typeof u !== "string") loadImgs();
-    el.querySelector("[data-lb=close]").focus();
+      back + (n ? `<button type="button" data-lb="off">Remove from this note</button>` : "") + `<button type="button" data-lb="close">Close</button></figcaption></figure>`;
+    if (n && typeof u !== "string") loadImgs();
+    el.querySelector(gone ? "[data-lb=undo]" : "[data-lb=close]").focus();
   };
   lightbox.show = show;
   el.addEventListener("click", e => {
@@ -2121,7 +2161,8 @@ function openLightbox(id, i, from) {
     if (!b) { if (e.target === el) closeLightbox(); return; }
     const y = noteList.find(z => z.id === lightbox.id), k = b.dataset.lb;
     if (k === "close") closeLightbox();
-    else if (k === "off") { const at = lightbox.i; closeLightbox(); dropImage(id, at); }
+    else if (k === "off") dropImage(id, lightbox.i);
+    else if (k === "undo") imgBack();
     else if (y) { lightbox.i = (lightbox.i + (k === "next" ? 1 : y.images.length - 1)) % y.images.length; show(); }
   });
   el.addEventListener("keydown", e => {
@@ -2136,9 +2177,11 @@ function openLightbox(id, i, from) {
 function closeLightbox() {
   if (!lightbox) return;
   const { el, from } = lightbox;
+  const n = lightbox.id;
   lightbox = null;
   el.remove();
-  if (from?.isConnected) from.focus({ preventScroll: true });
+  // The rail was drawn again under it: back to the line's picture mark.
+  (from?.isConnected ? from : ctx.tocEl.querySelector(`.dk-pic[data-n="${n}"], .dk-pic.back`))?.focus({ preventScroll: true });
 }
 
 /** Pictures dropped on a line's row go on that line; dropped on the new-line
@@ -3493,8 +3536,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* The card a line is rewritten in: over the row's text, the same left edge,
    laid over the lines below rather than pushing them. */
-.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 19px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
-.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 19px; right: 4px; }
+.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 30px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 30px; right: 4px; }
 .dk-note:hover > .nm { color: var(--fg); }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
@@ -3502,7 +3545,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* A line an agent ticked says which agent, and where the work went, on a
    line of its own under the text, lined up with it: the reader can untick
    it like any other. */
-.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 26px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
+.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 37px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
 .dk-by > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
 .dk-sha { padding: 0 3px; background: var(--rule); }
@@ -3552,16 +3595,30 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
 .dk-act-room { width: 20px; }
 .dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: 11px; color: var(--fg-3); background: var(--bg-side); animation: dk-fade 140ms ease-out; }
-/* A line's pictures: small, on a line of their own under its text, lined up
- * with it -- the row grows by their height once, when one is added, and
- * never under the pointer. */
-.dk-imgs { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 8px 6px 26px; }
-.dk-img { display: block; width: 44px; height: 32px; padding: 0; border-radius: 4px; overflow: hidden; background: var(--rule); box-shadow: 0 0 0 1px var(--rule-2); }
-.dk-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.dk-img:hover { box-shadow: 0 0 0 1.5px var(--accent); }
-.dk-imgs > .dk-img-gone { flex: 1; min-width: 0; padding: 0; }
-/* Pictures waiting on the new line, under its field. */
-.dk-pend { flex: 1 0 100%; display: flex; align-items: center; gap: 4px; padding: 0 8px 4px 26px; font-size: 11px; color: var(--fg-2); }
+/* How far an agent has got: a slot every line keeps between its circle and
+ * its text, 10 px, so a line that is picked up does not step right. Read is
+ * a small ring, planned the plan's page (it opens it), working a dot that
+ * breathes while the panel's agent is at it. Centred on the first line. */
+.dk-stage { position: relative; flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin: 8px -2px 0 -3px; padding: 0; color: var(--fg-3); }
+.dk-stage.read::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); }
+.dk-stage.planned svg { width: 10px; height: 10px; }
+.dk-stage.planned:hover { color: var(--accent); }
+.dk-stage.planned::before { content: ""; position: absolute; inset: -4px; }
+.dk-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
+@keyframes dk-breathe { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dk-stage.working::before { animation: none; } }
+/* A line's pictures: one mark at the end of its text, with their count, that
+ * opens them whole -- the row is the height of its text, pictures or not. A
+ * fixed width, so the mark turning into the Undo of one just taken off, and
+ * back, moves nothing. */
+.dk-pic { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; width: 24px; height: 18px; margin-top: 4px; padding: 0; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.dk-pic svg { width: 12px; height: 12px; }
+.dk-pic .c { font-family: var(--mono); font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; }
+button.dk-pic:hover { background: var(--rule-2); color: var(--fg); }
+.dk-pic.back { color: var(--accent); }
+/* Pictures waiting on the new line: the same mark, in the field's row. */
+.dk-pend { flex: none; display: flex; align-items: center; gap: 1px; margin: 2px 4px 2px -4px; color: var(--fg-2); }
+.dk-pend .dk-pic { margin: 0; color: var(--fg-2); }
 .dk-pend button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; color: var(--fg-3); }
 .dk-pend button:hover { background: var(--rule-2); color: var(--fg); }
 /* The row a dragged picture would land on. */
@@ -3575,6 +3632,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-lb figcaption .k { font-family: var(--mono); font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .dk-lb figcaption button { flex: none; padding: 3px 8px; border-radius: 4px; color: var(--fg-2); }
 .dk-lb figcaption button:hover { background: var(--rule-2); color: var(--fg); }
+.dk-lb figcaption .lb-gone { display: flex; align-items: center; gap: 4px; color: var(--fg-3); }
+.dk-lb figcaption .lb-gone .dk-undo { color: var(--accent); }
+/* The last picture taken off: the caption alone, holding its Undo. */
+.dk-lb figure.none { min-width: min(420px, calc(100vw - 64px)); }
 /* An empty list's line is the way to its first note. */
 #toc .dk-first { display: block; text-align: left; cursor: text; }
 #toc .dk-first:hover { color: var(--fg-2); }

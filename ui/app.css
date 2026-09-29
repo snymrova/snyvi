@@ -486,8 +486,14 @@ html[data-link="off"] .live { visibility: hidden; }
 .icon .aa { font-size: var(--fs-ui); font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: var(--fs-micro); letter-spacing: -.06em; }
 
-.side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
+.side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
 .side-foot { position: relative; }
+/* The version, quiet at the foot's end: a click is About, and an update
+   waiting puts its dot on it. Gone when the sidebar is folded; the rule stays. */
+.foot-ver { position: relative; margin-left: auto; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; transition: background var(--t), color var(--t); }
+.foot-ver:hover { background: var(--rule); color: var(--fg-2); }
+.foot-ver.upd::after { content: ""; position: absolute; top: 1px; right: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-side); }
+:root[data-side="0"] .foot-ver { display: none; }
 /* The accent: the swatch on the button is the colour in use, and a click is
    the next one. It was a popover of eight, which is a menu to read for a
    setting whose only real answer is what the page looks like in it; the

@@ -859,6 +859,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/api/panes/{id}/agent", post(pane_agent))
         .route("/api/panes/{id}/notes", get(pane_notes))
         .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
+        .route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))
         .route("/api/panes/{id}/name", post(pane_name))
         .route("/api/panes/{id}/brief", get(pane_brief))
         .route("/api/panes/{id}/leftoff", post(pane_left_off))
@@ -1553,7 +1554,8 @@ fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
     let cards: Vec<serde_json::Value> = list
         .iter()
         .map(|d| {
-            let notes = app.store.desk_notes(d.id).unwrap_or_default();
+            let mut notes = app.store.desk_notes(d.id).unwrap_or_default();
+            settle_stages(app, &mut notes);
             let open = notes.iter().filter(|n| !n.done && n.suggested_by.is_empty()).count();
             let notes_done = notes.iter().filter(|n| n.done).count();
             let suggested = notes.iter().filter(|n| !n.done && !n.suggested_by.is_empty()).count();
@@ -1563,7 +1565,8 @@ fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 .iter()
                 .filter(|n| !n.done && n.suggested_by.is_empty())
                 .take(HOME_NOTES)
-                .map(|n| json!({ "id": n.id, "text": n.text }))
+                .map(|n| json!({ "id": n.id, "text": n.text, "stage": n.stage, "stage_by": n.stage_by,
+                    "stage_doc": n.stage_doc, "stage_panel": n.stage_panel }))
                 .collect();
             let last_doc = app.store.desk_docs(d.id, 1, false).unwrap_or_default().into_iter().next();
             let git = app.git.read(std::path::Path::new(&d.root), now);
@@ -4098,8 +4101,37 @@ async fn desk_notes(
         return no;
     }
     match app.store.desk_notes(id) {
-        Ok(notes) => Json(json!({ "notes": notes })).into_response(),
+        Ok(mut notes) => {
+            settle_stages(&app, &mut notes);
+            Json(json!({ "notes": notes })).into_response()
+        }
         Err(e) => err(e),
+    }
+}
+
+/// A line said to be `working` is only still being worked on while the
+/// conversation that said so is going, in the pane it was said from: a
+/// session that ended, a panel closed, a daemon restarted, and the line is
+/// back at the stage before (`desk::settle_stage`). While it holds, the line
+/// carries the panel's name as the reader sees it. Read, never written: the
+/// stage in the store is what the agent said, and this is what is true now.
+fn settle_stages(app: &App, notes: &mut [crate::desk::DeskNote]) {
+    for n in notes.iter_mut().filter(|n| n.stage == "working") {
+        let s = app.panes.status(&n.stage_pane);
+        let pane = if s.running && !s.agent.is_empty() {
+            app.store.pane(&n.stage_pane).ok().flatten()
+        } else {
+            None
+        };
+        let pane = pane.filter(|p| p.pane.agent_session == n.stage_session);
+        if let Some(p) = &pane {
+            n.stage_panel = if p.pane.name.is_empty() {
+                format!("panel {}", p.pane.slot)
+            } else {
+                p.pane.name.clone()
+            };
+        }
+        crate::desk::settle_stage(n, pane.is_some());
     }
 }
 
@@ -4890,6 +4922,10 @@ async fn pane_notes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -
     };
     match app.store.desk_notes(placed.desk_id) {
         Ok(mut notes) => {
+            settle_stages(&app, &mut notes);
+            for n in notes.iter_mut().filter(|n| n.stage == "working" && n.stage_pane == id) {
+                n.stage_panel = "this panel".into();
+            }
             // A line's pictures, as files the agent can open and look at.
             let dir = app.paths.data_dir.join(crate::desk::NOTE_IMAGES);
             for n in &mut notes {
@@ -4990,6 +5026,76 @@ async fn pane_tick_note(
     }
 }
 
+#[derive(Deserialize, Default)]
+struct MarkBody {
+    #[serde(default)]
+    stage: String,
+    /// The agent's name, as its MCP client gave it in `initialize`.
+    #[serde(default)]
+    by: String,
+    /// The plan's document id: needed with `planned`.
+    #[serde(default)]
+    about: String,
+}
+
+/// An agent says how far it has got with a line on its own desk's list:
+/// `mark_desk_note`. The gate the tick has -- the token, then a running pane
+/// -- and the one write is that line's stage, on an open line of the desk the
+/// pane is on. `working` is tied to this pane and the conversation it has
+/// now, so it lasts only as long as that conversation (`settle_stages`).
+async fn pane_mark_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(String, i64)>,
+    body: Option<Json<MarkBody>>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !crate::pane::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if !app.panes.is_running(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let placed = match app.store.pane(&id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    let b = body.map(|Json(b)| b).unwrap_or_default();
+    let (stage, doc) = (b.stage.trim(), b.about.trim());
+    let say = |why: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response();
+    if !crate::desk::STAGES.contains(&stage) {
+        return say("stage must be read, planned or working; done is tick_desk_note");
+    }
+    if !doc.is_empty() && !crate::desk::doc_ok(doc) {
+        return say("about must be a document id from send_document: 10 hex digits");
+    }
+    if stage == "planned" && doc.is_empty() {
+        return say("planned needs about: the id of the plan you sent with send_document");
+    }
+    let mark = crate::desk::Mark {
+        stage: stage.into(),
+        by: b.by,
+        doc: doc.into(),
+        pane: id.clone(),
+        session: placed.pane.agent_session.clone(),
+    };
+    match app.store.mark_desk_note(placed.desk_id, note, &mark) {
+        Ok(true) => {
+            emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
+            Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
+        }
+        Ok(false) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no open note by that id on this desk" })),
+        )
+            .into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// An agent names the panel it runs in: `name_panel`. The gate the list has
 /// -- the token, then a running pane -- and the one thing it touches is that
 /// pane's own name, the one the reader sets with ✎. Empty gives the panel
@@ -5059,7 +5165,20 @@ async fn pane_brief(State(app): S, headers: HeaderMap, Path(id): Path<String>) -
     let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let notes = app.store.desk_notes(desk.id).unwrap_or_default();
+    let mut notes = app.store.desk_notes(desk.id).unwrap_or_default();
+    settle_stages(&app, &mut notes);
+    // Worked on here is not worked on elsewhere: a Claude starting in the
+    // pane that said `working` is a new conversation, and the old one's claim
+    // has already been settled above.
+    let notes: Vec<_> = notes
+        .into_iter()
+        .map(|mut n| {
+            if n.stage == "working" && n.stage_pane == id {
+                n.stage_panel.clear();
+            }
+            n
+        })
+        .collect();
     let docs = app.store.desk_docs(desk.id, 1, false).unwrap_or_default();
     let last = docs.first().map(|d| crate::brief::LastDoc {
         id: &d.id,
@@ -6182,6 +6301,20 @@ mod tests {
         );
         assert!(
             src.contains(r#".route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))"#)
+        );
+        // And the stage: the same gate, and one line's stage on its own desk.
+        let mark = &src[src.find("async fn pane_mark_note(").unwrap()..];
+        let mark = &mark[..mark.find("\n}\n").unwrap()];
+        assert!(mark.find("authorized(").unwrap() < mark.find("app.panes").unwrap());
+        assert!(mark.find("app.panes.is_running(").unwrap() < mark.find("app.store").unwrap());
+        assert_eq!(
+            mark.matches("app.store").count(),
+            mark.matches("app.store.pane(").count()
+                + mark.matches("app.store.mark_desk_note(").count(),
+            "pane_mark_note reaches the store for more than one line's stage"
+        );
+        assert!(
+            src.contains(r#".route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))"#)
         );
         // And naming its panel: token, running pane, then only that pane's name.
         let name = &src[src.find("async fn pane_name(").unwrap()..];

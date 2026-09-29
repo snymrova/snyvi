@@ -1678,8 +1678,16 @@
   /** An update landed in the last hour (about.js): the hover line answers
    *  with the version for that long (look.js's SAYS), and nothing opens. */
   const landed = (v, at) => { state.landed = { v, at }; };
+  /** The version at the sidebar's foot: About, on a click, and the one place
+   *  an update waiting shows as a dot. */
+  const verEl = $("#foot-ver");
+  if (boot.version) { verEl.textContent = `v${boot.version}`; verEl.hidden = false; }
+  verEl.addEventListener("click", () => panel("about"));
   function setUpd(u) {
     u = u && typeof u === "object" ? u : null;
+    verEl.classList.toggle("upd", !!(u && u.show));
+    verEl.dataset.tipSub = u && u.show ? "an update is waiting" : "";
+    if (!verEl.dataset.tipSub) delete verEl.dataset.tipSub;
     if ((u && (u.show || u.restart || u.restarting || Date.now() / 1e3 - (u.last_applied || 0) < 86400)) || !updEl.hidden)
       panelMod().then(m => m.pill(updEl, u, updCtx()), () => { panelLoading = null; });
   }

@@ -838,6 +838,25 @@ pub fn tick_desk_note(
     }
 }
 
+/// Say how far this agent has got with a note on its pane's desk:
+/// `mark_desk_note`. `about` is the plan's document id, needed with `planned`.
+pub fn mark_desk_note(paths: &Paths, pane: &str, note: i64, stage: &str, by: &str, about: &str) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/notes/{note}/mark"),
+        serde_json::json!({ "stage": stage, "by": by, "about": about }),
+    )?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a done note has no stage"),
+        400 => bail!("{}", said(&mut resp)),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// Name the panel this pane is: what the reader sees in its head and on the
 /// desk's rail. Empty gives it back to its program's title.
 pub fn name_panel(paths: &Paths, pane: &str, name: &str) -> Result<()> {

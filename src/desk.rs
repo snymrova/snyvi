@@ -101,7 +101,13 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   done_doc TEXT NOT NULL DEFAULT '',
   done_evidence TEXT NOT NULL DEFAULT '',
   suggested_by TEXT NOT NULL DEFAULT '',
-  images TEXT NOT NULL DEFAULT ''
+  images TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT '',
+  stage_by TEXT NOT NULL DEFAULT '',
+  stage_doc TEXT NOT NULL DEFAULT '',
+  stage_at INTEGER NOT NULL DEFAULT 0,
+  stage_pane TEXT NOT NULL DEFAULT '',
+  stage_session TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
@@ -194,7 +200,7 @@ pub const LEFT_OFF_CHARS: usize = 200;
 /// tick and put away, it belongs to a desk rather than to a sender, and it is
 /// in the database because a list that did not survive a restart would be a
 /// list no one trusted enough to write on.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DeskNote {
     pub id: i64,
     pub text: String,
@@ -226,6 +232,56 @@ pub struct DeskNote {
     /// The agent's read (`pane_notes`) gets them as absolute paths.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
+    /// How far an agent has got with an open line, short of done: one of
+    /// `STAGES`, or empty for a line no agent has picked up. Done stays the
+    /// tick, and a done line's stage is not shown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage: String,
+    /// The agent that set the stage, as its MCP client gave its name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_by: String,
+    /// The plan, when there is one: a document's id, which the line opens.
+    /// Set with `planned` and kept through `working`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_doc: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stage_at: i64,
+    /// The pane `working` was said from, and the Claude conversation it had
+    /// then: `working` is only true while that conversation is still going
+    /// there (`working_in`), so a session that ended, or a panel that closed
+    /// or crashed, does not leave a line saying it is being worked on. The
+    /// pane goes to the page too, which settles it the same way the moment
+    /// that pane's agent goes quiet, without waiting for the list again.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_pane: String,
+    #[serde(skip)]
+    pub stage_session: String,
+    /// Which panel is working on it, as the reader calls it: filled in by the
+    /// server from the pane, only while `working` holds.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_panel: String,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
+}
+
+/// The stages an agent can say a line is at, in order: it has read the line
+/// and taken it in; it has planned it, in a document; it is at work on it.
+/// Done is the tick, not a stage.
+pub const STAGES: [&str; 3] = ["read", "planned", "working"];
+
+/// What an agent says with a stage: `mark_note`.
+#[derive(Clone, Debug, Default)]
+pub struct Mark {
+    /// One of `STAGES`.
+    pub stage: String,
+    pub by: String,
+    /// The plan's id: needed with `planned`, and checked by `doc_ok`.
+    pub doc: String,
+    /// The pane it was said from, and that pane's conversation.
+    pub pane: String,
+    pub session: String,
 }
 
 /// Where a note's pictures are kept, under the data dir. Nothing here is
@@ -952,7 +1008,8 @@ pub fn clear(conn: &Connection) -> Result<()> {
 /// the row under the reader's cursor on every keystroke they finished.
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
-        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images FROM desk_notes
+        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
+                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1007,14 +1064,8 @@ pub fn add_note(
     Ok(Some(DeskNote {
         id,
         text,
-        done: false,
         created_at: now,
-        done_by: String::new(),
-        done_commit: String::new(),
-        done_doc: String::new(),
-        done_evidence: String::new(),
-        suggested_by: String::new(),
-        images: Vec::new(),
+        ..DeskNote::default()
     }))
 }
 
@@ -1134,6 +1185,54 @@ pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64
     )? > 0)
 }
 
+/// An agent says how far it has got with a line on its own desk's list:
+/// read, planned (with the plan's id), or working. Only an open line the
+/// reader has kept -- a done one is done, and only the reader unticks -- and
+/// any stage from any other, so an agent can step back from `working` to
+/// `planned` when it stops. The plan stays with the line when a later stage
+/// comes without one. False when the line is not open on this desk.
+pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64) -> Result<bool> {
+    if !STAGES.contains(&mark.stage.as_str()) || (mark.stage == "planned" && !doc_ok(&mark.doc)) {
+        return Ok(false);
+    }
+    let by = if mark.by.trim().is_empty() {
+        "an agent"
+    } else {
+        mark.by.trim()
+    };
+    let by: String = by.chars().take(60).collect();
+    let doc = if doc_ok(&mark.doc) {
+        mark.doc.to_ascii_lowercase()
+    } else {
+        String::new()
+    };
+    let working = mark.stage == "working";
+    Ok(conn.execute(
+        "UPDATE desk_notes SET stage = ?3, stage_by = ?4, stage_doc = CASE WHEN ?5 != '' THEN ?5 ELSE stage_doc END,
+                stage_at = ?6, stage_pane = ?7, stage_session = ?8
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+        params![
+            desk_id,
+            id,
+            mark.stage,
+            by,
+            doc,
+            now,
+            if working { mark.pane.as_str() } else { "" },
+            if working { mark.session.as_str() } else { "" }
+        ],
+    )? > 0)
+}
+
+/// A `working` line whose conversation has ended is back at the stage before
+/// it: planned, when there is a plan, and read otherwise. `live` is whether
+/// the pane it was said from is still running that conversation.
+pub fn settle_stage(n: &mut DeskNote, live: bool) {
+    if n.stage == "working" && !live {
+        n.stage = if n.stage_doc.is_empty() { "read" } else { "planned" }.into();
+    }
+}
+
 /// How many suggestions a desk holds waiting for the reader. A few, so an
 /// agent cannot fill the list with its own ideas while the reader is away:
 /// past this it is told to wait until one is kept or put away.
@@ -1199,14 +1298,9 @@ pub fn suggest_note(
     Ok(Suggested::Note(DeskNote {
         id,
         text,
-        done: false,
         created_at: now,
-        done_by: String::new(),
-        done_commit: String::new(),
-        done_doc: String::new(),
-        done_evidence: String::new(),
         suggested_by: by,
-        images: Vec::new(),
+        ..DeskNote::default()
     }))
 }
 
@@ -1334,6 +1428,13 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done_evidence: r.get(7)?,
         suggested_by: r.get(8)?,
         images: r.get::<_, String>(9)?.split_whitespace().map(String::from).collect(),
+        stage: r.get(10)?,
+        stage_by: r.get(11)?,
+        stage_doc: r.get(12)?,
+        stage_at: r.get(13)?,
+        stage_pane: r.get(14)?,
+        stage_session: r.get(15)?,
+        stage_panel: String::new(),
     })
 }
 
@@ -1625,6 +1726,70 @@ mod tests {
             by: name.into(),
             ..Tick::default()
         }
+    }
+
+    fn mark(stage: &str, doc: &str) -> Mark {
+        Mark {
+            stage: stage.into(),
+            by: "claude-code".into(),
+            doc: doc.into(),
+            pane: "p1".into(),
+            session: "s1".into(),
+        }
+    }
+
+    /// An agent says how far it has got: read, planned with the plan's id,
+    /// working from its pane. Any stage from any other, on an open line of
+    /// its own desk that the reader has kept; never on a done one.
+    #[test]
+    fn a_stage_is_read_planned_or_working_and_only_on_an_open_line() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let yours = create(&conn, "/yours", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "wire the route", 0).unwrap().unwrap();
+        let get = |conn: &Connection| notes(conn, mine).unwrap()[0].clone();
+
+        assert!(!mark_note(&conn, yours, n.id, &mark("read", ""), 1).unwrap(), "not across desks");
+        assert!(!mark_note(&conn, mine, n.id, &mark("done", ""), 1).unwrap(), "done is the tick");
+        assert!(!mark_note(&conn, mine, n.id, &mark("planned", ""), 1).unwrap(), "a plan needs its document");
+        assert!(!mark_note(&conn, mine, n.id, &mark("planned", "not-an-id"), 1).unwrap());
+        assert_eq!(get(&conn).stage, "");
+
+        assert!(mark_note(&conn, mine, n.id, &mark("read", ""), 2).unwrap());
+        let got = get(&conn);
+        assert_eq!((got.stage.as_str(), got.stage_by.as_str(), got.stage_at), ("read", "claude-code", 2));
+        assert_eq!(got.stage_pane, "", "only working keeps the pane");
+
+        assert!(mark_note(&conn, mine, n.id, &mark("planned", "58155BA5FC"), 3).unwrap());
+        assert_eq!(get(&conn).stage_doc, "58155ba5fc");
+        // Working keeps the plan, and says where it is happening.
+        assert!(mark_note(&conn, mine, n.id, &mark("working", ""), 4).unwrap());
+        let got = get(&conn);
+        assert_eq!((got.stage.as_str(), got.stage_doc.as_str()), ("working", "58155ba5fc"));
+        assert_eq!((got.stage_pane.as_str(), got.stage_session.as_str()), ("p1", "s1"));
+        // The conversation ends: back to planned. With no plan: read.
+        let mut ended = got.clone();
+        settle_stage(&mut ended, false);
+        assert_eq!(ended.stage, "planned");
+        let mut still = got.clone();
+        settle_stage(&mut still, true);
+        assert_eq!(still.stage, "working");
+        ended.stage = "working".into();
+        ended.stage_doc.clear();
+        settle_stage(&mut ended, false);
+        assert_eq!(ended.stage, "read");
+        // And back a step, by the agent itself.
+        assert!(mark_note(&conn, mine, n.id, &mark("planned", "58155ba5fc"), 5).unwrap());
+        assert_eq!(get(&conn).stage_pane, "");
+
+        // A done line is done: no stage over it. A suggestion is not the
+        // reader's list yet.
+        assert!(tick_note(&conn, mine, n.id, &by("claude-code"), 6).unwrap());
+        assert!(!mark_note(&conn, mine, n.id, &mark("working", ""), 7).unwrap());
+        let Suggested::Note(s) = suggest_note(&mut conn, mine, "an idea", "claude-code", 8).unwrap() else {
+            panic!("suggested")
+        };
+        assert!(!mark_note(&conn, mine, s.id, &mark("read", ""), 9).unwrap());
     }
 
     /// A tick can say where the work went: a commit hash, and a document the

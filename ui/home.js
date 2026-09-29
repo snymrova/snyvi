@@ -105,7 +105,19 @@ const CSS = `
 .hm-add input { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-ui); padding: 3px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 .hm-addb { display: block; min-height: 24px; margin: 0 0 4px 20px; color: var(--fg-3); }
 .hm-pick :is(.hm-addb, .hm-add) { margin-bottom: 12px; }
-.hm-next .hm-nt-more { padding-left: 20px; }
+.hm-next .hm-nt-more { padding-left: 31px; }
+/* How far an agent has got with a line, as the desk's rail draws it: a slot
+   every line keeps, a ring for read, the plan's page (it opens the plan), a
+   breathing dot while a panel's agent is at it. */
+.hm-stage { position: relative; flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin: 0 -3px 0 -4px; color: var(--fg-3); }
+.hm-stage.read::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); }
+.hm-stage.planned::before { content: ""; position: absolute; inset: -4px; }
+.hm-stage.planned:hover { color: var(--accent); }
+.hm-stage svg { width: 10px; height: 10px; }
+.hm-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: hm-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
+@keyframes hm-breathe { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .hm-stage.working::before { animation: none; } }
+.hm-dks-more { margin-top: 12px; }
 /* Desks: every other desk, a block each, on the page's own ground. */
 .hm-dks { display: grid; gap: 20px; }
 .hm-dk { min-width: 0; }
@@ -237,6 +249,13 @@ let drawing = false;
 const DAYS_FIRST = 3, LINES_FIRST = 4;
 let allDays = false;
 const opened = new Set();
+/** Home shows this many desks at most, Pick up's among them, most recently
+ *  touched first; "N more desks" opens the rest in place, and stays open or
+ *  shut as the reader left it. Content, not height: a page cut at a height
+ *  would cut a desk's notes off wherever the window ended. */
+const DESKS_SHOWN = 6;
+const desksAll = () => { try { return localStorage.getItem("snyvi.home.desks") === "1"; } catch { return false; } };
+const setDesksAll = on => { try { localStorage.setItem("snyvi.home.desks", on ? "1" : "0"); } catch {} };
 
 function style() {
   if (!sheet) { sheet = Object.assign(document.createElement("style"), { id: "home-drawn", textContent: CSS }); document.head.append(sheet); }
@@ -444,7 +463,7 @@ function pick(j) {
  *  (docs/DESIGN.md §3.2). A line ticked here keeps its row for a moment. */
 function notesOf(d, max) {
   const { esc } = c;
-  const rows = d.next.slice(0, max).map(n => ({ id: n.id, text: n.text, done: false, err: "" }));
+  const rows = d.next.slice(0, max).map(n => ({ ...n, done: false, err: "" }));
   for (const [id, t] of ticked) {
     if (t.desk !== d.id) continue;
     const r = rows.find(x => x.id === id);
@@ -458,10 +477,25 @@ function notesOf(d, max) {
   const more = d.open - listed;
   if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
   return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
-    `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>` +
+    `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>${stageMark(r)}` +
     `<span class="hm-nt-t" data-tip="${esc(r.text)}" data-tip-overflow>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
     (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
 }
+/** A line's stage, in the slot every line keeps: the server has already
+ *  settled a `working` whose conversation ended. None once it is ticked. */
+function stageMark(r) {
+  const { esc } = c, by = esc(r.stage_by || "an agent");
+  const st = r.done ? "" : r.stage || "";
+  if (st === "planned" && r.stage_doc)
+    return `<a class="hm-stage planned" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
+  if (st === "working") {
+    const at = r.stage_panel ? ` in ${esc(r.stage_panel)}` : "";
+    return `<span class="hm-stage working" role="img" data-tip="${by} is working on it${at}" aria-label="${by} is working on it${at}"></span>`;
+  }
+  if (st === "read" || st === "planned") return `<span class="hm-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
+  return `<span class="hm-stage" aria-hidden="true"></span>`;
+}
+const DOC = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.5v3h3M6 8h4M6 10.5h4"/></svg>`;
 const TICK = `<svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>`;
 
 /** The way to add a line to a desk's list from here: a quiet "+ New note",
@@ -480,10 +514,12 @@ function desksList(j) {
   const { esc } = c;
   const { rest } = pickOf(j);
   if (!rest.length) return `<p class="hm-quiet">Your other desks show here, each with its open notes. One project, one desk.</p>`;
-  return `<div class="hm-dks">` + rest.map(d => `<div class="hm-dk">` +
+  const all = desksAll(), shown = all ? rest : rest.slice(0, DESKS_SHOWN - 1), more = rest.length - (DESKS_SHOWN - 1);
+  return `<div class="hm-dks">` + shown.map(d => `<div class="hm-dk">` +
     `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}</div>` +
     (d.left_off ? `<p class="hm-dk-left" data-tip="Left off" data-tip-sub="${esc(d.left_off.text)}"><b>Left off</b>${esc(d.left_off.text)}</p>` : "") +
-    notesOf(d, 3) + addRow(d) + `</div>`).join("") + `</div>`;
+    notesOf(d, 3) + addRow(d) + `</div>`).join("") + `</div>` +
+    (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "");
 }
 
 /** The log, folded at the foot of the page until it is opened, and kept
@@ -670,6 +706,7 @@ function wire() {
     else if (k === "week") sendWeek(b);
     else if (k === "tick") tickNote(id, +b.dataset.n);
     else if (k === "addopen") { adding = id; addDraft = ""; addErr = ""; draw(last); c.docEl.querySelector("input[data-hm=add]")?.focus(); }
+    else if (k === "desks") { setDesksAll(!desksAll()); draw(last); c.docEl.querySelector("[data-hm=desks]")?.focus({ preventScroll: true }); }
     else if (k === "days") { allDays = !allDays; draw(last); c.docEl.querySelector("[data-hm=days]")?.focus({ preventScroll: true }); }
     else if (k === "more") { const key = b.dataset.k; opened.has(key) ? opened.delete(key) : opened.add(key); draw(last); }
     else if (k === "park") { parking = id; parkDraft = ""; parkFailed = false; draw(last); c.docEl.querySelector("input[data-hm=next]")?.focus(); }
