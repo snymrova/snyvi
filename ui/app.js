@@ -446,6 +446,8 @@
    *  the queue itself. */
   let qbGhost = null;   // Mark all read, answered by the bar itself: { n, undo, clock }
   let qbWas = 0, qbSettle = 0, waitedWas = 0;   // the bar's count last drawn, the face's way back to rest, and the count last seen
+  // The bar's ✕ hides it, read nothing, until the next arrival.
+  let arrivals = 0, qbShut = -1;
   /** The quiet switch (docs/DESIGN.md §2.5): faces at rest, nothing moving. */
   const quiet = () => root.dataset.mascot === "quiet";
   /** The switch itself, from ⌘K and the mark's menu; boot.js puts it back. */
@@ -495,7 +497,7 @@
       qbWas = 0;
       return;
     }
-    const bar = n > 0 && !!head && state.view !== "inbox";
+    const bar = n > 0 && !!head && state.view !== "inbox" && qbShut !== arrivals;
     queueBar.hidden = !bar;
     if (!bar) { queueBar.innerHTML = ""; qbWas = 0; return; }
     // The bar rises when it appears and stays put after: a count that changes
@@ -512,7 +514,8 @@
     if (!qb) {
       queueBar.innerHTML = `<div class="qb"><span class="qb-who"></span><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
         `<button type="button" data-q="next" data-tip="Open the next one waiting" data-tip-sub="letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
-        `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button></div>`;
+        `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
+        `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay waiting in the sidebar" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
       qbWas = n;
       return;
@@ -636,6 +639,7 @@
     if (b.dataset.q === "next") openNext();
     else if (b.dataset.q === "clear") clearQueue();
     else if (b.dataset.q === "undo") qbGhost?.undo();
+    else if (b.dataset.q === "shut") { qbShut = arrivals; renderQueue(); }
   });
 
   /** The rows inside one project: its sessions, their documents, and — where a
@@ -2047,6 +2051,7 @@
   let sayIn = 0, sayOut = 0;
   function closeSay() {
     sayEl.classList.remove("on");
+    brandEl.classList.remove("said");
     delete root.dataset.say;
     clearTimeout(sayOut);
     sayOut = setTimeout(() => { if (!sayEl.classList.contains("on")) sayEl.hidden = true; }, 340);
@@ -2056,7 +2061,8 @@
     // way to Search, so it waits for a moment's rest before it says anything.
     if (e.pointerType === "touch") return;
     clearTimeout(sayIn);
-    sayIn = setTimeout(() => useLook().then(l => { if (brandEl.matches(":hover")) l.openSay({ root, sayEl, state, quiet }); }, () => {}), 260);
+    // While it speaks, its line is the label: the "Home" tip gives way.
+    sayIn = setTimeout(() => useLook().then(l => { if (brandEl.matches(":hover")) { brandEl.classList.add("said"); tipMod?.gone(brandEl); l.openSay({ root, sayEl, state, quiet }); } }, () => {}), 260);
   });
   brandEl.addEventListener("pointerleave", () => { clearTimeout(sayIn); closeSay(); });
   // Following the brand through to the inbox takes the bubble with it.
@@ -3046,12 +3052,13 @@
     overBar();
   }
   /** The screen a document or a file was opened from, for its ✕ to go back
-   *  to: the Inbox, a folder's contents, the agents page, a desk. Asked just
+   *  to: Home, the Inbox, a folder's contents, the agents page, a desk. Asked just
    *  before the page leaves it. Read on from one document to the next, with
    *  `j`, a link or the palette, and the reader is still on the same visit:
    *  the entry being left already knows where that visit began. */
   function cameFrom() {
     if (state.view === "doc" || (state.view === "browse" && state.browsePath)) return (history.state && history.state.back) || null;
+    if (state.view === "home") return { home: true };
     if (state.view === "inbox") return { inbox: true };
     if (state.view === "browse" && state.browseRoot) return { browse: state.browseRoot.id, path: "" };
     if (state.view === "connect") return { connect: true };
@@ -3075,6 +3082,7 @@
       const r = state.browse.find(x => x.id === b.browse);
       return { name: r ? r.name : "the folder", go: () => showBrowse(b.browse, "", true) };
     }
+    if (b && b.home) return { name: "Home", go: () => showHome(true) };
     if (b && b.connect) return { name: "Agents", go: () => showConnect(true) };
     if (b && b.start) return { name: "How snyvi works", go: () => showStart(true, "") };
     if (b && b.welcome) return { name: "Welcome", go: () => showWelcome(true) };
@@ -3292,6 +3300,7 @@
       // arrival is the newest, and belongs after rows this page never had.
       if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
       state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
+      arrivals++;
       if (!opens) wash([d.id]);
       holdQueue();   // a burst's events carry counts ahead of the rows this page holds
       state.cache.delete(d.id);
