@@ -84,6 +84,18 @@ pub fn brief(
             }
         ));
     }
+    // Another panel's Claude is at work on these: a second one leaves them be.
+    let elsewhere: Vec<String> = open
+        .iter()
+        .filter(|n| n.stage == "working" && !n.stage_panel.is_empty())
+        .map(|n| format!("#{} ({})", n.id, n.stage_panel))
+        .collect();
+    if !elsewhere.is_empty() {
+        lines.push(format!(
+            "Being worked on in another panel, so leave them to it: {}.",
+            elsewhere.join(", ")
+        ));
+    }
     let mut done: Vec<&DeskNote> = notes.iter().filter(|n| n.done).collect();
     // The list reads done in the order ticked; the brief wants the newest.
     done.reverse();
@@ -190,11 +202,7 @@ mod tests {
             text: text.into(),
             done,
             created_at: 0,
-            done_by: String::new(),
-            done_commit: String::new(),
-            done_doc: String::new(),
-            done_evidence: String::new(),
-            suggested_by: String::new(),
+            ..DeskNote::default()
         }
     }
 
@@ -254,6 +262,33 @@ mod tests {
             "{b}"
         );
         assert_eq!(title(&desk(3, None), 2), "ledger · panel 2");
+    }
+
+    /// A line another panel's Claude is working on is named, with the panel,
+    /// so a second Claude leaves it be. Working in no panel says nothing.
+    #[test]
+    fn a_line_worked_on_elsewhere_is_named_with_its_panel() {
+        let mut busy = note(4, "sidebar foot", false);
+        busy.stage = "working".into();
+        busy.stage_panel = "notes: #45".into();
+        let mut mine = note(5, "home limit", false);
+        mine.stage = "working".into();
+        let b = brief(
+            &desk(2, None),
+            1,
+            &[note(3, "icon", false), busy, mine],
+            None,
+            0,
+        );
+        assert!(
+            b.contains("\nBeing worked on in another panel, so leave them to it: #4 (notes: #45)."),
+            "{b}"
+        );
+        assert!(!b.contains("#5 ("), "{b}");
+        assert!(
+            !brief(&desk(2, None), 1, &[note(3, "icon", false)], None, 0)
+                .contains("Being worked on")
+        );
     }
 
     #[test]

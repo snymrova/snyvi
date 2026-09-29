@@ -100,7 +100,14 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   done_commit TEXT NOT NULL DEFAULT '',
   done_doc TEXT NOT NULL DEFAULT '',
   done_evidence TEXT NOT NULL DEFAULT '',
-  suggested_by TEXT NOT NULL DEFAULT ''
+  suggested_by TEXT NOT NULL DEFAULT '',
+  images TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT '',
+  stage_by TEXT NOT NULL DEFAULT '',
+  stage_doc TEXT NOT NULL DEFAULT '',
+  stage_at INTEGER NOT NULL DEFAULT 0,
+  stage_pane TEXT NOT NULL DEFAULT '',
+  stage_session TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS desk_notes_desk ON desk_notes(desk_id, done_at, id);
 "#;
@@ -193,7 +200,7 @@ pub const LEFT_OFF_CHARS: usize = 200;
 /// tick and put away, it belongs to a desk rather than to a sender, and it is
 /// in the database because a list that did not survive a restart would be a
 /// list no one trusted enough to write on.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DeskNote {
     pub id: i64,
     pub text: String,
@@ -219,6 +226,82 @@ pub struct DeskNote {
     /// Keep and ✕, and on the list only once kept. The agent's name.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub suggested_by: String,
+    /// Pictures on the line -- a screenshot of the thing it is about -- by
+    /// file name in `note_images/` under the data dir (`NOTE_IMAGES`): the
+    /// content's hash and its extension, so the same picture is one file.
+    /// The agent's read (`pane_notes`) gets them as absolute paths.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+    /// How far an agent has got with an open line, short of done: one of
+    /// `STAGES`, or empty for a line no agent has picked up. Done stays the
+    /// tick, and a done line's stage is not shown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage: String,
+    /// The agent that set the stage, as its MCP client gave its name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_by: String,
+    /// The plan, when there is one: a document's id, which the line opens.
+    /// Set with `planned` and kept through `working`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_doc: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stage_at: i64,
+    /// The pane `working` was said from, and the Claude conversation it had
+    /// then: `working` is only true while that conversation is still going
+    /// there (`working_in`), so a session that ended, or a panel that closed
+    /// or crashed, does not leave a line saying it is being worked on. The
+    /// pane goes to the page too, which settles it the same way the moment
+    /// that pane's agent goes quiet, without waiting for the list again.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_pane: String,
+    #[serde(skip)]
+    pub stage_session: String,
+    /// Which panel is working on it, as the reader calls it: filled in by the
+    /// server from the pane, only while `working` holds.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub stage_panel: String,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
+}
+
+/// The stages an agent can say a line is at, in order: it has read the line
+/// and taken it in; it has planned it, in a document; it is at work on it.
+/// Done is the tick, not a stage.
+pub const STAGES: [&str; 3] = ["read", "planned", "working"];
+
+/// What an agent says with a stage: `mark_note`.
+#[derive(Clone, Debug, Default)]
+pub struct Mark {
+    /// One of `STAGES`.
+    pub stage: String,
+    pub by: String,
+    /// The plan's id: needed with `planned`, and checked by `doc_ok`.
+    pub doc: String,
+    /// The pane it was said from, and that pane's conversation.
+    pub pane: String,
+    pub session: String,
+}
+
+/// Where a note's pictures are kept, under the data dir. Nothing here is
+/// removed when a picture comes off a line: taking it off is Undo-able, and a
+/// file shared by two lines is still the other's.
+pub const NOTE_IMAGES: &str = "note_images";
+/// How many pictures one line holds.
+pub const IMAGES_PER_NOTE: usize = 6;
+
+/// A picture's name as `note_images` holds it: 16 hex characters and one of
+/// the four extensions. Anything else never reaches a path.
+pub fn image_name_ok(name: &str) -> bool {
+    let Some((hash, ext)) = name.split_once('.') else {
+        return false;
+    };
+    hash.len() == 16
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && matches!(ext, "png" | "jpg" | "gif" | "webp")
 }
 
 /// A pane, which in this phase is a workspace row and no process.
@@ -929,7 +1012,8 @@ pub fn clear(conn: &Connection) -> Result<()> {
 /// the row under the reader's cursor on every keystroke they finished.
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
-        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by FROM desk_notes
+        "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
+                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -984,13 +1068,8 @@ pub fn add_note(
     Ok(Some(DeskNote {
         id,
         text,
-        done: false,
         created_at: now,
-        done_by: String::new(),
-        done_commit: String::new(),
-        done_doc: String::new(),
-        done_evidence: String::new(),
-        suggested_by: String::new(),
+        ..DeskNote::default()
     }))
 }
 
@@ -1110,6 +1189,59 @@ pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64
     )? > 0)
 }
 
+/// An agent says how far it has got with a line on its own desk's list:
+/// read, planned (with the plan's id), or working. Only an open line the
+/// reader has kept -- a done one is done, and only the reader unticks -- and
+/// any stage from any other, so an agent can step back from `working` to
+/// `planned` when it stops. The plan stays with the line when a later stage
+/// comes without one. False when the line is not open on this desk.
+pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64) -> Result<bool> {
+    if !STAGES.contains(&mark.stage.as_str()) || (mark.stage == "planned" && !doc_ok(&mark.doc)) {
+        return Ok(false);
+    }
+    let by = if mark.by.trim().is_empty() {
+        "an agent"
+    } else {
+        mark.by.trim()
+    };
+    let by: String = by.chars().take(60).collect();
+    let doc = if doc_ok(&mark.doc) {
+        mark.doc.to_ascii_lowercase()
+    } else {
+        String::new()
+    };
+    let working = mark.stage == "working";
+    Ok(conn.execute(
+        "UPDATE desk_notes SET stage = ?3, stage_by = ?4, stage_doc = CASE WHEN ?5 != '' THEN ?5 ELSE stage_doc END,
+                stage_at = ?6, stage_pane = ?7, stage_session = ?8
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+        params![
+            desk_id,
+            id,
+            mark.stage,
+            by,
+            doc,
+            now,
+            if working { mark.pane.as_str() } else { "" },
+            if working { mark.session.as_str() } else { "" }
+        ],
+    )? > 0)
+}
+
+/// A `working` line whose conversation has ended is back at the stage before
+/// it: planned, when there is a plan, and read otherwise. `live` is whether
+/// the pane it was said from is still running that conversation.
+pub fn settle_stage(n: &mut DeskNote, live: bool) {
+    if n.stage == "working" && !live {
+        n.stage = if n.stage_doc.is_empty() {
+            "read"
+        } else {
+            "planned"
+        }
+        .into();
+    }
+}
+
 /// How many suggestions a desk holds waiting for the reader. A few, so an
 /// agent cannot fill the list with its own ideas while the reader is away:
 /// past this it is told to wait until one is kept or put away.
@@ -1118,7 +1250,8 @@ pub const SUGGESTIONS_PER_DESK: i64 = 3;
 /// What came of an agent suggesting a line.
 #[derive(Debug, PartialEq)]
 pub enum Suggested {
-    Note(DeskNote),
+    /// Boxed: a line with its stages is far bigger than the other answers.
+    Note(Box<DeskNote>),
     /// As many waiting as a desk holds, or the list is full.
     Full,
     Empty,
@@ -1172,17 +1305,13 @@ pub fn suggest_note(
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
-    Ok(Suggested::Note(DeskNote {
+    Ok(Suggested::Note(Box::new(DeskNote {
         id,
         text,
-        done: false,
         created_at: now,
-        done_by: String::new(),
-        done_commit: String::new(),
-        done_doc: String::new(),
-        done_evidence: String::new(),
         suggested_by: by,
-    }))
+        ..DeskNote::default()
+    })))
 }
 
 /// The reader keeps a suggestion: it is an ordinary line of theirs from here,
@@ -1308,7 +1437,69 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done_doc: r.get(6)?,
         done_evidence: r.get(7)?,
         suggested_by: r.get(8)?,
+        images: r
+            .get::<_, String>(9)?
+            .split_whitespace()
+            .map(String::from)
+            .collect(),
+        stage: r.get(10)?,
+        stage_by: r.get(11)?,
+        stage_doc: r.get(12)?,
+        stage_at: r.get(13)?,
+        stage_pane: r.get(14)?,
+        stage_session: r.get(15)?,
+        stage_panel: String::new(),
     })
+}
+
+/// Put one more picture on a line, at the end. `None` when there is no such
+/// line or it already holds `IMAGES_PER_NOTE`; the list it has now otherwise.
+pub fn add_note_image(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    name: &str,
+) -> Result<Option<Vec<String>>> {
+    let had: Option<String> = conn
+        .query_row(
+            "SELECT images FROM desk_notes WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+            params![desk_id, id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(had) = had else { return Ok(None) };
+    let mut list: Vec<String> = had.split_whitespace().map(String::from).collect();
+    if !list.iter().any(|n| n == name) {
+        list.push(name.to_string());
+    }
+    if !set_note_images(conn, desk_id, id, &list)? {
+        return Ok(None);
+    }
+    Ok(Some(list))
+}
+
+/// A line's pictures, replaced whole: an added one appended, a removed one
+/// left out, and Undo sending back the list it had. Names that are not a
+/// picture's are refused rather than kept. False when there is no such line.
+pub fn set_note_images(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    images: &[String],
+) -> Result<bool> {
+    if images.len() > IMAGES_PER_NOTE || !images.iter().all(|n| image_name_ok(n)) {
+        return Ok(false);
+    }
+    let mut seen = Vec::new();
+    for n in images {
+        if !seen.contains(n) {
+            seen.push(n.clone());
+        }
+    }
+    Ok(conn.execute(
+        "UPDATE desk_notes SET images = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        params![desk_id, id, seen.join(" ")],
+    )? > 0)
 }
 
 /// The folder's own name, which is what the reader right-clicked and so what
@@ -1483,6 +1674,66 @@ mod tests {
         assert!(notes(&conn, yours).unwrap().is_empty());
     }
 
+    /// A line's pictures: by name only, a name that is a picture's, each once,
+    /// up to the cap, on its own desk's lines; taking one off and Undo are
+    /// both the list set whole.
+    #[test]
+    fn a_line_holds_its_pictures_by_name_and_gives_them_back() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let yours = create(&conn, "/yours", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "this spacing", 0)
+            .unwrap()
+            .unwrap();
+        let a = "0123456789abcdef.png".to_string();
+        let b = "fedcba9876543210.webp".to_string();
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &a).unwrap(),
+            Some(vec![a.clone()])
+        );
+        // The same picture twice is on the line once.
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &a).unwrap(),
+            Some(vec![a.clone()])
+        );
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &b).unwrap(),
+            Some(vec![a.clone(), b.clone()])
+        );
+        assert_eq!(
+            notes(&conn, mine).unwrap()[0].images,
+            [a.clone(), b.clone()]
+        );
+        // Not across desks, and nothing that could be a path.
+        assert_eq!(add_note_image(&conn, yours, n.id, &a).unwrap(), None);
+        for bad in [
+            "../../etc/passwd",
+            "0123456789abcdef.svg",
+            "0123456789ABCDEF.png",
+            "abc.png",
+            "0123456789abcdef",
+        ] {
+            assert!(!image_name_ok(bad), "{bad}");
+            assert!(!set_note_images(&conn, mine, n.id, &[bad.to_string()]).unwrap());
+        }
+        // One off, and Undo puts the list back as it was.
+        assert!(set_note_images(&conn, mine, n.id, &[b.clone()]).unwrap());
+        assert_eq!(notes(&conn, mine).unwrap()[0].images, [b.clone()]);
+        assert!(set_note_images(&conn, mine, n.id, &[a.clone(), b.clone()]).unwrap());
+        assert_eq!(notes(&conn, mine).unwrap()[0].images, [a.clone(), b]);
+        // The cap.
+        let many: Vec<String> = (0..=IMAGES_PER_NOTE)
+            .map(|i| format!("{i:016x}.png"))
+            .collect();
+        assert!(!set_note_images(&conn, mine, n.id, &many).unwrap());
+        assert!(set_note_images(&conn, mine, n.id, &many[..IMAGES_PER_NOTE]).unwrap());
+        assert_eq!(
+            add_note_image(&conn, mine, n.id, &a).unwrap(),
+            None,
+            "a full line takes no more"
+        );
+    }
+
     /// An agent ticks only: an open line on its own desk, once, with its name
     /// kept -- and the reader's untick or re-tick makes the line theirs again.
     #[test]
@@ -1525,6 +1776,92 @@ mod tests {
             by: name.into(),
             ..Tick::default()
         }
+    }
+
+    fn mark(stage: &str, doc: &str) -> Mark {
+        Mark {
+            stage: stage.into(),
+            by: "claude-code".into(),
+            doc: doc.into(),
+            pane: "p1".into(),
+            session: "s1".into(),
+        }
+    }
+
+    /// An agent says how far it has got: read, planned with the plan's id,
+    /// working from its pane. Any stage from any other, on an open line of
+    /// its own desk that the reader has kept; never on a done one.
+    #[test]
+    fn a_stage_is_read_planned_or_working_and_only_on_an_open_line() {
+        let mut conn = db();
+        let mine = create(&conn, "/mine", None, 0).unwrap().id;
+        let yours = create(&conn, "/yours", None, 0).unwrap().id;
+        let n = add_note(&mut conn, mine, "wire the route", 0)
+            .unwrap()
+            .unwrap();
+        let get = |conn: &Connection| notes(conn, mine).unwrap()[0].clone();
+
+        assert!(
+            !mark_note(&conn, yours, n.id, &mark("read", ""), 1).unwrap(),
+            "not across desks"
+        );
+        assert!(
+            !mark_note(&conn, mine, n.id, &mark("done", ""), 1).unwrap(),
+            "done is the tick"
+        );
+        assert!(
+            !mark_note(&conn, mine, n.id, &mark("planned", ""), 1).unwrap(),
+            "a plan needs its document"
+        );
+        assert!(!mark_note(&conn, mine, n.id, &mark("planned", "not-an-id"), 1).unwrap());
+        assert_eq!(get(&conn).stage, "");
+
+        assert!(mark_note(&conn, mine, n.id, &mark("read", ""), 2).unwrap());
+        let got = get(&conn);
+        assert_eq!(
+            (got.stage.as_str(), got.stage_by.as_str(), got.stage_at),
+            ("read", "claude-code", 2)
+        );
+        assert_eq!(got.stage_pane, "", "only working keeps the pane");
+
+        assert!(mark_note(&conn, mine, n.id, &mark("planned", "58155BA5FC"), 3).unwrap());
+        assert_eq!(get(&conn).stage_doc, "58155ba5fc");
+        // Working keeps the plan, and says where it is happening.
+        assert!(mark_note(&conn, mine, n.id, &mark("working", ""), 4).unwrap());
+        let got = get(&conn);
+        assert_eq!(
+            (got.stage.as_str(), got.stage_doc.as_str()),
+            ("working", "58155ba5fc")
+        );
+        assert_eq!(
+            (got.stage_pane.as_str(), got.stage_session.as_str()),
+            ("p1", "s1")
+        );
+        // The conversation ends: back to planned. With no plan: read.
+        let mut ended = got.clone();
+        settle_stage(&mut ended, false);
+        assert_eq!(ended.stage, "planned");
+        let mut still = got.clone();
+        settle_stage(&mut still, true);
+        assert_eq!(still.stage, "working");
+        ended.stage = "working".into();
+        ended.stage_doc.clear();
+        settle_stage(&mut ended, false);
+        assert_eq!(ended.stage, "read");
+        // And back a step, by the agent itself.
+        assert!(mark_note(&conn, mine, n.id, &mark("planned", "58155ba5fc"), 5).unwrap());
+        assert_eq!(get(&conn).stage_pane, "");
+
+        // A done line is done: no stage over it. A suggestion is not the
+        // reader's list yet.
+        assert!(tick_note(&conn, mine, n.id, &by("claude-code"), 6).unwrap());
+        assert!(!mark_note(&conn, mine, n.id, &mark("working", ""), 7).unwrap());
+        let Suggested::Note(s) =
+            suggest_note(&mut conn, mine, "an idea", "claude-code", 8).unwrap()
+        else {
+            panic!("suggested")
+        };
+        assert!(!mark_note(&conn, mine, s.id, &mark("read", ""), 9).unwrap());
     }
 
     /// A tick can say where the work went: a commit hash, and a document the

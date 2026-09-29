@@ -460,11 +460,11 @@ html[data-say="love"] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
 html[data-say] .brand-name { opacity: 0; }
 /* How many agents hold a stream on the daemon now, and the way to the connect
    page. It was a row of its own, "Agents live", which spent a line of the
-   sidebar on a number read rarely; it is a pill beside the brand now, the dot
-   saying what the number counts and the tooltip naming who. The id and the
-   tooltip stay: bench/ui.mjs reads both. */
+   sidebar on a number read rarely; it is a pill at the foot, beside the
+   version, the dot saying what the number counts and the tooltip naming who.
+   The id and the tooltip stay: bench/ui.mjs reads both. */
 .side-head .brand { margin-right: auto; }
-.live { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--rule); color: var(--fg-3); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; transition: background var(--t), color var(--t); }
+.live { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 1px 7px; border-radius: var(--r-pill); background: var(--rule); color: var(--fg-3); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; transition: background var(--t), color var(--t); }
 .live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .6; }
 .live:hover { color: var(--fg); text-decoration: none; }
 .live.on { color: var(--fg-2); }
@@ -486,8 +486,14 @@ html[data-link="off"] .live { visibility: hidden; }
 .icon .aa { font-size: var(--fs-ui); font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: var(--fs-micro); letter-spacing: -.06em; }
 
-.side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; }
+.side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
 .side-foot { position: relative; }
+/* The version, quiet at the foot's end: a click is About, and an update
+   waiting puts its dot on it. Gone when the sidebar is folded; the rule stays. */
+.foot-ver { position: relative; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; transition: background var(--t), color var(--t); }
+.foot-ver:hover { background: var(--rule); color: var(--fg-2); }
+.foot-ver.upd::after { content: ""; position: absolute; top: 1px; right: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-side); }
+:root[data-side="0"] .foot-ver { display: none; }
 /* The accent: the swatch on the button is the colour in use, and a click is
    the next one. It was a popover of eight, which is a menu to read for a
    setting whose only real answer is what the page looks like in it; the
@@ -1202,9 +1208,12 @@ pre.code .ln::before { cursor: pointer; }
 :root[data-wrap="1"] .kind-markdown pre.code:has(.ln:nth-of-type(12)) .ln { padding-left: var(--gutter); text-indent: calc(-1 * var(--gutter)); }
 
 /* Capped and scrollable on its own, for a file with forty versions behind it:
-   the contents above it must never be squeezed out of the pane entirely. */
-#meta { flex: none; max-height: 50%; overflow-y: auto; margin-top: 28px; padding-right: 20px; color: var(--fg-3); line-height: 1.7; }
-#toc:empty + #meta { margin-top: 0; }
+   the contents above it must never be squeezed out of the pane entirely.
+   It has a place of its own, rail.foot: the foot of the rail, under a rule,
+   whatever the list above it holds -- a short list no longer pulls it up to
+   the middle of the rail, and a long one scrolls above it. */
+#meta { flex: none; max-height: 50%; overflow-y: auto; margin-top: auto; padding: 12px 20px 0 0; border-top: 1px solid var(--rule); color: var(--fg-3); line-height: 1.7; }
+#meta:empty { padding: 0; border-top: 0; }
 #meta .row { display: flex; gap: 8px; }
 #meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; flex: none; }
 /* Long folder and file names wrap inside the rail rather than running off it. */

@@ -136,6 +136,7 @@ const COMMANDS = [
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
   { cmd: "updates", t: "Check for updates", s: "Ask now, rather than at the next check" },
   { cmd: "about", t: "About snyvi", s: "The version, where it keeps things, and updates" },
+  { cmd: "parts", get t() { return document.documentElement.dataset.parts ? "Hide section names" : "Show section names"; }, s: "Each part of the window with its name, to point at (docs/LAYOUT.md)" },
 ];
 function commandItems(q) {
   const m = /^\s*>\s*(.*)$/.exec(q);
@@ -209,6 +210,7 @@ function pick(it) {
   if (it.cmd === "desk") { d.input.value = "new desk"; search("new desk"); return; }
   if (it.theme) previewing = false;
   close();
+  if (it.cmd === "parts") { parts(); return; }
   if (it.cmd) {
     const c = it.cmd;
     c === "home" ? d.showHome(true) : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
@@ -220,6 +222,54 @@ function pick(it) {
     : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? d.showDesk(it.desk, true)
       : it.file ? d.showBrowse(state.browseRoot.id, it.file, true) : d.showDoc(it.id, true);
 }
+
+/** Every part of the window that has a name wears it, until asked again:
+ *  so "the by-line in rail.docs.row" is a place on the screen as well as a
+ *  line in docs/LAYOUT.md. */
+let partsLayer = null, partsTimer = 0;
+function parts() {
+  const r = document.documentElement;
+  if (r.dataset.parts) {
+    delete r.dataset.parts;
+    clearInterval(partsTimer); removeEventListener("scroll", placeParts, true); removeEventListener("resize", placeParts);
+    partsLayer?.remove(); partsLayer = null;
+    return;
+  }
+  // Its look comes with the first ask, not with the page: nobody pays for it
+  // who never asks.
+  if (!document.getElementById("parts-css")) document.head.append(Object.assign(document.createElement("style"), { id: "parts-css", textContent: PARTS_CSS }));
+  r.dataset.parts = "1";
+  partsLayer = Object.assign(document.createElement("div"), { className: "parts-layer" });
+  partsLayer.setAttribute("aria-hidden", "true");
+  document.body.append(partsLayer);
+  placeParts();
+  // The labels sit in a layer of their own, over the page, so no part is
+  // restyled to hold one; they follow a scroll, and a redraw within a beat.
+  addEventListener("scroll", placeParts, { capture: true, passive: true });
+  addEventListener("resize", placeParts);
+  partsTimer = setInterval(placeParts, 700);
+}
+/** A label at each named part's top right corner. Parts that share a corner
+ *  (main, main.head, main.page) stack down rather than cover each other. */
+function placeParts() {
+  if (!partsLayer) return;
+  const taken = [], out = [];
+  for (const el of document.querySelectorAll("[data-part]")) {
+    const b = el.getBoundingClientRect();
+    if (!b.width || !b.height || b.bottom < 0 || b.top > innerHeight) continue;
+    let y = Math.max(0, b.top);
+    while (taken.some(t => Math.abs(t.x - b.right) < 120 && Math.abs(t.y - y) < 16)) y += 16;
+    taken.push({ x: b.right, y });
+    out.push(`<span style="left:${Math.round(b.right)}px;top:${Math.round(y)}px">${el.dataset.part}</span>`);
+  }
+  partsLayer.innerHTML = out.join("");
+}
+const PARTS_CSS = `
+:root[data-parts] [data-part] { outline: 1px dashed var(--accent); outline-offset: -1px; }
+.parts-layer { position: fixed; inset: 0; z-index: var(--z-dialog); pointer-events: none; }
+.parts-layer > span { position: absolute; transform: translateX(-100%); padding: 0 4px; border-radius: 0 0 0 4px; opacity: .92;
+  font: 500 var(--fs-micro)/16px var(--mono); letter-spacing: 0; white-space: nowrap; color: var(--bg); background: var(--accent); }
+`;
 
 /* The theme rows carry `data-theme`, so the theme's own block dresses each:
  * its ground, its ink, its accent resolved by its own color-scheme. The

@@ -626,6 +626,71 @@ jobs:
           git commit -m "snyvi $VERSION"
           git push
 
+  winget:
+    # `winget install snymrova.snyvi`. The manifests are written from the
+    # .sha256 the windows job uploaded beside the installer
+    # (packaging/winget.sh), as scoop's is, and after `publish` for the same
+    # reason. Unlike the bucket and the tap, microsoft/winget-pkgs is not
+    # ours: this opens a pull request there from a fork, and Microsoft's
+    # checks merge it, usually within a day. Until then winget still offers
+    # the version before.
+    #
+    # Through the API rather than a clone: winget-pkgs is hundreds of
+    # thousands of files, and a version is three of them.
+    #
+    # WINGET_TOKEN is a classic token with public_repo, from the account that
+    # owns the fork (a fine-grained one cannot open a pull request on someone
+    # else's repository); WINGET_FORK, a repository variable, if that fork is
+    # not snymrova/winget-pkgs. Skipped without the token.
+    needs: [create, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the manifests and open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.create.outputs.version }}
+          FORK: ${{ vars.WINGET_FORK || 'snymrova/winget-pkgs' }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::WINGET_TOKEN is not set; no winget pull request was opened."
+            exit 0
+          fi
+          upstream=microsoft/winget-pkgs
+          gh api "repos/$FORK" --silent 2>/dev/null || {
+            echo "::error::no fork at $FORK: gh repo fork $upstream --clone=false"; exit 1; }
+          dir=$(packaging/winget.sh "$VERSION" dist)
+          path=${dir#dist/}
+          branch=snymrova.snyvi-$VERSION
+          # The first version is a new package, every later one a new version;
+          # the winget-pkgs bots read the title.
+          if gh api "repos/$upstream/contents/manifests/s/snymrova/snyvi" --silent 2>/dev/null; then
+            kind="New version"
+          else
+            kind="New package"
+          fi
+          title="$kind: snymrova.snyvi version $VERSION"
+          # A re-run finds its branch and its pull request and writes neither
+          # again.
+          if gh api "repos/$FORK/branches/$branch" --silent 2>/dev/null; then
+            echo "$FORK already has $branch"
+          else
+            gh repo sync "$FORK" --source "$upstream"
+            base=$(gh api "repos/$FORK/git/ref/heads/master" -q .object.sha)
+            gh api "repos/$FORK/git/refs" -f ref="refs/heads/$branch" -f sha="$base" --silent
+            for f in "$dir"/*.yaml; do
+              gh api -X PUT "repos/$FORK/contents/$path/$(basename "$f")" --silent \
+                -f message="$title" -f branch="$branch" -f content="$(base64 -w0 "$f")"
+            done
+          fi
+          if [ -n "$(gh pr list --repo "$upstream" --head "$branch" --json url -q '.[].url')" ]; then
+            echo "the pull request for $branch is already open"; exit 0
+          fi
+          gh pr create --repo "$upstream" --head "${FORK%%/*}:$branch" --base master \
+            --title "$title" \
+            --body "Written by the snyvi release workflow from the release's own checksums: https://github.com/snymrova/snyvi/releases/tag/v$VERSION"
+
   homebrew:
     # `brew install --cask snymrova/snyvi/snyvi`. The cask is written from the
     # .sha256 files the macos job uploaded (packaging/homebrew.sh), and
