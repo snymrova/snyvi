@@ -1799,9 +1799,10 @@ function rail() {
     // is while the desk is the page. One line of title, then who sent it and
     // when: the panel by the name it was started with, which holds still, and
     // not its title, which ticks. The row on the page gets its second line.
-    (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") + `</ul>` +
-      // The rest, named rather than listed: one row that opens them here.
-      (rest ? `<button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button>` : "")
+    // The rest, named rather than listed: one row at the end of the box that
+    // opens them here, met where the scroll runs out rather than under it.
+    (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
+      (rest ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button></li>` : "") + `</ul>`
       : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
     // What the reader removed from this list, named, and there to open or put back.
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
@@ -3367,17 +3368,25 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * lines -- and these are rows, so both are undone at #toc's own weight. */
 #toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }
 /* A pane's row is the row and its tools: the row focuses the pane, and the
- * tools -- kept to no width until the row is under the cursor, or one of
- * them has the keyboard, the way a sidebar row's ✕ is -- act on it. */
+ * tools -- shown when the row is under the cursor, or one of them has the
+ * keyboard, the way a sidebar row's ✕ is -- act on it. They lie over the
+ * row's right end and take no room in it: room given only under the pointer
+ * reflowed the title beneath it, and the list jumped as the cursor passed. */
 .dk-pane { display: flex; align-items: center; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
 .dk-pane:hover { background: var(--rule); color: var(--fg); }
 .dk-pane.on { background: var(--accent-bg); color: var(--accent); }
 .dk-focus { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; text-align: left; padding: 4px 8px; color: inherit; white-space: nowrap; overflow: hidden; }
-.dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; width: 0; overflow: hidden; }
+.dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; }
+:is(.dk-pane, .dk-doc:not(.on), .dk-row) { position: relative; }
+/* Over the end of the title, on a ground that fades in from it: the hover
+   ground (--rule, see-through in the dark themes) laid over the rail's own. */
+:is(.dk-pane, .dk-doc:not(.on), .dk-row) > .dk-tools { position: absolute; top: 0; bottom: 0; right: 0; padding: 0 3px 0 14px; border-radius: 0 6px 6px 0; opacity: 0; pointer-events: none; transition: opacity var(--t);
+  background: linear-gradient(90deg, transparent, var(--tools-bg, var(--rule)) 14px), linear-gradient(90deg, transparent, var(--bg-side) 14px); }
+.dk-pane.on > .dk-tools { --tools-bg: var(--accent-bg); }
 /* The desk's folder is the folder's own name, and a click opens it in the file manager. */
 .dk-folder { min-width: 0; padding: 0; text-align: left; font: inherit; color: inherit; overflow-wrap: anywhere; border-radius: 3px; }
 .dk-folder:hover { color: var(--accent); }
-:is(.dk-pane, .dk-doc, .dk-note, .dk-row):is(:hover, :focus-within) .dk-tools, .dk-tools:has([data-armed]) { width: auto; overflow: visible; padding-right: 3px; }
+:is(.dk-pane, .dk-doc, .dk-row):is(:hover, :focus-within) > .dk-tools, .dk-tools:has([data-armed]) { opacity: 1; pointer-events: auto; }
 .dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
@@ -3425,7 +3434,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 #toc .dk-docs li a:hover { color: var(--fg); text-decoration: none; }
 .dk-doc.on { background: var(--accent-bg); }
 #toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .by { color: var(--accent); }
-.dk-doc.on .dk-tools { width: auto; overflow: visible; padding-right: 3px; }
+.dk-doc.on .dk-tools { padding-right: 3px; }
 /* A document row's tools are drawn as small keys, on their own ground: the
  * marked row shows them at rest, and two bare glyphs beside a title would
  * read as part of it. The age steps aside for them on that row. */
@@ -3439,7 +3448,11 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-doc.on .title { -webkit-line-clamp: 2; }
 /* A box of its own height that scrolls inside the rail: thirty rows of a
  * busy day never push the notes out of reach. */
-#toc .dk-docs { max-height: min(360px, 45vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+#toc .dk-docs { max-height: min(300px, 34vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+/* The notes the same: a long list scrolls in a box of its own, and the
+   gutter is kept whether the bar shows or not, so the rows never narrow
+   when the list grows past the box. */
+#toc .dk-notes > .dk-list { max-height: min(240px, 30vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
 /* What the reader removed from the list: named in a line, and opened under
  * it, each row with its Undo at rest. */
 #toc .dk-offs-line { margin: 4px 8px 0; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
