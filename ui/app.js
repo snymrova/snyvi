@@ -1497,7 +1497,9 @@
     state.view = "home"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
     document.title = "snyvi";
     if (push) history.pushState({ home: true }, "", "/");
-    markActive();
+    // The sidebar now, from what the page came with: Home waits on its chunk
+    // and its numbers, and the tree is not Home's to hold up.
+    renderTree(); markActive();
     try { await homeUse(); }
     catch { homeLoading = null; if (state.view === "home") docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1>${noReach("home")}</div>`; return; }
     if (state.view !== "home") return;
