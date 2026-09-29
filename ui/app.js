@@ -153,13 +153,15 @@
    * reader, as the folds are: it is a view, not a fact about the library. */
   const away = saved("snyvi.away");
   const saveAway = () => save("snyvi.away", away);
-  /* The Inbox holds as many projects as the window has room for, with Desks
-   * and the Folders head still on screen under it, and says the rest in one
-   * "N more" row. Projects are newest first, so the cut is the quiet ones and
-   * nothing is re-sorted. The Inbox is then the same height whatever
+  /* The Inbox holds the projects in use -- heard from this week, five to
+   * eight of them, and never more than the window has room for with Desks
+   * and the Folders head still on screen under it -- and says the rest in one
+   * "Show N more" row. Projects are newest first, so the cut is the quiet
+   * ones and nothing is re-sorted. The Inbox is then the same height whatever
    * arrives: a new project pushes the oldest into "more", not Desks down the
-   * page. The row unfolds in place, and stays unfolded until it is clicked
-   * again; per reader, as the folds are. */
+   * page. Shown, the rest take the row's place and "Show less" ends the list;
+   * either stays as it was left until it is clicked again, per reader, as
+   * the folds are. */
   let moreOpen = store.get("snyvi.more") === "1";
   /** The projects "more" holds right now, for the mark on it (`markActive`). */
   let moreHidden = new Set();
@@ -732,31 +734,36 @@
     t.splice(Math.min(g.projAt, t.length), 0, g.proj);
     return t;
   }
-  /** How many projects the Inbox shows before its "more" row: what fits
+  /** How many projects the Inbox shows before its "more" row: the ones heard
+   *  from this week, between USED_MIN and USED_MAX, and no more than fit
    *  between what stands above the projects (the head, All documents, the
    *  waiting list) and what must stay on screen below them (all of Desks,
    *  and the Folders head). Measured, because each of those changes it;
    *  never fewer than three. The whole list while the Inbox is folded or the
    *  sidebar is its rail, where there is no column to fit. */
-  const ROW_H = 28, MIN_CAP = 3, QUIET_S = 7 * 86400;
+  const ROW_H = 28, MIN_CAP = 3, QUIET_S = 7 * 86400, USED_MIN = 5, USED_MAX = 8;
   function inboxCap(awayRow) {
     const room = treesEl.clientHeight;
     if (!room || root.dataset.side === "0" || folded.has("inbox")) return Infinity;
+    const now = Date.now() / 1000;
+    const used = Math.min(USED_MAX, Math.max(USED_MIN, state.tree.filter(p => p.latest && now - p.latest <= QUIET_S).length));
     const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect(), fh = browseEl.querySelector(".s-head");
     const above = at.top - port.top + treesEl.scrollTop;
     const below = fh ? fh.getBoundingClientRect().bottom - at.bottom : 0;
     // 8: #trees' own padding at the foot; the "more" row; the removed row.
     const left = room - above - below - 8 - ROW_H - (awayRow ? 26 : 0);
-    return Math.max(MIN_CAP, Math.floor(left / ROW_H));
+    return Math.min(used, Math.max(MIN_CAP, Math.floor(left / ROW_H)));
   }
   /** The row that holds the projects past the cap. It says how many, and how
-   *  long they have been quiet -- or, when one has something waiting, that. */
+   *  long they have been quiet -- or, when one has something waiting, that.
+   *  Shown, it is "Show less", at the end of what it let out. */
   function moreRow(hidden) {
+    if (moreOpen) return `<button type="button" class="t-quiet" data-quiet aria-expanded="true">${icon("more")}<span class="nm">Show less</span>${chev}</button>`;
     const waiting = state.queue.filter(d => moreHidden.has(String(d.project_id))).length;
     const q = hidden[0].latest ? relShort(hidden[0].latest) : "";
     const say = waiting ? `${waiting} waiting` : !q || q === "now" ? "" : /^\d/.test(q) ? `quiet ${q}` : `quiet since ${q}`;
     const names = hidden.slice(0, 8).map(p => p.name).join(", ") + (hidden.length > 8 ? ` and ${hidden.length - 8} more` : "");
-    return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
+    return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
   }
   function renderTree() {
     const projects = heldTree();
@@ -824,8 +831,9 @@
     const hidden = past.filter(p => !projOpen(p) && awayJust !== String(p.id) && !(gone && gone.proj === p));
     moreHidden = new Set(hidden.map(p => String(p.id)));
     for (const p of drawn.slice(0, upto)) h += row(p);
-    if (hidden.length) h += moreRow(hidden);
+    if (hidden.length && !moreOpen) h += moreRow(hidden);
     for (const p of past) if (moreOpen || !moreHidden.has(String(p.id))) h += row(p);
+    if (hidden.length && moreOpen) h += moreRow(hidden);
     // Counted from the tree rather than from the set, so a project that is
     // gone for some other reason is not offered back. While this row is here
     // nothing is stranded: whatever was put away is one click from returning.
@@ -1112,7 +1120,10 @@
       e.preventDefault();
       moreOpen = !moreOpen;
       store.set("snyvi.more", moreOpen ? "1" : "0");
+      const kb = document.activeElement?.matches("[data-quiet]");
       renderTree(); markActive();
+      // The row moved to the other end of the list: a keyboard goes with it.
+      if (kb) treeEl.querySelector("[data-quiet]")?.focus({ preventScroll: true });
       return;
     }
     const bk = e.target.closest("[data-back]");
