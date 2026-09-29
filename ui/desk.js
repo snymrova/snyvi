@@ -43,11 +43,11 @@ let docList = [], docsAt = null;
  *  section says so, with a Retry, rather than looking empty. */
 let docsOff = null, notesOff = null;
 const noReach = w => `<p class="no-reach" role="alert">Could not reach snyvi<button type="button" data-a="reload" data-w="${w}">Retry</button></p>`;
-/** The rail shows the latest thirty of those and names the rest; a click on
- *  the rest opens the whole list, for this desk, until it is left. The list
- *  is a box of its own height and scrolls inside it, so a long day of sends
- *  never pushes the notes under it out of the rail. */
-const DOCS_SHOWN = 30;
+/** The rail shows the latest six of those and names the rest; a click on
+ *  the rest opens the whole list, and again folds it back. No box that
+ *  scrolls inside the rail: six rows is what a glance takes in, and the
+ *  notes under them stay in reach. */
+const DOCS_SHOWN = 6;
 let docsAll = false;
 /** The ones the reader removed from this desk's list (the daemon's
  *  `removed`), whether "N removed · Show" is open, and the row just removed
@@ -66,6 +66,13 @@ let noteList = [], notesAt = null, notesGet = null;
  *  the rail is redrawn whole -- by a pane's status, by the clock every 30s --
  *  and a field that lived only in the page would be swept away mid-word. */
 let noteField = null, noteDraft = "", noteCaret = 0, noteErr = "";
+/** The notes show six lines and name the rest, as the documents do. A line
+ *  the reader is working on shows whatever its place: one being rewritten,
+ *  one just taken off (its Undo), and one just added, so a new line never
+ *  lands out of sight. */
+const NOTES_SHOWN = 6;
+let notesAll = false;
+const notesKept = new Set();
 /** True only while the rail's HTML is being replaced. An element losing the
  *  focus that way is not a reader clicking away from it, and must not be read
  *  as one: without this, every redraw committed whatever was half-typed. */
@@ -1755,10 +1762,10 @@ function rail() {
   // A row just removed keeps its place through a read that no longer has it.
   const gone = docGone && docGone.at === d.id ? docGone.x : null;
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
-  // The latest thirty, and always the one on the page: a document being read
+  // The latest six, and always the one on the page: a document being read
   // is never the one the rail hides. The count names what is not shown.
   const shown = docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading);
-  const rest = dl.length - shown.length;
+  const rest = dl.length - shown.length, folds = docsAll && dl.length > DOCS_SHOWN;
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
   const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
@@ -1802,11 +1809,11 @@ function rail() {
     // The rest, named rather than listed: one row at the end of the box that
     // opens them here, met where the scroll runs out rather than under it.
     (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
-      (rest ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" title="Show every document this desk has sent">${rest} more</button></li>` : "") + `</ul>`
+      (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
       : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
     // What the reader removed from this list, named, and there to open or put back.
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
-      (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="dt"><span class="title">${esc(x.title)}</span></span></a>` +
+      (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
         `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "") +
     `</details>` + noteSec(d) + `</div>`);
   drawing = false;
@@ -1823,7 +1830,7 @@ function rail() {
 function docRow(x, gone, vs, esc) {
   if (gone) return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.title)}</span><button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}">Undo</button></li>` + errLine(`d${x.id}`, esc);
   const on = x.id === reading;
-  return `<li class="dk-doc${on ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `${esc(x.project)} · ${ctx.fmt(x.received_at)}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="dt"><span class="title">${esc(x.title)}</span><span class="by"><span class="slot">${esc(sentBy(vs, x.slot))}</span> · ${ctx.relShort(x.received_at)}${x.pinned ? ` · <span class="pin">pinned</span>` : ""}</span></span></a>` +
+  return `<li class="dk-doc${on ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
     // Its tools: the path to copy, where there is one; on the row of the
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
@@ -1935,7 +1942,10 @@ function noteSec(d) {
   if (notesAt !== d.id && notesOff !== d.id) getNotes(d.id);
   const left = mine.filter(x => !x.done && !x.gone && !x.suggested_by).length;
   const done = mine.filter(x => x.done && !x.gone).length;
-  const rows = mine.map(x => noteRow(x, esc)).join("");
+  const seen = mine.filter((x, i) => notesAll || i < NOTES_SHOWN || x.gone || notesKept.has(x.id) || (noteField && noteField.id === x.id));
+  const hid = mine.length - seen.length, folds = notesAll && mine.length > NOTES_SHOWN;
+  const rows = seen.map(x => noteRow(x, esc)).join("") +
+    (hid || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="notes-more" aria-expanded="${folds}">${folds ? "Show fewer" : `${hid} more`}</button></li>` : "");
   // The section's two actions sit in its head, beside the count, where they
   // are in view however long the list is: a new note, and removing the done
   // half. Removing answers where it was asked, as a ✕ does: the head holds
@@ -2207,7 +2217,7 @@ function waitingFirst(d) {
  *  desk's, and a field left open on this one must not reopen on that one. */
 function forgetNotes() {
   clearTimeout(backTimer);
-  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null;
+  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesKept.clear();
   clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
 
@@ -2309,6 +2319,7 @@ async function saveNote(again) {
   try {
     if (f.kind === "new") {
       const j = await ctx.api(`/api/desks/${d.id}/notes`, { text });
+      if (j.note) notesKept.add(j.note.id);
       if (pics.length && j.note) await putImages(j.note.id, pics);
     }
     else await ctx.api(`/api/desks/${d.id}/notes/${f.id}`, { text });
@@ -2535,7 +2546,8 @@ async function act(b, byKey) {
     else if (a === "reveal") ctx.reveal({ desk: d.id });
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
-    else if (a === "more") { docsAll = true; rail(); }
+    else if (a === "more") { docsAll = !docsAll; rail(); }
+    else if (a === "notes-more") { notesAll = !notesAll; rail(); }
     // Off this desk's list, and back: the row keeps its place with an Undo,
     // as a note's does, and the daemon is told after the rail has changed.
     else if (a === "doc-x") {
@@ -3421,10 +3433,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* A document row: a page icon at the left, in the accent while the
  * document waits to be read, then the title, the pane it came from and its
  * age. */
-#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 6px; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--fg-2); line-height: 1.5; white-space: normal; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
-.dk-docs a svg { flex: none; margin-top: 2px; color: var(--fg-3); transition: color var(--t); }
-.dk-docs .dt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.dk-docs .by { font-family: var(--mono); font-size: 10px; line-height: 1.5; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 6px; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--fg-2); line-height: 1.5; white-space: normal; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
+.dk-docs a svg { flex: none; align-self: flex-start; margin-top: 3px; color: var(--fg-3); transition: color var(--t); }
+.dk-docs .age { flex: none; font-family: var(--mono); font-size: 10px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .dk-docs a.new svg { color: var(--accent); }
 .dk-docs a.new .title { color: var(--fg); font-weight: 550; }
 /* The row, and not the link, carries the hover and the mark, so the copy
@@ -3433,7 +3444,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-doc:hover { background: var(--rule); }
 #toc .dk-docs li a:hover { color: var(--fg); text-decoration: none; }
 .dk-doc.on { background: var(--accent-bg); }
-#toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .by { color: var(--accent); }
+#toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .age { color: var(--accent); }
+.dk-doc.on .age { display: none; }
 .dk-doc.on .dk-tools { padding-right: 3px; }
 /* A document row's tools are drawn as small keys, on their own ground: the
  * marked row shows them at rest, and two bare glyphs beside a title would
@@ -3444,15 +3456,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-doc .dk-tools button:hover { background: var(--accent); color: var(--on-accent); box-shadow: none; }
 /* One line of title, and two on the row being read: a list is for finding
  * a row, and the one open is the one worth reading whole. */
-.dk-docs .title { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.dk-docs .title { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .dk-doc.on .title { -webkit-line-clamp: 2; }
-/* A box of its own height that scrolls inside the rail: thirty rows of a
- * busy day never push the notes out of reach. */
-#toc .dk-docs { max-height: min(300px, 34vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
-/* The notes the same: a long list scrolls in a box of its own, and the
-   gutter is kept whether the bar shows or not, so the rows never narrow
-   when the list grows past the box. */
-#toc .dk-notes > .dk-list { max-height: min(240px, 30vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
 /* What the reader removed from the list: named in a line, and opened under
  * it, each row with its Undo at rest. */
 #toc .dk-offs-line { margin: 4px 8px 0; font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
@@ -3460,7 +3465,6 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-link:hover { color: var(--accent); }
 .dk-doc.off a { opacity: .7; }
 .dk-doc.off .dk-undo { margin-right: 3px; }
-.dk-docs .by .slot { font-size: inherit; color: inherit; }
 .dk-panes .slot::before { content: "["; } .dk-panes .slot::after { content: "]"; }
 .dk-docs .k { font-family: var(--mono); font-size: 10px; color: var(--fg-3); flex: none; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
 #toc .dk-empty { margin: 2px 8px 0; padding: 0; text-indent: 0; font-size: 12px; line-height: 1.5; color: var(--fg-3); }
