@@ -490,7 +490,14 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     // Home, the update card, the desk brief and suggested notes, and the
     // design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
     // 16.4 on Windows).
-    rows.size("binary size, snyvi", size, 16.5);
+    //
+    // What ships is built with fat LTO (release.yml). A CI job that turns it
+    // off to save build time (the desktops, Windows, Intel Mac) measures a
+    // binary nobody downloads -- 16.6 MB on Windows for 14.3 shipped -- so
+    // there the row is printed and not enforced.
+    let lto_off = std::env::var("CARGO_PROFILE_RELEASE_LTO")
+        .is_ok_and(|v| matches!(v.as_str(), "off" | "false"));
+    rows.size("binary size, snyvi", size, 16.5, lto_off);
 
     // Three cold starts: the first also creates the database and the token,
     // and the two after it open what the first left, which is every start
@@ -630,15 +637,24 @@ impl Rows {
         );
     }
 
-    fn size(&mut self, name: &str, mb: f64, budget: f64) {
+    /// A size against its budget; when `unenforced` (a build without the LTO
+    /// that ships), printed with the budget in brackets and never a failure.
+    fn size(&mut self, name: &str, mb: f64, budget: f64, unenforced: bool) {
         let ok = mb <= budget;
-        self.failed |= !ok;
-        println!(
-            "{name:<48} {:>9}   {:>9}{}",
-            format!("{mb:.1} MB"),
-            format!("{budget:.0} MB"),
-            if ok { " ok" } else { " OVER" }
-        );
+        self.failed |= !ok && !unenforced;
+        // 16.5 is not 16: a budget with a fraction prints it.
+        let mbs = if budget.fract() == 0.0 {
+            format!("{budget:.0} MB")
+        } else {
+            format!("{budget:.1} MB")
+        };
+        let b = if unenforced { format!("({mbs})") } else { mbs };
+        let word = match (ok, unenforced) {
+            (true, _) => " ok",
+            (false, true) => " over, not enforced without LTO",
+            (false, false) => " OVER",
+        };
+        println!("{name:<48} {:>9}   {b:>9}{word}", format!("{mb:.1} MB"));
     }
 
     /// A count whose budget is none, naming what it found.
@@ -663,7 +679,7 @@ impl Rows {
     /// means (see `resident_bytes` for macOS), which says so on the row.
     fn memory(&mut self, name: &str, mb: Option<(f64, bool)>, budget: f64) {
         match mb {
-            Some((mb, true)) => self.size(name, mb, budget),
+            Some((mb, true)) => self.size(name, mb, budget, false),
             Some((mb, false)) => println!(
                 "{name:<48} {:>9}   {:>9} counts pages given back but not yet taken; not enforced",
                 format!("{mb:.1} MB"),

@@ -1384,7 +1384,10 @@ macOS jobs add `SNYVI_BENCH_SHARED=1`, which prints the cold-start row
 without enforcing it, and it alone: the Windows runner takes 400 ms to
 create a process where a dev box takes 11, and how much of that is
 Windows and how much the runner is not yet known. The send, first-byte
-and render clocks are held on every desktop.
+and render clocks are held on every desktop. The binary size is held
+only where the build has the fat LTO that ships: the desktop, Windows and
+Intel Mac jobs turn it off to save build time, so there the row is
+printed with its budget in brackets.
 
 The same bench, on the three desktops CI builds for. These are the
 hosted runners' numbers, from one run each, and a runner is a slow and
