@@ -136,7 +136,7 @@
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="109">
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="116.8">
 
       <!-- Four parts, in the order they play: the problem (passion, scatter),
            the answer, how it answers each part of the problem (desks through
@@ -206,7 +206,30 @@
         </div>
       </section>
 
-      <section id="s-docs" class="scene clip feat" data-start="38.6" data-duration="10.3" data-track-index="0">
+      <!-- Room to focus: the same desk, its sidebar and rail folded away, then
+           one panel given the whole window. -->
+      <section id="s-focus" class="scene clip feat" data-start="38.6" data-duration="8.3" data-track-index="0">
+        <div class="inner">
+          <div class="pad">
+            <div class="col">
+              <h2 class="title" id="focus-title">Room to focus</h2>
+              <p class="lead" id="focus-lead">Fold away the sidebar and the rail, and give one panel the whole window.</p>
+            </div>
+            <div class="win" id="focus-win">
+              <div class="win-body"><div class="cam" id="focus-cam"><img id="focus-img" src="frames/desk.png" alt="" />
+                <img id="focus-b" class="over" src="frames/focus-side.png" alt="" />
+                <img id="focus-c" class="over" src="frames/focus-rail.png" alt="" />
+                <img id="focus-d" class="over" src="frames/focus-full.png" alt="" />
+                <div class="ring" id="focus-r1" style="left: 17.3%; top: 1.3%; width: 2.6%; height: 3.9%;"></div>
+                <div class="ring" id="focus-r2" style="left: 82.3%; top: 1.3%; width: 2.6%; height: 3.9%;"></div>
+                <div class="ring" id="focus-r3" style="left: 46.5%; top: 5.5%; width: 2.6%; height: 3.9%;"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="s-docs" class="scene clip feat" data-start="46.4" data-duration="10.3" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="col">
@@ -224,7 +247,7 @@
         </div>
       </section>
 
-      <section id="s-library" class="scene clip feat" data-start="48.4" data-duration="9.9" data-track-index="0">
+      <section id="s-library" class="scene clip feat" data-start="56.2" data-duration="9.9" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="col">
@@ -241,7 +264,7 @@
         </div>
       </section>
 
-      <section id="s-notes" class="scene clip feat" data-start="57.8" data-duration="7.7" data-track-index="0">
+      <section id="s-notes" class="scene clip feat" data-start="65.6" data-duration="7.7" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="col">
@@ -257,7 +280,7 @@
         </div>
       </section>
 
-      <section id="s-switch" class="scene clip feat" data-start="65" data-duration="10.1" data-track-index="0">
+      <section id="s-switch" class="scene clip feat" data-start="72.8" data-duration="10.1" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="col">
@@ -265,7 +288,7 @@
               <p class="lead" id="switch-lead">Every desk keeps its place. <kbd id="switch-key">⌘K</kbd> finds anything, across all of them.</p>
             </div>
             <div class="win" id="switch-win">
-              <div class="win-body"><div class="cam" id="switch-cam"><img id="switch-img" src="frames/desk-two.png" alt="" />
+              <div class="win-body"><div class="cam" id="switch-cam"><img id="switch-img" src="frames/home.png" alt="" />
                 <img id="switch-b" class="over" src="frames/desk-search.png" alt="" /></div>
               </div>
             </div>
@@ -273,7 +296,7 @@
         </div>
       </section>
 
-      <section id="s-agents" class="scene clip feat" data-start="74.6" data-duration="8.3" data-track-index="0">
+      <section id="s-agents" class="scene clip feat" data-start="82.4" data-duration="8.3" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="col">
@@ -290,7 +313,7 @@
       </section>
 
       <!-- Private and fast: a statement, and three plain facts. -->
-      <section id="s-private" class="scene clip split" data-start="82.4" data-duration="9" data-track-index="0">
+      <section id="s-private" class="scene clip split" data-start="90.2" data-duration="9" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <h2 class="title" id="private-title">Private, and fast.</h2>
@@ -304,7 +327,7 @@
       </section>
 
       <!-- What it adds up to. -->
-      <section id="s-summary" class="scene clip" data-start="91" data-duration="9.44" data-track-index="0">
+      <section id="s-summary" class="scene clip" data-start="98.8" data-duration="9.44" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="lock" id="summary-lock"><svg id="summary-head" viewBox="0 0 32 32" aria-hidden="true"></svg><b>snyvi</b></div>
@@ -317,7 +340,7 @@
 
       <!-- One more thing: the rocket, over the desk, while the terminals work.
            Twenty-four stills from film/shoot.mjs, played as a flip-book. -->
-      <section id="s-rocket" class="scene clip" data-start="100.4" data-duration="8.6" data-track-index="0">
+      <section id="s-rocket" class="scene clip" data-start="108.2" data-duration="8.6" data-track-index="0">
         <div class="inner">
           <div class="pad">
             <div class="top">
@@ -359,11 +382,11 @@
 
       <!-- snyvi, peeking over the bottom edge. Gone for the tag, where it is in
            the rocket. -->
-      <div id="buddy" class="clip" data-start="0" data-duration="100.4" data-track-index="2">
+      <div id="buddy" class="clip" data-start="0" data-duration="108.2" data-track-index="2">
         <div class="rise"><div class="bob"><svg id="buddy-head" viewBox="0 0 32 32" aria-hidden="true"></svg></div></div>
       </div>
 
-      <audio id="track" src="audio/mix.mp3" data-start="0" data-duration="109" data-track-index="1" data-volume="1"></audio>
+      <audio id="track" src="audio/mix.mp3" data-start="0" data-duration="116.8" data-track-index="1" data-volume="1"></audio>
     </div>
 
     <script src="beats.js"></script>
@@ -439,6 +462,14 @@
       ringAt("desks-r1", T("desks", "folder") - 0.1, T("desks", "four") - 0.15);
       ringAt("desks-r2", T("desks", "four") - 0.1);
 
+      // The desk, then each control as it is named: a ring on it, and the
+      // window as it is after the click.
+      feature("focus");
+      [["focus-r1", "#focus-b", "side"], ["focus-r2", "#focus-c", "rail"], ["focus-r3", "#focus-d", "full"]].forEach(([ring, shot, cue]) => {
+        ringAt(ring, T("focus", cue) - 0.3, T("focus", cue) + 0.35);
+        swap(shot, T("focus", cue) + 0.2);
+      });
+
       // The desk; the frame with the new document in its list, which is the
       // arrival; then the document open over the desk.
       feature("docs");
@@ -460,7 +491,8 @@
       cam("notes", T("notes", 1.3), 90, 50, 1.14);
 
       feature("switch");
-      cam("switch", T("switch", "left") - 0.4, 10, 45, 1.1);
+      // Home: every desk and where it was left, the one to pick up in front.
+      cam("switch", T("switch", "left") - 0.4, 46, 36, 1.1);
       swap("#switch-b", T("switch", "key") - 0.3);
       cam("switch", T("switch", "key") - 0.3, 50, 30, 1.08);
       press("#switch-key", T("switch", "key"));
@@ -530,6 +562,12 @@
       look(B, 0, 0, at("desks"), 0);
       tl.to("#buddy .rise", { y: 0, duration: 0.7, ease: "back.out(1.6)" }, at("desks") + 0.4);
       blink(B, T("desks", "four") + 0.9);
+
+      look(B, -1.1, -0.3, T("focus", "side"));
+      look(B, 1.1, -0.3, T("focus", "rail"));
+      look(B, 0, 0, T("focus", "full"));
+      mood(B, "glad", T("focus", "full") + 0.3);
+      mood(B, "plain", at("docs"));
 
       mood(B, "whoa", T("docs", "lands")); hop(T("docs", "lands"));
       mood(B, "plain", T("docs", "lands") + 1.4);

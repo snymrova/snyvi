@@ -62,5 +62,9 @@
   "switch": {
     "text": "Move between projects, and each desk is exactly as you left it. Command K finds anything, across all of them.",
     "seconds": 8.352
+  },
+  "focus": {
+    "text": "When one of them needs your full attention, fold away the sidebar and the rail, and give its panel the whole window.",
+    "seconds": 6
   }
 }

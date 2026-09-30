@@ -27,6 +27,8 @@
     // How, one part of the problem a scene.
     { name: "desks", dur: 7.6, out: ["hold", 0.5], lead: 0.6, line: 6.264,
       cues: { folder: 1.910, four: 2.807 } },
+    { name: "focus", dur: 7.8, out: ["hold", 0.5], lead: 0.6, line: 6.000,
+      cues: { side: 2.2, rail: 3.3, full: 4.3 } },
     { name: "docs", dur: 9.8, out: ["hold", 0.5], lead: 0.6, line: 8.448,
       cues: { lands: 3.899, marked: 5.236, opens: 6.907 } },
     { name: "library", dur: 9.4, out: ["hold", 0.5], lead: 0.6, line: 7.992,

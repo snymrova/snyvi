@@ -1,6 +1,6 @@
 # The film — visual direction
 
-The README's film. A hundred and nine seconds, 1920×1080, narrated, cut in
+The README's film. A hundred and seventeen seconds, 1920×1080, narrated, cut in
 HyperFrames from stills of the real release. `film/index.html` is the
 composition; everything below is why it looks the way it does.
 
@@ -107,10 +107,10 @@ title, one sentence, and the window.
 | ---------- | ------------------ | ------------------------------------------------- |
 | 1 → 2      | push left, 0.45s   | from the projects to what happens to their work   |
 | 2 → 3      | dissolve, 0.6s     | from the problem into the answer                  |
-| 3 → 9      | hold, 0.5s         | the window stays; the next photograph fades in it |
-| 9 → 10     | push up, 0.5s      | a section change: from what it does to what it is |
-| 10 → 11    | push left, 0.4s    | into the summary                                  |
-| 11 → 12    | hard cut           | the film has ended; the tag is not part of it     |
+| 3 → 10     | hold, 0.5s         | the window stays; the next photograph fades in it |
+| 10 → 11    | push up, 0.5s      | a section change: from what it does to what it is |
+| 11 → 12    | push left, 0.4s    | into the summary                                  |
+| 12 → 13    | hard cut           | the film has ended; the tag is not part of it     |
 
 **No frame of a change is darker than either end of it.** Scenes paint no
 ground of their own -- the root does -- because when each carried one, the

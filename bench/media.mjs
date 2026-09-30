@@ -32,6 +32,9 @@ import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
 const args = process.argv.slice(2);
 const flag = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
 const KEEP = args.includes("--keep");
+/** The README's desk pair is the window camera's (film/shoot.mjs --stills):
+ *  `--no-desk` leaves it alone and spends no agent turns here. */
+const DESK = !args.includes("--no-desk");
 const OUT = resolve(flag("--out") || "docs/media");
 const BIN_SRC = resolve(flag("--bin") || "./target/release/snyvi");
 const PORT = flag("--port") || "7798";   // 7796 is browser.mjs, 7797 ui.mjs
@@ -87,10 +90,13 @@ class Driver {
     await loaded;
     await sleep(600);
   }
-  async press(k, { meta = false, wait = 120 } = {}) {
+  async press(k, { meta = false, ctrl = false, wait = 120 } = {}) {
+    // A single letter only acts once ⌃B has woken the keys, as it does for a
+    // reader; a second ⌃B would put them back to sleep.
+    if (!meta && !ctrl && k.length === 1 && !(await this.ev(`document.body.classList.contains("keys")`))) await this.press("b", { ctrl: true });
     const spec = KEYS[k] || { key: k, code: `Key${k.toUpperCase()}`, vk: k.toUpperCase().charCodeAt(0), text: k };
-    const modifiers = meta ? 4 : 0;
-    const down = { type: spec.text && !meta ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
+    const modifiers = (meta ? 4 : 0) | (ctrl ? 2 : 0);
+    const down = { type: spec.text && !meta && !ctrl ? "keyDown" : "rawKeyDown", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers };
     if (down.type === "keyDown") down.text = spec.text;
     await this.cdp.send("Input.dispatchKeyEvent", down, this.s);
     await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.vk, modifiers }, this.s);
@@ -419,7 +425,7 @@ async function main() {
     // they are sending into. The sessions are started once and photographed in
     // both themes back to back, so the pair differs in nothing but the theme --
     // and so the picture costs one turn from each agent, not two.
-    {
+    if (DESK) {
       await p.goto(`${base}/desk/${deskId}`);
       await p.panes(PANES.length);
       if (agentReady) {
