@@ -35,7 +35,7 @@
      The pictures below are the film's own camera: film/shoot.mjs against the
      release binary, live Claude Code in every panel, at 2x in both themes. -->
 
-https://github.com/user-attachments/assets/fb6ee0de-a5ce-437c-b2a3-d354081ca727
+https://github.com/user-attachments/assets/71a5b82e-3eaa-4529-9160-dbe453b6b430
 
 You have more passion projects than hours in the day. With coding agents,
 you can finally build them all, at the same time.
