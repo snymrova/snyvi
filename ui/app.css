@@ -786,6 +786,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-quiet > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .t-quiet > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); opacity: 1; }
 .t-quiet[aria-expanded="false"] > .s-chev { transform: rotate(-45deg); }
+/* "Show less" ends the list it let out, so its chevron points back up it. */
+.t-quiet[aria-expanded="true"] > .s-chev { transform: translateY(1.5px) rotate(-135deg); }
 .t-quiet > .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); flex: none; }
 /* Something waiting in there, or the document on screen: the mark a folded
    project gets, and "more" stays shut until it is clicked. */
@@ -799,9 +801,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* An idle desk's name steps back, so the live ones -- the dot, "needs you"
    -- are what the eye finds. The desk on screen keeps its ink. */
 .t-desk > a:not(.active):not(:has(.dot)) > .title { color: var(--fg-2); }
-/* The same folder in the other sections, while one of its rows is under
-   the pointer (app.js, `twins`). */
-:is(.t-proj > summary, .b-root > summary, .t-desk > a).twin { background: color-mix(in srgb, var(--rule) 55%, transparent); }
 /* A row's fold chevron comes up a step under the pointer, so it reads as
    something to press. */
 summary:is(:hover, :focus-visible) > .s-chev { color: var(--fg-2); }
