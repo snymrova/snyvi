@@ -1,13 +1,20 @@
 # The film
 
-The README's demo. A hundred and nine seconds, 1920×1080, narrated, with music.
+The README's demo. A hundred and seventeen seconds, 1920×1080, narrated, with music.
 Every product pixel in it is the current release, photographed by a script
 against the real binary — nothing here is a mock-up or a memory of a build.
 
 ```
-node film/stage.mjs                   # a library, three desks, held-back sends
-node film/shoot.mjs                   # the frames, off the real window, on its own display
+node film/stage.mjs                   # a library, five desks, notes at every stage, held-back sends
+node film/shoot.mjs                   # the frames, off the real window, on its own display,
+                                      #   then the README's stills at 2x in both themes (frames/stills/)
 node film/stage.mjs --stop            # and take the library down
+
+# the README's stills, from frames/stills/
+for n in desk over switch home focus; do for t in dark light; do
+  convert film/frames/stills/$n-$t.png -quality 82 -define webp:method=6 docs/media/$n-$t.webp
+done; done
+node bench/media.mjs --no-desk        # the GUIDE's theme pictures, from headless Chromium
 OPENROUTER_API_KEY=… node film/audio.mjs   # the narration and the music
 node film/mix.mjs                     # one soundtrack, voice over a ducked bed
 cd film && npx hyperframes check      # lint, layout, contrast
@@ -20,11 +27,11 @@ ffmpeg -i film/renders/demo.mp4 -c:v libx264 -crf 30 -preset slow \
 
 `--workers 1` on purpose: each worker is a Chrome, and on a machine with a
 modest GPU four of them went away mid-render without saying why. One worker
-takes about fifteen minutes for the 2,829 frames.
+takes about five minutes for the 3,504 frames on this machine.
 
 A render can still die part-way with no error at all — the process simply
 goes, at frame 213 one time and 539 another. It is memory: a render holds a
-headless Chrome, an encoder and 2,829 frames of 1920x1080 going past, and
+headless Chrome, an encoder and 3,500 frames of 1920x1080 going past, and
 both times something else on the machine was doing the same thing beside it.
 Nothing says so in the log, because the process that would have printed it
 is the one that went. On a machine with the memory to itself it finished
@@ -43,12 +50,12 @@ master at 1:1. Anything below CRF 32 was, so the ceiling chose the number.
 |---|---|
 | `DESIGN.md` | the visual direction, and why it is that and not something else |
 | `beats.js` | the clock: every scene, when it starts, and the second each line lands on |
-| `stage.mjs` | a library worth filming: five projects, three desks, documents sent from inside panels, desk notes |
-| `shoot.mjs` | the camera: an Xvfb, a private session bus and the stage's own window, real Claude Code in the panels, writes `frames/` |
+| `stage.mjs` | a library worth filming: five projects, five desks (one parked), documents sent from inside panels, desk notes at every stage, where each desk was left |
+| `shoot.mjs` | the camera: an Xvfb, a private session bus and the stage's own window, real Claude Code in the panels, writes `frames/` and `frames/stills/`; `--no-agents` checks where every click lands without spending a turn, `--no-stills` skips the README's |
 | `xdo.py` | keys, pointer and tooltips for the camera, straight at the X server |
 | `audio.mjs` | the voice and the music, through OpenRouter, cached by what was asked for |
 | `mix.mjs` | lays the lines against `beats.js` and ducks the music under them |
-| `index.html` | the composition: twelve scenes, one GSAP timeline: problem, answer, how, summary, tag |
+| `index.html` | the composition: thirteen scenes, one GSAP timeline: problem, answer, how, summary, tag |
 | `frames/` | the stills, at the width the film magnifies them to |
 | `audio/` | a line per beat, the bed, and `mix.mp3` — what the film carries |
 | `fonts/` | the page's own two faces, copied out of `ui/fonts` by the camera |
@@ -70,6 +77,11 @@ composition and the mixer. Each beat carries `cues`: moments inside a
 spoken line, in seconds, taken from the pauses the voice actually leaves —
 measured with `silencedetect`, not guessed. That is why the words land on
 the words.
+
+The music was made for a 109-second cut. When the film outgrows it, as
+the "Room to focus" scene did, `mix.mjs` plays the whole bed a little
+slower (0.923x for 117 s, pitch kept) rather than splicing bars in, and
+refuses past 0.85x -- make a longer bed then.
 
 Changing a line means re-running `audio.mjs` (which fetches only what
 changed), updating that beat's `line` and `cues` in `beats.js`, and
@@ -153,7 +165,7 @@ at WCAG AA, 0 layout errors. Two things it says that are answered rather
 than fixed:
 
 **Two lint warnings**, both asking for the scenes to be split into
-sub-compositions: the file is ~560 lines with twelve timed elements on one
+sub-compositions: the file is ~560 lines with thirteen timed elements on one
 track. It is one file on purpose. The cut between two scenes animates both
 of them at once, and a sub-composition's timeline cannot reach outside
 itself, so splitting would mean hoisting every transition back into the

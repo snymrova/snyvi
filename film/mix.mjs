@@ -66,6 +66,14 @@ const end = total.toFixed(3);
 const tag = beats.find(b => b.name === "rocket");
 const musicFade = tag ? 1.4 : 3.6;
 const musicOut = tag ? tag.at - musicFade + 0.3 : total - 4;
+// The bed was asked for at a length, and the film can outgrow it: a scene
+// added after the music was made. Rather than splice bars in -- a seam on
+// the beat is the one thing a listener hears -- the whole track is played a
+// little slower, pitch kept, so its last hit still lands where it fades.
+const musicLen = seconds(music);
+const need = musicOut + musicFade;
+const tempo = musicLen < need ? musicLen / need : 1;
+if (tempo < 0.85) throw new Error(`the music is ${musicLen.toFixed(1)} s and the film needs ${need.toFixed(1)}: slower than 0.85x drags -- make a longer bed`);
 const inputs = [...beats.flatMap(b => ["-i", join(AUDIO, `${b.name}.mp3`)]), "-i", music];
 const voice = beats.map((b, i) => `[${i}:a]adelay=${Math.round(b.say * 1000)}:all=1[v${i}]`);
 const filter = [
@@ -76,7 +84,7 @@ const filter = [
   // starts. If that scene is the rocket, the tag after the lockup, it is read
   // over nothing but the voice -- the music leaving is the "one more thing".
   // Otherwise out over the film's last three seconds, as it always was.
-  `[${beats.length}:a]aresample=44100,apad,atrim=0:${end},volume=0.26,`
+  `[${beats.length}:a]${tempo < 1 ? `atempo=${tempo.toFixed(4)},` : ""}aresample=44100,apad,atrim=0:${end},volume=0.26,`
     + `afade=t=in:d=2,afade=t=out:st=${musicOut.toFixed(3)}:d=${musicFade}[bed]`,
   // Under a line the bed steps back, and returns between them.
   `[bed][key]sidechaincompress=threshold=0.035:ratio=4:attack=40:release=600:level_sc=1[duck]`,
@@ -88,5 +96,5 @@ execFileSync("ffmpeg", ["-y", "-loglevel", "error", ...inputs,
   "-filter_complex", filter, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "2", OUT],
   { stdio: ["ignore", "ignore", "inherit"] });
 
-console.log(`${OUT}  ${seconds(OUT).toFixed(2)} s, ${beats.length} lines under ${seconds(music).toFixed(0)} s of music`);
+console.log(`${OUT}  ${seconds(OUT).toFixed(2)} s, ${beats.length} lines under ${musicLen.toFixed(0)} s of music${tempo < 1 ? ` played at ${tempo.toFixed(3)}x` : ""}`);
 for (const b of beats) console.log(`  ${b.say.toFixed(2).padStart(6)}  ${b.name}`);

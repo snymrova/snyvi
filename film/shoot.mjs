@@ -70,9 +70,8 @@ const env = {
   BROWSER: "/bin/true",   // a window that cannot open must not become a tab on the real desktop
 };
 // The film is set on the dark, so the window is too: snyvi follows the system
-// theme until a reader picks one, and this is the system saying dark.
+// theme until a reader picks one, and `open` below has the system say dark.
 // `--light` for the paper version.
-if (!args.includes("--light")) env.GTK_THEME = "Adwaita:dark";
 const snyvi = join(tmp, "bin", "snyvi");
 
 /** Turn the window to a URL, the way a click on an agent's link does. */
@@ -92,20 +91,24 @@ async function type(text) {
   execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "type", text], { env, stdio: "inherit" });
   await sleep(900);
 }
+/** The window's scale: 1 for the film's frames, 2 for the README's stills,
+ *  which are the same window drawn at twice the pixels. Every coordinate in
+ *  this file is in the window's own (1280x860) points. */
+let K = 1;
 async function click(x, y) {
-  execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "click", `${x},${y}`], { env, stdio: "inherit" });
+  execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "click", `${x * K},${y * K}`], { env, stdio: "inherit" });
   await sleep(500);
 }
 
-async function shot(name) {
+async function shot(name, dir = OUT) {
   const id = execFileSync(PY, [join(HERE, "xdo.py"), "find"], { env, encoding: "utf8" }).split(" ")[0];
-  execFileSync("import", ["-window", id, join(OUT, `${name}.png`)], { env, stdio: "ignore" });
+  execFileSync("import", ["-window", id, join(dir, `${name}.png`)], { env, stdio: "ignore" });
   console.log(`  ${name}.png`);
 }
 
 const token = () => readFileSync(join(tmp, "config", "token"), "utf8").trim();
-const post = async (path, body) => {
-  const r = await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token()}` }, body: JSON.stringify(body ?? {}) });
+const post = async (path, body, extra = {}) => {
+  const r = await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token()}`, ...extra }, body: JSON.stringify(body ?? {}) });
   if (!r.ok) throw new Error(`${path}: ${r.status} ${await r.text()}`);
   return r.status === 204 ? null : r.json();
 };
@@ -113,7 +116,8 @@ const post = async (path, body) => {
 /** The display, the bus and the window, none of them the desktop's. */
 async function world() {
   const children = [];
-  const x = spawn("Xvfb", [DISPLAY, "-screen", "0", "1600x1000x24", "-nolisten", "tcp"], { stdio: "ignore" });
+  // Room for the window at twice its size, for the README's stills.
+  const x = spawn("Xvfb", [DISPLAY, "-screen", "0", "2800x1900x24", "-nolisten", "tcp"], { stdio: "ignore" });
   children.push(x);
   await sleep(1500);
   const bus = execFileSync("dbus-daemon", ["--session", "--fork", "--print-address=1", "--print-pid=1", "--nopidfile"], { encoding: "utf8" }).trim().split("\n");
@@ -123,18 +127,29 @@ async function world() {
   // not whichever one is installed.
   const app = join(tmp, "bin", "snyvi-app");
   if (!existsSync(app)) copyFileSync(resolve(HERE, "..", "target", "release", "snyvi-app"), app);
-  const { capability } = await post("/api/capability");
-  children.push(spawn(app, [`${base}/?window=1#cap=${capability}`], { env, stdio: "ignore", cwd: tmpdir() }));
-  for (let i = 0; i < 60; i++) {
-    try { execFileSync(PY, [join(HERE, "xdo.py"), "find"], { env, stdio: "ignore" }); break; } catch { await sleep(500); }
+  let win = null;
+  /** The window, opened afresh: in a theme (the system's side, which snyvi
+   *  follows until a reader picks one) and at a scale. The panels and their
+   *  sessions are the daemon's, so they are there again as they were. */
+  async function open({ theme = args.includes("--light") ? "light" : "dark", scale = 1 } = {}) {
+    if (win) { win.kill(); await sleep(1500); }
+    if (theme === "dark") env.GTK_THEME = "Adwaita:dark"; else delete env.GTK_THEME;
+    if (scale === 1) delete env.GDK_SCALE; else env.GDK_SCALE = String(scale);
+    K = scale;
+    const { capability } = await post("/api/capability");
+    win = spawn(app, [`${base}/?window=1#cap=${capability}`], { env, stdio: "ignore", cwd: tmpdir() });
+    for (let i = 0; i < 60; i++) {
+      try { execFileSync(PY, [join(HERE, "xdo.py"), "find"], { env, stdio: "ignore" }); break; } catch { await sleep(500); }
+    }
+    await sleep(3000);
   }
-  await sleep(3000);
-  return () => { for (const c of children.reverse()) c.kill(); try { process.kill(busPid); } catch {} };
+  await open();
+  return { open, down: () => { win?.kill(); for (const c of children.reverse()) c.kill(); try { process.kill(busPid); } catch {} } };
 }
 
-async function move(x, y) { execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "move", `${x},${y}`], { env }); }
+async function move(x, y) { execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "move", `${x * K},${y * K}`], { env }); }
 /** The pointer out of the way, and any tooltip it left behind taken down. */
-async function still() { await move(640, 845); execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "untip"], { env }); await sleep(300); }
+async function still(x = 640, y = 845) { await move(x, y); execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "untip"], { env }); await sleep(300); }
 
 /** A document a panel sends, now: what film/stage.mjs held back. */
 async function sendFromPanel(which) {
@@ -152,30 +167,43 @@ const ASK = {
     "Review docs/rate-limiting.md against src/limit.rs and list where the plan and the code disagree",
     "Review src/limit.rs: what it does today, and what could break under load",
     "Find every path in src/limit.rs where a Redis error turns into a 429 or lets a request through",
-    "Read src/limit.rs and docs/rate-limiting.md and write docs/summary.md: what changes for Free, Team and Enterprise keys",
+    "Read src/limit.rs and docs/rate-limiting.md and say what changes for Free, Team and Enterprise keys",
   ],
   gateway: [
     "Review docs/gateway-design.md against src/ingest.ts and list where they conflict",
     "What happens to src/ingest.ts in a replay storm? Walk through it",
   ],
 };
-// The panel bodies, by count, in window pixels: two columns, one or two rows.
-const SPOTS = { 4: [[466, 300], [845, 300], [466, 700], [845, 700]], 2: [[466, 450], [845, 450]] };
 // The desk rail, in window pixels: rows of Documents, and the notes under them.
-const RAIL = { row: n => [1140, 286 + 26 * n], back: n => [1246, 286 + 26 * n], note: y => [1072, y] };
+// An open document's row wraps to two lines and lays its tools over its end:
+// copy, ← back to the desk, ✕ off the desk. ← is the middle one.
+const RAIL = { row: n => [1140, 286 + 26 * n], back: n => [1223, 295 + 26 * n], note: y => [1072, y] };
 
+/** `--no-agents`: the panels stay shells, for checking where every click
+ *  lands without spending a turn of anyone's Claude. */
+const AGENTS = !args.includes("--no-agents");
+
+/** Each panel of a desk restarted on its question, the way a panel's Start
+ *  runs a program: stopped, then started with `claude "…"` as its command.
+ *  Typing it at the window was the first way, and it raced: a click on the
+ *  next panel landed while the last was still taking keys, and half a
+ *  question went to the wrong one. */
 async function ask(deskIdx, name) {
   await go(`/desk/${desks[deskIdx]}`);
+  const cap = (await post("/api/capability")).capability;
+  const page = { "x-snyvi-capability": cap, origin: base };
   for (const [n, q] of ASK[name].entries()) {
-    await click(...SPOTS[ASK[name].length][n]);
-    await type(`clear; claude "${q}"`);
-    await key("Return");
+    const id = panes[name][n];
+    await post(`/api/panes/${id}/stop`, {}, page);
+    await sleep(600);
+    await post(`/api/panes/${id}/start`, { cmd: AGENTS ? `claude "${q}"` : "", cols: 100, rows: 30 }, page);
   }
+  await sleep(1500);
 }
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
-  const down = await world();
+  const { open, down } = await world();
   try {
     console.log(`frames: ${OUT}`);
     await key("Escape", { focus: true });
@@ -185,18 +213,48 @@ async function main() {
     // model, plan -- has scrolled off.
     await ask(0, "ledger");
     await ask(1, "gateway");
-    await sleep(Number(process.env.SNYVI_FILM_WORK_MS || 90000));
+    await sleep(Number(process.env.SNYVI_FILM_WORK_MS || (AGENTS ? 90000 : 3000)));
     await post("/api/queue/clear");
+
+    // Home: every desk, where each was left, what is still open on it -- with
+    // the ledger, looked at last, offered to pick up.
+    await go(`/desk/${desks[0]}`);
+    await go("/");
+    await still(1150, 845);   // Home's right column, empty: over the list a pointer raises a tip
+    await shot("home");
+
+    // Which agents are connected: the six sessions above, and the others
+    // registered in this home.
+    await go("/connect");
+    await still();
+    await shot("connect-dark");
 
     // The poster: the desk, four agents, what they sent, what it still owes.
     await go(`/desk/${desks[0]}`);
     await still();
     await shot("desk");
 
-    // Where it started: the folder the desk is rooted at, its new-desk tool up.
-    await move(120, 436);
-    execFileSync(PY, [join(HERE, "xdo.py"), "--no-focus", "untip"], { env });
-    await shot("folder-desk");
+    // Room to focus: the sidebar folded to its strip, the rail put away, and
+    // panel 1 given the whole window -- then all of it put back, so every
+    // frame after this one is the desk as it was.
+    await click(238, 28);          // the sidebar's Hide
+    await sleep(900);
+    await still();
+    await shot("focus-side");
+    await click(1070, 28);         // the rail's Hide
+    await sleep(900);
+    await still();
+    await shot("focus-rail");
+    await click(612, 64);          // panel 1's full view, in its head
+    await sleep(1400);
+    await still();
+    await shot("focus-full");
+    await click(1218, 64);         // back to the grid
+    await sleep(900);
+    await click(1154, 28);         // the rail, from its button in the window's head
+    await sleep(700);
+    await click(22, 66);           // the sidebar, from the top of its strip
+    await sleep(900);
 
     // Panel 4 sends; the rail takes it, marked [4].
     await still();
@@ -215,13 +273,16 @@ async function main() {
     await still();
     await shot("desk-over");
 
-    // Against the version before it.
+    // Against the version before it. The letters sleep until ⌃B wakes them,
+    // as they do for a reader, and go back to sleep after.
     await click(640, 420);
+    await key("ctrl+b");
     await key("c");
     await sleep(1500);
     await still();
     await shot("desk-diff");
     await key("c");
+    await key("ctrl+b");
 
     // Back to the desk, and one of its notes ticked off.
     await click(...RAIL.back(1));
@@ -266,6 +327,54 @@ async function main() {
       execFileSync("import", ["-window", id, join(OUT, "rocket", `r${String(i).padStart(2, "0")}.png`)], { env, stdio: "ignore" });
     }
     console.log("  rocket/r01..r24.png");
+
+    // The README's stills: the same library, the window reopened at twice the
+    // pixels, once on each side of the system theme. Photographed, not
+    // clicked through -- the notes were ticked above, and a second click would
+    // untick one -- except the plan, opened over the desk and closed again.
+    if (!args.includes("--no-stills")) {
+      const dir = join(OUT, "stills");
+      mkdirSync(dir, { recursive: true });
+      // Panel 3's review, sent during the game, is read: no banner over the
+      // stills, and it sits at the top of the rail, so the plan is row 2.
+      await post("/api/queue/clear");
+      for (const theme of ["dark", "light"]) {
+        await open({ theme, scale: 2 });
+        await key("Escape", { focus: true });
+        await go("/");
+        await still(1150, 845);
+        await shot(`home-${theme}`, dir);
+        await go(`/desk/${desks[0]}`);
+        await still();
+        await shot(`desk-${theme}`, dir);
+        await click(...RAIL.row(2));
+        await sleep(2000);
+        await still();
+        await shot(`over-${theme}`, dir);
+        await click(...RAIL.back(2));
+        await sleep(1500);
+        // Room to focus: sidebar and rail folded, panel 1 in full view, and
+        // all of it put back after.
+        await go(`/desk/${desks[0]}`);
+        await click(238, 28);
+        await sleep(900);
+        await click(1070, 28);
+        await sleep(900);
+        await click(612, 64);
+        await sleep(1400);
+        await still();
+        await shot(`focus-${theme}`, dir);
+        await click(1218, 64);
+        await sleep(900);
+        await click(1154, 28);
+        await sleep(700);
+        await click(22, 66);
+        await sleep(900);
+        await go(`/desk/${desks[1]}`);
+        await still();
+        await shot(`switch-${theme}`, dir);
+      }
+    }
   } finally {
     down();
   }

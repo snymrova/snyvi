@@ -38,6 +38,7 @@ export const LINES = {
   answer:   `${NAME} keeps it all in order. A desktop app with one desk for each project, and everything your agents write, kept where you can read it.`,
   // How, one part of the problem a line.
   desks:    "Each project gets a desk. Its folder, and up to four agents side by side, each in its own panel.",
+  focus:    "When one of them needs your full attention, fold away the sidebar and the rail, and give its panel the whole window.",
   docs:     "When an agent writes a plan or a review, it doesn't scroll away. It lands on the desk, marked with the panel that wrote it, and opens as a clean page.",
   library:  "Every document files itself by project, in one inbox. Every revision is kept, and C shows exactly what changed.",
   notes:    "Each desk keeps its own notes, so what's left to do stays with the project, not in your head.",

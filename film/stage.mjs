@@ -6,7 +6,7 @@
  * two projects so the sidebar has a shape, and bench/ui.mjs wants as little as
  * it can prove something with. The film wants the opposite. A library with one
  * project in it photographs as a demo; a reader recognises their own week in
- * five projects, a dozen documents, folders open on disk and three desks with
+ * five projects, a dozen documents, folders open on disk and five desks with
  * shells in them, and that recognition is most of what the film is selling.
  *
  * So this stages the full thing and then gets out of the way: it prints the
@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, copyFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, copyFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,29 +114,57 @@ const LATER = {
 };
 
 /** The desks: a name, the checkout it is rooted at, and how many panes.
- *  Seven panes over three desks, against a global cap of eight, so the
- *  Panels count in the rail reads as a working machine and not a fresh one. */
-const DESKS = [["ledger", "ledger", 4], ["gateway", "gateway", 2], ["atlas", "atlas", 1]];
+ *  Five desks, so Home has a shelf of them; infra is parked, with the step
+ *  it is waiting on, so Home shows a project put down on purpose. */
+const DESKS = [["ledger", "ledger", 4], ["gateway", "gateway", 2], ["atlas", "atlas", 1], ["website", "website", 1], ["infra", "infra", 1]];
+const PARKED = { infra: "Rotate the staging certificates before Friday's deploy" };
 
-/** What each desk still owes its reader, on its own list in the rail. The
- *  first is done, so the list reads as one being worked through. */
+/** What each desk still owes its reader, on its own list in the rail, and
+ *  how far an agent in one of its panels has got with each: a list being
+ *  worked through, by the agents as much as by the reader.
+ *  `[text, stage, pane]`: stage is open (null), read, planned, working or
+ *  done, said by the panel `pane` the way mark_desk_note and tick_desk_note
+ *  say it. */
 const DESK_NOTES = {
   ledger: [
-    ["Pick a side on the org bucket: plan or code", true],
-    ["Retry-After in whole seconds, or allow fractions?", false],
-    ["Fail open on Redis errors: ask ops before merge", false],
+    ["Pick a side on the org bucket: plan or code", "done", 0],
+    ["Retry-After in whole seconds, or allow fractions?", null],
+    ["Fail open on Redis errors: ask ops before merge", "working", 2],
+    ["Write up what changes for Free, Team and Enterprise keys", "planned", 3],
   ],
-  gateway: [["Make dedup-and-enqueue one atomic step", false]],
+  gateway: [
+    ["Make dedup-and-enqueue one atomic step", "read", 0],
+    ["Cap the retry queue before a replay storm fills it", null],
+  ],
+  atlas: [["Ask finance which 300 merchants make up the tail", null]],
+  website: [["Hero for the pricing page: the calmer one, like this", null, null, "hero"]],
+};
+
+/** Where each desk's work was left, as a panel's agent says it with
+ *  leave_off -- or, for the one without an agent, as the reader typed it. */
+const LEFT_OFF = {
+  ledger: ["If ops agree to fail open, merge the limiter; the two open questions are in the notes", 0],
+  gateway: ["Dedup and enqueue still race under replay; the fix is one Lua script, next session", 0],
+  atlas: ["Spike says yes; waiting on finance for the 300 accounts before the real build", 0],
+  website: ["Pricing copy is done; the hero picture is the last thing", null],
+};
+
+/** What the panels are called, as their agents name them with name_panel. */
+const PANEL_NAMES = {
+  ledger: ["Plan vs code", "Load review", "Redis errors", "Tier summary"],
+  gateway: ["Design vs ingest", "Replay storm"],
+  atlas: ["Statements spike"],
+  website: ["Pricing page"],
 };
 
 /** Folders open under Folders, read from disk rather than imported. */
-const FOLDERS = ["ledger", "gateway", "atlas"];
+const FOLDERS = ["ledger", "gateway", "atlas", "website", "infra"];
 
 /** The notes at the foot of the sidebar: the sentence that is not a document.
  *  The last of them is the one lit. */
 const NOTES = [
-  "Left the org bucket alone -- the plan and the code disagree about it and I did not want to pick a side without you.",
-  "The statements spike came out yes, with a tail of 300 merchant accounts. Numbers are in the table.",
+  ["Left the org bucket alone -- the plan and the code disagree about it and I did not want to pick a side without you.", "ledger"],
+  ["The statements spike came out yes, with a tail of 300 merchant accounts. Numbers are in the table.", "atlas"],
 ];
 
 /* ---------- staging ---------- */
@@ -193,8 +221,24 @@ const api = async (path, body, extra = {}) => {
   return r.status === 204 ? null : r.json();
 };
 
+/** A picture on a desk note: drawn here, so the stage needs nothing it has
+ *  not got. A hero sketch for the pricing page -- the kind of thing a reader
+ *  drops on a note to say "like this". */
+async function attach(desk, note, what) {
+  const file = join(tmp, `${what}.png`);
+  execFileSync("convert", ["-size", "960x540", "gradient:#f4efe6-#d9cbb3",
+    "-fill", "#2b2a28", "-font", "DejaVu-Sans-Bold", "-pointsize", "64", "-gravity", "west", "-annotate", "+90-40", "Build the thing\nyou care about.",
+    "-fill", "#7a6f60", "-font", "DejaVu-Sans", "-pointsize", "30", "-annotate", "+92+110", "Free for makers. $12 a month for teams.",
+    "-fill", "#c8553d", "-draw", "roundrectangle 90,420 330,480 12,12",
+    "-fill", "#ffffff", "-pointsize", "26", "-gravity", "northwest", "-annotate", "+128+434", "Start free", file]);
+  const r = await fetch(`${base}/api/desks/${desk}/notes/${note}/image`, {
+    method: "POST", headers: { "content-type": "image/png", authorization: `Bearer ${token}`, ...asPage }, body: readFileSync(file),
+  });
+  if (!r.ok) throw new Error(`note image: ${r.status} ${await r.text()}`);
+}
+
 // The notes: in memory, the last five, the newest lit.
-for (const text of NOTES) { await api("/api/notes", { text, sender: "claude-code" }); await sleep(400); }
+for (const [text, repo] of NOTES) { await api("/api/notes", { text, sender: "claude-code", cwd: dirs[repo] }); await sleep(400); }
 
 // Folders, read from disk. Nothing is imported by this.
 const roots = {};
@@ -210,7 +254,14 @@ const panes = {};
 for (const [name, root, count] of DESKS) {
   const { desk } = await api("/api/desks", { root: roots[root], name }, asPage);
   panes[name] = [];
-  for (let i = 0; i < count; i++) panes[name].push((await api(`/api/desks/${desk.id}/panes`, {}, asPage)).pane.id);
+  for (let i = 0; i < count; i++) {
+    const id = (await api(`/api/desks/${desk.id}/panes`, {}, asPage)).pane.id;
+    // Started, the way a window's first look at the panel starts it: a shell
+    // in the desk's folder. The agents' routes below answer only a running
+    // pane, as they do for a real one.
+    await api(`/api/panes/${id}/start`, { cmd: "", cols: 100, rows: 30 }, asPage);
+    panes[name].push(id);
+  }
   desks.push(desk);
 }
 
@@ -233,12 +284,40 @@ for (const [repo, workflow, file, sender, keep, as, from] of DOCS) {
 // Read everything but the last few, so the queue is a morning and not a backlog.
 for (const { doc, keep } of sent) if (!keep) await api(`/api/docs/${doc.id}/read`, {});
 
-// Each desk's own list, in the order it was written.
+// The plan the ledger's notes point at: a note planned or ticked names the
+// document it is about, the way an agent passes the id send_document gave it.
+const plan = sent.filter(s => s.doc.title && /rate/i.test(s.doc.title)).pop()?.doc ?? sent[sent.length - 1].doc;
+const head = repo => execFileSync("git", ["-C", dirs[repo], "rev-parse", "--short", "HEAD"], { env: gitEnv, encoding: "utf8" }).trim();
+
+// Each desk's own list, in the order it was written, and each line as far
+// along as the agent on it says. The panes' routes are the agents' own --
+// the token and a running pane -- so this is what mark_desk_note and
+// tick_desk_note do, not a shortcut past them.
 for (const desk of desks) {
-  for (const [text, done] of DESK_NOTES[desk.name] ?? []) {
+  for (const [text, stage, pane, picture] of DESK_NOTES[desk.name] ?? []) {
     const { note } = await api(`/api/desks/${desk.id}/notes`, { text }, asPage);
-    if (done) await api(`/api/desks/${desk.id}/notes/${note.id}`, { done: true }, asPage);
+    if (picture) await attach(desk.id, note.id, picture);
+    if (!stage) continue;
+    const at = `/api/panes/${panes[desk.name][pane]}/notes/${note.id}`;
+    if (stage === "done") await api(`${at}/tick`, { by: "claude-code", commit: head(desk.name), about: plan.id });
+    else await api(`${at}/mark`, { stage, by: "claude-code", about: stage === "planned" ? plan.id : "" });
+    await sleep(300);
   }
+}
+
+// The panels' names, and where each desk was left.
+for (const desk of desks) {
+  for (const [i, name] of (PANEL_NAMES[desk.name] ?? []).entries()) await api(`/api/panes/${panes[desk.name][i]}/name`, { name });
+  const left = LEFT_OFF[desk.name];
+  if (!left) continue;
+  if (left[1] === null) await api(`/api/desks/${desk.id}/leftoff`, { text: left[0], at: 0 }, asPage);
+  else await api(`/api/panes/${panes[desk.name][left[1]]}/leftoff`, { text: left[0], by: "claude-code" });
+}
+for (const desk of desks) if (PARKED[desk.name]) await api(`/api/desks/${desk.id}/park`, { next: PARKED[desk.name] }, asPage);
+// Visited in the order a day went, so Home offers ledger to pick up.
+for (const name of ["website", "atlas", "gateway", "ledger"]) {
+  await api(`/api/desks/${desks.find(d => d.name === name).id}/visit`, {}, asPage);
+  await sleep(1100);
 }
 
 // Three agents registered in this home, so the connect page and the count
@@ -252,8 +331,30 @@ for (const a of ["cursor", "codex"]) execFileSync(BIN, ["init", a], { env, stdio
 if (agentReady) {
   writeFileSync(join(claudeCfg, ".claude.json"), JSON.stringify({
     hasCompletedOnboarding: true,
+    // snyvi, by name: the stage's bin is first on the panes' PATH. Written
+    // here because init-claude reads the stage HOME's registration (the
+    // connect page's, above), finds snyvi there, and adds nothing.
+    mcpServers: { snyvi: { type: "stdio", command: "snyvi", args: ["mcp"], env: {} } },
     projects: Object.fromEntries(Object.values(dirs).map(d => [d, { hasTrustDialogAccepted: true, allowedTools: [], history: [] }])),
   }));
+  // And connected to this snyvi, as a reader's would be after `snyvi
+  // init-claude`: the MCP server, the hooks that say whether a panel is
+  // working, the status line. Run under the stage's HOME and Claude config,
+  // then the hooks copied to where that config's Claude reads them. The real
+  // ~/.claude is checked before and after: this must not have touched it.
+  // (~/.claude.json itself is rewritten by every running Claude, so its
+  // snyvi entry is what is compared, not its time.)
+  const realHome = process.env.HOME ?? "";
+  const stamp = () => {
+    let t = 0, entry = "";
+    try { t = statSync(join(realHome, ".claude", "settings.json")).mtimeMs; } catch {}
+    try { entry = JSON.stringify(JSON.parse(readFileSync(join(realHome, ".claude.json"), "utf8")).mcpServers?.snyvi); } catch {}
+    return `${t} ${entry}`;
+  };
+  const before = stamp();
+  execFileSync(BIN, ["init-claude"], { env, stdio: "ignore" });
+  if (stamp() !== before) throw new Error("init-claude touched the real ~/.claude -- stop here and look");
+  copyFileSync(join(home, ".claude", "settings.json"), join(claudeCfg, "settings.json"));
 }
 
 writeFileSync(MARK, JSON.stringify({ tmp, port: PORT, desks: desks.map(d => d.id), panes, dirs, later: LATER }, null, 2) + "\n");
