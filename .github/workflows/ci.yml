@@ -181,7 +181,7 @@ jobs:
         # daemon this starts and gzipped as it serves them -- not read out of
         # ui/, which stopped being the same bytes when build.rs began taking
         # the comments out. Two things fail a push: first paint over the
-        # 50 KB budget in docs/BRAINSTORM.md, and an asset that does not
+        # budget bench/bytes.mjs states (55 KB today), and an asset that does not
         # parse as served, which is the strip's own safety net.
         run: node bench/bytes.mjs --check
       - name: The design system's debt only goes down
@@ -191,6 +191,11 @@ jobs:
         # bench/lint-ui.baseline.json. Report mode: the push fails only when
         # a count goes up, and a change that pays debt lowers the file.
         run: node bench/lint-ui.mjs --check
+      - name: Nothing over a size ceiling grew
+        # CLAUDE.md: a file over 2,500 lines or a function over 120 may only
+        # shrink, held against bench/size.baseline.json. A change that
+        # splits a module lowers the file in the same commit.
+        run: node bench/size.mjs --check
       - name: The README's pictures can still be taken
         # bench/media.mjs is the camera the README's pictures come from; a
         # release re-takes them. Taken here into a folder that is thrown
