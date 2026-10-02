@@ -78,7 +78,8 @@ const notesKept = new Set();
  *  as one: without this, every redraw committed whatever was half-typed. */
 let drawing = false;
 /** How long the offer to put a line back stands, matching the page's own undo. */
-const BACK_MS = 8000;
+/** How long an Undo stands: six seconds, everywhere (docs/DESIGN.md Q2; app.js UNDO_MS). */
+const BACK_MS = 6000;
 let backTimer = 0;
 /** The done lines "Remove done notes" just took off -- { at: desk id, xs: [note] } --
  *  while their Undo stands. It shares backTimer with a single line's ✕: only
@@ -865,7 +866,7 @@ const CTRL = { " ": 0, "@": 0, "2": 0, "[": 27, "3": 27, "\\": 28, "4": 28, "]":
 
 /** What a key sends to a program, as xterm sends it. `null` for a key this
  *  leaves to the page: the platform's own shortcuts, and the two snyvi keeps. */
-export function keyBytes(e, appCursor) {
+function keyBytes(e, appCursor) {
   const m = 1 + (e.shiftKey ? 1 : 0) + (e.altKey ? 2 : 0) + (e.ctrlKey ? 4 : 0);
   let k = e.key;
   if (CUR[k]) return m > 1 ? `\x1b[1;${m}${CUR[k]}` : `\x1b${appCursor ? "O" : "["}${CUR[k]}`;
@@ -937,10 +938,10 @@ function makeView(p) {
   el.className = "pn";
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
-    `<div class="pn-body" tabindex="0" role="region" aria-label="Terminal"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
-    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" title="Not now" aria-label="Not now">✕</button></div>` +
+    `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
+    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
-    `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden title="claude --resume, the conversation this panel last had">↻ Resume conversation</button></form>`;
+    `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden data-tip="Resume conversation" data-tip-sub="claude --resume, the one this panel last had">↻ Resume conversation</button></form>`;
   // A new project desk's first panel, holding `claude` for the reader's Enter.
   const first = !!(ctx.held && ctx.held.delete(p.id));
   const kept = keepStopped.delete(p.id) || first;
@@ -1206,6 +1207,13 @@ const sentBy = (vs, slot) => {
 };
 const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
 
+/** The desk's live region (`.dk-live`, polite): one line at a time, and the
+ *  same line said twice is cleared first so it is read twice. */
+function announce(text) {
+  const el = ctx.docEl.querySelector(".dk-live");
+  if (el) { el.textContent = ""; el.textContent = text; }
+}
+
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
   const sl = $(".pn-slot");
@@ -1228,6 +1236,11 @@ function header(v) {
   if (cp == null) delete cx.dataset.tip; else cx.dataset.tip = ctxTip(s);
   if (s.agent) heardFrom(v);
   $(".pn-state").textContent = s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
+  // Said once, to a reader who cannot see the dot: a panel that needs the
+  // reader, or has finished. Working and running are the quiet states.
+  const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";
+  if (word && v.said !== word) announce(`Panel ${v.pane.slot}${v.pane.name ? ` (${v.pane.name})` : ""} ${word}`);
+  v.said = word;
   v.el.classList.toggle("blk", !!s.blocked);
   v.el.classList.toggle("done", s.agent === "done");
   v.el.classList.toggle("off", !s.running);
@@ -1573,7 +1586,7 @@ function draw() {
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
-    `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"></div></div></div>`;
+    `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div><div class="dk-live vh" aria-live="polite"></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
   gridWatch?.disconnect();
@@ -1618,7 +1631,7 @@ function list() {
  *  trimmed off -- and a closing bracket kept when the link opened one, as a
  *  Wikipedia link does. Nothing else is a link: what a program prints is not
  *  trusted, and `file:`, `javascript:` and every other scheme stay text. */
-export function urlAt(text, i) {
+function urlAt(text, i) {
   const re = /https?:\/\/[^\s<>"'`]+/g;
   for (let m; (m = re.exec(text));) {
     let u = m[0];
@@ -1923,10 +1936,10 @@ function rail() {
     return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
       `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
       `<span class="dk-tools">` +
-      (run ? `<button type="button" data-a="stop" data-p="${v.id}" title="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
-        : `<button type="button" data-a="start" data-p="${v.id}" title="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
-      (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" title="${run ? "Type claude --resume into the shell, for you to run" : "Resume the conversation this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
-      `<button type="button" data-a="close" data-p="${v.id}" title="Close panel · Undo for 8 s  ⌃⌥W" aria-label="Close panel ${n}">${ico("x")}</button>` +
+      (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
+        : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
+      (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" data-tip="Resume conversation" data-tip-sub="${run ? "Types claude --resume into the shell, for you to run" : "The one this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
+      `<button type="button" data-a="close" data-p="${v.id}" data-tip="Close panel" data-tip-sub="Undo in the rail" data-key="ctrl+alt+w" aria-label="Close panel ${n}">${ico("x")}</button>` +
       `</span></li>` +
       (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc);
   };
@@ -1941,7 +1954,7 @@ function rail() {
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" title="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" title="Start every stopped panel again">Start all</button>` : "") + `</div></div>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></div>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded. The row's
@@ -1981,7 +1994,7 @@ function docRow(x, gone, vs, esc) {
     // the ✕ that takes it off this list -- this list only.
     `<span class="dk-tools">` +
     (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
-    (on ? `<button type="button" data-a="desk" title="Back to the panels  ⌃\`" aria-label="Back to the panels">${ico("back")}</button>` : "") +
+    (on ? `<button type="button" data-a="desk" data-tip="Back to the panels" data-key="ctrl+\`" aria-label="Back to the panels">${ico("back")}</button>` : "") +
     `<button type="button" data-a="doc-x" data-d="${esc(x.id)}" data-tip="Remove from this list" data-tip-sub="the Inbox keeps it" aria-label="Remove ${esc(x.title)} from this desk's list">${ico("x")}</button>` +
     `</span></li>` + errLine(`d${x.id}`, esc);
 }
@@ -2649,7 +2662,7 @@ function pointSec(vs) {
       return `<ul class="dk-list">` + ps.map((x, i) => x.gone
         ? `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
         : `<li class="dk-note dk-point"><span class="nm" title="${esc(x.from)}">${esc(x.text)}</span>` +
-          `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" title="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
+          `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" data-tip="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
         (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" title="Type ${live === 1 ? "it" : "them"} into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
         (pointSaid && pointSaid.p === v.id ? `<p class="dk-empty dk-said" role="status">${esc(pointSaid.text)}</p>` : "");
     }).join("") + `</div>`;
@@ -3308,15 +3321,15 @@ export function actions(el) {
     const picked = body && !sel.isCollapsed && v.body.contains(sel.anchorNode);
     const s = v.status;
     return { head: `Panel ${v.pane.slot} · ${short(v)}`, items: [
-      picked && { label: "Copy", key: "⌃⇧C", run: () => copy(v, true) },
-      body && s.running && { label: "Paste", key: "⌃⇧V", run: () => pasteText(v) },
+      picked && { label: "Copy", key: ctx.keyHint("ctrl+shift+c"), run: () => copy(v, true) },
+      body && s.running && { label: "Paste", key: ctx.keyHint("ctrl+shift+v"), run: () => pasteText(v) },
       body && R,
-      body && { label: "Text size +", key: "⌃=", run: () => { textSize(1); if (ctx.sized) ctx.sized(); } },
-      body && { label: "Text size −", key: "⌃-", run: () => { textSize(-1); if (ctx.sized) ctx.sized(); } },
-      body && { label: "Reset text size", key: "⌃0", run: () => { textSize(0); if (ctx.sized) ctx.sized(); } },
+      body && { label: "Text size +", key: ctx.keyHint("ctrl+="), run: () => { textSize(1); if (ctx.sized) ctx.sized(); } },
+      body && { label: "Text size −", key: ctx.keyHint("ctrl+-"), run: () => { textSize(-1); if (ctx.sized) ctx.sized(); } },
+      body && { label: "Reset text size", key: ctx.keyHint("ctrl+0"), run: () => { textSize(0); if (ctx.sized) ctx.sized(); } },
       body && R,
-      v.id !== focused && { label: "Focus", key: `⌃⌥${v.pane.slot}`, run: () => focusPane(v.id) },
-      { label: full && v.id === focused ? "Back to the grid" : "Full view", key: "⌃⌥Z", run: () => { if (!(full && v.id === focused)) { focused = v.id; if (full) { saveFull(); layout(); v.body.focus(); return; } } zoom(); } },
+      v.id !== focused && { label: "Focus", key: ctx.keyHint(`ctrl+alt+${v.pane.slot}`), run: () => focusPane(v.id) },
+      { label: full && v.id === focused ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => { if (!(full && v.id === focused)) { focused = v.id; if (full) { saveFull(); layout(); v.body.focus(); return; } } zoom(); } },
       ...[1, 2, 3, 4].filter(n => n !== v.pane.slot).map(n => ({ label: `Move to position ${n}`, run: () => moveTo(v, n) })),
       R,
       s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
@@ -3325,8 +3338,8 @@ export function actions(el) {
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,
-      { label: "Rename…", key: "F2", moves: 1, run: () => renamePanel(v) },
-      { label: "Close panel", key: "⌃⌥W", danger: true, run: does("close") },
+      { label: "Rename…", key: ctx.keyHint("f2"), moves: 1, run: () => renamePanel(v) },
+      { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }
   const doc = el.closest(".dk-doc");
@@ -3383,7 +3396,6 @@ export const isFull = () => full;
 export const startAll = () => act({ dataset: { a: "all" } });
 export const renameHere = () => { const d = current(); if (d) renameDesk(d); };
 export const keysHere = () => { const d = current(); if (d) keysSheet(d); };
-export const panels = () => views.size;
 
 export function update(desks) {
   if (!ctx) return;

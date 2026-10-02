@@ -52,21 +52,54 @@ pub fn base_url() -> String {
 
 /// Daemon side: create the token on first run.
 pub fn load_or_create_token(paths: &Paths) -> Result<String> {
-    if let Ok(t) = fs::read_to_string(&paths.token_path) {
-        let t = t.trim().to_string();
-        if !t.is_empty() {
-            return Ok(t);
-        }
+    load_or_create_secret(&paths.token_path, &paths.config_dir)
+}
+
+/// Where the window secret lives: beside the token, in a file only its owner
+/// reads, made by the daemon on first run like the token is.
+pub fn window_secret_path(paths: &Paths) -> PathBuf {
+    paths.config_dir.join("window")
+}
+
+/// Daemon side: the window secret.
+///
+/// A second secret with a different job. The token is what an agent holds:
+/// it sends documents and asides and speaks for its own panel. This is what
+/// the window and the CLI hold: it stops, restarts and updates the daemon
+/// and mints a window's capability -- the things that start or end a
+/// process. The two sit in the same directory with the same mode, so a local
+/// program that reads one can read the other; what the split buys is that a
+/// token handed somewhere else (a container the agent runs in, a config
+/// file) carries no leave to run anything. See `server::windowed`.
+pub fn load_or_create_window_secret(paths: &Paths) -> Result<String> {
+    load_or_create_secret(&window_secret_path(paths), &paths.config_dir)
+}
+
+/// Client side: the window secret, if the daemon has made one.
+pub fn read_window_secret(paths: &Paths) -> Option<String> {
+    read_secret(&window_secret_path(paths))
+}
+
+fn load_or_create_secret(path: &std::path::Path, dir: &std::path::Path) -> Result<String> {
+    if let Some(s) = read_secret(path) {
+        return Ok(s);
     }
-    fs::create_dir_all(&paths.config_dir).context("creating config dir")?;
-    let token = random_token()?;
-    fs::write(&paths.token_path, &token).context("writing token")?;
+    fs::create_dir_all(dir).context("creating config dir")?;
+    let secret = random_token()?;
+    fs::write(path, &secret).with_context(|| format!("writing {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&paths.token_path, fs::Permissions::from_mode(0o600));
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
     }
-    Ok(token)
+    Ok(secret)
+}
+
+fn read_secret(path: &std::path::Path) -> Option<String> {
+    fs::read_to_string(path)
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
 }
 
 /// A new token in place of the old one, which is dead from here on. What a
@@ -80,10 +113,7 @@ pub fn rotate_token(paths: &Paths) -> Result<String> {
 
 /// Client side: read the token if the daemon has created one.
 pub fn read_token(paths: &Paths) -> Option<String> {
-    fs::read_to_string(&paths.token_path)
-        .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
+    read_secret(&paths.token_path)
 }
 
 fn random_token() -> Result<String> {

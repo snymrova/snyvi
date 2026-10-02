@@ -31,7 +31,9 @@ mod store;
 /// put the scanner's tests in `cargo test`, where they belong.
 #[cfg(test)]
 mod strip;
+mod text;
 mod update;
+mod version;
 mod watch;
 
 /// "1 panel", "3 panels": a count in words, never "panel(s)"
@@ -548,10 +550,10 @@ fn main() -> Result<()> {
                 Some(h) => {
                     println!("{}", serde_json::to_string_pretty(&h)?);
                     let running = h.get("version").and_then(|v| v.as_str()).unwrap_or("");
-                    if running != server::VERSION {
+                    if running != version::VERSION {
                         println!(
                             "\nthis binary is {} but the daemon is {running}; run `snyvi restart`",
-                            server::VERSION
+                            version::VERSION
                         );
                     }
                     if let Some(line) = client::update_line(&h["update"]) {
@@ -584,19 +586,19 @@ fn main() -> Result<()> {
             let eyes = if up { "●  ●" } else { "-  -" };
             println!("     ▪\n   ╭──────╮\n   │ {eyes} │\n   │  ‿   │\n   ╰──────╯");
             match running {
-                Some(v) if v != server::VERSION => println!(
+                Some(v) if v != version::VERSION => println!(
                     "   snyvi {v} at {} · this binary is {}",
                     config::base_url(),
-                    server::VERSION
+                    version::VERSION
                 ),
                 Some(_) => println!(
                     "   snyvi {} at {} · here",
-                    server::VERSION,
+                    version::VERSION,
                     config::base_url()
                 ),
                 None => println!(
                     "   snyvi {} · asleep; would listen at {}",
-                    server::VERSION,
+                    version::VERSION,
                     config::base_url()
                 ),
             }

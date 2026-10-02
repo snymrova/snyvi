@@ -151,7 +151,9 @@ async function main() {
     writeFileSync(md, "# A plan\n\nOne paragraph.\n");
     await cli("send", md);
     const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
-    const T = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    // What restarts or updates the daemon answers to the window secret, not the token.
+    const windowSecret = readFileSync(join(tmp, "config", "window"), "utf8").trim();
+    const T = { authorization: `Bearer ${token}`, "x-snyvi-window": windowSecret, "content-type": "application/json" };
     // Asked twice before giving up: the first request after a restart can
     // go out on a kept-alive connection to the process that has just left.
     const health = async () => { for (let i = 0; i < 2; i++) { try { return await (await fetch(`${base}/api/health`)).json(); } catch {} } return null; };
@@ -360,8 +362,8 @@ async function main() {
     execFileSync(join(devDir, "snyvi"), ["send", md], { env: denv, cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const dh = await until(async () => { try { return await (await fetch(`http://127.0.0.1:${DEV_PORT}/api/health`)).json(); } catch { return null; } }, 40);
     devPid = dh && dh.pid;
-    const dtoken = readFileSync(join(tmp, "dev-config", "token"), "utf8").trim();
-    const dr = dh && await fetch(`http://127.0.0.1:${DEV_PORT}/api/update/check`, { method: "POST", headers: { authorization: `Bearer ${dtoken}`, "content-type": "application/json" }, body: "{}" });
+    const dwindow = readFileSync(join(tmp, "dev-config", "window"), "utf8").trim();
+    const dr = dh && await fetch(`http://127.0.0.1:${DEV_PORT}/api/update/check`, { method: "POST", headers: { "x-snyvi-window": dwindow, "content-type": "application/json" }, body: "{}" });
     row("a build under target/ is on the dev channel and refuses to check", !!dh && dh.update.channel === "dev" && dr && dr.status === 409,
       dh ? `channel ${dh.update.channel}; check answered ${dr && dr.status}` : "the dev daemon did not come up");
     try { execFileSync(join(devDir, "snyvi"), ["stop"], { env: denv, stdio: "ignore" }); } catch {}

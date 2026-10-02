@@ -3264,6 +3264,10 @@
     // serves this file off disk and says so when it changes. A shipped daemon
     // never sends this, so the listener costs a page nothing but its own line.
     es.addEventListener("reload", () => location.reload());
+    // The daemon's channel ran ahead of this stream and the events between
+    // are gone: one `resync` says so, and the page reads everything again,
+    // the way it does on coming back.
+    es.addEventListener("resync", () => catchUp());
 
     // An agent arrived or left: its process opened or ended a stream.
     es.addEventListener("agents", ev => {

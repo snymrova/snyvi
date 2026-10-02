@@ -331,7 +331,7 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 } else if name != "send_document" {
                     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool {name}") } })
                 } else {
-                    match call_send(&paths, args, cwd.as_deref(), &session, sender.as_deref()) {
+                    match call_send(&paths, args, cwd.as_deref(), &session, sender.as_deref(), pane.as_deref()) {
                         Ok(sent) => json!({ "jsonrpc": "2.0", "id": id, "result": {
                             "content": [{ "type": "text", "text": sent.say() }],
                             "structuredContent": { "id": sent.id, "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },
@@ -686,6 +686,7 @@ fn call_send(
     cwd: Option<&str>,
     session: &str,
     sender: Option<&str>,
+    pane: Option<&str>,
 ) -> anyhow::Result<Sent> {
     let s = |k: &str| {
         args.get(k)
@@ -695,7 +696,7 @@ fn call_send(
     };
     // Prefer Claude's own session id (recorded by the hook) so hook and MCP sends share a workflow.
     let session = cwd
-        .and_then(|c| crate::session::lookup(paths, c))
+        .and_then(|c| crate::session::lookup(paths, c, pane))
         .map(|id| crate::session::workflow_key(&id))
         .unwrap_or_else(|| session.to_string());
     let payload = Payload {

@@ -375,15 +375,7 @@ fn place(agent: &Agent) -> String {
     }
 }
 
-/// A path with the home directory as `~`, the way the reader wrote it.
-pub fn tilde(p: &Path) -> String {
-    if let Some(home) = dirs::home_dir() {
-        if let Ok(rest) = p.strip_prefix(&home) {
-            return format!("~/{}", rest.display()).replace('\\', "/");
-        }
-    }
-    p.display().to_string()
-}
+pub use crate::text::tilde;
 
 // ---------- the line ----------
 
@@ -959,14 +951,7 @@ pub fn list(paths: &crate::config::Paths) -> Result<()> {
     Ok(())
 }
 
-fn ago(secs: i64) -> String {
-    match secs {
-        s if s < 90 => "just now".to_string(),
-        s if s < 3600 => format!("{} minutes ago", s / 60),
-        s if s < 86_400 => format!("{} hours ago", s / 3600),
-        s => format!("{} days ago", s / 86_400),
-    }
-}
+use crate::text::ago;
 
 /// One line per agent that has snyvi registered, for `snyvi status` after
 /// Claude Code's own line, and for the about box. Agents that are not set

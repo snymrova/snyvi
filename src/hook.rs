@@ -20,11 +20,21 @@ use std::path::{Path, PathBuf};
 
 /// The events installed for the panel's status. Each one maps to a state in
 /// `agent_state`. `PostToolUse` is installed for this too, as an entry of its
-/// own on every tool (`matcher: *`), with the same command as every other:
-/// a flag here would be read by whatever snyvi the entry names, and one from
-/// before the flag existed fails on it, on every tool call. So whether a
-/// written file is sent is not the entry's to say but `auto_send`'s.
+/// own on `STATUS_TOOLS`, with the same command as every other: a flag here
+/// would be read by whatever snyvi the entry names, and one from before the
+/// flag existed fails on it, on every tool call. So whether a written file
+/// is sent is not the entry's to say but `auto_send`'s.
 const STATUS_EVENTS: [&str; 4] = ["UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
+
+/// The tools the status entry runs after. It used to be every tool (`*`),
+/// which is one process started per Read, Grep and Glob of every turn, and
+/// hundreds of those to a prompt. What the entry is there for is narrower:
+/// a prompt says `working` already, and a `Stop` says done; between them the
+/// one thing only a tool call can say is that a permission the reader was
+/// asked for has been answered, since the tool then runs. So the tools that
+/// ask: the shell, the file writes, the web, plans, and every MCP tool.
+pub const STATUS_TOOLS: &str =
+    "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|ExitPlanMode|mcp__.*";
 
 /// What of an event this reads. Everything else -- above all a tool's output,
 /// which can be megabytes, and a Write's whole file -- is skipped as it is
@@ -197,17 +207,17 @@ pub fn run(paths: &Paths) -> Result<()> {
     // MCP server can file its documents under the same workflow as the hook.
     // Not a tool call: there are hundreds of those to a prompt, and the map
     // does not change between them.
-    if matches!(name, "SessionStart" | "UserPromptSubmit") {
-        if let (Some(cwd), Some(sid)) = (event.cwd.get(), event.session_id.get()) {
-            crate::session::record(paths, cwd, sid);
-        }
-    }
     // In a desk panel, the panel is told what the agent is doing and which
     // conversation it is, so it can offer that conversation back after Claude
     // or the daemon has gone. Outside one, nothing new happens.
     let pane = std::env::var("SNYVI_SESSION")
         .ok()
         .filter(|v| crate::pane::valid_id(v));
+    if matches!(name, "SessionStart" | "UserPromptSubmit") {
+        if let (Some(cwd), Some(sid)) = (event.cwd.get(), event.session_id.get()) {
+            crate::session::record(paths, cwd, sid, pane.as_deref());
+        }
+    }
     if let Some(pane) = &pane {
         let state = agent_state(&event);
         let session = event
@@ -505,13 +515,13 @@ fn ours(h: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// An entry that runs on every tool: the status one, under `PostToolUse`.
-/// The send entry names its tools.
+/// The status entry under `PostToolUse`: on `STATUS_TOOLS`, or on every tool
+/// as it was written before 1.13. The send entry names its tools.
 fn every_tool(entry: &Value) -> bool {
     matches!(
         entry.get("matcher").and_then(Value::as_str),
         None | Some("" | "*")
-    )
+    ) || entry.get("matcher").and_then(Value::as_str) == Some(STATUS_TOOLS)
 }
 
 /// Merge hooks into ~/.claude/settings.json, preserving everything else in it.
@@ -551,7 +561,7 @@ fn claude_hooks(command: &str, auto: bool) -> Vec<(&'static str, Value)> {
     }
     wanted.push((
         "PostToolUse",
-        json!({ "matcher": "*", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
+        json!({ "matcher": STATUS_TOOLS, "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
     ));
     // Plans land in snyvi as the approval is asked: in the background, so the
     // dialog never waits on it (`send_plan`).
@@ -643,8 +653,14 @@ fn merge(
     let hooks = hooks.as_object_mut().context("hooks is not an object")?;
     let mut changed = false;
     let mut rewritten = false;
+    // Claude Code's status entry narrowed to `STATUS_TOOLS` in 1.13; an
+    // install from before runs on every tool and is brought along. Only
+    // where that is what is wanted: Codex's entry says `*` and means it.
+    let narrow = wanted.iter().any(|(e, v)| {
+        *e == "PostToolUse" && v.get("matcher").and_then(Value::as_str) == Some(STATUS_TOOLS)
+    });
     // Every hook of ours, under any event, points at this binary from now on.
-    for (_, list) in hooks.iter_mut() {
+    for (event, list) in hooks.iter_mut() {
         let Some(list) = list.as_array_mut() else {
             continue;
         };
@@ -652,12 +668,21 @@ fn merge(
             let Some(hs) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
                 continue;
             };
+            let mine = hs.iter().any(ours);
             for h in hs.iter_mut().filter(|h| ours(h)) {
                 if h.get("command").and_then(Value::as_str) != Some(command) {
                     h["command"] = json!(command);
                     changed = true;
                     rewritten = true;
                 }
+            }
+            let every = matches!(
+                entry.get("matcher").and_then(Value::as_str),
+                None | Some("" | "*")
+            );
+            if narrow && mine && event == "PostToolUse" && every {
+                entry["matcher"] = json!(STATUS_TOOLS);
+                changed = true;
             }
         }
     }
@@ -937,10 +962,10 @@ mod tests {
             installed(&s),
             ALL.map(|e| (e, "/opt/snyvi hook".to_string())).to_vec()
         );
-        // The status entry runs on every tool, and never sends.
+        // The status entry runs on the tools that can ask, and never sends.
         let post = s["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 2);
-        assert_eq!(post[1]["matcher"], "*");
+        assert_eq!(post[1]["matcher"], STATUS_TOOLS);
         assert_eq!(post[1]["hooks"][0]["command"], "/opt/snyvi hook");
         // And it does not count as auto-send.
         assert!(!installed(&s).iter().any(|(e, _)| *e == "PostToolUse"));
@@ -1001,7 +1026,34 @@ mod tests {
         );
         assert_eq!(installed(&old).len(), 6);
         assert_eq!(old["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
-        assert_eq!(old["hooks"]["PostToolUse"][1]["matcher"], "*");
+        assert_eq!(old["hooks"]["PostToolUse"][1]["matcher"], STATUS_TOOLS);
+    }
+
+    /// An install from 1.12 ran the status entry on every tool. The next
+    /// `init-claude` or daemon start narrows it, once, and leaves a status
+    /// entry that is not ours (Codex's file, another tool's) as it is.
+    #[test]
+    fn an_every_tool_status_entry_is_narrowed_once() {
+        let mut s = json!({ "hooks": {
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "/usr/bin/snyvi hook" }] }],
+            "PostToolUse": [
+                { "matcher": "*", "hooks": [{ "type": "command", "command": "other --x" }] },
+                { "matcher": "*", "hooks": [{ "type": "command", "command": "/usr/bin/snyvi hook" }] }
+            ] } });
+        assert!(install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap().0);
+        let post = s["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 2, "narrowed in place, not added beside");
+        assert_eq!(post[0]["matcher"], "*", "another tool's entry is its own");
+        assert_eq!(post[1]["matcher"], STATUS_TOOLS);
+        assert_eq!(
+            install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap(),
+            (false, false)
+        );
+        // Codex's file keeps its `*`: there the matcher means it.
+        let mut c = json!({ "hooks": { "PostToolUse": [
+            { "matcher": "*", "hooks": [{ "type": "command", "command": "/usr/bin/snyvi hook" }] } ] } });
+        merge(&mut c, "/usr/bin/snyvi hook", codex_hooks("/usr/bin/snyvi hook")).unwrap();
+        assert_eq!(c["hooks"]["PostToolUse"][0]["matcher"], "*");
     }
 
     /// A build from source never tops up the hooks of an installed snyvi:

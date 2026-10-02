@@ -1,6 +1,7 @@
 //! The local HTTP server: UI shell, JSON API, SSE, and the receive endpoint.
 
 use crate::browse::Browser;
+use crate::capability::constant_eq;
 use crate::config::{self, Paths};
 use crate::platform;
 use crate::receive::{self, Payload};
@@ -31,10 +32,7 @@ use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// The commit and target from build.rs, "" outside a checkout.
-pub const BUILD_SHA: &str = env!("SNYVI_GIT_SHA");
-pub const BUILD_TARGET: &str = env!("SNYVI_TARGET");
+pub use crate::version::{BUILD_SHA, BUILD_TARGET, VERSION};
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 /// An address snyvi has nothing at: its own miss, so the page wears `oops`
@@ -250,6 +248,11 @@ pub struct App {
     /// Behind a lock because a reset replaces it: the old token is dead from
     /// that moment, which is the point of replacing it.
     pub token: std::sync::RwLock<String>,
+    /// The window secret: made beside the token on first run and read by the
+    /// CLI from the daemon's own files. The leave to stop, restart and update
+    /// the daemon and to mint a window's capability -- never the token, so
+    /// an agent holding the token sends and nothing more. See `windowed`.
+    pub window: String,
     pub events: broadcast::Sender<String>,
     /// Fires when `snyvi stop` asks the daemon to exit.
     pub shutdown: broadcast::Sender<()>,
@@ -629,34 +632,25 @@ fn waiting(app: &App) -> i64 {
     app.store.waiting().unwrap_or(0)
 }
 
-pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
-    let token = config::load_or_create_token(&paths)?;
-    let store = Store::open(&paths)?;
-    // A planned restart left a marker and marks; a crash left neither. Both
-    // are read now, before anything can ask, and cleared once the port is
-    // held: a successor that dies before then is started again, and must
-    // find them again. A mark to resume with no marker behind it -- the
-    // restart it was for never came, or came long ago -- is only an offer:
-    // nothing types a conversation back on its own the next day.
-    let planned = read_restart_marker(&paths);
-    let (mut resume, mut offer) = store.panes_resume().unwrap_or_default();
-    if planned.is_none() {
-        offer.append(&mut resume);
-    }
-    if let Some(apply) = planned {
-        eprintln!(
-            "snyvi: back from a planned restart{}; {} panel(s) to resume",
-            if apply {
-                " (an update was applied)"
-            } else {
-                ""
-            },
-            resume.len()
-        );
-    }
+
+/// Everything the handlers share, built once from the store and the two
+/// secrets. `run` calls this with the updater it made for the binary on
+/// disk; the router test calls it with none, which is how every route is
+/// exercised against a real `App` and a real store without a port.
+fn new_app(
+    paths: &Paths,
+    store: Store,
+    token: String,
+    window: String,
+    update: Option<Arc<crate::update::Updater>>,
+    exe: Option<Exe>,
+) -> Arc<App> {
     let renderer = Renderer::new();
-    let (tx, _) = broadcast::channel(64);
-    let (stop_tx, mut stop_rx) = broadcast::channel::<()>(1);
+    // Room for a burst: a desk's four panels changing state while a batch of
+    // documents lands. A stream that still falls behind is sent one `resync`
+    // (`events`) rather than losing what it missed.
+    let (tx, _) = broadcast::channel(256);
+    let (stop_tx, _) = broadcast::channel::<()>(1);
     // The Mermaid bundle is in the hash as well. It is served immutable for a
     // year like every other asset, and its URL had no version in it -- so a
     // browser that had cached one snyvi's bundle would have kept it across
@@ -689,15 +683,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         h.finalize().to_hex()[..8].to_string()
     };
     let panes = crate::pane::Panes::new(&paths.data_dir, tx.clone());
-    let exe = Exe::here();
-    let update = exe.as_ref().map(|e| {
-        Arc::new(crate::update::Updater::new(
-            &paths,
-            &e.path,
-            Box::new(crate::update::Http),
-        ))
-    });
-    let app = Arc::new(App {
+    Arc::new(App {
         store,
         renderer,
         browse: Browser::load(paths.config_dir.join("folders.json")),
@@ -728,33 +714,16 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
         quota: Default::default(),
-    });
-    if let Some(u) = &app.update {
-        if u.channel == crate::update::Channel::Dev {
-            eprintln!("snyvi: a development build; it will not check for updates");
-        } else if !u.auto() {
-            eprintln!("snyvi: automatic updates are off; `snyvi update` still works");
-        }
-    }
-    // Before the listener: a window's first status frame must already say
-    // which panes come back as a conversation.
-    app.panes.mark_resume(resume);
-    app.panes.mark_offer(offer);
-    // Where a shell moves to is where it starts next (`pane::follow_folders`).
-    let weak = Arc::downgrade(&app);
-    app.panes.on_cwd(Box::new(move |id, cwd| {
-        if let Some(app) = weak.upgrade() {
-            let _ = app.store.set_pane_cwd(id, cwd);
-        }
-    }));
-    // Kept past the router, which takes its own: what the daemon does on the
-    // way out needs the panes.
-    let leaving = app.clone();
-    let told = app.shutdown.clone();
-    crate::watch::spawn_browse_watcher(app.clone());
-    crate::watch::spawn_ui_watcher(app.clone());
+    })
+}
 
-    let router = Router::new()
+/// Every route, in one place, and the one layer in front of them all.
+///
+/// The test `every_route_answers_to_its_gate_and_to_this_host_only` sends a
+/// request to each of these; a route added here and not there fails it on
+/// the count, which is the point.
+fn router(app: Arc<App>) -> Router {
+    Router::new()
         .route("/", get(shell_home))
         .route("/inbox", get(shell_inbox))
         .route("/api/home", get(home))
@@ -899,7 +868,74 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         .route("/assets/browse.js", get(asset_browse))
         .route("/assets/paths.js", get(asset_paths))
         .fallback(not_found)
-        .with_state(app);
+        // After every route and the fallback: nothing is served to a request
+        // from another host, and the table test in `tests` holds that.
+        .layer(axum::middleware::from_fn(host_gate))
+        .with_state(app)
+}
+
+pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
+    let token = config::load_or_create_token(&paths)?;
+    let window = config::load_or_create_window_secret(&paths)?;
+    let store = Store::open(&paths)?;
+    // A planned restart left a marker and marks; a crash left neither. Both
+    // are read now, before anything can ask, and cleared once the port is
+    // held: a successor that dies before then is started again, and must
+    // find them again. A mark to resume with no marker behind it -- the
+    // restart it was for never came, or came long ago -- is only an offer:
+    // nothing types a conversation back on its own the next day.
+    let planned = read_restart_marker(&paths);
+    let (mut resume, mut offer) = store.panes_resume().unwrap_or_default();
+    if planned.is_none() {
+        offer.append(&mut resume);
+    }
+    if let Some(apply) = planned {
+        eprintln!(
+            "snyvi: back from a planned restart{}; {} panel(s) to resume",
+            if apply {
+                " (an update was applied)"
+            } else {
+                ""
+            },
+            resume.len()
+        );
+    }
+    let exe = Exe::here();
+    let update = exe.as_ref().map(|e| {
+        Arc::new(crate::update::Updater::new(
+            &paths,
+            &e.path,
+            Box::new(crate::update::Http),
+        ))
+    });
+    let app = new_app(&paths, store, token, window, update, exe);
+    let mut stop_rx = app.shutdown.subscribe();
+    if let Some(u) = &app.update {
+        if u.channel == crate::update::Channel::Dev {
+            eprintln!("snyvi: a development build; it will not check for updates");
+        } else if !u.auto() {
+            eprintln!("snyvi: automatic updates are off; `snyvi update` still works");
+        }
+    }
+    // Before the listener: a window's first status frame must already say
+    // which panes come back as a conversation.
+    app.panes.mark_resume(resume);
+    app.panes.mark_offer(offer);
+    // Where a shell moves to is where it starts next (`pane::follow_folders`).
+    let weak = Arc::downgrade(&app);
+    app.panes.on_cwd(Box::new(move |id, cwd| {
+        if let Some(app) = weak.upgrade() {
+            let _ = app.store.set_pane_cwd(id, cwd);
+        }
+    }));
+    // Kept past the router, which takes its own: what the daemon does on the
+    // way out needs the panes.
+    let leaving = app.clone();
+    let told = app.shutdown.clone();
+    crate::watch::spawn_browse_watcher(app.clone());
+    crate::watch::spawn_ui_watcher(app.clone());
+
+    let router = router(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -1742,27 +1778,9 @@ async fn desk_week(
         sender: Some("snyvi".into()),
         ..Default::default()
     };
-    let app2 = app.clone();
-    match tokio::task::spawn_blocking(move || {
-        receive::receive(&app2.store, &app2.renderer, payload)
-    })
-    .await
-    {
-        Ok(Ok(received)) => {
-            let doc = received.doc;
-            emit(
-                &app,
-                "doc",
-                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
-            );
-            Json(json!({ "ok": true, "id": doc.id })).into_response()
-        }
-        Ok(Err(e)) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-        Err(e) => err(anyhow::anyhow!(e)),
+    match receive_and_emit(&app, payload).await {
+        Ok(received) => Json(json!({ "ok": true, "id": received.doc.id })).into_response(),
+        Err(no) => no,
     }
 }
 
@@ -2408,7 +2426,10 @@ async fn history(State(app): S, Path(id): Path<String>) -> Response {
 
 /// Delete at once, and say nothing first. The page offers Undo for a few
 /// seconds; the document is on disk until `prune` runs either way.
-async fn delete_doc(State(app): S, Path(id): Path<String>) -> Response {
+async fn delete_doc(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.store.delete_versions(&id) {
         Ok(n) if n > 0 => {
             emit(
@@ -2458,7 +2479,10 @@ async fn removed_list(
 
 /// The other half of Undo. Gone means pruned, which is the one delete that
 /// cannot be taken back.
-async fn undelete_doc(State(app): S, Path(id): Path<String>) -> Response {
+async fn undelete_doc(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.store.undelete(&id) {
         Ok(true) => {
             let doc = app.store.get(&id).ok().flatten();
@@ -2480,12 +2504,8 @@ async fn undelete_doc(State(app): S, Path(id): Path<String>) -> Response {
 
 /// Ask the daemon to exit, so a new binary can take over the port.
 async fn shutdown(State(app): S, headers: HeaderMap) -> Response {
-    if !authorized(&app, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing or invalid token" })),
-        )
-            .into_response();
+    if !windowed(&app, &headers) {
+        return not_windowed();
     }
     let _ = app.shutdown.send(());
     Json(json!({ "ok": true, "version": VERSION })).into_response()
@@ -2509,21 +2529,14 @@ struct RestartBody {
 /// agent mid-turn or a program printing. The panes an agent was in come
 /// back as `claude --resume`; the rest as shells with their old screen
 /// greyed above, which is what any restart already does. Answers to the
-/// token (`snyvi restart`) or the window's capability (a click on the
-/// update pill); a tab holds neither. Asking again adds to the restart
+/// window secret (`snyvi restart`) or the window's capability (a click on
+/// the update pill); a tab holds neither, and nor does an agent's token.
+/// Asking again adds to the restart
 /// already pending rather than queueing another: `snyvi restart` while the
 /// pill's update waits still takes the update, and `--now` hurries both.
 async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) -> Response {
-    let cap = headers
-        .get(CAPABILITY_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|c| app.capabilities.verify(c.trim()));
-    if !cap && !authorized(&app, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing or invalid token" })),
-        )
-            .into_response();
+    if !windowed(&app, &headers) {
+        return not_windowed();
     }
     let now = match b.when.as_deref().unwrap_or("idle") {
         "idle" => false,
@@ -2576,12 +2589,8 @@ async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) 
 /// Ctrl-C under `snyvi restart`, and the pill's Cancel. The same who as
 /// asking. One already under way is past calling off, and says so.
 async fn cancel_restart(State(app): S, headers: HeaderMap) -> Response {
-    if !capable(&app, &headers) && !authorized(&app, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing or invalid token" })),
-        )
-            .into_response();
+    if !windowed(&app, &headers) {
+        return not_windowed();
     }
     let cancelled = app.restart.lock().unwrap().take().is_some();
     if cancelled {
@@ -2615,12 +2624,8 @@ async fn update_check(
     headers: HeaderMap,
     Json(b): Json<UpdateCheckBody>,
 ) -> Response {
-    if !capable(&app, &headers) && !authorized(&app, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing or invalid token" })),
-        )
-            .into_response();
+    if !windowed(&app, &headers) {
+        return not_windowed();
     }
     let Some(u) = app.update.clone() else {
         return (StatusCode::CONFLICT, Json(json!({ "error": "this daemon cannot say what file it runs from, so it does not update itself" }))).into_response();
@@ -2687,12 +2692,8 @@ struct UpdateAutoBody {
 /// `<config>/updates.json`; `SNYVI_UPDATES=off` in the daemon's environment
 /// wins, and the answer says so.
 async fn update_auto(State(app): S, headers: HeaderMap, Json(b): Json<UpdateAutoBody>) -> Response {
-    if !capable(&app, &headers) && !authorized(&app, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing or invalid token" })),
-        )
-            .into_response();
+    if !windowed(&app, &headers) {
+        return not_windowed();
     }
     let Some(u) = &app.update else {
         return (
@@ -2721,12 +2722,8 @@ struct LaterBody {
 /// "Later" on the update card: the offer of this version waits until then,
 /// in every window, since it is the daemon's word the windows draw from.
 async fn update_later(State(app): S, headers: HeaderMap, Json(b): Json<LaterBody>) -> Response {
-    if !capable(&app, &headers) && !authorized(&app, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "missing or invalid token" })),
-        )
-            .into_response();
+    if !windowed(&app, &headers) {
+        return not_windowed();
     }
     let Some(u) = &app.update else {
         return (
@@ -2750,6 +2747,53 @@ fn capable(app: &App, headers: &HeaderMap) -> bool {
         .get(CAPABILITY_HEADER)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|c| app.capabilities.verify(c.trim()))
+}
+
+/// Where the window secret rides: a header, for the reason the capability
+/// is one (`CAPABILITY_HEADER`).
+const WINDOW_HEADER: &str = "x-snyvi-window";
+
+/// Does this request carry the window secret? The CLI reads it from the
+/// daemon's own files (`config::window_secret_path`) for `snyvi stop`,
+/// `snyvi restart`, `snyvi update` and `snyvi app`.
+fn window_secret_ok(app: &App, headers: &HeaderMap) -> bool {
+    headers
+        .get(WINDOW_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| constant_eq(s.trim(), &app.window))
+}
+
+/// The window's leave: the capability a window holds, or the window secret
+/// the CLI reads. What stops, restarts and updates the daemon answers to
+/// this and not to the token, so that an agent holding the token -- to send,
+/// to tick a note, to name its panel -- holds nothing that starts or ends a
+/// process. A tab holds neither.
+fn windowed(app: &App, headers: &HeaderMap) -> bool {
+    capable(app, headers) || window_secret_ok(app, headers)
+}
+
+/// What a request that is not the window's gets.
+fn not_windowed() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "not the window, and no window secret" })),
+    )
+        .into_response()
+}
+
+/// A reader's action -- a ✕, a pin, a rename, mark read, Undo -- is taken
+/// from this page, which a browser proves with an `Origin` of ours on every
+/// POST, or from the CLI with the token. Nothing else: a page on another
+/// origin sends its own `Origin`, and a local program that sends none has
+/// the token to read if it is the reader's. The sentence if not.
+fn refuse_reader(app: &App, headers: &HeaderMap) -> Option<Response> {
+    (!from_this_page(headers) && !authorized(app, headers)).then(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not from this page, and no token" })),
+        )
+            .into_response()
+    })
 }
 
 /// What a reset would take, for the sentence that asks.
@@ -2794,12 +2838,8 @@ fn pinned_docs(n: i64) -> String {
 }
 
 async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> Response {
-    if !from_this_page(&headers) && !authorized(&app, &headers) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "not from this page, and no token" })),
-        )
-            .into_response();
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
     }
     let census = match app.store.census() {
         Ok(c) => c,
@@ -2861,9 +2901,12 @@ async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<ResetBody>) -> R
 }
 
 /// Open tabs report focus so arrivals only raise a desktop notification when nobody is looking.
-async fn focus(State(app): S) -> StatusCode {
+async fn focus(State(app): S, headers: HeaderMap) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     *app.last_focus.lock().unwrap() = Instant::now();
-    StatusCode::NO_CONTENT
+    StatusCode::NO_CONTENT.into_response()
 }
 
 fn notify_desktop(app: &App, doc: &Doc) {
@@ -3106,10 +3149,18 @@ async fn events(
         .chain(BroadcastStream::new(rx).filter_map(move |m| {
             // Captured so that the mark lives exactly as long as the stream does.
             let _keep = &mark;
-            m.ok().map(|msg| {
-                let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
-                Some(Ok(Event::default().event(name).data(data)))
-            })
+            let ev = match m {
+                Ok(msg) => {
+                    let (name, data) = msg.split_once('\n').unwrap_or(("doc", msg.as_str()));
+                    Event::default().event(name).data(data)
+                }
+                // The stream fell behind the channel and the events between
+                // are gone. One `resync` in their place: the page refetches
+                // the tree, the queue, the notes, the agents and the desks,
+                // which is what each of them would have had it do.
+                Err(_lagged) => Event::default().event("resync").data("{}"),
+            };
+            Some(Some(Ok(ev)))
         }))
         .merge(stop)
         .take_while(Option::is_some)
@@ -3119,6 +3170,44 @@ async fn events(
 
 pub(crate) fn emit(app: &App, name: &str, data: serde_json::Value) {
     let _ = app.events.send(format!("{name}\n{data}"));
+}
+
+/// The `doc` event every arrival ends in, shaped one way for the three
+/// routes a document comes in by.
+fn emit_doc(app: &App, received: &receive::Received) {
+    let doc = &received.doc;
+    emit(
+        app,
+        "doc",
+        json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) }),
+    );
+}
+
+/// A document in, the plain way: rendered and stored off the executor, then
+/// told to every page. A send has more to do around it (`receive_doc`); a
+/// pasted picture and a week's page have not, and come through here. The
+/// refusal is the response the caller returns.
+async fn receive_and_emit(
+    app: &Arc<App>,
+    payload: Payload,
+) -> Result<receive::Received, Response> {
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || {
+        receive::receive(&app2.store, &app2.renderer, payload)
+    })
+    .await
+    {
+        Ok(Ok(received)) => {
+            emit_doc(app, &received);
+            Ok(received)
+        }
+        Ok(Err(e)) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response()),
+        Err(e) => Err(err(anyhow::anyhow!(e))),
+    }
 }
 
 #[derive(Deserialize)]
@@ -3165,7 +3254,15 @@ fn clean_name(raw: &str) -> Option<String> {
 /// Renaming is a label, like pinning: it moves nothing on disk and reveals nothing,
 /// so it needs no token. The identity underneath (a project's root, a workflow's key)
 /// is untouched, so what arrives next still lands where it did.
-async fn rename_project(State(app): S, Path(id): Path<i64>, Json(b): Json<RenameBody>) -> Response {
+async fn rename_project(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<RenameBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     let Some(name) = clean_name(&b.name) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -3185,9 +3282,13 @@ async fn rename_project(State(app): S, Path(id): Path<i64>, Json(b): Json<Rename
 
 async fn rename_workflow(
     State(app): S,
+    headers: HeaderMap,
     Path(id): Path<i64>,
     Json(b): Json<RenameBody>,
 ) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     let Some(name) = clean_name(&b.name) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -3216,7 +3317,10 @@ async fn queue(State(app): S, Query(q): Query<Limit>) -> Response {
 /// A tab opened a document. Every other tab hears, so the same row leaves
 /// the queue everywhere at once; a document already read answers the same
 /// and tells nobody, since nothing changed.
-async fn mark_read(State(app): S, Path(id): Path<String>) -> Response {
+async fn mark_read(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.store.mark_read(&id) {
         Ok(true) => {
             emit(
@@ -3232,7 +3336,10 @@ async fn mark_read(State(app): S, Path(id): Path<String>) -> Response {
 }
 
 /// Everything waiting, read without being opened.
-async fn clear_queue(State(app): S) -> Response {
+async fn clear_queue(State(app): S, headers: HeaderMap) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.store.mark_all_read() {
         Ok(ids) => {
             if !ids.is_empty() {
@@ -3251,7 +3358,10 @@ struct IdsBody {
 
 /// Mark all read, taken back: the ids `clear_queue` answered with wait again.
 /// Every tab hears it as a restore, which refetches the queue and the tree.
-async fn unread(State(app): S, Json(b): Json<IdsBody>) -> Response {
+async fn unread(State(app): S, headers: HeaderMap, Json(b): Json<IdsBody>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.store.mark_unread(&b.ids) {
         Ok(back) => {
             if !back.is_empty() {
@@ -3263,8 +3373,17 @@ async fn unread(State(app): S, Json(b): Json<IdsBody>) -> Response {
     }
 }
 
-/// Pinning is UI state, so it needs no token; it only affects what `prune` keeps.
-async fn pin(State(app): S, Path(id): Path<String>, Json(b): Json<PinBody>) -> Response {
+/// Pinning is UI state: from this page, or the CLI with the token. It only
+/// affects what `prune` keeps.
+async fn pin(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<PinBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.store.set_pinned(&id, b.pinned) {
         Ok(true) => {
             emit(&app, "pinned", json!({ "id": id, "pinned": b.pinned }));
@@ -3311,13 +3430,9 @@ async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payl
     });
     match result {
         Ok(Ok(received)) => {
+            emit_doc(&app, &received);
             let doc = received.doc;
             let url = format!("{}/d/{}", config::base_url(), doc.id);
-            emit(
-                &app,
-                "doc",
-                json!({ "doc": doc, "url": url, "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
-            );
             if !received.existing {
                 notify_desktop(&app, &doc);
             }
@@ -3398,11 +3513,14 @@ async fn asides(State(app): S) -> Json<serde_json::Value> {
 }
 
 /// A reader looked: the glow goes out in every page.
-async fn see_asides(State(app): S) -> Json<serde_json::Value> {
+async fn see_asides(State(app): S, headers: HeaderMap) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     if app.asides.see() {
         emit(&app, "notes", json!({ "notes": app.asides.list() }));
     }
-    Json(json!({ "ok": true }))
+    Json(json!({ "ok": true })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -3412,18 +3530,24 @@ struct AsideIds {
 
 /// A reader closed an aside, or all of them: gone from the card in every
 /// page. Only flagged, so `restore` is the Undo.
-async fn dismiss_asides(State(app): S, Json(b): Json<AsideIds>) -> Json<serde_json::Value> {
+async fn dismiss_asides(State(app): S, headers: HeaderMap, Json(b): Json<AsideIds>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     if app.asides.dismiss(&b.ids) {
         emit(&app, "notes", json!({ "notes": app.asides.list() }));
     }
-    Json(json!({ "ok": true }))
+    Json(json!({ "ok": true })).into_response()
 }
 
-async fn restore_asides(State(app): S, Json(b): Json<AsideIds>) -> Json<serde_json::Value> {
+async fn restore_asides(State(app): S, headers: HeaderMap, Json(b): Json<AsideIds>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     if app.asides.restore(&b.ids) {
         emit(&app, "notes", json!({ "notes": app.asides.list() }));
     }
-    Json(json!({ "ok": true }))
+    Json(json!({ "ok": true })).into_response()
 }
 
 /// Large code files are stored partly plain for an instant first view; finish the
@@ -3500,13 +3624,15 @@ fn doc_folder(app: &App, doc: &Doc) -> Option<std::path::PathBuf> {
 
 /// Mint a capability for a window that is opening.
 ///
-/// The token is required, and this is the only endpoint whose answer is itself
-/// a secret. The caller is `snyvi app`, in the moment between deciding to open a
-/// window and launching one: see `crate::capability` for why the answer is not
-/// the token itself and never reaches disk.
+/// The window secret is required -- not the token, which an agent holds and
+/// which must not reach a desk's panels -- and this is the only endpoint
+/// whose answer is itself a secret. The caller is `snyvi app`, in the moment
+/// between deciding to open a window and launching one: see
+/// `crate::capability` for why the answer is not the token itself, and how
+/// it is kept beside the token so a window outlives the daemon.
 async fn mint_capability(State(app): S, headers: HeaderMap) -> Response {
-    if !authorized(&app, &headers) {
-        return (StatusCode::FORBIDDEN, Json(json!({ "error": "no token" }))).into_response();
+    if !window_secret_ok(&app, &headers) {
+        return not_windowed();
     }
     match app.capabilities.mint() {
         Ok(capability) => Json(json!({ "capability": capability })).into_response(),
@@ -3863,6 +3989,61 @@ fn same_origin_read(headers: &HeaderMap) -> bool {
     ["127.0.0.1", "localhost", "[::1]"]
         .iter()
         .any(|h| host == format!("{h}:{port}"))
+}
+
+/// What the gate says, and the test reads: a refusal of the host, and one
+/// of the origin.
+const NOT_THIS_HOST: &str = "not this host";
+const NOT_THIS_ORIGIN: &str = "not this origin";
+
+/// Is this request addressed to this daemon, by a page of this daemon's?
+///
+/// The daemon listens on the loopback and nowhere else, which keeps the
+/// network out. It does not keep a browser out: a page on any site can send a
+/// request to `http://127.0.0.1:7777`, and a site that points its own name at
+/// 127.0.0.1 (DNS rebinding) can then read the answers, since to the browser
+/// that is its own origin. The `Host` header is the one thing both leave
+/// behind -- the rebound page sends its own name -- so every request is held
+/// to a `Host` of ours before any route sees it, and to an `Origin` of ours
+/// where one is sent, which a browser does on every POST and every
+/// cross-origin request. Fetch metadata, where an engine sends it, has to
+/// agree on anything that is not a read: `same-origin` from a page, `none`
+/// from the address bar or a link opened from outside. A read is left alone
+/// so a link to a document still opens from anywhere.
+fn not_this_host(headers: &HeaderMap, method: &axum::http::Method) -> Option<&'static str> {
+    let port = config::port();
+    let ours = |given: &str, scheme: &str| {
+        let given = given.trim().to_ascii_lowercase();
+        ["127.0.0.1", "localhost", "[::1]"]
+            .iter()
+            .any(|h| given == format!("{scheme}{h}:{port}"))
+    };
+    match headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
+        Some(h) if ours(h, "") => {}
+        _ => return Some(NOT_THIS_HOST),
+    }
+    if let Some(o) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        if !ours(o, "http://") {
+            return Some(NOT_THIS_ORIGIN);
+        }
+    }
+    if *method != axum::http::Method::GET && *method != axum::http::Method::HEAD {
+        if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+            if site != "same-origin" && site != "none" {
+                return Some(NOT_THIS_ORIGIN);
+            }
+        }
+    }
+    None
+}
+
+/// The layer `router` puts in front of every route: `not_this_host`, as a
+/// refusal before any handler runs.
+async fn host_gate(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if let Some(why) = not_this_host(req.headers(), req.method()) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": why }))).into_response();
+    }
+    next.run(req).await
 }
 
 /// Where the capability rides on an HTTP request.
@@ -5595,27 +5776,9 @@ async fn paste_image(
         pane: Some(id.clone()),
         ..Default::default()
     };
-    let app2 = app.clone();
-    match tokio::task::spawn_blocking(move || {
-        receive::receive(&app2.store, &app2.renderer, payload)
-    })
-    .await
-    {
-        Ok(Ok(received)) => {
-            let doc = received.doc;
-            emit(
-                &app,
-                "doc",
-                json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(&app) }),
-            );
-            Json(json!({ "id": doc.id, "path": file })).into_response()
-        }
-        Ok(Err(e)) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-        Err(e) => err(anyhow::anyhow!(e)),
+    match receive_and_emit(&app, payload).await {
+        Ok(received) => Json(json!({ "id": received.doc.id, "path": file })).into_response(),
+        Err(no) => no,
     }
 }
 
@@ -5710,16 +5873,7 @@ fn refuse_folder(
     if b.desk.is_some() {
         return refuse_desk(app, headers, q);
     }
-    if !from_this_page(headers) && !authorized(app, headers) {
-        return Some(
-            (
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": "not from this page, and no token" })),
-            )
-                .into_response(),
-        );
-    }
-    None
+    refuse_reader(app, headers)
 }
 
 /// The folder a request names, looked up here from an id snyvi already
@@ -5995,7 +6149,10 @@ async fn browse_list(State(app): S) -> Response {
     Json(app.browse.list()).into_response()
 }
 
-async fn browse_close(State(app): S, Path(id): Path<String>) -> Response {
+async fn browse_close(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     if app.browse.close(&id) {
         emit(&app, "browse", json!({ "roots": app.browse.list() }));
         Json(json!({ "ok": true })).into_response()
@@ -6006,7 +6163,10 @@ async fn browse_close(State(app): S, Path(id): Path<String>) -> Response {
 
 /// Close folder, taken back. Only a folder closed in this run comes back, so
 /// a page with no token can undo its own close and open nothing else.
-async fn browse_reopen(State(app): S, Path(id): Path<String>) -> Response {
+async fn browse_reopen(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
     match app.browse.reopen(&id) {
         Some(root) => {
             emit(&app, "browse", json!({ "roots": app.browse.list() }));
@@ -6308,14 +6468,6 @@ fn authorized(app: &App, headers: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-fn constant_eq(a: &str, b: &str) -> bool {
-    a.len() == b.len()
-        && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
-}
-
 fn err(e: anyhow::Error) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -6331,8 +6483,13 @@ mod tests {
         BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML,
         KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
     };
+    use super::{
+        new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER,
+        NOT_THIS_HOST, NOT_THIS_ORIGIN, WINDOW_HEADER,
+    };
     use crate::capability::Capabilities;
     use axum::http::{header, HeaderMap, HeaderValue};
+    use tower::ServiceExt;
 
     /// A file opens the folder it sits in; a folder opens itself.
     #[test]
@@ -6546,180 +6703,333 @@ mod tests {
         );
     }
 
+    /// What a route answers to. `ROUTES` names one for every route, and the
+    /// test sends each route a request from another host, one with nothing,
+    /// one with the wrong leave and one with the right one.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Gate {
+        /// Anyone on this host: the shell, the assets, the reads.
+        Open,
+        /// A reader's action: from this page (an `Origin` of ours) or the token.
+        Reader,
+        /// A desk: this page and a live capability.
+        Desk,
+        /// An agent in a panel, or what sends: the token.
+        Token,
+        /// What runs the daemon: the capability or the window secret.
+        Window,
+        /// The one mint: the window secret alone.
+        Mint,
+    }
+
+    /// Method, path, JSON body (none sends no body), gate, and whether the
+    /// request with the right leave is sent at all. A few routes open a
+    /// dialog, write a keychain or run a setup; those are asked only to
+    /// refuse. Ids are made up, so a route let through answers 404 or 400
+    /// from its handler -- which is the proof the gate came first.
+    const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
+        ("GET", "/", None, Gate::Open, true),
+        ("GET", "/inbox", None, Gate::Open, true),
+        ("GET", "/api/home", None, Gate::Open, true),
+        ("GET", "/connect", None, Gate::Open, true),
+        ("GET", "/start", None, Gate::Open, true),
+        ("GET", "/welcome", None, Gate::Open, true),
+        ("GET", "/d/nope", None, Gate::Open, true),
+        ("GET", "/b/nope", None, Gate::Open, true),
+        ("GET", "/b/nope/x.md", None, Gate::Open, true),
+        ("GET", "/assets/app.css", None, Gate::Open, true),
+        ("GET", "/assets/app.js", None, Gate::Open, true),
+        ("GET", "/assets/boot.js", None, Gate::Open, true),
+        ("GET", "/assets/mmd.js", None, Gate::Open, true),
+        ("GET", "/assets/mermaid.js", None, Gate::Open, true),
+        ("GET", "/files/nope/x.png", None, Gate::Open, true),
+        ("GET", "/assets/fonts/x.woff2", None, Gate::Open, true),
+        ("GET", "/api/health", None, Gate::Open, true),
+        ("GET", "/api/about", None, Gate::Open, true),
+        ("GET", "/api/agents", None, Gate::Open, true),
+        ("POST", "/api/agents/claude/connect", None, Gate::Desk, false),
+        ("GET", "/api/tree", None, Gate::Open, true),
+        ("GET", "/api/projects/1/tree", None, Gate::Open, true),
+        ("GET", "/api/workflows/1/tree", None, Gate::Open, true),
+        ("GET", "/api/inbox", None, Gate::Open, true),
+        ("GET", "/api/search?q=x", None, Gate::Open, true),
+        ("POST", "/api/docs", Some("{}"), Gate::Token, true),
+        ("GET", "/api/docs/nope", None, Gate::Open, true),
+        ("POST", "/api/docs/nope/pin", Some(r#"{"pinned":true}"#), Gate::Reader, true),
+        ("POST", "/api/docs/nope/read", None, Gate::Reader, true),
+        ("GET", "/api/queue", None, Gate::Open, true),
+        ("POST", "/api/queue/clear", None, Gate::Reader, true),
+        ("POST", "/api/queue/unread", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+        ("POST", "/api/docs/nope/delete", None, Gate::Reader, true),
+        ("POST", "/api/docs/nope/undelete", None, Gate::Reader, true),
+        ("GET", "/api/removed", None, Gate::Open, true),
+        ("GET", "/api/docs/nope/history", None, Gate::Open, true),
+        ("POST", "/api/projects/1/rename", Some(r#"{"name":"x"}"#), Gate::Reader, true),
+        ("POST", "/api/workflows/1/rename", Some(r#"{"name":"x"}"#), Gate::Reader, true),
+        ("GET", "/api/docs/nope/split", None, Gate::Open, true),
+        ("GET", "/api/docs/nope/outline", None, Gate::Open, true),
+        ("GET", "/api/notes", None, Gate::Open, true),
+        ("POST", "/api/notes", Some(r#"{"text":"x"}"#), Gate::Token, true),
+        ("POST", "/api/notes/seen", None, Gate::Reader, true),
+        ("POST", "/api/notes/dismiss", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+        ("POST", "/api/notes/restore", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+        ("POST", "/api/focus", None, Gate::Reader, true),
+        ("POST", "/api/shutdown", None, Gate::Window, true),
+        ("POST", "/api/restart", Some("{}"), Gate::Window, true),
+        ("DELETE", "/api/restart", None, Gate::Window, true),
+        ("POST", "/api/update/check", Some(r#"{"lift":false}"#), Gate::Window, true),
+        ("POST", "/api/update/auto", Some(r#"{"on":false}"#), Gate::Window, true),
+        ("POST", "/api/update/later", Some("{}"), Gate::Window, true),
+        ("GET", "/api/reset", None, Gate::Open, true),
+        // 999 documents is never the count there is, so the reset is refused
+        // as stale once it is past the gate, and the store stays.
+        ("POST", "/api/reset", Some(r#"{"documents":999}"#), Gate::Reader, true),
+        ("POST", "/api/terminal", Some("{}"), Gate::Reader, true),
+        ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
+        ("POST", "/api/resolve", Some(r#"{"word":"x"}"#), Gate::Desk, true),
+        ("GET", "/api/browse", None, Gate::Open, true),
+        ("POST", "/api/browse", Some(r#"{"path":"."}"#), Gate::Token, true),
+        ("POST", "/api/browse/pick", None, Gate::Desk, false),
+        ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
+        ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
+        ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
+        ("GET", "/api/browse/nope/file?path=x.md", None, Gate::Open, true),
+        ("GET", "/api/browse/nope/raw?path=x.md", None, Gate::Open, true),
+        ("GET", "/api/browse/nope/raw/x.md", None, Gate::Open, true),
+        ("GET", "/api/browse/nope/find?q=x", None, Gate::Open, true),
+        ("GET", "/api/browse/nope/outline?path=x.md", None, Gate::Open, true),
+        ("GET", "/api/docs/nope/raw", None, Gate::Open, true),
+        ("GET", "/api/docs/nope/blob", None, Gate::Open, true),
+        ("GET", "/api/compare/a/b", None, Gate::Open, true),
+        ("GET", "/api/events", None, Gate::Open, true),
+        ("POST", "/api/capability", None, Gate::Mint, true),
+        // The socket proves itself in its first frame; without an upgrade it
+        // is a GET that goes nowhere, and the host gate is what is tested.
+        ("GET", "/api/desk", None, Gate::Open, true),
+        ("GET", "/api/desks", None, Gate::Desk, true),
+        ("POST", "/api/desks", Some("{}"), Gate::Desk, true),
+        ("POST", "/api/desks/1/rename", Some(r#"{"name":"x"}"#), Gate::Desk, true),
+        ("POST", "/api/desks/1/layout", Some(r#"{"col":0.5,"row":0.5}"#), Gate::Desk, true),
+        ("POST", "/api/desks/1/move", Some(r#"{"from":1,"to":2}"#), Gate::Desk, true),
+        ("POST", "/api/desks/1/delete", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/reopen", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/panes", Some("{}"), Gate::Desk, true),
+        ("GET", "/api/desks/1/docs", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/docs/d/remove", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/docs/d/restore", None, Gate::Desk, true),
+        ("GET", "/api/desks/1/notes", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/notes", Some(r#"{"text":"x"}"#), Gate::Desk, true),
+        ("POST", "/api/desks/1/notes/1", Some("{}"), Gate::Desk, true),
+        ("POST", "/api/desks/1/notes/1/remove", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/notes/1/restore", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/notes/1/keep", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/leftoff", Some(r#"{"text":"x","at":0}"#), Gate::Desk, true),
+        ("GET", "/api/desks/1/keys", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/keys", Some(r#"{"name":"X_KEY","value":"y"}"#), Gate::Desk, false),
+        ("POST", "/api/desks/1/keys/X_KEY/remove", Some("{}"), Gate::Desk, false),
+        ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/park", Some("{}"), Gate::Desk, true),
+        ("POST", "/api/desks/1/week", Some(r#"{"title":"t","content":"c"}"#), Gate::Desk, true),
+        ("POST", "/api/desks/1/notes/1/image", None, Gate::Desk, true),
+        ("POST", "/api/desks/1/notes/1/images", Some(r#"{"images":[]}"#), Gate::Desk, true),
+        ("GET", "/api/desks/1/note-images/x.png", None, Gate::Desk, true),
+        ("GET", "/api/brief", None, Gate::Desk, true),
+        ("POST", "/api/brief", Some(r#"{"on":true}"#), Gate::Desk, true),
+        ("POST", "/api/panes/nope/delete", None, Gate::Desk, true),
+        ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
+        ("POST", "/api/panes/nope/rename", Some(r#"{"name":"x"}"#), Gate::Desk, true),
+        ("POST", "/api/panes/nope/start", Some(r#"{"cols":80,"rows":24}"#), Gate::Desk, true),
+        ("POST", "/api/panes/nope/stop", None, Gate::Desk, true),
+        ("POST", "/api/panes/nope/agent", Some("{}"), Gate::Token, true),
+        ("GET", "/api/panes/nope/notes", None, Gate::Token, true),
+        ("POST", "/api/panes/nope/notes/1/tick", None, Gate::Token, true),
+        ("POST", "/api/panes/nope/notes/1/mark", None, Gate::Token, true),
+        ("POST", "/api/panes/nope/name", Some(r#"{"name":"x"}"#), Gate::Token, true),
+        ("GET", "/api/panes/nope/brief", None, Gate::Token, true),
+        ("GET", "/api/panes/nope/changes", None, Gate::Token, true),
+        ("POST", "/api/panes/nope/leftoff", Some("{}"), Gate::Token, true),
+        ("POST", "/api/panes/nope/suggest", Some("{}"), Gate::Token, true),
+        ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
+        ("GET", "/desks", None, Gate::Open, true),
+        ("GET", "/desk/1", None, Gate::Open, true),
+        ("GET", "/assets/desk.js", None, Gate::Open, true),
+        ("GET", "/assets/frame.js", None, Gate::Open, true),
+        ("GET", "/assets/game.js", None, Gate::Open, true),
+        ("GET", "/assets/about.js", None, Gate::Open, true),
+        ("GET", "/assets/find.js", None, Gate::Open, true),
+        ("GET", "/assets/keys.js", None, Gate::Open, true),
+        ("GET", "/assets/menu.js", None, Gate::Open, true),
+        ("GET", "/assets/themes.css", None, Gate::Open, true),
+        ("GET", "/assets/palette.js", None, Gate::Open, true),
+        ("GET", "/assets/look.js", None, Gate::Open, true),
+        ("GET", "/assets/note.js", None, Gate::Open, true),
+        ("GET", "/assets/tip.js", None, Gate::Open, true),
+        ("GET", "/assets/home.js", None, Gate::Open, true),
+        ("GET", "/assets/toast.js", None, Gate::Open, true),
+        ("GET", "/assets/diff.js", None, Gate::Open, true),
+        ("GET", "/assets/browse.js", None, Gate::Open, true),
+        ("GET", "/assets/paths.js", None, Gate::Open, true),
+    ];
+
+    /// One request to the router, without a port. Only a refusal's body is
+    /// read: an event stream never ends.
+    async fn ask(
+        router: &Router,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, String) {
+        let mut req = axum::http::Request::builder().method(method).uri(path);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let req = match body {
+            Some(b) => req
+                .header("content-type", "application/json")
+                .body(Body::from(b.to_string()))
+                .unwrap(),
+            None => req.body(Body::empty()).unwrap(),
+        };
+        let resp = router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let text = if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
+            let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        } else {
+            String::new()
+        };
+        (status, text)
+    }
+
     /// A gate helps only if every route is behind it, and a route added later
-    /// is exactly the one that will forget. So the file is read: each desk
-    /// handler must reach the gate before it reaches the store.
-    #[test]
-    fn every_desk_route_is_behind_the_gate() {
-        // A checkout on Windows can have CRLF line endings, and the end of a
-        // handler is found by its newlines.
-        let src = include_str!("server.rs").replace("\r\n", "\n");
-        let src = src.as_str();
-        for handler in [
-            "async fn desks(",
-            "async fn create_desk(",
-            "async fn browse_pick(",
-            "async fn rename_desk(",
-            "async fn desk_layout(",
-            "async fn move_pane(",
-            "async fn delete_desk(",
-            "async fn reopen_desk(",
-            "async fn desk_docs(",
-            "async fn remove_desk_doc(",
-            "async fn restore_desk_doc(",
-            "async fn desk_notes(",
-            "async fn add_desk_note(",
-            "async fn set_desk_note(",
-            "async fn remove_desk_note(",
-            "async fn restore_desk_note(",
-            "async fn keep_desk_note(",
-            "async fn desk_left_off(",
-            "async fn visit_desk(",
-            "async fn park_desk(",
-            "async fn desk_week(",
-            "async fn add_note_image(",
-            "async fn set_note_images(",
-            "async fn note_image(",
-            "async fn brief_setting(",
-            "async fn set_brief_setting(",
-            "async fn open_pane(",
-            "async fn close_pane(",
-            "async fn restore_pane(",
-            "async fn rename_pane(",
-            "async fn start_pane(",
-            "async fn stop_pane(",
-            "async fn paste_image(",
-            "async fn connect_claude(",
-            "async fn resolve_path(",
-        ] {
-            let from = src
-                .find(handler)
-                .unwrap_or_else(|| panic!("{handler} is a route in this file"));
-            let body = &src[from..];
-            let end = body.find("\n}\n").expect("a handler ends");
-            let body = &body[..end];
-            let gate = body
-                .find("refuse_desk")
-                .expect("a desk handler goes through the gate");
-            let store = body.find("app.store").unwrap_or(usize::MAX);
-            assert!(gate < store, "{handler} reaches the store before the gate");
+    /// is exactly the one that will forget. So the router is built against a
+    /// store in a temp dir and every route is sent four requests: the count
+    /// of routes in `router()` has to match the table, so a new route must
+    /// say what it answers to before the build is green.
+    #[tokio::test]
+    async fn every_route_answers_to_its_gate_and_to_this_host_only() {
+        let tmp = crate::store::tempdir::Dir::new("snyvi-routes");
+        let paths = Paths {
+            data_dir: tmp.path.join("data"),
+            config_dir: tmp.path.join("config"),
+            docs_dir: tmp.path.join("data").join("docs"),
+            db_path: tmp.path.join("data").join("snyvi.db"),
+            token_path: tmp.path.join("config").join("token"),
+        };
+        let token = crate::config::load_or_create_token(&paths).unwrap();
+        let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+        assert_ne!(token, window, "two secrets, two jobs");
+        let store = Store::open(&paths).unwrap();
+        let app = new_app(&paths, store, token.clone(), window.clone(), None, None);
+        let cap = app.capabilities.mint().unwrap();
+        let router = router(app);
+
+        // The table is the router.
+        let src = include_str!("server.rs");
+        let routed = &src[src.find("\nfn router(").unwrap()..];
+        let routed = &routed[..routed.find("\n}\n").unwrap()];
+        let n = routed.matches("get(").count()
+            + routed.matches("post(").count()
+            + routed.matches(".delete(").count();
+        assert_eq!(n, ROUTES.len(), "every route is in ROUTES, and nothing else is");
+
+        let port = crate::config::port();
+        let host = format!("127.0.0.1:{port}");
+        let origin = format!("http://{host}");
+        let bearer = format!("Bearer {token}");
+        let (host, origin, bearer, cap, window) =
+            (host.as_str(), origin.as_str(), bearer.as_str(), cap.as_str(), window.as_str());
+        let refused = |s: StatusCode| s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN;
+
+        for &(method, path, body, gate, go) in ROUTES {
+            let what = format!("{method} {path}");
+            // From another host, with every leave there is: refused before any
+            // handler, by the gate and not by a route.
+            let (s, t) = ask(
+                &router,
+                method,
+                path,
+                body,
+                &[
+                    ("host", "evil.example:7777"),
+                    ("authorization", bearer),
+                    (CAPABILITY_HEADER, cap),
+                    (WINDOW_HEADER, window),
+                ],
+            )
+            .await;
+            assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another host");
+            assert!(t.contains(NOT_THIS_HOST), "{what}: the gate refuses another host, not a handler: {t}");
+            // Our host, a stranger's Origin: a page elsewhere, or a rebound name.
+            let (s, t) = ask(
+                &router,
+                method,
+                path,
+                body,
+                &[("host", host), ("origin", "http://evil.example"), ("authorization", bearer)],
+            )
+            .await;
+            assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another origin");
+            assert!(t.contains(NOT_THIS_ORIGIN), "{what}: the gate refuses another origin: {t}");
+            // Nothing but the host.
+            let (bare, _) = ask(&router, method, path, body, &[("host", host)]).await;
+            if gate == Gate::Open {
+                assert!(!refused(bare), "{what}: open, but {bare}");
+                continue;
+            }
+            assert!(refused(bare), "{what}: nothing offered, but {bare}");
+            // The wrong leave: a capability where the token is wanted, the
+            // token where the window's leave is, a capability with no page
+            // behind it where the page is.
+            let wrong: Vec<(&str, &str)> = match gate {
+                Gate::Token => vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
+                Gate::Window | Gate::Mint => vec![("host", host), ("authorization", bearer)],
+                Gate::Desk => vec![("host", host), ("origin", origin), ("authorization", bearer)],
+                Gate::Reader => vec![("host", host), (CAPABILITY_HEADER, cap)],
+                Gate::Open => unreachable!(),
+            };
+            let (s, _) = ask(&router, method, path, body, &wrong).await;
+            assert!(refused(s), "{what}: the wrong leave let through: {s}");
+            if gate == Gate::Mint {
+                let (s, _) = ask(&router, method, path, body, &[("host", host), (CAPABILITY_HEADER, cap)]).await;
+                assert!(refused(s), "{what}: a capability mints nothing");
+            }
+            if !go {
+                continue;
+            }
+            // The right leave, each there is.
+            let rights: Vec<Vec<(&str, &str)>> = match gate {
+                Gate::Reader => vec![vec![("host", host), ("origin", origin)], vec![("host", host), ("authorization", bearer)]],
+                Gate::Desk => vec![vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)]],
+                Gate::Token => vec![vec![("host", host), ("authorization", bearer)]],
+                Gate::Window => vec![vec![("host", host), (WINDOW_HEADER, window)], vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)]],
+                Gate::Mint => vec![vec![("host", host), (WINDOW_HEADER, window)]],
+                Gate::Open => unreachable!(),
+            };
+            for h in rights {
+                let (s, t) = ask(&router, method, path, body, &h).await;
+                assert!(!refused(s), "{what}: refused with the right leave: {s} {t}");
+            }
         }
-        // The folder dialog is a page reaching the filesystem, the same as a
-        // desk: no dialog is shown to a page that has not passed the gate.
-        let pick = &src[src.find("async fn browse_pick(").unwrap()..];
-        assert!(
-            pick.find("refuse_desk").unwrap() < pick.find("pick_folder").unwrap(),
-            "browse_pick shows a dialog before the gate"
-        );
-        // And the routes themselves: every path a desk is reached by is one of
-        // the handlers above.
-        for route in [
-            r#".route("/api/desks", get(desks).post(create_desk))"#,
-            r#".route("/api/browse/pick", post(browse_pick))"#,
-            r#".route("/api/resolve", post(resolve_path))"#,
-            r#".route("/api/desks/{id}/rename", post(rename_desk))"#,
-            r#".route("/api/desks/{id}/layout", post(desk_layout))"#,
-            r#".route("/api/desks/{id}/move", post(move_pane))"#,
-            r#".route("/api/desks/{id}/delete", post(delete_desk))"#,
-            r#".route("/api/desks/{id}/reopen", post(reopen_desk))"#,
-            r#".route("/api/desks/{id}/panes", post(open_pane))"#,
-            r#".route("/api/desks/{id}/docs", get(desk_docs))"#,
-            r#".route("/api/desks/{id}/docs/{doc}/remove", post(remove_desk_doc))"#,
-            r#".route("/api/desks/{id}/docs/{doc}/restore", post(restore_desk_doc))"#,
-            r#".route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))"#,
-            r#".route("/api/desks/{id}/notes/{note}", post(set_desk_note))"#,
-            r#".route("/api/desks/{id}/notes/{note}/remove", post(remove_desk_note))"#,
-            r#".route("/api/desks/{id}/notes/{note}/restore", post(restore_desk_note))"#,
-            r#".route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))"#,
-            r#".route("/api/desks/{id}/leftoff", post(desk_left_off))"#,
-            r#".route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))"#,
-            r#".route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))"#,
-            r#".route("/api/desks/{id}/visit", post(visit_desk))"#,
-            r#".route("/api/desks/{id}/park", post(park_desk))"#,
-            r#".route("/api/desks/{id}/week", post(desk_week))"#,
-            r#""/api/desks/{id}/notes/{note}/image""#,
-            "post(add_note_image)",
-            r#".route("/api/desks/{id}/notes/{note}/images", post(set_note_images))"#,
-            r#".route("/api/desks/{id}/note-images/{name}", get(note_image))"#,
-            r#".route("/api/brief", get(brief_setting).post(set_brief_setting))"#,
-            r#".route("/api/panes/{id}/changes", get(pane_changes))"#,
-            r#".route("/api/panes/{id}/delete", post(close_pane))"#,
-            r#".route("/api/panes/{id}/restore", post(restore_pane))"#,
-            r#".route("/api/panes/{id}/rename", post(rename_pane))"#,
-            r#".route("/api/panes/{id}/start", post(start_pane))"#,
-            r#".route("/api/panes/{id}/stop", post(stop_pane))"#,
-            r#""/api/panes/{id}/paste""#,
-            "post(paste_image)",
-        ] {
-            assert!(src.contains(route), "the route table should hold {route}");
-        }
-        // The one pane route outside the gate, on purpose: the agent's hook
-        // holds the token, not the capability. It answers to the token first,
-        // and it reaches the store for one thing -- the conversation's id,
-        // after the pane is known to be running.
-        let agent = &src[src.find("async fn pane_agent(").unwrap()..];
-        let agent = &agent[..agent.find("\n}\n").unwrap()];
-        assert!(agent.find("authorized(").unwrap() < agent.find("app.panes").unwrap());
-        assert!(agent.find("app.panes").unwrap() < agent.find("app.store").unwrap());
-        assert_eq!(
-            agent.matches("app.store").count(),
-            agent.matches("app.store.set_pane_session(").count(),
-            "pane_agent reaches the store for more than the session id"
-        );
-        // And the one that reads: token first, then a running pane, and then
-        // the store only to find that pane's desk and read its list -- no
-        // write of any kind.
-        let notes = &src[src.find("async fn pane_notes(").unwrap()..];
-        let notes = &notes[..notes.find("\n}\n").unwrap()];
-        assert!(notes.find("authorized(").unwrap() < notes.find("app.panes").unwrap());
-        assert!(notes.find("app.panes.is_running(").unwrap() < notes.find("app.store").unwrap());
-        assert_eq!(
-            notes.matches("app.store").count(),
-            notes.matches("app.store.pane(").count()
-                + notes.matches("app.store.desk_notes(").count(),
-            "pane_notes reaches the store for more than reading one desk's list"
-        );
-        assert!(src.contains(r#".route("/api/panes/{id}/notes", get(pane_notes))"#));
-        // And the one write: token, running pane, then the store only to find
-        // the pane's desk and tick one line on it.
-        let tick = &src[src.find("async fn pane_tick_note(").unwrap()..];
-        let tick = &tick[..tick.find("\n}\n").unwrap()];
-        assert!(tick.find("authorized(").unwrap() < tick.find("app.panes").unwrap());
-        assert!(tick.find("app.panes.is_running(").unwrap() < tick.find("app.store").unwrap());
-        assert_eq!(
-            tick.matches("app.store").count(),
-            tick.matches("app.store.pane(").count()
-                + tick.matches("app.store.tick_desk_note(").count(),
-            "pane_tick_note reaches the store for more than ticking one line"
-        );
-        assert!(
-            src.contains(r#".route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))"#)
-        );
-        // And the stage: the same gate, and one line's stage on its own desk.
-        let mark = &src[src.find("async fn pane_mark_note(").unwrap()..];
-        let mark = &mark[..mark.find("\n}\n").unwrap()];
-        assert!(mark.find("authorized(").unwrap() < mark.find("app.panes").unwrap());
-        assert!(mark.find("app.panes.is_running(").unwrap() < mark.find("app.store").unwrap());
-        assert_eq!(
-            mark.matches("app.store").count(),
-            mark.matches("app.store.pane(").count()
-                + mark.matches("app.store.mark_desk_note(").count(),
-            "pane_mark_note reaches the store for more than one line's stage"
-        );
-        assert!(
-            src.contains(r#".route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))"#)
-        );
-        // And naming its panel: token, running pane, then only that pane's name.
-        let name = &src[src.find("async fn pane_name(").unwrap()..];
-        let name = &name[..name.find("\n}\n").unwrap()];
-        assert!(name.find("authorized(").unwrap() < name.find("app.panes").unwrap());
-        assert!(name.find("app.panes.is_running(").unwrap() < name.find("app.store").unwrap());
-        assert_eq!(
-            name.matches("app.store").count(),
-            name.matches("app.store.rename_pane(&id,").count(),
-            "pane_name reaches the store for more than its own pane's name"
-        );
-        assert!(src.contains(r#".route("/api/panes/{id}/name", post(pane_name))"#));
+
+        // Fetch metadata that says the request came from another site is
+        // refused on anything that is not a read, whatever else it carries.
+        let (s, t) = ask(
+            &router,
+            "POST",
+            "/api/focus",
+            None,
+            &[("host", host), ("origin", origin), ("sec-fetch-site", "cross-site")],
+        )
+        .await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+        assert!(t.contains(NOT_THIS_ORIGIN));
+        // And a read from the address bar is not.
+        let (s, _) = ask(&router, "GET", "/api/health", None, &[("host", host), ("sec-fetch-site", "none")]).await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, _) = ask(&router, "GET", "/api/health", None, &[("host", format!("localhost:{port}").as_str())]).await;
+        assert_eq!(s, StatusCode::OK, "localhost is this host too");
     }
 
     /// The capability is read off the fragment and presented in a frame. If it

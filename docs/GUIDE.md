@@ -547,7 +547,11 @@ kept, because a kept secret is still a secret. Closing
 a desk keeps its keys; `snyvi prune` ends them with the desk. Home's right
 column lists every key by name, with the desks it is on and when a panel
 last started with it. snyvi never uses a key itself, and no tool lets an
-agent read one.
+agent read one. It is in the environment, though, and an environment is
+shared: the panel's shell, the agent in it and every program that agent
+runs see the variable the way they see `PATH`. A key on a desk is a key
+you would hand to anything you run on that desk. On Linux the file it
+rests in is readable by your user alone, as snyvi's own token is.
 
 The server also offers four prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is

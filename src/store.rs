@@ -185,6 +185,104 @@ const DOC_FROM: &str =
 const HEAD_FROM: &str =
     "FROM head_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 
+/// What the schema has gained since the tables were first made, each step an
+/// `ALTER TABLE … ADD COLUMN`, grouped by the version `PRAGMA user_version`
+/// records once they have run.
+///
+/// Version 1 is every column added through 1.13. Those used to run on every
+/// start with their errors dropped, so a database from before the version
+/// was counted says 0 and may already hold any prefix of them: version 1
+/// alone takes "duplicate column" as done, and `migrate` says 1 after it.
+/// From 2 on, a step runs once, in a transaction with the rest of its
+/// version, and an error is an error -- a daemon that cannot bring its
+/// database forward says so and stops, rather than running on a schema it
+/// half has.
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"),
+    (1, "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'"),
+    (1, "ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0"),
+    // Read, for everything that was here before there was a queue: a
+    // library's worth of old documents is not a backlog.
+    (1, "ALTER TABLE docs ADD COLUMN unread INTEGER NOT NULL DEFAULT 0"),
+    // Deleted, and still here until `prune` says otherwise -- which is
+    // what makes "Undo" in the toast something the daemon can honour.
+    (1, "ALTER TABLE docs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0"),
+    // Who sent it, by the name the MCP client gave in `initialize`,
+    // so the connect page can say when an agent last worked.
+    (1, "ALTER TABLE docs ADD COLUMN sender TEXT NOT NULL DEFAULT ''"),
+    // Which desk and slot it came from, when it came from a pane.
+    // Copied, not joined: a desk that is closed later does not take
+    // the document's provenance with it.
+    (1, "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0"),
+    (1, "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0"),
+    // The Claude conversation a pane last had, to offer it back.
+    (1, "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''"),
+    // Who ticked a desk's line, when an agent did.
+    (1, "ALTER TABLE desk_notes ADD COLUMN done_by TEXT NOT NULL DEFAULT ''"),
+    // Marked by a planned restart: bring this pane back as
+    // `claude --resume`. Taken by the daemon that comes up next.
+    (1, "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0"),
+    // 1.7.1: what the reader called a panel, and a desk's full view.
+    (1, "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0"),
+    // 1.7.1: where an agent's tick says the work went.
+    (1, "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''"),
+    // 1.8: a closed desk is kept, with its notes, until prune.
+    (1, "ALTER TABLE desks ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0"),
+    // 1.8: where the work was left, and a tick's evidence and an
+    // agent's suggested line.
+    (1, "ALTER TABLE desks ADD COLUMN left_off TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desks ADD COLUMN left_off_at INTEGER NOT NULL DEFAULT 0"),
+    (1, "ALTER TABLE desks ADD COLUMN left_off_by TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desks ADD COLUMN left_off_about TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN done_evidence TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN suggested_by TEXT NOT NULL DEFAULT ''"),
+    // 1.9: when a desk was last opened, and a desk on the shelf.
+    (1, "ALTER TABLE desks ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0"),
+    (1, "ALTER TABLE desks ADD COLUMN parked_at INTEGER NOT NULL DEFAULT 0"),
+    (1, "ALTER TABLE desks ADD COLUMN parked_next TEXT NOT NULL DEFAULT ''"),
+    // 1.10: when the reader took a document off its desk's list. The
+    // desk's list only: the library, the Inbox and search still have it.
+    (1, "ALTER TABLE docs ADD COLUMN desk_off INTEGER NOT NULL DEFAULT 0"),
+    // 1.10: pictures on a desk's line.
+    (1, "ALTER TABLE desk_notes ADD COLUMN images TEXT NOT NULL DEFAULT ''"),
+    // 1.10: how far an agent has got with a line, short of done.
+    (1, "ALTER TABLE desk_notes ADD COLUMN stage TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN stage_doc TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN stage_at INTEGER NOT NULL DEFAULT 0"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN stage_pane TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desk_notes ADD COLUMN stage_session TEXT NOT NULL DEFAULT ''"),
+    // 1.13: the pane a tick or a left-off came from, so a panel is not
+    // told its own doings as news at its next prompt.
+    (1, "ALTER TABLE desk_notes ADD COLUMN done_pane TEXT NOT NULL DEFAULT ''"),
+    (1, "ALTER TABLE desks ADD COLUMN left_off_pane TEXT NOT NULL DEFAULT ''"),
+];
+
+/// Bring a database to the newest version in `MIGRATIONS`.
+fn migrate(conn: &Connection) -> Result<()> {
+    let have: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .context("reading the schema version")?;
+    let latest = MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0);
+    if have >= latest {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    for (version, stmt) in MIGRATIONS.iter().filter(|(v, _)| *v > have) {
+        match tx.execute_batch(stmt) {
+            Ok(()) => {}
+            Err(e) if *version == 1 && e.to_string().contains("duplicate column name") => {}
+            Err(e) => return Err(e).with_context(|| format!("schema step {version}: {stmt}")),
+        }
+    }
+    tx.execute_batch(&format!("PRAGMA user_version = {latest}"))?;
+    tx.commit()?;
+    Ok(())
+}
+
 impl Store {
     pub fn open(paths: &Paths) -> Result<Store> {
         fs::create_dir_all(&paths.data_dir).context("creating data dir")?;
@@ -218,71 +316,7 @@ impl Store {
              UPDATE workflows SET key = LOWER(key) WHERE key <> LOWER(key);",
         )
         .ok();
-        for stmt in [
-            "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'",
-            "ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0",
-            // Read, for everything that was here before there was a queue: a
-            // library's worth of old documents is not a backlog.
-            "ALTER TABLE docs ADD COLUMN unread INTEGER NOT NULL DEFAULT 0",
-            // Deleted, and still here until `prune` says otherwise -- which is
-            // what makes "Undo" in the toast something the daemon can honour.
-            "ALTER TABLE docs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0",
-            // Who sent it, by the name the MCP client gave in `initialize`,
-            // so the connect page can say when an agent last worked.
-            "ALTER TABLE docs ADD COLUMN sender TEXT NOT NULL DEFAULT ''",
-            // Which desk and slot it came from, when it came from a pane.
-            // Copied, not joined: a desk that is closed later does not take
-            // the document's provenance with it.
-            "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0",
-            // The Claude conversation a pane last had, to offer it back.
-            "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''",
-            // Who ticked a desk's line, when an agent did.
-            "ALTER TABLE desk_notes ADD COLUMN done_by TEXT NOT NULL DEFAULT ''",
-            // Marked by a planned restart: bring this pane back as
-            // `claude --resume`. Taken by the daemon that comes up next.
-            "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0",
-            // 1.7.1: what the reader called a panel, and a desk's full view.
-            "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0",
-            // 1.7.1: where an agent's tick says the work went.
-            "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''",
-            // 1.8: a closed desk is kept, with its notes, until prune.
-            "ALTER TABLE desks ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0",
-            // 1.8: where the work was left, and a tick's evidence and an
-            // agent's suggested line.
-            "ALTER TABLE desks ADD COLUMN left_off TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desks ADD COLUMN left_off_at INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE desks ADD COLUMN left_off_by TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desks ADD COLUMN left_off_about TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN done_evidence TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN suggested_by TEXT NOT NULL DEFAULT ''",
-            // 1.9: when a desk was last opened, and a desk on the shelf.
-            "ALTER TABLE desks ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE desks ADD COLUMN parked_at INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE desks ADD COLUMN parked_next TEXT NOT NULL DEFAULT ''",
-            // 1.10: when the reader took a document off its desk's list. The
-            // desk's list only: the library, the Inbox and search still have it.
-            "ALTER TABLE docs ADD COLUMN desk_off INTEGER NOT NULL DEFAULT 0",
-            // 1.10: pictures on a desk's line.
-            "ALTER TABLE desk_notes ADD COLUMN images TEXT NOT NULL DEFAULT ''",
-            // 1.10: how far an agent has got with a line, short of done.
-            "ALTER TABLE desk_notes ADD COLUMN stage TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN stage_doc TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN stage_at INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE desk_notes ADD COLUMN stage_pane TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desk_notes ADD COLUMN stage_session TEXT NOT NULL DEFAULT ''",
-            // 1.13: the pane a tick or a left-off came from, so a panel is not
-            // told its own doings as news at its next prompt.
-            "ALTER TABLE desk_notes ADD COLUMN done_pane TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE desks ADD COLUMN left_off_pane TEXT NOT NULL DEFAULT ''",
-        ] {
-            let _ = conn.execute_batch(stmt);
-        }
+        migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
         // `head_docs` is the second of the two, and the one every *list* reads:

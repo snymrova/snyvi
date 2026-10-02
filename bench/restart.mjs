@@ -74,7 +74,9 @@ async function main() {
     writeFileSync(md, "# A plan\n\nOne paragraph.\n");
     cli("send", md);
     const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
-    const T = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    // What restarts the daemon answers to the window secret, not the token.
+    const windowSecret = readFileSync(join(tmp, "config", "window"), "utf8").trim();
+    const T = { authorization: `Bearer ${token}`, "x-snyvi-window": windowSecret, "content-type": "application/json" };
     const health = async () => { try { return await (await fetch(`${base}/api/health`)).json(); } catch { return null; } };
     const postT = async (path, body = {}) => { const r = await fetch(base + path, { method: "POST", headers: T, body: JSON.stringify(body) }); return { status: r.status, json: await r.json().catch(() => ({})) }; };
     const h0 = await health();

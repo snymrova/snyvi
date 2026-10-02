@@ -122,7 +122,9 @@ fn random_hex() -> anyhow::Result<String> {
     Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn constant_eq(a: &str, b: &str) -> bool {
+/// Equal, in time that does not depend on where they differ: the compare
+/// every secret snyvi checks goes through.
+pub(crate) fn constant_eq(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes()
             .zip(b.bytes())

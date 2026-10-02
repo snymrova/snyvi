@@ -1,70 +1,54 @@
 {
   "colour": {
-    "total": 8,
+    "total": 2,
     "files": {
-      "about.js": 1,
-      "app.css": 5,
-      "desk.js": 1,
-      "note.js": 1
+      "app.css": 1,
+      "desk.js": 1
     }
   },
   "font-size": {
-    "total": 55,
+    "total": 21,
     "files": {
-      "about.js": 14,
-      "app.css": 26,
-      "desk.js": 11,
-      "menu.js": 1,
-      "mmd.js": 1,
-      "note.js": 1,
+      "about.js": 4,
+      "app.css": 3,
+      "desk.js": 12,
+      "home.js": 1,
       "palette.js": 1
     }
   },
   "duration": {
-    "total": 79,
+    "total": 43,
     "files": {
-      "app.css": 44,
-      "desk.js": 5,
-      "keys.js": 4,
-      "look.js": 8,
-      "menu.js": 1,
-      "mmd.js": 2,
-      "note.js": 15
+      "about.js": 4,
+      "app.css": 19,
+      "desk.js": 7,
+      "keys.js": 1,
+      "look.js": 1,
+      "note.js": 11
     }
   },
   "z-index": {
-    "total": 15,
+    "total": 3,
     "files": {
-      "app.css": 8,
+      "about.js": 1,
       "desk.js": 1,
-      "frame.js": 1,
-      "game.js": 1,
-      "keys.js": 1,
-      "look.js": 1,
-      "menu.js": 1,
-      "mmd.js": 1
+      "paths.js": 1
     }
   },
   "outline": {
     "total": 5,
     "files": {
-      "app.css": 2,
+      "about.js": 1,
+      "app.css": 1,
       "desk.js": 2,
       "menu.js": 1
     }
   },
   "title": {
-    "total": 123,
+    "total": 20,
     "files": {
-      "about.js": 6,
-      "app.js": 37,
-      "desk.js": 51,
-      "frame.js": 4,
-      "game.js": 1,
-      "index.html": 12,
-      "menu.js": 2,
-      "mmd.js": 5,
-      "note.js": 5
+      "desk.js": 19,
+      "paths.js": 1
     }
   },
   "raw-error": {
@@ -72,15 +56,9 @@
     "files": {}
   },
   "words": {
-    "total": 25,
+    "total": 2,
     "files": {
-      "about.js": 8,
-      "app.js": 1,
-      "desk.js": 5,
-      "game.js": 2,
-      "index.html": 5,
-      "mmd.js": 1,
-      "note.js": 3
+      "desk.js": 2
     }
   },
   "nesting": {
