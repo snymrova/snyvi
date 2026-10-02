@@ -2,9 +2,11 @@
 //! file, send it. Zero agent cooperation needed. And inside a desk panel, every
 //! event that says what Claude is doing -- a prompt, a tool, a permission
 //! prompt, the end of a turn -- is told to the panel; a session starting there
-//! is handed the desk brief (`crate::brief`) and named after its panel; and a
+//! is handed the desk brief (`crate::brief`) and named after its panel; each
+//! prompt is handed what changed on the desk since the last one; and a
 //! plan Claude asks to have approved lands in snyvi while it waits for the
-//! answer. Quiet on every path: a hook must never interrupt the session, so
+//! answer. Codex runs the same hooks with the same events and the same
+//! stdin, and takes the same `additionalContext` back. Quiet on every path: a hook must never interrupt the session, so
 //! failures are swallowed and exit 0.
 
 use crate::client;
@@ -229,6 +231,18 @@ pub fn run(paths: &Paths) -> Result<()> {
             }
             return Ok(());
         }
+        // And at each prompt, what the reader and the other panels did on the
+        // desk since the last one -- a note added, one ticked, a document
+        // from the panel beside this one -- goes in with the prompt. Only
+        // when something did: most prompts get nothing, and nothing is
+        // printed. It rides on the reader's own message, so snyvi still
+        // never starts a turn.
+        if name == "UserPromptSubmit" {
+            if let Some(out) = client::changes(paths, pane).and_then(|c| prompt_output(&c)) {
+                println!("{out}");
+            }
+            return Ok(());
+        }
     }
     if event.tool_name.get() == Some("ExitPlanMode") && matches!(name, "PreToolUse" | "PostToolUse")
     {
@@ -270,9 +284,17 @@ pub fn run(paths: &Paths) -> Result<()> {
 /// and never over a name the reader gave: a title that is not one of ours
 /// ("ledger · panel 2") is theirs, from `--name` or `/rename`. One of ours is
 /// replaced, since a conversation resumed in another panel lives there now.
+///
+/// And only for a Claude Code session, which is the one with a 36-character
+/// id: Codex takes the same hook and the same context, but refuses an output
+/// field it does not know, and `sessionTitle` is one.
 fn session_start_output(event: &Event, context: &str, title: &str) -> Option<String> {
     let titled = matches!(event.source.get(), Some("startup" | "resume" | "fork"))
         && !title.is_empty()
+        && event
+            .session_id
+            .get()
+            .is_some_and(crate::desk::valid_session)
         && event
             .session_title
             .get()
@@ -288,6 +310,21 @@ fn session_start_output(event: &Event, context: &str, title: &str) -> Option<Str
         out["sessionTitle"] = json!(title);
     }
     Some(json!({ "hookSpecificOutput": out }).to_string())
+}
+
+/// What a UserPromptSubmit hook prints: the desk's changes as
+/// `additionalContext`, and nothing at all when there are none.
+fn prompt_output(context: &str) -> Option<String> {
+    if context.trim().is_empty() {
+        return None;
+    }
+    Some(
+        json!({ "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": context,
+        } })
+        .to_string(),
+    )
 }
 
 /// A session title snyvi gave: "<desk> · panel <n>" (`crate::brief::title`).
@@ -386,6 +423,9 @@ fn agent_state(event: &Event) -> Option<&'static str> {
         "UserPromptSubmit" | "PostToolUse" => Some("working"),
         "Stop" => Some("done"),
         "SessionEnd" => Some(""),
+        // Codex asks for an approval through this event; Claude Code says the
+        // same thing with a `Notification`.
+        "PermissionRequest" => Some("needs_you"),
         // A permission prompt needs the reader. The idle reminder a minute
         // after a turn ended does not: the turn is done, and says so already.
         "Notification" => {
@@ -499,6 +539,102 @@ pub fn install(command: &str, auto: bool) -> Result<(PathBuf, Vec<&'static str>,
 /// The merge itself, on the parsed file. Returns (anything changed, a
 /// command was rewritten).
 pub fn install_into(settings: &mut Value, command: &str, auto: bool) -> Result<(bool, bool)> {
+    merge(settings, command, claude_hooks(command, auto))
+}
+
+/// The entries Claude Code gets, each under its event.
+fn claude_hooks(command: &str, auto: bool) -> Vec<(&'static str, Value)> {
+    let hook = |c: &str| json!({ "hooks": [{ "type": "command", "command": c, "timeout": 10 }] });
+    let mut wanted: Vec<(&str, Value)> = vec![("SessionStart", hook(command))];
+    for event in STATUS_EVENTS {
+        wanted.push((event, hook(command)));
+    }
+    wanted.push((
+        "PostToolUse",
+        json!({ "matcher": "*", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
+    ));
+    // Plans land in snyvi as the approval is asked: in the background, so the
+    // dialog never waits on it (`send_plan`).
+    wanted.push((
+        "PreToolUse",
+        json!({ "matcher": PLAN_MATCHER, "hooks": [{ "type": "command", "command": command, "async": true, "timeout": 10 }] }),
+    ));
+    if auto {
+        wanted.push((
+            "PostToolUse",
+            json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
+        ));
+    }
+    wanted
+}
+
+/// The entries Codex gets: the same events as Claude Code's status ones,
+/// spelled the way Codex has them. `PermissionRequest` is its "needs you"
+/// (Claude Code says it with a `Notification`, which Codex has not), the
+/// `SessionEnd` timeout is the three seconds Codex allows, and there is no
+/// plan hook and no auto-send: Codex has no ExitPlanMode, and its edits
+/// come as a patch with no file path in the hook's input.
+fn codex_hooks(command: &str) -> Vec<(&'static str, Value)> {
+    let hook =
+        |c: &str, t: u32| json!({ "hooks": [{ "type": "command", "command": c, "timeout": t }] });
+    vec![
+        ("SessionStart", hook(command, 10)),
+        ("UserPromptSubmit", hook(command, 10)),
+        ("PermissionRequest", hook(command, 10)),
+        (
+            "PostToolUse",
+            json!({ "matcher": "*", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
+        ),
+        ("Stop", hook(command, 10)),
+        ("SessionEnd", hook(command, 3)),
+    ]
+}
+
+/// Codex's hooks file, `hooks.json` beside its config: `CODEX_HOME`, or
+/// `~/.codex`. The same shape as Claude Code's `hooks` object, under the
+/// same key, so the one merge serves both.
+pub fn codex_hooks_path() -> Result<PathBuf> {
+    let home = match std::env::var_os("CODEX_HOME") {
+        Some(h) => PathBuf::from(h),
+        None => dirs::home_dir()
+            .context("no home directory")?
+            .join(".codex"),
+    };
+    Ok(home.join("hooks.json"))
+}
+
+/// Write snyvi's hooks for Codex, keeping whatever else the file holds.
+/// Returns the file and whether anything changed.
+pub fn install_codex(command: &str) -> Result<(PathBuf, bool)> {
+    let path = codex_hooks_path()?;
+    let mut settings = read_settings(&path)?;
+    let (changed, _) = merge(&mut settings, command, codex_hooks(command))?;
+    if changed {
+        write_settings(&path, &settings)?;
+    }
+    Ok((path, changed))
+}
+
+/// Take snyvi's hooks out of Codex's file, and nothing else.
+pub fn uninstall_codex() -> Result<(PathBuf, usize)> {
+    let path = codex_hooks_path()?;
+    if !path.is_file() {
+        return Ok((path, 0));
+    }
+    let mut settings = read_settings(&path)?;
+    let n = remove_from(&mut settings);
+    if n > 0 {
+        write_settings(&path, &settings)?;
+    }
+    Ok((path, n))
+}
+
+/// Merge `wanted` into the file's `hooks`, preserving everything else in it.
+fn merge(
+    settings: &mut Value,
+    command: &str,
+    wanted: Vec<(&'static str, Value)>,
+) -> Result<(bool, bool)> {
     let hooks = settings
         .as_object_mut()
         .context("settings.json is not an object")?
@@ -524,27 +660,6 @@ pub fn install_into(settings: &mut Value, command: &str, auto: bool) -> Result<(
                 }
             }
         }
-    }
-    let hook = |c: &str| json!({ "hooks": [{ "type": "command", "command": c, "timeout": 10 }] });
-    let mut wanted: Vec<(&str, Value)> = vec![("SessionStart", hook(command))];
-    for event in STATUS_EVENTS {
-        wanted.push((event, hook(command)));
-    }
-    wanted.push((
-        "PostToolUse",
-        json!({ "matcher": "*", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
-    ));
-    // Plans land in snyvi as the approval is asked: in the background, so the
-    // dialog never waits on it (`send_plan`).
-    wanted.push((
-        "PreToolUse",
-        json!({ "matcher": PLAN_MATCHER, "hooks": [{ "type": "command", "command": command, "async": true, "timeout": 10 }] }),
-    ));
-    if auto {
-        wanted.push((
-            "PostToolUse",
-            json!({ "matcher": "Write|Edit|MultiEdit", "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
-        ));
     }
     for (event, entry) in wanted {
         let is_status = every_tool(&entry);
@@ -903,6 +1018,47 @@ mod tests {
         assert!(!runs("/nowhere/snyvi hook", &me));
     }
 
+    /// Codex gets its six events and none of Claude Code's own, beside
+    /// whatever the file had; a second write changes nothing, and the
+    /// uninstall leaves the rest.
+    #[test]
+    fn codex_gets_its_own_set_of_hooks_and_keeps_the_rest_of_its_file() {
+        let before = json!({ "description": "mine", "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "python3 stop.py" }] } ] } });
+        let mut s = before.clone();
+        assert_eq!(
+            merge(&mut s, "/opt/snyvi hook", codex_hooks("/opt/snyvi hook")).unwrap(),
+            (true, false)
+        );
+        let events: Vec<&str> = s["hooks"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            events,
+            [
+                "Stop",
+                "SessionStart",
+                "UserPromptSubmit",
+                "PermissionRequest",
+                "PostToolUse",
+                "SessionEnd"
+            ]
+        );
+        assert_eq!(s["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        assert_eq!(s["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 3);
+        assert_eq!(s["hooks"]["PostToolUse"][0]["matcher"], "*");
+        assert_eq!(s["description"], "mine");
+        assert_eq!(
+            merge(&mut s, "/opt/snyvi hook", codex_hooks("/opt/snyvi hook")).unwrap(),
+            (false, false)
+        );
+        assert_eq!(remove_from(&mut s), 6);
+        assert_eq!(s, before);
+    }
+
     #[test]
     fn uninstall_leaves_what_it_found() {
         let before = json!({ "theme": "dark", "hooks": { "PostToolUse": [
@@ -928,8 +1084,9 @@ mod tests {
     /// replaced, since the conversation may be in another panel now.
     #[test]
     fn a_session_start_is_handed_the_brief_and_named_after_its_panel() {
+        let claude = "0f3b2a1c-9d8e-4f70-a1b2-c3d4e5f60718";
         let out = |source: &str, title: Option<&str>| {
-            let mut v = json!({ "hook_event_name": "SessionStart", "source": source });
+            let mut v = json!({ "hook_event_name": "SessionStart", "source": source, "session_id": claude });
             if let Some(t) = title {
                 v["session_title"] = json!(t);
             }
@@ -960,10 +1117,41 @@ mod tests {
             "ledger · panel 2"
         );
         // The brief turned off: nothing at all.
-        let off = event(json!({ "hook_event_name": "SessionStart", "source": "startup" }));
+        let off = event(
+            json!({ "hook_event_name": "SessionStart", "source": "startup", "session_id": claude }),
+        );
         assert_eq!(session_start_output(&off, "", ""), None);
+        // Codex: the brief, and no title, which its output schema would refuse.
+        let codex = event(
+            json!({ "hook_event_name": "SessionStart", "source": "startup",
+            "session_id": "thr_0196a7", "model": "gpt-5-codex" }),
+        );
+        let o = session_start_output(&codex, "the brief", "ledger · panel 2").unwrap();
+        let o = serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"].clone();
+        assert_eq!(o["additionalContext"], "the brief");
+        assert!(o.get("sessionTitle").is_none());
+        assert_eq!(
+            agent_state(&event(
+                json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash" })
+            )),
+            Some("needs_you")
+        );
         assert!(
             our_title("a · b · panel 12") && !our_title("panel 2") && !our_title("x · panel two")
+        );
+    }
+
+    /// A prompt is handed the desk's changes, and nothing when there are none.
+    #[test]
+    fn a_prompt_is_handed_what_changed_and_nothing_when_nothing_did() {
+        assert_eq!(prompt_output(""), None);
+        assert_eq!(prompt_output(" \n"), None);
+        let o =
+            serde_json::from_str::<Value>(&prompt_output("New on the list: #3").unwrap()).unwrap();
+        assert_eq!(o["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
+        assert_eq!(
+            o["hookSpecificOutput"]["additionalContext"],
+            "New on the list: #3"
         );
     }
 

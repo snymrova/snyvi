@@ -160,6 +160,12 @@ pub struct Status {
     pub ctx_used: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_at: Option<i64>,
+    /// When snyvi last spoke to the agent in this pane about its desk: the
+    /// brief at a start, or the changes at a prompt (`crate::brief::changes`).
+    /// What the next prompt's changes are counted from. The daemon's own, not
+    /// the page's; 0 is "never", and a pane at 0 is told nothing but stamped.
+    #[serde(skip)]
+    pub told_at: i64,
 }
 
 /// The session is over: what it said about its model goes with it.
@@ -284,6 +290,9 @@ pub struct Start<'a> {
     /// The pane comes back as its shell while its conversation is still on
     /// offer: the page's own resume found the mark lapsed (`start_pane`).
     pub offer: bool,
+    /// The desk's keys, `NAME=value`, for the child's environment and nowhere
+    /// else: not in the status, not in the text, not in a frame.
+    pub env: &'a [(String, String)],
 }
 
 /// Told a panel's id and the folder its shell is now in.
@@ -683,12 +692,28 @@ impl Panes {
         i.status.agent_since = (!state.is_empty()).then(crate::store::now);
         if state.is_empty() {
             clear_context(&mut i.status);
+            i.status.told_at = 0;
         }
         let s = i.status.clone();
         drop(i);
         let _ = l.tx.send(status_frame(&l.id, &s).into());
         self.changed(&l.id, &s);
         true
+    }
+
+    /// snyvi is about to tell the agent in this pane about its desk, as of
+    /// `now`: when it last did so (0 for never), with `now` written in its
+    /// place. `None` when the pane is not running. Read-and-stamp in one
+    /// step, so two prompts in a row never count the same change twice.
+    pub fn told(&self, id: &str, now: i64) -> Option<i64> {
+        let l = self.live.lock().unwrap().get(id).cloned()?;
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return None;
+        }
+        let was = i.status.told_at;
+        i.status.told_at = now;
+        Some(was)
     }
 
     /// The model and the context window, as the status line in this pane last
@@ -1141,6 +1166,9 @@ impl Live {
         cmd.env("SNYVI_SESSION", &self.id);
         cmd.env("SNYVI_DESK", s.desk);
         cmd.env("SNYVI_SLOT", s.slot.to_string());
+        for (k, v) in s.env {
+            cmd.env(k, v);
+        }
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -1774,6 +1802,7 @@ mod tests {
                 rows: 10,
                 accent: "",
                 offer: false,
+                env: &[],
             };
             let status = panes.get(late).start(s, &panes).unwrap();
             assert!(!status.resume);
@@ -1832,7 +1861,7 @@ mod tests {
             Start {
                 cwd: &cwd,
                 root: &cwd,
-                cmd: "printf 'pane=%s\\n' \"$SNYVI_SESSION\"; pwd; exit 3",
+                cmd: "printf 'pane=%s key=%s\\n' \"$SNYVI_SESSION\" \"$SNYVI_T\"; pwd; exit 3",
                 desk: "d",
                 slot: 1,
                 // Wide enough for a macOS temp dir, which is long enough to
@@ -1841,6 +1870,7 @@ mod tests {
                 rows: 10,
                 accent: "",
                 offer: false,
+                env: &[("SNYVI_T".to_string(), "x".to_string())],
             },
             &panes,
         )
@@ -1865,6 +1895,8 @@ mod tests {
             seen.push_str(&msg);
         }
         assert!(seen.contains(&format!("pane={id}")), "{seen}");
+        // The desk's keys reach the child's environment and nothing else does.
+        assert!(seen.contains(&format!("pane={id} key=x")), "{seen}");
         assert!(seen.contains(cwd.split('/').next_back().unwrap()), "{seen}");
         assert_eq!(exit, Some(3));
         // And what it left is on disk, for a restart to grey out.
@@ -1902,6 +1934,7 @@ mod tests {
                 rows: 10,
                 accent: "",
                 offer: false,
+                env: &[],
             },
             &panes,
         )
@@ -1945,6 +1978,7 @@ mod tests {
                 rows: 10,
                 accent: "",
                 offer: false,
+                env: &[],
             },
             &panes,
         )
@@ -1995,6 +2029,7 @@ mod tests {
                 rows: 10,
                 accent: "",
                 offer: false,
+                env: &[],
             },
             &panes,
         )
@@ -2062,6 +2097,7 @@ mod tests {
                 rows: 10,
                 accent: "",
                 offer: false,
+                env: &[],
             },
             &panes,
         )

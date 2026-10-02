@@ -2069,6 +2069,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
   const p = new Driver(cdp, sessionId);
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  let other = 0;
   try {
     // Home and the Inbox, each at its own address.
     await p.goto(`${base}/#cap=${cap}`);
@@ -2077,8 +2078,51 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     rows.push(["the mark opens Home, with Pick up and a one-line status", home && /Nothing needs you/.test(quiet),
       !home ? "no Home, no Pick up, or the desk is not on it" : `the status says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
     // The page is a grid, not the reading measure.
-    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(pick.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
+    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
     rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+
+    // The note bar: one field for a line on any desk, Pick up's to start with.
+    const notesOn = async id => ((await get(`/api/desks/${id}/notes`)).notes || []).map(n => n.text);
+    await p.press("a");
+    const inBar = await p.ev(`document.activeElement?.dataset?.hm === "bar" && document.querySelector(".hm [data-hm=to]")?.textContent === "home-bench"`);
+    await p.type("Write the bar's own row");
+    await p.press("Enter");
+    const added = await until(`/Added to home-bench/.test(document.querySelector(".hm-nb-say")?.textContent || "") && document.querySelector("input[data-hm=bar]").value === "" && document.activeElement?.dataset?.hm === "bar"`);
+    const onDesk = (await notesOn(d)).includes("Write the bar's own row");
+    await p.clickOn(".hm [data-hm=barundo]");
+    const undone = await until(`document.querySelector("input[data-hm=bar]").value === "Write the bar's own row"`);
+    const offDesk = !(await notesOn(d)).includes("Write the bar's own row");
+    rows.push(["the note bar: a, a line, Enter puts it on Pick up's desk; Undo takes it back", inBar && added && onDesk && undone && offDesk,
+      !inBar ? "a did not put the hand in the bar, on home-bench" : !added ? `the bar says "${await p.ev(`document.querySelector(".hm-nb-say")?.textContent || ""`)}"` : !onDesk ? "the line is not on the desk" : !undone || !offDesk ? "Undo left the line on the desk, or did not give the words back" : "added, said in the bar's row, and taken back into the bar"]);
+
+    // `#` and the start of a name, then Tab: that desk on the chip, the
+    // `#name` out of the line. A `#` that names no desk is the note's own.
+    const two = (await post("/api/desks", { name: "bench-two" })).json;
+    other = two.desk ? two.desk.id : two.id;
+    // A query of its own: the same address with only a new fragment is not a load.
+    await p.goto(`${base}/?two=1#cap=${cap}`);
+    await until(`!!document.querySelector(".hm input[data-hm=bar]") && !!document.querySelector(".hm-dk-add")`);
+    await p.clickOn(".hm input[data-hm=bar]");
+    await p.ev(`(() => { const b = document.querySelector("input[data-hm=bar]"); b.value = ""; b.dispatchEvent(new InputEvent("input", { bubbles: true })); return 1; })()`);
+    await p.type("Ship it #bench-t");
+    const hashList = await p.ev(`[...document.querySelectorAll(".hm-nb-list:not([hidden]) .hm-nb-o .hm-t")].map(x => x.textContent).join()`);
+    await p.press("Tab");
+    const hashed = await p.ev(`({ chip: document.querySelector(".hm [data-hm=to]").textContent, text: document.querySelector("input[data-hm=bar]").value, shut: document.querySelector(".hm-nb-list").hidden })`);
+    await p.type("#77");
+    const plain = await p.ev(`document.querySelector(".hm-nb-list").hidden && document.querySelector("input[data-hm=bar]").value === "Ship it #77"`);
+    rows.push(["# and Tab put a desk on the bar's chip; a # that names no desk stays text", hashList === "bench-two" && hashed.chip === "bench-two" && hashed.text === "Ship it " && hashed.shut && plain,
+      hashList !== "bench-two" ? `#bench-t hashList "${hashList}"` : hashed.chip !== "bench-two" ? `the chip says ${hashed.chip}` : hashed.text !== "Ship it " ? `the line is "${hashed.text}"` : !plain ? "#77 opened the list or lost its text" : "bench-two on the chip, \"Ship it #77\" in the line"]);
+    await p.press("Escape");
+
+    // A card's +, at the foot of a scrolled page: its desk on the chip, the
+    // hand in the bar, and neither the page nor the card moves.
+    const plusAt = await p.ev(`(() => { const m = document.querySelector("#main"); m.style.scrollBehavior = "auto"; m.scrollTo({ top: m.scrollHeight }); const b = [...document.querySelectorAll(".hm-dk-add")].pop(); b.dataset.bench = "1"; return { y: m.scrollTop, h: b.closest(".hm-dk").getBoundingClientRect().height, name: b.getAttribute("aria-label").replace("A new note on ", "") }; })()`);
+    await p.clickOn(`.hm-dk-add[data-bench="1"]`);
+    const plussed = await p.ev(`(() => { const m = document.querySelector("#main"), b = [...document.querySelectorAll(".hm-dk-add")].find(x => x.getAttribute("aria-label") === ${JSON.stringify("A new note on ")} + ${JSON.stringify(plusAt.name)}); m.style.scrollBehavior = ""; return { y: m.scrollTop, h: b?.closest(".hm-dk").getBoundingClientRect().height, chip: document.querySelector(".hm [data-hm=to]").textContent, inBar: document.activeElement?.dataset?.hm === "bar", top: Math.round(document.querySelector(".hm-nb").getBoundingClientRect().top) }; })()`);
+    rows.push(["a card's + puts its desk on the bar, in view, and nothing moves", plussed.chip === plusAt.name && plussed.inBar && Math.abs(plussed.y - plusAt.y) < 1 && Math.abs(plussed.h - plusAt.h) < 1 && plussed.top >= 0,
+      plussed.chip !== plusAt.name ? `the chip says ${plussed.chip}, not ${plusAt.name}` : !plussed.inBar ? "the hand is not in the bar" : Math.abs(plussed.y - plusAt.y) >= 1 ? `the page moved ${plusAt.y} → ${plussed.y}` : Math.abs(plussed.h - plusAt.h) >= 1 ? `the card grew ${plusAt.h} → ${plussed.h} px` : `${plusAt.name} on the chip, the bar held ${plussed.top} px from the top`]);
+    await post(`/api/desks/${other}/delete`); other = 0;
+
     await p.goto(`${base}/inbox#cap=${cap}`);
     const inbox = await until(`document.querySelector("#doc h1")?.textContent === "Inbox"`);
     rows.push(["the Inbox is at /inbox", inbox, inbox ? "its own page, its own address" : "no Inbox at /inbox"]);
@@ -2188,6 +2232,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     const at = await p.ev(`(document.querySelector("#main") || document.querySelector("main")).scrollTop`);
     rows.push(["a document opens where it was left", at > 200, `${Math.round(at)} px down on reopening from the Inbox`]);
   } finally {
+    if (other) await post(`/api/desks/${other}/delete`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
@@ -2353,15 +2398,15 @@ async function deskLossRows(cdp, base, token) {
     rows.push(["close refused → panel row running, no Closed row", await refused(p) && shut.row && !shut.closed && e2.includes("Could not close panel 1"),
       !(await refused(p)) ? "the ✕ never asked the daemon" : !shut.row ? "the panel's row is gone or still closing" : shut.closed ? "a Closed · Undo row was drawn anyway" : !e2.length ? "nothing said it failed" : `still running, and its row says "${e2.join(" / ")}"`]);
 
-    // Another desk's notes, not sent: a line that says so, not the prompt
-    // an empty list gets.
+    // Another desk's notes, not sent: a line that says so, not the bar an
+    // empty list is.
     await refuse(p, "GET", /\/notes$/);
     await toDesk(other);
     await until(`location.pathname === "/desk/${other}"`);
     await sleep(500);
-    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes .dk-empty") })`);
+    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes .dk-note.new") })`);
     if (notes.line) await p.clickOn("#toc .dk-notes .no-reach [data-a=reload]");
-    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-empty")`);
+    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-note.new")`);
     rows.push(["notes fetch refused → Retry line, not the empty prompt", await refused(p) && !!notes.line && !notes.prompt && prompt,
       !(await refused(p)) ? "the desk never asked for its notes" : notes.prompt ? "the empty prompt, as if the list were empty" : !notes.line ? "nothing says the notes did not load" : prompt ? `"${notes.line}", and the Retry read the (empty) list` : "the Retry did not read the list"]);
 

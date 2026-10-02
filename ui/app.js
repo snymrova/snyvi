@@ -1380,7 +1380,7 @@
     }
     if (push) leave();
     behindDesk(id, over);
-    state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder;
+    state.view = "doc"; state.doc = j.doc; state.previous = j.previous; state.comparing = null; state.folder = j.folder; setHistory(j.history);
     // Off the queue once the document is on screen: taking it off redraws the
     // sidebar, and the reader is waiting for the page, not the row.
     afterPaint(() => markRead(id));
@@ -1450,6 +1450,15 @@
     return browseUse().then(m => m.show(browseCtx(), rootId, path, push, fromHistory), e => toast("Could not open the folder", { sub: e }));
   }
 
+  /* Ctrl-click on a path, in the reader and in a desk's panels, is
+   * ui/paths.js: fetched the first time Ctrl is held in a window that holds
+   * the capability, and never in a tab, which cannot ask. */
+  let pathsLoading = null;
+  const pathsUse = () => (pathsLoading ||= import(`/assets/paths.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => m.init({ api: deskApi, state, docEl, toast,
+    browse: (r, p) => showBrowse(r, p, true),
+    landLine: n => { history.replaceState(history.state, "", `${location.pathname}#L${n}`); jumpToHash(); } }), e => { pathsLoading = null; throw e; }));
+  addEventListener("keydown", e => { if (e.key === "Control" && capability && !pathsLoading) pathsUse().catch(() => {}); });
+
   async function showInbox(push = true) {
     if (push) leave();
     offDesk();
@@ -1484,7 +1493,8 @@
     if (items && state.waiting > state.queue.length) {
       try {
         const q = await (await fetch("/api/queue")).json();
-        if (Array.isArray(q) && state.view === "inbox" && homeMod) { state.queue = q; docEl.innerHTML = inboxHtml(items, homeMod); renderTree(); markActive(); }
+        // In place, where the reader may have scrolled: WebKitGTK would put them back at the top.
+        if (Array.isArray(q) && state.view === "inbox" && homeMod) { state.queue = q; const y = main.scrollTop; docEl.innerHTML = inboxHtml(items, homeMod); if (main.scrollTop !== y) main.scrollTo({ top: y, behavior: "instant" }); renderTree(); markActive(); }
       } catch {}
     }
   }
@@ -2125,7 +2135,7 @@
     const place = placeOf();
     let j; try { j = await fetchDoc(id); } catch { return; }
     if (!state.doc || state.doc.id !== id) return;
-    state.doc = j.doc; state.previous = j.previous; state.folder = j.folder;
+    state.doc = j.doc; state.previous = j.previous; state.folder = j.folder; setHistory(j.history);
     setPreview(j.preview, j.preview_url, `d:${id}`);
     docEl.innerHTML = j.html;
     applyPreview();
@@ -2164,16 +2174,30 @@
   }
 
   // ---------- history (every snapshot of the same file) ----------
+  /* The versions arrive with the document and are drawn with the rest of the
+   * rail's foot, in the same frame (#53): the foot sits at the bottom of the
+   * rail, so a box added to it after the paint pushed every row above it up.
+   * The read after the paint only brings a list that moved since the document
+   * was cached up to date, in place. */
+  function setHistory(h) {
+    state.history = h && h.length > 1 ? h : null;
+    state.versions = state.history ? state.history.map(d => d.id) : [];
+  }
+  const historyBox = () => {
+    const h = state.history, d = state.doc;
+    return h && d ? `<div id="history"><h4>Versions · ${h.length}</h4>` + h.map(v => `<a href="/d/${v.id}" data-id="${v.id}" class="${v.id === d.id ? "cur" : ""}" data-tip="${esc(v.workflow_title)}">${fmt(v.received_at)}${v.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("") + `</div>` : "";
+  };
   async function renderHistory() {
-    const old = $("#history"); if (old) old.remove();
-    state.versions = [];
-    if (!state.doc || !state.doc.source_path) return;
-    let h; try { h = await (await fetch(`/api/docs/${state.doc.id}/history`)).json(); } catch { return; }
-    if (!h || h.length < 2) return;
-    state.versions = h.map(d => d.id);
-    const box = document.createElement("div"); box.id = "history";
-    box.innerHTML = `<h4>Versions · ${h.length}</h4>` + h.map(d => `<a href="/d/${d.id}" data-id="${d.id}" class="${d.id === state.doc.id ? "cur" : ""}" data-tip="${esc(d.workflow_title)}">${fmt(d.received_at)}${d.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("");
-    metaEl.appendChild(box);
+    const d = state.doc;
+    if (!d || !d.source_path || state.view !== "doc") return;
+    let h; try { h = await (await fetch(`/api/docs/${d.id}/history`)).json(); } catch { return; }
+    if (state.doc !== d || state.deskBehind != null) return;
+    const was = historyBox();
+    setHistory(h);
+    const now = historyBox(), old = $("#history");
+    if (now === was) return;
+    if (old) { if (now) old.outerHTML = now; else old.remove(); }
+    else if (now) metaEl.insertAdjacentHTML("beforeend", now);
   }
 
   // ---------- find in document: a chunk, fetched when `/` asks for it ----------
@@ -2604,7 +2628,7 @@
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" data-tip="${esc(d.source_path)}" data-tip-mono>Copy path</button>` : "") +
       (state.folder ? `<button data-act="terminal" data-tip="${esc(state.folder)}" data-tip-mono>Open terminal here</button><button data-act="reveal" data-tip="${esc(state.folder)}" data-tip-mono>Open in file manager</button>` : "") +
-      `</div>`;
+      `</div>` + historyBox();
   }
   const rawUrl = (rootId, path) => `/api/browse/${rootId}/raw/${path.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -3025,7 +3049,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -3313,14 +3337,14 @@
         await showDoc(d.id, true);
         // Nobody pressed anything: this one came in on its own, so it keeps
         // the corner rather than pointing at whatever was last touched.
-        toast(d.title, { sub: `${d.project} · just now`, kind: "news" });
+        toast(d.title, { sub: `${d.project} · just now`, kind: "news", go: () => showDoc(d.id, true) });
       }
       else if (superseded) {
         // The rail picks it up either way, so the offer is free to fade: a
         // reader who misses the button finds the new version at the top of
         // Versions, and `]` steps to it.
         renderHistory();
-        toast("A newer version arrived", { sub: d.title, kind: "news",
+        toast("A newer version arrived", { sub: d.title, kind: "news", go: () => showDoc(d.id, true),
           action: { label: "Read it", run: () => showDoc(d.id, true) } });
       }
       else if (state.view === "inbox") showInbox(false);
@@ -3853,6 +3877,7 @@
   /* What the letters act on, handed to keys.js with each one. */
   const keyCtx = { state, browsing, browseEl, showBrowse, order, siblings, showDoc, showCompare, togglePin, toggleSplit, togglePreview,
     openFind, deleteCurrent, openNext, showInbox, showHome, rawUrl, mmd: () => mmd,
+    noteBar: () => state.view === "home" && !!homeMod?.focusBar(),
     wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
     rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
     side: () => closePop() || fold("side") };

@@ -334,7 +334,8 @@ function entries(ctx, el) {
       d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
-      { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) }, RULE,
+      { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
+      dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
       { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };

@@ -3,13 +3,16 @@
  * A page for planning, so it looks ahead and not back: the desks, and what is
  * open on each. Which project tonight, and where was I? -- the Pick up card:
  * the desk touched last (or the one the reader keeps there), where it was
- * left, its open notes, what git says, one button with Enter on it. What is
- * open everywhere else? -- Desks: every other desk with where it was left and
- * its first open notes, each tickable where it stands, and a line to add one
- * without opening the desk. Does anything need me? -- one status line under
- * the title, which the rail and the sidebar answer too, so it is a line and
- * not three boxes. Is this project alive? -- Projects: eight weeks of each
- * desk, quietly, and "Park it?" for one that has gone quiet. And the trail --
+ * left, its open notes, what git says, one button with Enter on it. A thought
+ * for one of them? -- the note bar above it, in view however far the page
+ * scrolls: a line on any desk's list, without opening the desk. What is
+ * open everywhere else? -- Projects: a card for every other desk, with where
+ * it was left, its first open notes, each tickable where it stands, a + that
+ * puts the desk on the note bar, and its last eight weeks, quietly, with
+ * "Park it?" for one that has gone quiet. One project, one card: nothing is
+ * listed twice. Does anything need me? -- one status line under the title,
+ * which the rail and the sidebar answer too, so it is a line and not three
+ * boxes. What day is it? -- Today: the time and the month. And the trail --
  * what was ticked, sent, left off and committed, day by day -- is This week,
  * folded at the foot, with the week as a document on a button: kept, and no
  * longer what the page leads with. No streaks, no red, no scores: a hobby is
@@ -32,7 +35,7 @@
  */
 
 const CSS = `
-.hm { max-width: 1120px; margin: 0 auto; padding: 8px 0 48px; container-type: inline-size; }
+.hm { max-width: 1440px; margin: 0 auto; padding: 8px 0 48px; container-type: inline-size; }
 .hm-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 4px; }
 .hm-head h1 { margin: 0; font-size: var(--fs-h2); font-weight: 650; letter-spacing: -.02em; }
 .hm-head .hm-v { color: var(--fg-3); font-size: var(--fs-small); }
@@ -42,7 +45,7 @@ const CSS = `
 .hm-status.ring .hm-ring { color: var(--warn); font-weight: 600; }
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 /* Pick up, the desks and the week on the left, the side column beside them. */
-.hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
+.hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
 .hm-grid.no-side { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
 @container (max-width: 760px) {
   .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "side"; }
@@ -65,6 +68,8 @@ const CSS = `
 .hm-s { flex: none; color: var(--fg-3); font-size: var(--fs-small); }
 .hm-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-list { list-style: none; margin: 0; padding: 0; }
+.hm-kn { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
+.hm-key .hm-t a { color: inherit; }
 .hm-link { padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); cursor: pointer; }
 .hm-link:hover { color: var(--fg); text-decoration: underline; }
 .hm-link.hm-undo { color: var(--accent); }
@@ -80,6 +85,7 @@ const CSS = `
 .hm-pk-name { font-size: var(--fs-h3); font-weight: 650; letter-spacing: -.01em; color: var(--fg); text-decoration: none; }
 .hm-pk-name:hover { text-decoration: underline; }
 .hm-pk-top .fact { color: var(--fg-3); }
+.hm-pk-top .hm-spark { margin-left: auto; align-self: center; }
 .hm-pk-left { margin: 0 0 12px; font-size: var(--fs-body-s); line-height: 1.55; color: var(--fg); }
 .hm-pk-left b { font-weight: 500; color: var(--fg-3); margin-right: 6px; }
 .hm-pk-left.hm-derived { color: var(--fg-2); }
@@ -100,11 +106,45 @@ const CSS = `
 .hm-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
 .hm-tick svg { width: 9px; height: 9px; }
 .hm-err { color: var(--danger); }
-/* A line added from Home: the field in the list's own place, under it. */
-.hm-add { display: flex; align-items: center; gap: 10px; min-height: 24px; margin: 0 0 4px 20px; }
-.hm-add input { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-ui); padding: 3px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
-.hm-addb { display: block; min-height: 24px; margin: 0 0 4px 20px; color: var(--fg-3); }
-.hm-pick :is(.hm-addb, .hm-add) { margin-bottom: 12px; }
+/* The note bar: one field for a line on any desk, held under the page's head
+   as the page scrolls, on a strip of the page's own ground so what goes under
+   it goes out of sight. One height whatever it says: what the last Enter did
+   is said in its own row, and the desk list opens over the page. */
+.hm-nb { position: sticky; top: var(--head-h); z-index: calc(var(--z-sticky) - 1); margin: -8px 0; padding: 8px 0; background: var(--bg); }
+.hm-nb-in { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px 0 6px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow-1); transition: border-color var(--t), background var(--t); }
+/* The field's focus is the bar's: its border, not a ring inside it. */
+.hm-nb-in:focus-within, .hm-nb.drop .hm-nb-in, .hm-nb-t:focus { outline: none; border-color: var(--accent); }
+.hm-nb.drop .hm-nb-in { background: color-mix(in srgb, var(--accent), var(--bg) 94%); }
+.hm-nb.lit .hm-nb-in { animation: hm-lit calc(var(--dur-moment) * 2) ease-out; }
+@keyframes hm-lit { 0% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent), transparent 70%); } }
+@media (prefers-reduced-motion: reduce) { .hm-nb.lit .hm-nb-in { animation: none; } }
+.hm-nb-to { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 40%; height: 28px; padding: 0 8px 0 10px; border: 0; border-radius: var(--r-pill); background: var(--rule); color: var(--fg); font: inherit; font-size: var(--fs-small); font-weight: 500; cursor: pointer; transition: background var(--t); }
+.hm-nb-to > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-nb-to svg { flex: none; color: var(--fg-3); }
+.hm-nb-to:hover, .hm-nb-to[aria-expanded="true"] { background: var(--rule-2); }
+.hm-nb-t { flex: 1; min-width: 0; height: 100%; padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-ui); color: var(--fg); }
+.hm-nb-t::placeholder { color: var(--fg-3); }
+.hm-nb-pend { flex: none; display: flex; align-items: center; gap: 1px; color: var(--fg-2); }
+.hm-nb-pic { display: inline-flex; align-items: center; gap: 1px; }
+.hm-nb-pic .c { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.hm-nb-pend button { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
+.hm-nb-pend button:hover { background: var(--rule-2); color: var(--fg); }
+.hm-nb-say { flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 50%; min-width: 0; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; }
+.hm-nb-say > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hm-nb-say a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--rule-2); text-underline-offset: 3px; }
+.hm-nb-say a:hover { text-decoration-color: currentColor; }
+.hm-nb-k { visibility: hidden; }
+.hm-nb-in:focus-within .hm-nb-k { visibility: visible; }
+.hm-nb-list { position: absolute; left: 0; top: calc(100% - 4px); z-index: 1; display: flex; flex-direction: column; width: min(320px, 100%); max-height: 340px; padding: 4px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow); }
+.hm-nb-list[hidden] { display: none; }
+.hm-nb-find { flex: none; margin: 0 0 4px; padding: 5px 8px; font: inherit; font-size: var(--fs-ui); border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.hm-nb-find:focus { outline: none; border-color: var(--accent); }
+.hm-nb-opts { position: relative; min-height: 0; overflow-y: auto; }
+.hm-nb-opts .hm-quiet { padding: 4px 8px; }
+.hm-nb-o { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-ui); color: var(--fg); text-align: left; cursor: pointer; }
+.hm-nb-o:hover, .hm-nb-o.at { background: var(--rule); }
+.hm-nb-o .fact { flex: none; color: var(--fg-3); }
+.hm-nb-on { flex: none; display: grid; place-items: center; width: 12px; color: var(--accent); }
 .hm-next .hm-nt-more { padding-left: 31px; }
 /* How far an agent has got with a line, as the desk's rail draws it: a slot
    every line keeps, a ring for read, the plan's page (it opens the plan), a
@@ -114,20 +154,27 @@ const CSS = `
 .hm-stage.planned::before { content: ""; position: absolute; inset: -4px; }
 .hm-stage.planned:hover { color: var(--accent); }
 .hm-stage svg { width: 10px; height: 10px; }
-.hm-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: hm-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
+.hm-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.hm-stage.working.busy::before { animation: hm-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
 @keyframes hm-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .hm-stage.working::before { animation: none; } }
 .hm-dks-more { margin-top: 12px; }
-/* Desks: every other desk, a block each, on the page's own ground. */
-.hm-dks { display: grid; gap: 20px; }
-.hm-dk { min-width: 0; }
-.hm-dk-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin: 0 0 4px; }
+/* Projects: every other desk, a card each, as many across as fit. */
+.hm-dks { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 16px; }
+.hm-dk { min-width: 0; display: flex; flex-direction: column; padding: 12px 14px 10px; border: 1px solid var(--rule); border-radius: var(--r-md); }
+.hm-dk-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin: 0 0 6px; }
+.hm-dk-add { flex: none; align-self: center; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); font-size: var(--fs-body-s); line-height: 1; cursor: pointer; }
+.hm-dk-add:hover { background: var(--rule-2); color: var(--fg); }
+.hm-dk-foot { display: flex; align-items: center; gap: 10px; min-height: 22px; margin-top: auto; padding-top: 8px; }
+.hm-dk-foot .hm-spark { margin-left: auto; }
+.hm-dk .hm-park { padding: 0 0 6px; }
+.hm-shelf-w { margin-top: 16px; }
 .hm-dk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body-s); font-weight: 600; color: var(--fg); text-decoration: none; }
 .hm-dk-name:hover { text-decoration: underline; }
 .hm-dk-top .hm-dots { align-self: center; }
 .hm-dk-top .fact { color: var(--fg-3); }
 .hm-dk-top .hm-dk-n { margin-left: auto; }
-.hm-dk-left { margin: 0 0 4px; font-size: var(--fs-small); line-height: 1.55; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-dk-left { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin: 0 0 6px; font-size: var(--fs-small); line-height: 1.55; color: var(--fg-2); overflow: hidden; }
 .hm-dk-left b { font-weight: 500; color: var(--fg-3); margin-right: 6px; }
 .hm-dk .hm-next { margin: 0; }
 /* This week: the log, folded under the desks until it is asked for. */
@@ -188,7 +235,15 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-bar i { display: block; height: 100%; background: var(--fg-2); }
 .hm-bar.hot i { background: var(--warn); }
 .hm-k { font-size: var(--fs-small); color: var(--fg-2); }
-.hm-q .fact { color: var(--fg-3); }
+.hm-q .fact { display: block; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Today: the time, the date, and the month, Monday first. */
+.hm-time { margin: 0; font-size: 40px; font-weight: 600; line-height: 1.1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--fg); }
+.hm-date { margin: 4px 0 12px; font-size: var(--fs-small); color: var(--fg-2); }
+.hm-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px 0; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; text-align: center; }
+.hm-cal > * { height: 24px; line-height: 24px; color: var(--fg-2); }
+.hm-cal > b { font-weight: 500; color: var(--fg-3); }
+.hm-cal > .we { color: var(--fg-3); }
+.hm-cal > .today { justify-self: center; width: 24px; border-radius: 50%; background: var(--accent); color: var(--bg); font-weight: 600; }
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-meta a { color: inherit; text-decoration: none; }
 .hm-meta a:hover { color: var(--fg); text-decoration: underline; }
@@ -205,8 +260,9 @@ a.hm-panels:hover { color: var(--fg); }
 /** The widgets that can be hidden, in the order they stand. Pick up cannot:
  *  it is what the page is for. */
 const WIDGETS = [
-  ["desks", "Desks"],
-  ["projects", "Projects"],
+  ["desks", "Projects"],
+  ["today", "Today"],
+  ["keys", "Keys"],
   ["claude", "Claude"],
   ["snyvi", "snyvi"],
 ];
@@ -223,10 +279,15 @@ let c = null, last = null, soon = 0, reading = 0, sheet = null;
 let parking = 0, parkDraft = "", parkFailed = false, justParked = 0, parkedT = 0;
 /** What the week's button last said, in its own place, for a while. */
 let weekSaid = null;
-/** A line being added from Home: the desk whose field is open, what is typed
- *  in it (kept across the redraws an event brings), and why the last one was
- *  refused. */
-let adding = 0, addDraft = "", addErr = "";
+/** The note bar: the desk chosen on its chip (0 is Pick up's), what is typed
+ *  in it and the pictures waiting on that line (both kept across the redraws
+ *  an event brings), and what the last Enter did, said in the bar's own row. */
+let barTo = 0, barDraft = "", barPics = [], barSaid = null, barT = 0;
+/** The bar's desk list while it is open: opened by the chip, with a field of
+ *  its own, or by a `#` typed in the bar, from `from` to the caret at `to`.
+ *  `q` narrows it, `at` is the row Enter takes. */
+let menu = null;
+const SAID_MS = 4000;
 /** The desks' order, taken once each time Home is shown: a line added or
  *  ticked here touches its desk, and Home must not reshuffle under the
  *  reader's hand for it. A desk new since then goes at the end. */
@@ -250,10 +311,10 @@ const DAYS_FIRST = 3, LINES_FIRST = 4;
 let allDays = false;
 const opened = new Set();
 /** Home shows this many desks at most, Pick up's among them, most recently
- *  touched first; "N more desks" opens the rest in place, and stays open or
+ *  touched first, so two rows of three cards; "N more desks" opens the rest in place, and stays open or
  *  shut as the reader left it. Content, not height: a page cut at a height
  *  would cut a desk's notes off wherever the window ended. */
-const DESKS_SHOWN = 6;
+const DESKS_SHOWN = 7;
 const desksAll = () => { try { return localStorage.getItem("snyvi.home.desks") === "1"; } catch { return false; } };
 const setDesksAll = on => { try { localStorage.setItem("snyvi.home.desks", on ? "1" : "0"); } catch {} };
 
@@ -276,9 +337,26 @@ export async function show(ctx) {
   c = ctx;
   style();
   order = null;
+  tick();
   if (last) draw(last);
   await refresh();
 }
+
+/** Today's time, kept by itself: only its own text changes, so nothing the
+ *  reader is in -- a field, a focus -- is touched by it. A new day draws the
+ *  page again, for the calendar and the "today" words. */
+let ticker = 0, drawnDay = 0;
+function tick() {
+  if (ticker) return;
+  ticker = setInterval(() => {
+    if (!c || c.view() !== "home") return;
+    if (startOfDay(Date.now() / 1000) !== drawnDay && last) return draw(last);
+    const t = c.docEl.querySelector(".hm-time");
+    const now = hhmm();
+    if (t && t.textContent !== now) t.textContent = now;
+  }, 15000);
+}
+const hhmm = () => new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
 /** Read Home again soon: many events in a burst are one read. */
 export function soonRefresh() {
@@ -348,29 +426,40 @@ function draw(j) {
   const w = (key, title, body, extra = "", act = "") => hid.includes(key) ? "" :
     `<section class="hm-w" data-w="${key}" data-part="home.${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
     `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="Show brings it back" aria-label="Hide ${esc(title)}">✕</button></div>${body}</section>`;
+  drawnDay = startOfDay(Date.now() / 1000);
   const side = [
-    w("projects", "Projects", projects(j), j.desks?.length ? ` <span class="n">${j.desks.length}</span>` : ""),
+    w("today", "Today", today()),
+    w("keys", "Keys", keys(j), keysOf(j).length ? ` <span class="n">${keysOf(j).length}</span>` : ""),
     w("claude", "Claude", claude(j)),
     w("snyvi", "snyvi", `<div class="hm-upd"></div>` + `<p class="hm-quiet hm-uptodate">snyvi ${esc(j.version || "")} · <button type="button" class="uc-link" data-hm="check">Check for updates</button></p>`),
   ].join("");
-  const desks = j.desks ? w("desks", "Desks", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
+  const desks = j.desks ? w("desks", "Projects", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
   const n = hid.length;
-  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</span></header>` +
+  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1>${hid.includes("today") ? `<span class="hm-v">${new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</span>` : ""}</header>` +
     status(j) +
-    `<div class="hm-grid${!side ? " no-side" : ""}"><div class="hm-main">${pick(j)}${desks}${week(j)}</div>${side ? `<div class="hm-side">${side}</div>` : ""}</div>` +
+    `<div class="hm-grid${!side ? " no-side" : ""}"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div>${side ? `<div class="hm-side">${side}</div>` : ""}</div>` +
     (n ? `<p class="hm-foot">${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button></p>` : "") + `</div>`;
   const a = document.activeElement;
   const key = b => b.dataset.hm + (b.dataset.k || "") + (b.dataset.n ? `:${b.dataset.n}` : "");
   const had = c.docEl.contains(a) && a.dataset.hm ? key(a) : null;
+  // A caret in the middle of a line stays where it was.
+  const sel = a?.tagName === "INPUT" ? [a.selectionStart, a.selectionEnd] : null;
+  // WebKitGTK puts the page back at the top when its HTML is replaced, and
+  // then glides to the focus: Home is drawn whole for a click, so it keeps
+  // its place itself.
+  const sc = c.docEl.closest("#main"), y = sc?.scrollTop || 0;
   drawing = true;
   c.docEl.innerHTML = html;
   drawing = false;
+  if (sc && sc.scrollTop !== y) sc.scrollTo({ top: y, behavior: "instant" });
   if (had) {
     const el = [...c.docEl.querySelectorAll("[data-hm]")].find(b => key(b) === had);
     el?.focus({ preventScroll: true });
-    if (el?.tagName === "INPUT") el.setSelectionRange(el.value.length, el.value.length);
+    if (el?.tagName === "INPUT") { const n = el.value.length; el.setSelectionRange(Math.min(sel?.[0] ?? n, n), Math.min(sel?.[1] ?? n, n)); }
   }
   wire();
+  // The hand put back in the bar came before its listeners did.
+  if (document.activeElement?.dataset?.hm === "bar") asks(document.activeElement);
   const up = c.docEl.querySelector(".hm-upd");
   if (up) c.card().then(m => { if (m.card(up, j.update, c.updCtx())) { const q = c.docEl.querySelector(".hm-uptodate"); if (q) q.hidden = true; } }, () => {});
 }
@@ -440,18 +529,18 @@ function pick(j) {
       : `<p class="hm-pk-left hm-quiet"><b>Left off</b>not said yet. A Claude on this desk says it at the end of a stretch, or write it in the desk's head.</p>`;
   // A list with nothing left open is a milestone said in numbers
   // (docs/DESIGN.md §3.2); a desk with no list yet is not.
-  const next = notesOf(d, 5) + addRow(d);
+  const next = notesOf(d, 5);
   const g = d.git;
   const git = g ? `<span class="hm-git" data-tip="What git says in ${esc(d.root || "the desk's folder")}" data-tip-sub="${g.last ? `last commit ${ago(g.last.at)}: ${esc(g.last.subject)}` : "no commits yet"}">${BRANCH}<span class="fact">${esc(g.branch || "no branch")}</span>` +
     `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${ago(g.last.at)}` : ""}</span></span>` : "";
   const panels = d.panes.map(p =>
     `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
-  // The other desks, as chips, only while Desks below is hidden: it lists them.
+  // The other desks, as chips, only while Projects below is hidden: it lists them.
   const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
-  return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span></div>` +
+  return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span>${spark(d.pulse)}</div>` +
     left + next + facts +
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
     (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Keep this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Kept here · Follow the last touched" : "Keep here"}</button>` : "") +
@@ -489,8 +578,10 @@ function stageMark(r) {
   if (st === "planned" && r.stage_doc)
     return `<a class="hm-stage planned" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
   if (st === "working") {
+    // Breathing only while the agent is at it, as on the desk's rail.
     const at = r.stage_panel ? ` in ${esc(r.stage_panel)}` : "";
-    return `<span class="hm-stage working" role="img" data-tip="${by} is working on it${at}" aria-label="${by} is working on it${at}"></span>`;
+    const say = r.stage_busy ? `${by} is working on it${at}` : `${by} has it${at}`;
+    return `<span class="hm-stage working${r.stage_busy ? " busy" : ""}" role="img" data-tip="${say}"${r.stage_busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>`;
   }
   if (st === "read" || st === "planned") return `<span class="hm-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
   return `<span class="hm-stage" aria-hidden="true"></span>`;
@@ -498,28 +589,191 @@ function stageMark(r) {
 const DOC = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.5v3h3M6 8h4M6 10.5h4"/></svg>`;
 const TICK = `<svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>`;
 
-/** The way to add a line to a desk's list from here: a quiet "+ New note",
- *  and the field in its place while it is open. Enter keeps the line and
- *  leaves the field open for the next; Esc, or leaving it empty, closes it. */
-function addRow(d) {
-  const { esc } = c;
-  if (adding !== d.id) return `<button type="button" class="hm-link hm-addb" data-hm="addopen" data-k="${d.id}">+ New note</button>`;
-  return `<div class="hm-add"><input data-hm="add" data-k="${d.id}" maxlength="500" placeholder="What has to happen" aria-label="A new note on ${esc(d.name)}" value="${esc(addDraft)}" spellcheck="false">` +
-    (addErr ? `<span class="hm-s hm-err" role="alert">${esc(addErr)}</span>` : "") + `</div>`;
+/* ---------- the note bar ----------
+ *
+ * One place on Home to put a line on any desk's list: a field at the head of
+ * the left column, in view however far the page has scrolled, with the desk
+ * it goes on as a chip at its left -- Pick up's, until another is chosen from
+ * the chip's list or by typing `#` and the start of its name, then Tab. Enter
+ * keeps the line and leaves the field open for the next, as the desk's own
+ * field does, and a screenshot pasted or dropped on it waits on the line until
+ * then. What the Enter did is said in the bar's own row -- "Added to snyvi ·
+ * Undo" -- where the hand already is. A card's + puts its desk on the chip and
+ * the hand in the bar: one place to type, and no card grows a field.
+ */
+
+/** The desk the bar writes to: the one chosen, else Pick up's. */
+function barDesk(j) {
+  const ds = j?.desks || [];
+  return ds.find(d => d.id === barTo) || (ds.length ? pickOf(j).hero : null) || ds[0] || null;
 }
 
-/** Every desk but the one in Pick up, most recently touched first: where it
- *  was left, and what is open on it. Parked desks are on Projects' shelf. */
+/** The desks the list offers, in Home's own order with the parked last;
+ *  narrowed, the names that start with what was typed come first. */
+function menuDesks(j) {
+  const ds = j?.desks || [], q = (menu?.q || "").toLowerCase();
+  const all = [...byOrder(ds.filter(d => !d.parked)), ...ds.filter(d => d.parked)];
+  if (!q) return all;
+  const starts = all.filter(d => d.name.toLowerCase().startsWith(q));
+  return [...starts, ...all.filter(d => !starts.includes(d) && d.name.toLowerCase().includes(q))];
+}
+
+function bar(j) {
+  const { esc, plural } = c;
+  const d = barDesk(j);
+  if (!d) return "";
+  const n = barPics.length;
+  const pend = n ? `<span class="hm-nb-pend" role="status" aria-label="${plural(n, "picture")} with this line"><span class="hm-nb-pic">${PIC}${n > 1 ? `<span class="c">${n}</span>` : ""}</span>` +
+    `<button type="button" data-hm="pendx" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${X}</button></span>` : "";
+  return `<div class="hm-nb" data-part="home.bar"><div class="hm-nb-in">` +
+    `<button type="button" class="hm-nb-to" data-hm="to" aria-haspopup="listbox" aria-expanded="${menu?.by === "chip"}" aria-controls="hm-nb-opts" data-tip="The desk this note goes on" data-tip-sub="or type # and its name in the note" aria-label="On ${esc(d.name)} · choose another desk"><span>${esc(d.name)}</span>${CHEV}</button>` +
+    `<input data-hm="bar" class="hm-nb-t" maxlength="500" placeholder="Add a note" aria-label="A new note on ${esc(d.name)}" value="${esc(barDraft)}" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="${menu?.by === "hash"}" aria-controls="hm-nb-opts">` +
+    pend + `<span class="hm-nb-say">${saidHtml()}</span></div>` +
+    `<div class="hm-nb-list"${menu ? "" : " hidden"}>${menu ? menuHtml(j) : ""}</div></div>`;
+}
+
+/** The bar's right end: Enter's key while the bar has the hand, then what the
+ *  last Enter did, for a moment -- or, until the next key, why it did not. */
+function saidHtml() {
+  const { esc } = c, s = barSaid;
+  if (!s) return `<kbd class="hm-nb-k" aria-hidden="true">↵</kbd>`;
+  if (s.err) return `<span class="hm-err" role="alert">${esc(s.err)}</span>`;
+  return `<span role="status">Added to <a href="/desk/${s.desk}" data-desk="${s.desk}">${esc(s.name)}</a> ·</span><button type="button" class="hm-link hm-undo" data-hm="barundo">Undo</button>`;
+}
+
+function menuHtml(j) {
+  const find = menu.by === "chip" ? `<input data-hm="find" class="hm-nb-find" placeholder="Find a desk" aria-label="Find a desk" value="${c.esc(menu.q)}" spellcheck="false" autocomplete="off">` : "";
+  return find + `<div class="hm-nb-opts" id="hm-nb-opts" role="listbox" aria-label="Desks">${optsHtml(j)}</div>`;
+}
+
+function optsHtml(j) {
+  const { esc } = c, xs = menuDesks(j), on = barDesk(j);
+  if (!xs.length) return `<p class="hm-quiet">No desk is called that.</p>`;
+  menu.at = Math.min(Math.max(0, menu.at), xs.length - 1);
+  return xs.map((d, i) => `<button type="button" role="option" tabindex="-1" class="hm-nb-o${i === menu.at ? " at" : ""}" aria-selected="${d.id === on?.id}" data-hm="pickto" data-k="${d.id}">` +
+    `<span class="hm-nb-on">${d.id === on?.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span><span class="fact">${d.parked ? "parked" : d.touched ? age(d.touched) : "new"}</span></button>`).join("");
+}
+
+/** Draw the list alone, as it opens, narrows and moves: the rest of the page,
+ *  and the field being typed in, are left as they are. */
+function drawMenu() {
+  const box = c.docEl.querySelector(".hm-nb-list");
+  if (!box) return;
+  c.docEl.querySelector("[data-hm=to]")?.setAttribute("aria-expanded", String(menu?.by === "chip"));
+  c.docEl.querySelector("input[data-hm=bar]")?.setAttribute("aria-expanded", String(menu?.by === "hash"));
+  box.hidden = !menu;
+  if (!menu) { box.innerHTML = ""; return; }
+  const opts = box.querySelector(".hm-nb-opts");
+  if (opts && (menu.by === "chip") === !!box.querySelector("[data-hm=find]")) opts.innerHTML = optsHtml(last);
+  else box.innerHTML = menuHtml(last);
+  // The marked row in view, by the list's own scroll and no other.
+  const at = box.querySelector(".hm-nb-o.at"), o = box.querySelector(".hm-nb-opts");
+  if (at && o) {
+    if (at.offsetTop < o.scrollTop) o.scrollTop = at.offsetTop;
+    else if (at.offsetTop + at.offsetHeight > o.scrollTop + o.clientHeight) o.scrollTop = at.offsetTop + at.offsetHeight - o.clientHeight;
+  }
+}
+
+/** A `#` and the start of a name, just before the caret, opens the list
+ *  narrowed to it; a `#` nothing answers to is left as text -- "#77" is a
+ *  note's own words, not a desk. */
+function hashMenu(el) {
+  const at = el.selectionStart ?? el.value.length, m = /(^|\s)#([^\s#]*)$/.exec(el.value.slice(0, at));
+  const was = menu?.by === "hash";
+  if (m) {
+    const q = m[2];
+    menu = { by: "hash", q, at: was && menu.q === q ? menu.at : 0, from: at - q.length - 1, to: at };
+    if (!menuDesks(last).length) menu = null;
+  } else if (was) menu = null;
+  else return;
+  drawMenu();
+}
+
+/** The desk chosen, from either list: on the chip, and the hand back in the
+ *  bar. Chosen by `#`, the `#name` comes out of the line. */
+function chooseDesk(id) {
+  let caret = null;
+  if (menu?.by === "hash") {
+    const a = barDraft.slice(0, menu.from).replace(/\s+$/, ""), b = barDraft.slice(menu.to).replace(/^\s+/, "");
+    barDraft = (a ? a + " " : "") + b;
+    caret = a ? a.length + 1 : 0;
+  }
+  menu = null; barTo = id;
+  draw(last);
+  focusBar(caret);
+}
+
+/** The hand in the bar, without moving the page: it is in view wherever the
+ *  page is. True when there is a bar to be in. */
+export function focusBar(caret = null) {
+  const el = c?.view() === "home" ? c.docEl.querySelector("input[data-hm=bar]") : null;
+  if (!el) return false;
+  el.focus({ preventScroll: true });
+  const n = caret ?? el.value.length;
+  el.setSelectionRange(n, n);
+  return true;
+}
+
+/** The bar's right end, drawn alone: a timer running out must not redraw
+ *  the field being typed in. */
+function say(s) {
+  clearTimeout(barT);
+  barSaid = s;
+  if (s && !s.err) barT = setTimeout(() => { if (barSaid === s) { barSaid = null; sayNow(); } }, SAID_MS);
+}
+function sayNow() { const el = c?.docEl.querySelector(".hm-nb-say"); if (el) el.innerHTML = saidHtml(); }
+
+/** What the bar asks for while it has the hand: the line, or what a picture
+ *  waiting on it shows -- the desk's own field's words. */
+const asks = el => { el.placeholder = barPics.length ? "What it shows" : "What has to happen"; };
+
+/** The pictures in a paste or a drop, of the four kinds the daemon keeps --
+ *  the desk rail's own test, which lives in a chunk Home does not load. */
+const images = dt => [...(dt?.files || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
+
+function addPics(fs) {
+  if (!fs.length) return;
+  barPics = [...barPics, ...fs];
+  draw(last);
+  focusBar();
+}
+
+const PIC = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.75" cy="6.25" r="1.1"/><path d="M2.5 11.5l3.5-3.5 2.5 2.5 2-2 3 3"/></svg>`;
+const X = `<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+const CHEV = `<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>`;
+
+/** Every desk but the one in Pick up, most recently touched first, a card
+ *  each: where it was left, what is open on it, a + to add a line, and its
+ *  last eight weeks with "Park it?" once it has gone quiet. Parked desks are
+ *  on the shelf under the cards. */
 function desksList(j) {
   const { esc } = c;
   const { rest } = pickOf(j);
-  if (!rest.length) return `<p class="hm-quiet">Your other desks show here, each with its open notes. One project, one desk.</p>`;
+  const now = Date.now() / 1000;
+  const shelf = j.desks.filter(d => d.parked && d.id !== justParked).sort((a, b) => b.parked.at - a.parked.at);
+  const shelved = shelf.length ? `<div class="hm-shelf-w"><h3 class="hm-sub">Parked</h3><ul class="hm-list hm-shelf">${shelf.map(d =>
+    `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="hm-t">${d.parked.next ? `next: ${esc(d.parked.next)}` : ""}</span></span>` +
+    `<button type="button" class="hm-link" data-hm="unpark" data-k="${d.id}">Take down</button><span class="hm-age fact">${age(d.parked.at)}</span></li>`).join("")}</ul></div>` : "";
+  if (!rest.length) return `<p class="hm-quiet">Your other projects show here, each with its open notes. One project, one desk.</p>` + shelved;
   const all = desksAll(), shown = all ? rest : rest.slice(0, DESKS_SHOWN - 1), more = rest.length - (DESKS_SHOWN - 1);
-  return `<div class="hm-dks">` + shown.map(d => `<div class="hm-dk">` +
-    `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}</div>` +
-    (d.left_off ? `<p class="hm-dk-left" data-tip="Left off" data-tip-sub="${esc(d.left_off.text)}"><b>Left off</b>${esc(d.left_off.text)}</p>` : "") +
-    notesOf(d, 3) + addRow(d) + `</div>`).join("") + `</div>` +
-    (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "");
+  const card = d => {
+    const done = (j.days || []).filter(r => r.desk === d.id && r.kind === "tick" && r.at >= now - 7 * DAY).length;
+    let left = d.left_off ? `<p class="hm-dk-left" data-tip="Left off" data-tip-sub="${esc(d.left_off.text)}"><b>Left off</b>${esc(d.left_off.text)}</p>` : "";
+    let foot = done ? `<span class="hm-s" data-tip="${done} ${done === 1 ? "note" : "notes"} ticked in the last seven days">${done} done</span>` : "";
+    if (d.id === justParked) foot = `<span class="hm-s">Parked</span><button type="button" class="hm-link hm-undo" data-hm="unpark" data-k="${d.id}">Undo</button>`;
+    else if (parking === d.id) left = `<div class="hm-park"><input data-hm="next" data-k="${d.id}" maxlength="200" placeholder="The next step, for when you come back" aria-label="The next step on ${esc(d.name)}" value="${esc(parkDraft)}">` +
+      `<button type="button" class="hm-link" data-hm="parkgo" data-k="${d.id}">Park</button><button type="button" class="hm-link" data-hm="parkno">Cancel</button>${parkFailed ? `<span class="hm-s">Could not park</span>` : ""}</div>`;
+    else if (d.touched && now - d.touched > QUIET_DAYS * DAY)
+      foot += `<button type="button" class="hm-link" data-hm="park" data-k="${d.id}" data-tip="Put it on the shelf" data-tip-sub="it leaves Pick up; nothing on it is closed">Park it?</button>`;
+    const notes = notesOf(d, 3);
+    return `<div class="hm-dk">` +
+      `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
+      `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
+      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) +
+      `<div class="hm-dk-foot">${foot}${spark(d.pulse)}</div></div>`;
+  };
+  return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +
+    (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "") + shelved;
 }
 
 /** The log, folded at the foot of the page until it is opened, and kept
@@ -627,31 +881,45 @@ function spark(pulse = []) {
     n.map((v, i) => v ? `<i${i === 7 ? ` class="now"` : ""} style="height:${2 + v * 2}px"></i>` : `<i class="z"></i>`).join("") + `</span>`;
 }
 
-function projects(j) {
+/** The time, the day, and this month with today ringed, Monday first. */
+function today() {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  // 1 Jan 2024 was a Monday: the week's letters in the reader's own language.
+  const heads = Array.from({ length: 7 }, (_, i) => `<b>${c.esc(new Date(2024, 0, 1 + i).toLocaleDateString(undefined, { weekday: "narrow" }))}</b>`);
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7, days = new Date(y, m + 1, 0).getDate();
+  const cells = Array.from({ length: lead }, () => `<span></span>`);
+  for (let n = 1; n <= days; n++) {
+    const wd = (lead + n - 1) % 7;
+    cells.push(`<span class="${n === now.getDate() ? "today" : wd > 4 ? "we" : ""}"${n === now.getDate() ? ` aria-current="date"` : ""}>${n}</span>`);
+  }
+  return `<p class="hm-time">${hhmm()}</p>` +
+    `<p class="hm-date">${c.esc(now.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }))}</p>` +
+    `<div class="hm-cal" role="img" aria-label="${c.esc(now.toLocaleDateString(undefined, { month: "long", year: "numeric" }))}">${heads.join("")}${cells.join("")}</div>`;
+}
+
+/** Every key the desks hand their panels, one row per name: the provider,
+ *  which desks have it (or every desk), and when a panel last started with
+ *  it. Names only -- Home is never sent a value -- and nothing is added
+ *  here: a key is a desk's, and goes in from that desk's head. */
+function keysOf(j) {
+  const by = new Map();
+  for (const d of j.desks || []) for (const k of d.keys || []) {
+    const r = by.get(k.name) || { name: k.name, provider: "", every: false, desks: [], used: 0 };
+    if (k.desk_id) r.desks.push(d); else r.every = true;
+    r.provider ||= k.provider || "";
+    r.used = Math.max(r.used, k.used_at || 0);
+    by.set(k.name, r);
+  }
+  return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+function keys(j) {
   const { esc } = c;
-  if (!j.desks) return `<p class="hm-quiet">Open the window to see your projects.</p>`;
-  if (!j.desks.length) return `<p class="hm-quiet">Each desk shows here with its last eight weeks.</p>`;
-  const now = Date.now() / 1000;
-  const live = byOrder(j.desks.filter(d => !d.parked || d.id === justParked));
-  const shelf = j.desks.filter(d => d.parked && d.id !== justParked).sort((a, b) => b.parked.at - a.parked.at);
-  const row = d => {
-    const done = (j.days || []).filter(r => r.desk === d.id && r.kind === "tick" && r.at >= now - 7 * DAY).length;
-    let say = "", tail;
-    if (d.id === justParked) { say = `<span class="hm-s">Parked</span><button type="button" class="hm-link hm-undo" data-hm="unpark" data-k="${d.id}">Undo</button>`; tail = ""; }
-    else {
-      if (done) say = `<span class="hm-s" data-tip="${done} ${done === 1 ? "note" : "notes"} ticked in the last seven days">${done} done</span>`;
-      if (d.touched && now - d.touched > QUIET_DAYS * DAY && parking !== d.id)
-        say += `<button type="button" class="hm-link" data-hm="park" data-k="${d.id}" data-tip="Put it on the shelf" data-tip-sub="it leaves Pick up; nothing on it is closed">Park it?</button>`;
-      tail = d.touched ? age(d.touched) : "new";
-    }
-    const form = parking === d.id ? `<li class="hm-park"><input data-hm="next" data-k="${d.id}" maxlength="200" placeholder="The next step, for when you come back" aria-label="The next step on ${esc(d.name)}" value="${esc(parkDraft)}">` +
-      `<button type="button" class="hm-link" data-hm="parkgo" data-k="${d.id}">Park</button><button type="button" class="hm-link" data-hm="parkno">Cancel</button>${parkFailed ? `<span class="hm-s">Could not park</span>` : ""}</li>` : "";
-    return `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${say}</span>${spark(d.pulse)}<span class="hm-age fact">${tail}</span></li>${form}`;
-  };
-  return `<ul class="hm-list">${live.map(row).join("")}</ul>` +
-    (shelf.length ? `<h3 class="hm-sub">Parked</h3><ul class="hm-list hm-shelf">${shelf.map(d =>
-      `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="hm-t">${d.parked.next ? `next: ${esc(d.parked.next)}` : ""}</span></span>` +
-      `<button type="button" class="hm-link" data-hm="unpark" data-k="${d.id}">Take down</button><span class="hm-age fact">${age(d.parked.at)}</span></li>`).join("")}</ul>` : "");
+  if (!j.desks) return `<p class="hm-quiet">Open the window to see your keys.</p>`;
+  const rows = keysOf(j);
+  if (!rows.length) return `<p class="hm-quiet">None yet. A desk's head has a Keys slot: paste one there, and every panel on that desk starts with it in its environment.</p>`;
+  return `<ul class="hm-list">${rows.map(r =>
+    `<li class="hm-pj hm-key"><span class="hm-pw"><span class="hm-kn">${esc(r.name)}</span><span class="hm-t">${r.provider ? esc(r.provider) + " · " : ""}${r.every ? "every desk" : r.desks.map(d => `<a href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>`).join(", ")}</span></span>` +
+    `<span class="hm-age fact" data-tip="${r.used ? "a panel last started with it" : "no panel has started with it yet"}">${r.used ? age(r.used) : "unused"}</span></li>`).join("")}</ul>`;
 }
 
 /** What is left of one rate-limit window, as a share from 0 to 100 and a
@@ -705,7 +973,19 @@ function wire() {
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
     else if (k === "week") sendWeek(b);
     else if (k === "tick") tickNote(id, +b.dataset.n);
-    else if (k === "addopen") { adding = id; addDraft = ""; addErr = ""; draw(last); c.docEl.querySelector("input[data-hm=add]")?.focus(); }
+    // A card's +: its desk on the chip, and the hand in the bar, which is in
+    // view wherever the page is; the bar lights for a moment to say where.
+    else if (k === "addopen") { barTo = id; menu = null; draw(last); focusBar(); lit(); }
+    else if (k === "to") {
+      if (menu?.by === "chip") { menu = null; drawMenu(); focusBar(); return; }
+      const xs = menuDesks(last), on = barDesk(last);
+      menu = { by: "chip", q: "", at: Math.max(0, xs.findIndex(d => d.id === on?.id)) };
+      drawMenu();
+      c.docEl.querySelector("input[data-hm=find]")?.focus({ preventScroll: true });
+    }
+    else if (k === "pickto") chooseDesk(id);
+    else if (k === "pendx") { barPics = []; draw(last); focusBar(); }
+    else if (k === "barundo") undoAdd();
     else if (k === "desks") { setDesksAll(!desksAll()); draw(last); c.docEl.querySelector("[data-hm=desks]")?.focus({ preventScroll: true }); }
     else if (k === "days") { allDays = !allDays; draw(last); c.docEl.querySelector("[data-hm=days]")?.focus({ preventScroll: true }); }
     else if (k === "more") { const key = b.dataset.k; opened.has(key) ? opened.delete(key) : opened.add(key); draw(last); }
@@ -721,19 +1001,58 @@ function wire() {
   });
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
-    else if (e.target.dataset?.hm === "add") { addDraft = e.target.value; if (addErr) { addErr = ""; e.target.nextElementSibling?.remove(); } }
+    else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) { say(null); sayNow(); } hashMenu(e.target); }
+    else if (e.target.dataset?.hm === "find" && menu) { menu.q = e.target.value; menu.at = 0; drawMenu(); }
   });
+  // The list's rows take a click without taking the hand from the field, and
+  // so does the ✕ that leaves the pictures out.
+  el.addEventListener("mousedown", e => { if (e.target.closest?.("[data-hm=pickto], [data-hm=pendx]")) e.preventDefault(); });
+  // A screenshot pasted into the bar, or dropped on it, waits on the line.
+  el.addEventListener("paste", e => {
+    if (e.target.dataset?.hm !== "bar") return;
+    const fs = images(e.clipboardData);
+    if (fs.length) { e.preventDefault(); addPics(fs); }
+  });
+  el.addEventListener("dragover", e => {
+    const nb = e.target.closest?.(".hm-nb");
+    if (!nb || ![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault(); nb.classList.add("drop");
+  });
+  el.addEventListener("dragleave", e => { const nb = e.target.closest?.(".hm-nb"); if (nb && !nb.contains(e.relatedTarget)) nb.classList.remove("drop"); });
+  el.addEventListener("drop", e => {
+    const nb = e.target.closest?.(".hm-nb");
+    if (!nb) return;
+    e.preventDefault(); nb.classList.remove("drop");
+    addPics(images(e.dataTransfer));
+  });
+  el.addEventListener("focusin", e => { if (e.target.dataset?.hm === "bar") asks(e.target); });
   // The week stays as the reader left it, folded or open.
   el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); }, true);
-  // Leaving an empty field closes it; one with a line in it waits, as typed.
+  // The hand leaving the bar closes its list; what is typed in it waits, as typed.
   el.addEventListener("focusout", e => {
-    if (drawing || e.target.dataset?.hm !== "add" || addDraft.trim()) return;
-    setTimeout(() => { if (adding && !addDraft.trim() && !c.docEl.contains(document.activeElement?.closest?.(".hm-add") || null)) { adding = 0; addErr = ""; draw(last); } }, 0);
+    if (drawing || !e.target.closest?.(".hm-nb")) return;
+    if (e.target.dataset?.hm === "bar") e.target.placeholder = "Add a note";
+    if (menu && !e.relatedTarget?.closest?.(".hm-nb")) { menu = null; drawMenu(); }
   });
   el.addEventListener("keydown", e => {
-    if (e.target.dataset?.hm === "add") {
-      if (e.key === "Enter") { e.preventDefault(); addNote(); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); adding = 0; addDraft = ""; addErr = ""; draw(last); }
+    const f = e.target.dataset?.hm;
+    if (f === "bar" || f === "find") {
+      const xs = menu ? menuDesks(last) : [];
+      if (menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        if (xs.length) { menu.at = (menu.at + (e.key === "ArrowDown" ? 1 : -1) + xs.length) % xs.length; drawMenu(); }
+      }
+      // Enter on an open list takes the marked desk; so does Tab after a `#`.
+      else if (menu && (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey && menu.by === "hash"))) {
+        if (xs[menu.at]) { e.preventDefault(); chooseDesk(xs[menu.at].id); }
+        else if (e.key === "Enter") e.preventDefault();
+      }
+      else if (e.key === "Escape") {
+        e.preventDefault(); e.stopPropagation();
+        if (menu) { const by = menu.by; menu = null; drawMenu(); if (by === "chip") focusBar(); }
+        else e.target.blur();
+      }
+      else if (f === "bar" && e.key === "Enter") { e.preventDefault(); addNote(); }
       return;
     }
     if (e.target.dataset?.hm !== "next") return;
@@ -762,26 +1081,67 @@ async function tickNote(desk, n) {
   soonRefresh();
 }
 
-/** Keep the line in the open field. It shows in the desk's list at once, and
- *  the field stays open, empty, for the next: a list is written in a run. */
+/** Keep the line in the bar on the chip's desk. The bar empties at once and
+ *  keeps the hand, for the next: a list is written in a run. The line shows
+ *  in its desk's card, and the bar says where it went, with an Undo; a no
+ *  puts what was typed back, and says why where the Enter was. */
 async function addNote() {
-  const id = adding, text = addDraft.trim(), d = last?.desks?.find(x => x.id === id);
-  if (!id || !d) return;
-  if (!text) { adding = 0; addErr = ""; draw(last); return; }
-  addDraft = ""; addErr = "";
+  const d = barDesk(last), pics = barPics;
+  // A line that is only a picture still needs words to be a line: these,
+  // until the reader writes their own -- as on the desk.
+  const text = barDraft.trim() || (pics.length ? "A picture" : "");
+  if (!d || !text) return;
+  barDraft = ""; barPics = []; menu = null; say(null);
+  draw(last); focusBar();
   let r;
-  try { r = await c.deskApi(`/api/desks/${id}/notes`, { text }); }
+  try { r = await c.deskApi(`/api/desks/${d.id}/notes`, { text }); }
   catch (e) {
-    // What was typed is not lost to a no.
-    addDraft = text; addErr = `Could not add the note${/keeps \d+ notes/.test(e?.message || "") ? " · the desk is full" : ""}`;
-    draw(last); return;
+    // What was typed is not lost to a no, unless the next line is already being written.
+    if (!barDraft.trim() && !barPics.length) { barDraft = pics.length && text === "A picture" ? "" : text; barPics = pics; barTo = d.id; }
+    say({ err: `Could not add the note${/keeps \d+ notes/.test(e?.message || "") ? ` · ${d.name} is full` : ""}` });
+    if (c.view() === "home") { draw(last); focusBar(); }
+    return;
   }
-  if (r?.note && d.next.length < 5) d.next.push({ id: r.note.id, text: r.note.text });
-  if (r?.note) d.open += 1;
-  draw(last);
-  c.docEl.querySelector("input[data-hm=add]")?.focus();
+  let lost = 0;
+  if (r?.note) for (const f of pics) { try { await c.deskApi(`/api/desks/${d.id}/notes/${r.note.id}/image`, f, f.type); } catch { lost++; } }
+  if (r?.note) { if (d.next.length < 5) d.next.push({ id: r.note.id, text: r.note.text }); d.open += 1; }
+  say(lost ? { err: `Added to ${d.name}, without ${lost === 1 ? "the picture" : c.plural(lost, "picture")}` } : { desk: d.id, name: d.name, id: r?.note?.id, text });
+  if (c.view() === "home") draw(last);
   soonRefresh();
 }
+
+/** The bar's Undo: the line comes off its desk -- the ✕'s way, so nothing is
+ *  deleted -- and back into the bar, on its desk, to be put right. */
+async function undoAdd() {
+  const s = barSaid;
+  if (!s || s.err || !s.id) return;
+  say(null); sayNow();
+  try { await c.deskApi(`/api/desks/${s.desk}/notes/${s.id}/remove`, {}); }
+  catch { say({ err: "Could not take it back" }); sayNow(); return; }
+  const d = last?.desks?.find(x => x.id === s.desk);
+  if (d) { d.next = d.next.filter(n => n.id !== s.id); d.open = Math.max(0, d.open - 1); }
+  if (!barDraft.trim()) { barDraft = s.text === "A picture" ? "" : s.text; barTo = s.desk; }
+  draw(last); focusBar(); soonRefresh();
+}
+
+/** The bar lights for a moment, so a + at the foot of the page says where
+ *  the hand went. */
+function lit() {
+  const nb = c.docEl.querySelector(".hm-nb");
+  if (!nb) return;
+  nb.classList.remove("lit"); void nb.offsetWidth; nb.classList.add("lit");
+}
+
+/** A picture the Linux window read off the clipboard itself, on Ctrl+V: its
+ *  engine gives the paste event nothing for an image (src/bin/app.rs). Taken
+ *  when the bar has the hand. */
+addEventListener("snyvi-paste-image", e => {
+  const at = document.activeElement;
+  if (!c || c.view() !== "home" || at?.dataset?.hm !== "bar" || !c.docEl.contains(at) || typeof e.detail !== "string") return;
+  const bin = atob(e.detail.slice(e.detail.indexOf(",") + 1)), buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  addPics([new File([buf], "pasted.png", { type: "image/png" })]);
+});
 
 /** Park the desk with what was typed: the row keeps its place and says so,
  *  with an Undo, for four seconds, and then goes up on the shelf. */

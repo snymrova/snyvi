@@ -307,12 +307,9 @@ fn json_value(f: Format, program: &str) -> Value {
 /// than pretty-printed, so the entry is three lines and not nine.
 pub fn snippet(agent: &Agent, program: &str) -> String {
     match agent.format {
-        Format::Toml => {
-            let mut t = toml_edit::Table::new();
-            t["command"] = toml_edit::value(program);
-            t["args"] = toml_edit::value(toml_edit::Array::from_iter(["mcp"]));
-            format!("[mcp_servers.snyvi]\n{}", t).trim_end().to_string()
-        }
+        Format::Toml => format!("[mcp_servers.snyvi]\n{}", toml_table(program))
+            .trim_end()
+            .to_string(),
         f => {
             let c = serde_json::to_string(program).unwrap_or_default();
             let extra = match f {
@@ -326,6 +323,46 @@ pub fn snippet(agent: &Agent, program: &str) -> String {
             )
         }
     }
+}
+
+/// Codex's entry. `env_vars` names what of the shell's environment the
+/// server may see: Codex starts a stdio server with a short allowlist of its
+/// own, and `SNYVI_SESSION` -- the panel's id, which is how `snyvi mcp` knows
+/// it is in a desk -- is not on it.
+fn toml_table(program: &str) -> toml_edit::Table {
+    let mut t = toml_edit::Table::new();
+    t["command"] = toml_edit::value(program);
+    t["args"] = toml_edit::value(toml_edit::Array::from_iter(["mcp"]));
+    t["env_vars"] = toml_edit::value(toml_edit::Array::from_iter([PANE_VAR]));
+    t
+}
+
+/// The environment variable a desk's pane puts its id in (`crate::pane`).
+pub const PANE_VAR: &str = "SNYVI_SESSION";
+
+/// Whether Codex's entry lets the pane's id through. One registered by a
+/// snyvi before 1.13 did not, and `init codex` writes it again.
+fn toml_passes_pane(doc: &toml_edit::DocumentMut) -> bool {
+    doc.get("mcp_servers")
+        .and_then(|s| s.get("snyvi"))
+        .and_then(|e| e.get("env_vars"))
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(PANE_VAR)))
+}
+
+/// Whether the agent's file has our entry as `init` would write it today. For
+/// Codex that includes the pane's variable; for the rest the command and
+/// `mcp` are the whole of it.
+fn entry_current(agent: &Agent) -> bool {
+    if agent.format != Format::Toml {
+        return true;
+    }
+    agent
+        .file
+        .as_ref()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+        .is_some_and(|d| toml_passes_pane(&d))
 }
 
 fn place(agent: &Agent) -> String {
@@ -441,10 +478,7 @@ fn write_entry(agent: &Agent, file: &Path, program: &str) -> Result<Wrote> {
                 })
                 .as_table_mut()
                 .context("mcp_servers is not a table")?;
-            let mut t = toml_edit::Table::new();
-            t["command"] = toml_edit::value(program);
-            t["args"] = toml_edit::value(toml_edit::Array::from_iter(["mcp"]));
-            servers.insert("snyvi", toml_edit::Item::Table(t));
+            servers.insert("snyvi", toml_edit::Item::Table(toml_table(program)));
             doc.to_string()
         }
         f => {
@@ -542,7 +576,7 @@ pub fn init(agent: &Agent, instructions: bool) -> Result<()> {
     let before = state(agent);
     let write = match &before {
         State::Connected { command, args }
-            if args == &["mcp"] && same_program(command, &program) =>
+            if args == &["mcp"] && same_program(command, &program) && entry_current(agent) =>
         {
             println!(
                 "{} already has snyvi registered: {command} mcp, in {}",
@@ -586,6 +620,21 @@ pub fn init(agent: &Agent, instructions: bool) -> Result<()> {
         }
         if !on_path {
             println!("  Written with the binary's full path, since `snyvi` is not on PATH; run this again if it moves.");
+        }
+    }
+    // Codex runs the same hooks as Claude Code, from the same binary: the
+    // desk's panel learns what it is doing, and it is handed the brief and
+    // the desk's changes. Codex runs none of them until the reader has looked
+    // at them once, in `/hooks`.
+    if agent.id == "codex" {
+        let command = crate::hook::command_line(&program);
+        match crate::hook::install_codex(&command) {
+            Ok((path, true)) => println!(
+                "Wrote snyvi's hooks to {}: the panel learns what Codex is doing, and Codex is handed the desk brief.\n  Codex runs no hook it has not been shown: open `/hooks` in Codex once and trust them.",
+                tilde(&path)
+            ),
+            Ok((path, false)) => println!("{} already has snyvi's hooks.", tilde(&path)),
+            Err(e) => println!("Could not write Codex's hooks ({e}); the panel will not learn what Codex is doing."),
         }
     }
 
@@ -667,6 +716,13 @@ pub fn uninstall_keeping(agent: &Agent, keeping: bool) -> Result<()> {
     if let Some(Where::File(path)) = &agent.instructions {
         if line_remove(path)? {
             println!("Removed the snyvi line from {}.", tilde(path));
+        }
+    }
+    if agent.id == "codex" {
+        if let Ok((path, n)) = crate::hook::uninstall_codex() {
+            if n > 0 {
+                println!("Removed snyvi's hooks from {}.", tilde(&path));
+            }
         }
     }
     if !keeping {
@@ -1004,9 +1060,10 @@ mod tests {
         let after = std::fs::read_to_string(&file).unwrap();
         assert!(after.starts_with(before), "{after}");
         assert!(
-            after.contains("[mcp_servers.snyvi]\ncommand = \"snyvi\"\nargs = [\"mcp\"]"),
+            after.contains("[mcp_servers.snyvi]\ncommand = \"snyvi\"\nargs = [\"mcp\"]\nenv_vars = [\"SNYVI_SESSION\"]"),
             "{after}"
         );
+        assert!(entry_current(&a));
         assert!(matches!(
             state(&a),
             State::Connected { .. } | State::Stale { .. }
@@ -1018,10 +1075,22 @@ mod tests {
         write_entry(&a, &file, "snyvi").unwrap();
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
-            "[mcp_servers.snyvi]\ncommand = \"snyvi\"\nargs = [\"mcp\"]\n"
+            "[mcp_servers.snyvi]\ncommand = \"snyvi\"\nargs = [\"mcp\"]\nenv_vars = [\"SNYVI_SESSION\"]\n"
         );
         remove_entry(&a, &file).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
+        // An entry from before 1.13 has no `env_vars`: registered, but not
+        // current, so `init codex` writes it again.
+        std::fs::write(
+            &file,
+            "[mcp_servers.snyvi]\ncommand = \"snyvi\"\nargs = [\"mcp\"]\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            state(&a),
+            State::Connected { .. } | State::Stale { .. }
+        ));
+        assert!(!entry_current(&a));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1036,7 +1105,7 @@ mod tests {
         assert!(snippet(&cursor, "snyvi").contains("\"mcpServers\""));
         assert_eq!(
             snippet(&codex, "/opt/snyvi"),
-            "[mcp_servers.snyvi]\ncommand = \"/opt/snyvi\"\nargs = [\"mcp\"]"
+            "[mcp_servers.snyvi]\ncommand = \"/opt/snyvi\"\nargs = [\"mcp\"]\nenv_vars = [\"SNYVI_SESSION\"]"
         );
         assert!(snippet(&zed, "snyvi").contains("\"context_servers\""));
         assert!(snippet(&code, "snyvi").contains("\"type\": \"stdio\""));

@@ -443,9 +443,18 @@ impl Browser {
         // alone they resolve against the page's own /b/ address, which answers
         // with the viewer rather than the picture.
         let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
-        let base = if dir.is_empty() { raw_url(id, "") } else { format!("{}/", raw_url(id, dir)) };
-        let html = render::chunk_code(&renderer.render_with_base(kind, lang.as_deref(), &text, Some(&base)))
-            .into_owned();
+        let base = if dir.is_empty() {
+            raw_url(id, "")
+        } else {
+            format!("{}/", raw_url(id, dir))
+        };
+        let html = render::chunk_code(&renderer.render_with_base(
+            kind,
+            lang.as_deref(),
+            &text,
+            Some(&base),
+        ))
+        .into_owned();
 
         let mut cache = self.cache.lock().unwrap();
         if cache.len() >= CACHE_ENTRIES {
@@ -691,9 +700,15 @@ mod tests {
         let rn = Renderer::new();
         let r = b.open(&d.path).unwrap();
         let top = b.file(&r.id, "top.md", &rn).unwrap().html;
-        assert!(top.contains(&format!("src=\"/api/browse/{}/raw/a.png\"", r.id)), "{top}");
+        assert!(
+            top.contains(&format!("src=\"/api/browse/{}/raw/a.png\"", r.id)),
+            "{top}"
+        );
         let kit = b.file(&r.id, "docs/kit.md", &rn).unwrap().html;
-        assert!(kit.contains(&format!("src=\"/api/browse/{}/raw/docs/img/b.png\"", r.id)), "{kit}");
+        assert!(
+            kit.contains(&format!("src=\"/api/browse/{}/raw/docs/img/b.png\"", r.id)),
+            "{kit}"
+        );
         assert!(kit.contains("src=\"https://h/c.png\""), "{kit}");
         assert!(kit.contains("src=\"/abs.png\""), "{kit}");
     }

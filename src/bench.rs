@@ -490,7 +490,10 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     // Home, the update card, the desk brief and suggested notes, and the
     // design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
     // 16.4 on Windows). 16.5 until 1.10.0: pictures on notes, note stages and
-    // the Home of desks and notes took the musl build to 16.6 MB.
+    // the Home of desks and notes took the musl build to 16.6 MB. 17 held
+    // in 1.13.0: the desks' keys and the changes at each prompt came to
+    // 0.05 MB once Linux was left without a keychain client, which was 1.8 MB
+    // of D-Bus for encryption at rest (src/secrets.rs says why).
     //
     // What ships is built with fat LTO (release.yml). A CI job that turns it
     // off to save build time (the desktops, Windows, Intel Mac) measures a

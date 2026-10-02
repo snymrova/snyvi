@@ -26,6 +26,8 @@ const CSS = `
 #toasts[data-side="below"] .toast::before { top: -5px; left: var(--tail-x, 16px); border-bottom: 0; border-right: 0; }
 .toast .say { min-width: 0; }
 .toast .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast.go { cursor: pointer; }
+.toast.go:hover .t { text-decoration: underline; }
 .toast .s { color: var(--fg-3); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The one thing an answer offers that has to be reached on purpose. */
 .toast .act { font: inherit; font-size: var(--fs-small); font-weight: 500; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 3px 9px; margin-left: 4px; cursor: pointer; flex: none; }
@@ -158,9 +160,11 @@ function say(title, o, acted) {
     b.type = "button"; b.className = "act"; b.textContent = action.label;
     b.addEventListener("click", ev => { ev.stopPropagation(); unsay(); action.run(); });
     el.appendChild(b);
-  } else if (!err) {
-    el.addEventListener("click", () => { hush(); o.go?.(); });
   }
+  // `go` is the whole toast, beside a button or without one: news about a
+  // document is a way to it (#66).
+  if (o.go || (!action && !err)) el.addEventListener("click", () => { hush(); o.go?.(); });
+  if (o.go) el.classList.add("go");
   if (err) {
     const x = document.createElement("button");
     x.type = "button"; x.className = "act tx"; x.innerHTML = glyph("x"); x.ariaLabel = "Dismiss";

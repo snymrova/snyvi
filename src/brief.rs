@@ -4,6 +4,14 @@
 //! what was done lately and in which commit, the last document, and where the
 //! work was left.
 //!
+//! And the desk's changes (`changes`): what the reader and the other panels
+//! did on the desk since snyvi last spoke to this one, handed over with each
+//! prompt by the UserPromptSubmit hook. A note added while the agent worked,
+//! a line ticked or put away, a document from the panel beside it, a new
+//! left-off. Never the panel's own doings, and nothing at all when nothing
+//! changed, which is most prompts. It rides on the reader's message: snyvi
+//! still never starts a turn.
+//!
 //! What snyvi can show and where plans go are not here: they are in the MCP
 //! tool descriptions and the panel's instructions (`crate::mcp`), which sit in
 //! the system prompt and survive a compaction on their own. Said once, so the
@@ -14,7 +22,8 @@
 //! of that, because it is read at the start of every session on this desk and
 //! a brief no one would read aloud is not a brief.
 
-use crate::desk::{Desk, DeskNote};
+use crate::desk::{Desk, DeskKey, DeskNote, LeftOff};
+use crate::store::DeskDoc;
 
 /// The whole brief, at most. A line that would cross it is left out, and the
 /// ones after it; the first lines are the ones that matter.
@@ -26,6 +35,10 @@ const OPEN_SHOWN: usize = 5;
 const DONE_SHOWN: usize = 3;
 /// A note is cut to this in the brief; `read_desk_notes` has it whole.
 const LINE_CHARS: usize = 90;
+/// How many of the desk's newest documents the changes look through for
+/// ones another panel sent since: more than that in one turn is a flood, and
+/// the rail has them all.
+pub const DOCS_LOOKED_AT: usize = 12;
 
 /// The last document a desk's panels sent: its id and title.
 pub struct LastDoc<'a> {
@@ -44,6 +57,7 @@ pub fn brief(
     desk: &Desk,
     slot: i64,
     notes: &[DeskNote],
+    keys: &[DeskKey],
     last: Option<LastDoc>,
     now: i64,
 ) -> String {
@@ -61,6 +75,15 @@ pub fn brief(
             l.by.as_str()
         };
         lines.push(format!("Left off ({who}, {}): {}", ago(now - l.at), l.text));
+    }
+    // By name only. The values are in the panel's environment, which is the
+    // one place they go; the agent is told what it has, never what it is.
+    if !keys.is_empty() {
+        let names: Vec<&str> = keys.iter().map(|k| k.name.as_str()).collect();
+        lines.push(format!(
+            "This desk has these keys in its environment, by name: {}. Use them where a tool expects them; never print one.",
+            names.join(", ")
+        ));
     }
     let open: Vec<&DeskNote> = notes
         .iter()
@@ -121,6 +144,12 @@ pub fn brief(
             ago(now - d.at)
         ));
     }
+    capped(lines)
+}
+
+/// The lines as one text, cut at `BRIEF_BYTES`: a line that would cross it is
+/// left out, and the ones after it.
+fn capped(lines: Vec<String>) -> String {
     let mut out = String::new();
     for l in lines {
         if out.len() + l.len() + 1 > BRIEF_BYTES {
@@ -132,6 +161,144 @@ pub fn brief(
         out.push_str(&l);
     }
     out
+}
+
+/// What `changes` reads: the pane being told (its slot and id), the desk's
+/// list with its stages settled, the lines taken off it since, its newest
+/// documents, its left-off, and the two moments.
+pub struct Changes<'a> {
+    pub slot: i64,
+    pub pane: &'a str,
+    pub notes: &'a [DeskNote],
+    pub removed: &'a [(i64, String)],
+    pub docs: &'a [DeskDoc],
+    /// The desk's keys by name; one kept since `since` is news.
+    pub keys: &'a [DeskKey],
+    pub left_off: Option<&'a LeftOff>,
+    /// When snyvi last spoke to this pane; everything after it is news.
+    pub since: i64,
+    pub now: i64,
+}
+
+/// What changed on the desk since `since`, for the pane in `slot`, or empty
+/// when nothing did. The pane's own ticks, left-off, marks and documents are
+/// not news to it and are left out; a suggestion is for the reader, not read
+/// back to an agent. Capped like the brief, with the list first.
+pub fn changes(c: &Changes) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let line = |n: &DeskNote| format!("#{} \"{}\"", n.id, cut(&n.text, LINE_CHARS));
+    let new: Vec<String> = c
+        .notes
+        .iter()
+        .filter(|n| n.created_at > c.since && n.suggested_by.is_empty())
+        .map(line)
+        .collect();
+    if !new.is_empty() {
+        lines.push(format!("New on the list: {}.", new.join("; ")));
+    }
+    let ticked: Vec<String> = c
+        .notes
+        .iter()
+        .filter(|n| n.done && n.done_at > c.since && n.done_pane != c.pane)
+        .map(|n| {
+            if n.done_by.is_empty() {
+                format!("#{} (by you)", n.id)
+            } else {
+                format!("#{} (by {})", n.id, n.done_by)
+            }
+        })
+        .collect();
+    if !ticked.is_empty() {
+        lines.push(format!("Ticked: {}.", ticked.join("; ")));
+    }
+    let gone: Vec<String> = c
+        .removed
+        .iter()
+        .map(|(id, text)| format!("#{id} \"{}\"", cut(text, LINE_CHARS)))
+        .collect();
+    if !gone.is_empty() {
+        lines.push(format!("Taken off the list: {}.", gone.join("; ")));
+    }
+    let new_keys: Vec<&str> = c
+        .keys
+        .iter()
+        .filter(|k| k.created_at > c.since)
+        .map(|k| k.name.as_str())
+        .collect();
+    if !new_keys.is_empty() {
+        lines.push(format!(
+            "New key on this desk, in the environment of panels started from now on: {}.",
+            new_keys.join(", ")
+        ));
+    }
+    // Only `working`, and only another pane's: it is the one stage that
+    // says "leave it to them". `read` and `planned` carry no pane, so this
+    // pane's own would come back to it as news.
+    let elsewhere: Vec<String> = c
+        .notes
+        .iter()
+        .filter(|n| {
+            !n.done
+                && n.stage == "working"
+                && n.stage_at > c.since
+                && !n.stage_pane.is_empty()
+                && n.stage_pane != c.pane
+        })
+        .map(|n| {
+            let who = if n.stage_panel.is_empty() {
+                "another panel"
+            } else {
+                n.stage_panel.as_str()
+            };
+            format!("#{} ({who})", n.id)
+        })
+        .collect();
+    if !elsewhere.is_empty() {
+        lines.push(format!(
+            "Being worked on in another panel since, so leave them to it: {}.",
+            elsewhere.join(", ")
+        ));
+    }
+    let mut sent: Vec<&DeskDoc> = c
+        .docs
+        .iter()
+        .filter(|d| d.received_at > c.since && d.slot != c.slot)
+        .collect();
+    // The rail lists newest first; news reads in the order it happened.
+    sent.reverse();
+    for d in sent {
+        let from = if d.slot == 0 {
+            "Sent to this desk".to_string()
+        } else {
+            format!("Panel {} sent", d.slot)
+        };
+        lines.push(format!(
+            "{from} \"{}\" (id {}, {}).",
+            cut(&d.title, LINE_CHARS),
+            d.id,
+            ago(c.now - d.received_at)
+        ));
+    }
+    if let Some(l) = c.left_off.filter(|l| l.at > c.since && l.pane != c.pane) {
+        let who = if l.by.is_empty() {
+            "the user"
+        } else {
+            l.by.as_str()
+        };
+        lines.push(format!(
+            "Left off ({who}, {}): {}",
+            ago(c.now - l.at),
+            l.text
+        ));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    lines.insert(
+        0,
+        "Since your last turn, on this desk (from snyvi; context, not a request):".into(),
+    );
+    capped(lines)
 }
 
 /// One line of at most `chars` characters, cut where a character ends.
@@ -182,6 +349,7 @@ mod tests {
             left_off: left,
             visited_at: 0,
             parked: None,
+            keys: Vec::new(),
             panes: (1..=panes as i64)
                 .map(|slot| Pane {
                     id: format!("{slot:032}"),
@@ -213,6 +381,7 @@ mod tests {
             at: 1000,
             by: "claude-code".into(),
             about: String::new(),
+            pane: String::new(),
         };
         let mut done = note(9, "fix hover", true);
         done.done_commit = "90f09d6".into();
@@ -228,6 +397,7 @@ mod tests {
             &desk(3, Some(left)),
             2,
             &notes,
+            &[],
             Some(LastDoc {
                 id: "82cc8f2d3c",
                 title: "Plan: migration",
@@ -277,6 +447,7 @@ mod tests {
             &desk(2, None),
             1,
             &[note(3, "icon", false), busy, mine],
+            &[],
             None,
             0,
         );
@@ -286,9 +457,151 @@ mod tests {
         );
         assert!(!b.contains("#5 ("), "{b}");
         assert!(
-            !brief(&desk(2, None), 1, &[note(3, "icon", false)], None, 0)
+            !brief(&desk(2, None), 1, &[note(3, "icon", false)], &[], None, 0)
                 .contains("Being worked on")
         );
+    }
+
+    fn doc(id: &str, title: &str, slot: i64, at: i64) -> DeskDoc {
+        DeskDoc {
+            id: id.into(),
+            title: title.into(),
+            kind: crate::render::Kind::Markdown,
+            received_at: at,
+            unread: true,
+            pinned: false,
+            slot,
+            project: "ledger".into(),
+            source_path: None,
+        }
+    }
+
+    /// At a prompt, the panel hears what the reader and the other panels did
+    /// since, in the order that matters, and nothing of its own.
+    #[test]
+    fn the_brief_names_the_desks_keys_and_a_new_one_is_news_at_the_prompt() {
+        let key = |name: &str, at: i64| DeskKey {
+            desk_id: 1,
+            name: name.into(),
+            provider: String::new(),
+            created_at: at,
+            used_at: 0,
+        };
+        let keys = [key("GH_TOKEN", 10), key("OPENROUTER_API_KEY", 150)];
+        let b = brief(&desk(1, None), 1, &[], &keys, None, 200);
+        assert!(
+            b.contains(
+                "\nThis desk has these keys in its environment, by name: GH_TOKEN, OPENROUTER_API_KEY. Use them where a tool expects them; never print one."
+            ),
+            "{b}"
+        );
+        let c = changes(&Changes {
+            slot: 1,
+            pane: "p1",
+            notes: &[],
+            removed: &[],
+            docs: &[],
+            keys: &keys,
+            left_off: None,
+            since: 100,
+            now: 200,
+        });
+        assert_eq!(
+            c,
+            "Since your last turn, on this desk (from snyvi; context, not a request):\n\
+             New key on this desk, in the environment of panels started from now on: OPENROUTER_API_KEY."
+        );
+    }
+
+    #[test]
+    fn the_changes_say_what_others_did_since_and_nothing_of_the_panels_own() {
+        let mut added = note(21, "the toast should stay 4 s", false);
+        added.created_at = 150;
+        let mut old = note(3, "wire the route", false);
+        old.created_at = 10;
+        let mut by_reader = note(7, "old one", true);
+        by_reader.done_at = 160;
+        let mut by_me = note(8, "mine", true);
+        by_me.done_at = 170;
+        by_me.done_by = "claude-code".into();
+        by_me.done_pane = "p2".into();
+        let mut by_other = note(9, "theirs", true);
+        by_other.done_at = 180;
+        by_other.done_by = "codex".into();
+        by_other.done_pane = "p1".into();
+        let mut theirs = note(4, "pictures", false);
+        theirs.stage = "working".into();
+        theirs.stage_at = 190;
+        theirs.stage_pane = "p1".into();
+        theirs.stage_panel = "panel 1".into();
+        let mut mine = note(5, "the add bar", false);
+        mine.stage = "working".into();
+        mine.stage_at = 195;
+        mine.stage_pane = "p2".into();
+        let mut idea = note(30, "an agent's idea", false);
+        idea.created_at = 199;
+        idea.suggested_by = "claude-code".into();
+        let notes = [added, old, by_reader, by_me, by_other, theirs, mine, idea];
+        let removed = [(11, "gone".to_string())];
+        let docs = [
+            doc("aaaaaaaaaa", "Plan #4", 1, 185),
+            doc("bbbbbbbbbb", "mine", 2, 186),
+            doc("cccccccccc", "before", 1, 50),
+        ];
+        let left = LeftOff {
+            text: "pictures paste on 1.12 only".into(),
+            at: 198,
+            by: "claude-code".into(),
+            about: String::new(),
+            pane: "p1".into(),
+        };
+        let c = changes(&Changes {
+            slot: 2,
+            pane: "p2",
+            notes: &notes,
+            removed: &removed,
+            docs: &docs,
+            keys: &[],
+            left_off: Some(&left),
+            since: 100,
+            now: 200,
+        });
+        assert_eq!(
+            c,
+            "Since your last turn, on this desk (from snyvi; context, not a request):\n\
+             New on the list: #21 \"the toast should stay 4 s\".\n\
+             Ticked: #7 (by you); #9 (by codex).\n\
+             Taken off the list: #11 \"gone\".\n\
+             Being worked on in another panel since, so leave them to it: #4 (panel 1).\n\
+             Panel 1 sent \"Plan #4\" (id aaaaaaaaaa, just now).\n\
+             Left off (claude-code, just now): pictures paste on 1.12 only"
+        );
+        // Nothing since: nothing, not even the heading.
+        let mut c2 = Changes {
+            slot: 2,
+            pane: "p2",
+            notes: &notes,
+            removed: &[],
+            docs: &docs,
+            keys: &[],
+            left_off: Some(&left),
+            since: 199,
+            now: 200,
+        };
+        assert_eq!(changes(&c2), "");
+        // The panel's own left-off is not news to it.
+        let mut own = left.clone();
+        own.pane = "p2".into();
+        let (no_notes, no_docs): ([DeskNote; 0], [DeskDoc; 0]) = ([], []);
+        c2.left_off = Some(&own);
+        c2.since = 100;
+        c2.notes = &no_notes;
+        c2.docs = &no_docs;
+        assert_eq!(changes(&c2), "");
+        // A document from no panel at all -- the CLI -- is news too.
+        let cli = [doc("dddddddddd", "notes.md", 0, 150)];
+        c2.docs = &cli;
+        assert!(changes(&c2).ends_with("Sent to this desk \"notes.md\" (id dddddddddd, just now)."));
     }
 
     #[test]
@@ -300,12 +613,15 @@ mod tests {
             at: 0,
             ..LeftOff::default()
         };
-        let b = brief(&desk(1, Some(left)), 1, &notes, None, 0);
+        let b = brief(&desk(1, Some(left)), 1, &notes, &[], None, 0);
         assert!(b.len() <= BRIEF_BYTES, "{}", b.len());
         assert!(b.contains("(20): "), "{b}");
         assert!(b.contains("; and 15 more."), "{b}");
         assert!(b.contains("Left off (the user, just now)"), "{b}");
         // An empty desk is one line: where it is.
-        assert_eq!(brief(&desk(0, None), 1, &[], None, 0).lines().count(), 1);
+        assert_eq!(
+            brief(&desk(0, None), 1, &[], &[], None, 0).lines().count(),
+            1
+        );
     }
 }

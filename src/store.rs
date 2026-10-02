@@ -276,6 +276,10 @@ impl Store {
             "ALTER TABLE desk_notes ADD COLUMN stage_at INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE desk_notes ADD COLUMN stage_pane TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE desk_notes ADD COLUMN stage_session TEXT NOT NULL DEFAULT ''",
+            // 1.13: the pane a tick or a left-off came from, so a panel is not
+            // told its own doings as news at its next prompt.
+            "ALTER TABLE desk_notes ADD COLUMN done_pane TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE desks ADD COLUMN left_off_pane TEXT NOT NULL DEFAULT ''",
         ] {
             let _ = conn.execute_batch(stmt);
         }
@@ -1334,6 +1338,29 @@ impl Store {
         desk::notes(&self.conn.lock().unwrap(), desk_id)
     }
 
+    /// A desk's keys by name: its own and the every-desk ones (`desk::keys`).
+    pub fn desk_keys(&self, desk_id: i64) -> Result<Vec<desk::DeskKey>> {
+        desk::keys(&self.conn.lock().unwrap(), desk_id)
+    }
+
+    pub fn add_desk_key(&self, desk_id: i64, name: &str, provider: &str) -> Result<()> {
+        desk::add_key(&self.conn.lock().unwrap(), desk_id, name, provider, now())
+    }
+
+    pub fn remove_desk_key(&self, desk_id: i64, name: &str) -> Result<bool> {
+        desk::remove_key(&self.conn.lock().unwrap(), desk_id, name)
+    }
+
+    pub fn touch_desk_keys(&self, keys: &[desk::DeskKey]) -> Result<()> {
+        desk::touch_keys(&self.conn.lock().unwrap(), keys, now())
+    }
+
+    /// The keys of desks `prune_desks` is about to end, taken off unless
+    /// `dry_run`; the caller forgets their values.
+    pub fn prune_desk_keys(&self, before: i64, dry_run: bool) -> Result<Vec<(i64, String)>> {
+        desk::prune_keys(&self.conn.lock().unwrap(), before, dry_run)
+    }
+
     pub fn add_desk_note(&self, desk_id: i64, text: &str) -> Result<Option<desk::DeskNote>> {
         desk::add_note(&mut self.conn.lock().unwrap(), desk_id, text, now())
     }
@@ -1350,6 +1377,12 @@ impl Store {
 
     pub fn tick_desk_note(&self, desk_id: i64, id: i64, tick: &desk::Tick) -> Result<bool> {
         desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
+    }
+
+    /// The lines taken off a desk's list since `since`, for the panel's
+    /// changes (`crate::brief::changes`).
+    pub fn removed_desk_notes_since(&self, desk_id: i64, since: i64) -> Result<Vec<(i64, String)>> {
+        desk::removed_since(&self.conn.lock().unwrap(), desk_id, since)
     }
 
     pub fn mark_desk_note(&self, desk_id: i64, id: i64, mark: &desk::Mark) -> Result<bool> {
