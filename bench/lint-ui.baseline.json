@@ -3,7 +3,7 @@
     "total": 2,
     "files": {
       "app.css": 1,
-      "desk.js": 1
+      "desk/08-style.js": 1
     }
   },
   "font-size": {
@@ -11,7 +11,7 @@
     "files": {
       "about.js": 4,
       "app.css": 3,
-      "desk.js": 12,
+      "desk/08-style.js": 12,
       "home.js": 1,
       "palette.js": 1
     }
@@ -21,7 +21,7 @@
     "files": {
       "about.js": 4,
       "app.css": 19,
-      "desk.js": 7,
+      "desk/08-style.js": 7,
       "keys.js": 1,
       "look.js": 1,
       "note.js": 11
@@ -31,7 +31,7 @@
     "total": 3,
     "files": {
       "about.js": 1,
-      "desk.js": 1,
+      "desk/08-style.js": 1,
       "paths.js": 1
     }
   },
@@ -40,14 +40,16 @@
     "files": {
       "about.js": 1,
       "app.css": 1,
-      "desk.js": 2,
+      "desk/08-style.js": 2,
       "menu.js": 1
     }
   },
   "title": {
     "total": 20,
     "files": {
-      "desk.js": 19,
+      "desk/05-desk.js": 2,
+      "desk/06-rail.js": 15,
+      "desk/07-actions.js": 2,
       "paths.js": 1
     }
   },
@@ -58,13 +60,14 @@
   "words": {
     "total": 2,
     "files": {
-      "desk.js": 2
+      "desk/04-keys-pane.js": 1,
+      "desk/07-actions.js": 1
     }
   },
   "nesting": {
     "total": 1,
     "files": {
-      "app.js": 1
+      "app/02-tree.js": 1
     }
   },
   "toast-title": {

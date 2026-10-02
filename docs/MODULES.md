@@ -9,7 +9,17 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | File | Lines | What |
 |---|---|---|
 | `src/main.rs` | 623 | the CLI: one match arm per subcommand, then `server::run` |
-| `src/server.rs` | 7019 | **over the ceiling.** Router, all handlers, SSE, WS, assets, lifecycle, auth helpers, gate tests. Being split into `src/server/{mod,assets,lifecycle,api_docs,api_desk,api_agent,ws,auth}.rs` |
+| `src/server/mod.rs` | 653 | the `App`, `new_app`, the router (one layer in front: the host gate), `run`, the one `doc` event every arrival ends in |
+| `src/server/auth.rs` | 259 | the three leaves (token, capability, window secret), the host gate, `refuse_desk`, `refuse_reader` |
+| `src/server/assets.rs` | 648 | the shell pages, the `ASSETS` table (routes, hashes and the live read all come from it), fonts, Mermaid, a document's files |
+| `src/server/api_docs.rs` | 815 | the library over HTTP, the receive endpoint, asides, terminal and reveal |
+| `src/server/api_desk.rs` | 1535 | Home, desks, panels, notes, keys, pastes, Ctrl-clicked paths; every route behind `refuse_desk` |
+| `src/server/api_agent.rs` | 638 | `/api/agents`, connect, and what an agent in a panel says (`/api/panes/{id}/*`, token + running pane) |
+| `src/server/api_browse.rs` | 378 | browse mode over HTTP, ranged file serving |
+| `src/server/events.rs` | 249 | SSE: the stream, the window/agent mark, `resync`, focus |
+| `src/server/ws.rs` | 291 | the desk socket |
+| `src/server/lifecycle.rs` | 912 | health, about, restart and the planned exit, the update watcher, relaunch, reset |
+| `src/server/tests.rs` | 830 | the route table every route must be in, and the rest of the server's tests |
 | `src/store.rs` | 2396 | documents on disk, SQLite index, FTS5, versions, projects, workflows, inbox |
 | `src/receive.rs` | 525 | the one entry every transport calls: locate, read, render, file |
 | `src/render.rs` | 1760 | Markdown → HTML once, at receive time; outline; code; Mermaid left to the page |
@@ -54,7 +64,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/desktop.rs` | 284 | which face opens the viewer |
 | `src/reset.rs` | 301 | back to a fresh install |
 | `src/bench.rs` | 1044 | `snyvi bench`: the budgets as tests |
-| `src/strip.rs` | 450 | comments and indentation out of `ui/` on the way into the binary |
+| `src/strip.rs` | 500 | comments and indentation out of `ui/` on the way into the binary; `source` joins a script kept as parts |
 | `src/bin/app.rs` | 866 | the native window; nothing else |
 | `build.rs` | 105 | runs the strip; records commit and target |
 
@@ -63,8 +73,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | File | Lines | Loaded | What |
 |---|---|---|---|
 | `ui/index.html`, `ui/boot.js`, `ui/app.css`, `ui/themes.css` | — | first paint | shell, theme before paint, styles |
-| `ui/app.js` | 3955 | first paint | **over.** sidebar tree, document view, SSE, navigation, the desk context. Splitting into `ui/app/{shell,tree,doc,events,nav}.js` concatenated by `build.rs` |
-| `ui/desk.js` | 3889 | lazy | **over.** the desk: canvas panes, rail, notes, protocol. Splitting into `ui/desk/{view,rail,notes,index}.js` |
+| `ui/app/01-shell.js` … `10-boot.js` | 119–871 each | first paint | `app.js`, as ten parts in one function scope: shell and helpers, tree, queue and what moved, documents and connect, notes and live refresh, the rail, navigation, desks, what snyvi says back, boot. `build.rs` joins them in name order |
+| `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
 | `ui/home.js` | 1221 | lazy | Home |
 | `ui/about.js` | 1025 | lazy | About, updates that ask |
 | `ui/mmd.js` | 987 | lazy | Mermaid driver |

@@ -45,6 +45,59 @@ enum Mode {
 
 /// Comments, indentation and blank lines out; everything else through as
 /// written.
+/// The served scripts that are kept as parts on disk: `ui/app/*.js` is
+/// `app.js`, `ui/desk/*.js` is `desk.js`, joined in name order (the parts
+/// are numbered). A file an agent can hold in one read, and an anchor that
+/// is unique in it, is what the split buys; the page still fetches one
+/// script. `app.js` is one function scope -- it was an IIFE in one file --
+/// so the wrapper is put round its parts here, and each part on disk is a
+/// plain list of statements that parses on its own.
+const WRAPPED: &[&str] = &["app.js"];
+
+/// The files `name` is read from: the one file, or every `.js` under the
+/// directory of its name, in name order. `build.rs` watches each.
+pub fn parts(ui: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    let dir = ui.join(name.trim_end_matches(".js"));
+    if name.ends_with(".js") && dir.is_dir() {
+        let mut found: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "js"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found.insert(0, dir);
+        return found;
+    }
+    vec![ui.join(name)]
+}
+
+/// The source of `name` as the browser is to read it: the file, or its
+/// parts joined, wrapped where the script is one scope.
+pub fn source(ui: &std::path::Path, name: &str) -> std::io::Result<String> {
+    let found = parts(ui, name);
+    if found.len() == 1 {
+        return std::fs::read_to_string(&found[0]);
+    }
+    let wrap = WRAPPED.contains(&name);
+    let mut out = String::new();
+    if wrap {
+        out.push_str("(() => {\n  \"use strict\";\n");
+    }
+    for part in &found[1..] {
+        out.push_str(&std::fs::read_to_string(part)?);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    if wrap {
+        out.push_str("})();\n");
+    }
+    Ok(out)
+}
+
 pub fn strip(src: &str, lang: Lang) -> String {
     let c: Vec<char> = src.chars().collect();
     let mut out = String::with_capacity(src.len());

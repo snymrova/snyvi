@@ -1,0 +1,830 @@
+//! The server's tests, with the route table every route must be in.
+
+use super::{
+    desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
+    BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML,
+    KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
+};
+use super::{
+    new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER,
+    NOT_THIS_HOST, NOT_THIS_ORIGIN, WINDOW_HEADER,
+};
+use crate::capability::Capabilities;
+use axum::http::{header, HeaderMap, HeaderValue};
+use tower::ServiceExt;
+
+/// A file opens the folder it sits in; a folder opens itself.
+#[test]
+fn a_file_opens_beside_itself() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-reveal");
+    let file = tmp.path.join("notes.md");
+    std::fs::write(&file, "x").unwrap();
+    assert_eq!(dir_of(file), Some(tmp.path.clone()));
+    assert_eq!(dir_of(tmp.path.clone()), Some(tmp.path.clone()));
+}
+
+/// What a player sends when it seeks, and what it must get back.
+#[test]
+fn ranges_are_read_the_way_players_send_them() {
+    assert_eq!(parse_range("bytes=0-", 1000), Span::Part(0, 999));
+    assert_eq!(parse_range("bytes=100-199", 1000), Span::Part(100, 199));
+    assert_eq!(
+        parse_range("bytes=900-5000", 1000),
+        Span::Part(900, 999),
+        "clamped to the end"
+    );
+    assert_eq!(
+        parse_range("bytes=-500", 1000),
+        Span::Part(500, 999),
+        "a suffix"
+    );
+    assert_eq!(parse_range("bytes=-5000", 1000), Span::Part(0, 999));
+    assert_eq!(parse_range("bytes=1000-", 1000), Span::Unsatisfiable);
+    assert_eq!(
+        parse_range("bytes=0-", 0),
+        Span::Unsatisfiable,
+        "an empty file"
+    );
+    assert_eq!(parse_range("bytes=-0", 1000), Span::Unsatisfiable);
+    assert_eq!(
+        parse_range("bytes=0-1,5-9", 1000),
+        Span::Whole,
+        "several fall back to all"
+    );
+    assert_eq!(parse_range("items=0-1", 1000), Span::Whole);
+    assert_eq!(parse_range("bytes=9-3", 1000), Span::Whole);
+    assert_eq!(parse_range("bytes=x-", 1000), Span::Whole);
+}
+
+/// The one decision in this server that stands between a web page and a
+/// shell. Every shape that is not a live capability under the key that
+/// means it has to be a refusal, including the shapes that look close.
+#[test]
+fn only_a_frame_carrying_a_live_capability_opens_a_desk() {
+    let caps = Capabilities::default();
+    let cap = caps.mint().unwrap();
+
+    assert!(hello_allows(
+        &caps,
+        Some(&format!(r#"{{"capability":"{cap}"}}"#))
+    ));
+
+    // Silence until the deadline, which is what a socket opened by
+    // something with nothing to present does.
+    assert!(!hello_allows(&caps, None));
+    // A capability that was never minted, and the empty one.
+    assert!(!hello_allows(
+        &caps,
+        Some(&format!(r#"{{"capability":"{}"}}"#, "b".repeat(64)))
+    ));
+    assert!(!hello_allows(&caps, Some(r#"{"capability":""}"#)));
+    // The right secret under the wrong key is not a hello, and neither is a
+    // bare string: the frame has to be the shape the protocol says.
+    assert!(!hello_allows(
+        &caps,
+        Some(&format!(r#"{{"token":"{cap}"}}"#))
+    ));
+    assert!(!hello_allows(&caps, Some(&format!(r#""{cap}""#))));
+    assert!(!hello_allows(&caps, Some("")));
+    assert!(!hello_allows(&caps, Some("not json at all")));
+}
+
+/// `window=1` is forgeable, so the desk path must never read it. The two
+/// window signals were allowed to coexist on exactly this condition: the
+/// count answers "how many are reading", the capability answers "may this
+/// page run a shell", and the second never consults the first. `EventSource`
+/// cannot set a header, which is why the count still rides a query string;
+/// this test is what makes that harmless rather than a second way in.
+#[test]
+fn the_window_count_is_never_consulted_on_the_desk_path() {
+    let src = include_str!("mod.rs");
+    let from = src
+        .find("async fn desk_socket")
+        .expect("the desk socket should be in this file");
+    let to = src[from..]
+        .find("\nfn hello_allows")
+        .expect("hello_allows follows the socket")
+        + from;
+    let path = &src[from..to];
+
+    for forgeable in ["has_window", "windows", "is_window", "EventsQ"] {
+        assert!(
+            !path.contains(forgeable),
+            "the desk path reads `{forgeable}`, which a browser tab can forge"
+        );
+    }
+    // And the gate it does go through takes no app at all, so there is
+    // nothing for a count to reach it through even by accident.
+    assert!(
+        src.contains(
+            "fn hello_allows(caps: &crate::capability::Capabilities, frame: Option<&str>)"
+        ),
+        "the desk gate should see a capability and a frame, and nothing else"
+    );
+}
+
+/// The same three refusals as the socket, on the routes a desk is made
+/// and named over. The capability rides in a header because that is the
+/// one place a page can put a secret on a request it composes itself --
+/// and the query string, where it would be logged, is refused at the place
+/// the attempt is made rather than quietly ignored.
+#[test]
+fn a_desk_route_takes_its_capability_from_a_header_and_nowhere_else() {
+    let caps = Capabilities::default();
+    let cap = caps.mint().unwrap();
+    let none = std::collections::HashMap::new();
+    let ours = |cap: &str| {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::ORIGIN,
+            HeaderValue::from_str(&crate::config::base_url()).unwrap(),
+        );
+        h.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+        if !cap.is_empty() {
+            h.insert(
+                super::CAPABILITY_HEADER,
+                HeaderValue::from_str(cap).unwrap(),
+            );
+        }
+        h
+    };
+
+    assert_eq!(desk_refusal(&caps, &ours(&cap), &none), None);
+
+    // A page of ours, and no capability: a browser tab, which is the case
+    // the whole feature rests on refusing.
+    assert_eq!(desk_refusal(&caps, &ours(""), &none), Some("no capability"));
+    assert_eq!(
+        desk_refusal(&caps, &ours(&"c".repeat(64)), &none),
+        Some("no capability")
+    );
+
+    // The right secret, in the wrong place.
+    let query = std::collections::HashMap::from([("cap".to_string(), cap.clone())]);
+    assert_eq!(
+        desk_refusal(&caps, &ours(&cap), &query),
+        Some("the capability is not a query parameter")
+    );
+    let query = std::collections::HashMap::from([("capability".to_string(), cap.clone())]);
+    assert_eq!(
+        desk_refusal(&caps, &ours(&cap), &query),
+        Some("the capability is not a query parameter")
+    );
+
+    // Another origin, and a local process with no browser at all: neither
+    // is this page, whatever it is holding.
+    let mut elsewhere = ours(&cap);
+    elsewhere.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("http://evil.example"),
+    );
+    assert_eq!(
+        desk_refusal(&caps, &elsewhere, &none),
+        Some("not from this page")
+    );
+    let mut bare = HeaderMap::new();
+    bare.insert(
+        super::CAPABILITY_HEADER,
+        HeaderValue::from_str(&cap).unwrap(),
+    );
+    assert_eq!(
+        desk_refusal(&caps, &bare, &none),
+        Some("not from this page")
+    );
+
+    // The window's own GET: a browser sends no `Origin` on a same-origin
+    // read, so `Host` is what says it is ours. The live window found this;
+    // the desk list was refused and every desk read "No such desk".
+    let read = |host: &str, site: Option<&'static str>| {
+        let mut h = HeaderMap::new();
+        h.insert(header::HOST, HeaderValue::from_str(host).unwrap());
+        if let Some(s) = site {
+            h.insert("sec-fetch-site", HeaderValue::from_static(s));
+        }
+        h.insert(
+            super::CAPABILITY_HEADER,
+            HeaderValue::from_str(&cap).unwrap(),
+        );
+        h
+    };
+    let here = format!("127.0.0.1:{}", crate::config::port());
+    assert_eq!(
+        desk_refusal(&caps, &read(&here, Some("same-origin")), &none),
+        None
+    );
+    assert_eq!(desk_refusal(&caps, &read(&here, None), &none), None);
+    // A name rebound to 127.0.0.1 is still its own name in `Host`.
+    let rebound = format!("evil.example:{}", crate::config::port());
+    assert_eq!(
+        desk_refusal(&caps, &read(&rebound, Some("same-origin")), &none),
+        Some("not from this page")
+    );
+    assert_eq!(
+        desk_refusal(&caps, &read(&here, Some("cross-site")), &none),
+        Some("not from this page")
+    );
+}
+
+/// What a route answers to. `ROUTES` names one for every route, and the
+/// test sends each route a request from another host, one with nothing,
+/// one with the wrong leave and one with the right one.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Gate {
+    /// Anyone on this host: the shell, the assets, the reads.
+    Open,
+    /// A reader's action: from this page (an `Origin` of ours) or the token.
+    Reader,
+    /// A desk: this page and a live capability.
+    Desk,
+    /// An agent in a panel, or what sends: the token.
+    Token,
+    /// What runs the daemon: the capability or the window secret.
+    Window,
+    /// The one mint: the window secret alone.
+    Mint,
+}
+
+/// Method, path, JSON body (none sends no body), gate, and whether the
+/// request with the right leave is sent at all. A few routes open a
+/// dialog, write a keychain or run a setup; those are asked only to
+/// refuse. Ids are made up, so a route let through answers 404 or 400
+/// from its handler -- which is the proof the gate came first.
+const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
+    ("GET", "/", None, Gate::Open, true),
+    ("GET", "/inbox", None, Gate::Open, true),
+    ("GET", "/api/home", None, Gate::Open, true),
+    ("GET", "/connect", None, Gate::Open, true),
+    ("GET", "/start", None, Gate::Open, true),
+    ("GET", "/welcome", None, Gate::Open, true),
+    ("GET", "/d/nope", None, Gate::Open, true),
+    ("GET", "/b/nope", None, Gate::Open, true),
+    ("GET", "/b/nope/x.md", None, Gate::Open, true),
+    ("GET", "/files/nope/x.png", None, Gate::Open, true),
+    ("GET", "/assets/mermaid.js", None, Gate::Open, true),
+    ("GET", "/assets/app.js", None, Gate::Open, true),
+    ("GET", "/assets/fonts/x.woff2", None, Gate::Open, true),
+    ("GET", "/api/health", None, Gate::Open, true),
+    ("GET", "/api/about", None, Gate::Open, true),
+    ("GET", "/api/agents", None, Gate::Open, true),
+    ("POST", "/api/agents/claude/connect", None, Gate::Desk, false),
+    ("GET", "/api/tree", None, Gate::Open, true),
+    ("GET", "/api/projects/1/tree", None, Gate::Open, true),
+    ("GET", "/api/workflows/1/tree", None, Gate::Open, true),
+    ("GET", "/api/inbox", None, Gate::Open, true),
+    ("GET", "/api/search?q=x", None, Gate::Open, true),
+    ("POST", "/api/docs", Some("{}"), Gate::Token, true),
+    ("GET", "/api/docs/nope", None, Gate::Open, true),
+    ("POST", "/api/docs/nope/pin", Some(r#"{"pinned":true}"#), Gate::Reader, true),
+    ("POST", "/api/docs/nope/read", None, Gate::Reader, true),
+    ("GET", "/api/queue", None, Gate::Open, true),
+    ("POST", "/api/queue/clear", None, Gate::Reader, true),
+    ("POST", "/api/queue/unread", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+    ("POST", "/api/docs/nope/delete", None, Gate::Reader, true),
+    ("POST", "/api/docs/nope/undelete", None, Gate::Reader, true),
+    ("GET", "/api/removed", None, Gate::Open, true),
+    ("GET", "/api/docs/nope/history", None, Gate::Open, true),
+    ("POST", "/api/projects/1/rename", Some(r#"{"name":"x"}"#), Gate::Reader, true),
+    ("POST", "/api/workflows/1/rename", Some(r#"{"name":"x"}"#), Gate::Reader, true),
+    ("GET", "/api/docs/nope/split", None, Gate::Open, true),
+    ("GET", "/api/docs/nope/outline", None, Gate::Open, true),
+    ("GET", "/api/notes", None, Gate::Open, true),
+    ("POST", "/api/notes", Some(r#"{"text":"x"}"#), Gate::Token, true),
+    ("POST", "/api/notes/seen", None, Gate::Reader, true),
+    ("POST", "/api/notes/dismiss", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+    ("POST", "/api/notes/restore", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+    ("POST", "/api/focus", None, Gate::Reader, true),
+    ("POST", "/api/shutdown", None, Gate::Window, true),
+    ("POST", "/api/restart", Some("{}"), Gate::Window, true),
+    ("DELETE", "/api/restart", None, Gate::Window, true),
+    ("POST", "/api/update/check", Some(r#"{"lift":false}"#), Gate::Window, true),
+    ("POST", "/api/update/auto", Some(r#"{"on":false}"#), Gate::Window, true),
+    ("POST", "/api/update/later", Some("{}"), Gate::Window, true),
+    ("GET", "/api/reset", None, Gate::Open, true),
+    // 999 documents is never the count there is, so the reset is refused
+    // as stale once it is past the gate, and the store stays.
+    ("POST", "/api/reset", Some(r#"{"documents":999}"#), Gate::Reader, true),
+    ("POST", "/api/terminal", Some("{}"), Gate::Reader, true),
+    ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
+    ("POST", "/api/resolve", Some(r#"{"word":"x"}"#), Gate::Desk, true),
+    ("GET", "/api/browse", None, Gate::Open, true),
+    ("POST", "/api/browse", Some(r#"{"path":"."}"#), Gate::Token, true),
+    ("POST", "/api/browse/pick", None, Gate::Desk, false),
+    ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
+    ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
+    ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/file?path=x.md", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/raw?path=x.md", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/raw/x.md", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/find?q=x", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/outline?path=x.md", None, Gate::Open, true),
+    ("GET", "/api/docs/nope/raw", None, Gate::Open, true),
+    ("GET", "/api/docs/nope/blob", None, Gate::Open, true),
+    ("GET", "/api/compare/a/b", None, Gate::Open, true),
+    ("GET", "/api/events", None, Gate::Open, true),
+    ("POST", "/api/capability", None, Gate::Mint, true),
+    // The socket proves itself in its first frame; without an upgrade it
+    // is a GET that goes nowhere, and the host gate is what is tested.
+    ("GET", "/api/desk", None, Gate::Open, true),
+    ("GET", "/api/desks", None, Gate::Desk, true),
+    ("POST", "/api/desks", Some("{}"), Gate::Desk, true),
+    ("POST", "/api/desks/1/rename", Some(r#"{"name":"x"}"#), Gate::Desk, true),
+    ("POST", "/api/desks/1/layout", Some(r#"{"col":0.5,"row":0.5}"#), Gate::Desk, true),
+    ("POST", "/api/desks/1/move", Some(r#"{"from":1,"to":2}"#), Gate::Desk, true),
+    ("POST", "/api/desks/1/delete", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/reopen", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/panes", Some("{}"), Gate::Desk, true),
+    ("GET", "/api/desks/1/docs", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/docs/d/remove", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/docs/d/restore", None, Gate::Desk, true),
+    ("GET", "/api/desks/1/notes", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/notes", Some(r#"{"text":"x"}"#), Gate::Desk, true),
+    ("POST", "/api/desks/1/notes/1", Some("{}"), Gate::Desk, true),
+    ("POST", "/api/desks/1/notes/1/remove", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/notes/1/restore", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/notes/1/keep", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/leftoff", Some(r#"{"text":"x","at":0}"#), Gate::Desk, true),
+    ("GET", "/api/desks/1/keys", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/keys", Some(r#"{"name":"X_KEY","value":"y"}"#), Gate::Desk, false),
+    ("POST", "/api/desks/1/keys/X_KEY/remove", Some("{}"), Gate::Desk, false),
+    ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/park", Some("{}"), Gate::Desk, true),
+    ("POST", "/api/desks/1/week", Some(r#"{"title":"t","content":"c"}"#), Gate::Desk, true),
+    ("POST", "/api/desks/1/notes/1/image", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/notes/1/images", Some(r#"{"images":[]}"#), Gate::Desk, true),
+    ("GET", "/api/desks/1/note-images/x.png", None, Gate::Desk, true),
+    ("GET", "/api/brief", None, Gate::Desk, true),
+    ("POST", "/api/brief", Some(r#"{"on":true}"#), Gate::Desk, true),
+    ("POST", "/api/panes/nope/delete", None, Gate::Desk, true),
+    ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
+    ("POST", "/api/panes/nope/rename", Some(r#"{"name":"x"}"#), Gate::Desk, true),
+    ("POST", "/api/panes/nope/start", Some(r#"{"cols":80,"rows":24}"#), Gate::Desk, true),
+    ("POST", "/api/panes/nope/stop", None, Gate::Desk, true),
+    ("POST", "/api/panes/nope/agent", Some("{}"), Gate::Token, true),
+    ("GET", "/api/panes/nope/notes", None, Gate::Token, true),
+    ("POST", "/api/panes/nope/notes/1/tick", None, Gate::Token, true),
+    ("POST", "/api/panes/nope/notes/1/mark", None, Gate::Token, true),
+    ("POST", "/api/panes/nope/name", Some(r#"{"name":"x"}"#), Gate::Token, true),
+    ("GET", "/api/panes/nope/brief", None, Gate::Token, true),
+    ("GET", "/api/panes/nope/changes", None, Gate::Token, true),
+    ("POST", "/api/panes/nope/leftoff", Some("{}"), Gate::Token, true),
+    ("POST", "/api/panes/nope/suggest", Some("{}"), Gate::Token, true),
+    ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
+    ("GET", "/desks", None, Gate::Open, true),
+    ("GET", "/desk/1", None, Gate::Open, true),
+];
+
+/// One request to the router, without a port. Only a refusal's body is
+/// read: an event stream never ends.
+async fn ask(
+    router: &Router,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, String) {
+    let mut req = axum::http::Request::builder().method(method).uri(path);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let req = match body {
+        Some(b) => req
+            .header("content-type", "application/json")
+            .body(Body::from(b.to_string()))
+            .unwrap(),
+        None => req.body(Body::empty()).unwrap(),
+    };
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let text = if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
+        let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        String::new()
+    };
+    (status, text)
+}
+
+/// A gate helps only if every route is behind it, and a route added later
+/// is exactly the one that will forget. So the router is built against a
+/// store in a temp dir and every route is sent four requests: the count
+/// of routes in `router()` has to match the table, so a new route must
+/// say what it answers to before the build is green.
+#[tokio::test]
+async fn every_route_answers_to_its_gate_and_to_this_host_only() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-routes");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let token = crate::config::load_or_create_token(&paths).unwrap();
+    let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+    assert_ne!(token, window, "two secrets, two jobs");
+    let store = Store::open(&paths).unwrap();
+    let app = new_app(&paths, store, token.clone(), window.clone(), None, None);
+    let cap = app.capabilities.mint().unwrap();
+    let router = router(app);
+
+    // The table is the router.
+    let src = include_str!("mod.rs");
+    let routed = &src[src.find("\nfn router(").unwrap()..];
+    let routed = &routed[..routed.find("\n}\n").unwrap()];
+    let n = routed.matches("get(").count()
+        + routed.matches("post(").count()
+        + routed.matches(".delete(").count();
+    assert_eq!(n, ROUTES.len(), "every route is in ROUTES, and nothing else is");
+
+    let port = crate::config::port();
+    let host = format!("127.0.0.1:{port}");
+    let origin = format!("http://{host}");
+    let bearer = format!("Bearer {token}");
+    let (host, origin, bearer, cap, window) =
+        (host.as_str(), origin.as_str(), bearer.as_str(), cap.as_str(), window.as_str());
+    let refused = |s: StatusCode| s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN;
+
+    for &(method, path, body, gate, go) in ROUTES {
+        let what = format!("{method} {path}");
+        // From another host, with every leave there is: refused before any
+        // handler, by the gate and not by a route.
+        let (s, t) = ask(
+            &router,
+            method,
+            path,
+            body,
+            &[
+                ("host", "evil.example:7777"),
+                ("authorization", bearer),
+                (CAPABILITY_HEADER, cap),
+                (WINDOW_HEADER, window),
+            ],
+        )
+        .await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another host");
+        assert!(t.contains(NOT_THIS_HOST), "{what}: the gate refuses another host, not a handler: {t}");
+        // Our host, a stranger's Origin: a page elsewhere, or a rebound name.
+        let (s, t) = ask(
+            &router,
+            method,
+            path,
+            body,
+            &[("host", host), ("origin", "http://evil.example"), ("authorization", bearer)],
+        )
+        .await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another origin");
+        assert!(t.contains(NOT_THIS_ORIGIN), "{what}: the gate refuses another origin: {t}");
+        // Nothing but the host.
+        let (bare, _) = ask(&router, method, path, body, &[("host", host)]).await;
+        if gate == Gate::Open {
+            assert!(!refused(bare), "{what}: open, but {bare}");
+            continue;
+        }
+        assert!(refused(bare), "{what}: nothing offered, but {bare}");
+        // The wrong leave: a capability where the token is wanted, the
+        // token where the window's leave is, a capability with no page
+        // behind it where the page is.
+        let wrong: Vec<(&str, &str)> = match gate {
+            Gate::Token => vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
+            Gate::Window | Gate::Mint => vec![("host", host), ("authorization", bearer)],
+            Gate::Desk => vec![("host", host), ("origin", origin), ("authorization", bearer)],
+            Gate::Reader => vec![("host", host), (CAPABILITY_HEADER, cap)],
+            Gate::Open => unreachable!(),
+        };
+        let (s, _) = ask(&router, method, path, body, &wrong).await;
+        assert!(refused(s), "{what}: the wrong leave let through: {s}");
+        if gate == Gate::Mint {
+            let (s, _) = ask(&router, method, path, body, &[("host", host), (CAPABILITY_HEADER, cap)]).await;
+            assert!(refused(s), "{what}: a capability mints nothing");
+        }
+        if !go {
+            continue;
+        }
+        // The right leave, each there is.
+        let rights: Vec<Vec<(&str, &str)>> = match gate {
+            Gate::Reader => vec![vec![("host", host), ("origin", origin)], vec![("host", host), ("authorization", bearer)]],
+            Gate::Desk => vec![vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)]],
+            Gate::Token => vec![vec![("host", host), ("authorization", bearer)]],
+            Gate::Window => vec![vec![("host", host), (WINDOW_HEADER, window)], vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)]],
+            Gate::Mint => vec![vec![("host", host), (WINDOW_HEADER, window)]],
+            Gate::Open => unreachable!(),
+        };
+        for h in rights {
+            let (s, t) = ask(&router, method, path, body, &h).await;
+            assert!(!refused(s), "{what}: refused with the right leave: {s} {t}");
+        }
+    }
+
+    // Fetch metadata that says the request came from another site is
+    // refused on anything that is not a read, whatever else it carries.
+    let (s, t) = ask(
+        &router,
+        "POST",
+        "/api/focus",
+        None,
+        &[("host", host), ("origin", origin), ("sec-fetch-site", "cross-site")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert!(t.contains(NOT_THIS_ORIGIN));
+    // And a read from the address bar is not.
+    let (s, _) = ask(&router, "GET", "/api/health", None, &[("host", host), ("sec-fetch-site", "none")]).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = ask(&router, "GET", "/api/health", None, &[("host", format!("localhost:{port}").as_str())]).await;
+    assert_eq!(s, StatusCode::OK, "localhost is this host too");
+}
+
+/// The capability is read off the fragment and presented in a frame. If it
+/// ever reaches a URL the page builds, it reaches the daemon's request path
+/// and whatever logs one -- so the page's own source is where that line is
+/// held.
+#[test]
+fn the_page_never_puts_the_capability_in_a_url() {
+    assert!(
+        APP_JS.contains("/api/desk"),
+        "the desk socket should be opened from here"
+    );
+    for (name, src) in [("app.js", APP_JS), ("desk.js", DESK_JS)] {
+        for bad in ["cap=${", "capability=${", "?cap=", "&cap=", "?capability="] {
+            assert!(
+                !src.contains(bad),
+                "the capability is in a URL in {name}: {bad}"
+            );
+        }
+    }
+}
+
+/// The desk view is the second chunk, and its bargain is the diagram
+/// driver's: one import, made when a desk is opened -- and only past the
+/// point where a tab has been given its sentence and sent away, so a page
+/// with no capability never fetches the code that paints a pane.
+#[test]
+fn the_page_asks_for_the_desk_view_only_in_a_window_opening_a_desk() {
+    assert_eq!(APP_JS.matches("import(`/assets/desk.js").count(), 1);
+    let import = APP_JS.find("import(`/assets/desk.js").unwrap();
+    let sentence = APP_JS
+        .find("This is a browser tab, and a browser tab cannot start one")
+        .expect("a tab is told why there is no desk");
+    let refusal = APP_JS[..sentence]
+        .rfind("if (!capability)")
+        .expect("the sentence is what a page without the capability gets");
+    assert!(refusal < import, "the import sits past the tab's refusal");
+    assert!(sentence < import);
+    for seam in [
+        "export function open(",
+        "export function update(",
+        "export function close(",
+    ] {
+        assert!(DESK_JS.contains(seam), "desk.js should export `{seam}`");
+    }
+}
+
+/// The game is the fourth chunk, and the smallest bargain of them: one
+/// import, in the rocket's click handler and nowhere else, so a page
+/// whose rocket is never pressed never fetches a game.
+#[test]
+fn the_page_asks_for_the_game_only_when_the_rocket_is_pressed() {
+    assert_eq!(APP_JS.matches("import(`/assets/game.js").count(), 1);
+    let import = APP_JS.find("import(`/assets/game.js").unwrap();
+    let press = APP_JS
+        .find(r##"$("#btn-game")"##)
+        .expect("the rocket is the button the game is behind");
+    assert!(press < import, "the import sits inside the rocket's press");
+    for seam in [
+        "export function open(",
+        "export function close(",
+        "export function isOpen(",
+    ] {
+        assert!(GAME_JS.contains(seam), "game.js should export `{seam}`");
+    }
+}
+
+/// The fifth chunk, and the one the budget was over by: the about panel
+/// and the reset dialog. Two buttons, one import, and a page that opens
+/// neither never fetches either. `bench/bytes.mjs` is what noticed they
+/// were being carried by every first paint.
+#[test]
+fn the_page_asks_for_the_panels_only_when_one_is_opened() {
+    assert_eq!(APP_JS.matches("import(`/assets/about.js").count(), 1);
+    // Since 1.8 the two buttons are in the shortcuts card, which the
+    // chunk builds and wires when it first opens: the page has neither.
+    for button in [r##"on("#btn-about""##, r##"on("#btn-reset""##] {
+        assert!(
+            ABOUT_JS.contains(button),
+            "{button} is wired where the card is built"
+        );
+    }
+    for button in [r##"$("#btn-about")"##, r##"$("#btn-reset")"##] {
+        assert!(
+            !APP_JS.contains(button),
+            "{button} belongs to the chunk now"
+        );
+    }
+    assert!(
+        ABOUT_JS.contains("export function open("),
+        "about.js should export `open`"
+    );
+    // The panels themselves must not have stayed behind in the page.
+    for gone in ["/api/about", "#about-facts", "#reset-go"] {
+        assert!(
+            !APP_JS.contains(gone),
+            "`{gone}` belongs to the chunk now, not to app.js"
+        );
+    }
+}
+
+/// The driver is a chunk, and the page's half of that bargain is that it
+/// asks for the chunk only when a document actually holds a diagram. An
+/// import that escaped that check would be eager again -- 11.6 KB gzipped
+/// back on every page load, for a feature most documents do not use, and
+/// nothing would say so but `bench/bytes.mjs` on the next push.
+#[test]
+fn the_page_asks_for_the_diagram_driver_only_when_a_document_holds_one() {
+    assert_eq!(
+        APP_JS.matches("import(`/assets/mmd.js").count(),
+        1,
+        "one import, so there is one place the laziness can be lost"
+    );
+    assert!(
+        APP_JS.contains(r#"if (docEl.querySelector("pre.mermaid")) mmdLoad()"#),
+        "the import should sit behind the check for a diagram in this document"
+    );
+    // The machinery itself must not have found its way back into the page.
+    for gone in [
+        "mermaid.run",
+        "mermaidLib",
+        "mmdRender",
+        "mmdReserve",
+        "mmdDrain",
+        "mmdQueue",
+    ] {
+        assert!(!APP_JS.contains(gone), "`{gone}` is back in app.js");
+    }
+    // And the module is what holds it, behind the four names the page knows.
+    for kept in [
+        "export function prepare(",
+        "export function retheme(",
+        "export function escape(",
+        "export function key(",
+    ] {
+        assert!(MMD_JS.contains(kept), "mmd.js should export `{kept}`");
+    }
+}
+
+/// The dev loop's whole promise is that the file on disk is the one being
+/// served, and its whole safety is that a daemon without `SNYVI_UI_DIR`
+/// cannot be made to read one. Both halves, plus the fallback that keeps a
+/// page rendering while an editor has the file renamed out from under it.
+#[test]
+fn a_live_ui_serves_the_file_on_disk_and_a_shipped_one_cannot() {
+    let dir = std::env::temp_dir().join(format!("snyvi-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let css = dir.join("app.css");
+    std::fs::write(&css, "body { --probe: 1 }").unwrap();
+
+    let live = Ui {
+        dir: Some(dir.clone()),
+    };
+    assert_eq!(live.text("app.css", APP_CSS), "body { --probe: 1 }");
+    assert!(live.live());
+    // A different file on disk is a different bundle, which is what makes
+    // an open page reload without the daemon restarting.
+    let before = live.version("shipped");
+    std::fs::write(&css, "body { --probe: 2 }").unwrap();
+    assert_ne!(live.version("shipped"), before);
+    // Gone mid-edit: the compiled-in copy, not an empty stylesheet.
+    std::fs::remove_file(&css).unwrap();
+    assert_eq!(live.text("app.css", APP_CSS), APP_CSS);
+
+    let shipped = Ui { dir: None };
+    assert!(!shipped.live());
+    assert_eq!(shipped.text("app.css", APP_CSS), APP_CSS);
+    assert_eq!(shipped.version("shipped"), "shipped");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `$("#btn-wrap").addEventListener` on an element that is not in the page throws on
+/// boot and takes the whole UI with it, so every id the script uses without checking
+/// first must exist in the markup. A guarded `const x = $("#id"); if (x)` is fine.
+///
+/// Every chunk and not only `app.js`: the panels, the find bar and the game
+/// were moved out of the first paint, and an id one of them reaches for is
+/// no longer caught at boot -- it throws when the chunk loads, which is
+/// later, and in front of someone.
+#[test]
+fn every_id_the_script_uses_unguarded_is_in_the_page() {
+    let mut missing = Vec::new();
+    for (file, src) in [
+        ("app.js", APP_JS),
+        ("desk.js", DESK_JS),
+        ("frame.js", FRAME_JS),
+        ("game.js", GAME_JS),
+        ("about.js", ABOUT_JS),
+        ("find.js", FIND_JS),
+        ("keys.js", KEYS_JS),
+        ("menu.js", MENU_JS),
+        ("palette.js", PALETTE_JS),
+        ("look.js", LOOK_JS),
+        ("note.js", NOTE_JS),
+        ("tip.js", TIP_JS),
+        ("home.js", HOME_JS),
+        ("toast.js", TOAST_JS),
+        ("diff.js", DIFF_JS),
+        ("browse.js", BROWSE_JS),
+        ("paths.js", PATHS_JS),
+    ] {
+        for (i, _) in src.match_indices("$(\"#") {
+            let rest = &src[i + 4..];
+            let end = rest.find('"').expect("unterminated selector");
+            let id = &rest[..end];
+            let used_at_once = rest[end..].starts_with("\").");
+            // Or in the chunk itself: about.js builds the boxes it fills.
+            let built = format!("id=\"{id}\"");
+            if used_at_once && !INDEX_HTML.contains(&built) && !src.contains(&built) {
+                missing.push(format!("{file}: {id}"));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "not in index.html: {missing:?}");
+}
+
+/// The page asks for every chunk as `/assets/x.js?v=`, and they are served
+/// immutable for a year -- so a chunk left out of the hash that makes `?v=`
+/// is a chunk a browser keeps across the change that was meant to replace
+/// it. `Ui::version` lists them for a live directory; this is the hash that
+/// ships, and `about.js` and `find.js` were once added to the first and not
+/// the second. Held together here so the next chunk cannot be half-added.
+#[test]
+fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
+    let src = include_str!("mod.rs");
+    let from = src.find("let asset_v = {").expect("the startup hash");
+    let to = from + src[from..].find("\n    };").expect("the end of it");
+    let block = &src[from..to];
+    for chunk in [
+        "INDEX_HTML",
+        "APP_CSS",
+        "APP_JS",
+        "DESK_JS",
+        "FRAME_JS",
+        "GAME_JS",
+        "ABOUT_JS",
+        "FIND_JS",
+        "KEYS_JS",
+        "MENU_JS",
+        "THEMES_CSS",
+        "PALETTE_JS",
+        "LOOK_JS",
+        "NOTE_JS",
+        "TIP_JS",
+        "HOME_JS",
+        "TOAST_JS",
+        "DIFF_JS",
+        "BROWSE_JS",
+        "PATHS_JS",
+    ] {
+        assert!(
+            block.contains(chunk),
+            "{chunk} is served immutable under ?v= but is not in the hash that makes it"
+        );
+    }
+}
+
+/// A name is drawn on one line in the tree, and it arrives from a field a paste can
+/// fill with anything.
+#[test]
+fn a_name_is_cleaned_before_it_is_stored() {
+    use super::clean_name;
+    assert_eq!(clean_name("  Auth work  ").unwrap(), "Auth work");
+    assert_eq!(clean_name("Auth\n\twork").unwrap(), "Auth work");
+    assert_eq!(clean_name("Auth   work").unwrap(), "Auth work");
+    assert!(clean_name("").is_none());
+    assert!(clean_name("   \n ").is_none(), "whitespace is not a name");
+    // Counted in characters, so a multi-byte name is not cut mid-character.
+    let long = "é".repeat(400);
+    assert_eq!(clean_name(&long).unwrap().chars().count(), 120);
+}
+
+/// The pre-paint script and the app must agree on the keys, or a saved setting is
+/// written by one and never read by the other. The app's half is app.js, or
+/// look.js for the theme and font, which it fetches once the page is idle. The
+/// three theme keys are spelled out in full: this is a substring check, and
+/// `snyvi.theme` would go on passing on the strength of `snyvi.theme.light` alone.
+#[test]
+fn settings_written_by_the_app_are_applied_before_first_paint() {
+    for key in [
+        "theme.light",
+        "theme.dark",
+        "theme.follow",
+        "font",
+        "side",
+        "wide",
+        "wrap",
+    ] {
+        let k = format!("snyvi.{key}");
+        assert!(
+            APP_JS.contains(&k) || LOOK_JS.contains(&k),
+            "{k} is not used by app.js or look.js"
+        );
+        assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
+    }
+}

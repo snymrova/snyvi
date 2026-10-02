@@ -1,10 +1,7 @@
 {
   "files": {
     "src/desk.rs": 2935,
-    "src/server.rs": 7019,
-    "src/update.rs": 2920,
-    "ui/app.js": 3955,
-    "ui/desk.js": 3889
+    "src/update.rs": 2920
   },
   "functions": {
     "src/bench.rs::process_rows": 141,
@@ -14,12 +11,12 @@
     "src/pane.rs::start": 137,
     "src/receive.rs::receive": 205,
     "src/screen.rs::csi_dispatch": 224,
-    "src/server.rs::run": 356,
-    "src/server.rs::every_desk_route_is_behind_the_gate": 171,
-    "src/store.rs::open": 132,
+    "src/server/mod.rs::router": 131,
+    "src/server/mod.rs::run": 147,
+    "src/server/tests.rs::every_route_answers_to_its_gate_and_to_this_host_only": 123,
     "src/strip.rs::strip": 150,
-    "ui/app.js::connect": 186,
-    "ui/desk.js::act": 189,
+    "ui/app/08-desks.js::connect": 190,
+    "ui/desk/07-actions.js::act": 189,
     "ui/look.js::init": 241,
     "ui/note.js::init": 209
   }
