@@ -1067,9 +1067,21 @@ impl Live {
         if slow {
             self.slow.fetch_add(1, Ordering::Relaxed);
         } else {
-            let _ = self
-                .slow
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            // Down by one, never below none: a loop rather than fetch_update,
+            // which newer toolchains call deprecated and older ones lack the
+            // new name of.
+            let mut n = self.slow.load(Ordering::Relaxed);
+            while n > 0 {
+                match self.slow.compare_exchange_weak(
+                    n,
+                    n - 1,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(now) => n = now,
+                }
+            }
             self.watched.notify_one();
         }
     }
