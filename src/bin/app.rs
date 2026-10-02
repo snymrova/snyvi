@@ -303,6 +303,8 @@ fn main() {
                 .build()?;
             // Size and position from the last run, saved by the plugin on close.
             let _ = w.restore_state(REMEMBERED);
+            #[cfg(target_os = "linux")]
+            paste_pictures(&w);
 
             // A tray is an addition, not a precondition. On Linux it is loaded
             // at runtime rather than linked, so a machine without
@@ -468,6 +470,50 @@ fn port() -> u16 {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_PORT)
+}
+
+/// A screenshot pasted into the page, on Linux. WebKitGTK gives a page's paste
+/// event the clipboard's text and file paths and never an image -- a PNG on
+/// the clipboard arrives as a paste with nothing in it, and
+/// `navigator.clipboard.read()` is refused -- so a picture could not be pasted
+/// onto a desk note in this window, while it could in a browser tab beside it.
+///
+/// The window reads it instead, on the key and only on the key: Ctrl+V with
+/// an image and no text on the clipboard is handed to the page as a
+/// `snyvi-paste-image` event carrying the picture as a PNG `data:` URL. The
+/// page decides whether anything there takes a picture. Nothing is held back
+/// from the engine, which pastes as it always did, and the page is given no
+/// command of its own that could read the clipboard when nobody pasted.
+/// macOS and Windows hand the page the image themselves.
+#[cfg(target_os = "linux")]
+fn paste_pictures(w: &WebviewWindow) {
+    use gtk::gdk::{keys::constants as key, Atom, ModifierType, SELECTION_CLIPBOARD};
+    use gtk::prelude::*;
+    let page = w.clone();
+    let _ = w.with_webview(move |view| {
+        view.inner().connect_key_press_event(move |_, ev| {
+            if ev.state().contains(ModifierType::CONTROL_MASK) && ev.keyval().to_lower() == key::v {
+                let page = page.clone();
+                // What is on offer first: copied text with a picture beside it
+                // -- a part of a web page -- is the engine's paste, not this.
+                // Asynchronous both times, so a slow clipboard owner never
+                // holds up the window.
+                gtk::Clipboard::get(&SELECTION_CLIPBOARD).request_contents(&Atom::intern("TARGETS"), move |clip, offer| {
+                    if !offer.targets_include_image(false) || offer.targets_include_text() {
+                        return;
+                    }
+                    clip.request_image(move |_, pic| {
+                        let Some(png) = pic.and_then(|p| p.save_to_bufferv("png", &[]).ok()) else {
+                            return;
+                        };
+                        let url = format!("data:image/png;base64,{}", gtk::glib::base64_encode(&png));
+                        let _ = page.eval(format!("dispatchEvent(new CustomEvent('snyvi-paste-image', {{ detail: '{url}' }}))"));
+                    });
+                });
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    });
 }
 
 /// Whether anything answers on the daemon's port. A connection and nothing

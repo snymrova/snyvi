@@ -306,6 +306,7 @@ const HELP = `
     <div class="hk"><span>The next document waiting</span><span class="keys"><kbd>n</kbd></span></div>
     <div class="hk"><span>Home</span><span class="keys"><kbd>h</kbd></span></div>
     <div class="hk"><span>Inbox</span><span class="keys"><kbd>i</kbd></span></div>
+    <div class="hk"><span>A note, on Home</span><span class="keys"><kbd>a</kbd></span></div>
     <div class="hk"><span>Back / forward</span><span class="keys">${kb("alt", "←")}<i>/</i><kbd>→</kbd></span></div>
     <div class="hk"><span>Go to a line</span><span class="keys">${kb("mod", "K")}<code>:120</code></span></div>
   </section>

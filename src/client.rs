@@ -904,6 +904,27 @@ pub fn brief(paths: &Paths, pane: &str) -> Option<(String, String)> {
     Some((s("context"), s("title")))
 }
 
+/// What changed on this pane's desk since snyvi last spoke to its agent
+/// (`crate::brief::changes`), for the UserPromptSubmit hook to hand Claude
+/// with the prompt. Empty when nothing did, and `None` when there is no
+/// daemon, no token, or no answer in half a second: the prompt never waits.
+pub fn changes(paths: &Paths, pane: &str) -> Option<String> {
+    let token = config::read_token(paths)?;
+    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/changes", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(500)))
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .ok()?;
+    if resp.status().as_u16() != 200 {
+        return None;
+    }
+    let v: Value = resp.body_mut().read_json().ok()?;
+    Some(v.get("context")?.as_str()?.to_string())
+}
+
 /// Say where the work on this pane's desk was left: `leave_off`.
 pub fn leave_off(paths: &Paths, pane: &str, text: &str, about: &str, by: &str) -> Result<Value> {
     let mut resp = pane_post(

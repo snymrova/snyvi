@@ -153,6 +153,8 @@ export function letter(e, c) {
     case "n": c.openNext(); break;
     case "i": c.showInbox(true); break;
     case "h": c.showHome(true); break;
+    // A note, from Home's bar; anywhere else the key is not one of these.
+    case "a": if (!c.noteBar()) return false; break;
     case "w": c.wide(); break;
     case "z": c.wrap(); break;
     case "t": c.rail(); break;

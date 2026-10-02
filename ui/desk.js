@@ -1011,11 +1011,13 @@ function makeView(p) {
   body.addEventListener("mousedown", e => { v.down = [e.clientX, e.clientY]; text(v); v.holding = true; addEventListener("mouseup", () => { v.holding = false; }, { once: true }); });
   body.addEventListener("mouseup", e => {
     // Ctrl-click on a link opens it, and only that: a plain click never does,
-    // and neither does a press that travelled or left a selection.
+    // and neither does a press that travelled or left a selection. A path is
+    // opened only once the daemon has said it is there -- the underline.
     const still = v.down && Math.hypot(e.clientX - v.down[0], e.clientY - v.down[1]) < 4;
     if (e.button === 0 && e.ctrlKey && still && getSelection().isCollapsed) {
       const l = linkAt(v, e);
-      if (l) { openLink(l.url); return; }
+      if (l && !l.path) { openLink(l.url); return; }
+      if (l && found(v, l.path)) { P.open(fromPane(v), l.path); hover(v, null); return; }
     }
     setTimeout(() => copy(v, false), 0);
   });
@@ -1336,6 +1338,7 @@ function layout() {
   if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
   leftOffSlot(d);
+  keysSlot(d);
 }
 
 /* Where the work on this desk was left: one quiet line in the head, in a slot
@@ -1348,7 +1351,7 @@ function leftOffSlot(d) {
   const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
   if (!head) return;
   let el = head.querySelector(".dk-left");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-tabs").before(el); }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-keys, .dk-tabs").before(el); }
   if (leftField === d.id && el.querySelector("input")) return;
   const l = d.left_off;
   if (leftGone && leftGone.desk === d.id) {
@@ -1359,6 +1362,123 @@ function leftOffSlot(d) {
     ? `<button type="button" class="dk-left-b" data-a="left-edit" data-tip="${esc(l.text)}" data-tip-sub="${esc(l.by || "you")} · ${ctx.relShort(l.at)} · click to rewrite" data-tip-overflow><span class="dk-left-k">Left off</span> ${esc(l.text)}</button>`
     : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`;
 }
+
+/* The desk's keys: a slot in the head beside Left off, there whether or not
+ * the desk has any, so nothing moves when one arrives. Names only: a value
+ * goes from the paste to the daemon and from there to the keychain (or the
+ * 0600 file, see src/secrets.rs), and the window never sees it again. The
+ * sheet under the slot lists them and takes a new one; a ✕ holds its row for
+ * BACK_MS with Undo, as a note's does, and then the value is gone -- the one
+ * removal here that is not kept, because a kept secret is still a secret. */
+const PROVIDERS = [
+  ["OpenRouter", "OPENROUTER_API_KEY"], ["ElevenLabs", "ELEVENLABS_API_KEY"], ["GitHub", "GH_TOKEN"],
+  ["AWS", "AWS_ACCESS_KEY_ID"], ["AWS secret", "AWS_SECRET_ACCESS_KEY"], ["OpenAI", "OPENAI_API_KEY"],
+  ["Anthropic", "ANTHROPIC_API_KEY"], ["Hugging Face", "HF_TOKEN"], ["Replicate", "REPLICATE_API_TOKEN"], ["Stripe", "STRIPE_SECRET_KEY"],
+];
+let keysOpen = null, keysGone = null;
+
+function keysSlot(d) {
+  const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
+  if (!head) return;
+  let el = head.querySelector(".dk-keys");
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); head.querySelector(".dk-tabs").before(el); }
+  // The button is redrawn in place; the sheet beside it is left alone, with
+  // whatever is typed in it.
+  let b = el.querySelector(".dk-keys-b");
+  if (!b) { b = Object.assign(document.createElement("button"), { type: "button", className: "dk-keys-b" }); b.dataset.a = "keys"; b.setAttribute("aria-haspopup", "dialog"); el.prepend(b); }
+  const ks = d.keys || [], n = ks.length, open = keysOpen === d.id;
+  b.classList.toggle("none", !n);
+  b.setAttribute("aria-expanded", String(open));
+  b.textContent = n ? `${n} key${n === 1 ? "" : "s"}` : "Keys";
+  b.dataset.tip = n ? ks.map(k => k.name).join(", ") : "Keys for this desk's panels";
+  b.dataset.tipSub = n ? "in the environment of this desk's panels · click to see or add" : "an API key or a token, kept where only you can read it and put in the environment of every panel here";
+  if (open) keysRows(d);
+}
+
+const provider = name => (PROVIDERS.find(([, n]) => n === name) || [""])[0];
+
+function keysSheet(d) {
+  if (keysOpen === d.id) { keysClose(true); return; }
+  keysClose();
+  const slot = ctx.docEl.querySelector(".dk-keys");
+  if (!slot) return;
+  keysOpen = d.id;
+  const sheet = Object.assign(document.createElement("div"), { className: "dk-keys-sheet" });
+  sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-label", "Keys for this desk's panels");
+  sheet.innerHTML = `<div class="dk-keys-h">Keys for this desk's panels</div><div class="dk-keys-rows"></div>
+    <form class="dk-keys-add" autocomplete="off">
+      <div class="dk-keys-t">Add a key</div>
+      <label><span>Name</span><input name="name" list="dk-key-names" required spellcheck="false" placeholder="OPENROUTER_API_KEY" pattern="[A-Z][A-Z0-9_]*" maxlength="64" title="capitals, digits and underscores"></label>
+      <datalist id="dk-key-names">${PROVIDERS.map(([p, n]) => `<option value="${n}">${p}</option>`).join("")}</datalist>
+      <label><span>Value</span><input name="value" type="password" autocomplete="new-password" required placeholder="paste it here"></label>
+      <div class="dk-keys-w"><span>Where</span><label><input type="radio" name="every" value="" checked> this desk</label><label><input type="radio" name="every" value="1"> every desk</label><button type="submit">Keep</button></div>
+      <p class="dk-keys-say" role="status">Kept where only you can read it and never shown again. Panels started from now on have it; open panels get it when they next start.</p>
+    </form>`;
+  sheet.querySelector("form").addEventListener("submit", e => keyAdd(d, e));
+  // What is typed is the sheet's: the page's own keys stay out of it.
+  sheet.addEventListener("keydown", e => { if (e.key !== "Escape") e.stopPropagation(); });
+  slot.append(sheet);
+  keysRows(d);
+  keysSlot(d);
+  document.addEventListener("pointerdown", keysOutside, true);
+  document.addEventListener("keydown", keysKey, true);
+  sheet.querySelector("input[name=name]").focus();
+}
+
+function keysRows(d) {
+  const rows = ctx.docEl.querySelector(".dk-keys-sheet .dk-keys-rows");
+  if (!rows) return;
+  const { esc } = ctx, ks = d.keys || [];
+  const gone = k => keysGone && keysGone.desk === d.id && keysGone.name === k.name && keysGone.every === !k.desk_id;
+  rows.innerHTML = ks.length ? ks.map(k => gone(k)
+    ? `<div class="dk-key" role="status"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">Removed · its value is gone in a moment</span><button type="button" class="dk-undo" data-a="key-back">Undo</button></div>`
+    : `<div class="dk-key"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">${k.provider ? esc(k.provider) + " · " : ""}${k.desk_id ? "this desk" : "every desk"} · ${k.used_at ? "a panel started with it " + ctx.relShort(k.used_at) : "no panel has started with it yet"}</span><button type="button" class="icon dk-key-x" data-a="key-x" data-n="${esc(k.name)}" data-every="${k.desk_id ? "" : "1"}" data-tip="Take it off ${k.desk_id ? "this desk" : "every desk"}" aria-label="Remove ${esc(k.name)}">${ctx.glyph("x")}</button></div>`).join("")
+    : `<p class="dk-keys-none">None yet. A key here goes into the environment of every panel on this desk, and Claude is told its name, never its value.</p>`;
+}
+
+function keysOutside(e) { if (!e.target.closest(".dk-keys")) keysClose(); }
+function keysKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); keysClose(true); } }
+function keysClose(back = false) {
+  if (keysOpen == null) return;
+  keysOpen = null;
+  document.removeEventListener("pointerdown", keysOutside, true);
+  document.removeEventListener("keydown", keysKey, true);
+  const sheet = ctx.docEl.querySelector(".dk-keys-sheet"); if (sheet) sheet.remove();
+  const b = ctx.docEl.querySelector(".dk-keys-b");
+  if (b) { b.setAttribute("aria-expanded", "false"); if (back) b.focus(); }
+}
+
+async function keyAdd(d, e) {
+  e.preventDefault();
+  const f = e.target, name = f.name.value.trim(), value = f.value.value, every = f.every.value === "1";
+  const say = f.querySelector(".dk-keys-say"), btn = f.querySelector("button[type=submit]");
+  if (!name || !value) return;
+  btn.disabled = true;
+  try {
+    const j = await ctx.api(`/api/desks/${d.id}/keys`, { name, value, every, provider: provider(name) });
+    f.value.value = ""; f.name.value = "";
+    say.textContent = j.kept === "file"
+      ? `${name} is kept in a file only you can read. Panels started from now on have it; open panels get it when they next start.`
+      : `${name} is kept in your keychain. Panels started from now on have it; open panels get it when they next start.`;
+    f.name.focus();
+  } catch (err) { say.textContent = `Could not keep it · ${ctx.sayErr(err).why}`; }
+  btn.disabled = false;
+}
+
+function keyRemove(d, name, every) {
+  // Only the newest offer stands: two rows both saying Undo cannot both mean
+  // the last thing that happened.
+  if (keysGone) { clearTimeout(keysGone.timer); keyGo(keysGone); }
+  keysGone = { desk: d.id, name, every, timer: 0 };
+  keysGone.timer = setTimeout(() => { const g = keysGone; keysGone = null; keyGo(g); }, BACK_MS);
+  keysRows(d);
+}
+async function keyGo(g) {
+  try { await ctx.api(`/api/desks/${g.desk}/keys/${encodeURIComponent(g.name)}/remove`, { every: g.every }); }
+  catch (e) { ctx.toast(`Could not remove ${g.name}`, e); }
+  const d = current(); if (d && keysOpen === d.id) keysRows(d);
+}
+function keyBack(d) { if (!keysGone) return; clearTimeout(keysGone.timer); keysGone = null; keysRows(d); }
 
 /** The line, as a field in its own place. Enter or leaving it keeps what was
  *  typed; Escape leaves it as it was. */
@@ -1544,7 +1664,7 @@ function linkAt(v, e) {
         text += c[0];
       });
     }
-    const u = urlAt(text, at);
+    const u = urlAt(text, at) || pathIn(text, at);
     if (!u) return null;
     const rects = [];
     for (let k = u.from; k < u.to; k++) {
@@ -1552,7 +1672,7 @@ function linkAt(v, e) {
       if (last && last.y === yy) last.w = (xx + w) * cellW - last.x;
       else rects.push({ x: xx * cellW, y: yy, w: w * cellW });
     }
-    return { url: u.url, rects: rects.map(q => ({ left: r.left + q.x, top: r.top + q.y * LINE_PX, width: q.w, height: LINE_PX })) };
+    return { url: u.url, path: u.path, rects: rects.map(q => ({ left: r.left + q.x, top: r.top + q.y * LINE_PX, width: q.w, height: LINE_PX })) };
   }
   const line = e.target.closest && e.target.closest(".pn-pg > div");
   const hit = line && document.caretRangeFromPoint && document.caretRangeFromPoint(e.clientX, e.clientY);
@@ -1570,7 +1690,8 @@ function linkAt(v, e) {
     for (let n; (n = w.nextNode());) { if (n === hit.startContainer) { at += hit.startOffset; break; } at += n.length; }
     break;
   }
-  const u = urlAt(lines.map(l => l.textContent).join(""), at);
+  const all = lines.map(l => l.textContent).join("");
+  const u = urlAt(all, at) || pathIn(all, at);
   if (!u) return null;
   // Its rectangles, from a range over the same characters.
   const rects = [];
@@ -1583,13 +1704,34 @@ function linkAt(v, e) {
       k += n.length;
     }
   }
-  return { url: u.url, rects };
+  return { url: u.url, path: u.path, rects };
+}
+
+/* A path in a panel is ui/paths.js's to find and to open (see `pathsUse` in
+ * app.js), shared with the reader: fetched the first time Ctrl is held over a
+ * panel, and until then only a URL is a link. */
+let P = null, pLoading = false;
+const pathIn = (text, at) => (P && P.pathAt(text, at)) || null;
+const fromPane = v => ({ desk: current().id, pane: v.id });
+/** Whether the daemon has said this path is there. Asked once per word while
+ *  Ctrl is held; the answer, when it comes, redraws the underline if the
+ *  pointer is still where it was. */
+function found(v, path, e) {
+  const j = P.known(fromPane(v), path);
+  if (j && typeof j.then !== "function") return j;
+  if (e && j !== null) P.check(fromPane(v), path).then(() => { if (v.at === e) hover(v, e); });
+  return null;
 }
 
 /** The underline under a link while Ctrl is held: divs laid over the pane,
  *  never drawn into the canvas, so the paint budget does not see them. */
 function hover(v, e) {
-  const l = e && linkAt(v, e);
+  if (e && !P && !pLoading && ctx.paths) {
+    pLoading = true;
+    ctx.paths().then(m => { P = m; if (v.at && v.at.ctrlKey) hover(v, v.at); }, () => { pLoading = false; });
+  }
+  let l = e && linkAt(v, e);
+  if (l && l.path) { const j = found(v, l.path, e); l = j && { ...l, url: j.path }; }
   v.body.classList.toggle("pn-on-link", !!l);
   if (!l) { v.ul?.remove(); v.ul = null; return; }
   if (!v.ul) { v.ul = document.createElement("div"); v.ul.className = "pn-ul"; v.el.append(v.ul); }
@@ -1964,15 +2106,17 @@ function noteSec(d) {
     `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
     `<summary class="t-label dk-lab" data-part="rail.notes.head" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     errLine("clear", esc, "p") +
-    (rows ? `<ul class="dk-list">${rows}</ul>`
-      : noteField ? "" : notesOff === d.id ? noReach("notes") : `<button type="button" class="dk-empty dk-first" data-a="note-new">What's the status of this project? A line here keeps it out of your head.</button>`) +
-    // The field for a new line opens at the end of the list, where the line
-    // will land.
-    (noteField && noteField.kind === "new"
-      ? `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><span class="dk-stage" aria-hidden="true"></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
+    (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
+    // The bar for a new line, always at the end of the list, where the line
+    // will land: a quiet field until it is clicked, or the head's + is, and
+    // then the live one, in the same room, so nothing under it moves as it
+    // opens and shuts. On an empty list it is the whole of the list.
+    (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
+      ? `<div class="dk-note new idle"><span class="dk-tick ghost" aria-hidden="true"></span><span class="dk-stage" aria-hidden="true"></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
+      : `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><span class="dk-stage" aria-hidden="true"></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
-        (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>` : "") +
+        (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`) +
     `</details><span class="dk-sec-acts">${acts}</span></div>`;
 }
 
@@ -2059,8 +2203,12 @@ function stageMark(x, esc) {
     return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}</button>`;
   }
   if (st === "working") {
+    // The dot breathes only while that agent is at it; between its turns
+    // the line is still its, and the dot holds still.
     const at = x.stage_panel ? ` in ${esc(x.stage_panel)}` : "";
-    return `<span class="dk-stage working" role="img" data-tip="${by} is working on it${at}" aria-label="${by} is working on it${at}"></span>`;
+    const busy = views.get(x.stage_pane)?.status?.agent === "working";
+    const say = busy ? `${by} is working on it${at}` : `${by} has it${at}`;
+    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>`;
   }
   if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
   return `<span class="dk-stage" aria-hidden="true"></span>`;
@@ -2205,7 +2353,11 @@ function dropped(e) {
   const fs = images(e.dataTransfer);
   e.preventDefault();
   if (!fs.length) return;
-  if (row.classList.contains("new")) { pending = [...pending, ...fs]; rail(); return; }
+  if (row.classList.contains("new")) {
+    if (noteField && noteField.kind === "edit") return;
+    if (!noteField) { noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; }
+    pending = [...pending, ...fs]; rail(); return;
+  }
   const n = row.querySelector("[data-a=note-tick]")?.dataset.n;
   if (n) putImages(+n, fs);
 }
@@ -2307,7 +2459,10 @@ export function notesChanged(id) {
 /** Put the open field back after a redraw, with what was typed into it and the
  *  caret where the reader left it. */
 function noteFocus() {
-  const inp = ctx.tocEl.querySelector(".dk-note-in");
+  ctx.tocEl.querySelector(".dk-note-in.idle")?.addEventListener("focus", () => {
+    noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; rail();
+  }, { once: true });
+  const inp = ctx.tocEl.querySelector(".dk-note-in:not(.idle)");
   if (!inp) return;
   inp.value = noteDraft;
   // The card over a line being rewritten grows with its text, up to twelve
@@ -2333,8 +2488,7 @@ function noteFocus() {
     const fs = images(e.clipboardData);
     if (!fs.length) return;
     e.preventDefault();
-    if (noteField && noteField.kind === "edit") putImages(noteField.id, fs);
-    else { pending = [...pending, ...fs]; rail(); }
+    pasted(fs);
   });
   // Its ✕ must not take the focus from the field: leaving the field keeps the line.
   ctx.tocEl.querySelector("[data-a=pend-x]")?.addEventListener("mousedown", e => e.preventDefault());
@@ -2342,6 +2496,30 @@ function noteFocus() {
   inp.focus();
   const at = Math.min(noteCaret, inp.value.length);
   inp.setSelectionRange(at, at);
+}
+
+/** Pictures pasted into the open field: onto the line being rewritten at
+ *  once, or held for the new line until Enter makes it. */
+function pasted(fs) {
+  if (noteField && noteField.kind === "edit") putImages(noteField.id, fs);
+  else { pending = [...pending, ...fs]; rail(); }
+}
+
+/** A picture the Linux window read off the clipboard itself, on Ctrl+V: its
+ *  engine gives the paste event nothing for an image (src/bin/app.rs). Taken
+ *  where it was pasted: a note's field, or a panel, which gets it as it gets
+ *  any pasted picture, as a document whose path is typed. */
+function windowPaste(e) {
+  const at = document.activeElement;
+  if (typeof e.detail !== "string" || !at) return;
+  const note = at.classList.contains("dk-note-in") && ctx.tocEl.contains(at);
+  const v = !note && [...views.values()].find(x => x.body === at);
+  if (!note && !v) return;
+  const b64 = e.detail.slice(e.detail.indexOf(",") + 1), bin = atob(b64), buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  const file = new File([buf], "pasted.png", { type: "image/png" });
+  if (note) pasted([file]);
+  else paste(v, { items: [{ kind: "file", type: file.type, getAsFile: () => file }], getData: () => "" });
 }
 
 /** Keep what is in the field. `again` is Enter, which on a new line opens the
@@ -2683,6 +2861,9 @@ async function act(b, byKey) {
     }
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
+    else if (a === "keys") keysSheet(d);
+    else if (a === "key-x") keyRemove(d, b.dataset.n, !!b.dataset.every);
+    else if (a === "key-back") keyBack(d);
     else if (a === "note-x") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) {
@@ -2991,6 +3172,7 @@ function detach() {
   ctx.tocEl.removeEventListener("dragover", dragOver);
   ctx.tocEl.removeEventListener("dragleave", dragLeave);
   ctx.tocEl.removeEventListener("drop", dropped);
+  window.removeEventListener("snyvi-paste-image", windowPaste);
   ctx.metaEl.removeEventListener("click", click);
   closeLightbox();
   document.removeEventListener("keydown", keys, true);
@@ -3022,7 +3204,7 @@ export function open(c) {
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
     docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); hidePoints();
-    focused = null; full = false;
+    focused = null; full = false; keysClose();
   }
   deskId = c.id; reading = null;
   // Home's "last touched" and the desk it offers to pick up start here.
@@ -3037,6 +3219,7 @@ export function open(c) {
   ctx.tocEl.addEventListener("dragover", dragOver);
   ctx.tocEl.addEventListener("dragleave", dragLeave);
   ctx.tocEl.addEventListener("drop", dropped);
+  window.addEventListener("snyvi-paste-image", windowPaste);
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
   // A passage selected in a document read over the desk can be kept as a
@@ -3199,6 +3382,7 @@ export const zoomOn = () => { zoom(); return full; };
 export const isFull = () => full;
 export const startAll = () => act({ dataset: { a: "all" } });
 export const renameHere = () => { const d = current(); if (d) renameDesk(d); };
+export const keysHere = () => { const d = current(); if (d) keysSheet(d); };
 export const panels = () => views.size;
 
 export function update(desks) {
@@ -3282,6 +3466,30 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-left-b.none { color: var(--fg-3); opacity: 0; }
 .dk-head:is(:hover, :focus-within) .dk-left-b.none { opacity: 1; }
 .dk-left-in { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-small); padding: 1px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+/* Keys: the slot after Left off, there with nothing in it, dim and shown on
+   hover until the desk has one; its sheet hangs under it, over the panes. */
+.dk-keys { position: relative; flex: none; display: flex; align-items: center; }
+.dk-keys-b { padding: 2px 6px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
+.dk-keys-b:hover, .dk-keys-b[aria-expanded="true"] { background: var(--rule); color: var(--fg); }
+.dk-keys-b.none { color: var(--fg-3); opacity: 0; }
+.dk-head:is(:hover, :focus-within) .dk-keys-b.none, .dk-keys-b.none[aria-expanded="true"] { opacity: 1; }
+.dk-keys-sheet { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop); width: min(460px, calc(100vw - 32px)); padding: 8px 10px 10px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-small); color: var(--fg-2); text-align: left; white-space: normal; cursor: auto; }
+.dk-keys-h { color: var(--fg-3); padding: 0 2px 6px; border-bottom: 1px solid var(--rule); margin-bottom: 2px; }
+.dk-key { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--rule); }
+.dk-key-n { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
+.dk-key-m { flex: 1; min-width: 0; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-key-x { flex: none; }
+.dk-keys-none { margin: 6px 2px; color: var(--fg-3); }
+.dk-keys-add { display: grid; gap: 6px; padding-top: 8px; }
+.dk-keys-t { color: var(--fg-3); font-weight: 600; }
+.dk-keys-add label { display: flex; align-items: center; gap: 8px; }
+.dk-keys-add label > span { flex: 0 0 44px; color: var(--fg-3); }
+.dk-keys-add input:not([type="radio"]) { flex: 1; min-width: 0; font: inherit; font-family: var(--mono); font-size: 12px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.dk-keys-w { display: flex; align-items: center; gap: 10px; }
+.dk-keys-w > span { color: var(--fg-3); }
+.dk-keys-w button { margin-left: auto; padding: 2px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--accent); cursor: pointer; }
+.dk-keys-w button:disabled { opacity: .5; cursor: default; }
+.dk-keys-say { margin: 0; color: var(--fg-3); font-size: var(--fs-micro); }
 /* An agent's suggestion: a ghost row, quieter than a line of the reader's,
    with its two answers always shown. */
 .dk-sug .nm { color: var(--fg-3); font-style: italic; }
@@ -3598,6 +3806,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
 .dk-note-in:focus { outline: none; }
 .dk-note-in::placeholder { color: var(--fg-3); }
+/* The bar at rest: the live field's size and border width, its colour quiet,
+   so opening it changes a colour and nothing else. */
+.dk-note-in.idle { border-color: var(--rule-2); background: transparent; cursor: text; }
+.dk-note-in.idle:hover { border-color: var(--fg-3); }
 /* A line just taken off, holding its own place in the list: the offer to put
    it back is where the ✕ was, which is where the eye already is. Nothing was
    deleted, so the row says the mildest true thing and says it quietly. */
@@ -3628,7 +3840,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-stage.planned svg { width: 10px; height: 10px; }
 .dk-stage.planned:hover { color: var(--accent); }
 .dk-stage.planned::before { content: ""; position: absolute; inset: -4px; }
-.dk-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
+.dk-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.dk-stage.working.busy::before { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
 @keyframes dk-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dk-stage.working::before { animation: none; } }
 /* A line's pictures: one mark at the end of its text, with their count, that
@@ -3661,8 +3874,6 @@ button.dk-pic:hover { background: var(--rule-2); color: var(--fg); }
 /* The last picture taken off: the caption alone, holding its Undo. */
 .dk-lb figure.none { min-width: min(420px, calc(100vw - 64px)); }
 /* An empty list's line is the way to its first note. */
-#toc .dk-first { display: block; text-align: left; cursor: text; }
-#toc .dk-first:hover { color: var(--fg-2); }
 /* ---------- points ----------
  * The control by a selection: small, on the page's raised ground, where the
  * selection ends. And the kept points under the panels, on the list's own

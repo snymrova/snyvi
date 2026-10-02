@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.11.0"
+version = "1.12.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -106,6 +106,7 @@ desktop = [
   "dep:tauri-plugin-single-instance",
   "dep:tauri-plugin-global-shortcut",
   "dep:tauri-plugin-deep-link",
+  "dep:gtk",
 ]
 
 [dependencies.tauri]
@@ -157,6 +158,12 @@ winresource = "0.1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# The window's own reading of a pasted picture on Linux, where WebKitGTK hands
+# a page text and file paths from the clipboard but never an image. Already in
+# the tree through tauri's webview; named here so snyvi-app can ask GTK itself.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", optional = true }
+
 # Only to create the daemon process directly, which is the one thing std's
 # Command cannot be asked to do: start something that inherits no handles.
 [target.'cfg(windows)'.dependencies]
@@ -171,3 +178,11 @@ windows-sys = { version = "0.60", features = [
   # it the resident set on Linux.
   "Win32_System_ProcessStatus",
 ] }
+
+# The native keychain for the desks' key values: Keychain on macOS, Credential
+# Manager on Windows, both a few dozen KB. Linux keeps them in a file only the
+# owner reads, beside the token: the pure-Rust Secret Service client is 1.8 MB
+# of D-Bus for encryption at rest only, which an unlocked keyring hands to any
+# process of the user's anyway (see src/secrets.rs).
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+keyring = "4"

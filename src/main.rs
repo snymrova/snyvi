@@ -18,7 +18,9 @@ mod prompt;
 mod receive;
 mod render;
 mod reset;
+mod resolve;
 mod screen;
+mod secrets;
 mod server;
 mod session;
 mod setup;
@@ -464,6 +466,21 @@ fn main() -> Result<()> {
                     } else {
                         " deleted"
                     }
+                );
+            }
+            // A pruned desk's keys go with it: the names from the store, the
+            // values from the keychain or the file they were kept in.
+            let keys = store.prune_desk_keys(before, dry_run)?;
+            if !dry_run {
+                let secrets = secrets::Secrets::new(paths.config_dir.join("keys.json"));
+                for (desk, name) in &keys {
+                    secrets.forget(*desk, name);
+                }
+            }
+            for (desk, name) in &keys {
+                println!(
+                    "{} key {name} of desk {desk}",
+                    if dry_run { "would forget" } else { "forgot" }
                 );
             }
             // Closed desks, after their panels: the cascade takes their notes

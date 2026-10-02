@@ -439,7 +439,22 @@ impl Browser {
         let (kind, lang) = renderer.detect(Some(&path.to_string_lossy()), None, &text);
         // A browsed file keeps its own H1; there is no separate title to duplicate.
         // Cut before it is cached, so a revisit is not cut again.
-        let html = render::chunk_code(&renderer.render(kind, lang.as_deref(), &text)).into_owned();
+        // Relative images resolve beside the file, through the raw route: left
+        // alone they resolve against the page's own /b/ address, which answers
+        // with the viewer rather than the picture.
+        let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
+        let base = if dir.is_empty() {
+            raw_url(id, "")
+        } else {
+            format!("{}/", raw_url(id, dir))
+        };
+        let html = render::chunk_code(&renderer.render_with_base(
+            kind,
+            lang.as_deref(),
+            &text,
+            Some(&base),
+        ))
+        .into_owned();
 
         let mut cache = self.cache.lock().unwrap();
         if cache.len() >= CACHE_ENTRIES {
@@ -670,6 +685,32 @@ mod tests {
             .map(|e| e.path)
             .collect();
         assert_eq!(sub, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn markdown_images_resolve_beside_the_file() {
+        let (b, d) = fixture();
+        std::fs::create_dir_all(d.path.join("docs")).unwrap();
+        std::fs::write(d.path.join("top.md"), "![a](a.png)\n").unwrap();
+        std::fs::write(
+            d.path.join("docs/kit.md"),
+            "![b](./img/b.png) ![c](https://h/c.png) ![e](/abs.png)\n",
+        )
+        .unwrap();
+        let rn = Renderer::new();
+        let r = b.open(&d.path).unwrap();
+        let top = b.file(&r.id, "top.md", &rn).unwrap().html;
+        assert!(
+            top.contains(&format!("src=\"/api/browse/{}/raw/a.png\"", r.id)),
+            "{top}"
+        );
+        let kit = b.file(&r.id, "docs/kit.md", &rn).unwrap().html;
+        assert!(
+            kit.contains(&format!("src=\"/api/browse/{}/raw/docs/img/b.png\"", r.id)),
+            "{kit}"
+        );
+        assert!(kit.contains("src=\"https://h/c.png\""), "{kit}");
+        assert!(kit.contains("src=\"/abs.png\""), "{kit}");
     }
 
     #[test]

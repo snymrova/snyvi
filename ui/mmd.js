@@ -393,7 +393,11 @@ function mmdInit() {
   const theme = mmdCurrentTheme();
   if (theme === mermaidTheme) return;
   mermaidTheme = theme;
-  window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "base", ...mmdTheme() });
+  // suppressErrorRendering: without it, a source that will not parse is drawn
+  // as Mermaid's bomb into a box on <body>, and `render` throws before it takes
+  // that box away -- so "Syntax error in text" sat under the whole window.
+  // mmdFail shows the error in the figure instead.
+  window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: "base", ...mmdTheme() });
 }
 
 /** One diagram per task, yielding between. A 2433 ms diagram is still 2433 ms

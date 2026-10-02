@@ -457,6 +457,17 @@ cannot parse, is left alone and the snippet printed instead).
 it has one, asking it to send what it writes; `snyvi uninstall <agent>`
 takes the entry and the line back out.
 
+Codex can work in a desk's panel the way Claude Code does. `snyvi init
+codex` writes its entry with `env_vars = ["SNYVI_SESSION"]`, since Codex
+starts a server with a short environment of its own and the panel's id
+is how `snyvi mcp` knows which desk it is in; and it writes snyvi's
+hooks to `~/.codex/hooks.json`, the same events as Claude Code's, so the
+panel shows what Codex is doing and Codex is handed the desk brief and
+the desk's changes at each prompt. Codex runs no hook it has not been
+shown: open `/hooks` in Codex once and trust them. Plans and auto-send
+stay Claude Code's; Codex has neither an ExitPlanMode nor a file path in
+its edit hook.
+
 The viewer says the same thing, on *Agents* (`/connect`): one row per agent, read by the daemon from the
 agent's own file, saying whether it is set up, not set up, or
 registered under a path that no longer exists, with the command or the
@@ -511,6 +522,32 @@ yourself. And a plan Claude asks you to approve lands in snyvi as it asks,
 rendered, with its diagrams drawn, while the approval waits in the panel;
 a revised plan is a new version of the same document. Outside a desk,
 plans land only with `--auto`.
+
+And at each prompt, Claude is handed what changed on the desk since its
+last turn, if anything did: a note you added while it worked, a line you
+ticked or put away, a document the panel beside it sent, a new left-off,
+a line another panel has taken up. Its own doings are not read back to
+it, and most prompts get nothing. It rides on your own message -- snyvi
+never starts a turn -- and the same switch in About turns it off with the
+brief.
+
+A desk can hold keys for its panels: an API key, a token. The *Keys*
+slot in the desk's head, beside *Left off*, opens a small sheet. Paste the
+value once, name the variable it goes in (`OPENROUTER_API_KEY`,
+`GH_TOKEN`), say whether it is for this desk or for every desk, and keep
+it. The value goes to your keychain -- Keychain on macOS, Credential
+Manager on Windows -- or, on Linux and wherever no keychain answers, to a
+file only you can read beside snyvi's own token, the way `gh` and `aws`
+keep theirs; it is never shown again, and snyvi keeps only the name. Every panel started on the desk from then on has it in its
+environment, open panels get it when they next start, and the brief tells
+Claude the names, never the values. A desk's own key shadows an
+every-desk one of the same name. ✕ on a row offers Undo for a few
+seconds, then the value is gone -- the one removal in snyvi that is not
+kept, because a kept secret is still a secret. Closing
+a desk keeps its keys; `snyvi prune` ends them with the desk. Home's right
+column lists every key by name, with the desks it is on and when a panel
+last started with it. snyvi never uses a key itself, and no tool lets an
+agent read one.
 
 The server also offers four prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
@@ -678,6 +715,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | Del   | remove document (⌘/ctrl Z undoes it)        |
 | h     | home                                        |
 | i     | inbox                                       |
+| a     | add a note, on Home                         |
 | f     | fill the screen with the diagram            |
 | 0     | fit the diagram                             |
 | t     | toggle contents                             |
@@ -725,6 +763,16 @@ their usual menu for Copy and Paste.
 In a panel, hold **Ctrl** over a link a program printed and it is
 underlined; **Ctrl-click** opens it in your browser. A plain click never
 does, and only http and https links count.
+
+A path works the same way, in a panel and in what you are reading: hold
+**Ctrl** over `src/app.js:120`, `~/.claude/settings.json` or `../notes/`
+and it is underlined only if it is there. Ctrl-click opens a file in
+snyvi's reader, at the line when one follows it, and a folder in your file
+manager. A relative path is looked for where it was printed: in a panel,
+the folder its program is in, then the desk's; in a document, the folder of
+the file it was sent from, then its desk's, then its project's; in the
+folder reader, the file's own folder. Nothing is ever run. This needs the
+window: a browser tab cannot ask.
 
 Everything the keys do, a finger can do too: on a screen with no
 pointer the controls that appear on hover -- copy, rename, the `#`
@@ -960,6 +1008,17 @@ Under the title, one line says what needs you (a panel that rang, or a
 Claude asking), what is waiting to be read, whether a Claude is working,
 and how much of the account's five-hour window is left.
 
+**The note bar** is at the top of the left column, and stays there as the
+page scrolls: one field for a line on any desk's list. The chip at its left
+says which desk, and starts on Pick up's; click it for the list of desks, or
+type `#` and the start of a desk's name in the note and press Tab. A `#`
+that names no desk -- "#77" -- stays in the note as written. Enter adds the
+line and leaves the bar empty for the next, as the desk's own field does. A
+screenshot pasted or dropped on the bar goes on the line with it. The bar
+says where the line went, "Added to snyvi · Undo", for a few seconds; Undo
+takes it off again and puts the words back in the bar. `a` puts you in the
+bar, with the letter keys on.
+
 **Pick up** is one desk, large: the one you touched last, or the one you
 keep there with *Keep here*. It says when you last touched it, where the
 work was left -- or, when no one said, the last thing that happened on it,
@@ -975,11 +1034,18 @@ lines; the rest are a click away. *Send this week as a doc*, on its
 heading, files the last seven days as a document in each desk's own
 project.
 
-**Projects** shows each desk's last eight weeks, a bar a week as tall as
-the days with work in them. A desk quiet for ten days offers *Park it?*:
-it asks for the next step, takes the desk out of Pick up, and keeps it on
-a Parked shelf with that step until you take it down. Nothing on a parked
-desk is closed.
+**Projects** is every other desk, a card each, as many across as the
+window fits: its age, where it was left, its first open notes (tick one
+where it stands), a **+** that puts the desk on the note bar's chip, and
+its last eight weeks, a bar a week as tall as the days with work in them.
+A desk quiet for ten days offers *Park it?*: it asks for the next step,
+takes the desk out of Pick up, and keeps it on a Parked shelf under the
+cards with that step until you take it down. Nothing on a parked desk is
+closed.
+
+**Today** has the time, the date and this month, Monday first, with today
+ringed. Only the time changes as it runs, so nothing you are typing in is
+touched. Hide it and the date comes back beside the title.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS desks (
   left_off_at INTEGER NOT NULL DEFAULT 0,
   left_off_by TEXT NOT NULL DEFAULT '',
   left_off_about TEXT NOT NULL DEFAULT '',
+  left_off_pane TEXT NOT NULL DEFAULT '',
   visited_at INTEGER NOT NULL DEFAULT 0,
   parked_at INTEGER NOT NULL DEFAULT 0,
   parked_next TEXT NOT NULL DEFAULT ''
@@ -89,6 +90,14 @@ CREATE TABLE IF NOT EXISTS panes_closed (
   created_at INTEGER NOT NULL,
   closed_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS desk_keys (
+  desk_id INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  used_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (desk_id, name)
+);
 CREATE TABLE IF NOT EXISTS desk_notes (
   id INTEGER PRIMARY KEY,
   desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
@@ -100,6 +109,7 @@ CREATE TABLE IF NOT EXISTS desk_notes (
   done_commit TEXT NOT NULL DEFAULT '',
   done_doc TEXT NOT NULL DEFAULT '',
   done_evidence TEXT NOT NULL DEFAULT '',
+  done_pane TEXT NOT NULL DEFAULT '',
   suggested_by TEXT NOT NULL DEFAULT '',
   images TEXT NOT NULL DEFAULT '',
   stage TEXT NOT NULL DEFAULT '',
@@ -139,8 +149,31 @@ pub struct Desk {
     /// pick-up and its chips until the reader takes it down again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parked: Option<Parked>,
+    /// The keys its panels start with, by name only: the desk's own and the
+    /// ones kept for every desk. Values live in the keychain (`crate::secrets`).
+    pub keys: Vec<DeskKey>,
     pub panes: Vec<Pane>,
 }
+
+/// A key a desk hands its panels, by name. The value is in the keychain or
+/// snyvi's 0600 file (`crate::secrets`), never in this row, never in a
+/// response, never in an event: the window and the brief see names.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeskKey {
+    /// The desk it belongs to, or `EVERY_DESK`.
+    pub desk_id: i64,
+    /// The environment variable, `[A-Z][A-Z0-9_]*`.
+    pub name: String,
+    /// What the reader called it: `github`, `openrouter`; may be empty.
+    pub provider: String,
+    pub created_at: i64,
+    /// When a panel last started with it; 0 for never.
+    pub used_at: i64,
+}
+
+/// The desk id a key kept for every desk is filed under. Not a desk, so no
+/// cascade reaches it: `prune_keys` is what takes a desk's rows.
+pub const EVERY_DESK: i64 = 0;
 
 /// A desk the reader put on the shelf, and the next step they wrote on the way
 /// out: "Park it?" asks for one, so a project coming back starts from a
@@ -188,6 +221,11 @@ pub struct LeftOff {
     /// A document it is about, by id.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub about: String,
+    /// The pane it was said from, when an agent said it: what keeps a panel
+    /// from being told its own left-off as news (`crate::brief::changes`).
+    /// Never the page's.
+    #[serde(skip)]
+    pub pane: String,
 }
 
 /// How long a Left off is, at most: one sentence.
@@ -222,6 +260,13 @@ pub struct DeskNote {
     /// deploy, a store page. An `http(s)` URL (`evidence_ok`).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub done_evidence: String,
+    /// The pane an agent ticked it from, and when it was ticked by anyone:
+    /// what `crate::brief::changes` reads to tell a panel of a tick that was
+    /// not its own. The page has `done` and the order; neither goes to it.
+    #[serde(skip)]
+    pub done_pane: String,
+    #[serde(skip)]
+    pub done_at: i64,
     /// An agent's suggestion, not yet the reader's: shown as a ghost row with
     /// Keep and ✕, and on the list only once kept. The agent's name.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -384,6 +429,23 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
             d.panes.push(pane);
         }
     }
+    // One query for every desk's keys, picked per desk the way `keys` picks.
+    let mut stmt = conn.prepare(
+        "SELECT desk_id, name, provider, created_at, used_at FROM desk_keys ORDER BY name, desk_id DESC",
+    )?;
+    let all: Vec<DeskKey> = stmt
+        .query_map([], row_to_key)?
+        .collect::<rusqlite::Result<_>>()?;
+    if !all.is_empty() {
+        for d in &mut desks {
+            let id = d.id;
+            d.keys = pick_keys(
+                all.iter()
+                    .filter(|k| k.desk_id == id || k.desk_id == EVERY_DESK)
+                    .cloned(),
+            );
+        }
+    }
     Ok(desks)
 }
 
@@ -405,6 +467,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
         .collect::<rusqlite::Result<_>>()?;
+    desk.keys = keys(conn, id)?;
     Ok(Some(desk))
 }
 
@@ -438,6 +501,7 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         left_off: None,
         visited_at: 0,
         parked: None,
+        keys: Vec::new(),
         panes: Vec::new(),
     })
 }
@@ -611,6 +675,98 @@ pub fn closed_desks(conn: &Connection, limit: usize) -> Result<Vec<ClosedDesk>> 
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
+}
+
+/// The keys a desk's panels start with: its own rows and the every-desk rows,
+/// by name, a desk's own shadowing an every-desk one of the same name.
+pub fn keys(conn: &Connection, desk_id: i64) -> Result<Vec<DeskKey>> {
+    let mut stmt = conn.prepare(
+        "SELECT desk_id, name, provider, created_at, used_at FROM desk_keys
+         WHERE desk_id IN (?1, 0) ORDER BY name, desk_id DESC",
+    )?;
+    let rows: Vec<DeskKey> = stmt
+        .query_map(params![desk_id], row_to_key)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(pick_keys(rows))
+}
+
+fn row_to_key(r: &rusqlite::Row) -> rusqlite::Result<DeskKey> {
+    Ok(DeskKey {
+        desk_id: r.get(0)?,
+        name: r.get(1)?,
+        provider: r.get(2)?,
+        created_at: r.get(3)?,
+        used_at: r.get(4)?,
+    })
+}
+
+/// Rows ordered by name, a desk's own before the every-desk one: the first
+/// of each name is the one the desk gets.
+fn pick_keys(rows: impl IntoIterator<Item = DeskKey>) -> Vec<DeskKey> {
+    let mut out: Vec<DeskKey> = Vec::new();
+    for k in rows {
+        if out.last().is_some_and(|l| l.name == k.name) {
+            continue;
+        }
+        out.push(k);
+    }
+    out
+}
+
+/// Keep a key's name on a desk (or on every desk). Pasted again, it is new
+/// again: `created_at` moves and `used_at` starts over.
+pub fn add_key(
+    conn: &Connection,
+    desk_id: i64,
+    name: &str,
+    provider: &str,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO desk_keys(desk_id, name, provider, created_at, used_at) VALUES (?1, ?2, ?3, ?4, 0)",
+        params![desk_id, name, provider, now],
+    )?;
+    Ok(())
+}
+
+/// Take a key's name off a desk; whether there was one. The value is the
+/// caller's to forget (`crate::secrets`).
+pub fn remove_key(conn: &Connection, desk_id: i64, name: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "DELETE FROM desk_keys WHERE desk_id = ?1 AND name = ?2",
+        params![desk_id, name],
+    )? > 0)
+}
+
+/// A panel started with these: say when.
+pub fn touch_keys(conn: &Connection, keys: &[DeskKey], now: i64) -> Result<()> {
+    for k in keys {
+        conn.execute(
+            "UPDATE desk_keys SET used_at = ?3 WHERE desk_id = ?1 AND name = ?2",
+            params![k.desk_id, k.name, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// The keys of desks closed before `before`, (desk, name), taken off unless
+/// `dry_run`: run before `prune_desks`, and forget each value. Every-desk
+/// rows belong to no desk and stay.
+pub fn prune_keys(conn: &Connection, before: i64, dry_run: bool) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT k.desk_id, k.name FROM desk_keys k JOIN desks d ON d.id = k.desk_id
+         WHERE d.closed_at != 0 AND d.closed_at < ?1 ORDER BY k.desk_id, k.name",
+    )?;
+    let gone: Vec<(i64, String)> = stmt
+        .query_map(params![before], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if !dry_run {
+        conn.execute(
+            "DELETE FROM desk_keys WHERE desk_id IN (SELECT id FROM desks WHERE closed_at != 0 AND closed_at < ?1)",
+            params![before],
+        )?;
+    }
+    Ok(gone)
 }
 
 /// Desks closed before `before`, ended for good unless `dry_run`, with their
@@ -1013,7 +1169,7 @@ pub fn clear(conn: &Connection) -> Result<()> {
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
         "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
-                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session FROM desk_notes
+                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1110,7 +1266,7 @@ pub fn set_note(
     // A tick from the page is the reader's own: whoever ticked it before, it
     // is theirs now, and an untick clears it.
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = '', done_doc = '', done_evidence = '', suggested_by = ''
+        "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = '', done_doc = '', done_evidence = '', done_pane = '', suggested_by = ''
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
         params![desk_id, id, if done { now } else { 0 }],
     )? > 0)
@@ -1127,6 +1283,8 @@ pub struct Tick {
     pub doc: String,
     /// Checked by `evidence_ok`.
     pub evidence: String,
+    /// The pane it was said from.
+    pub pane: String,
 }
 
 /// A commit hash as `git log` prints one, short or full: 7 to 40 hex digits
@@ -1183,9 +1341,9 @@ pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64
     // A suggestion is not the reader's list yet, so it is not the agent's to
     // tick: it is kept, or not, first.
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6, done_evidence = ?7
+        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6, done_evidence = ?7, done_pane = ?8
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
-        params![desk_id, id, now, by, commit, doc, evidence],
+        params![desk_id, id, now, by, commit, doc, evidence, tick.pane],
     )? > 0)
 }
 
@@ -1341,14 +1499,14 @@ pub fn set_left_off(
     let Some(desk) = get(conn, desk_id)? else {
         return Ok(None);
     };
-    let (at, by, about) = if text.is_empty() {
-        (0, String::new(), String::new())
+    let (at, by, about, pane) = if text.is_empty() {
+        (0, String::new(), String::new(), String::new())
     } else {
-        (to.at, by, about)
+        (to.at, by, about, to.pane.clone())
     };
     conn.execute(
-        "UPDATE desks SET left_off = ?2, left_off_at = ?3, left_off_by = ?4, left_off_about = ?5 WHERE id = ?1",
-        params![desk_id, text, at, by, about],
+        "UPDATE desks SET left_off = ?2, left_off_at = ?3, left_off_by = ?4, left_off_about = ?5, left_off_pane = ?6 WHERE id = ?1",
+        params![desk_id, text, at, by, about, pane],
     )?;
     Ok(Some(desk.left_off))
 }
@@ -1379,6 +1537,19 @@ pub fn removed_notes(conn: &Connection, limit: usize) -> Result<Vec<RemovedNote>
         .query_map(params![limit as i64], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// The lines taken off one desk's list since `since`: (id, text), oldest
+/// first. What a panel is told of at its next prompt (`crate::brief::changes`),
+/// so an agent set on a line the reader has since put away hears so.
+pub fn removed_since(conn: &Connection, desk_id: i64, since: i64) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, text FROM desk_notes WHERE desk_id = ?1 AND removed_at > ?2 ORDER BY removed_at, id",
+    )?;
+    let rows = stmt
+        .query_map(params![desk_id, since], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
@@ -1449,6 +1620,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         stage_pane: r.get(14)?,
         stage_session: r.get(15)?,
         stage_panel: String::new(),
+        done_pane: r.get(16)?,
+        done_at: r.get(2)?,
     })
 }
 
@@ -1551,7 +1724,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -1571,6 +1744,7 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
                 at: r.get(8)?,
                 by: r.get(9)?,
                 about: r.get(10)?,
+                pane: r.get(14)?,
             })
         },
         visited_at: r.get(11)?,
@@ -1581,6 +1755,7 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
                 next: r.get(13)?,
             }),
         },
+        keys: Vec::new(),
         panes: Vec::new(),
     })
 }
@@ -1879,6 +2054,7 @@ mod tests {
             commit: "90F09D6".into(),
             doc: "82cc8f2d3c".into(),
             evidence: "https://github.com/o/r/pull/40".into(),
+            pane: "p1".into(),
         };
         assert!(tick_note(&conn, mine, n.id, &tick, 1).unwrap());
         let got = &notes(&conn, mine).unwrap()[0];
@@ -1886,9 +2062,17 @@ mod tests {
             (
                 got.done_commit.as_str(),
                 got.done_doc.as_str(),
-                got.done_evidence.as_str()
+                got.done_evidence.as_str(),
+                got.done_pane.as_str(),
+                got.done_at
             ),
-            ("90f09d6", "82cc8f2d3c", "https://github.com/o/r/pull/40")
+            (
+                "90f09d6",
+                "82cc8f2d3c",
+                "https://github.com/o/r/pull/40",
+                "p1",
+                1
+            )
         );
         assert!(set_note(&conn, mine, n.id, None, Some(false), 2).unwrap());
         let got = &notes(&conn, mine).unwrap()[0];
@@ -1905,6 +2089,7 @@ mod tests {
             commit: "main; rm -rf".into(),
             doc: "../etc".into(),
             evidence: "javascript:alert(1)".into(),
+            pane: String::new(),
         };
         assert!(tick_note(&conn, mine, n.id, &junk, 3).unwrap());
         let got = &notes(&conn, mine).unwrap()[0];
@@ -2563,6 +2748,64 @@ mod tests {
     /// Left off is one line per desk: set, replaced, cleared -- each hands
     /// back the one before, for an Undo -- and carried on the desk.
     #[test]
+    fn keys_are_names_per_desk_or_for_every_desk_and_go_with_prune() {
+        let mut conn = db();
+        let a = create(&conn, "/w/a", None, 0).unwrap().id;
+        let b = create(&conn, "/w/b", None, 0).unwrap().id;
+        add_key(&conn, a, "GH_TOKEN", "github", 10).unwrap();
+        add_key(&conn, EVERY_DESK, "OPENROUTER_API_KEY", "openrouter", 20).unwrap();
+        add_key(&conn, EVERY_DESK, "GH_TOKEN", "github", 30).unwrap();
+        let named = |v: Vec<DeskKey>| {
+            v.into_iter()
+                .map(|k| (k.desk_id, k.name, k.used_at))
+                .collect::<Vec<_>>()
+        };
+        // Desk a's own GH_TOKEN shadows the one for every desk; b gets both
+        // every-desk rows.
+        let ka = keys(&conn, a).unwrap();
+        assert_eq!(
+            named(ka.clone()),
+            vec![
+                (a, "GH_TOKEN".to_string(), 0),
+                (0, "OPENROUTER_API_KEY".to_string(), 0)
+            ]
+        );
+        assert_eq!(
+            named(keys(&conn, b).unwrap()),
+            vec![
+                (0, "GH_TOKEN".to_string(), 0),
+                (0, "OPENROUTER_API_KEY".to_string(), 0)
+            ]
+        );
+        assert_eq!(get(&conn, a).unwrap().unwrap().keys, ka);
+        // A panel started on a: its two are stamped, b's own view of GH_TOKEN is not.
+        touch_keys(&conn, &ka, 40).unwrap();
+        assert_eq!(
+            named(keys(&conn, b).unwrap()),
+            vec![
+                (0, "GH_TOKEN".to_string(), 0),
+                (0, "OPENROUTER_API_KEY".to_string(), 40)
+            ]
+        );
+        assert!(remove_key(&conn, a, "GH_TOKEN").unwrap());
+        assert!(!remove_key(&conn, a, "GH_TOKEN").unwrap());
+        assert_eq!(keys(&conn, a).unwrap()[0].desk_id, EVERY_DESK);
+        // Closing keeps them; prune takes the desk's own rows and no other.
+        add_key(&conn, a, "ELEVENLABS_API_KEY", "elevenlabs", 50).unwrap();
+        close(&mut conn, a, 60).unwrap();
+        assert_eq!(keys(&conn, a).unwrap().len(), 3);
+        assert_eq!(
+            prune_keys(&conn, 61, true).unwrap(),
+            vec![(a, "ELEVENLABS_API_KEY".to_string())]
+        );
+        assert_eq!(keys(&conn, a).unwrap().len(), 3);
+        assert_eq!(prune_keys(&conn, 61, false).unwrap().len(), 1);
+        prune_desks(&conn, 61, false).unwrap();
+        assert_eq!(keys(&conn, a).unwrap().len(), 2);
+        assert_eq!(keys(&conn, b).unwrap().len(), 2);
+    }
+
+    #[test]
     fn left_off_is_one_line_and_hands_back_the_one_before() {
         let conn = db();
         let d = create(&conn, "/w", None, 0).unwrap().id;
@@ -2572,13 +2815,19 @@ mod tests {
             at: 10,
             by: "claude-code".into(),
             about: "82CC8F2D3C".into(),
+            pane: "p1".into(),
         };
         assert_eq!(set_left_off(&conn, d, &first).unwrap(), Some(None));
         let got = get(&conn, d).unwrap().unwrap().left_off.unwrap();
         assert_eq!(got.text, "If the tests pass, ship the migration");
         assert_eq!(
-            (got.at, got.by.as_str(), got.about.as_str()),
-            (10, "claude-code", "82cc8f2d3c")
+            (
+                got.at,
+                got.by.as_str(),
+                got.about.as_str(),
+                got.pane.as_str()
+            ),
+            (10, "claude-code", "82cc8f2d3c", "p1")
         );
         let long = LeftOff {
             text: "x".repeat(300),
