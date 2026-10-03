@@ -45,11 +45,9 @@
     }
   },
   "title": {
-    "total": 20,
+    "total": 3,
     "files": {
       "desk/05-desk.js": 2,
-      "desk/06-rail.js": 15,
-      "desk/07-actions.js": 2,
       "paths.js": 1
     }
   },

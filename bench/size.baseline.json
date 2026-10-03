@@ -1,6 +1,5 @@
 {
   "files": {
-    "src/desk.rs": 2935,
     "src/update.rs": 2920
   },
   "functions": {
@@ -11,7 +10,7 @@
     "src/server/mod.rs::run": 147,
     "src/strip.rs::strip": 150,
     "ui/app/08-desks.js::connect": 190,
-    "ui/desk/07-actions.js::act": 189,
+    "ui/desk/07-actions.js::act": 181,
     "ui/look.js::init": 241,
     "ui/note.js::init": 209
   }

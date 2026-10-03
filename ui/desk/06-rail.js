@@ -37,9 +37,6 @@ const HEAD = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
 };
 const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
-/** A control that does something there is no undoing asks twice. Its text
- *  is `data-sure` while armed, and the title says why. */
-const sure = (a, p, title, label, glyph) => `<button type="button" data-a="${a}"${p ? ` data-p="${p}"` : ""} data-sure="Close?" title="${title}" aria-label="${label}">${glyph}</button>`;
 
 /** Whether the reader folded one of the rail's sections, remembered as the
  *  sidebar remembers its own folds -- and per section, so folding the list
@@ -94,16 +91,16 @@ function rail() {
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
-    `<div data-part="rail.panels"><div class="t-label dk-lab" title="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
+    `<div data-part="rail.panels"><div class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" title="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
+    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></div>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded. The row's
     // [n] says which panel sent it.
-    `<details class="dk-sec" data-sec="docs" data-part="rail.docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" title="The documents the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${live.length ? `<span class="n">${live.length}${waiting ? ` · <b>${waiting} waiting</b>` : ""}</span>` : ""}</summary>` +
+    `<details class="dk-sec" data-sec="docs" data-part="rail.docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" data-tip="Documents" data-tip-sub="What the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${live.length ? `<span class="n">${live.length}${waiting ? ` · <b>${waiting} waiting</b>` : ""}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. One line of title, then who sent it and
     // when: the panel by the name it was started with, which holds still, and
@@ -137,7 +134,7 @@ function docRow(x, gone, vs, esc) {
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
     `<span class="dk-tools">` +
-    (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" title="Copy path · ${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
+    (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" data-tip="Copy path" data-tip-sub="${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
     (on ? `<button type="button" data-a="desk" data-tip="Back to the panels" data-key="ctrl+\`" aria-label="Back to the panels">${ico("back")}</button>` : "") +
     `<button type="button" data-a="doc-x" data-d="${esc(x.id)}" data-tip="Remove from this list" data-tip-sub="the Inbox keeps it" aria-label="Remove ${esc(x.title)} from this desk's list">${ico("x")}</button>` +
     `</span></li>` + errLine(`d${x.id}`, esc);
@@ -210,7 +207,8 @@ function named(v) {
   const b = ctx.tocEl.querySelector(`.dk-focus[data-focus="${v.id}"]`);
   if (!b) return;
   const here = v.status.cwd || v.pane.cwd;
-  b.title = what(v) + (here ? ` · ${tilde(here)}` : "");
+  b.dataset.tip = what(v);
+  if (here) b.dataset.tipSub = tilde(here); else delete b.dataset.tipSub;
   b.querySelector(".nm").textContent = short(v);
   const cp = ctxPct(v.status);
   let c = b.querySelector(".ctx");
@@ -261,7 +259,7 @@ function noteSec(d) {
       `<button type="button" data-a="note-new" data-tip="New note" aria-label="New note">${ico("plus")}</button>`;
   return `<div class="dk-notes-part${undo ? " undo" : ""}" data-part="rail.notes">` +
     `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
-    `<summary class="t-label dk-lab" data-part="rail.notes.head" title="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
+    `<summary class="t-label dk-lab" data-part="rail.notes.head" data-tip="Notes" data-tip-sub="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
     errLine("clear", esc, "p") +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
     // The bar for a new line, always at the end of the list, where the line
@@ -279,7 +277,7 @@ function noteSec(d) {
 
 /** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
 const errLine = (k, esc, tag = "li") => rowErr && rowErr.k === k
-  ? `<${tag} class="dk-err" role="alert" title="${esc(rowErr.raw)}">${esc(rowErr.why)}<button type="button" class="dk-undo" data-a="retry">Retry</button></${tag}>` : "";
+  ? `<${tag} class="dk-err" role="alert" data-tip="What went wrong" data-tip-sub="${esc(rowErr.raw)}">${esc(rowErr.why)}<button type="button" class="dk-undo" data-a="retry">Retry</button></${tag}>` : "";
 
 /** Why the field is open again, after a save the daemon refused. */
 const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(noteErr)}</span>` : "";
@@ -542,13 +540,13 @@ function copySha(b) {
  *  and the document it sent (a click opens it). A line of its own, so a long
  *  note keeps the rail's width and nothing beside it moves. */
 function byLine(x, esc) {
-  const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" title="Copy ${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
-  const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" title="Open what ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
+  const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" data-tip="Copy commit" data-tip-sub="${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
+  const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" data-tip="Open the document" data-tip-sub="What ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
   // Where the finished work can be seen -- a PR, a deploy -- by its host.
   let host = "";
   try { host = x.done_evidence ? new URL(x.done_evidence).host.replace(/^www\./, "") : ""; } catch { host = ""; }
   const ev = host ? `<button type="button" class="dk-ev" data-a="note-ev" data-u="${esc(x.done_evidence)}" data-tip="${esc(x.done_evidence)}" data-tip-sub="where the work can be seen">${esc(host)} ↗</button>` : "";
-  return `<span class="dk-by"><span title="Ticked by ${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}${ev}</span>`;
+  return `<span class="dk-by"><span data-tip="Ticked by" data-tip-sub="${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}${ev}</span>`;
 }
 
 /** A desk with nothing sent yet waits for its first document, and says how
@@ -771,7 +769,8 @@ function picked(e) {
   if (!text || !v) return;
   const rs = sel.getRangeAt(0).getClientRects(), r = rs.length ? rs[rs.length - 1] : sel.getRangeAt(0).getBoundingClientRect();
   const b = Object.assign(document.createElement("button"), { type: "button", className: "dk-pick", textContent: `+ Point for panel ${v.pane.slot}` });
-  b.title = "Keep this passage, to put in that panel's input with the rest";
+  b.dataset.tip = "Keep this passage";
+  b.dataset.tipSub = "To put in that panel's input with the rest";
   // Pressing the control must not take the selection it is about away.
   b.addEventListener("mousedown", ev => ev.preventDefault());
   b.addEventListener("click", () => {
@@ -800,14 +799,14 @@ function pointSec(vs) {
   const { esc } = ctx;
   const has = vs.filter(v => (points.get(v.id) || []).length || (pointSaid && pointSaid.p === v.id));
   if (!has.length) return "";
-  return `<div class="dk-points" data-part="rail.points"><div class="t-label dk-lab" title="Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.">Points</div>` +
+  return `<div class="dk-points" data-part="rail.points"><div class="t-label dk-lab" data-tip="Points" data-tip-sub="Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.">Points</div>` +
     has.map(v => {
       const ps = points.get(v.id) || [], live = ps.filter(x => !x.gone).length;
       return `<ul class="dk-list">` + ps.map((x, i) => x.gone
         ? `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
-        : `<li class="dk-note dk-point"><span class="nm" title="${esc(x.from)}">${esc(x.text)}</span>` +
+        : `<li class="dk-note dk-point"><span class="nm" data-tip="Kept from" data-tip-sub="${esc(x.from)}">${esc(x.text)}</span>` +
           `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" data-tip="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
-        (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" title="Type ${live === 1 ? "it" : "them"} into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
+        (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" data-tip="Put into the panel" data-tip-sub="Typed into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
         (pointSaid && pointSaid.p === v.id ? `<p class="dk-empty dk-said" role="status">${esc(pointSaid.text)}</p>` : "");
     }).join("") + `</div>`;
 }

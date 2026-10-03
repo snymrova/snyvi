@@ -4,14 +4,6 @@
 
 async function act(b, byKey) {
   const a = b.dataset.a, d = current(), v = views.get(b.dataset.p || focused);
-  // Closing ends a process, and there is no undoing that: the first click
-  // says what the second will do, in the control's own place.
-  if (b.dataset.sure && !b.dataset.armed) {
-    b.dataset.armed = "1"; const was = b.innerHTML, title = b.title;
-    b.textContent = b.dataset.sure; b.title = "Click again to confirm";
-    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.innerHTML = was; b.title = title; } }, 3000);
-    return;
-  }
   const e0 = rowErr;
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
