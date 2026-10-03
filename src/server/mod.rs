@@ -455,6 +455,18 @@ fn router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
+/// Every panel of a desk shares one socket, and its frames are already paced
+/// to one per 16 ms: Nagle buys nothing there, and held a key's echo behind
+/// the page's delayed ACK -- 40 ms -- whenever another panel was busy.
+fn nodelay(
+    listener: tokio::net::TcpListener,
+) -> axum::serve::TapIo<tokio::net::TcpListener, fn(&mut tokio::net::TcpStream)> {
+    use axum::serve::ListenerExt;
+    listener.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    })
+}
+
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
@@ -554,7 +566,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         }
     });
     eprintln!("snyvi {VERSION} listening on http://{addr}");
-    axum::serve(listener, router)
+    axum::serve(nodelay(listener), router)
         .with_graceful_shutdown(async move {
             let term = async {
                 #[cfg(unix)]

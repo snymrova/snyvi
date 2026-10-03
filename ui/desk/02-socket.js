@@ -161,8 +161,8 @@ function paint(v, f) {
       const row = v.cells[y];
       let x = x0;
       for (const [t, fg = 0, bg = 0, fl = 0] of runs) {
-        const wide = fl & WIDE, a = fl & ~WIDE;
-        for (const ch of t) {
+        const wide = fl & WIDE, a = fl & ~(WIDE | CLUSTER);
+        for (const ch of fl & CLUSTER ? [t] : t) {
           row[x++] = [ch, fg, bg, a, wide ? 2 : 1];
           if (wide) row[x++] = null;
         }

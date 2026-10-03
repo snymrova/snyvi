@@ -16,6 +16,12 @@
  */
 
 const WIDE = 256;
+/** A run that is one cell: a character and the marks or emoji parts that
+ *  join it (src/screen/cluster.rs). Never split into characters. */
+const CLUSTER = 512;
+/** A cell drawn alone, in a box of its own width: a wide one, a cluster, or
+ *  one the pane's font may not have, whose advance cannot be trusted. */
+const ownCell = c => c[4] === 2 || c[0] >= "\u2000" || c[0].length > 1;
 /** The terminal's text sizes, which Aa steps through on a desk: the font
  *  size and the row's height, in px. Normal is what a pane always was. One
  *  size for every desk, kept in `snyvi.term-size`. */

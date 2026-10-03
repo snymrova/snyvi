@@ -220,7 +220,10 @@ and taking it in cost over a second on every desk switch.
 A run is `[text, fg, bg, flags]`, and trailing defaults are dropped, so plain
 text is `["text"]`. A colour is 0 for the default, 1–256 for a palette index
 plus one, or `0x1000000 | rgb`. Flag 256 marks a run of double-width
-characters.
+characters. Flag 512 marks a run that is one cell: a character and the marks
+or emoji parts that join it (a Devanagari vowel sign, a skin tone, a ZWJ
+family), which the page never splits. Its width is its first character's, as
+Claude Code counts it (`src/screen/cluster.rs`).
 
 ### Three rules from the Phase 0 spike
 
@@ -426,9 +429,9 @@ token and a running pane.
 ## 7. Gaps, stated
 
 - **No reflow on resize.** A line cut short by a narrower pane stays cut.
-- **No combining marks, charset designation or DCS.** The spike saw 0–4
-  unhandled sequences per run. A combining mark is dropped rather than drawn
-  in the wrong cell.
+- **No charset designation or DCS.** The spike saw 0–4 unhandled sequences
+  per run. A combining mark joins the cell before it; one with no cell before
+  it is dropped.
 - **No IME composition.** Keys arrive as `keydown`, so dead keys and input
   methods that compose do not work yet.
 - **A pane is sized by the last window to ask**, as in tmux. Two windows on

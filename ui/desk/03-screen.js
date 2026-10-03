@@ -138,7 +138,7 @@ function rowHtml(row) {
   for (let i = 0; i < row.length; i++) {
     const c = row[i];
     if (!c) continue;
-    if (c[4] === 2 || c[0] >= "\u2000") {
+    if (ownCell(c)) {
       flush(); key = null;
       // A rule or a bar is one character many times over: one span for the
       // run, its mask repeated across it, not a span and a layer for each.
@@ -159,7 +159,7 @@ function rowHtml(row) {
 }
 const runsHtml = runs => {
   const row = [];
-  for (const [t, fg = 0, bg = 0, fl = 0] of runs) for (const ch of t) row.push([ch, fg, bg, fl & ~WIDE, fl & WIDE ? 2 : 1]);
+  for (const [t, fg = 0, bg = 0, fl = 0] of runs) for (const ch of fl & CLUSTER ? [t] : t) row.push([ch, fg, bg, fl & ~(WIDE | CLUSTER), fl & WIDE ? 2 : 1]);
   return rowHtml(row);
 };
 
@@ -299,7 +299,7 @@ function rowText(row) {
   let out = "", text = "";
   for (const c of row) {
     if (!c) continue;
-    if (c[4] === 2 || c[0] >= "\u2000") { out += ctx.esc(text) + `<span class="x${c[4] === 2 ? " w" : ""}">${ctx.esc(c[0])}</span>`; text = ""; continue; }
+    if (ownCell(c)) { out += ctx.esc(text) + `<span class="x${c[4] === 2 ? " w" : ""}">${ctx.esc(c[0])}</span>`; text = ""; continue; }
     text += c[0];
   }
   return out + ctx.esc(text);
@@ -390,9 +390,10 @@ function font(v, g, px, fl) {
     v.pal.fonts.set(key, f);
   }
   g.font = f.css;
-  // The quick way to set text: no kerning to work out, and no ligatures,
-  // which a grid has no room for anyway.
-  g.textRendering = "optimizeSpeed"; g.fontKerning = "none";
+  // No kerning to work out. Ligatures are kept out by `drawRow`, which gives
+  // the canvas one character at a time: WebKit's canvas has no
+  // `textRendering` to turn them off with, and `=>` came out as one arrow.
+  g.fontKerning = "none";
   return f;
 }
 
@@ -455,10 +456,10 @@ function drawRow(v, y, a = 0, b = v.cols) {
     if (!c) { x++; continue; }
     const f = fgOf(c), fl = c[3];
     let n = x + c[4], text = c[0];
-    const own = c[4] === 2 || c[0] >= "\u2000";
+    const own = ownCell(c);
     const same = r => r && r[4] === 1 && r[1] === c[1] && r[2] === c[2] && r[3] === fl;
     if (!own) {
-      while (n < e && same(row[n]) && row[n][0] < "\u2000") text += row[n++][0];
+      while (n < e && same(row[n]) && !ownCell(row[n])) text += row[n++][0];
     } else if (c[4] === 1 && SPAN.has(text)) {
       while (n < e && same(row[n]) && row[n][0] === text) n++;
     }
@@ -468,8 +469,17 @@ function drawRow(v, y, a = 0, b = v.cols) {
       else {
         const icon = own && /[\ue000-\uf8ff]/.test(text), m = font(v, g, icon ? 10 : size, fl);
         g.fillStyle = f;
-        if (own) { g.textAlign = "center"; g.fillText(text, (X(x) + X(n)) / 2, top + m.base); g.textAlign = "start"; }
-        else g.fillText(text, X(x), top + m.base);
+        g.textAlign = "center";
+        if (own) g.fillText(text, (X(x) + X(n)) / 2, top + m.base);
+        // A character to a cell, each centred in its own. A run given whole
+        // is spaced by the canvas's own advance, which is not the cell the
+        // page measured: at 2x, or on the GPU canvas of the Linux window,
+        // half a pixel short a letter. A row drifted off the grid, opened
+        // gaps where the next run started on it again, and a partial redraw
+        // under a typed key showed the wrong letters in its clip. (A run here
+        // is one UTF-16 unit a cell: anything longer is `ownCell`.)
+        else for (let i = 0; i < text.length; i++) if (text[i] !== " ") g.fillText(text[i], (X(x + i) + X(x + i + 1)) / 2, top + m.base);
+        g.textAlign = "start";
       }
     }
     if (fl & 136 && !(fl & 64)) {

@@ -48,6 +48,13 @@ const UNWATCHED_FRAME: Duration = Duration::from_secs(1);
 /// first alone sent a torn half of it and then the rest -- two frames, two
 /// paints, for one redraw. Short enough that a key's echo does not lag.
 const SETTLE: Duration = Duration::from_millis(4);
+/// Output within this long of a key is its echo, and goes out at once: no
+/// `SETTLE`, no waiting out the frame gap. A program answers a key in one
+/// write (Claude Code's whole input line is one), so there is nothing to tear.
+const ECHO_WINDOW: Duration = Duration::from_millis(50);
+/// What an echo does wait: a shell's highlighter can follow its echo with a
+/// recolour a few hundred microseconds later, and both should be one frame.
+const ECHO_SETTLE: Duration = Duration::from_millis(1);
 /// A synchronized update (mode 2026) is framed when it ends, or after this --
 /// what terminals that speak the mode hold one for at most, so a program that
 /// never ends its update is not frozen.
@@ -239,6 +246,23 @@ struct Inner {
     /// When the present run of output began: the first print after
     /// `busy_output` of quiet. See `PRINTING_AT_MOST`.
     printing_since: Instant,
+    /// When the reader last typed, until its echo is framed: one fast frame
+    /// per key, so a paste or a key that starts a flood is paced as before.
+    typed: Option<Instant>,
+}
+
+impl Inner {
+    /// Output has come since the last key, soon enough to be its echo. Spends
+    /// the key: the next output is paced as usual.
+    fn echo_due(&mut self) -> bool {
+        match self.typed {
+            Some(t) if self.wrote >= t => {
+                self.typed = None;
+                t.elapsed() < ECHO_WINDOW
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Inner {
@@ -391,6 +415,7 @@ impl Panes {
                 root: String::new(),
                 wrote: Instant::now(),
                 printing_since: Instant::now(),
+                typed: None,
             }),
             tx,
             wake: Notify::new(),
@@ -1109,6 +1134,7 @@ impl Live {
         let mut i = self.inner.lock().unwrap();
         let Some(p) = i.proc.as_ref() else { return };
         let _ = p.input.send(bytes.to_vec());
+        i.typed = Some(Instant::now());
         if i.status.blocked {
             i.status.blocked = false;
             i.status.blocked_since = None;
@@ -1422,7 +1448,13 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
             _ = tokio::time::sleep(wait) => if hold.is_none() { continue },
         }
         let since = last.elapsed();
-        if since >= gap && hold.is_none() {
+        let echo = match me.upgrade() {
+            Some(l) => l.inner.lock().unwrap().echo_due(),
+            None => return,
+        };
+        if echo && hold.is_none() {
+            tokio::time::sleep(ECHO_SETTLE).await;
+        } else if since >= gap && hold.is_none() {
             tokio::time::sleep(SETTLE).await;
         } else if since < gap {
             let Some(l) = me.upgrade() else { return };
@@ -1915,6 +1947,30 @@ mod tests {
         let text =
             std::fs::read_to_string(dir.path.join("panes").join(format!("{id}.txt"))).unwrap();
         assert!(text.contains(&format!("pane={id}")));
+    }
+
+    /// A key buys one fast frame for the output that follows it, and only
+    /// one: output before the key, or long after it, or a second burst after
+    /// the echo, is paced as before.
+    #[tokio::test]
+    async fn a_key_buys_one_fast_frame_for_its_echo() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-echo");
+        let (events, _) = broadcast::channel(16);
+        let panes = Panes::new(&dir.path, events);
+        let live = panes.get("0f0e0d0c0b0a09080706050403020100");
+        let mut i = live.inner.lock().unwrap();
+        assert!(!i.echo_due(), "nothing typed");
+        let key = Instant::now();
+        i.wrote = key - Duration::from_millis(1);
+        i.typed = Some(key);
+        assert!(!i.echo_due(), "output from before the key is not its echo");
+        i.wrote = key + Duration::from_millis(1);
+        assert!(i.echo_due(), "the echo");
+        assert!(!i.echo_due(), "spent: the next output is paced");
+        i.typed = Some(key - ECHO_WINDOW * 2);
+        i.wrote = Instant::now();
+        assert!(!i.echo_due(), "too long after the key to be its echo");
+        assert_eq!(i.typed, None);
     }
 
     /// A pane nobody watches makes a frame a second, not sixty -- and a page

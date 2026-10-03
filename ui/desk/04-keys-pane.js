@@ -38,7 +38,9 @@ function keyBytes(e, appCursor) {
 function input(v, text) {
   if (!v.status.running || !text) return;
   say({ t: "in", p: v.id, d: text });
-  v.body.scrollTop = v.body.scrollHeight;
+  // Typing brings a reader scrolled up back down. One at the bottom already
+  // is left alone: reading the height was a layout forced on every key.
+  if (!v.pinned) { v.pinned = true; v.body.scrollTop = v.body.scrollHeight; }
 }
 const bracket = (v, t) => (v.mode && v.mode[1] ? `\x1b[200~${t}\x1b[201~` : t);
 

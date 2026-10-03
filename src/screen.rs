@@ -29,10 +29,12 @@
 //!    what goes on the wire is bounded by the screen's size and not by how fast
 //!    a process writes: 369 KB/s in became 26 KB/s out.
 //!
-//! What is deliberately absent: reflow on resize, combining marks, charset
+//! What is deliberately absent: reflow on resize, charset
 //! designation, DCS, mouse reporting past the wheel, and OSC 52 clipboard
 //! writes, which snyvi declines -- a process in a pane does not get to write
 //! the reader's clipboard. `docs/DESK.md` has the list and why.
+
+mod cluster;
 
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -70,6 +72,9 @@ pub const STRIKE: u16 = 128;
 /// Not an SGR: set on a run of double-width characters, so the page can give
 /// each of them two columns rather than trusting a font to.
 pub const WIDE: u16 = 256;
+/// Not an SGR either: the run is one cell, a character and the marks or emoji
+/// parts that join it (`cluster`), and is not to be split into characters.
+pub const CLUSTER: u16 = 512;
 
 /// A colour: 0 is the default, 1..=256 is a palette index plus one, and
 /// anything with bit 24 set is `0xRRGGBB` truecolor. One number, so a run on
@@ -617,7 +622,10 @@ impl Screen {
         lines.extend(self.pushed.iter().map(Line::text));
         let main = self.stash.as_ref().map(|(g, _)| g).unwrap_or(&self.grid);
         for row in main {
-            let s: String = row.iter().filter(|c| c.width > 0).map(|c| c.ch).collect();
+            let mut s = String::new();
+            for c in row.iter().filter(|c| c.width > 0) {
+                cluster::push(&mut s, c.ch);
+            }
             lines.push(s.trim_end().to_string());
         }
         while lines.last().is_some_and(|l| l.is_empty()) {
@@ -655,7 +663,8 @@ impl Screen {
     /// on its own is cut at the cap, since the alternative is keeping nothing.
     fn keep_line(&mut self, mut l: Line) {
         if l.bytes() > SCROLLBACK_BYTES {
-            let attr = l.runs.first().map(|r| r.1).unwrap_or_default();
+            let mut attr = l.runs.first().map(|r| r.1).unwrap_or_default();
+            attr.flags &= !(WIDE | CLUSTER);
             let mut t = l.text();
             let mut cut = SCROLLBACK_BYTES / 2;
             while !t.is_char_boundary(cut) {
@@ -739,12 +748,61 @@ impl Screen {
     }
 
     fn print_char(&mut self, c: char) {
-        let w = c.width().unwrap_or(0);
-        if w == 0 {
-            // A combining mark or a control that reached print: dropped, which
-            // is the documented gap. Nothing is lost from a cell that exists.
+        if c >= '\u{300}' && self.joined(c) {
             return;
         }
+        let c = cluster::own(c);
+        let w = width_of(c);
+        if w == 0 {
+            // A control that reached print, or a mark with nothing before it
+            // to join: dropped. Nothing is lost from a cell that exists.
+            return;
+        }
+        self.place(c, w);
+    }
+
+    /// A mark, a joiner, a skin tone: joined to the cell before the cursor,
+    /// which keeps its width, and the cursor stays where it is.
+    fn joined(&mut self, c: char) -> bool {
+        let row = &mut self.grid[self.y];
+        let mut x = if self.pending {
+            self.x
+        } else if self.x > 0 {
+            self.x - 1
+        } else {
+            return false;
+        };
+        if row[x].width == 0 && x > 0 {
+            x -= 1;
+        }
+        match cluster::join(row[x].ch, c) {
+            None => false,
+            Some(Some(h)) => {
+                row[x].ch = h;
+                true
+            }
+            Some(None) => true,
+        }
+    }
+
+    /// Repeat the last character: rare, and cheap to get right as "print the
+    /// one to the left again" -- a cluster whole, not joined to itself.
+    fn repeat(&mut self, n: usize) {
+        if self.x == 0 {
+            return;
+        }
+        let c = self.grid[self.y][self.x - 1].ch;
+        let w = width_of(c);
+        if w == 0 {
+            return;
+        }
+        for _ in 0..n.min(self.cols) {
+            self.place(c, w);
+        }
+    }
+
+    /// A cell's character at the cursor, `w` columns of it.
+    fn place(&mut self, c: char, w: usize) {
         if self.pending {
             if self.autowrap {
                 self.wraps[self.y] = true;
@@ -1285,16 +1343,7 @@ impl vte::Perform for Screen {
             }
             'S' => self.scroll_up(arg(0, 1), false),
             'T' => self.scroll_down(arg(0, 1)),
-            'b' => {
-                // Repeat the last character: rare, and cheap to get right as
-                // "print the one to the left again".
-                if self.x > 0 {
-                    let c = self.grid[self.y][self.x - 1].ch;
-                    for _ in 0..arg(0, 1).min(self.cols) {
-                        self.print_char(c);
-                    }
-                }
-            }
+            'b' => self.repeat(arg(0, 1)),
             'g' => match arg(0, 0) {
                 0 => self.tabs[self.x] = false,
                 3 => self.tabs.iter_mut().for_each(|t| *t = false),
@@ -1368,8 +1417,8 @@ impl vte::Perform for Screen {
 
 // ---------- the wire ----------
 
-/// Cells as runs that share an attribute, and double-width characters as runs
-/// of their own marked `WIDE`.
+/// Cells as runs that share an attribute, double-width characters as runs of
+/// their own marked `WIDE`, and each cluster a run of its own marked `CLUSTER`.
 fn runs(cells: &[Cell]) -> Vec<(String, Attr)> {
     let mut out: Vec<(String, Attr)> = Vec::new();
     for c in cells {
@@ -1380,12 +1429,29 @@ fn runs(cells: &[Cell]) -> Vec<(String, Attr)> {
         if c.width == 2 {
             attr.flags |= WIDE;
         }
+        if cluster::is_handle(c.ch) {
+            attr.flags |= CLUSTER;
+            out.push((cluster::text(c.ch), attr));
+            continue;
+        }
         match out.last_mut() {
             Some((t, a)) if *a == attr => t.push(c.ch),
             _ => out.push((c.ch.to_string(), attr)),
         }
     }
     out
+}
+
+/// How many columns a cell's character takes: a cluster, its first's.
+fn width_of(c: char) -> usize {
+    if cluster::is_handle(c) {
+        return cluster::text(c)
+            .chars()
+            .next()
+            .and_then(|c| c.width())
+            .unwrap_or(1);
+    }
+    c.width().unwrap_or(0)
 }
 
 fn push_runs(out: &mut String, cells: &[Cell]) {
@@ -1457,7 +1523,7 @@ mod tests {
         s.grid[y]
             .iter()
             .filter(|c| c.width > 0)
-            .map(|c| c.ch)
+            .map(|c| cluster::text(c.ch))
             .collect::<String>()
             .trim_end()
             .to_string()
@@ -1468,7 +1534,7 @@ mod tests {
     /// ever disagrees with the screen after a frame, that is a desync.
     struct Replica {
         cols: usize,
-        rows: Vec<Vec<(char, Attr)>>,
+        rows: Vec<Vec<(String, Attr)>>,
         sb: Vec<String>,
     }
 
@@ -1486,7 +1552,7 @@ mod tests {
                 let c = sz[0].as_u64().unwrap() as usize;
                 let r = sz[1].as_u64().unwrap() as usize;
                 self.cols = c;
-                self.rows = vec![vec![(' ', Attr::default()); c]; r];
+                self.rows = vec![vec![(" ".into(), Attr::default()); c]; r];
             }
             if f.get("sbclear").is_some() {
                 self.sb.clear();
@@ -1504,7 +1570,7 @@ mod tests {
             if let Some(k) = f.get("up").and_then(Value::as_u64) {
                 let k = k as usize;
                 self.rows.drain(..k);
-                let blank = vec![(' ', Attr::default()); self.cols];
+                let blank = vec![(" ".into(), Attr::default()); self.cols];
                 self.rows.extend(std::iter::repeat_n(blank, k));
             }
             for r in f.get("r").and_then(Value::as_array).into_iter().flatten() {
@@ -1516,14 +1582,20 @@ mod tests {
                     let attr = Attr {
                         fg: n(1) as u32,
                         bg: n(2) as u32,
-                        flags: n(3) as u16 & !WIDE,
+                        flags: n(3) as u16 & !(WIDE | CLUSTER),
                     };
                     let wide = n(3) as u16 & WIDE != 0;
-                    for ch in a[0].as_str().unwrap().chars() {
+                    let t = a[0].as_str().unwrap();
+                    let cells: Vec<String> = if n(3) as u16 & CLUSTER != 0 {
+                        vec![t.into()]
+                    } else {
+                        t.chars().map(String::from).collect()
+                    };
+                    for ch in cells {
                         self.rows[y][x] = (ch, attr);
                         x += 1;
                         if wide {
-                            self.rows[y][x] = (' ', attr);
+                            self.rows[y][x] = (" ".into(), attr);
                             x += 1;
                         }
                     }
@@ -1543,9 +1615,13 @@ mod tests {
             for y in 0..s.rows {
                 for x in 0..s.cols {
                     let c = s.grid[y][x];
-                    let want = if c.width == 0 { ' ' } else { c.ch };
-                    let got = self.rows[y][x].0;
-                    if got != want || (c.width != 0 && self.rows[y][x].1 != c.attr) {
+                    let want = if c.width == 0 {
+                        " ".into()
+                    } else {
+                        cluster::text(c.ch)
+                    };
+                    let got = &self.rows[y][x].0;
+                    if *got != want || (c.width != 0 && self.rows[y][x].1 != c.attr) {
                         return Err(format!("row {y} col {x}: page {got:?}, screen {want:?}"));
                     }
                 }
@@ -1573,6 +1649,65 @@ mod tests {
         let f = s.frame("p", &mut shown).expect("the clear goes out");
         assert!(f.contains("\"sbclear\":1"));
         assert!(!s.scrollback_cleared(), "and down once it has");
+    }
+
+    /// What Claude Code's caret said each of these is, typed into its prompt
+    /// (docs: the garbled-panel report, 2026-10-03). A spacing vowel sign, a
+    /// skin tone, a family's ZWJ: no column of their own. And kept, not
+    /// dropped: the cell reads back as it was written.
+    #[test]
+    fn a_cluster_is_as_wide_as_claude_code_counts_it() {
+        for (text, cols) in [
+            ("पहले", 3),
+            ("दिखेगा", 3),
+            ("लेना", 2),
+            ("नहीं", 2),
+            ("ज\u{93c}्यादा", 3),
+            ("কিছু", 2),
+            ("தமிழ்", 3),
+            ("👍🏽", 2),
+            ("👨\u{200d}👩\u{200d}👧", 2),
+            ("🇮🇳", 2),
+            ("e\u{301}", 1),
+            ("ที่", 1),
+            ("漢字", 4),
+        ] {
+            let (mut s, mut p) = screen(20, 2);
+            feed(&mut s, &mut p, text);
+            assert_eq!(s.x, cols, "{text}");
+            assert_eq!(row(&s, 0), text);
+        }
+    }
+
+    /// Claude Code's redraw: up a row, back to the start, write. A row of
+    /// Hindi that fits for Claude Code fits here too, so "up one" lands on
+    /// the row it meant -- before, the row wrapped, and the rewrite went over
+    /// the line below it.
+    #[test]
+    fn a_redraw_over_hindi_lands_where_claude_code_aims_it() {
+        let (mut s, mut p) = screen(8, 4);
+        feed(&mut s, &mut p, "दिखेगा लेना\r\nnext\x1b[1A\r\x1b[2Kok");
+        assert_eq!(row(&s, 0), "ok");
+        assert_eq!(row(&s, 1), "next");
+    }
+
+    /// A cluster goes over the wire as one cell, on the screen and into the
+    /// scrollback, and the page's copy agrees with the screen's.
+    #[test]
+    fn a_cluster_reaches_the_page_as_one_cell() {
+        let (mut s, mut p) = screen(12, 2);
+        let mut shown = Shown::new(12, 2);
+        let mut rep = Replica::new();
+        feed(&mut s, &mut p, "\x1b[1mनहीं\x1b[0m 👍🏽 ok");
+        pump(&mut s, &mut shown, &mut rep);
+        feed(&mut s, &mut p, "\r\nदिखेगा\r\nthird");
+        pump(&mut s, &mut shown, &mut rep);
+        assert_eq!(rep.sb, vec!["नहीं 👍🏽 ok".to_string()]);
+        assert_eq!(s.text()[0], "नहीं 👍🏽 ok");
+        // A mark with nothing before it to join is dropped, as before.
+        let (mut s, mut p) = screen(4, 1);
+        feed(&mut s, &mut p, "\u{301}a");
+        assert_eq!((row(&s, 0).as_str(), s.x), ("a", 1));
     }
 
     #[test]

@@ -1417,7 +1417,10 @@ positions, no clocks, so every one
 of its rows is enforced on every machine, CI's included. The desktop
 window's engine is not Chromium: `bench/webkit.py` drives the same page
 in WebKitGTK under Xvfb, by hand for now, and reads the two things only
-that engine got wrong.
+that engine got wrong. `bench/echo.py`, also by hand, types into a panel
+over the desk socket and times each key to its echo: p99 6 ms with a busy
+panel beside it, held to 20 ms (it was 42 before the socket set
+`TCP_NODELAY` and a key's echo stopped waiting out the frame pacing).
 
 Every row here is one the bench reads, with the budget the bench holds
 it to; a number no probe reads is in the short list after the table,
