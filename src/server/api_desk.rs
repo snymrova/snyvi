@@ -163,6 +163,32 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
     (json!(cards), json!(days))
 }
 
+/// What git says about a desk's folder, for its rail: the repository's page
+/// on the web. The same half-minute cache Home reads (`crate::git`), off the
+/// runtime; `null` for a folder with no repository or no remote.
+pub(crate) async fn desk_git(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let app2 = app.clone();
+    let git = tokio::task::spawn_blocking(move || {
+        app2.git
+            .read(std::path::Path::new(&desk.root), crate::store::now())
+    })
+    .await
+    .ok()
+    .flatten();
+    Json(json!({ "remote": git.as_deref().and_then(|g| g.remote.clone()) })).into_response()
+}
+
 /// The reader opened a desk: Home's "last touched" and the desk it offers to
 /// pick up are read from this.
 pub(crate) async fn visit_desk(
@@ -976,6 +1002,37 @@ pub(crate) async fn rename_desk(
             Json(json!({ "ok": true, "name": name })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OrderBody {
+    pub(crate) ids: Vec<i64>,
+}
+
+/// The reader's order for the desks, top first: every open desk, or nothing
+/// changes (`desk::reorder`). Every page redraws its lists from the `desks`
+/// event, this one too.
+pub(crate) async fn order_desks(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<OrderBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.reorder_desks(&b.ids) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "the desks changed; this is not the whole list of them" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }

@@ -143,6 +143,8 @@ pub(crate) async fn pane_agent(
     }
     let mut live = match &b.state {
         Some(state) => app.panes.set_agent(&id, state),
+        // A session named with no state is a SessionStart: an agent is in.
+        None if b.session.is_some() => app.panes.agent_in(&id),
         None => app.panes.is_running(&id),
     };
     if live && (b.model.is_some() || b.ctx.is_some()) {
@@ -457,7 +459,8 @@ pub(crate) async fn pane_brief(
     app.panes.told(&id, now);
     Json(json!({
         "context": crate::brief::brief(&desk, placed.pane.slot, &notes, &desk.keys, last, now),
-        "title": crate::brief::title(&desk, placed.pane.slot),
+        "title": crate::brief::title(&desk, placed.pane.slot, &placed.pane.name),
+        "desk": desk.name,
     }))
     .into_response()
 }
@@ -477,17 +480,21 @@ pub(crate) async fn pane_changes(
         Ok(p) => p,
         Err(no) => return *no,
     };
-    let quiet = || Json(json!({ "context": "" })).into_response();
     if !brief_on(&app) {
-        return quiet();
+        return Json(json!({ "context": "" })).into_response();
     }
+    let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // The session's title goes with every answer, so a panel named since the
+    // session started gives the session its name at the next prompt.
+    let title = crate::brief::title(&desk, placed.pane.slot, &placed.pane.name);
+    let quiet =
+        || Json(json!({ "context": "", "title": title, "desk": desk.name })).into_response();
     let now = crate::store::now();
     let since = match app.panes.told(&id, now) {
         Some(since) if since > 0 => since,
         _ => return quiet(),
-    };
-    let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
-        return StatusCode::NOT_FOUND.into_response();
     };
     let mut notes = app.store.desk_notes(desk.id).unwrap_or_default();
     settle_stages(&app, &mut notes);
@@ -510,7 +517,7 @@ pub(crate) async fn pane_changes(
         since,
         now,
     });
-    Json(json!({ "context": context })).into_response()
+    Json(json!({ "context": context, "title": title, "desk": desk.name })).into_response()
 }
 
 #[derive(Deserialize, Default)]

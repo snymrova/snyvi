@@ -161,8 +161,39 @@ function forgetDocs() {
   docOff = []; offShown = false; docGone = null; docSeen = null;
 }
 
+/** Where each desk's repository lives on the web, by desk id: `{ url, at,
+ *  busy }`, read off the daemon's git (`/api/desks/{id}/git`), which keeps
+ *  its answer for half a minute too. Kept across desks, so going back to one
+ *  draws its line at once. */
+const repos = new Map();
+const REPO_FRESH = 30_000;
+const REPO = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12.5v-9A1.5 1.5 0 0 1 5 2h7.5v9.5H5a1.5 1.5 0 0 0 0 3h7.5"/></svg>`;
+const FORGES = { "github.com": "GitHub", "gitlab.com": "GitLab", "codeberg.org": "Codeberg", "bitbucket.org": "Bitbucket" };
+
+/** The repo's web page for desk `d`, as last read, and a read when that is
+ *  stale. A line that changes is redrawn when the answer comes. */
+function repoOf(d) {
+  const r = repos.get(d.id);
+  if (!r || (!r.busy && Date.now() - r.at > REPO_FRESH)) {
+    const was = r ? r.url : null;
+    repos.set(d.id, { url: was, at: Date.now(), busy: true });
+    ctx.api(`/api/desks/${d.id}/git`).then(j => (j && j.remote) || null, () => was).then(url => {
+      repos.set(d.id, { url, at: Date.now(), busy: false });
+      if (url !== was && current()?.id === d.id) meta();
+    });
+  }
+  return r ? r.url : null;
+}
+
+/** `https://github.com/o/r` as `o/r`, and the name of where it is. */
+function repoName(url) {
+  try { const u = new URL(url); return { path: u.pathname.replace(/^\/+/, ""), host: FORGES[u.hostname] || u.host }; }
+  catch { return null; }
+}
+
 /** The desk and its focused panel, in the pane under the rail: what the
- *  clock and the focused panel's own frames redraw, and nothing else. */
+ *  clock and the focused panel's own frames redraw, and nothing else. Under
+ *  them, the desk's repository on the web, when its folder has one. */
 function meta() {
   const d = current();
   if (!d) return;
@@ -176,16 +207,18 @@ function meta() {
     `${cp == null ? "" : ` · <span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}">${ctxFig(s)}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
     // The folder the panel's shell is in now, when it is not the desk's own.
     ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" data-tip="${esc(s.cwd || v.pane.cwd)}" data-tip-mono>${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
+  const url = repoOf(d), rn = url && repoName(url);
+  const foot = rn && rn.path ? `<div class="row dk-repo-row"><a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="Open on ${esc(rn.host)}" data-tip-sub="${esc(url)}">${REPO}<span>${esc(rn.path)}</span><span class="dk-out">↗</span></a></div>` : "";
   // The panel's line ticks ("up 12s") on every frame that brings a status,
   // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
   // written alone while the rows above it are still the ones drawn here.
   const el = ctx.metaEl, pl = el.querySelector(".dk-pl");
-  if (el.$top === top && el.firstElementChild === el.$first && (pl || !low)) {
+  if (el.$top === top && el.$foot === foot && el.firstElementChild === el.$first && (pl || !low)) {
     // The panel's lines -- its state and, when it moved, its folder -- are
     // written together: all of the old ones out, the new ones in their place.
     if (low !== el.$low) { el.querySelectorAll(".dk-pl").forEach((r, i) => { if (i) r.remove(); }); if (low) pl.outerHTML = low; else if (pl) pl.remove(); }
-  } else drawIn(el, top + low);
-  el.$top = top; el.$low = low;
+  } else drawIn(el, top + low + foot);
+  el.$top = top; el.$low = low; el.$foot = foot;
   ctx.rail.classList.remove("empty");
 }
 
@@ -663,13 +696,17 @@ function pasted(fs) {
 /** A picture the Linux window read off the clipboard itself, on Ctrl+V: its
  *  engine gives the paste event nothing for an image (src/bin/app.rs). Taken
  *  where it was pasted: a note's field, or a panel, which gets it as it gets
- *  any pasted picture, as a document whose path is typed. */
+ *  any pasted picture, as a document whose path is typed -- except Claude on a
+ *  plain ⌃V, which takes the picture itself. */
 function windowPaste(e) {
   const at = document.activeElement;
   if (typeof e.detail !== "string" || !at) return;
   const note = at.classList.contains("dk-note-in") && ctx.tocEl.contains(at);
   const v = !note && [...views.values()].find(x => x.body === at);
   if (!note && !v) return;
+  // Claude, live in the panel, was sent ^V and has the picture already;
+  // typing its path as well would give it the picture twice.
+  if (v && (v.status.agent_in || v.status.agent) && Date.now() - (v.ctrlV || 0) < 2000) return;
   const b64 = e.detail.slice(e.detail.indexOf(",") + 1), bin = atob(b64), buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
   const file = new File([buf], "pasted.png", { type: "image/png" });

@@ -234,8 +234,8 @@ pub fn run(paths: &Paths) -> Result<()> {
         // for this: `client::brief` gives up after half a second, and then
         // nothing is printed and Claude starts as it would have.
         if starting {
-            if let Some((context, title)) = client::brief(paths, pane) {
-                if let Some(out) = session_start_output(&event, &context, &title) {
+            if let Some(b) = client::brief(paths, pane) {
+                if let Some(out) = session_start_output(&event, &b.context, &b.title, &b.desk) {
                     println!("{out}");
                 }
             }
@@ -248,7 +248,9 @@ pub fn run(paths: &Paths) -> Result<()> {
         // printed. It rides on the reader's own message, so snyvi still
         // never starts a turn.
         if name == "UserPromptSubmit" {
-            if let Some(out) = client::changes(paths, pane).and_then(|c| prompt_output(&c)) {
+            if let Some(out) = client::changes(paths, pane)
+                .and_then(|c| prompt_output(&event, &c.context, &c.title, &c.desk))
+            {
                 println!("{out}");
             }
             return Ok(());
@@ -292,13 +294,13 @@ pub fn run(paths: &Paths) -> Result<()> {
 ///
 /// The title only where Claude Code applies one -- startup, resume, fork --
 /// and never over a name the reader gave: a title that is not one of ours
-/// ("ledger · panel 2") is theirs, from `--name` or `/rename`. One of ours is
-/// replaced, since a conversation resumed in another panel lives there now.
+/// (`ours`) is theirs, from `--name` or `/rename`. One of ours is replaced,
+/// since a conversation resumed in another panel lives there now.
 ///
 /// And only for a Claude Code session, which is the one with a 36-character
 /// id: Codex takes the same hook and the same context, but refuses an output
 /// field it does not know, and `sessionTitle` is one.
-fn session_start_output(event: &Event, context: &str, title: &str) -> Option<String> {
+fn session_start_output(event: &Event, context: &str, title: &str, desk: &str) -> Option<String> {
     let titled = matches!(event.source.get(), Some("startup" | "resume" | "fork"))
         && !title.is_empty()
         && event
@@ -308,7 +310,7 @@ fn session_start_output(event: &Event, context: &str, title: &str) -> Option<Str
         && event
             .session_title
             .get()
-            .is_none_or(|t| t.trim().is_empty() || our_title(t));
+            .is_none_or(|t| t.trim().is_empty() || titled_by_us(t, desk));
     if context.is_empty() && !titled {
         return None;
     }
@@ -323,18 +325,38 @@ fn session_start_output(event: &Event, context: &str, title: &str) -> Option<Str
 }
 
 /// What a UserPromptSubmit hook prints: the desk's changes as
-/// `additionalContext`, and nothing at all when there are none.
-fn prompt_output(context: &str) -> Option<String> {
-    if context.trim().is_empty() {
+/// `additionalContext`, and the session's title when the panel's name has
+/// moved on from it -- a panel `name_panel` named after the session began.
+/// The title on `session_start_output`'s terms: Claude Code's sessions only,
+/// and only over one of ours. Nothing at all when there is neither.
+fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Option<String> {
+    let now = event.session_title.get().map(str::trim).unwrap_or("");
+    let titled = !title.is_empty()
+        && now != title
+        && (now.is_empty() || titled_by_us(now, desk))
+        && event
+            .session_id
+            .get()
+            .is_some_and(crate::desk::valid_session);
+    let said = !context.trim().is_empty();
+    if !said && !titled {
         return None;
     }
-    Some(
-        json!({ "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": context,
-        } })
-        .to_string(),
-    )
+    let mut out = json!({ "hookEventName": "UserPromptSubmit" });
+    if said {
+        out["additionalContext"] = json!(context);
+    }
+    if titled {
+        out["sessionTitle"] = json!(title);
+    }
+    Some(json!({ "hookSpecificOutput": out }).to_string())
+}
+
+/// A title snyvi gave, and so one it may give again: the old
+/// "<desk> · panel <n>" on any desk, or anything after this desk's
+/// "<desk> · " (`crate::brief::title`), a panel's name included.
+fn titled_by_us(t: &str, desk: &str) -> bool {
+    our_title(t) || (!desk.is_empty() && t.strip_prefix(desk).is_some_and(|r| r.starts_with(" · ")))
 }
 
 /// A session title snyvi gave: "<desk> · panel <n>" (`crate::brief::title`).
@@ -1151,7 +1173,7 @@ mod tests {
             if let Some(t) = title {
                 v["session_title"] = json!(t);
             }
-            session_start_output(&event(v), "the brief", "ledger · panel 2")
+            session_start_output(&event(v), "the brief", "ledger · panel 2", "ledger")
                 .map(|o| serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"].clone())
         };
         for source in ["startup", "resume", "fork"] {
@@ -1177,17 +1199,22 @@ mod tests {
             out("startup", Some("  ")).unwrap()["sessionTitle"],
             "ledger · panel 2"
         );
+        // A panel's name snyvi gave on this desk is ours to change too.
+        assert_eq!(
+            out("resume", Some("ledger · auth refactor")).unwrap()["sessionTitle"],
+            "ledger · panel 2"
+        );
         // The brief turned off: nothing at all.
         let off = event(
             json!({ "hook_event_name": "SessionStart", "source": "startup", "session_id": claude }),
         );
-        assert_eq!(session_start_output(&off, "", ""), None);
+        assert_eq!(session_start_output(&off, "", "", ""), None);
         // Codex: the brief, and no title, which its output schema would refuse.
         let codex = event(
             json!({ "hook_event_name": "SessionStart", "source": "startup",
             "session_id": "thr_0196a7", "model": "gpt-5-codex" }),
         );
-        let o = session_start_output(&codex, "the brief", "ledger · panel 2").unwrap();
+        let o = session_start_output(&codex, "the brief", "ledger · panel 2", "ledger").unwrap();
         let o = serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"].clone();
         assert_eq!(o["additionalContext"], "the brief");
         assert!(o.get("sessionTitle").is_none());
@@ -1205,15 +1232,69 @@ mod tests {
     /// A prompt is handed the desk's changes, and nothing when there are none.
     #[test]
     fn a_prompt_is_handed_what_changed_and_nothing_when_nothing_did() {
-        assert_eq!(prompt_output(""), None);
-        assert_eq!(prompt_output(" \n"), None);
-        let o =
-            serde_json::from_str::<Value>(&prompt_output("New on the list: #3").unwrap()).unwrap();
+        let claude = "0f3b2a1c-9d8e-4f70-a1b2-c3d4e5f60718";
+        let named = |t: &str| {
+            event(
+                json!({ "hook_event_name": "UserPromptSubmit", "session_id": claude, "session_title": t }),
+            )
+        };
+        let same = named("ledger · panel 2");
+        assert_eq!(prompt_output(&same, "", "ledger · panel 2", "ledger"), None);
+        assert_eq!(
+            prompt_output(&same, " \n", "ledger · panel 2", "ledger"),
+            None
+        );
+        let o = serde_json::from_str::<Value>(
+            &prompt_output(&same, "New on the list: #3", "ledger · panel 2", "ledger").unwrap(),
+        )
+        .unwrap();
         assert_eq!(o["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
         assert_eq!(
             o["hookSpecificOutput"]["additionalContext"],
             "New on the list: #3"
         );
+        assert!(o["hookSpecificOutput"].get("sessionTitle").is_none());
+    }
+
+    /// A panel named after its session began names the session at the next
+    /// prompt -- over a title snyvi gave, and never over the reader's own.
+    #[test]
+    fn a_prompt_names_the_session_after_its_panel() {
+        let claude = "0f3b2a1c-9d8e-4f70-a1b2-c3d4e5f60718";
+        let title = |had: Option<&str>, id: &str| {
+            let mut v = json!({ "hook_event_name": "UserPromptSubmit", "session_id": id });
+            if let Some(t) = had {
+                v["session_title"] = json!(t);
+            }
+            prompt_output(&event(v), "", "ledger · auth refactor", "ledger").map(|o| {
+                serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"]["sessionTitle"]
+                    .clone()
+            })
+        };
+        for had in [
+            Some("ledger · panel 2"),
+            Some("ledger · old name"),
+            Some("chores · panel 1"),
+            None,
+        ] {
+            assert_eq!(
+                title(had, claude),
+                Some(json!("ledger · auth refactor")),
+                "{had:?}"
+            );
+        }
+        assert_eq!(title(Some("my own name"), claude), None, "the reader's");
+        assert_eq!(
+            title(Some("ledgerx · thing"), claude),
+            None,
+            "another desk's prefix"
+        );
+        assert_eq!(
+            title(Some("ledger · auth refactor"), claude),
+            None,
+            "already"
+        );
+        assert_eq!(title(None, "thr_0196a7"), None, "Codex");
     }
 
     /// ExitPlanMode's plan and its file are read from the input a

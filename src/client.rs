@@ -895,12 +895,30 @@ pub fn name_panel(paths: &Paths, pane: &str, name: &str) -> Result<()> {
     }
 }
 
-/// The desk brief for a Claude starting in this pane, and the title its
-/// session takes (`crate::brief`): (context, title), either empty when there
-/// is nothing to say. Asked from the SessionStart hook, which Claude's first
-/// reply waits on, so on `agent_state`'s terms: never starts a daemon, half a
-/// second at most, and nothing at all on any failure.
-pub fn brief(paths: &Paths, pane: &str) -> Option<(String, String)> {
+/// What the daemon says to a Claude in a pane, for a hook to hand on: the
+/// context, the title its session takes (`crate::brief::title`) and the
+/// desk's name, which every title snyvi gives starts with. Any of them empty
+/// when there is nothing to say.
+pub struct Said {
+    pub context: String,
+    pub title: String,
+    pub desk: String,
+}
+
+fn said_by(v: &Value) -> Said {
+    let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    Said {
+        context: s("context"),
+        title: s("title"),
+        desk: s("desk"),
+    }
+}
+
+/// The desk brief for a Claude starting in this pane (`crate::brief`).
+/// Asked from the SessionStart hook, which Claude's first reply waits on, so
+/// on `agent_state`'s terms: never starts a daemon, half a second at most,
+/// and nothing at all on any failure.
+pub fn brief(paths: &Paths, pane: &str) -> Option<Said> {
     let token = config::read_token(paths)?;
     let mut resp = ureq::get(&format!("{}/api/panes/{pane}/brief", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
@@ -914,15 +932,15 @@ pub fn brief(paths: &Paths, pane: &str) -> Option<(String, String)> {
         return None;
     }
     let v: Value = resp.body_mut().read_json().ok()?;
-    let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    Some((s("context"), s("title")))
+    Some(said_by(&v))
 }
 
 /// What changed on this pane's desk since snyvi last spoke to its agent
 /// (`crate::brief::changes`), for the UserPromptSubmit hook to hand Claude
-/// with the prompt. Empty when nothing did, and `None` when there is no
+/// with the prompt, and the session's title as the panel's name now has it.
+/// The context is empty when nothing changed, and `None` when there is no
 /// daemon, no token, or no answer in half a second: the prompt never waits.
-pub fn changes(paths: &Paths, pane: &str) -> Option<String> {
+pub fn changes(paths: &Paths, pane: &str) -> Option<Said> {
     let token = config::read_token(paths)?;
     let mut resp = ureq::get(&format!("{}/api/panes/{pane}/changes", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
@@ -936,7 +954,8 @@ pub fn changes(paths: &Paths, pane: &str) -> Option<String> {
         return None;
     }
     let v: Value = resp.body_mut().read_json().ok()?;
-    Some(v.get("context")?.as_str()?.to_string())
+    v.get("context")?.as_str()?;
+    Some(said_by(&v))
 }
 
 /// Say where the work on this pane's desk was left: `leave_off`.

@@ -1,6 +1,7 @@
 //! What git says about a desk's folder: the branch, how much is changed, what
-//! is not pushed, and the commits of the last few weeks. Home reads it for the
-//! pick-up card and the log of the days.
+//! is not pushed, the commits of the last few weeks, and where the repository
+//! lives on the web. Home reads it for the pick-up card and the log of the
+//! days, and the desk's rail for its repo link.
 //!
 //! Read-only and local. snyvi holds no tokens and calls nothing: this runs
 //! `git status` and `git log` in a folder the reader gave a desk, with the same
@@ -46,6 +47,11 @@ pub struct State {
     /// as they are: Home turns them into the log and the rhythm.
     #[serde(skip)]
     pub commits: Vec<Commit>,
+    /// The repository's page on the web, from the `origin` remote (or the
+    /// first remote when there is no `origin`): `https://github.com/o/r`.
+    /// `None` with no remote, or one that is a path on this machine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -108,7 +114,82 @@ pub fn read(root: &Path, now: i64) -> Option<State> {
     s.last = s.commits.last().cloned().or_else(|| {
         run(root, &["log", "-1", "--format=%ct%x09%h%x09%s"]).and_then(|l| parse_log(&l).pop())
     });
+    // Read from the config, never asked of the remote: no network. A repo
+    // with no remote at all makes `git config` exit 1, which is `None`.
+    s.remote = run(root, &["config", "--get-regexp", r"^remote\..*\.url$"])
+        .and_then(|out| remote(&out))
+        .and_then(|url| web_url(&url));
     Some(s)
+}
+
+/// The URL of `origin`, or of the first remote when there is none, out of
+/// `git config --get-regexp` lines: `remote.<name>.url <url>`.
+fn remote(out: &str) -> Option<String> {
+    let urls: Vec<(&str, &str)> = out
+        .lines()
+        .filter_map(|l| {
+            let (key, url) = l.split_once(' ')?;
+            let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
+            Some((name, url.trim()))
+        })
+        .collect();
+    urls.iter()
+        .find(|(n, _)| *n == "origin")
+        .or(urls.first())
+        .map(|(_, u)| u.to_string())
+}
+
+/// A remote's URL as the repository's web page: `git@github.com:o/r.git`,
+/// `ssh://git@host:22/o/r` and `https://user:token@host/o/r.git` are all
+/// `https://host/o/r`. What it never keeps is a user, a password or a token,
+/// a query or an ssh port. `None` for a path on this machine or anything that
+/// does not read as a host and a path.
+pub fn web_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
+        // scp-like, `[user@]host:path`: a colon before any slash. A Windows
+        // drive (`C:\...`, `C:/...`) is a one-letter host, and a path.
+        None => {
+            let colon = url.find(':')?;
+            if url[..colon].contains('/') || colon < 2 {
+                return None;
+            }
+            ("ssh".to_string(), url)
+        }
+    };
+    let web = match scheme.as_str() {
+        "http" => "http",
+        "https" | "ssh" | "git" | "git+ssh" | "ssh+git" => "https",
+        _ => return None,
+    };
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    let (authority, path) = if url.contains("://") {
+        rest.split_once('/')?
+    } else {
+        rest.split_once(':')?
+    };
+    // Whatever is before the last `@` is credentials: dropped, never shown.
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    // A port is the web's only for http(s); an ssh port says nothing of it.
+    let host = match host.rsplit_once(':') {
+        Some((h, port))
+            if !scheme.starts_with("http") && port.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            h
+        }
+        _ => host,
+    };
+    let path = path.trim_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    let ok = |s: &str| !s.is_empty() && !s.contains(char::is_whitespace);
+    if !ok(host) || !ok(path) || host.contains(['/', '\\']) {
+        return None;
+    }
+    Some(format!("{web}://{host}/{path}"))
 }
 
 /// The top of the repository `dir` is in, found by looking for `.git` on the
@@ -239,6 +320,92 @@ mod tests {
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].hash, "a1");
         assert_eq!(v[1].subject, "second\twith a tab");
+    }
+
+    #[test]
+    fn a_remote_is_its_web_page_and_never_its_credentials() {
+        let cases = [
+            (
+                "git@github.com:snymrova/snyvi.git",
+                Some("https://github.com/snymrova/snyvi"),
+            ),
+            ("github.com:o/r", Some("https://github.com/o/r")),
+            (
+                "ssh://git@gitlab.com:22/group/sub/repo.git",
+                Some("https://gitlab.com/group/sub/repo"),
+            ),
+            (
+                "git+ssh://git@codeberg.org/o/r",
+                Some("https://codeberg.org/o/r"),
+            ),
+            ("https://github.com/o/r.git", Some("https://github.com/o/r")),
+            ("https://github.com/o/r/", Some("https://github.com/o/r")),
+            (
+                "https://x-access-token:ghp_secret@github.com/o/r.git",
+                Some("https://github.com/o/r"),
+            ),
+            (
+                "https://user@bitbucket.org/o/r.git?x=1",
+                Some("https://bitbucket.org/o/r"),
+            ),
+            (
+                "https://git.example.com:8443/o/r",
+                Some("https://git.example.com:8443/o/r"),
+            ),
+            (
+                "http://localhost:3000/o/r.git",
+                Some("http://localhost:3000/o/r"),
+            ),
+            ("git://example.org/o/r.git", Some("https://example.org/o/r")),
+            ("file:///home/me/r.git", None),
+            ("/home/me/r.git", None),
+            ("../r", None),
+            ("C:\\repos\\r", None),
+            ("C:/repos/r", None),
+            ("https://github.com", None),
+            ("", None),
+        ];
+        for (url, want) in cases {
+            assert_eq!(web_url(url).as_deref(), want, "{url}");
+        }
+        for (url, _) in cases {
+            assert!(
+                !web_url(url).unwrap_or_default().contains("secret"),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn origin_is_the_remote_and_else_the_first() {
+        let out = "remote.upstream.url https://github.com/a/b\nremote.origin.url git@github.com:o/r.git\n";
+        assert_eq!(remote(out).as_deref(), Some("git@github.com:o/r.git"));
+        assert_eq!(
+            remote("remote.fork.url https://github.com/f/r\nremote.up.url x\n").as_deref(),
+            Some("https://github.com/f/r")
+        );
+        assert_eq!(remote(""), None);
+    }
+
+    #[test]
+    fn a_repository_says_its_remote_without_asking_it() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-git-remote");
+        let git = |args: &[&str]| run(&dir.path, args).is_some();
+        if !git(&["init", "-q"]) {
+            return; // no git here
+        }
+        assert_eq!(read(&dir.path, 0).and_then(|s| s.remote), None, "no remote");
+        // A remote that does not exist: nothing is fetched, so nothing fails.
+        assert!(git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://tok@github.invalid/o/r.git"
+        ]));
+        assert_eq!(
+            read(&dir.path, 0).and_then(|s| s.remote).as_deref(),
+            Some("https://github.invalid/o/r")
+        );
     }
 
     #[test]

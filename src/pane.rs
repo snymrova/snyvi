@@ -133,6 +133,12 @@ pub struct Status {
     /// Empty for everything else, which keeps `blocked` as its only signal.
     pub agent: &'static str,
     pub agent_since: Option<i64>,
+    /// An agent's session is open in this pane: its SessionStart hook came
+    /// and its SessionEnd has not. True from before the first prompt, which
+    /// `agent` waits for. The page reads it to leave the picture on a plain
+    /// ⌃V to the agent, which reads the clipboard itself.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub agent_in: bool,
     /// This pane was running Claude when the last daemon went on purpose --
     /// a planned restart -- so the window's next start of it should be
     /// `claude --resume` rather than the shell. Set by `mark_resume` for a
@@ -700,7 +706,7 @@ impl Panes {
         if !i.status.running {
             return false;
         }
-        if i.status.agent == state {
+        if i.status.agent == state && i.status.agent_in == !state.is_empty() {
             return true;
         }
         // `needs_you` is also `blocked`, so everything that already shows a
@@ -715,6 +721,7 @@ impl Panes {
         }
         i.status.agent = state;
         i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        i.status.agent_in = !state.is_empty();
         if state.is_empty() {
             clear_context(&mut i.status);
             i.status.told_at = 0;
@@ -723,6 +730,26 @@ impl Panes {
         drop(i);
         let _ = l.tx.send(status_frame(&l.id, &s).into());
         self.changed(&l.id, &s);
+        true
+    }
+
+    /// An agent's session started in this running pane (`Status::agent_in`).
+    /// False when the pane is not running.
+    pub fn agent_in(&self, id: &str) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return false;
+        }
+        if !i.status.agent_in {
+            i.status.agent_in = true;
+            let s = i.status.clone();
+            drop(i);
+            let _ = l.tx.send(status_frame(&l.id, &s).into());
+            self.changed(&l.id, &s);
+        }
         true
     }
 
@@ -1328,6 +1355,7 @@ impl Live {
             i.status.blocked_since = None;
             i.status.agent = "";
             i.status.agent_since = None;
+            i.status.agent_in = false;
             i.unsaved = false;
             i.unsaved_lines = false;
             i.saved_at = Instant::now();
@@ -2139,6 +2167,51 @@ mod tests {
             "",
             "the agent goes with its process"
         );
+    }
+
+    /// An agent is in a pane from its SessionStart, before any state, and
+    /// leaves with its SessionEnd or its process.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_agent_is_in_from_its_start_to_its_end() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-agent-in");
+        let (events, _ev) = broadcast::channel(64);
+        let panes = Panes::new(&dir.path, events);
+        let id = "00112233445566778899aabbccddeeff";
+        assert!(!panes.agent_in(id), "a pane nobody opened");
+        let live = panes.get(id);
+        let cwd = dir.path.to_string_lossy().to_string();
+        live.start(
+            Start {
+                cwd: &cwd,
+                root: &cwd,
+                cmd: "read x",
+                desk: "d",
+                slot: 1,
+                cols: 80,
+                rows: 10,
+                accent: "",
+                offer: false,
+                env: &[],
+            },
+            &panes,
+        )
+        .unwrap();
+        assert!(!panes.status(id).agent_in);
+        assert!(panes.agent_in(id));
+        let st = panes.status(id);
+        assert!(st.agent_in && st.agent.is_empty(), "in, before any prompt");
+        assert!(panes.set_agent(id, ""), "SessionEnd");
+        assert!(!panes.status(id).agent_in, "out, though it never prompted");
+        assert!(panes.agent_in(id));
+        assert!(panes.set_agent(id, "working"));
+        assert!(panes.status(id).agent_in);
+        live.stop();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while panes.status(id).running && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!panes.status(id).agent_in, "out with its process");
     }
 
     /// A title is the pane header's business and goes down the desk socket;

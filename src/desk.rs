@@ -48,6 +48,11 @@ pub const NOTES_PER_DESK: i64 = 200;
 const MIN_FRACTION: f64 = 0.15;
 const MAX_FRACTION: f64 = 0.85;
 
+/// 1.14: the reader's order for the desks (`reorder`). Not in `SCHEMA`: it is
+/// version 2 of `store::MIGRATIONS`, which runs once and takes an error as
+/// one, so a database made new must not have it before the step adds it.
+pub const POS_COLUMN: &str = "ALTER TABLE desks ADD COLUMN pos INTEGER NOT NULL DEFAULT 0";
+
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS desks (
   id INTEGER PRIMARY KEY,
@@ -410,14 +415,15 @@ pub enum Opened {
 /// How long a panel's name is, at most: a head's worth, like a desk's.
 pub const NAME_CHARS: usize = 80;
 
-/// Every desk, oldest first, each with its panes in slot order.
+/// Every desk, in the reader's order (`reorder`) -- the order they were made
+/// in until the reader moves one -- each with its panes in slot order.
 ///
 /// Two queries rather than a join with a row per pane: a desk with no panes is
 /// a real and common state -- it is what every desk is for the moment after it
 /// is made -- and it should not need a left join to survive the trip.
 pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {DESK_COLS} FROM desks WHERE closed_at = 0 ORDER BY id"
+        "SELECT {DESK_COLS} FROM desks WHERE closed_at = 0 ORDER BY pos, id"
     ))?;
     let mut desks: Vec<Desk> = stmt
         .query_map([], row_to_desk)?
@@ -489,8 +495,11 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         .map(str::to_string)
         .unwrap_or_else(|| derive_name(root));
     let name = free_name(conn, &wanted)?;
+    // Last in the reader's order, as a desk made now always was. Past the
+    // closed ones too, which keep their places for a reopen.
     conn.execute(
-        "INSERT INTO desks(name, root, col, row, created_at) VALUES(?1, ?2, 0.5, 0.5, ?3)",
+        "INSERT INTO desks(name, root, col, row, created_at, pos)
+         VALUES(?1, ?2, 0.5, 0.5, ?3, (SELECT COALESCE(MAX(pos), 0) + 1 FROM desks))",
         params![name, root, now],
     )?;
     let id = conn.last_insert_rowid();
@@ -508,6 +517,33 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         keys: Vec::new(),
         panes: Vec::new(),
     })
+}
+
+/// The reader's order for the desks: `ids` is every open desk, top first.
+/// Anything else -- one missing, one extra, one twice, one closed -- is
+/// refused with `false` and nothing changes, so two windows that each saw a
+/// different list cannot leave half of each. A closed desk keeps the place it
+/// had, and a reopen puts it back there.
+pub fn reorder(conn: &mut Connection, ids: &[i64]) -> Result<bool> {
+    let tx = conn.transaction()?;
+    let mut open: Vec<i64> = tx
+        .prepare("SELECT id FROM desks WHERE closed_at = 0")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut asked = ids.to_vec();
+    open.sort_unstable();
+    asked.sort_unstable();
+    if open != asked {
+        return Ok(false);
+    }
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE desks SET pos = ?2 WHERE id = ?1",
+            params![id, i as i64 + 1],
+        )?;
+    }
+    tx.commit()?;
+    Ok(true)
 }
 
 /// The reader opened this desk. Written at most once a minute: the window

@@ -271,7 +271,7 @@ async function dropDesk(ctx, id) {
  *  state; it is asked only when it is already loaded, which it is whenever
  *  one of them is on the page. */
 const RULE = "rule";
-function entries(ctx, el) {
+function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const term = body => capability && { label: "Open terminal here", run: () => terminal(ctx, body) };
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
@@ -336,6 +336,8 @@ function entries(ctx, el) {
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
+      // Where it is in the list; what cannot move it is not offered.
+      ...(here ? [] : moves(ctx, id, byKey)),
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
       { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
@@ -356,11 +358,97 @@ function entries(ctx, el) {
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;
 }
 
+/** The desks in the reader's order: `ids`, top first, drawn at once and then
+ *  sent. A no puts the list back as it was, and the row that moved says so. */
+async function order(ctx, ids, moved, byKey) {
+  const ds = ctx.state.desks;
+  if (!ds) return;
+  const was = ds.desks, by = new Map(was.map(d => [d.id, d]));
+  if (ids.join() === was.map(d => d.id).join() || ids.some(id => !by.has(id))) return;
+  ds.desks = ids.map(id => by.get(id));
+  ctx.drawDesks();
+  if (byKey) ctx.focusDesk(moved);
+  try { await ctx.api("/api/desks/order", { ids }); }
+  catch (e) { ds.desks = was; ctx.deskSaid(moved, "Couldn't move it", e); if (byKey) ctx.focusDesk(moved); }
+}
+
+/** Desk `id` one place up (-1) or down (1), or to the top ("top"): its menu
+ *  and ⌥↑ ⌥↓ on its row. */
+export function moveDesk(ctx, id, by, byKey = false) {
+  const ids = (ctx.state.desks ? ctx.state.desks.desks : []).map(d => d.id), i = ids.indexOf(id);
+  const to = by === "top" ? 0 : Math.max(0, Math.min(ids.length - 1, i + by));
+  if (i < 0 || to === i) return;
+  ids.splice(i, 1); ids.splice(to, 0, id);
+  return order(ctx, ids, id, byKey);
+}
+
+/** A desk row's menu entries for its place in the list. */
+function moves(ctx, id, byKey) {
+  const ids = ctx.state.desks.desks.map(d => d.id), i = ids.indexOf(id), last = ids.length - 1;
+  return [
+    i > 1 && { label: "Move to top", run: () => moveDesk(ctx, id, "top", byKey) },
+    i > 0 && { label: "Move up", key: ctx.keyHint("alt+↑"), run: () => moveDesk(ctx, id, -1, byKey) },
+    i < last && { label: "Move down", key: ctx.keyHint("alt+↓"), run: () => moveDesk(ctx, id, 1, byKey) },
+    ids.length > 1 && RULE,
+  ];
+}
+
+/** A desk's row, dragged to another place. The rows stay where they are
+ *  while it moves -- nothing shifts under the pointer -- and a line says
+ *  where it will land; the list changes once, on the drop. Esc puts it back,
+ *  and a press that never travelled is the click it was. */
+export function dragDesk(ctx, a, e) {
+  const rows = [...a.closest(".t-desks").querySelectorAll(".t-desk > a[data-desk]")];
+  if (rows.length < 2 || e.button !== 0) return;
+  const id = +a.dataset.desk, x0 = e.clientX, y0 = e.clientY;
+  let line = null, at = -1;
+  const move = ev => {
+    if (!line) {
+      if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+      line = document.createElement("div");
+      line.className = "t-drop";
+      document.body.append(line);
+      a.classList.add("dragging");
+      document.documentElement.classList.add("desk-drag");
+    }
+    // The gap nearest the pointer: before the first row whose middle is below it.
+    at = rows.findIndex(r => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
+    if (at < 0) at = rows.length;
+    const b = rows[Math.min(at, rows.length - 1)].getBoundingClientRect();
+    line.style.cssText = `left:${b.left}px;width:${b.width}px;top:${(at < rows.length ? b.top : b.bottom) - 1}px`;
+  };
+  const end = go => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    removeEventListener("pointercancel", off);
+    removeEventListener("keydown", key, true);
+    if (!line) return;
+    line.remove();
+    a.classList.remove("dragging");
+    document.documentElement.classList.remove("desk-drag");
+    // The click that ends a drag is not a click on the row.
+    const eat = c => { c.preventDefault(); c.stopPropagation(); };
+    addEventListener("click", eat, { capture: true, once: true });
+    setTimeout(() => removeEventListener("click", eat, true), 0);
+    if (!go) return;
+    const ids = rows.map(r => +r.dataset.desk), from = ids.indexOf(id);
+    ids.splice(from, 1);
+    ids.splice(at > from ? at - 1 : at, 0, id);
+    order(ctx, ids, id, false);
+  };
+  const up = () => end(true), off = () => end(false);
+  const key = k => { if (k.key === "Escape" && line) { k.preventDefault(); k.stopPropagation(); end(false); } };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+  addEventListener("pointercancel", off);
+  addEventListener("keydown", key, true);
+}
+
 /** The menu for `el`, at a point -- the pointer's, or the element's corner
  *  when a key asked. Returns false when `el` has nothing to offer, so the
  *  caller can leave the browser's own menu alone. */
 export function open(ctx, el, x, y, byKey = false) {
-  const m = entries(ctx, el);
+  const m = entries(ctx, el, byKey);
   // Rules only between two entries: none leading, trailing or doubled.
   const items = m ? m.items.filter(Boolean).filter((e, i, a) => e !== RULE || (i > 0 && a[i - 1] !== RULE && a.slice(i + 1).some(x => x !== RULE))) : [];
   if (!items.some(e => e !== RULE)) return false;

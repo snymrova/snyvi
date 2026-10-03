@@ -727,6 +727,12 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    mark -- a green dot running, an amber ! waiting, nothing idle -- and the
    count, right-aligned. Both were laid out only when there was something to
    show, so the dot on one row sat where the count did on the next. */
+/* A desk row on its way to another place: the line is where it lands, and
+ * nothing else moves until it does. */
+.t-drop { position: fixed; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: var(--z-pop); }
+.t-desk > a.dragging { opacity: .55; }
+.desk-drag, .desk-drag * { cursor: grabbing !important; user-select: none; }
+.t-desks .t-said { color: var(--warn); font-size: var(--fs-micro); font-weight: 600; white-space: nowrap; }
 .t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
 .t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }

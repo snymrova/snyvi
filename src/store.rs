@@ -367,6 +367,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         1,
         "ALTER TABLE desks ADD COLUMN left_off_pane TEXT NOT NULL DEFAULT ''",
     ),
+    // 1.14: the reader's order for the desks, starting as the order they
+    // were made in, so nothing moves on the upgrade.
+    (2, desk::POS_COLUMN),
+    (2, "UPDATE desks SET pos = id"),
 ];
 
 /// Bring a database to the newest version in `MIGRATIONS`.
@@ -1349,6 +1353,10 @@ impl Store {
 
     pub fn create_desk(&self, root: &str, name: Option<&str>) -> Result<Desk> {
         desk::create(&self.conn.lock().unwrap(), root, name, now())
+    }
+
+    pub fn reorder_desks(&self, ids: &[i64]) -> Result<bool> {
+        desk::reorder(&mut self.conn.lock().unwrap(), ids)
     }
 
     pub fn rename_desk(&self, id: i64, name: &str) -> Result<bool> {

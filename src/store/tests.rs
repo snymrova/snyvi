@@ -742,3 +742,33 @@ fn an_expanded_project_is_a_screenful_not_a_year() {
     assert_eq!((w.docs.len(), w.total), (12, 12));
     assert!(s.workflow_tree(9999).unwrap().is_none());
 }
+
+/// A database from before the reader's desk order comes forward with the
+/// order it had: the order the desks were made in.
+#[test]
+fn an_older_database_keeps_its_desk_order_on_the_upgrade() {
+    let dir = tempdir::Dir::new("snyvi-store-pos");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    {
+        let conn = Connection::open(&paths.db_path).unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute_batch(desk::SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO desks(id, name, root, created_at) VALUES(7, 'late', '/w', 0);
+             INSERT INTO desks(id, name, root, created_at) VALUES(3, 'early', '/w', 0);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&paths).unwrap();
+    let names: Vec<String> = store.desks().unwrap().into_iter().map(|d| d.name).collect();
+    assert_eq!(names, ["early", "late"]);
+    let made = store.create_desk("/w", Some("new")).unwrap();
+    assert_eq!(store.desks().unwrap().last().map(|d| d.id), Some(made.id));
+}

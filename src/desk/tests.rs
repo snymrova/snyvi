@@ -4,6 +4,7 @@ fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(SCHEMA).unwrap();
+    conn.execute_batch(POS_COLUMN).unwrap();
     conn
 }
 
@@ -1154,4 +1155,53 @@ fn ticks_since_leave_out_what_was_put_away_and_closed_desks() {
         (got[0].by.as_str(), got[0].commit.as_str(), got[0].at),
         ("claude-code", "a41c2e9", 20)
     );
+}
+
+fn order(conn: &Connection) -> Vec<String> {
+    list(conn).unwrap().into_iter().map(|d| d.name).collect()
+}
+
+/// The reader's order: the order desks were made in until one is moved, a
+/// new desk last, and a closed desk back in its place when it is reopened.
+#[test]
+fn desks_keep_the_readers_order_and_a_new_one_goes_last() {
+    let mut conn = db();
+    let ids: Vec<i64> = ["a", "b", "c"]
+        .iter()
+        .map(|n| create(&conn, "/w", Some(n), 0).unwrap().id)
+        .collect();
+    assert_eq!(order(&conn), ["a", "b", "c"]);
+    assert!(reorder(&mut conn, &[ids[2], ids[0], ids[1]]).unwrap());
+    assert_eq!(order(&conn), ["c", "a", "b"]);
+    create(&conn, "/w", Some("d"), 0).unwrap();
+    assert_eq!(order(&conn), ["c", "a", "b", "d"]);
+    // `a` closes and comes back where it was, not at the end.
+    close(&mut conn, ids[0], 1).unwrap();
+    assert_eq!(order(&conn), ["c", "b", "d"]);
+    assert!(reopen(&mut conn, ids[0]).unwrap());
+    assert_eq!(order(&conn), ["c", "a", "b", "d"]);
+}
+
+/// Only the whole list of open desks is an order: two windows that each saw
+/// a different one cannot leave half of each.
+#[test]
+fn an_order_is_the_whole_list_of_open_desks_or_nothing() {
+    let mut conn = db();
+    let a = create(&conn, "/w", Some("a"), 0).unwrap().id;
+    let b = create(&conn, "/w", Some("b"), 0).unwrap().id;
+    let c = create(&conn, "/w", Some("c"), 0).unwrap().id;
+    for bad in [
+        vec![b, a],
+        vec![c, b, a, 99],
+        vec![c, b, b],
+        vec![c, b, a, a],
+        vec![],
+    ] {
+        assert!(!reorder(&mut conn, &bad).unwrap(), "{bad:?}");
+    }
+    assert_eq!(order(&conn), ["a", "b", "c"], "nothing moved");
+    close(&mut conn, c, 1).unwrap();
+    assert!(!reorder(&mut conn, &[c, b, a]).unwrap(), "a closed desk");
+    assert!(reorder(&mut conn, &[b, a]).unwrap());
+    assert_eq!(order(&conn), ["b", "a"]);
 }

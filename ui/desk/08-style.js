@@ -323,6 +323,14 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 #meta .dk-row { align-items: center; min-height: 22px; }
 #meta .dk-row .dk-nm { flex: 1; }
 #meta .dk-row .dk-tools { line-height: 1; }
+/* The desk's repository on the web, under the panel's line: quiet until
+ * pointed at, and cut short rather than wrapped. */
+#meta .dk-repo-row { min-width: 0; }
+#meta .dk-repo { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--fg-3); text-decoration: none; }
+#meta .dk-repo svg { flex: none; }
+#meta .dk-repo span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#meta .dk-repo .dk-out { flex: none; font-size: var(--fs-micro); }
+#meta .dk-repo:hover, #meta .dk-repo:focus-visible { color: var(--accent); }
 .dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .dk-make:hover { background: var(--accent); color: var(--on-accent); }
 /* ---------- the list ----------

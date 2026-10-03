@@ -436,6 +436,21 @@ async function mmdDrain() {
   }
 }
 
+/** A `;` in a sequence diagram's message or note ends the line to Mermaid,
+ *  and a sentence with one in it fails to parse. A diagram that failed is
+ *  tried once more with each such `;` written as `#59;`, which draws as one.
+ *  The source that parsed is never touched; the first error is the one shown. */
+async function mmdDraw(id, src) {
+  try { return await window.mermaid.render(id, src); } catch (e) {
+    const mended = /^\s*sequenceDiagram\b/m.test(src) && src.split("\n").map(l => {
+      const at = l.indexOf(":");
+      return at < 0 ? l : l.slice(0, at + 1) + l.slice(at + 1).replace(/;/g, "#59;");
+    }).join("\n");
+    if (!mended || mended === src) throw e;
+    try { return await window.mermaid.render(id, mended); } catch { throw e; }
+  }
+}
+
 async function mmdRender(fig, token) {
   fig.dataset.state = "rendering";
   const key = mmdKey(fig.dataset.src);
@@ -453,7 +468,7 @@ async function mmdRender(fig, token) {
   const t0 = performance.now();
   try {
     const id = mmdRenderId(fig);
-    const { svg } = await window.mermaid.render(id, fig.dataset.src);
+    const { svg } = await mmdDraw(id, fig.dataset.src);
     const kept = svg.split(id).join(MMD_ID);
     // Kept before the token is consulted: the drawing is done and paid for
     // either way, and a reader who navigated away while it was being made is
