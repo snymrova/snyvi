@@ -71,6 +71,22 @@ pub struct Agent {
     pub instructions: Option<Where>,
     /// Lower-case pieces of the `clientInfo.name` the agent opens with.
     pub client: &'static [&'static str],
+    /// The command that goes back to one of its conversations, before the
+    /// conversation's id. None for an agent that tells snyvi no conversation.
+    pub resume: Option<&'static str>,
+}
+
+/// The agent whose conversation a desk's panel keeps. Only Claude Code's
+/// hook tells a pane which conversation runs in it
+/// (`server::api_agent::pane_agent`), so a pane's `agent_session` is always
+/// one of Claude Code's.
+pub const KEEPS_SESSIONS: &str = "claude";
+
+/// The command that goes back to conversation `session` of agent `id`, or
+/// None when that agent cannot be taken back to one.
+pub fn resume_cmd(id: &str, session: &str) -> Option<String> {
+    let a = find(id)?;
+    Some(format!("{} {session}", a.resume?))
 }
 
 /// Every agent snyvi knows, in the order the page lists them.
@@ -91,6 +107,7 @@ pub fn all() -> Vec<Agent> {
             file: h(".claude.json"),
             instructions: h(".claude/CLAUDE.md").map(Where::File),
             client: &["claude-code", "claude code"],
+            resume: Some("claude --resume"),
         },
         Agent {
             id: "codex",
@@ -101,6 +118,7 @@ pub fn all() -> Vec<Agent> {
                 .as_ref()
                 .map(|c| Where::File(c.join("AGENTS.md"))),
             client: &["codex"],
+            resume: None,
         },
         Agent {
             id: "cursor",
@@ -109,6 +127,7 @@ pub fn all() -> Vec<Agent> {
             file: h(".cursor/mcp.json"),
             instructions: Some(Where::Setting("Cursor → Settings → Rules → User Rules")),
             client: &["cursor"],
+            resume: None,
         },
         Agent {
             id: "claude-desktop",
@@ -119,6 +138,7 @@ pub fn all() -> Vec<Agent> {
                 "Claude → Settings → Profile, the preferences box",
             )),
             client: &["claude-ai", "claude desktop", "claude-desktop"],
+            resume: None,
         },
         Agent {
             id: "gemini",
@@ -127,6 +147,7 @@ pub fn all() -> Vec<Agent> {
             file: h(".gemini/settings.json"),
             instructions: h(".gemini/GEMINI.md").map(Where::File),
             client: &["gemini"],
+            resume: None,
         },
         Agent {
             id: "windsurf",
@@ -135,6 +156,7 @@ pub fn all() -> Vec<Agent> {
             file: h(".codeium/windsurf/mcp_config.json"),
             instructions: h(".codeium/windsurf/memories/global_rules.md").map(Where::File),
             client: &["windsurf", "codeium"],
+            resume: None,
         },
         Agent {
             id: "vscode",
@@ -145,6 +167,7 @@ pub fn all() -> Vec<Agent> {
                 ".github/copilot-instructions.md in each repository",
             )),
             client: &["visual studio code", "vscode", "vs code", "copilot"],
+            resume: None,
         },
         Agent {
             id: "zed",
@@ -157,6 +180,7 @@ pub fn all() -> Vec<Agent> {
             },
             instructions: Some(Where::Setting(".rules at the root of each project")),
             client: &["zed"],
+            resume: None,
         },
     ]
 }
@@ -984,6 +1008,22 @@ mod tests {
         let file = a.file.take().unwrap();
         a.file = Some(dir.join(file.file_name().unwrap()));
         a
+    }
+
+    /// The panel types what this says, and the daemon runs it: one place for
+    /// the command, and only for the agent whose conversations a pane keeps.
+    #[test]
+    fn a_kept_conversation_resumes_with_its_agents_own_command() {
+        let id = "0b7c2d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e";
+        assert_eq!(
+            resume_cmd(KEEPS_SESSIONS, id).as_deref(),
+            Some("claude --resume 0b7c2d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e")
+        );
+        assert_eq!(resume_cmd("codex", id), None, "no conversation it told us");
+        assert_eq!(resume_cmd("nobody", id), None);
+        assert!(all()
+            .iter()
+            .any(|a| a.id == KEEPS_SESSIONS && a.resume.is_some()));
     }
 
     #[test]

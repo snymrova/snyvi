@@ -1240,15 +1240,16 @@ pub(crate) async fn start_pane(
     let offer = lapsed && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
     let cmd = if b.resume && !lapsed {
-        let session = &placed.pane.agent_session;
-        if !crate::desk::valid_session(session) {
+        // Built from the pane's kept id (`desk::row_to_pane`), never from
+        // the page: empty when there is nothing to go back to.
+        if placed.pane.resume.is_empty() {
             return (
                 StatusCode::CONFLICT,
                 Json(json!({ "error": "this panel has no conversation to resume" })),
             )
                 .into_response();
         }
-        format!("claude --resume {session}")
+        placed.pane.resume.clone()
     } else {
         let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
         if cmd.trim() != placed.pane.cmd {

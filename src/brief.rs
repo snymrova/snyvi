@@ -343,6 +343,7 @@ mod tests {
                     cmd: String::new(),
                     created_at: 0,
                     agent_session: String::new(),
+                    resume: String::new(),
                     name: String::new(),
                 })
                 .collect(),

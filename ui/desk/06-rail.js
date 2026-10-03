@@ -82,7 +82,7 @@ function rail() {
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
-      (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" data-tip="Resume conversation" data-tip-sub="${run ? "Types claude --resume into the shell, for you to run" : "The one this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
+      (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" data-tip="Resume conversation" data-tip-sub="${run ? `Types ${esc(resumeWord(v))} into the shell, for you to run` : "The one this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
       `<button type="button" data-a="close" data-p="${v.id}" data-tip="Close panel" data-tip-sub="Undo in the rail" data-key="ctrl+alt+w" aria-label="Close panel ${n}">${ico("x")}</button>` +
       `</span></li>` +
       (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc);
@@ -848,8 +848,8 @@ function put(v) {
  *  are put -- not run, so Enter is the reader's -- and only where points
  *  would be let in. A refusal is said under the pane's own row. */
 function again(v) {
-  const id = talked(v), n = v.pane.slot;
-  if (!id) return;
+  const n = v.pane.slot;
+  if (!talked(v) || !v.pane.resume) return;
   if (!v.status.running) { run(v, "", false, true); return; }
   const why = !v.mode[1] ? `Panel ${n} is not at a prompt, so nothing is typed into it.`
     : Date.now() - (v.typed || 0) < TYPED_MS ? `You are typing in panel ${n}.` : "";
@@ -860,7 +860,7 @@ function again(v) {
     rail();
     return;
   }
-  input(v, bracket(v, `claude --resume ${id}`));
+  input(v, bracket(v, v.pane.resume));
   if (reading != null) ctx.go(deskId, true, n); else focusPane(v.id);
 }
 

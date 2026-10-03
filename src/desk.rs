@@ -368,6 +368,10 @@ pub struct Pane {
     /// reported it, so the pane can offer to resume it after Claude or the
     /// daemon has gone. Empty when none has. Always a `valid_session`.
     pub agent_session: String,
+    /// The command that goes back to `agent_session`
+    /// (`crate::agents::resume_cmd`), or empty with no conversation. The page
+    /// types this one rather than building its own.
+    pub resume: String,
     /// What the reader called it, or empty for the title its program sets.
     pub name: String,
 }
@@ -832,6 +836,7 @@ pub fn open_pane(
         cmd: cmd.to_string(),
         created_at: now,
         agent_session: String::new(),
+        resume: String::new(),
         name: String::new(),
     }))
 }
@@ -1761,13 +1766,19 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
 }
 
 fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
+    let session: String = r.get(at + 5)?;
+    let resume = Some(session.as_str())
+        .filter(|s| valid_session(s))
+        .and_then(|s| crate::agents::resume_cmd(crate::agents::KEEPS_SESSIONS, s))
+        .unwrap_or_default();
     Ok(Pane {
         id: r.get(at)?,
         slot: r.get(at + 1)?,
         cwd: r.get(at + 2)?,
         cmd: r.get(at + 3)?,
         created_at: r.get(at + 4)?,
-        agent_session: r.get(at + 5)?,
+        agent_session: session,
+        resume,
         name: r.get(at + 6)?,
     })
 }

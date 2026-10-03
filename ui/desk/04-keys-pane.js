@@ -349,6 +349,9 @@ const sentBy = (vs, slot) => {
   return `[${slot}] ${v.pane.name || agent || v.status.cmd || v.pane.cmd || "shell"}`;
 };
 const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
+/** The resume command without its id, `claude --resume`, as a tip says it.
+ *  The daemon names it (`agents::resume_cmd`); the page only quotes it. */
+const resumeWord = v => (v.pane.resume || "").replace(/ \S+$/, "");
 
 /** The desk's live region (`.dk-live`, polite): one line at a time, and the
  *  same line said twice is cleared first so it is read twice. */
@@ -394,7 +397,9 @@ function header(v) {
   v.start.hidden = !!s.running || v.resuming || v.starting;
   if (!v.start.hidden && wasHidden) v.start.querySelector("input").value = s.cmd || v.pane.cmd || "";
   v.start.querySelector("input").placeholder = "blank for the shell";
-  v.start.querySelector(".pn-resume").hidden = !talked(v);
+  const again = v.start.querySelector(".pn-resume");
+  again.hidden = !talked(v);
+  if (talked(v)) again.dataset.tipSub = `${resumeWord(v)}, the one this panel last had`;
   if (s.offer) v.offered = true;
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
