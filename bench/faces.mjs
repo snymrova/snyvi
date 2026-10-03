@@ -13,7 +13,7 @@
  * the blush and the light in the eyes.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,10 +22,12 @@ const flag = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1]
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(flag("--out") || join(HERE, "..", "docs", "media", "faces.svg"));
 
-const src = readFileSync(join(HERE, "..", "ui", "app.js"), "utf8");
+// app.js is kept as parts (ui/app/*.js, joined by build.rs in name order).
+const APP = join(HERE, "..", "ui", "app");
+const src = readdirSync(APP).filter(p => p.endsWith(".js")).sort().map(p => readFileSync(join(APP, p), "utf8")).join("\n");
 const from = src.indexOf("  const EYE = ");
 const to = src.indexOf('.join("") + "</svg>");', from);
-if (from < 0 || to < 0) throw new Error("faces: FACES, mascotHead or mascotPeek moved in ui/app.js");
+if (from < 0 || to < 0) throw new Error("faces: FACES, mascotHead or mascotPeek moved in ui/app/");
 const block = src.slice(from, to + '.join("") + "</svg>");'.length);
 const { FACES, mascotPeek } = new Function(`${block}\nreturn { FACES, mascotHead, mascotPeek };`)();
 
@@ -47,7 +49,7 @@ function face(name) {
 }
 
 let out = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="snyvi's six faces: ${names.join(", ")}">\n` +
-  `<!-- Drawn by bench/faces.mjs from FACES in ui/app.js. Edit the faces there, not here. -->\n` +
+  `<!-- Drawn by bench/faces.mjs from FACES in ui/app/. Edit the faces there, not here. -->\n` +
   `<style>text{font:500 12px/1 system-ui,sans-serif;text-anchor:middle}</style>\n`;
 GROUNDS.forEach(([which, bg, fg], r) => {
   const y = r * ROW;

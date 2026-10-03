@@ -340,7 +340,7 @@ pub trait Fetch: Send + Sync {
 pub struct Http;
 
 fn user_agent() -> String {
-    format!("snyvi/{}", crate::server::VERSION)
+    format!("snyvi/{}", crate::version::VERSION)
 }
 
 impl Fetch for Http {
@@ -670,7 +670,7 @@ impl Updater {
             source: Source::from_env(),
             fetch,
             key,
-            running: semver::Version::parse(crate::server::VERSION)
+            running: semver::Version::parse(crate::version::VERSION)
                 .expect("CARGO_PKG_VERSION is semver"),
             current: Mutex::new(None),
             state: Mutex::new(state),

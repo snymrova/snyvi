@@ -369,9 +369,12 @@ DESK_SEEN = """JSON.stringify({ panes: document.querySelectorAll('.dk .pn').leng
 
 
 def capability(env, base):
-    """The daemon's token, and a window's capability with the header that carries it."""
+    """The daemon's token, and a window's capability with the header that
+    carries it. The capability is minted over the window secret, the way a
+    window launch does: the token sends and nothing more (server/auth.rs)."""
     token = open(f"{env['SNYVI_CONFIG_DIR']}/token").read().strip()
-    cap = post(base, "/api/capability", {}, {"authorization": f"Bearer {token}"})["capability"]
+    window = open(f"{env['SNYVI_CONFIG_DIR']}/window").read().strip()
+    cap = post(base, "/api/capability", {}, {"x-snyvi-window": window})["capability"]
     return token, cap, {"x-snyvi-capability": cap}
 
 

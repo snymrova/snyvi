@@ -53,7 +53,7 @@ your machine, with no account and nothing to configure.
 |---|---|
 | **macOS** | `brew install --cask snymrova/snyvi/snyvi` |
 | **Linux** | `curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh \| sh` |
-| **Windows** | `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` then `scoop install snyvi`, or the [installer][win] |
+| **Windows** | `winget install snymrova.snyvi`, or `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` then `scoop install snyvi`, or the [installer][win] |
 
 Then open snyvi from your apps, or run `snyvi app`. It asks what you're
 working on, makes that project's first desk, and connects Claude Code from
@@ -158,7 +158,7 @@ document sent from anywhere else lands in the inbox, under its project.
 
 ## Private, and fast
 
-- One static binary, listening on `127.0.0.1` only.
+- One static binary, and a small window that opens it, listening on `127.0.0.1` only.
 - No account, no telemetry, and nothing leaves your machine.
 - Up in 11 ms, and [every budget is checked](docs/GUIDE.md#measured-so-far) on every push.
 - Updates are signed, and checked before they're applied.

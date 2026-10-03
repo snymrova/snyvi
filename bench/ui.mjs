@@ -35,6 +35,10 @@ import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
 import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
 
+/** The daemon's window secret, read once it is up: what mints a window's
+ *  capability answers to it and not to the token (`config::window_secret_path`). */
+let windowSecret = "";
+
 const args = process.argv.slice(2);
 const CHECK = args.includes("--check");
 const KEEP = args.includes("--keep");
@@ -154,6 +158,7 @@ async function main() {
     const secondUrl = execFileSync(BIN, ["send", second], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
     if (!/^https?:\/\//.test(secondUrl)) throw new Error(`snyvi send printed no URL:\n${secondUrl}`);
     const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
+    windowSecret = readFileSync(join(tmp, "config", "window"), "utf8").trim();
     const md = join(tmp, "plan.md");
     writeFileSync(md, plan());
     const send = async () => {
@@ -1994,7 +1999,7 @@ async function linkRows(p, url, base, env, tmp, token, stub, mcpSend) {
  *  tab, and every other section is a browser tab without one. */
 async function deskRows(cdp, base, token) {
   const rows = [];
-  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
   const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
   const a = await post("/api/desks", { name: "still-a" }), b = await post("/api/desks", { name: "still-b" });
@@ -2052,7 +2057,7 @@ async function deskRows(cdp, base, token) {
  *  with the capability. */
 async function homeRows(cdp, base, token, arrive, tmp) {
   const rows = [];
-  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const H = { "x-snyvi-capability": cap, "content-type": "application/json" }, T = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const post = async (path, body = {}, h = H) => { const r = await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) }); return { status: r.status, json: await r.json().catch(() => ({})) }; };
   const get = async (path, h = H) => (await fetch(base + path, { headers: h })).json().catch(() => ({}));
@@ -2248,7 +2253,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
  *  `deskRows` is. */
 async function projectDeskRows(cdp, base, token, tmp) {
   const rows = [];
-  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
   const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
   const desks = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks;
@@ -2300,7 +2305,7 @@ async function projectDeskRows(cdp, base, token, tmp) {
  *  a tab of its own, with the capability, as `deskRows` is. */
 async function deskLossRows(cdp, base, token) {
   const rows = [];
-  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
   const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
   const d = await post("/api/desks", { name: "refusals" });
@@ -2452,7 +2457,7 @@ async function deskLossRows(cdp, base, token) {
  *  In a tab of its own, with the capability, as `deskRows` is. */
 async function panelRows(cdp, base, token) {
   const rows = [];
-  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
   const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
   const slotOf = async (desk, pane) => { const j = await (await fetch(`${base}/api/desks`, { headers: H })).json(); return j.desks.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot; };
@@ -2730,7 +2735,7 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   await p.goto(base + "/inbox");
   await walk(p, "the inbox");
 
-  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { authorization: `Bearer ${token}` } })).json()).capability;
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
   const post = async (path, body = {}) => (await fetch(base + path, { method: "POST", headers: H, body: JSON.stringify(body) })).json().catch(() => ({}));
   const d = await post("/api/desks", { name: "sizes" });
@@ -2994,7 +2999,8 @@ async function startRows(p, url, arrive, base) {
 
   // snyvi's own aside: said once, when two are waiting, and never over an
   // agent's that is still unread.
-  await fetch(`${base}/api/notes/seen`, { method: "POST" }).catch(() => {});
+  // From the page, as note.js asks it: a reader's action needs our Origin.
+  await p.ev(`fetch("/api/notes/seen", { method: "POST" }).then(r => r.status)`);
   await p.ev(`Object.keys(localStorage).filter(k => k.startsWith("snyvi.seen.")).forEach(k => localStorage.removeItem(k)); 1`);
   await p.goto(url);
   await arrive(); await arrive();
@@ -3197,7 +3203,8 @@ async function stopRows(p, base, tmp, env, second) {
 
   const before = await health();
   const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
-  await fetch(`${base}/api/shutdown`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  // Leaving is the window's to ask for, not the agent's token's (server/auth.rs).
+  await fetch(`${base}/api/shutdown`, { method: "POST", headers: { authorization: `Bearer ${token}`, "x-snyvi-window": windowSecret } });
   const gone = await until(() => !alive(before.pid), 30);
   rows.push(["the daemon exits with a page on it", gone, gone ? `pid ${before.pid} gone within 3 s, ${before.streams} stream${before.streams === 1 ? "" : "s"} open on it` : `pid ${before.pid} is still up 3 s after it was asked to stop`]);
 

@@ -40,7 +40,13 @@ const WRITE = process.argv.includes("--write");
 const SCALE = new Set([11, 12, 13, 14, 15, 17, 18, 20, 26, 34]);
 
 /* themes.css is where colours live; everything else reads them. */
-const FILES = readdirSync(UI).filter(f => /\.(css|js)$/.test(f) && f !== "themes.css").concat("index.html").sort();
+/* app.js and desk.js are kept as parts (ui/app/, ui/desk/; src/strip.rs
+ * joins them), so each part is read on its own and named by its path. */
+const FILES = [
+  ...readdirSync(UI).filter(f => /\.(css|js)$/.test(f) && f !== "themes.css"),
+  ...["app", "desk"].flatMap(d => readdirSync(join(UI, d)).filter(f => f.endsWith(".js")).map(f => `${d}/${f}`)),
+  "index.html",
+].sort();
 
 /** Comments out, so a rule written about in prose is not a rule broken. */
 function uncomment(text, css) {
@@ -146,7 +152,7 @@ const CHECKS = {
       text = text.split("\n").filter(l => !/\bMac\b|\bMAC\b/.test(l)).join("\n");
       const strings = [...text.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map(m => m[2]).join("\n");
       let n = count(strings, /\b(?:Let go|Take off|Put away|Clear done|Kill)\b|Undo for \d|\(Esc\)|\S {2,}(?:⌘|⌃|Ctrl|Esc)\b/g);
-      if (file !== "app.js") n += count(strings, /⌘/g);
+      if (!file.startsWith("app/")) n += count(strings, /⌘/g);
       return n;
     },
   },

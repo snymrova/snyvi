@@ -702,6 +702,8 @@ struct Daemon {
     child: Child,
     port: u16,
     token: String,
+    /// The window secret, which is what a shutdown answers to.
+    window: String,
     /// How long one exchange with this daemon may take before the bench
     /// calls it a hang rather than slow.
     ///
@@ -737,6 +739,7 @@ impl Daemon {
             child,
             port,
             token: String::new(),
+            window: String::new(),
             patience,
         };
         // Asked every two milliseconds: a daemon answers in about 25, and the
@@ -763,6 +766,9 @@ impl Daemon {
         daemon.token = std::fs::read_to_string(dir.join("config").join("token"))
             .map(|t| t.trim().to_string())
             .context("reading the bench daemon's token")?;
+        daemon.window = std::fs::read_to_string(dir.join("config").join("window"))
+            .map(|t| t.trim().to_string())
+            .context("reading the bench daemon's window secret")?;
         Ok((daemon, ms))
     }
 
@@ -931,6 +937,7 @@ impl Events {
 fn stop(mut d: Daemon) {
     let _ = ureq::post(&d.url("/api/shutdown"))
         .header("Authorization", &format!("Bearer {}", d.token))
+        .header("x-snyvi-window", &d.window)
         .config()
         .timeout_global(Some(Duration::from_secs(2)))
         .http_status_as_error(false)

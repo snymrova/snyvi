@@ -287,7 +287,8 @@ let barTo = 0, barDraft = "", barPics = [], barSaid = null, barT = 0;
  *  its own, or by a `#` typed in the bar, from `from` to the caret at `to`.
  *  `q` narrows it, `at` is the row Enter takes. */
 let menu = null;
-const SAID_MS = 4000;
+/** How long a said line, and its Undo, stands: six seconds, everywhere (docs/DESIGN.md Q2). */
+const SAID_MS = 6000;
 /** The desks' order, taken once each time Home is shown: a line added or
  *  ticked here touches its desk, and Home must not reshuffle under the
  *  reader's hand for it. A desk new since then goes at the end. */
@@ -1151,7 +1152,7 @@ async function parkNow(id) {
   parking = 0; parkDraft = ""; justParked = id;
   draw(last);
   clearTimeout(parkedT);
-  parkedT = setTimeout(() => { justParked = 0; if (last && c.view() === "home") draw(last); }, 4000);
+  parkedT = setTimeout(() => { justParked = 0; if (last && c.view() === "home") draw(last); }, SAID_MS);
   soonRefresh();
 }
 

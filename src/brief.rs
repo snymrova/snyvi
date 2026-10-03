@@ -310,26 +310,11 @@ fn cut(text: &str, chars: usize) -> String {
     }
 }
 
-/// "just now", "5 min ago", "3 h ago", "2 days ago".
-fn ago(secs: i64) -> String {
-    let s = secs.max(0);
-    match s {
-        ..=59 => "just now".into(),
-        60..=3599 => format!("{} min ago", s / 60),
-        3600..=86399 => format!("{} h ago", s / 3600),
-        _ => {
-            let d = s / 86400;
-            format!("{d} day{} ago", if d == 1 { "" } else { "s" })
-        }
-    }
-}
+use crate::text::ago;
 
 /// The desk's folder as the reader writes it, `~` for home.
 fn tilde(path: &str) -> String {
-    match dirs::home_dir().map(|h| h.to_string_lossy().to_string()) {
-        Some(h) if !h.is_empty() && path.starts_with(&h) => format!("~{}", &path[h.len()..]),
-        _ => path.to_string(),
-    }
+    crate::text::tilde(std::path::Path::new(path))
 }
 
 #[cfg(test)]
@@ -358,6 +343,7 @@ mod tests {
                     cmd: String::new(),
                     created_at: 0,
                     agent_session: String::new(),
+                    resume: String::new(),
                     name: String::new(),
                 })
                 .collect(),

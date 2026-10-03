@@ -60,10 +60,14 @@ fn strip_ui() {
         ("app.css", strip::Lang::Css),
         ("themes.css", strip::Lang::Css),
     ] {
-        let from = dir.join(name);
-        println!("cargo:rerun-if-changed={}", from.display());
-        let src =
-            std::fs::read_to_string(&from).unwrap_or_else(|e| panic!("{}: {e}", from.display()));
+        // A script kept as parts (ui/app/, ui/desk/) is joined here, the way
+        // the daemon joins it off disk under SNYVI_UI_DIR; every part, and
+        // the directory a part could be added to, is watched.
+        for from in strip::parts(&dir, name) {
+            println!("cargo:rerun-if-changed={}", from.display());
+        }
+        let src = strip::source(&dir, name)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.join(name).display()));
         std::fs::write(out.join(name), strip::strip(&src, lang))
             .unwrap_or_else(|e| panic!("{}: {e}", out.join(name).display()));
     }

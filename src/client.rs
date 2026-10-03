@@ -18,6 +18,16 @@ pub fn health() -> Option<Value> {
         .ok()
 }
 
+/// The header the window secret rides in, and its value: the daemon's own
+/// file, or nothing when there is none to read. Sent beside the token on
+/// what stops, restarts, updates or mints -- a daemon from 1.13 on answers
+/// to this one and no longer to the token there; an older daemon reads the
+/// token and ignores this. `config::load_or_create_window_secret` says why.
+const WINDOW_HEADER: &str = "x-snyvi-window";
+fn window_secret(paths: &Paths) -> String {
+    config::read_window_secret(paths).unwrap_or_default()
+}
+
 /// Ask a running daemon to exit. Returns false when none was running.
 ///
 /// Versions before 0.3 have no shutdown endpoint, and an upgrade is exactly when
@@ -32,6 +42,7 @@ pub fn stop(paths: &Paths) -> Result<bool> {
     if let Some(token) = config::read_token(paths) {
         let _ = ureq::post(&format!("{}/api/shutdown", config::base_url()))
             .header("Authorization", &format!("Bearer {token}"))
+            .header(WINDOW_HEADER, &window_secret(paths))
             .config()
             .timeout_global(Some(Duration::from_secs(5)))
             .http_status_as_error(false)
@@ -141,10 +152,10 @@ fn legacy_pids() -> Vec<u32> {
 /// what happens after an upgrade: the old process keeps serving the old code.
 fn warn_if_stale(h: &Value) {
     let running = h.get("version").and_then(Value::as_str).unwrap_or("");
-    if !running.is_empty() && running != crate::server::VERSION {
+    if !running.is_empty() && running != crate::version::VERSION {
         eprintln!(
             "note: snyvi {running} is still running but this binary is {}. Run `snyvi restart` to pick up the new version.",
-            crate::server::VERSION
+            crate::version::VERSION
         );
     } else if h.get("stale").and_then(Value::as_bool) == Some(true) {
         // Same version, different file: the daemon re-stats what it was
@@ -175,6 +186,7 @@ pub fn restart(paths: &Paths, now: bool) -> Result<()> {
     };
     let asked = ureq::post(&format!("{}/api/restart", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
+        .header(WINDOW_HEADER, &window_secret(paths))
         .config()
         .timeout_global(Some(Duration::from_secs(5)))
         .http_status_as_error(false)
@@ -211,6 +223,7 @@ fn send_cancel(paths: &Paths) -> Result<bool> {
     };
     let r = ureq::delete(&format!("{}/api/restart", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
+        .header(WINDOW_HEADER, &window_secret(paths))
         .config()
         .timeout_global(Some(Duration::from_secs(5)))
         .http_status_as_error(false)
@@ -358,6 +371,7 @@ fn post(paths: &Paths, path: &str, body: Value, within: Duration) -> Result<(u16
     };
     let mut r = ureq::post(&format!("{}{path}", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
+        .header(WINDOW_HEADER, &window_secret(paths))
         .config()
         .timeout_global(Some(within))
         .http_status_as_error(false)
@@ -1126,6 +1140,7 @@ pub fn mint_capability(paths: &Paths) -> Option<String> {
     let token = config::read_token(paths)?;
     let mut resp = ureq::post(&format!("{}/api/capability", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
+        .header(WINDOW_HEADER, &window_secret(paths))
         .config()
         .timeout_global(Some(Duration::from_secs(2)))
         .http_status_as_error(false)

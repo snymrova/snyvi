@@ -42,8 +42,8 @@ up)
   envs setsid nohup "$BIN" serve > $ST/serve.log 2>&1 &
   base="http://127.0.0.1:$(cat $ST/port)"
   for _ in $(seq 100); do curl -sf "$base/api/health" >/dev/null 2>&1 && break; sleep 0.1; done
-  tok=$(cat $ST/config/token)
-  cap=$(curl -sf -X POST -H "authorization: Bearer $tok" "$base/api/capability" | sed -E 's/.*"capability":"([^"]+)".*/\1/')
+  win=$(cat $ST/config/window)
+  cap=$(curl -sf -X POST -H "x-snyvi-window: $win" "$base/api/capability" | sed -E 's/.*"capability":"([^"]+)".*/\1/')
   H=(-H "x-snyvi-capability: $cap" -H "content-type: application/json")
   desk=$(curl -sf -X POST "${H[@]}" -d '{"name":"paint"}' "$base/api/desks" | grep -oE '"id":[0-9]+' | head -1 | cut -d: -f2)
   for _ in 1 2 3 4; do

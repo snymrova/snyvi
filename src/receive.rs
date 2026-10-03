@@ -65,22 +65,37 @@ fn automatic(origin: &str) -> bool {
     matches!(origin, "hook" | "watch")
 }
 
-pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
-    // `body` is what gets stored; `text` is the decoded view of it, empty when there
-    // is no text to decode. Reading a file as UTF-8 unconditionally is how a PNG used
-    // to become a document full of mojibake.
-    //
-    // A video or a song is `staged` instead: copied into the store as it is
-    // hashed, with `body` left empty.
-    let mut staged: Option<Staged> = None;
-    let (body, text, path) = match (&p.content, &p.path) {
-        (Some(c), _) => (c.clone().into_bytes(), c.clone(), p.path.clone()),
+/// What arrived, read: `bytes` is what gets stored; `text` is the decoded
+/// view of it, empty when there is no text to decode. Reading a file as UTF-8
+/// unconditionally is how a PNG used to become a document full of mojibake.
+///
+/// A video or a song is `staged` instead: copied into the store as it is
+/// hashed, with `bytes` left empty.
+struct Body {
+    bytes: Vec<u8>,
+    text: String,
+    path: Option<String>,
+    staged: Option<Staged>,
+}
+
+fn read(store: &Store, p: &Payload) -> Result<Body> {
+    let body = match (&p.content, &p.path) {
+        (Some(c), _) => Body {
+            bytes: c.clone().into_bytes(),
+            text: c.clone(),
+            path: p.path.clone(),
+            staged: None,
+        },
         (None, Some(path)) => {
             let path = absolutize(path, p.cwd.as_deref());
             let sp = path.to_string_lossy().to_string();
             if render::media_kind(&render::ext_of(&sp)).is_some() {
-                staged = Some(store.stage(&path, MAX_MEDIA_BYTES)?);
-                (Vec::new(), String::new(), Some(sp))
+                Body {
+                    bytes: Vec::new(),
+                    text: String::new(),
+                    path: Some(sp),
+                    staged: Some(store.stage(&path, MAX_MEDIA_BYTES)?),
+                }
             } else {
                 let bytes =
                     std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -97,14 +112,105 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
                 } else {
                     String::from_utf8_lossy(&bytes).into_owned()
                 };
-                (bytes, text, Some(sp))
+                Body {
+                    bytes,
+                    text,
+                    path: Some(sp),
+                    staged: None,
+                }
             }
         }
         (None, None) => bail!("send_document needs either `path` or `content`"),
     };
-    if body.len() > MAX_BYTES {
+    if body.bytes.len() > MAX_BYTES {
         bail!("content is larger than {} MB", MAX_BYTES / 1024 / 1024);
     }
+    Ok(body)
+}
+
+/// What kind of document it is. An image is known by its extension; anything
+/// else undecodable is just binary.
+fn classify(renderer: &Renderer, b: &Body, lang: Option<&str>) -> (Kind, Option<String>) {
+    match renderer.detect(b.path.as_deref(), lang, &b.text) {
+        // Played only from a copy that was streamed in, whatever language it
+        // was labelled. Inline text that names a video file is still text.
+        _ if b.staged.is_some() => {
+            let ext = render::ext_of(b.path.as_deref().unwrap_or_default());
+            match render::media_kind(&ext) {
+                Some("video") => (Kind::Video, Some(ext)),
+                _ => (Kind::Audio, Some(ext)),
+            }
+        }
+        (Kind::Video | Kind::Audio, _) => (Kind::Text, None),
+        (_, lang) if !b.text.is_empty() && render::looks_binary(&b.bytes) => (Kind::Binary, lang),
+        (Kind::Image, lang) => (Kind::Image, lang),
+        _ if b.text.is_empty() && !b.bytes.is_empty() => (Kind::Binary, None),
+        other => other,
+    }
+}
+
+/// The page for document `id`: rendered, or a frame around the bytes served
+/// back.
+fn page(
+    renderer: &Renderer,
+    b: &Body,
+    id: &str,
+    kind: Kind,
+    lang: Option<&str>,
+    title: &str,
+) -> String {
+    // The viewer shows the title as the page heading, so a leading H1 that *is* the title
+    // would appear twice. Drop it from the rendered body only; the stored source is untouched.
+    let body_src = if kind == Kind::Markdown {
+        render::strip_leading_h1(&b.text, title)
+    } else {
+        None
+    };
+    let file_base = b.path.as_ref().map(|_| format!("/files/{id}/"));
+    match kind {
+        // The bytes are the document; serve them back rather than rendering them.
+        Kind::Image => render::image_body(&format!("/api/docs/{id}/blob"), title),
+        Kind::Video | Kind::Audio => render::media_body(
+            &format!("/api/docs/{id}/blob"),
+            &render::ext_of(b.path.as_deref().unwrap_or_default()),
+        ),
+        Kind::Binary => render::placeholder(&render::describe_bytes(title, b.bytes.len() as u64)),
+        _ => renderer.render_with_base(
+            kind,
+            lang,
+            body_src.as_deref().unwrap_or(&b.text),
+            file_base.as_deref(),
+        ),
+    }
+}
+
+/// The workflow a document joins, and that workflow's title.
+///
+/// Keys are matched case-insensitively: "KSI pivot" and "ksi pivot" are one
+/// workflow, not two. The title keeps whatever casing arrived first.
+/// A plan the hook sent as Claude asked for approval (`crate::hook`) is
+/// filed under the desk it was made on, or its project: a plan is looked
+/// for by where the work is, not by which conversation wrote it.
+fn workflow(
+    p: &Payload,
+    origin: &str,
+    from: Option<&crate::desk::Origin>,
+    project: &str,
+    title: &str,
+) -> (String, String) {
+    let plan_home = (origin == "plan" && p.workflow.is_none()).then(|| {
+        from.map(|o| o.name.clone())
+            .unwrap_or_else(|| project.to_string())
+    });
+    match (plan_home.as_ref().or(p.workflow.as_ref()), &p.session) {
+        (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
+        (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.to_string()),
+        _ => ("manual".to_string(), "Sent manually".to_string()),
+    }
+}
+
+pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
+    let b = read(store, &p)?;
     let origin = p.origin.as_deref().unwrap_or("cli");
     // Attribution only. Which workflow a document joins is still the
     // session's, as it always was; the pane says where it was sent from.
@@ -124,7 +230,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         .cwd
         .as_deref()
         .map(PathBuf::from)
-        .or_else(|| path.as_deref().map(PathBuf::from))
+        .or_else(|| b.path.as_deref().map(PathBuf::from))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
     let proj = project::resolve(&anchor);
     let root = proj.root.to_string_lossy().to_string();
@@ -132,11 +238,11 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     // Same file, same bytes as the latest snapshot: hand back that document rather
     // than storing a duplicate (an explicit send after a hook send, or vice versa).
-    let hash = match &staged {
+    let hash = match &b.staged {
         Some(st) => st.hash.clone(),
-        None => blake3::hash(&body).to_hex().to_string(),
+        None => blake3::hash(&b.bytes).to_hex().to_string(),
     };
-    let latest_same_path = match &path {
+    let latest_same_path = match &b.path {
         Some(sp) => store.latest_for_path(&root, sp)?,
         None => None,
     };
@@ -151,45 +257,14 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         }
     }
 
-    // An image is known by its extension; anything else undecodable is just binary.
-    let (kind, lang) = match renderer.detect(path.as_deref(), p.lang.as_deref(), &text) {
-        // Played only from a copy that was streamed in, whatever language it
-        // was labelled. Inline text that names a video file is still text.
-        _ if staged.is_some() => {
-            let ext = render::ext_of(path.as_deref().unwrap_or_default());
-            match render::media_kind(&ext) {
-                Some("video") => (Kind::Video, Some(ext)),
-                _ => (Kind::Audio, Some(ext)),
-            }
-        }
-        (Kind::Video | Kind::Audio, _) => (Kind::Text, None),
-        (_, lang) if !text.is_empty() && render::looks_binary(&body) => (Kind::Binary, lang),
-        (Kind::Image, lang) => (Kind::Image, lang),
-        _ if text.is_empty() && !body.is_empty() => (Kind::Binary, None),
-        other => other,
-    };
-    let title = render::title_for(p.title.as_deref(), kind, path.as_deref(), &text);
+    let (kind, lang) = classify(renderer, &b, p.lang.as_deref());
+    let title = render::title_for(p.title.as_deref(), kind, b.path.as_deref(), &b.text);
 
-    // Keys are matched case-insensitively: "KSI pivot" and "ksi pivot" are one
-    // workflow, not two. The title keeps whatever casing arrived first.
-    // A plan the hook sent as Claude asked for approval (`crate::hook`) is
-    // filed under the desk it was made on, or its project: a plan is looked
-    // for by where the work is, not by which conversation wrote it.
-    let plan_home = (origin == "plan" && p.workflow.is_none()).then(|| {
-        from.as_ref()
-            .map(|o| o.name.clone())
-            .unwrap_or_else(|| proj.name.clone())
-    });
-    let (wf_name, wf_title) = match (plan_home.as_ref().or(p.workflow.as_ref()), &p.session) {
-        (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
-        (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.clone()),
-        _ => ("manual".to_string(), "Sent manually".to_string()),
-    };
+    let (wf_name, wf_title) = workflow(&p, origin, from.as_ref(), &proj.name, &title);
 
     // A hook firing on every edit would otherwise fill a workflow with near-identical
     // snapshots; within a short window, overwrite the last one instead.
     let wf_key = wf_name.to_lowercase();
-    let _ = &wf_name;
 
     let coalesce_into = match (origin, &latest_same_path) {
         (o, Some(prev))
@@ -206,31 +281,8 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let id = coalesce_into
         .clone()
         .unwrap_or_else(|| crate::store::new_id(&hash));
-
-    // The viewer shows the title as the page heading, so a leading H1 that *is* the title
-    // would appear twice. Drop it from the rendered body only; the stored source is untouched.
-    let body_src = if kind == Kind::Markdown {
-        render::strip_leading_h1(&text, &title)
-    } else {
-        None
-    };
-    let file_base = path.as_ref().map(|_| format!("/files/{id}/"));
-    let html = match kind {
-        // The bytes are the document; serve them back rather than rendering them.
-        Kind::Image => render::image_body(&format!("/api/docs/{id}/blob"), &title),
-        Kind::Video | Kind::Audio => render::media_body(
-            &format!("/api/docs/{id}/blob"),
-            &render::ext_of(path.as_deref().unwrap_or_default()),
-        ),
-        Kind::Binary => render::placeholder(&render::describe_bytes(&title, body.len() as u64)),
-        _ => renderer.render_with_base(
-            kind,
-            lang.as_deref(),
-            body_src.as_deref().unwrap_or(&text),
-            file_base.as_deref(),
-        ),
-    };
-    let needs_full_highlight = kind == Kind::Code && text.len() > HIGHLIGHT_CAP;
+    let html = page(renderer, &b, &id, kind, lang.as_deref(), &title);
+    let needs_full_highlight = kind == Kind::Code && b.text.len() > HIGHLIGHT_CAP;
 
     let new_doc = NewDoc {
         project_root: &root,
@@ -240,14 +292,14 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         title: &title,
         kind,
         lang: lang.as_deref(),
-        source_path: path.as_deref(),
+        source_path: b.path.as_deref(),
         branch: branch.as_deref(),
         origin,
         sender: p.sender.as_deref().unwrap_or(""),
         desk: from.as_ref(),
-        source: &body,
-        staged: staged.as_ref(),
-        search_body: &text,
+        source: &b.bytes,
+        staged: b.staged.as_ref(),
+        search_body: &b.text,
         html: &html,
     };
 

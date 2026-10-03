@@ -110,9 +110,13 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    tab gets 403 on every desk route and on the socket.
    `desk_refusal` (`src/server.rs`) makes three refusals, in order: the
    capability in a query string, a request not from this page (`Origin` /
-   `Sec-Fetch-Site`), and a missing or wrong capability. The test
-   `every_desk_route_is_behind_the_gate` reads the source and fails if any
-   desk handler reaches the store before it reaches the gate.
+   `Sec-Fetch-Site`), and a missing or wrong capability. In front of every
+   route, desk or not, `host_gate` refuses a request whose `Host` or `Origin`
+   is not this daemon's, which is what keeps a rebound DNS name out. The test
+   `every_route_answers_to_its_gate_and_to_this_host_only` builds the router
+   against a temp store and sends each route four requests: from another
+   host, with nothing, with the wrong leave, with the right one; a route
+   added to the router and not to its table fails the count.
 2. **The capability is never the write token.** It is stripped from the URL
    before anything renders, and it never reaches a page as the token would.
    `src/capability.rs` mints 32 bytes for each window launch and keeps the
@@ -120,8 +124,12 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    that was open across a daemon restart or an upgrade keeps its panes. They
    were once held in memory only, and every restart left the open window
    answering "no capability" until it was reopened. What the capability keeps
-   out is a browser tab, which cannot read a file; a process running as the
-   reader can read the token, and mint with it, already. The page reads the capability from the URL fragment, keeps it
+   out is a browser tab, which cannot read a file. Minting takes the *window
+   secret* (`config::window_secret_path`, beside the token, 0600), not the
+   token: the token is the agent's, and it can send, tick, name and leave
+   off but never start a window, a panel or a process. `snyvi stop`,
+   `snyvi restart` and `snyvi update` read the window secret from the
+   daemon's own files. The page reads the capability from the URL fragment, keeps it
    in `sessionStorage`, and `replaceState`s it out of the address bar. HTTP
    requests carry it in the `x-snyvi-capability` header. The socket carries it
    in its first frame, because a browser `WebSocket` cannot set headers.
@@ -212,7 +220,10 @@ and taking it in cost over a second on every desk switch.
 A run is `[text, fg, bg, flags]`, and trailing defaults are dropped, so plain
 text is `["text"]`. A colour is 0 for the default, 1–256 for a palette index
 plus one, or `0x1000000 | rgb`. Flag 256 marks a run of double-width
-characters.
+characters. Flag 512 marks a run that is one cell: a character and the marks
+or emoji parts that join it (a Devanagari vowel sign, a skin tone, a ZWJ
+family), which the page never splits. Its width is its first character's, as
+Claude Code counts it (`src/screen/cluster.rs`).
 
 ### Three rules from the Phase 0 spike
 
@@ -418,9 +429,9 @@ token and a running pane.
 ## 7. Gaps, stated
 
 - **No reflow on resize.** A line cut short by a narrower pane stays cut.
-- **No combining marks, charset designation or DCS.** The spike saw 0–4
-  unhandled sequences per run. A combining mark is dropped rather than drawn
-  in the wrong cell.
+- **No charset designation or DCS.** The spike saw 0–4 unhandled sequences
+  per run. A combining mark joins the cell before it; one with no cell before
+  it is dropped.
 - **No IME composition.** Keys arrive as `keydown`, so dead keys and input
   methods that compose do not work yet.
 - **A pane is sized by the last window to ask**, as in tmux. Two windows on

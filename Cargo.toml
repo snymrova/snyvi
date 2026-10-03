@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.12.0"
+version = "1.13.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -75,6 +75,11 @@ semver = "1"
 sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
+
+[dev-dependencies]
+# The router test sends every route a request without a port: tower's
+# `ServiceExt::oneshot` on the Router axum already builds on.
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 opt-level = 3
