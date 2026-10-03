@@ -198,7 +198,11 @@ pub(crate) async fn pane_agent(
 /// gone, and only with that one desk's list -- never another desk's, never the
 /// library. A token holder could already open the store; what this adds is
 /// that an agent is handed one list through the front door instead.
-pub(crate) async fn pane_notes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn pane_notes(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     if !authorized(&app, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -455,7 +459,11 @@ pub(crate) fn agent_pane(
 /// the SessionStart hook hands it as context, and the session's title. The
 /// gate the list has, and only this pane's own desk. Empty when the reader
 /// turned the brief off, so the hook says nothing.
-pub(crate) async fn pane_brief(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn pane_brief(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,
@@ -503,7 +511,11 @@ pub(crate) async fn pane_brief(State(app): S, headers: HeaderMap, Path(id): Path
 /// changed, when the brief is off, and when the daemon does not know when it
 /// last spoke to this pane -- it has just started -- in which case it only
 /// starts counting.
-pub(crate) async fn pane_changes(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn pane_changes(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,

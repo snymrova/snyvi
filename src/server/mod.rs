@@ -15,9 +15,9 @@ mod assets;
 mod auth;
 mod events;
 mod lifecycle;
-mod ws;
 #[cfg(test)]
 mod tests;
+mod ws;
 
 use api_agent::*;
 use api_browse::*;
@@ -27,8 +27,8 @@ use assets::*;
 use auth::*;
 use events::*;
 use lifecycle::*;
-use ws::*;
 pub use lifecycle::{relaunch, Leaving};
+use ws::*;
 
 use crate::browse::Browser;
 use crate::capability::constant_eq;
@@ -37,6 +37,7 @@ use crate::platform;
 use crate::receive::{self, Payload};
 use crate::render::{self, Renderer};
 use crate::store::{Doc, Store};
+pub use crate::version::{BUILD_SHA, BUILD_TARGET, VERSION};
 use axum::{
     body::Body,
     extract::{
@@ -61,7 +62,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
-pub use crate::version::{BUILD_SHA, BUILD_TARGET, VERSION};
 
 pub struct App {
     pub store: Store,
@@ -290,6 +290,7 @@ fn new_app(
         paths: paths.clone(),
         secrets: crate::secrets::Secrets::new(paths.config_dir.join("keys.json")),
         token: std::sync::RwLock::new(token),
+        window,
         events: tx,
         shutdown: stop_tx,
         started: Instant::now(),
@@ -620,11 +621,12 @@ fn emit_doc(app: &App, received: &receive::Received) {
 /// A document in, the plain way: rendered and stored off the executor, then
 /// told to every page. A send has more to do around it (`receive_doc`); a
 /// pasted picture and a week's page have not, and come through here. The
-/// refusal is the response the caller returns.
+/// refusal is the response the caller returns, boxed: a `Response` is a
+/// large thing to carry in every `Ok`, and clippy says so.
 async fn receive_and_emit(
     app: &Arc<App>,
     payload: Payload,
-) -> Result<receive::Received, Response> {
+) -> Result<receive::Received, Box<Response>> {
     let app2 = app.clone();
     match tokio::task::spawn_blocking(move || {
         receive::receive(&app2.store, &app2.renderer, payload)
@@ -635,12 +637,14 @@ async fn receive_and_emit(
             emit_doc(app, &received);
             Ok(received)
         }
-        Ok(Err(e)) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response()),
-        Err(e) => Err(err(anyhow::anyhow!(e))),
+        Ok(Err(e)) => Err(Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        )),
+        Err(e) => Err(Box::new(err(anyhow::anyhow!(e)))),
     }
 }
 

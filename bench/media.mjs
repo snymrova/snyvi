@@ -247,6 +247,7 @@ async function main() {
     // The daemon comes up the way it always does, on the first send.
     execFileSync(BIN, ["send", join(SEED, "notes.md"), "-w", "Pricing rewrite"], { env, cwd: website, encoding: "utf8" });
     const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
+    const windowSecret = readFileSync(join(tmp, "config", "window"), "utf8").trim();
     const send = async (file, { cwd, workflow, sender = "claude-code" } = {}) => {
       const r = await fetch(`${base}/api/docs`, {
         method: "POST",
@@ -329,7 +330,7 @@ async function main() {
     // The desk the pictures show: a folder opened under Folders, and a desk on
     // it. Panes are behind the window's capability -- a browser tab has none,
     // and that is the whole of the rule that keeps processes out of one -- so
-    // the camera mints one over the token, the way a window launch does, and
+    // the camera mints one over the window secret, the way a window launch does, and
     // hands it to the page on the URL fragment exactly as `snyvi app` would.
     const post = async (path, body) => {
       const r = await fetch(`${base}${path}`, {
@@ -341,7 +342,7 @@ async function main() {
       return r.json();
     };
     const rootId = (await post("/api/browse", { path: ledger })).root.id;
-    const cap = (await post("/api/capability")).capability;
+    const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
     await p.goto(`${base}/?window=1#cap=${cap}`);
     // Made from the page, not from here: the daemon answers this route only for
     // a request that came from a page of its own and carries the capability.

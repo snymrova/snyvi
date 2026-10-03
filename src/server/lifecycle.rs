@@ -599,7 +599,11 @@ pub(crate) struct RestartBody {
 /// Asking again adds to the restart
 /// already pending rather than queueing another: `snyvi restart` while the
 /// pill's update waits still takes the update, and `--now` hurries both.
-pub(crate) async fn restart(State(app): S, headers: HeaderMap, Json(b): Json<RestartBody>) -> Response {
+pub(crate) async fn restart(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<RestartBody>,
+) -> Response {
     if !windowed(&app, &headers) {
         return not_windowed();
     }
@@ -756,7 +760,11 @@ pub(crate) struct UpdateAutoBody {
 /// `Updates: on / off` in About, and `snyvi update on|off`. Written to
 /// `<config>/updates.json`; `SNYVI_UPDATES=off` in the daemon's environment
 /// wins, and the answer says so.
-pub(crate) async fn update_auto(State(app): S, headers: HeaderMap, Json(b): Json<UpdateAutoBody>) -> Response {
+pub(crate) async fn update_auto(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<UpdateAutoBody>,
+) -> Response {
     if !windowed(&app, &headers) {
         return not_windowed();
     }
@@ -786,7 +794,11 @@ pub(crate) struct LaterBody {
 
 /// "Later" on the update card: the offer of this version waits until then,
 /// in every window, since it is the daemon's word the windows draw from.
-pub(crate) async fn update_later(State(app): S, headers: HeaderMap, Json(b): Json<LaterBody>) -> Response {
+pub(crate) async fn update_later(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<LaterBody>,
+) -> Response {
     if !windowed(&app, &headers) {
         return not_windowed();
     }

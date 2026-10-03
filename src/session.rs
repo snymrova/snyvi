@@ -163,10 +163,19 @@ mod tests {
         let root = d.path.to_str().unwrap();
         record(&paths, root, "aaaaaaaa-1", Some("p1"));
         record(&paths, root, "bbbbbbbb-2", Some("p2"));
-        assert_eq!(lookup(&paths, root, Some("p1")).as_deref(), Some("aaaaaaaa-1"));
-        assert_eq!(lookup(&paths, root, Some("p2")).as_deref(), Some("bbbbbbbb-2"));
+        assert_eq!(
+            lookup(&paths, root, Some("p1")).as_deref(),
+            Some("aaaaaaaa-1")
+        );
+        assert_eq!(
+            lookup(&paths, root, Some("p2")).as_deref(),
+            Some("bbbbbbbb-2")
+        );
         // No pane, or one that never prompted: the folder's latest.
         assert_eq!(lookup(&paths, root, None).as_deref(), Some("bbbbbbbb-2"));
-        assert_eq!(lookup(&paths, root, Some("p3")).as_deref(), Some("bbbbbbbb-2"));
+        assert_eq!(
+            lookup(&paths, root, Some("p3")).as_deref(),
+            Some("bbbbbbbb-2")
+        );
     }
 }

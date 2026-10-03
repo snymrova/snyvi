@@ -243,7 +243,7 @@ pub(crate) async fn desk_week(
     };
     match receive_and_emit(&app, payload).await {
         Ok(received) => Json(json!({ "ok": true, "id": received.doc.id })).into_response(),
-        Err(no) => no,
+        Err(no) => *no,
     }
 }
 
@@ -1386,7 +1386,7 @@ pub(crate) async fn paste_image(
     };
     match receive_and_emit(&app, payload).await {
         Ok(received) => Json(json!({ "id": received.doc.id, "path": file })).into_response(),
-        Err(no) => no,
+        Err(no) => *no,
     }
 }
 

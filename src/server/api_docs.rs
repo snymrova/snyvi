@@ -22,7 +22,11 @@ pub(crate) struct TreeQ {
 /// What one project holds, fetched when a reader expands it. Zero for either
 /// cap means all of them: that is a reader who clicked past the cap, and the
 /// answer to "show me the rest" is the rest.
-pub(crate) async fn project_tree(State(app): S, Path(id): Path<i64>, Query(q): Query<TreeQ>) -> Response {
+pub(crate) async fn project_tree(
+    State(app): S,
+    Path(id): Path<i64>,
+    Query(q): Query<TreeQ>,
+) -> Response {
     let workflows = q.workflows.unwrap_or(TREE_WORKFLOWS);
     let docs = q.docs.unwrap_or(TREE_DOCS);
     Json(project_rows(&app, id, workflows, docs, q.whole)).into_response()
@@ -206,7 +210,11 @@ pub(crate) async fn history(State(app): S, Path(id): Path<String>) -> Response {
 
 /// Delete at once, and say nothing first. The page offers Undo for a few
 /// seconds; the document is on disk until `prune` runs either way.
-pub(crate) async fn delete_doc(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn delete_doc(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
@@ -259,7 +267,11 @@ pub(crate) async fn removed_list(
 
 /// The other half of Undo. Gone means pruned, which is the one delete that
 /// cannot be taken back.
-pub(crate) async fn undelete_doc(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn undelete_doc(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
@@ -396,7 +408,11 @@ pub(crate) async fn queue(State(app): S, Query(q): Query<Limit>) -> Response {
 /// A tab opened a document. Every other tab hears, so the same row leaves
 /// the queue everywhere at once; a document already read answers the same
 /// and tells nobody, since nothing changed.
-pub(crate) async fn mark_read(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn mark_read(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
@@ -473,7 +489,11 @@ pub(crate) async fn pin(
     }
 }
 
-pub(crate) async fn receive_doc(State(app): S, headers: HeaderMap, Json(payload): Json<Payload>) -> Response {
+pub(crate) async fn receive_doc(
+    State(app): S,
+    headers: HeaderMap,
+    Json(payload): Json<Payload>,
+) -> Response {
     if !authorized(&app, &headers) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -609,7 +629,11 @@ pub(crate) struct AsideIds {
 
 /// A reader closed an aside, or all of them: gone from the card in every
 /// page. Only flagged, so `restore` is the Undo.
-pub(crate) async fn dismiss_asides(State(app): S, headers: HeaderMap, Json(b): Json<AsideIds>) -> Response {
+pub(crate) async fn dismiss_asides(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<AsideIds>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
@@ -619,7 +643,11 @@ pub(crate) async fn dismiss_asides(State(app): S, headers: HeaderMap, Json(b): J
     Json(json!({ "ok": true })).into_response()
 }
 
-pub(crate) async fn restore_asides(State(app): S, headers: HeaderMap, Json(b): Json<AsideIds>) -> Response {
+pub(crate) async fn restore_asides(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<AsideIds>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }

@@ -201,8 +201,8 @@ impl Ui {
             return built_in.to_string();
         };
         let mut h = blake3::Hasher::new();
-        for (name, fallback) in
-            std::iter::once(("index.html", INDEX_HTML)).chain(ASSETS.iter().map(|(n, b, _)| (*n, *b)))
+        for (name, fallback) in std::iter::once(("index.html", INDEX_HTML))
+            .chain(ASSETS.iter().map(|(n, b, _)| (*n, *b)))
         {
             h.update(self.text(name, fallback).as_bytes());
         }
@@ -293,7 +293,12 @@ pub(crate) fn not_found_page(app: &App) -> Response {
         .into_response()
 }
 
-pub(crate) fn shell(app: &App, mut boot: serde_json::Value, initial_html: &str, title: &str) -> Response {
+pub(crate) fn shell(
+    app: &App,
+    mut boot: serde_json::Value,
+    initial_html: &str,
+    title: &str,
+) -> Response {
     // The build hash, for the one asset the client asks for itself rather than
     // through the markup: the Mermaid bundle.
     if let Some(o) = boot.as_object_mut() {
@@ -522,7 +527,12 @@ pub(crate) async fn asset_named(State(app): S, Path(name): Path<String>) -> Resp
 /// An asset that is immutable for a shipped build -- its URL carries the
 /// build hash, so a year is the right answer -- and uncached while the UI is
 /// live, where the whole point is that the next request sees the edit.
-pub(crate) fn asset(app: &App, content_type: &'static str, name: &str, built_in: &'static str) -> Response {
+pub(crate) fn asset(
+    app: &App,
+    content_type: &'static str,
+    name: &str,
+    built_in: &'static str,
+) -> Response {
     let body = app.ui.text(name, built_in).into_owned();
     if !app.ui.live() {
         return immutable(content_type, body);
@@ -613,7 +623,10 @@ pub(crate) async fn shell_browse(State(app): S, Path(id): Path<String>) -> Respo
     browse_shell(app, id, String::new()).await
 }
 
-pub(crate) async fn shell_browse_file(State(app): S, Path((id, path)): Path<(String, String)>) -> Response {
+pub(crate) async fn shell_browse_file(
+    State(app): S,
+    Path((id, path)): Path<(String, String)>,
+) -> Response {
     browse_shell(app, id, path).await
 }
 

@@ -2115,7 +2115,9 @@ mod tests {
         )
         .unwrap();
         let mut titles = Vec::new();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        // Generous: a shell under a full `cargo test` has been seen to take
+        // past five seconds to its first prompt. Alone it is under one.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         while !panes.status(id).blocked && tokio::time::Instant::now() < deadline {
             while let Ok(m) = rx.try_recv() {
                 let v: serde_json::Value = serde_json::from_str(&m).unwrap();

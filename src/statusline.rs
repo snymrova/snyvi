@@ -137,13 +137,13 @@ pub fn run(paths: &Paths) -> anyhow::Result<()> {
         return Ok(());
     };
     let seen = read(&v);
-    if let (Some(cwd), Some(sid)) = (&seen.cwd, &seen.session) {
-        crate::session::record(paths, cwd, sid);
-    }
-    if let Some(pane) = std::env::var("SNYVI_SESSION")
+    let pane = std::env::var("SNYVI_SESSION")
         .ok()
-        .filter(|p| crate::pane::valid_id(p))
-    {
+        .filter(|p| crate::pane::valid_id(p));
+    if let (Some(cwd), Some(sid)) = (&seen.cwd, &seen.session) {
+        crate::session::record(paths, cwd, sid, pane.as_deref());
+    }
+    if let Some(pane) = pane {
         client::agent_context(paths, &pane, &seen);
     }
     Ok(())

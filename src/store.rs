@@ -198,67 +198,175 @@ const HEAD_FROM: &str =
 /// database forward says so and stops, rather than running on a schema it
 /// half has.
 const MIGRATIONS: &[(i64, &str)] = &[
-    (1, "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"),
-    (1, "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'"),
-    (1, "ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN origin TEXT NOT NULL DEFAULT 'cli'",
+    ),
+    (
+        1,
+        "ALTER TABLE projects ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0",
+    ),
     // Read, for everything that was here before there was a queue: a
     // library's worth of old documents is not a backlog.
-    (1, "ALTER TABLE docs ADD COLUMN unread INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN unread INTEGER NOT NULL DEFAULT 0",
+    ),
     // Deleted, and still here until `prune` says otherwise -- which is
     // what makes "Undo" in the toast something the daemon can honour.
-    (1, "ALTER TABLE docs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0",
+    ),
     // Who sent it, by the name the MCP client gave in `initialize`,
     // so the connect page can say when an agent last worked.
-    (1, "ALTER TABLE docs ADD COLUMN sender TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN sender TEXT NOT NULL DEFAULT ''",
+    ),
     // Which desk and slot it came from, when it came from a pane.
     // Copied, not joined: a desk that is closed later does not take
     // the document's provenance with it.
-    (1, "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0"),
-    (1, "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN desk_name TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN desk_slot INTEGER NOT NULL DEFAULT 0",
+    ),
     // The Claude conversation a pane last had, to offer it back.
-    (1, "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE panes ADD COLUMN agent_session TEXT NOT NULL DEFAULT ''",
+    ),
     // Who ticked a desk's line, when an agent did.
-    (1, "ALTER TABLE desk_notes ADD COLUMN done_by TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN done_by TEXT NOT NULL DEFAULT ''",
+    ),
     // Marked by a planned restart: bring this pane back as
     // `claude --resume`. Taken by the daemon that comes up next.
-    (1, "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE panes ADD COLUMN resume_next INTEGER NOT NULL DEFAULT 0",
+    ),
     // 1.7.1: what the reader called a panel, and a desk's full view.
-    (1, "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE panes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN full_slot INTEGER NOT NULL DEFAULT 0",
+    ),
     // 1.7.1: where an agent's tick says the work went.
-    (1, "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN done_doc TEXT NOT NULL DEFAULT ''",
+    ),
     // 1.8: a closed desk is kept, with its notes, until prune.
-    (1, "ALTER TABLE desks ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0",
+    ),
     // 1.8: where the work was left, and a tick's evidence and an
     // agent's suggested line.
-    (1, "ALTER TABLE desks ADD COLUMN left_off TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desks ADD COLUMN left_off_at INTEGER NOT NULL DEFAULT 0"),
-    (1, "ALTER TABLE desks ADD COLUMN left_off_by TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desks ADD COLUMN left_off_about TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN done_evidence TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN suggested_by TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN left_off TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN left_off_at INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN left_off_by TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN left_off_about TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN done_evidence TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN suggested_by TEXT NOT NULL DEFAULT ''",
+    ),
     // 1.9: when a desk was last opened, and a desk on the shelf.
-    (1, "ALTER TABLE desks ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0"),
-    (1, "ALTER TABLE desks ADD COLUMN parked_at INTEGER NOT NULL DEFAULT 0"),
-    (1, "ALTER TABLE desks ADD COLUMN parked_next TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN parked_at INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN parked_next TEXT NOT NULL DEFAULT ''",
+    ),
     // 1.10: when the reader took a document off its desk's list. The
     // desk's list only: the library, the Inbox and search still have it.
-    (1, "ALTER TABLE docs ADD COLUMN desk_off INTEGER NOT NULL DEFAULT 0"),
+    (
+        1,
+        "ALTER TABLE docs ADD COLUMN desk_off INTEGER NOT NULL DEFAULT 0",
+    ),
     // 1.10: pictures on a desk's line.
-    (1, "ALTER TABLE desk_notes ADD COLUMN images TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN images TEXT NOT NULL DEFAULT ''",
+    ),
     // 1.10: how far an agent has got with a line, short of done.
-    (1, "ALTER TABLE desk_notes ADD COLUMN stage TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN stage_doc TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN stage_at INTEGER NOT NULL DEFAULT 0"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN stage_pane TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desk_notes ADD COLUMN stage_session TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN stage TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN stage_doc TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN stage_at INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN stage_pane TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN stage_session TEXT NOT NULL DEFAULT ''",
+    ),
     // 1.13: the pane a tick or a left-off came from, so a panel is not
     // told its own doings as news at its next prompt.
-    (1, "ALTER TABLE desk_notes ADD COLUMN done_pane TEXT NOT NULL DEFAULT ''"),
-    (1, "ALTER TABLE desks ADD COLUMN left_off_pane TEXT NOT NULL DEFAULT ''"),
+    (
+        1,
+        "ALTER TABLE desk_notes ADD COLUMN done_pane TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        1,
+        "ALTER TABLE desks ADD COLUMN left_off_pane TEXT NOT NULL DEFAULT ''",
+    ),
 ];
 
 /// Bring a database to the newest version in `MIGRATIONS`.

@@ -27,9 +27,9 @@ mod setup;
 mod statusline;
 mod store;
 /// `build.rs` compiles this one for itself -- it is what strips `ui/` on the
-/// way into the binary -- so the daemon never calls it and it is here only to
-/// put the scanner's tests in `cargo test`, where they belong.
-#[cfg(test)]
+/// way into the binary and joins a script's parts -- and the daemon shares
+/// it: under `SNYVI_UI_DIR` an asset kept as parts is joined the same way
+/// (`server::assets`), and the scanner's tests are in `cargo test`.
 mod strip;
 mod text;
 mod update;

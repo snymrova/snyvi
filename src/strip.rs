@@ -26,6 +26,10 @@
 //! strings, templates and regex literals are copied through untouched, and
 //! only code is trimmed.
 
+/// The daemon calls only `source` and `parts`; the scanner itself is
+/// `build.rs`'s, which compiles this file for its own. Live in that build,
+/// and here for the tests.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lang {
     Js,
@@ -98,6 +102,7 @@ pub fn source(ui: &std::path::Path, name: &str) -> std::io::Result<String> {
     Ok(out)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn strip(src: &str, lang: Lang) -> String {
     let c: Vec<char> = src.chars().collect();
     let mut out = String::with_capacity(src.len());
@@ -327,7 +332,7 @@ fn copy_regex(c: &[char], start: usize, out: &mut String) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{strip, Lang};
+    use super::{source, strip, Lang};
 
     fn js(s: &str) -> String {
         strip(s, Lang::Js)
@@ -422,20 +427,23 @@ mod tests {
         );
     }
 
+    /// Every script the browser is served, as it is served: `app.js` and
+    /// `desk.js` are joined from their parts by `source`.
+    fn served_scripts() -> Vec<String> {
+        let ui = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/ui"));
+        [
+            "boot.js", "app.js", "mmd.js", "desk.js", "game.js", "about.js", "find.js", "keys.js",
+            "menu.js",
+        ]
+        .iter()
+        .map(|name| source(ui, name).unwrap_or_else(|e| panic!("{name}: {e}")))
+        .collect()
+    }
+
     #[test]
     fn stripping_twice_changes_nothing() {
-        for src in [
-            include_str!("../ui/boot.js"),
-            include_str!("../ui/app.js"),
-            include_str!("../ui/mmd.js"),
-            include_str!("../ui/desk.js"),
-            include_str!("../ui/game.js"),
-            include_str!("../ui/about.js"),
-            include_str!("../ui/find.js"),
-            include_str!("../ui/keys.js"),
-            include_str!("../ui/menu.js"),
-        ] {
-            let once = js(src);
+        for src in served_scripts() {
+            let once = js(&src);
             assert_eq!(js(&once), once);
         }
         let once = strip(include_str!("../ui/app.css"), Lang::Css);
@@ -453,17 +461,8 @@ mod tests {
     /// makes it, against what the daemon serves.
     #[test]
     fn the_real_assets_keep_their_code() {
-        for src in [
-            include_str!("../ui/app.js"),
-            include_str!("../ui/desk.js"),
-            include_str!("../ui/mmd.js"),
-            include_str!("../ui/boot.js"),
-            include_str!("../ui/game.js"),
-            include_str!("../ui/about.js"),
-            include_str!("../ui/find.js"),
-            include_str!("../ui/keys.js"),
-            include_str!("../ui/menu.js"),
-        ] {
+        for src in served_scripts() {
+            let src = src.as_str();
             let out = strip(src, Lang::Js);
             // Deletion and nothing else: every character of the output is in
             // the source, in order. A scanner that mangled, reordered or

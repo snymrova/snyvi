@@ -20,7 +20,11 @@ pub(crate) struct FindQ {
     pub(crate) limit: Option<usize>,
 }
 
-pub(crate) async fn browse_open(State(app): S, headers: HeaderMap, Json(b): Json<OpenBody>) -> Response {
+pub(crate) async fn browse_open(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<OpenBody>,
+) -> Response {
     if !authorized(&app, &headers) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -112,7 +116,11 @@ pub(crate) async fn browse_list(State(app): S) -> Response {
     Json(app.browse.list()).into_response()
 }
 
-pub(crate) async fn browse_close(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn browse_close(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
@@ -126,7 +134,11 @@ pub(crate) async fn browse_close(State(app): S, headers: HeaderMap, Path(id): Pa
 
 /// Close folder, taken back. Only a folder closed in this run comes back, so
 /// a page with no token can undo its own close and open nothing else.
-pub(crate) async fn browse_reopen(State(app): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+pub(crate) async fn browse_reopen(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
@@ -139,7 +151,11 @@ pub(crate) async fn browse_reopen(State(app): S, headers: HeaderMap, Path(id): P
     }
 }
 
-pub(crate) async fn browse_tree(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+pub(crate) async fn browse_tree(
+    State(app): S,
+    Path(id): Path<String>,
+    Query(q): Query<PathQ>,
+) -> Response {
     match app.browse.entries(&id, q.path.as_deref().unwrap_or("")) {
         Ok(entries) => Json(entries).into_response(),
         Err(e) => (
@@ -150,7 +166,11 @@ pub(crate) async fn browse_tree(State(app): S, Path(id): Path<String>, Query(q):
     }
 }
 
-pub(crate) async fn browse_file(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+pub(crate) async fn browse_file(
+    State(app): S,
+    Path(id): Path<String>,
+    Query(q): Query<PathQ>,
+) -> Response {
     let rel = q.path.unwrap_or_default();
     let app2 = app.clone();
     let rel2 = rel.clone();
@@ -214,7 +234,12 @@ pub(crate) fn protect(headers: &mut HeaderMap, ext: &str) {
     );
 }
 
-pub(crate) async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str, req: &HeaderMap) -> Response {
+pub(crate) async fn serve_browsed(
+    app: &Arc<App>,
+    id: &str,
+    rel: &str,
+    req: &HeaderMap,
+) -> Response {
     let Ok(path) = app.browse.resolve(id, rel) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -240,7 +265,11 @@ pub(crate) async fn serve_browsed(app: &Arc<App>, id: &str, rel: &str, req: &Hea
 /// at a time as the connection takes it, so what the daemon holds per open
 /// player is one buffer whatever the file weighs. `headers` are the
 /// caller's (type, cache, policy); length and range are added here.
-pub(crate) async fn serve_file(path: &std::path::Path, mut headers: HeaderMap, req: &HeaderMap) -> Response {
+pub(crate) async fn serve_file(
+    path: &std::path::Path,
+    mut headers: HeaderMap,
+    req: &HeaderMap,
+) -> Response {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let Ok(mut file) = tokio::fs::File::open(path).await else {
         return StatusCode::NOT_FOUND.into_response();
@@ -347,7 +376,11 @@ impl tokio_stream::Stream for Chunks {
 
 /// Declarations in a browsed file. Parsing is repeated rather than cached: it is
 /// off the first-paint path and the rail asks for it only once per file.
-pub(crate) async fn browse_outline(State(app): S, Path(id): Path<String>, Query(q): Query<PathQ>) -> Response {
+pub(crate) async fn browse_outline(
+    State(app): S,
+    Path(id): Path<String>,
+    Query(q): Query<PathQ>,
+) -> Response {
     let rel = q.path.unwrap_or_default();
     let Ok(path) = app.browse.resolve(&id, &rel) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -362,7 +395,11 @@ pub(crate) async fn browse_outline(State(app): S, Path(id): Path<String>, Query(
     }
 }
 
-pub(crate) async fn browse_find(State(app): S, Path(id): Path<String>, Query(q): Query<FindQ>) -> Response {
+pub(crate) async fn browse_find(
+    State(app): S,
+    Path(id): Path<String>,
+    Query(q): Query<FindQ>,
+) -> Response {
     let app2 = app.clone();
     let query = q.q.unwrap_or_default();
     let limit = q.limit.unwrap_or(40).min(200);

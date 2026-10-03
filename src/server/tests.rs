@@ -1,13 +1,13 @@
 //! The server's tests, with the route table every route must be in.
 
 use super::{
-    desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-    BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML,
-    KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
+    desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
+    BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS, LOOK_JS,
+    MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
 };
 use super::{
-    new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER,
-    NOT_THIS_HOST, NOT_THIS_ORIGIN, WINDOW_HEADER,
+    new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
+    NOT_THIS_ORIGIN, WINDOW_HEADER,
 };
 use crate::capability::Capabilities;
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -97,12 +97,12 @@ fn only_a_frame_carrying_a_live_capability_opens_a_desk() {
 /// this test is what makes that harmless rather than a second way in.
 #[test]
 fn the_window_count_is_never_consulted_on_the_desk_path() {
-    let src = include_str!("mod.rs");
+    let src = include_str!("ws.rs");
     let from = src
         .find("async fn desk_socket")
-        .expect("the desk socket should be in this file");
+        .expect("the desk socket should be in ws.rs");
     let to = src[from..]
-        .find("\nfn hello_allows")
+        .find("\npub(crate) fn hello_allows")
         .expect("hello_allows follows the socket")
         + from;
     let path = &src[from..to];
@@ -266,7 +266,13 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/api/health", None, Gate::Open, true),
     ("GET", "/api/about", None, Gate::Open, true),
     ("GET", "/api/agents", None, Gate::Open, true),
-    ("POST", "/api/agents/claude/connect", None, Gate::Desk, false),
+    (
+        "POST",
+        "/api/agents/claude/connect",
+        None,
+        Gate::Desk,
+        false,
+    ),
     ("GET", "/api/tree", None, Gate::Open, true),
     ("GET", "/api/projects/1/tree", None, Gate::Open, true),
     ("GET", "/api/workflows/1/tree", None, Gate::Open, true),
@@ -274,49 +280,139 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/api/search?q=x", None, Gate::Open, true),
     ("POST", "/api/docs", Some("{}"), Gate::Token, true),
     ("GET", "/api/docs/nope", None, Gate::Open, true),
-    ("POST", "/api/docs/nope/pin", Some(r#"{"pinned":true}"#), Gate::Reader, true),
+    (
+        "POST",
+        "/api/docs/nope/pin",
+        Some(r#"{"pinned":true}"#),
+        Gate::Reader,
+        true,
+    ),
     ("POST", "/api/docs/nope/read", None, Gate::Reader, true),
     ("GET", "/api/queue", None, Gate::Open, true),
     ("POST", "/api/queue/clear", None, Gate::Reader, true),
-    ("POST", "/api/queue/unread", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+    (
+        "POST",
+        "/api/queue/unread",
+        Some(r#"{"ids":[]}"#),
+        Gate::Reader,
+        true,
+    ),
     ("POST", "/api/docs/nope/delete", None, Gate::Reader, true),
     ("POST", "/api/docs/nope/undelete", None, Gate::Reader, true),
     ("GET", "/api/removed", None, Gate::Open, true),
     ("GET", "/api/docs/nope/history", None, Gate::Open, true),
-    ("POST", "/api/projects/1/rename", Some(r#"{"name":"x"}"#), Gate::Reader, true),
-    ("POST", "/api/workflows/1/rename", Some(r#"{"name":"x"}"#), Gate::Reader, true),
+    (
+        "POST",
+        "/api/projects/1/rename",
+        Some(r#"{"name":"x"}"#),
+        Gate::Reader,
+        true,
+    ),
+    (
+        "POST",
+        "/api/workflows/1/rename",
+        Some(r#"{"name":"x"}"#),
+        Gate::Reader,
+        true,
+    ),
     ("GET", "/api/docs/nope/split", None, Gate::Open, true),
     ("GET", "/api/docs/nope/outline", None, Gate::Open, true),
     ("GET", "/api/notes", None, Gate::Open, true),
-    ("POST", "/api/notes", Some(r#"{"text":"x"}"#), Gate::Token, true),
+    (
+        "POST",
+        "/api/notes",
+        Some(r#"{"text":"x"}"#),
+        Gate::Token,
+        true,
+    ),
     ("POST", "/api/notes/seen", None, Gate::Reader, true),
-    ("POST", "/api/notes/dismiss", Some(r#"{"ids":[]}"#), Gate::Reader, true),
-    ("POST", "/api/notes/restore", Some(r#"{"ids":[]}"#), Gate::Reader, true),
+    (
+        "POST",
+        "/api/notes/dismiss",
+        Some(r#"{"ids":[]}"#),
+        Gate::Reader,
+        true,
+    ),
+    (
+        "POST",
+        "/api/notes/restore",
+        Some(r#"{"ids":[]}"#),
+        Gate::Reader,
+        true,
+    ),
     ("POST", "/api/focus", None, Gate::Reader, true),
     ("POST", "/api/shutdown", None, Gate::Window, true),
     ("POST", "/api/restart", Some("{}"), Gate::Window, true),
     ("DELETE", "/api/restart", None, Gate::Window, true),
-    ("POST", "/api/update/check", Some(r#"{"lift":false}"#), Gate::Window, true),
-    ("POST", "/api/update/auto", Some(r#"{"on":false}"#), Gate::Window, true),
+    (
+        "POST",
+        "/api/update/check",
+        Some(r#"{"lift":false}"#),
+        Gate::Window,
+        true,
+    ),
+    (
+        "POST",
+        "/api/update/auto",
+        Some(r#"{"on":false}"#),
+        Gate::Window,
+        true,
+    ),
     ("POST", "/api/update/later", Some("{}"), Gate::Window, true),
     ("GET", "/api/reset", None, Gate::Open, true),
     // 999 documents is never the count there is, so the reset is refused
     // as stale once it is past the gate, and the store stays.
-    ("POST", "/api/reset", Some(r#"{"documents":999}"#), Gate::Reader, true),
+    (
+        "POST",
+        "/api/reset",
+        Some(r#"{"documents":999}"#),
+        Gate::Reader,
+        true,
+    ),
     ("POST", "/api/terminal", Some("{}"), Gate::Reader, true),
     ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
-    ("POST", "/api/resolve", Some(r#"{"word":"x"}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/resolve",
+        Some(r#"{"word":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/browse", None, Gate::Open, true),
-    ("POST", "/api/browse", Some(r#"{"path":"."}"#), Gate::Token, true),
+    (
+        "POST",
+        "/api/browse",
+        Some(r#"{"path":"."}"#),
+        Gate::Token,
+        true,
+    ),
     ("POST", "/api/browse/pick", None, Gate::Desk, false),
     ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
     ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
     ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
-    ("GET", "/api/browse/nope/file?path=x.md", None, Gate::Open, true),
-    ("GET", "/api/browse/nope/raw?path=x.md", None, Gate::Open, true),
+    (
+        "GET",
+        "/api/browse/nope/file?path=x.md",
+        None,
+        Gate::Open,
+        true,
+    ),
+    (
+        "GET",
+        "/api/browse/nope/raw?path=x.md",
+        None,
+        Gate::Open,
+        true,
+    ),
     ("GET", "/api/browse/nope/raw/x.md", None, Gate::Open, true),
     ("GET", "/api/browse/nope/find?q=x", None, Gate::Open, true),
-    ("GET", "/api/browse/nope/outline?path=x.md", None, Gate::Open, true),
+    (
+        "GET",
+        "/api/browse/nope/outline?path=x.md",
+        None,
+        Gate::Open,
+        true,
+    ),
     ("GET", "/api/docs/nope/raw", None, Gate::Open, true),
     ("GET", "/api/docs/nope/blob", None, Gate::Open, true),
     ("GET", "/api/compare/a/b", None, Gate::Open, true),
@@ -327,47 +423,179 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/api/desk", None, Gate::Open, true),
     ("GET", "/api/desks", None, Gate::Desk, true),
     ("POST", "/api/desks", Some("{}"), Gate::Desk, true),
-    ("POST", "/api/desks/1/rename", Some(r#"{"name":"x"}"#), Gate::Desk, true),
-    ("POST", "/api/desks/1/layout", Some(r#"{"col":0.5,"row":0.5}"#), Gate::Desk, true),
-    ("POST", "/api/desks/1/move", Some(r#"{"from":1,"to":2}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/rename",
+        Some(r#"{"name":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/layout",
+        Some(r#"{"col":0.5,"row":0.5}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/move",
+        Some(r#"{"from":1,"to":2}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/delete", None, Gate::Desk, true),
     ("POST", "/api/desks/1/reopen", None, Gate::Desk, true),
     ("POST", "/api/desks/1/panes", Some("{}"), Gate::Desk, true),
     ("GET", "/api/desks/1/docs", None, Gate::Desk, true),
     ("POST", "/api/desks/1/docs/d/remove", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/docs/d/restore", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/docs/d/restore",
+        None,
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/desks/1/notes", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/notes", Some(r#"{"text":"x"}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/notes",
+        Some(r#"{"text":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/notes/1", Some("{}"), Gate::Desk, true),
-    ("POST", "/api/desks/1/notes/1/remove", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/notes/1/restore", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/notes/1/remove",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/notes/1/restore",
+        None,
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/notes/1/keep", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/leftoff", Some(r#"{"text":"x","at":0}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/leftoff",
+        Some(r#"{"text":"x","at":0}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/desks/1/keys", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/keys", Some(r#"{"name":"X_KEY","value":"y"}"#), Gate::Desk, false),
-    ("POST", "/api/desks/1/keys/X_KEY/remove", Some("{}"), Gate::Desk, false),
+    (
+        "POST",
+        "/api/desks/1/keys",
+        Some(r#"{"name":"X_KEY","value":"y"}"#),
+        Gate::Desk,
+        false,
+    ),
+    (
+        "POST",
+        "/api/desks/1/keys/X_KEY/remove",
+        Some("{}"),
+        Gate::Desk,
+        false,
+    ),
     ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
     ("POST", "/api/desks/1/park", Some("{}"), Gate::Desk, true),
-    ("POST", "/api/desks/1/week", Some(r#"{"title":"t","content":"c"}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/week",
+        Some(r#"{"title":"t","content":"c"}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/notes/1/image", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/notes/1/images", Some(r#"{"images":[]}"#), Gate::Desk, true),
-    ("GET", "/api/desks/1/note-images/x.png", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/notes/1/images",
+        Some(r#"{"images":[]}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "GET",
+        "/api/desks/1/note-images/x.png",
+        None,
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/brief", None, Gate::Desk, true),
-    ("POST", "/api/brief", Some(r#"{"on":true}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/brief",
+        Some(r#"{"on":true}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/panes/nope/delete", None, Gate::Desk, true),
     ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
-    ("POST", "/api/panes/nope/rename", Some(r#"{"name":"x"}"#), Gate::Desk, true),
-    ("POST", "/api/panes/nope/start", Some(r#"{"cols":80,"rows":24}"#), Gate::Desk, true),
+    (
+        "POST",
+        "/api/panes/nope/rename",
+        Some(r#"{"name":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/start",
+        Some(r#"{"cols":80,"rows":24}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/panes/nope/stop", None, Gate::Desk, true),
-    ("POST", "/api/panes/nope/agent", Some("{}"), Gate::Token, true),
+    (
+        "POST",
+        "/api/panes/nope/agent",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     ("GET", "/api/panes/nope/notes", None, Gate::Token, true),
-    ("POST", "/api/panes/nope/notes/1/tick", None, Gate::Token, true),
-    ("POST", "/api/panes/nope/notes/1/mark", None, Gate::Token, true),
-    ("POST", "/api/panes/nope/name", Some(r#"{"name":"x"}"#), Gate::Token, true),
+    (
+        "POST",
+        "/api/panes/nope/notes/1/tick",
+        None,
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/notes/1/mark",
+        None,
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/name",
+        Some(r#"{"name":"x"}"#),
+        Gate::Token,
+        true,
+    ),
     ("GET", "/api/panes/nope/brief", None, Gate::Token, true),
     ("GET", "/api/panes/nope/changes", None, Gate::Token, true),
-    ("POST", "/api/panes/nope/leftoff", Some("{}"), Gate::Token, true),
-    ("POST", "/api/panes/nope/suggest", Some("{}"), Gate::Token, true),
+    (
+        "POST",
+        "/api/panes/nope/leftoff",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/suggest",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
     ("GET", "/desks", None, Gate::Open, true),
     ("GET", "/desk/1", None, Gate::Open, true),
@@ -434,14 +662,23 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let n = routed.matches("get(").count()
         + routed.matches("post(").count()
         + routed.matches(".delete(").count();
-    assert_eq!(n, ROUTES.len(), "every route is in ROUTES, and nothing else is");
+    assert_eq!(
+        n,
+        ROUTES.len(),
+        "every route is in ROUTES, and nothing else is"
+    );
 
     let port = crate::config::port();
     let host = format!("127.0.0.1:{port}");
     let origin = format!("http://{host}");
     let bearer = format!("Bearer {token}");
-    let (host, origin, bearer, cap, window) =
-        (host.as_str(), origin.as_str(), bearer.as_str(), cap.as_str(), window.as_str());
+    let (host, origin, bearer, cap, window) = (
+        host.as_str(),
+        origin.as_str(),
+        bearer.as_str(),
+        cap.as_str(),
+        window.as_str(),
+    );
     let refused = |s: StatusCode| s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN;
 
     for &(method, path, body, gate, go) in ROUTES {
@@ -462,18 +699,28 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         )
         .await;
         assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another host");
-        assert!(t.contains(NOT_THIS_HOST), "{what}: the gate refuses another host, not a handler: {t}");
+        assert!(
+            t.contains(NOT_THIS_HOST),
+            "{what}: the gate refuses another host, not a handler: {t}"
+        );
         // Our host, a stranger's Origin: a page elsewhere, or a rebound name.
         let (s, t) = ask(
             &router,
             method,
             path,
             body,
-            &[("host", host), ("origin", "http://evil.example"), ("authorization", bearer)],
+            &[
+                ("host", host),
+                ("origin", "http://evil.example"),
+                ("authorization", bearer),
+            ],
         )
         .await;
         assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another origin");
-        assert!(t.contains(NOT_THIS_ORIGIN), "{what}: the gate refuses another origin: {t}");
+        assert!(
+            t.contains(NOT_THIS_ORIGIN),
+            "{what}: the gate refuses another origin: {t}"
+        );
         // Nothing but the host.
         let (bare, _) = ask(&router, method, path, body, &[("host", host)]).await;
         if gate == Gate::Open {
@@ -487,14 +734,25 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         let wrong: Vec<(&str, &str)> = match gate {
             Gate::Token => vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
             Gate::Window | Gate::Mint => vec![("host", host), ("authorization", bearer)],
-            Gate::Desk => vec![("host", host), ("origin", origin), ("authorization", bearer)],
+            Gate::Desk => vec![
+                ("host", host),
+                ("origin", origin),
+                ("authorization", bearer),
+            ],
             Gate::Reader => vec![("host", host), (CAPABILITY_HEADER, cap)],
             Gate::Open => unreachable!(),
         };
         let (s, _) = ask(&router, method, path, body, &wrong).await;
         assert!(refused(s), "{what}: the wrong leave let through: {s}");
         if gate == Gate::Mint {
-            let (s, _) = ask(&router, method, path, body, &[("host", host), (CAPABILITY_HEADER, cap)]).await;
+            let (s, _) = ask(
+                &router,
+                method,
+                path,
+                body,
+                &[("host", host), (CAPABILITY_HEADER, cap)],
+            )
+            .await;
             assert!(refused(s), "{what}: a capability mints nothing");
         }
         if !go {
@@ -502,10 +760,20 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         }
         // The right leave, each there is.
         let rights: Vec<Vec<(&str, &str)>> = match gate {
-            Gate::Reader => vec![vec![("host", host), ("origin", origin)], vec![("host", host), ("authorization", bearer)]],
-            Gate::Desk => vec![vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)]],
+            Gate::Reader => vec![
+                vec![("host", host), ("origin", origin)],
+                vec![("host", host), ("authorization", bearer)],
+            ],
+            Gate::Desk => vec![vec![
+                ("host", host),
+                ("origin", origin),
+                (CAPABILITY_HEADER, cap),
+            ]],
             Gate::Token => vec![vec![("host", host), ("authorization", bearer)]],
-            Gate::Window => vec![vec![("host", host), (WINDOW_HEADER, window)], vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)]],
+            Gate::Window => vec![
+                vec![("host", host), (WINDOW_HEADER, window)],
+                vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
+            ],
             Gate::Mint => vec![vec![("host", host), (WINDOW_HEADER, window)]],
             Gate::Open => unreachable!(),
         };
@@ -522,15 +790,33 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         "POST",
         "/api/focus",
         None,
-        &[("host", host), ("origin", origin), ("sec-fetch-site", "cross-site")],
+        &[
+            ("host", host),
+            ("origin", origin),
+            ("sec-fetch-site", "cross-site"),
+        ],
     )
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
     assert!(t.contains(NOT_THIS_ORIGIN));
     // And a read from the address bar is not.
-    let (s, _) = ask(&router, "GET", "/api/health", None, &[("host", host), ("sec-fetch-site", "none")]).await;
+    let (s, _) = ask(
+        &router,
+        "GET",
+        "/api/health",
+        None,
+        &[("host", host), ("sec-fetch-site", "none")],
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = ask(&router, "GET", "/api/health", None, &[("host", format!("localhost:{port}").as_str())]).await;
+    let (s, _) = ask(
+        &router,
+        "GET",
+        "/api/health",
+        None,
+        &[("host", format!("localhost:{port}").as_str())],
+    )
+    .await;
     assert_eq!(s, StatusCode::OK, "localhost is this host too");
 }
 
@@ -748,45 +1034,51 @@ fn every_id_the_script_uses_unguarded_is_in_the_page() {
     assert!(missing.is_empty(), "not in index.html: {missing:?}");
 }
 
-/// The page asks for every chunk as `/assets/x.js?v=`, and they are served
-/// immutable for a year -- so a chunk left out of the hash that makes `?v=`
-/// is a chunk a browser keeps across the change that was meant to replace
-/// it. `Ui::version` lists them for a live directory; this is the hash that
-/// ships, and `about.js` and `find.js` were once added to the first and not
-/// the second. Held together here so the next chunk cannot be half-added.
+/// Every chunk the page can fetch under `?v=` is in the hash that makes
+/// `v`, or a browser keeps a stale copy across an upgrade. The hash walks
+/// `ASSETS`, so what this holds is that `ASSETS` names every text asset in
+/// `ui/`: a file added there and not to the table is neither served nor
+/// hashed, and this is where that is caught rather than in a browser.
 #[test]
 fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
     let src = include_str!("mod.rs");
     let from = src.find("let asset_v = {").expect("the startup hash");
     let to = from + src[from..].find("\n    };").expect("the end of it");
     let block = &src[from..to];
-    for chunk in [
-        "INDEX_HTML",
-        "APP_CSS",
-        "APP_JS",
-        "DESK_JS",
-        "FRAME_JS",
-        "GAME_JS",
-        "ABOUT_JS",
-        "FIND_JS",
-        "KEYS_JS",
-        "MENU_JS",
-        "THEMES_CSS",
-        "PALETTE_JS",
-        "LOOK_JS",
-        "NOTE_JS",
-        "TIP_JS",
-        "HOME_JS",
-        "TOAST_JS",
-        "DIFF_JS",
-        "BROWSE_JS",
-        "PATHS_JS",
-    ] {
-        assert!(
-            block.contains(chunk),
-            "{chunk} is served immutable under ?v= but is not in the hash that makes it"
-        );
-    }
+    assert!(
+        block.contains("INDEX_HTML"),
+        "the page itself is in the hash"
+    );
+    assert!(block.contains("in ASSETS"), "the hash walks ASSETS");
+    assert!(
+        block.contains("MERMAID_JS_GZ"),
+        "the diagram bundle is in the hash"
+    );
+
+    let ui = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/ui"));
+    let mut on_disk: Vec<String> = std::fs::read_dir(ui)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?.to_string();
+            if p.is_dir() && name != "fonts" && !ui.join(format!("{name}.js")).exists() {
+                // A script kept as parts: served under the directory's name.
+                return Some(format!("{name}.js"));
+            }
+            (name.ends_with(".js") || name.ends_with(".css")).then_some(name)
+        })
+        .collect();
+    on_disk.sort();
+    let mut named: Vec<String> = super::assets::ASSETS
+        .iter()
+        .map(|(n, _, _)| n.to_string())
+        .collect();
+    named.sort();
+    assert_eq!(
+        on_disk, named,
+        "every .js and .css in ui/ is in ASSETS, and nothing else is"
+    );
 }
 
 /// A name is drawn on one line in the tree, and it arrives from a field a paste can

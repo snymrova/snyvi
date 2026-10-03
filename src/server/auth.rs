@@ -162,7 +162,10 @@ pub(crate) const NOT_THIS_ORIGIN: &str = "not this origin";
 /// agree on anything that is not a read: `same-origin` from a page, `none`
 /// from the address bar or a link opened from outside. A read is left alone
 /// so a link to a document still opens from anywhere.
-pub(crate) fn not_this_host(headers: &HeaderMap, method: &axum::http::Method) -> Option<&'static str> {
+pub(crate) fn not_this_host(
+    headers: &HeaderMap,
+    method: &axum::http::Method,
+) -> Option<&'static str> {
     let port = config::port();
     let ours = |given: &str, scheme: &str| {
         let given = given.trim().to_ascii_lowercase();
@@ -191,7 +194,10 @@ pub(crate) fn not_this_host(headers: &HeaderMap, method: &axum::http::Method) ->
 
 /// The layer `router` puts in front of every route: `not_this_host`, as a
 /// refusal before any handler runs.
-pub(crate) async fn host_gate(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+pub(crate) async fn host_gate(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     if let Some(why) = not_this_host(req.headers(), req.method()) {
         return (StatusCode::FORBIDDEN, Json(json!({ "error": why }))).into_response();
     }

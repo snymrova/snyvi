@@ -331,7 +331,14 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 } else if name != "send_document" {
                     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool {name}") } })
                 } else {
-                    match call_send(&paths, args, cwd.as_deref(), &session, sender.as_deref(), pane.as_deref()) {
+                    match call_send(
+                        &paths,
+                        args,
+                        cwd.as_deref(),
+                        &session,
+                        sender.as_deref(),
+                        pane.as_deref(),
+                    ) {
                         Ok(sent) => json!({ "jsonrpc": "2.0", "id": id, "result": {
                             "content": [{ "type": "text", "text": sent.say() }],
                             "structuredContent": { "id": sent.id, "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },

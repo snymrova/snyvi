@@ -1040,7 +1040,11 @@ mod tests {
                 { "matcher": "*", "hooks": [{ "type": "command", "command": "other --x" }] },
                 { "matcher": "*", "hooks": [{ "type": "command", "command": "/usr/bin/snyvi hook" }] }
             ] } });
-        assert!(install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap().0);
+        assert!(
+            install_into(&mut s, "/usr/bin/snyvi hook", false)
+                .unwrap()
+                .0
+        );
         let post = s["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 2, "narrowed in place, not added beside");
         assert_eq!(post[0]["matcher"], "*", "another tool's entry is its own");
@@ -1052,7 +1056,12 @@ mod tests {
         // Codex's file keeps its `*`: there the matcher means it.
         let mut c = json!({ "hooks": { "PostToolUse": [
             { "matcher": "*", "hooks": [{ "type": "command", "command": "/usr/bin/snyvi hook" }] } ] } });
-        merge(&mut c, "/usr/bin/snyvi hook", codex_hooks("/usr/bin/snyvi hook")).unwrap();
+        merge(
+            &mut c,
+            "/usr/bin/snyvi hook",
+            codex_hooks("/usr/bin/snyvi hook"),
+        )
+        .unwrap();
         assert_eq!(c["hooks"]["PostToolUse"][0]["matcher"], "*");
     }
 
