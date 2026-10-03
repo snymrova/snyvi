@@ -632,14 +632,19 @@ async fn ask(
     (status, text)
 }
 
-/// A gate helps only if every route is behind it, and a route added later
-/// is exactly the one that will forget. So the router is built against a
-/// store in a temp dir and every route is sent four requests: the count
-/// of routes in `router()` has to match the table, so a new route must
-/// say what it answers to before the build is green.
-#[tokio::test]
-async fn every_route_answers_to_its_gate_and_to_this_host_only() {
-    let tmp = crate::store::tempdir::Dir::new("snyvi-routes");
+/// Every leave there is, for one router: the host and origin it answers
+/// to, the agent's token, a minted capability and the window's secret.
+struct Leaves {
+    host: String,
+    origin: String,
+    bearer: String,
+    cap: String,
+    window: String,
+}
+
+/// The router against a store in a temp dir, kept alive by the `Dir`.
+fn gated_router(name: &str) -> (crate::store::tempdir::Dir, Router, Leaves) {
+    let tmp = crate::store::tempdir::Dir::new(name);
     let paths = Paths {
         data_dir: tmp.path.join("data"),
         config_dir: tmp.path.join("config"),
@@ -653,7 +658,25 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let store = Store::open(&paths).unwrap();
     let app = new_app(&paths, store, token.clone(), window.clone(), None, None);
     let cap = app.capabilities.mint().unwrap();
-    let router = router(app);
+    let host = format!("127.0.0.1:{}", crate::config::port());
+    let leaves = Leaves {
+        origin: format!("http://{host}"),
+        host,
+        bearer: format!("Bearer {token}"),
+        cap,
+        window,
+    };
+    (tmp, router(app), leaves)
+}
+
+/// A gate helps only if every route is behind it, and a route added later
+/// is exactly the one that will forget. So the router is built against a
+/// store in a temp dir and every route is sent four requests: the count
+/// of routes in `router()` has to match the table, so a new route must
+/// say what it answers to before the build is green.
+#[tokio::test]
+async fn every_route_answers_to_its_gate_and_to_this_host_only() {
+    let (_tmp, router, leaves) = gated_router("snyvi-routes");
 
     // The table is the router.
     let src = include_str!("mod.rs");
@@ -667,122 +690,133 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         ROUTES.len(),
         "every route is in ROUTES, and nothing else is"
     );
-
-    let port = crate::config::port();
-    let host = format!("127.0.0.1:{port}");
-    let origin = format!("http://{host}");
-    let bearer = format!("Bearer {token}");
-    let (host, origin, bearer, cap, window) = (
-        host.as_str(),
-        origin.as_str(),
-        bearer.as_str(),
-        cap.as_str(),
-        window.as_str(),
-    );
-    let refused = |s: StatusCode| s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN;
-
-    for &(method, path, body, gate, go) in ROUTES {
-        let what = format!("{method} {path}");
-        // From another host, with every leave there is: refused before any
-        // handler, by the gate and not by a route.
-        let (s, t) = ask(
-            &router,
-            method,
-            path,
-            body,
-            &[
-                ("host", "evil.example:7777"),
-                ("authorization", bearer),
-                (CAPABILITY_HEADER, cap),
-                (WINDOW_HEADER, window),
-            ],
-        )
-        .await;
-        assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another host");
-        assert!(
-            t.contains(NOT_THIS_HOST),
-            "{what}: the gate refuses another host, not a handler: {t}"
-        );
-        // Our host, a stranger's Origin: a page elsewhere, or a rebound name.
-        let (s, t) = ask(
-            &router,
-            method,
-            path,
-            body,
-            &[
-                ("host", host),
-                ("origin", "http://evil.example"),
-                ("authorization", bearer),
-            ],
-        )
-        .await;
-        assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another origin");
-        assert!(
-            t.contains(NOT_THIS_ORIGIN),
-            "{what}: the gate refuses another origin: {t}"
-        );
-        // Nothing but the host.
-        let (bare, _) = ask(&router, method, path, body, &[("host", host)]).await;
-        if gate == Gate::Open {
-            assert!(!refused(bare), "{what}: open, but {bare}");
-            continue;
-        }
-        assert!(refused(bare), "{what}: nothing offered, but {bare}");
-        // The wrong leave: a capability where the token is wanted, the
-        // token where the window's leave is, a capability with no page
-        // behind it where the page is.
-        let wrong: Vec<(&str, &str)> = match gate {
-            Gate::Token => vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
-            Gate::Window | Gate::Mint => vec![("host", host), ("authorization", bearer)],
-            Gate::Desk => vec![
-                ("host", host),
-                ("origin", origin),
-                ("authorization", bearer),
-            ],
-            Gate::Reader => vec![("host", host), (CAPABILITY_HEADER, cap)],
-            Gate::Open => unreachable!(),
-        };
-        let (s, _) = ask(&router, method, path, body, &wrong).await;
-        assert!(refused(s), "{what}: the wrong leave let through: {s}");
-        if gate == Gate::Mint {
-            let (s, _) = ask(
-                &router,
-                method,
-                path,
-                body,
-                &[("host", host), (CAPABILITY_HEADER, cap)],
-            )
-            .await;
-            assert!(refused(s), "{what}: a capability mints nothing");
-        }
-        if !go {
-            continue;
-        }
-        // The right leave, each there is.
-        let rights: Vec<Vec<(&str, &str)>> = match gate {
-            Gate::Reader => vec![
-                vec![("host", host), ("origin", origin)],
-                vec![("host", host), ("authorization", bearer)],
-            ],
-            Gate::Desk => vec![vec![
-                ("host", host),
-                ("origin", origin),
-                (CAPABILITY_HEADER, cap),
-            ]],
-            Gate::Token => vec![vec![("host", host), ("authorization", bearer)]],
-            Gate::Window => vec![
-                vec![("host", host), (WINDOW_HEADER, window)],
-                vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
-            ],
-            Gate::Mint => vec![vec![("host", host), (WINDOW_HEADER, window)]],
-            Gate::Open => unreachable!(),
-        };
-        for h in rights {
-            let (s, t) = ask(&router, method, path, body, &h).await;
-            assert!(!refused(s), "{what}: refused with the right leave: {s} {t}");
-        }
+    for &route in ROUTES {
+        answers_to_its_gate(&router, &leaves, route).await;
     }
+}
 
+/// One row of ROUTES, sent from another host, another origin, with nothing,
+/// with the wrong leave and with each right one.
+async fn answers_to_its_gate(
+    router: &Router,
+    l: &Leaves,
+    (method, path, body, gate, go): (&str, &str, Option<&str>, Gate, bool),
+) {
+    let (host, origin, bearer, cap, window) = (
+        l.host.as_str(),
+        l.origin.as_str(),
+        l.bearer.as_str(),
+        l.cap.as_str(),
+        l.window.as_str(),
+    );
+    let router = router.clone();
+    let refused = |s: StatusCode| s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN;
+    let what = format!("{method} {path}");
+    // From another host, with every leave there is: refused before any
+    // handler, by the gate and not by a route.
+    let (s, t) = ask(
+        &router,
+        method,
+        path,
+        body,
+        &[
+            ("host", "evil.example:7777"),
+            ("authorization", bearer),
+            (CAPABILITY_HEADER, cap),
+            (WINDOW_HEADER, window),
+        ],
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another host");
+    assert!(
+        t.contains(NOT_THIS_HOST),
+        "{what}: the gate refuses another host, not a handler: {t}"
+    );
+    // Our host, a stranger's Origin: a page elsewhere, or a rebound name.
+    let (s, t) = ask(
+        &router,
+        method,
+        path,
+        body,
+        &[
+            ("host", host),
+            ("origin", "http://evil.example"),
+            ("authorization", bearer),
+        ],
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{what}: another origin");
+    assert!(
+        t.contains(NOT_THIS_ORIGIN),
+        "{what}: the gate refuses another origin: {t}"
+    );
+    // Nothing but the host.
+    let (bare, _) = ask(&router, method, path, body, &[("host", host)]).await;
+    if gate == Gate::Open {
+        assert!(!refused(bare), "{what}: open, but {bare}");
+        return;
+    }
+    assert!(refused(bare), "{what}: nothing offered, but {bare}");
+    // The wrong leave: a capability where the token is wanted, the
+    // token where the window's leave is, a capability with no page
+    // behind it where the page is.
+    let wrong: Vec<(&str, &str)> = match gate {
+        Gate::Token => vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
+        Gate::Window | Gate::Mint => vec![("host", host), ("authorization", bearer)],
+        Gate::Desk => vec![
+            ("host", host),
+            ("origin", origin),
+            ("authorization", bearer),
+        ],
+        Gate::Reader => vec![("host", host), (CAPABILITY_HEADER, cap)],
+        Gate::Open => unreachable!(),
+    };
+    let (s, _) = ask(&router, method, path, body, &wrong).await;
+    assert!(refused(s), "{what}: the wrong leave let through: {s}");
+    if gate == Gate::Mint {
+        let (s, _) = ask(
+            &router,
+            method,
+            path,
+            body,
+            &[("host", host), (CAPABILITY_HEADER, cap)],
+        )
+        .await;
+        assert!(refused(s), "{what}: a capability mints nothing");
+    }
+    if !go {
+        return;
+    }
+    // The right leave, each there is.
+    let rights: Vec<Vec<(&str, &str)>> = match gate {
+        Gate::Reader => vec![
+            vec![("host", host), ("origin", origin)],
+            vec![("host", host), ("authorization", bearer)],
+        ],
+        Gate::Desk => vec![vec![
+            ("host", host),
+            ("origin", origin),
+            (CAPABILITY_HEADER, cap),
+        ]],
+        Gate::Token => vec![vec![("host", host), ("authorization", bearer)]],
+        Gate::Window => vec![
+            vec![("host", host), (WINDOW_HEADER, window)],
+            vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
+        ],
+        Gate::Mint => vec![vec![("host", host), (WINDOW_HEADER, window)]],
+        Gate::Open => unreachable!(),
+    };
+    for h in rights {
+        let (s, t) = ask(&router, method, path, body, &h).await;
+        assert!(!refused(s), "{what}: refused with the right leave: {s} {t}");
+    }
+}
+
+#[tokio::test]
+async fn a_write_from_another_site_is_refused_and_a_read_from_the_address_bar_is_not() {
+    let (_tmp, router, l) = gated_router("snyvi-fetch-site");
+    let port = crate::config::port();
+    let (host, origin) = (l.host.as_str(), l.origin.as_str());
     // Fetch metadata that says the request came from another site is
     // refused on anything that is not a read, whatever else it carries.
     let (s, t) = ask(

@@ -109,21 +109,53 @@ checked it. Never act on a note unasked. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
 is context from snyvi, not a request.";
 
-pub fn run(paths: Paths) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir()
-        .ok()
-        .map(|p| p.to_string_lossy().to_string());
-    let session = session_key();
+/// What one MCP server process knows about the session it serves: where it
+/// was started, the pane it runs in if any, and the client's name once
+/// `initialize` has said it.
+struct Session {
+    paths: Paths,
+    cwd: Option<String>,
+    key: String,
     // The pane this server runs in, if it does: a desk's pane puts its id in
     // the shell's environment, and Claude Code passes it on to the servers it
     // starts. Outside a pane there is no desk to read, and the tool is not
     // offered at all.
-    let pane = std::env::var("SNYVI_SESSION")
-        .ok()
-        .filter(|p| crate::pane::valid_id(p));
+    pane: Option<String>,
     // The client's name from `initialize`, kept for every send after it, so
     // the connect page can say which agent last worked and when.
-    let mut sender: Option<String> = None;
+    sender: Option<String>,
+}
+
+/// A tool's handler: the arguments in, the `result` of `tools/call` out.
+type Tool = fn(&Session, &Value) -> Value;
+
+/// Every tool `tools/call` answers, by name. `send_note` is the name
+/// `send_aside` had through 1.4.0: a session that started before an upgrade
+/// still has it from `tools/list`.
+const TOOLS: &[(&str, Tool)] = &[
+    ("send_document", Session::send_document),
+    ("send_aside", Session::send_aside),
+    ("send_note", Session::send_aside),
+    ("read_desk_notes", Session::read_desk_notes),
+    ("tick_desk_note", Session::tick_desk_note),
+    ("mark_desk_note", Session::mark_desk_note),
+    ("suggest_desk_note", Session::suggest_desk_note),
+    ("leave_off", Session::leave_off),
+    ("name_panel", Session::name_panel),
+];
+
+pub fn run(paths: Paths) -> anyhow::Result<()> {
+    let mut s = Session {
+        paths,
+        cwd: std::env::current_dir()
+            .ok()
+            .map(|p| p.to_string_lossy().to_string()),
+        key: session_key(),
+        pane: std::env::var("SNYVI_SESSION")
+            .ok()
+            .filter(|p| crate::pane::valid_id(p)),
+        sender: None,
+    };
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -141,223 +173,270 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
                 continue;
             }
         };
-        let id = msg.get("id").cloned();
+        // Notifications have no id and get no reply.
+        let Some(id) = msg.get("id").cloned() else {
+            continue;
+        };
         let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        // Notifications have no id and get no reply.
-        let Some(id) = id else { continue };
-        let reply = match method {
-            "initialize" => {
-                sender = params
-                    .pointer("/clientInfo/name")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                if let Some(name) = &sender {
-                    client::hold_presence(name.clone());
-                }
-                json!({ "jsonrpc": "2.0", "id": id, "result": {
-                    "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
-                    "capabilities": { "tools": {}, "prompts": {} },
-                    "serverInfo": { "name": "snyvi", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": instructions(pane.is_some())
-                }})
-            }
-            "prompts/list" => {
-                let prompts: Vec<Value> = PROMPTS
-                    .iter()
-                    .filter(|p| pane.is_some() || !p.panel)
-                    .map(prompt_spec)
-                    .collect();
-                json!({ "jsonrpc": "2.0", "id": id, "result": { "prompts": prompts } })
-            }
-            "prompts/get" => {
-                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-                match PROMPTS
-                    .iter()
-                    .find(|p| p.name == name && (pane.is_some() || !p.panel))
-                {
-                    Some(p) => {
-                        let arg = p
-                            .arg
-                            .and_then(|(a, _)| params.pointer(&format!("/arguments/{a}")))
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty());
-                        json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "description": p.description,
-                            "messages": [{ "role": "user", "content": { "type": "text", "text": prompt_text(p, arg) } }]
-                        }})
-                    }
-                    None => {
-                        json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown prompt {name}") } })
-                    }
-                }
-            }
-            "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
-            "tools/list" => {
-                let mut tools = vec![tool_spec(), aside_spec()];
-                if pane.is_some() {
-                    tools.push(desk_notes_spec());
-                    tools.push(mark_spec());
-                    tools.push(tick_spec());
-                    tools.push(suggest_spec());
-                    tools.push(leave_off_spec());
-                    tools.push(name_spec());
-                }
-                json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } })
-            }
-            "tools/call" => {
-                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                // `send_note` is the name this tool had through 1.4.0: a session that
-                // started before an upgrade still has it from `tools/list`.
-                if name == "send_aside" || name == "send_note" {
-                    match call_aside(&paths, &args, cwd.as_deref(), sender.as_deref()) {
-                        Ok(()) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": "Left in snyvi. No need to mention it to the user." }],
-                            "isError": false
-                        }}),
-                        Err(e) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": format!("snyvi could not take the aside: {e}") }],
-                            "isError": true
-                        }}),
-                    }
-                } else if name == "read_desk_notes" {
-                    match pane.as_deref().map(|p| client::desk_notes(&paths, p)) {
-                        Some(Ok(v)) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": say_notes(&v) }],
-                            "structuredContent": v,
-                            "isError": false
-                        }}),
-                        Some(Err(e)) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": format!("snyvi could not read the desk's notes: {e}") }],
-                            "isError": true
-                        }}),
-                        None => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": "This session is not running in a snyvi desk, so there are no desk notes to read." }],
-                            "isError": true
-                        }}),
-                    }
-                } else if name == "tick_desk_note" {
-                    let note = args.get("id").and_then(Value::as_i64);
-                    let by = sender.as_deref().unwrap_or("");
-                    let arg = |k: &str| {
-                        args.get(k)
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .trim()
-                            .to_string()
-                    };
-                    let (commit, about, evidence) = (arg("commit"), arg("about"), arg("evidence"));
-                    let (text, bad) = match (pane.as_deref(), note) {
-                        (None, _) => ("This session is not running in a snyvi desk, so there is no desk list to tick.".to_string(), true),
-                        (_, None) => ("tick_desk_note needs the note's id, a number from read_desk_notes.".to_string(), true),
-                        (Some(p), Some(n)) => match client::tick_desk_note(&paths, p, n, by, &commit, &about, &evidence) {
-                            Ok(v) => (format!("Ticked note {n} on the desk \"{}\". Tell the user which note you ticked.", v.get("desk").and_then(Value::as_str).unwrap_or("this desk")), false),
-                            Err(e) => (format!("snyvi did not tick the note: {e}"), true),
-                        },
-                    };
-                    json!({ "jsonrpc": "2.0", "id": id, "result": {
-                        "content": [{ "type": "text", "text": text }],
-                        "isError": bad
-                    }})
-                } else if name == "mark_desk_note" {
-                    let note = args.get("id").and_then(Value::as_i64);
-                    let by = sender.as_deref().unwrap_or("");
-                    let arg = |k: &str| {
-                        args.get(k)
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .trim()
-                            .to_string()
-                    };
-                    let (stage, about) = (arg("stage"), arg("about"));
-                    let (text, bad) = match (pane.as_deref(), note) {
-                        (None, _) => ("This session is not running in a snyvi desk, so there is no desk list to mark.".to_string(), true),
-                        (_, None) => ("mark_desk_note needs the note's id, a number from read_desk_notes.".to_string(), true),
-                        (Some(p), Some(n)) => match client::mark_desk_note(&paths, p, n, &stage, by, &about) {
-                            Ok(_) => (format!("Note {n} is marked {stage}."), false),
-                            Err(e) => (format!("snyvi did not mark the note: {e}"), true),
-                        },
-                    };
-                    json!({ "jsonrpc": "2.0", "id": id, "result": {
-                        "content": [{ "type": "text", "text": text }],
-                        "isError": bad
-                    }})
-                } else if name == "suggest_desk_note" || name == "leave_off" {
-                    let arg = |k: &str| {
-                        args.get(k)
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .trim()
-                            .to_string()
-                    };
-                    let by = sender.as_deref().unwrap_or("");
-                    let text = arg("text");
-                    let (said, bad) = match pane.as_deref() {
-                        None => ("This session is not running in a snyvi desk, so there is no desk to write to.".to_string(), true),
-                        Some(p) if name == "leave_off" => match client::leave_off(&paths, p, &text, &arg("about"), by) {
-                            Ok(v) => (format!("Left off on the desk \"{}\": {text}", v.get("desk").and_then(Value::as_str).unwrap_or("this desk")), false),
-                            Err(e) => (format!("snyvi did not take it: {e}"), true),
-                        },
-                        Some(p) => match client::suggest_desk_note(&paths, p, &text, by) {
-                            Ok(_) => ("Suggested. It waits beside the user's notes until they keep it or remove it; mention it in your reply.".to_string(), false),
-                            Err(e) => (format!("snyvi did not take the suggestion: {e}"), true),
-                        },
-                    };
-                    json!({ "jsonrpc": "2.0", "id": id, "result": {
-                        "content": [{ "type": "text", "text": said }],
-                        "isError": bad
-                    }})
-                } else if name == "name_panel" {
-                    let to = args
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    let (text, bad) = match pane.as_deref() {
-                        None => ("This session is not running in a snyvi desk, so there is no panel to name.".to_string(), true),
-                        Some(p) => match client::name_panel(&paths, p, &to) {
-                            Ok(()) if to.is_empty() => ("The panel is back to its program's title.".to_string(), false),
-                            Ok(()) => (format!("The panel is named \"{to}\"."), false),
-                            Err(e) => (format!("snyvi did not name the panel: {e}"), true),
-                        },
-                    };
-                    json!({ "jsonrpc": "2.0", "id": id, "result": {
-                        "content": [{ "type": "text", "text": text }],
-                        "isError": bad
-                    }})
-                } else if name != "send_document" {
-                    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("unknown tool {name}") } })
-                } else {
-                    match call_send(
-                        &paths,
-                        args,
-                        cwd.as_deref(),
-                        &session,
-                        sender.as_deref(),
-                        pane.as_deref(),
-                    ) {
-                        Ok(sent) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": sent.say() }],
-                            "structuredContent": { "id": sent.id, "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },
-                            "isError": false
-                        }}),
-                        Err(e) => json!({ "jsonrpc": "2.0", "id": id, "result": {
-                            "content": [{ "type": "text", "text": format!("snyvi could not receive the document: {e}") }],
-                            "isError": true
-                        }}),
-                    }
-                }
-            }
-            _ => {
-                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not found: {method}") } })
+        let reply = match s.answer(method, &params) {
+            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            Err((code, message)) => {
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
             }
         };
         write_msg(&mut out, &reply)?;
     }
     Ok(())
+}
+
+/// A tool's answer: one text for the agent, and whether it is an error.
+fn said(text: impl Into<String>, bad: bool) -> Value {
+    json!({ "content": [{ "type": "text", "text": text.into() }], "isError": bad })
+}
+
+/// A string argument, trimmed; empty when it is missing.
+fn arg(args: &Value, k: &str) -> String {
+    args.get(k)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+impl Session {
+    /// The `result` of one request, or its JSON-RPC error code and message.
+    fn answer(&mut self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        match method {
+            "initialize" => {
+                self.sender = params
+                    .pointer("/clientInfo/name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if let Some(name) = &self.sender {
+                    client::hold_presence(name.clone());
+                }
+                Ok(json!({
+                    "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
+                    "capabilities": { "tools": {}, "prompts": {} },
+                    "serverInfo": { "name": "snyvi", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": instructions(self.pane.is_some())
+                }))
+            }
+            "prompts/list" => {
+                let prompts: Vec<Value> = PROMPTS
+                    .iter()
+                    .filter(|p| self.pane.is_some() || !p.panel)
+                    .map(prompt_spec)
+                    .collect();
+                Ok(json!({ "prompts": prompts }))
+            }
+            "prompts/get" => self.prompt(params),
+            "ping" => Ok(json!({})),
+            "tools/list" => {
+                let mut tools = vec![tool_spec(), aside_spec()];
+                if self.pane.is_some() {
+                    tools.extend([
+                        desk_notes_spec(),
+                        mark_spec(),
+                        tick_spec(),
+                        suggest_spec(),
+                        leave_off_spec(),
+                        name_spec(),
+                    ]);
+                }
+                Ok(json!({ "tools": tools }))
+            }
+            "tools/call" => {
+                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                match TOOLS.iter().find(|(n, _)| *n == name) {
+                    Some((_, tool)) => Ok(tool(self, &args)),
+                    None => Err((-32602, format!("unknown tool {name}"))),
+                }
+            }
+            _ => Err((-32601, format!("method not found: {method}"))),
+        }
+    }
+
+    fn prompt(&self, params: &Value) -> Result<Value, (i64, String)> {
+        let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+        let Some(p) = PROMPTS
+            .iter()
+            .find(|p| p.name == name && (self.pane.is_some() || !p.panel))
+        else {
+            return Err((-32602, format!("unknown prompt {name}")));
+        };
+        let arg = p
+            .arg
+            .and_then(|(a, _)| params.pointer(&format!("/arguments/{a}")))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        Ok(json!({
+            "description": p.description,
+            "messages": [{ "role": "user", "content": { "type": "text", "text": prompt_text(p, arg) } }]
+        }))
+    }
+
+    fn by(&self) -> &str {
+        self.sender.as_deref().unwrap_or("")
+    }
+
+    fn send_document(&self, args: &Value) -> Value {
+        match call_send(
+            &self.paths,
+            args.clone(),
+            self.cwd.as_deref(),
+            &self.key,
+            self.sender.as_deref(),
+            self.pane.as_deref(),
+        ) {
+            Ok(sent) => json!({
+                "content": [{ "type": "text", "text": sent.say() }],
+                "structuredContent": { "id": sent.id, "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },
+                "isError": false
+            }),
+            Err(e) => said(format!("snyvi could not receive the document: {e}"), true),
+        }
+    }
+
+    fn send_aside(&self, args: &Value) -> Value {
+        match call_aside(
+            &self.paths,
+            args,
+            self.cwd.as_deref(),
+            self.sender.as_deref(),
+        ) {
+            Ok(()) => said("Left in snyvi. No need to mention it to the user.", false),
+            Err(e) => said(format!("snyvi could not take the aside: {e}"), true),
+        }
+    }
+
+    fn read_desk_notes(&self, _args: &Value) -> Value {
+        match self
+            .pane
+            .as_deref()
+            .map(|p| client::desk_notes(&self.paths, p))
+        {
+            Some(Ok(v)) => json!({
+                "content": [{ "type": "text", "text": say_notes(&v) }],
+                "structuredContent": v,
+                "isError": false
+            }),
+            Some(Err(e)) => said(format!("snyvi could not read the desk's notes: {e}"), true),
+            None => said(
+                "This session is not running in a snyvi desk, so there are no desk notes to read.",
+                true,
+            ),
+        }
+    }
+
+    fn tick_desk_note(&self, args: &Value) -> Value {
+        let note = args.get("id").and_then(Value::as_i64);
+        let (commit, about, evidence) = (
+            arg(args, "commit"),
+            arg(args, "about"),
+            arg(args, "evidence"),
+        );
+        match (self.pane.as_deref(), note) {
+            (None, _) => said(
+                "This session is not running in a snyvi desk, so there is no desk list to tick.",
+                true,
+            ),
+            (_, None) => said(
+                "tick_desk_note needs the note's id, a number from read_desk_notes.",
+                true,
+            ),
+            (Some(p), Some(n)) => match client::tick_desk_note(
+                &self.paths,
+                p,
+                n,
+                self.by(),
+                &commit,
+                &about,
+                &evidence,
+            ) {
+                Ok(v) => said(
+                    format!(
+                        "Ticked note {n} on the desk \"{}\". Tell the user which note you ticked.",
+                        v.get("desk").and_then(Value::as_str).unwrap_or("this desk")
+                    ),
+                    false,
+                ),
+                Err(e) => said(format!("snyvi did not tick the note: {e}"), true),
+            },
+        }
+    }
+
+    fn mark_desk_note(&self, args: &Value) -> Value {
+        let note = args.get("id").and_then(Value::as_i64);
+        let (stage, about) = (arg(args, "stage"), arg(args, "about"));
+        match (self.pane.as_deref(), note) {
+            (None, _) => said(
+                "This session is not running in a snyvi desk, so there is no desk list to mark.",
+                true,
+            ),
+            (_, None) => said(
+                "mark_desk_note needs the note's id, a number from read_desk_notes.",
+                true,
+            ),
+            (Some(p), Some(n)) => {
+                match client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about) {
+                    Ok(_) => said(format!("Note {n} is marked {stage}."), false),
+                    Err(e) => said(format!("snyvi did not mark the note: {e}"), true),
+                }
+            }
+        }
+    }
+
+    fn suggest_desk_note(&self, args: &Value) -> Value {
+        let text = arg(args, "text");
+        match self.pane.as_deref() {
+            None => said("This session is not running in a snyvi desk, so there is no desk to write to.", true),
+            Some(p) => match client::suggest_desk_note(&self.paths, p, &text, self.by()) {
+                Ok(_) => said("Suggested. It waits beside the user's notes until they keep it or remove it; mention it in your reply.", false),
+                Err(e) => said(format!("snyvi did not take the suggestion: {e}"), true),
+            },
+        }
+    }
+
+    fn leave_off(&self, args: &Value) -> Value {
+        let text = arg(args, "text");
+        match self.pane.as_deref() {
+            None => said(
+                "This session is not running in a snyvi desk, so there is no desk to write to.",
+                true,
+            ),
+            Some(p) => {
+                match client::leave_off(&self.paths, p, &text, &arg(args, "about"), self.by()) {
+                    Ok(v) => said(
+                        format!(
+                            "Left off on the desk \"{}\": {text}",
+                            v.get("desk").and_then(Value::as_str).unwrap_or("this desk")
+                        ),
+                        false,
+                    ),
+                    Err(e) => said(format!("snyvi did not take it: {e}"), true),
+                }
+            }
+        }
+    }
+
+    fn name_panel(&self, args: &Value) -> Value {
+        let to = arg(args, "name");
+        match self.pane.as_deref() {
+            None => said(
+                "This session is not running in a snyvi desk, so there is no panel to name.",
+                true,
+            ),
+            Some(p) => match client::name_panel(&self.paths, p, &to) {
+                Ok(()) if to.is_empty() => said("The panel is back to its program's title.", false),
+                Ok(()) => said(format!("The panel is named \"{to}\"."), false),
+                Err(e) => said(format!("snyvi did not name the panel: {e}"), true),
+            },
+        }
+    }
 }
 
 fn tool_spec() -> Value {

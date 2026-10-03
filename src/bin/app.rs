@@ -121,6 +121,81 @@ const REMEMBERED: tauri_plugin_window_state::StateFlags =
     );
 
 fn main() {
+    let (parsed, quit) = target();
+    // The origin the window reads from, kept before the URL is handed to the
+    // builder. Every navigation is measured against it below.
+    let home = parsed.origin().ascii_serialization();
+    let shortcut = shortcut_wanted();
+    let run = plugins(shortcut.is_some())
+        .setup(move |app| {
+            if quit {
+                std::process::exit(0);
+            }
+            let w = window(app, parsed, &home)?;
+            // A tray is an addition, not a precondition. On Linux it is loaded
+            // at runtime rather than linked, so a machine without
+            // libayatana-appindicator has none -- and a window is still worth
+            // far more than no window.
+            let tray = match tray(app.handle(), &w) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("snyvi-app: no tray icon ({e})");
+                    false
+                }
+            };
+
+            if let Some(key) = &shortcut {
+                match app.global_shortcut().register(key.as_str()) {
+                    Ok(()) => eprintln!("snyvi-app: {key} shows or hides the window from anywhere"),
+                    // Another program holds the key, or the display has no
+                    // way to grant one. The tray still shows the window, and
+                    // so does running `snyvi app` again.
+                    Err(e) => eprintln!("snyvi-app: no global shortcut ({key}: {e})"),
+                }
+            }
+
+            // Off the main thread: it runs the desktop's own tools, and the
+            // window should not wait on them. Nothing on macOS, where the
+            // scheme is declared in the bundle's Info.plist and cannot be
+            // claimed at runtime.
+            #[cfg(any(target_os = "linux", windows))]
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || claim_scheme(&handle));
+            }
+
+            hide_on_close(app.handle(), &w, tray);
+            Ok(())
+        })
+        .build(tauri::generate_context!());
+    let app = match run {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("snyvi-app: {e}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|_app, _event| {
+        // A `snyvi://` link on macOS arrives here, from the desktop, whether
+        // the app was running or was started for it -- there is no argv for
+        // a link on macOS. Anything else on the run loop is Tauri's own.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = _event {
+            let Some(w) = _app.get_webview_window("main") else {
+                return;
+            };
+            if let Some(u) = urls.into_iter().find(|u| u.scheme() == SCHEME) {
+                open_in(&w, u);
+            }
+            reveal(&w);
+        }
+    });
+}
+
+/// The address the window opens on, from argv, and whether this run is
+/// `--quit`. A `snyvi://` link is handed to `snyvi app` here, which never
+/// returns.
+fn target() -> (tauri::Url, bool) {
     let url = match std::env::args().nth(1) {
         Some(u) => u,
         None => hand_to_snyvi(None),
@@ -171,10 +246,12 @@ fn main() {
     } else {
         parsed
     });
-    // The origin the window reads from, kept before the URL is handed to the
-    // builder. Every navigation is measured against it below.
-    let home = parsed.origin().ascii_serialization();
-    let shortcut = shortcut_wanted();
+    (parsed, quit)
+}
+
+/// The runtime with its plugins: one window per user, the remembered
+/// geometry, `snyvi://` links, and the global key when one is wanted.
+fn plugins(shortcut: bool) -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
         // Before every other plugin, which is what this one requires: it has
         // to answer for a second process before that process builds anything.
@@ -205,7 +282,7 @@ fn main() {
     // interface as it loads, and a failure there is fatal to the whole window,
     // which a shortcut is never worth. The key itself is registered in setup
     // below, where its failure is a line and not an exit.
-    let builder = match shortcut.is_some() {
+    match shortcut {
         true => builder.plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _key, event| {
@@ -219,171 +296,120 @@ fn main() {
                 .build(),
         ),
         false => builder,
+    }
+}
+
+/// The one window: allowed the page's window commands from the daemon's
+/// origin, kept on that origin, framed or not as asked, and back at the size
+/// and place it had.
+fn window(app: &tauri::App, parsed: tauri::Url, home: &str) -> tauri::Result<WebviewWindow> {
+    use tauri_plugin_window_state::WindowExt;
+    let at_home = home.to_string();
+    let frame = frame_wanted();
+    // The page may run the window commands above, and only from the
+    // daemon's origin -- the one place the window ever shows, as the
+    // navigation rule says. Granted here, at run time, because that
+    // origin is only known once the window is given its URL; a
+    // capability file would have to guess the port. Before the window
+    // exists, so no page is ever ahead of its permission.
+    let mut cap = CapabilityBuilder::new("page-frame")
+        .local(false)
+        .remote(home.to_string())
+        .window("main");
+    for permission in PAGE_WINDOW_COMMANDS {
+        cap = cap.permission(permission);
+    }
+    if let Err(e) = app.add_capability(cap) {
+        eprintln!("snyvi-app: the page cannot drag or close the window ({e})");
+    }
+    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
+        .title("snyvi")
+        .inner_size(1280.0, 860.0)
+        .min_inner_size(480.0, 320.0)
+        // No title bar of the system's: the page's own header row is
+        // the drag region and carries the window buttons, so the app
+        // stops being a web page in a frame. The edges still resize
+        // the window; the runtime does that itself for an undecorated
+        // window. `SNYVI_FRAME=1` keeps the system's frame.
+        .decorations(frame);
+    // On macOS the frame stays and the title bar goes transparent
+    // instead, so the traffic lights are the system's own and sit
+    // over the page's header, where the page leaves room for them.
+    #[cfg(target_os = "macos")]
+    let builder = match frame {
+        true => builder,
+        false => builder
+            .decorations(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true),
     };
-    let run = builder
-        .setup(move |app| {
-            use tauri_plugin_window_state::{AppHandleExt, WindowExt};
-            if quit {
-                std::process::exit(0);
+    let w = builder
+        // The web belongs in a browser. This window has no address bar
+        // and no Back button -- Back is the page's own key handler, and
+        // a page from somewhere else does not have it -- so a link
+        // followed here would strand the reader on a site with no way
+        // home but the tray. Anything off the daemon's origin is handed
+        // to the desktop instead and the window stays where it was.
+        .on_navigation(move |url| {
+            if stays_home(url, &at_home) {
+                return true;
             }
-            let at_home = home.clone();
-            let frame = frame_wanted();
-            // The page may run the window commands above, and only from the
-            // daemon's origin -- the one place the window ever shows, as the
-            // navigation rule says. Granted here, at run time, because that
-            // origin is only known once the window is given its URL; a
-            // capability file would have to guess the port. Before the window
-            // exists, so no page is ever ahead of its permission.
-            let mut cap = CapabilityBuilder::new("page-frame")
-                .local(false)
-                .remote(home.clone())
-                .window("main");
-            for permission in PAGE_WINDOW_COMMANDS {
-                cap = cap.permission(permission);
-            }
-            if let Err(e) = app.add_capability(cap) {
-                eprintln!("snyvi-app: the page cannot drag or close the window ({e})");
-            }
-            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
-                .title("snyvi")
-                .inner_size(1280.0, 860.0)
-                .min_inner_size(480.0, 320.0)
-                // No title bar of the system's: the page's own header row is
-                // the drag region and carries the window buttons, so the app
-                // stops being a web page in a frame. The edges still resize
-                // the window; the runtime does that itself for an undecorated
-                // window. `SNYVI_FRAME=1` keeps the system's frame.
-                .decorations(frame);
-            // On macOS the frame stays and the title bar goes transparent
-            // instead, so the traffic lights are the system's own and sit
-            // over the page's header, where the page leaves room for them.
-            #[cfg(target_os = "macos")]
-            let builder = match frame {
-                true => builder,
-                false => builder
-                    .decorations(true)
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true),
-            };
-            let w = builder
-                // The web belongs in a browser. This window has no address bar
-                // and no Back button -- Back is the page's own key handler, and
-                // a page from somewhere else does not have it -- so a link
-                // followed here would strand the reader on a site with no way
-                // home but the tray. Anything off the daemon's origin is handed
-                // to the desktop instead and the window stays where it was.
-                .on_navigation(move |url| {
-                    if stays_home(url, &at_home) {
-                        return true;
-                    }
-                    hand_to_desktop(url.as_str());
-                    false
-                })
-                // `window.open` and `target="_blank"`, which the engine treats
-                // as a request for a second window rather than a navigation.
-                // snyvi has one window, so these go to the desktop too --
-                // including the viewer's own "Open source", whose raw text is
-                // a thing to read beside snyvi rather than inside it.
-                .on_new_window(|url, _features| {
-                    hand_to_desktop(url.as_str());
-                    tauri::webview::NewWindowResponse::Deny
-                })
-                // Every page, not only the first: the window navigates, and
-                // each page it lands on is asked the same question. Not on
-                // macOS, where the frame is never taken away.
-                .on_page_load(move |w, payload| {
-                    if cfg!(target_os = "macos") || frame {
-                        return;
-                    }
-                    if payload.event() == PageLoadEvent::Finished {
-                        let _ = w.eval(FRAME_CHECK);
-                    }
-                })
-                .icon(Image::from_bytes(WINDOW_ICON)?)?
-                .build()?;
-            // Size and position from the last run, saved by the plugin on close.
-            let _ = w.restore_state(REMEMBERED);
-            #[cfg(target_os = "linux")]
-            paste_pictures(&w);
-
-            // A tray is an addition, not a precondition. On Linux it is loaded
-            // at runtime rather than linked, so a machine without
-            // libayatana-appindicator has none -- and a window is still worth
-            // far more than no window.
-            let tray = match tray(app.handle(), &w) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("snyvi-app: no tray icon ({e})");
-                    false
-                }
-            };
-
-            if let Some(key) = &shortcut {
-                match app.global_shortcut().register(key.as_str()) {
-                    Ok(()) => eprintln!("snyvi-app: {key} shows or hides the window from anywhere"),
-                    // Another program holds the key, or the display has no
-                    // way to grant one. The tray still shows the window, and
-                    // so does running `snyvi app` again.
-                    Err(e) => eprintln!("snyvi-app: no global shortcut ({key}: {e})"),
-                }
-            }
-
-            // Off the main thread: it runs the desktop's own tools, and the
-            // window should not wait on them. Nothing on macOS, where the
-            // scheme is declared in the bundle's Info.plist and cannot be
-            // claimed at runtime.
-            #[cfg(any(target_os = "linux", windows))]
-            {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || claim_scheme(&handle));
-            }
-
-            let window = w.clone();
-            let handle = app.handle().clone();
-            w.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    // Closing puts snyvi away rather than ending it. Showing a
-                    // hidden window is instant; starting a browser engine is
-                    // the ~150 ms this avoids paying again, and the tray is
-                    // there to bring it back.
-                    //
-                    // Only when there is a tray, though: hiding the window
-                    // with nothing to click would leave snyvi running with no
-                    // way back to it.
-                    if !tray {
-                        return;
-                    }
-                    api.prevent_close();
-                    // Written now rather than on exit, because by then the
-                    // window has been hidden and has no geometry worth saving.
-                    let _ = handle.save_window_state(REMEMBERED);
-                    let _ = window.hide();
-                    said_where_it_went();
-                }
-            });
-            Ok(())
+            hand_to_desktop(url.as_str());
+            false
         })
-        .build(tauri::generate_context!());
-    let app = match run {
-        Ok(app) => app,
-        Err(e) => {
-            eprintln!("snyvi-app: {e}");
-            std::process::exit(1);
-        }
-    };
-    app.run(|_app, _event| {
-        // A `snyvi://` link on macOS arrives here, from the desktop, whether
-        // the app was running or was started for it -- there is no argv for
-        // a link on macOS. Anything else on the run loop is Tauri's own.
-        #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Opened { urls } = _event {
-            let Some(w) = _app.get_webview_window("main") else {
+        // `window.open` and `target="_blank"`, which the engine treats
+        // as a request for a second window rather than a navigation.
+        // snyvi has one window, so these go to the desktop too --
+        // including the viewer's own "Open source", whose raw text is
+        // a thing to read beside snyvi rather than inside it.
+        .on_new_window(|url, _features| {
+            hand_to_desktop(url.as_str());
+            tauri::webview::NewWindowResponse::Deny
+        })
+        // Every page, not only the first: the window navigates, and
+        // each page it lands on is asked the same question. Not on
+        // macOS, where the frame is never taken away.
+        .on_page_load(move |w, payload| {
+            if cfg!(target_os = "macos") || frame {
                 return;
-            };
-            if let Some(u) = urls.into_iter().find(|u| u.scheme() == SCHEME) {
-                open_in(&w, u);
             }
-            reveal(&w);
+            if payload.event() == PageLoadEvent::Finished {
+                let _ = w.eval(FRAME_CHECK);
+            }
+        })
+        .icon(Image::from_bytes(WINDOW_ICON)?)?
+        .build()?;
+    // Size and position from the last run, saved by the plugin on close.
+    let _ = w.restore_state(REMEMBERED);
+    #[cfg(target_os = "linux")]
+    paste_pictures(&w);
+    Ok(w)
+}
+
+/// Closing the window hides it when there is a tray to bring it back.
+fn hide_on_close(handle: &tauri::AppHandle, w: &WebviewWindow, tray: bool) {
+    use tauri_plugin_window_state::AppHandleExt;
+    let window = w.clone();
+    let handle = handle.clone();
+    w.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            // Closing puts snyvi away rather than ending it. Showing a
+            // hidden window is instant; starting a browser engine is
+            // the ~150 ms this avoids paying again, and the tray is
+            // there to bring it back.
+            //
+            // Only when there is a tray, though: hiding the window
+            // with nothing to click would leave snyvi running with no
+            // way back to it.
+            if !tray {
+                return;
+            }
+            api.prevent_close();
+            // Written now rather than on exit, because by then the
+            // window has been hidden and has no geometry worth saving.
+            let _ = handle.save_window_state(REMEMBERED);
+            let _ = window.hide();
+            said_where_it_went();
         }
     });
 }
