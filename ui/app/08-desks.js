@@ -61,7 +61,22 @@
     applyRename: (what, id) => applyRename(what, id),
     places: () => deskPlaces(),
     hold: id => heldPanes.add(id),
+    // The desks moved in the reader's order (menu.js, `moveDesk`).
+    drawDesks: () => renderDesks(),
+    focusDesk: id => deskNav.querySelector(`a[data-desk="${id}"]`)?.focus({ preventScroll: false }),
+    deskSaid: (id, text, e) => { clearTimeout(deskSaid?.timer); deskSaid = { id, text, why: e ? sayErr(e).why : "", timer: setTimeout(() => { deskSaid = null; renderDesks(); }, 4000) }; renderDesks(); },
   };
+  /* A desk row dragged to another place (menu.js, `dragDesk`). The chunk is
+   * fetched when the pointer comes over the list, so it is there by the
+   * press; a press before that is a click, as it always was. */
+  deskNav.addEventListener("pointerenter", () => { if (capability) useActs().catch(() => { actsLoading = null; }); });
+  deskNav.addEventListener("pointerdown", e => {
+    const a = e.target.closest(".t-desk > a[data-desk]");
+    if (a && capability && acts && !e.target.closest("[data-dropdesk]")) acts.dragDesk(actsCtx, a, e);
+  });
+  /** A desk row's own word on what just failed on it, for a few seconds: in
+   *  the row, where the reader was looking, not in a corner. */
+  let deskSaid = null;
   /** Panels made to wait for the reader's Enter: a new project desk's first,
    *  holding `claude`. The desk view takes each once, as it draws it. */
   const heldPanes = new Set();
@@ -129,8 +144,9 @@
       const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
       const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
-      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" class="${on && state.deskId === d.id ? "active" : ""}">` +
+      return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
+        deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
         `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
@@ -315,6 +331,11 @@
       e.preventDefault(); e.stopPropagation();
       const r = at.getBoundingClientRect();
       menuFor(at, r.left + 12, r.top + Math.min(r.height, 28), true);
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && capability && el.matches("a[data-desk]") && deskNav.contains(el)) {
+      // A desk's place in the list, from its row: what its menu's Move up
+      // and Move down do.
+      e.preventDefault(); e.stopPropagation();
+      act("moveDesk", +el.dataset.desk, e.key === "ArrowUp" ? -1 : 1, true);
     } else if (e.key === "F2" && !inPane && !e.ctrlKey && !e.altKey && !e.metaKey) {
       const p = el.closest(".t-proj > summary"), d = el.closest("a[data-desk]");
       if (p) { e.preventDefault(); startRename(p, "project", +p.parentElement.dataset.pid); }

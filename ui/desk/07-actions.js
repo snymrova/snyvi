@@ -597,6 +597,14 @@ export function actions(el) {
       { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }
+  const repo = el.closest(".dk-repo");
+  if (repo) {
+    const url = repo.getAttribute("href"), rn = repoName(url);
+    return { head: rn ? rn.path : url, items: [
+      { label: `Open on ${rn ? rn.host : "the web"}`, run: () => openLink(url) },
+      { label: "Copy repo URL", run: () => { navigator.clipboard?.writeText(url); ctx.toast("Copied", url); } },
+    ] };
+  }
   const doc = el.closest(".dk-doc");
   if (doc) {
     const id = doc.querySelector("a[data-read]")?.dataset.read, x = docList.find(y => y.id === id);

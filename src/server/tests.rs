@@ -503,6 +503,14 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         false,
     ),
     ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
+    ("GET", "/api/desks/1/git", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/order",
+        Some(r#"{"ids":[1]}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/park", Some("{}"), Gate::Desk, true),
     (
         "POST",
@@ -679,12 +687,16 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let (_tmp, router, leaves) = gated_router("snyvi-routes");
 
     // The table is the router. Git on Windows checks this file out with CRLF.
+    // `router`, and the panels' routes it merges.
     let src = include_str!("mod.rs").replace("\r\n", "\n");
-    let routed = &src[src.find("\nfn router(").unwrap()..];
-    let routed = &routed[..routed.find("\n}\n").unwrap()];
-    let n = routed.matches("get(").count()
-        + routed.matches("post(").count()
-        + routed.matches(".delete(").count();
+    let routes_in = |name: &str| {
+        let routed = &src[src.find(name).unwrap()..];
+        let routed = &routed[..routed.find("\n}\n").unwrap()];
+        routed.matches("get(").count()
+            + routed.matches("post(").count()
+            + routed.matches(".delete(").count()
+    };
+    let n = routes_in("\nfn router(") + routes_in("\nfn pane_routes(");
     assert_eq!(
         n,
         ROUTES.len(),

@@ -29,7 +29,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
@@ -143,6 +143,12 @@ async function main() {
   const openers = join(tmp, "openers");
   mkdirSync(openers);
   for (const o of ["xdg-open", "open"]) writeFileSync(join(openers, o), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${join(tmp, "opened")}"\n`, { mode: 0o755 });
+  // git, which the desk's repo line asks, may live beside an installed
+  // snyvi-app that the PATH below leaves out: kept, by a link of its own.
+  if (process.platform !== "win32") {
+    const git = (process.env.PATH ?? "").split(sep).map(d => join(d, "git")).find(f => existsSync(f));
+    if (git) symlinkSync(git, join(openers, "git"));
+  }
   const path = [openers, ...(process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app)))].join(sep);
   const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, PATH: path };
   const stub = join(bin, app);
@@ -252,6 +258,7 @@ async function main() {
     await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
+    await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
     await section("answers beside their buttons", () => answerRows(url, tmp));
     await section("every control, in every view", () => controlRows(cdp, p, url, browsed, base, token));
     await section("the first frame, in the reader's theme", () => firstFrameRows(p, url));
@@ -2043,6 +2050,152 @@ async function deskRows(cdp, base, token) {
   } finally {
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** 1.14: the reader's order for desks -- by alt ↑, by the row's menu, by a
+ *  drag that moves nothing until the drop, kept over a reload and on Home,
+ *  and put back, said in the row, when snyvi says no; the repository's link
+ *  at the foot of a desk's rail, and none for a folder with no remote; a
+ *  plain ⌃V into a panel with Claude in it left to Claude, while a shell
+ *  still gets the picture's path, once; and a sequence diagram with a `;` in
+ *  a note, drawn. In a tab of its own, with the capability. */
+async function orderRepoRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const T = { "content-type": "application/json", authorization: `Bearer ${token}` };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const listed = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks.map(d => d.name);
+  // A repository with a remote that is never asked anything, and a folder with none.
+  const repo = join(tmp, "repo-114"), plain = join(tmp, "plain-114");
+  mkdirSync(repo, { recursive: true }); mkdirSync(plain, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:someone/thing.git"], { cwd: repo });
+  const rootOf = dir => execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = [];
+  const desk = async body => { const j = await post("/api/desks", body); const d = j.desk || j; made.push(d.id); return d.id; };
+  const o1 = await desk({ name: "order-1" }), o2 = await desk({ name: "order-2" }), o3 = await desk({ name: "order-3" });
+  const dRepo = await desk({ root: rootOf(repo), path: "" }), dPlain = await desk({ root: rootOf(plain), path: "" });
+  const ours = names => names.filter(n => /^order-/.test(n));
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const sideOrder = () => p.ev(`[...document.querySelectorAll("#desk-nav .t-desk .nm")].map(e => e.textContent).filter(n => /^order-/.test(n))`);
+  const panes = [];
+  try {
+    await p.goto(`${base}/#cap=${cap}`);
+    await until(`!!document.querySelector('a[data-desk="${o3}"]')`);
+
+    // ⌥↑ on a row.
+    await p.ev(`document.querySelector('a[data-desk="${o3}"]').focus(); 1`);
+    await p.press("ArrowUp", { alt: true });
+    await until(`[...document.querySelectorAll("#desk-nav .t-desk .nm")].map(e => e.textContent).join() .includes("order-1,order-3,order-2")`, 30);
+    const byKey = await sideOrder(), saved = ours(await listed()), focusKept = await p.ev(`document.activeElement === document.querySelector('a[data-desk="${o3}"]')`);
+    rows.push(["alt ↑ moves a desk's row, and the daemon keeps it", byKey.join() === "order-1,order-3,order-2" && saved.join() === byKey.join() && focusKept,
+      byKey.join() !== "order-1,order-3,order-2" ? `the sidebar reads ${byKey.join(", ")}` : saved.join() !== byKey.join() ? `the daemon has ${saved.join(", ")}` : !focusKept ? "the focus left the row it moved" : "order-1, order-3, order-2, in the sidebar and the daemon, the focus still on order-3"]);
+
+    // The row's menu.
+    await p.rightClickOn(`a[data-desk="${o1}"]`);
+    const offered = await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`);
+    const isTop = await p.ev(`document.querySelector("#desk-nav .t-desk a[data-desk]")?.dataset.desk === "${o1}"`);
+    const down = offered.findIndex(t => /^Move down/.test(t));
+    if (down >= 0) await p.ev(`[...document.querySelectorAll("#ctx button")][${down}].click(); 1`);
+    await sleep(500);
+    const byMenu = await sideOrder();
+    const upOnTop = isTop && offered.some(t => /^Move up/.test(t));
+    rows.push(["Move down in the row's menu, and no Move up on the top row", down >= 0 && !upOnTop && byMenu.join() === "order-3,order-1,order-2",
+      down < 0 ? `the menu offers ${offered.join(" · ")}` : upOnTop ? "the top row is offered Move up" : byMenu.join() !== "order-3,order-1,order-2" ? `after Move down the sidebar reads ${byMenu.join(", ")}` : "order-1 went down one, past order-3"]);
+
+    // A drag: every row holds still until the drop, and the drop is not a click.
+    await p.hoverOn("#desk-nav");
+    await until(`!!document.querySelector("#desk-nav")`);
+    await sleep(400);
+    const at = await p.ev(`(() => { const r = q => document.querySelector(q).getBoundingClientRect(); const a = r('a[data-desk="${o3}"]'), z = r('a[data-desk="${o2}"]');
+      return { x: a.left + a.width / 2, y: a.top + a.height / 2, to: z.bottom - 3, tops: [...document.querySelectorAll("#desk-nav .t-desk")].map(li => li.getBoundingClientRect().top) }; })()`);
+    const path0 = await p.ev(`location.pathname`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, sessionId);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button: "left", clickCount: 1 }, sessionId);
+    for (let i = 1; i <= 8; i++) { await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y + (at.to - at.y) * i / 8, button: "left", buttons: 1 }, sessionId); await sleep(30); }
+    const mid = await p.ev(`({ line: !!document.querySelector(".t-drop"), tops: [...document.querySelectorAll("#desk-nav .t-desk")].map(li => li.getBoundingClientRect().top) })`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.to, button: "left", clickCount: 1 }, sessionId);
+    await sleep(600);
+    const byDrag = await sideOrder(), path1 = await p.ev(`location.pathname`);
+    const still = mid.tops.length === at.tops.length && mid.tops.every((t, i) => Math.abs(t - at.tops[i]) < 0.5);
+    rows.push(["a drag moves nothing until the drop, then the row", mid.line && still && byDrag.join() === "order-1,order-2,order-3" && path1 === path0,
+      !mid.line ? "no line said where it would land" : !still ? "rows moved during the drag" : path1 !== path0 ? `the drop opened ${path1}` : byDrag.join() !== "order-1,order-2,order-3" ? `after the drop the sidebar reads ${byDrag.join(", ")}`
+        : "a line while dragging, every row where it was, order-3 last on the drop, and no desk opened"]);
+
+    // snyvi says no: the list goes back and the row says so.
+    await p.ev(`window.__fetch = window.fetch; window.fetch = (u, o) => String(u).includes("/api/desks/order") ? Promise.resolve(new Response("{}", { status: 500 })) : window.__fetch(u, o); 1`);
+    await p.ev(`document.querySelector('a[data-desk="${o3}"]').focus(); 1`);
+    await p.press("ArrowUp", { alt: true });
+    const said = await until(`!!document.querySelector('a[data-desk="${o3}"] .t-said')`, 30);
+    const backTo = await sideOrder();
+    await p.ev(`window.fetch = window.__fetch; 1`);
+    rows.push(["a move snyvi refuses goes back, and its row says so", said && backTo.join() === "order-1,order-2,order-3",
+      !said ? "nothing said in the row" : `the sidebar reads ${backTo.join(", ")}`]);
+
+    // Kept: a reload, and Home's own lists.
+    await p.reload();
+    await until(`!!document.querySelector('a[data-desk="${o3}"]')`);
+    const reloaded = await sideOrder();
+    const home = await (await fetch(`${base}/api/home`, { headers: H })).json();
+    const homeOrder = ours(home.desks.map(d => d.name));
+    rows.push(["the order survives a reload and is Home's", reloaded.join() === "order-1,order-2,order-3" && homeOrder.join() === reloaded.join(),
+      reloaded.join() !== "order-1,order-2,order-3" ? `after a reload: ${reloaded.join(", ")}` : `Home has ${homeOrder.join(", ")}`]);
+
+    // The repository's link, and none for a plain folder.
+    await p.goto(`${base}/desk/${dRepo}#cap=${cap}`);
+    const linked = await until(`!!document.querySelector("#meta .dk-repo")`);
+    const link = linked ? await p.ev(`({ href: document.querySelector("#meta .dk-repo").getAttribute("href"), text: document.querySelector("#meta .dk-repo").textContent })`) : {};
+    await p.goto(`${base}/desk/${dPlain}#cap=${cap}`);
+    await until(`!!document.querySelector(".dk")`);
+    await sleep(1200);
+    const none = await p.ev(`!document.querySelector("#meta .dk-repo")`);
+    rows.push(["a desk on a repository links it; a plain folder links nothing", linked && link.href === "https://github.com/someone/thing" && /someone\/thing/.test(link.text) && none,
+      !linked ? "no repo line on the repository's desk" : link.href !== "https://github.com/someone/thing" ? `the link is ${link.href}` : !none ? "a folder with no remote has a repo line" : "someone/thing ↗ to https://github.com/someone/thing, and nothing on the plain folder"]);
+
+    // One picture for a plain ⌃V: Claude takes it itself; a shell gets the path.
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    // By its full path: the daemon's PATH leaves out the folder of an installed snyvi-app.
+    const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+    const pasted = async (claude) => {
+      const pid = (await post(`/api/desks/${dPlain}/panes`)).pane.id;
+      panes.push(pid);
+      await post(`/api/panes/${pid}/start`, { cmd: `${sleepBin} 300` });
+      if (claude) await post(`/api/panes/${pid}/agent`, { session: "0f3b2a1c-9d8e-4f70-a1b2-c3d4e5f60718" }, T);
+      // The same address as the page's is a jump within it, and loads nothing.
+      if (await p.ev(`location.pathname`) === `/desk/${dPlain}`) await p.reload(); else await p.goto(`${base}/desk/${dPlain}#cap=${cap}`);
+      await until(`!!document.querySelector('.pn[data-id="${pid}"] .pn-body')`);
+      await sleep(500);
+      await p.ev(`window.__pastes = 0; window.__fetch = window.fetch; window.fetch = (u, o) => { if (/^[/]api[/]panes[/][^/]+[/]paste/.test(new URL(String(u), location.href).pathname)) window.__pastes++; return window.__fetch(u, o); };
+        document.querySelector('.pn[data-id="${pid}"] .pn-body').focus(); 1`);
+      await p.press("v", { ctrl: true });
+      await p.ev(`dispatchEvent(new CustomEvent("snyvi-paste-image", { detail: "${png}" })); 1`);
+      await sleep(800);
+      return p.ev(`window.__pastes`);
+    };
+    const toClaude = await pasted(true), toShell = await pasted(false);
+    rows.push(["a plain ⌃V into Claude is Claude's; a shell gets the picture once", toClaude === 0 && toShell === 1,
+      toClaude ? `snyvi saved the picture ${toClaude} time(s) for Claude, which had read it itself` : toShell !== 1 ? `a shell's paste saved ${toShell} picture(s)` : "nothing saved for Claude, one picture for the shell"]);
+
+    // A `;` in a sequence diagram's note.
+    const semi = join(tmp, "semicolon.md");
+    writeFileSync(semi, "# A semicolon\n\n```mermaid\nsequenceDiagram\n  actor You\n  participant Side\n  You->>Side: drag\n  Note over Side: rows stay still; a 2px line marks the drop\n  You->>Side: drop\n```\n");
+    const semiUrl = execFileSync(BIN, ["send", semi], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
+    await p.goto(semiUrl);
+    await p.ev(`document.querySelector(".mmd")?.scrollIntoView({ block: "center", behavior: "instant" }); 1`);
+    const drew = await until(`!!document.querySelector('.mmd[data-state="done"]') || !!document.querySelector('.mmd[data-state="error"], .mmd-err')`, 80);
+    const state = await p.ev(`document.querySelector(".mmd")?.dataset.state || "none"`);
+    rows.push(["a ; in a sequence diagram's note still draws", drew && state === "done", `the diagram is ${state}`]);
+  } finally {
+    for (const pid of panes) await post(`/api/panes/${pid}/stop`).catch(() => {});
+    for (const d of made) await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
   return rows;

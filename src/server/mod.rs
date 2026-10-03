@@ -318,7 +318,34 @@ fn new_app(
     })
 }
 
-/// Every route, in one place, and the one layer in front of them all.
+/// A panel's routes, `/api/panes/{id}/*`: the page's (close, restore,
+/// rename, start, stop, a pasted picture) and the agent's in it, behind the
+/// token (`api_agent`). Their own function so `router` stays one screen; the
+/// route table in `tests` counts both.
+fn pane_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/panes/{id}/delete", post(close_pane))
+        .route("/api/panes/{id}/restore", post(restore_pane))
+        .route("/api/panes/{id}/rename", post(rename_pane))
+        .route("/api/panes/{id}/start", post(start_pane))
+        .route("/api/panes/{id}/stop", post(stop_pane))
+        .route("/api/panes/{id}/agent", post(pane_agent))
+        .route("/api/panes/{id}/notes", get(pane_notes))
+        .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
+        .route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))
+        .route("/api/panes/{id}/name", post(pane_name))
+        .route("/api/panes/{id}/brief", get(pane_brief))
+        .route("/api/panes/{id}/changes", get(pane_changes))
+        .route("/api/panes/{id}/leftoff", post(pane_left_off))
+        .route("/api/panes/{id}/suggest", post(pane_suggest_note))
+        .route(
+            "/api/panes/{id}/paste",
+            post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
+        )
+}
+
+/// Every route -- a panel's merged in from `pane_routes` -- and the one layer
+/// in front of them all.
 ///
 /// The test `every_route_answers_to_its_gate_and_to_this_host_only` sends a
 /// request to each of these; a route added here and not there fails it on
@@ -395,6 +422,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/capability", post(mint_capability))
         .route("/api/desk", get(desk_socket))
         .route("/api/desks", get(desks).post(create_desk))
+        .route("/api/desks/order", post(order_desks))
         .route("/api/desks/{id}/rename", post(rename_desk))
         .route("/api/desks/{id}/layout", post(desk_layout))
         .route("/api/desks/{id}/move", post(move_pane))
@@ -419,6 +447,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))
         .route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))
         .route("/api/desks/{id}/visit", post(visit_desk))
+        .route("/api/desks/{id}/git", get(desk_git))
         .route("/api/desks/{id}/park", post(park_desk))
         .route("/api/desks/{id}/week", post(desk_week))
         .route(
@@ -428,24 +457,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
-        .route("/api/panes/{id}/delete", post(close_pane))
-        .route("/api/panes/{id}/restore", post(restore_pane))
-        .route("/api/panes/{id}/rename", post(rename_pane))
-        .route("/api/panes/{id}/start", post(start_pane))
-        .route("/api/panes/{id}/stop", post(stop_pane))
-        .route("/api/panes/{id}/agent", post(pane_agent))
-        .route("/api/panes/{id}/notes", get(pane_notes))
-        .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
-        .route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))
-        .route("/api/panes/{id}/name", post(pane_name))
-        .route("/api/panes/{id}/brief", get(pane_brief))
-        .route("/api/panes/{id}/changes", get(pane_changes))
-        .route("/api/panes/{id}/leftoff", post(pane_left_off))
-        .route("/api/panes/{id}/suggest", post(pane_suggest_note))
-        .route(
-            "/api/panes/{id}/paste",
-            post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
-        )
+        .merge(pane_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
         .fallback(not_found)

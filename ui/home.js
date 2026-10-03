@@ -187,6 +187,8 @@ const CSS = `
 .hm-facts .fact { color: var(--fg); }
 .hm-git { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .hm-git svg { flex: none; color: var(--fg-3); }
+a.hm-repo { color: var(--fg-2); text-decoration: none; }
+a.hm-repo:hover, a.hm-repo:focus-visible { color: var(--accent); }
 a.hm-panels { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); text-decoration: none; }
 a.hm-panels:hover { color: var(--fg); }
 .hm-pk-go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
@@ -289,9 +291,11 @@ let barTo = 0, barDraft = "", barPics = [], barSaid = null, barT = 0;
 let menu = null;
 /** How long a said line, and its Undo, stands: six seconds, everywhere (docs/DESIGN.md Q2). */
 const SAID_MS = 6000;
-/** The desks' order, taken once each time Home is shown: a line added or
- *  ticked here touches its desk, and Home must not reshuffle under the
- *  reader's hand for it. A desk new since then goes at the end. */
+/** Last touched first, taken once each time Home is shown: which desk Pick
+ *  up offers. A line added or ticked here touches its desk, and Home must not
+ *  reshuffle under the reader's hand for it. A desk new since then goes at
+ *  the end. Everything else lists the desks in the reader's own order, which
+ *  is the daemon's. */
 let order = null;
 function byOrder(xs) {
   if (!order) order = [...xs].sort((a, b) => b.touched - a.touched || b.id - a.id).map(d => d.id);
@@ -506,10 +510,11 @@ function dot(p) {
 }
 
 /** The desk Pick up offers: the one the reader keeps there, else the one
- *  touched last. Parked desks are on the shelf, not here. */
+ *  touched last. The rest, in the reader's order, are the cards. Parked
+ *  desks are on the shelf, not here. */
 function pickOf(j) {
-  const live = byOrder((j.desks || []).filter(d => !d.parked || d.id === justParked));
-  const k = kept(), hero = live.find(d => d.id === k) || live[0];
+  const live = (j.desks || []).filter(d => !d.parked || d.id === justParked);
+  const k = kept(), hero = live.find(d => d.id === k) || byOrder(live)[0];
   return { hero, rest: live.filter(d => d !== hero), isKept: !!hero && hero.id === k };
 }
 
@@ -533,7 +538,7 @@ function pick(j) {
   const next = notesOf(d, 5);
   const g = d.git;
   const git = g ? `<span class="hm-git" data-tip="What git says in ${esc(d.root || "the desk's folder")}" data-tip-sub="${g.last ? `last commit ${ago(g.last.at)}: ${esc(g.last.subject)}` : "no commits yet"}">${BRANCH}<span class="fact">${esc(g.branch || "no branch")}</span>` +
-    `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${ago(g.last.at)}` : ""}</span></span>` : "";
+    `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${ago(g.last.at)}` : ""}</span></span>` + repoLink(g.remote) : "";
   const panels = d.panes.map(p =>
     `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
@@ -546,6 +551,18 @@ function pick(j) {
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
     (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Keep this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Kept here · Follow the last touched" : "Keep here"}</button>` : "") +
     `</div>` + chips);
+}
+
+/** Where a desk's repository lives on the web, as `owner/repo ↗`: the same
+ *  link the desk's rail has. Nothing for a folder with no remote. */
+const FORGES = { "github.com": "GitHub", "gitlab.com": "GitLab", "codeberg.org": "Codeberg", "bitbucket.org": "Bitbucket" };
+function repoLink(url) {
+  const { esc } = c;
+  let u;
+  try { u = url && new URL(url); } catch { return ""; }
+  const path = u && u.pathname.replace(/^\/+/, "");
+  if (!path) return "";
+  return `<a class="hm-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="Open on ${esc(FORGES[u.hostname] || u.host)}" data-tip-sub="${esc(url)}">${esc(path)} ↗</a>`;
 }
 
 /** A desk's first open notes, each with the circle that ticks it, then "and
@@ -609,11 +626,11 @@ function barDesk(j) {
   return ds.find(d => d.id === barTo) || (ds.length ? pickOf(j).hero : null) || ds[0] || null;
 }
 
-/** The desks the list offers, in Home's own order with the parked last;
+/** The desks the list offers, in the reader's order with the parked last;
  *  narrowed, the names that start with what was typed come first. */
 function menuDesks(j) {
   const ds = j?.desks || [], q = (menu?.q || "").toLowerCase();
-  const all = [...byOrder(ds.filter(d => !d.parked)), ...ds.filter(d => d.parked)];
+  const all = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
   if (!q) return all;
   const starts = all.filter(d => d.name.toLowerCase().startsWith(q));
   return [...starts, ...all.filter(d => !starts.includes(d) && d.name.toLowerCase().includes(q))];

@@ -145,6 +145,9 @@ function makeView(p) {
     }
     if (e.isComposing || e.key === "Dead" || e.key === "Process") return;
     if (e.key === "Control" && v.at) hover(v, v.at);
+    // A plain ⌃V goes down as ^V, and Claude Code reads a picture off the
+    // clipboard itself on it: the window's own picture paste stands aside.
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyV") v.ctrlV = Date.now();
     const b = keyBytes(e, v.mode[0]);
     if (b == null) return;
     e.preventDefault(); e.stopPropagation();

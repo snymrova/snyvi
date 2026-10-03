@@ -47,9 +47,14 @@ pub struct LastDoc<'a> {
     pub at: i64,
 }
 
-/// The session's title in `/resume` and Remote Control: "ledger · panel 2".
-pub fn title(desk: &Desk, slot: i64) -> String {
-    format!("{} · panel {slot}", desk.name)
+/// The session's title in `/resume` and Remote Control: the panel's name
+/// when it has one, by `name_panel` or the reader -- "ledger · auth refactor"
+/// -- and "ledger · panel 2" until then.
+pub fn title(desk: &Desk, slot: i64, name: &str) -> String {
+    match name.trim() {
+        "" => format!("{} · panel {slot}", desk.name),
+        name => format!("{} · {name}", desk.name),
+    }
 }
 
 /// The brief for the panel in `slot` of `desk`, as of `now`.
@@ -417,7 +422,11 @@ mod tests {
             b.contains("\"Plan: migration\" (id 82cc8f2d3c, 2 h ago)"),
             "{b}"
         );
-        assert_eq!(title(&desk(3, None), 2), "ledger · panel 2");
+        assert_eq!(title(&desk(3, None), 2, " "), "ledger · panel 2");
+        assert_eq!(
+            title(&desk(3, None), 2, "auth refactor"),
+            "ledger · auth refactor"
+        );
     }
 
     /// A line another panel's Claude is working on is named, with the panel,

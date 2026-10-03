@@ -64,6 +64,7 @@ const HELP =
   `<div class="hk"><span>Stop / start the panel</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>R</kbd></span></div>` +
   `<div class="hk"><span>Move the panel</span><span class="keys"><kbd>ctrl</kbd><kbd>alt</kbd><kbd>shift</kbd><i>+</i>arrow</span></div>` +
   `<div class="hk"><span>Rename the panel</span><span class="keys"><kbd>F2</kbd></span></div>` +
+  `<div class="hk"><span>Move a desk's row in the sidebar</span><span class="keys"><kbd>alt</kbd><kbd>↑</kbd><i>/</i><kbd>↓</kbd></span></div>` +
   `<div class="hk"><span>Copy / paste</span><span class="keys"><kbd>ctrl</kbd><kbd>shift</kbd><kbd>C</kbd><i>/</i><kbd>V</kbd></span></div>` +
   `<div class="hk"><span>Scroll the scrollback</span><span class="keys"><kbd>shift</kbd><i>+</i>wheel</span></div>` +
   `<p class="help-note">Every other key goes to the shell in the focused panel.</p></section>`;

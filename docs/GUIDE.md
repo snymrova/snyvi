@@ -730,6 +730,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | alt ← / → | back / forward                          |
 | ☰ / ⇧F10 | the menu for what has the focus           |
 | F2    | rename the project, desk or panel row you are on |
+| alt ↑ / ↓ | move the desk row you are on up / down     |
 | ⌘K `>` | what snyvi can do: a theme, a desk, a folder, an agent, the keys |
 
 `?` works with the letters asleep: it is how you find out they sleep.
@@ -747,7 +748,20 @@ close it (its row keeps Undo for 8 s), `⌃⌥R` stop or start it, `⌃⌥Z` it
 alone, and `⌃⌥⇧` with an arrow moves it. The ✎ in a panel's head, F2 on its
 row or Rename… in its menu names it; the ⋯ at the end of the desk's head
 is the desk's own menu. A panel running Claude shows its model and how full
-its context window is, amber from 85%.
+its context window is, amber from 85%. Under it, the foot of the rail links
+the repository the desk's folder lives in (`owner/repo ↗`, read from its
+`origin` remote, never fetched), and Home's Pick up has the same link.
+
+**Desks keep your order.** Drag a desk's row in the sidebar to put it
+where you want it, or use Move to top, Move up and Move down in its menu,
+or alt ↑ / ↓ on the row. The sidebar, Home's cards, Home's # list and ⌘K
+all show that order; a new desk goes at the bottom, and a reopened one goes
+back where it was. Only Pick up follows the desk you touched last.
+
+**A Claude session is named after its panel.** In `/resume` it reads
+*snyvi · panel 1* until the panel has a name, by `name_panel` or by you,
+and *snyvi · fix the login* from the next prompt on. A name you gave the
+session yourself, with `/rename` or `-n`, is left alone.
 
 **Right-click** anything in the sidebar, the rail or a desk for what it can
 do: a folder, a file, a project, a document, a desk, a panel's head or its
