@@ -678,8 +678,8 @@ fn gated_router(name: &str) -> (crate::store::tempdir::Dir, Router, Leaves) {
 async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let (_tmp, router, leaves) = gated_router("snyvi-routes");
 
-    // The table is the router.
-    let src = include_str!("mod.rs");
+    // The table is the router. Git on Windows checks this file out with CRLF.
+    let src = include_str!("mod.rs").replace("\r\n", "\n");
     let routed = &src[src.find("\nfn router(").unwrap()..];
     let routed = &routed[..routed.find("\n}\n").unwrap()];
     let n = routed.matches("get(").count()
