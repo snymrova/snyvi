@@ -2999,7 +2999,8 @@ async function startRows(p, url, arrive, base) {
 
   // snyvi's own aside: said once, when two are waiting, and never over an
   // agent's that is still unread.
-  await fetch(`${base}/api/notes/seen`, { method: "POST" }).catch(() => {});
+  // From the page, as note.js asks it: a reader's action needs our Origin.
+  await p.ev(`fetch("/api/notes/seen", { method: "POST" }).then(r => r.status)`);
   await p.ev(`Object.keys(localStorage).filter(k => k.startsWith("snyvi.seen.")).forEach(k => localStorage.removeItem(k)); 1`);
   await p.goto(url);
   await arrive(); await arrive();
@@ -3202,7 +3203,8 @@ async function stopRows(p, base, tmp, env, second) {
 
   const before = await health();
   const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
-  await fetch(`${base}/api/shutdown`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  // Leaving is the window's to ask for, not the agent's token's (server/auth.rs).
+  await fetch(`${base}/api/shutdown`, { method: "POST", headers: { authorization: `Bearer ${token}`, "x-snyvi-window": windowSecret } });
   const gone = await until(() => !alive(before.pid), 30);
   rows.push(["the daemon exits with a page on it", gone, gone ? `pid ${before.pid} gone within 3 s, ${before.streams} stream${before.streams === 1 ? "" : "s"} open on it` : `pid ${before.pid} is still up 3 s after it was asked to stop`]);
 
