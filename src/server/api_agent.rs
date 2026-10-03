@@ -203,19 +203,9 @@ pub(crate) async fn pane_notes(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    if !authorized(&app, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if !crate::pane::valid_id(&id) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if !app.panes.is_running(&id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let placed = match app.store.pane(&id) {
-        Ok(Some(p)) => p,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(e) => return err(e),
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
     };
     match app.store.desk_notes(placed.desk_id) {
         Ok(mut notes) => {
@@ -267,19 +257,9 @@ pub(crate) async fn pane_tick_note(
     Path((id, note)): Path<(String, i64)>,
     body: Option<Json<TickBody>>,
 ) -> Response {
-    if !authorized(&app, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if !crate::pane::valid_id(&id) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if !app.panes.is_running(&id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let placed = match app.store.pane(&id) {
-        Ok(Some(p)) => p,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(e) => return err(e),
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
     };
     let b = body.map(|Json(b)| b).unwrap_or_default();
     let (commit, doc, evidence) = (b.commit.trim(), b.about.trim(), b.evidence.trim());
@@ -354,19 +334,9 @@ pub(crate) async fn pane_mark_note(
     Path((id, note)): Path<(String, i64)>,
     body: Option<Json<MarkBody>>,
 ) -> Response {
-    if !authorized(&app, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if !crate::pane::valid_id(&id) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if !app.panes.is_running(&id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let placed = match app.store.pane(&id) {
-        Ok(Some(p)) => p,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(e) => return err(e),
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
     };
     let b = body.map(|Json(b)| b).unwrap_or_default();
     let (stage, doc) = (b.stage.trim(), b.about.trim());
@@ -411,23 +381,10 @@ pub(crate) async fn pane_name(
     Path(id): Path<String>,
     Json(b): Json<RenameBody>,
 ) -> Response {
-    if !authorized(&app, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(no) = agent_pane(&app, &headers, &id) {
+        return *no;
     }
-    if !crate::pane::valid_id(&id) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if !app.panes.is_running(&id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    match app.store.rename_pane(&id, &b.name) {
-        Ok(true) => {
-            desks_moved(&app);
-            Json(json!({ "ok": true })).into_response()
-        }
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => err(e),
-    }
+    renamed(&app, &id, &b.name)
 }
 
 /// The running pane `id`, placed on its desk, for the routes an agent reaches

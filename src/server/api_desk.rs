@@ -1162,9 +1162,14 @@ pub(crate) async fn rename_pane(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.rename_pane(&id, &b.name) {
+    renamed(&app, &id, &b.name)
+}
+
+/// The one rename, the reader's ✎ and an agent's `name_panel` alike.
+pub(crate) fn renamed(app: &App, id: &str, name: &str) -> Response {
+    match app.store.rename_pane(id, name) {
         Ok(true) => {
-            desks_moved(&app);
+            desks_moved(app);
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
