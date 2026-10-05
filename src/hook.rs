@@ -236,13 +236,15 @@ pub fn run(paths: &Paths) -> Result<()> {
         let said = state.is_some() || (starting && session.is_some());
         // The two events that also ask the daemon something tell it the
         // state in the same request; a daemon from before 1.17 answers
-        // without taking it, and is told the way it knows, after.
+        // without taking it, and one that did not answer at all -- slow,
+        // or the pane unknown to it -- may not have taken it either: both
+        // are told the way they know, after. Telling twice sets it twice.
         let asks = starting || name == "UserPromptSubmit";
         if said && !asks {
             client::agent_state(paths, pane, state, session);
         }
         let tell_anyway = |heard: Option<&client::Said>| {
-            if said && heard.is_some_and(|h| !h.applied) {
+            if said && heard.is_none_or(|h| !h.applied) {
                 client::agent_state(paths, pane, state, session);
             }
         };
