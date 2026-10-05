@@ -103,6 +103,20 @@ required-features = ["desktop"]
 
 [features]
 default = []
+# The A/B for the allocator's footprint (1.15.0 audit, finding 12): the same
+# daemon with arenas committed as they are touched rather than ahead of time,
+# and transparent huge pages off for the process. Nothing else changes.
+#
+#   cargo build --release --features mimalloc-lazy
+#
+# then `snyvi bench` and the 4-panel idle row against the stock build. The
+# stock binary takes the same two knobs from its environment, which is the
+# quicker comparison when a build is not wanted:
+#
+#   MIMALLOC_ARENA_EAGER_COMMIT=0 MIMALLOC_ALLOW_THP=0 snyvi serve
+#
+# Ships only if the render rows hold within 5%; see src/main.rs.
+mimalloc-lazy = ["libmimalloc-sys/no_thp"]
 # Builds the `snyvi-app` window executable. Nothing in `snyvi` is conditional on it.
 desktop = [
   "dep:tauri",
