@@ -4,10 +4,66 @@ use crate::config::{self, Paths};
 use crate::receive::Payload;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+/// The one HTTP agent this process talks to the daemon with.
+///
+/// `ureq::get` and `ureq::post` build an agent per call, and an agent's
+/// resolver, asked with a timeout set -- which every call here sets --
+/// spawns a thread to do the lookup it can abort. The daemon is only ever
+/// at `127.0.0.1`, which is not a lookup at all; `Loopback` says so and the
+/// thread is never started. One agent is also one connection pool, so the
+/// two requests a hook makes in a row share a socket. Each call still sets
+/// its own timeout, on the request (`.config()`), as it always did.
+static AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
+    ureq::Agent::with_parts(
+        ureq::config::Config::builder().build(),
+        ureq::unversioned::transport::DefaultConnector::default(),
+        Loopback,
+    )
+});
+
+fn agent() -> &'static ureq::Agent {
+    &AGENT
+}
+
+/// A resolver that answers an IP literal from the string, and leaves every
+/// other host to ureq's own. ureq's default resolves `127.0.0.1` through
+/// `getaddrinfo` on a thread of its own whenever a timeout is set, which was
+/// one `clone3` per hook call, on every prompt and tool call of a session.
+#[derive(Debug)]
+struct Loopback;
+
+impl ureq::unversioned::resolver::Resolver for Loopback {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> std::result::Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let literal = uri.host().and_then(|h| {
+            h.trim_matches(|c| c == '[' || c == ']')
+                .parse::<std::net::IpAddr>()
+                .ok()
+        });
+        let port = uri.port_u16().or_else(|| match uri.scheme_str() {
+            Some("http") => Some(80),
+            Some("https") => Some(443),
+            _ => None,
+        });
+        if let (Some(ip), Some(port)) = (literal, port) {
+            let mut out = self.empty();
+            out.push(std::net::SocketAddr::new(ip, port));
+            return Ok(out);
+        }
+        ureq::unversioned::resolver::DefaultResolver::default().resolve(uri, config, timeout)
+    }
+}
+
 pub fn health() -> Option<Value> {
-    ureq::get(&format!("{}/api/health", config::base_url()))
+    agent()
+        .get(&format!("{}/api/health", config::base_url()))
         .config()
         .timeout_global(Some(Duration::from_millis(400)))
         .build()
@@ -40,7 +96,8 @@ pub fn stop(paths: &Paths) -> Result<bool> {
         .unwrap_or("?")
         .to_string();
     if let Some(token) = config::read_token(paths) {
-        let _ = ureq::post(&format!("{}/api/shutdown", config::base_url()))
+        let _ = agent()
+            .post(&format!("{}/api/shutdown", config::base_url()))
             .header("Authorization", &format!("Bearer {token}"))
             .header(WINDOW_HEADER, &window_secret(paths))
             .config()
@@ -184,7 +241,8 @@ pub fn restart(paths: &Paths, now: bool) -> Result<()> {
             paths.config_dir.display()
         );
     };
-    let asked = ureq::post(&format!("{}/api/restart", config::base_url()))
+    let asked = agent()
+        .post(&format!("{}/api/restart", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .header(WINDOW_HEADER, &window_secret(paths))
         .config()
@@ -369,7 +427,8 @@ fn post(paths: &Paths, path: &str, body: Value, within: Duration) -> Result<(u16
             paths.config_dir.display()
         );
     };
-    let mut r = ureq::post(&format!("{}{path}", config::base_url()))
+    let mut r = agent()
+        .post(&format!("{}{path}", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .header(WINDOW_HEADER, &window_secret(paths))
         .config()
@@ -732,7 +791,8 @@ fn send_within(paths: &Paths, payload: &Payload, within: Duration) -> Result<Val
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::post(&format!("{}/api/docs", config::base_url()))
+    let mut resp = agent()
+        .post(&format!("{}/api/docs", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(within))
@@ -762,7 +822,8 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
     let Some(token) = config::read_token(paths) else {
         return;
     };
-    let _ = ureq::post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+    let _ = agent()
+        .post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_millis(500)))
@@ -779,7 +840,8 @@ pub fn agent_context(paths: &Paths, pane: &str, seen: &crate::statusline::Seen) 
     let Some(token) = config::read_token(paths) else {
         return;
     };
-    let _ = ureq::post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+    let _ = agent()
+        .post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_millis(500)))
@@ -808,7 +870,8 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/notes", config::base_url()))
+    let mut resp = agent()
+        .get(&format!("{}/api/panes/{pane}/notes", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(5)))
@@ -920,7 +983,8 @@ fn said_by(v: &Value) -> Said {
 /// and nothing at all on any failure.
 pub fn brief(paths: &Paths, pane: &str) -> Option<Said> {
     let token = config::read_token(paths)?;
-    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/brief", config::base_url()))
+    let mut resp = agent()
+        .get(&format!("{}/api/panes/{pane}/brief", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_millis(500)))
@@ -942,7 +1006,8 @@ pub fn brief(paths: &Paths, pane: &str) -> Option<Said> {
 /// daemon, no token, or no answer in half a second: the prompt never waits.
 pub fn changes(paths: &Paths, pane: &str) -> Option<Said> {
     let token = config::read_token(paths)?;
-    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/changes", config::base_url()))
+    let mut resp = agent()
+        .get(&format!("{}/api/panes/{pane}/changes", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_millis(500)))
@@ -1006,17 +1071,18 @@ pub fn key(paths: &Paths, name: &str) -> Result<String> {
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::get(&format!(
-        "{}/api/panes/{pane}/keys/{name}",
-        config::base_url()
-    ))
-    .header("Authorization", &format!("Bearer {token}"))
-    .config()
-    .timeout_global(Some(Duration::from_secs(5)))
-    .http_status_as_error(false)
-    .build()
-    .call()
-    .context("asking snyvi")?;
+    let mut resp = agent()
+        .get(&format!(
+            "{}/api/panes/{pane}/keys/{name}",
+            config::base_url()
+        ))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .context("asking snyvi")?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_to_string()?),
         400 => bail!("{}", said(&mut resp)),
@@ -1039,7 +1105,8 @@ fn pane_post(paths: &Paths, path: &str, body: Value) -> Result<ureq::http::Respo
             paths.token_path.display()
         )
     })?;
-    ureq::post(&format!("{}/api/panes/{path}", config::base_url()))
+    agent()
+        .post(&format!("{}/api/panes/{path}", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(5)))
@@ -1069,7 +1136,8 @@ pub fn aside(paths: &Paths, aside: &crate::aside::NewAside) -> Result<Value> {
     })?;
     // The route keeps the name it had before the tool was `send_aside`, so an
     // MCP server from either side of the rename reaches a daemon from the other.
-    let mut resp = ureq::post(&format!("{}/api/notes", config::base_url()))
+    let mut resp = agent()
+        .post(&format!("{}/api/notes", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -1099,7 +1167,8 @@ pub fn browse(paths: &Paths, dir: &str) -> Result<String> {
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::post(&format!("{}/api/browse", config::base_url()))
+    let mut resp = agent()
+        .post(&format!("{}/api/browse", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(20)))
@@ -1169,7 +1238,8 @@ pub fn hold_presence(name: String) {
     let _ = std::thread::Builder::new()
         .name("presence".into())
         .spawn(move || loop {
-            let held = ureq::get(&url)
+            let held = agent()
+                .get(&url)
                 .config()
                 .timeout_connect(Some(Duration::from_secs(2)))
                 .build()
@@ -1196,7 +1266,8 @@ pub fn hold_presence(name: String) {
 /// always has, without panes.
 pub fn mint_capability(paths: &Paths) -> Option<String> {
     let token = config::read_token(paths)?;
-    let mut resp = ureq::post(&format!("{}/api/capability", config::base_url()))
+    let mut resp = agent()
+        .post(&format!("{}/api/capability", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .header(WINDOW_HEADER, &window_secret(paths))
         .config()
