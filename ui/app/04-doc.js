@@ -62,13 +62,25 @@
     swapAnim = still.matches || byKey ? null : docEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: "ease-out" });
   }
 
+  /* The cache is bounded in bytes rather than in entries, the way mmd.js
+   * bounds its diagrams: forty entries was forty documents of any size, and a
+   * tab left open all day over long files is the tab this project promises
+   * stays small. Summed at each fetch rather than kept, since a dozen places
+   * drop an entry; the oldest go first, and never the one just fetched.
+ * Eight megabytes of rendered html. */
   async function fetchDoc(id) {
     if (state.cache.has(id)) return state.cache.get(id);
     const r = await fetch(`/api/docs/${id}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    if (state.cache.size > 40) state.cache.delete(state.cache.keys().next().value);
     state.cache.set(id, j);
+    let n = 0;
+    for (const v of state.cache.values()) n += v.html?.length || 0;
+    for (const [k, v] of state.cache) {
+      if (n <= 8 << 20 || k === id) break;
+      state.cache.delete(k);
+      n -= v.html?.length || 0;
+    }
     return j;
   }
 

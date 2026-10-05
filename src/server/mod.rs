@@ -351,6 +351,15 @@ fn pane_routes() -> Router<Arc<App>> {
 /// The test `every_route_answers_to_its_gate_and_to_this_host_only` sends a
 /// request to each of these; a route added here and not there fails it on
 /// the count, which is the point.
+/// The receive endpoint, taking up to what `receive` takes with room for
+/// the fields around the content: a send over axum's 2 MB default reaches
+/// it, and one over the cap is refused with its real size, not a bare 413.
+fn receive_route() -> axum::routing::MethodRouter<Arc<App>> {
+    post(receive_doc).layer(axum::extract::DefaultBodyLimit::max(
+        receive::MAX_BYTES + 64 * 1024,
+    ))
+}
+
 fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/", get(shell_home))
@@ -375,7 +384,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/workflows/{id}/tree", get(workflow_tree))
         .route("/api/inbox", get(inbox))
         .route("/api/search", get(search))
-        .route("/api/docs", post(receive_doc))
+        .route("/api/docs", receive_route())
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
         .route("/api/docs/{id}/read", post(mark_read))
@@ -635,13 +644,29 @@ pub(crate) fn emit(app: &App, name: &str, data: serde_json::Value) {
 
 /// The `doc` event every arrival ends in, shaped one way for the three
 /// routes a document comes in by.
-fn emit_doc(app: &App, received: &receive::Received) {
+///
+/// It carries the one project that moved, as the tree lists it (`project`)
+/// and as expanding it would (`rows`, the default caps), so a page patches
+/// that project and redraws once rather than fetching the whole tree and the
+/// project's rows back on every save of a file an agent is editing.
+///
+/// Built where the receive ran, off the executor: the project's row and its
+/// rows are store reads, and every save pays them. Left out when no page is
+/// open to patch its sidebar with them -- a page that misses them refetches.
+pub(crate) fn doc_event(app: &App, received: &receive::Received) -> serde_json::Value {
     let doc = &received.doc;
-    emit(
-        app,
-        "doc",
-        json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) }),
-    );
+    let mut ev = json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) });
+    if app.pages.load(Ordering::Relaxed) > 0 {
+        ev["project"] = json!(app.store.project_row(doc.project_id).ok().flatten());
+        ev["rows"] = json!(project_rows(
+            app,
+            doc.project_id,
+            TREE_WORKFLOWS,
+            TREE_DOCS,
+            None
+        ));
+    }
+    ev
 }
 
 /// A document in, the plain way: rendered and stored off the executor, then
@@ -655,12 +680,12 @@ async fn receive_and_emit(
 ) -> Result<receive::Received, Box<Response>> {
     let app2 = app.clone();
     match tokio::task::spawn_blocking(move || {
-        receive::receive(&app2.store, &app2.renderer, payload)
+        receive::receive(&app2.store, &app2.renderer, payload).map(|r| (doc_event(&app2, &r), r))
     })
     .await
     {
-        Ok(Ok(received)) => {
-            emit_doc(app, &received);
+        Ok(Ok((event, received))) => {
+            emit(app, "doc", event);
             Ok(received)
         }
         Ok(Err(e)) => Err(Box::new(

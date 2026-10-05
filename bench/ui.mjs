@@ -57,6 +57,9 @@ function flag(name) {
  *  is a function so `node --check` reads it, as bench/page.mjs explains. */
 function prelude() {
   const q = s => document.querySelector(s);
+  // What the page counts of itself: app.js adds one to `renders` per draw
+  // of the sidebar when this object is there, and nothing when it is not.
+  window.__perf = { renders: 0 };
   window.__ui = {
     vis(s) {
       const el = q(s);
@@ -253,6 +256,7 @@ async function main() {
     await section("a window to hand a link to", () => windowRows(p, url, base, mcpSend));
     await section("a link that opens in the window", () => linkRows(p, url, base, env, tmp, token, stub, mcpSend));
     await section("what moves, and for how long", () => motionRows(p, url, arrive));
+    await section("what a save, and a hover, cost", () => costRows(p, url, base, token, tmp, arrive));
     await section("desks that hold still", () => deskRows(cdp, base, token));
     await section("a desk for each project", () => projectDeskRows(cdp, base, token, tmp));
     await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
@@ -3087,6 +3091,103 @@ async function motionRows(p, url, arrive) {
   rows.push(["ghost Undo still there after 6 s with focus on it, both motion modes", held.reduce && held.full,
     held.reduce && held.full ? "the clock held while the focus rested on the Undo, with motion and without" : `gone after 6 s under focus with ${[!held.reduce && "reduced motion", !held.full && "full motion"].filter(Boolean).join(" and ")}`]);
   void second;
+  return rows;
+}
+
+/** 1.17: a save costs a render. An agent saving a file in the open project
+ *  reaches the page as one event, and the page draws the project the event
+ *  carries: nothing fetched, the sidebar drawn once, and the draw reading
+ *  the page's layout before it writes rather than after. And the pointer
+ *  crossing the sidebar fetches nothing until it rests on a row. The audit
+ *  of 1.15 counted the same save at two to four requests, two draws and two
+ *  to four forced layouts, and a document fetched for every row the pointer
+ *  crossed on its way to one. */
+async function costRows(p, url, base, token, tmp, arrive) {
+  const rows = [];
+  // A second file in the plan's project, saved the way a watched file is:
+  // once to exist, and again under the probe, so that save lands in place
+  // (`existing`) the way an agent's edits do.
+  const other = join(tmp, "other.md");
+  const save = async n => {
+    writeFileSync(other, `# Another file\n\nSaved ${n} times.\n`);
+    const r = await fetch(`${base}/api/docs`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ path: other, cwd: tmp, origin: "watch" }),
+    });
+    if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
+    return r.json();
+  };
+  await save(1);
+  await p.goto(url);
+  await p.pointerAway();
+  await sleep(600);
+  // Counted at the source: every GET under /api, every draw of the sidebar
+  // (the page counts its own, see prelude), and every read of layout that
+  // follows a write to the DOM before a frame has settled it -- which is
+  // what makes the browser lay the page out on the spot. The frame loop
+  // clears the mark the way the browser's own layout at the end of a frame
+  // does, so a read in a later frame is not charged.
+  await p.ev(`(() => {
+    const C = window.__cost = { api: [], forced: 0, dirty: false, renders: window.__perf.renders };
+    const real = window.fetch;
+    window.fetch = function (u, o) {
+      const at = new URL(u instanceof Request ? u.url : u, location.href).pathname;
+      if (at.startsWith("/api/") && ((o && o.method) || "GET").toUpperCase() === "GET") C.api.push(at);
+      return real.apply(this, arguments);
+    };
+    const read = () => { if (C.dirty) { C.forced++; C.dirty = false; } };
+    const write = (proto, name) => { const d = Object.getOwnPropertyDescriptor(proto, name); Object.defineProperty(proto, name, { ...d, set(v) { C.dirty = true; d.set.call(this, v); } }); };
+    write(Element.prototype, "innerHTML"); write(Element.prototype, "outerHTML"); write(Node.prototype, "textContent");
+    const prop = (proto, name) => { const d = Object.getOwnPropertyDescriptor(proto, name); Object.defineProperty(proto, name, { ...d, get() { read(); return d.get.call(this); } }); };
+    for (const n of ["clientWidth", "clientHeight", "scrollTop", "scrollHeight"]) prop(Element.prototype, n);
+    for (const n of ["offsetWidth", "offsetHeight", "offsetTop"]) prop(HTMLElement.prototype, n);
+    for (const n of ["getBoundingClientRect", "getClientRects"]) { const f = Element.prototype[n]; Element.prototype[n] = function () { read(); return f.apply(this, arguments); }; }
+    const gcs = window.getComputedStyle; window.getComputedStyle = function () { read(); return gcs.apply(this, arguments); };
+    const frame = () => requestAnimationFrame(() => setTimeout(() => { C.dirty = false; frame(); }, 0));
+    frame();
+    return 1;
+  })()`);
+  const saved = await save(2);
+  await sleep(1200);
+  // The requests the finding named: the tree, a project's rows, a document
+  // and its versions. Anything else under /api is printed, not charged.
+  const c = await p.ev(`({ api: window.__cost.api, forced: window.__cost.forced, renders: window.__perf.renders - window.__cost.renders })`);
+  const tree = c.api.filter(a => /^\/api\/(tree|projects\/|workflows\/|docs\/|queue)/.test(a));
+  dbg("save", { saved: saved.existing, c });
+  rows.push(["a save fetches nothing", saved.existing === true && tree.length === 0,
+    !saved.existing ? "the save made a new version instead of landing in place"
+      : tree.length ? `${tree.length} fetched: ${tree.join(", ")}` : `the event carried the project, and the page asked for nothing${c.api.length ? ` (${c.api.join(", ")} aside)` : ""}`]);
+  rows.push(["and draws the sidebar once", c.renders === 1, `${c.renders} draw${c.renders === 1 ? "" : "s"} for one event`]);
+  rows.push(["reading layout once, before it writes", c.forced <= 1, `${c.forced} layout${c.forced === 1 ? "" : "s"} forced by a read after a write`]);
+
+  // The pointer across the rows, one every 50 ms, which is what a hand on
+  // its way to a row does to the rows on the way. Over documents this page
+  // has never fetched -- arrivals, whose cache entry the page drops -- so a
+  // fetch would show. Then it rests on the last, and that one may come.
+  const fresh = [];
+  for (let i = 0; i < 8; i++) fresh.push((await arrive({ name: `sweep-${i}.md`, body: `# Swept ${i}\n\nA row the pointer crosses.\n` })).id);
+  for (let i = 0; i < 40 && !(await p.ev(`!!document.querySelector('#trees a[data-id="${fresh[fresh.length - 1]}"]')`)); i++) await sleep(100);
+  await sleep(400);
+  const swept = (await p.ev(`[...document.querySelectorAll("#trees a[data-id]")].map(a => a.dataset.id)`)).filter(id => fresh.includes(id));
+  const ids = [...new Set(swept)];
+  await p.ev(`window.__cost.api.length = 0`);
+  for (const id of ids) {
+    const at = await p.ui("center", `a[data-id="${id}"]`);
+    await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, p.s);
+    await sleep(50);
+  }
+  await p.pointerAway();
+  await sleep(400);
+  const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/"));
+  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && crossed.length === 0,
+    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep` : crossed.length ? `${crossed.length} documents fetched for ${ids.length} rows crossed` : `${ids.length} rows crossed in ${ids.length * 50} ms, nothing fetched`]);
+  await p.ev(`window.__cost.api.length = 0`);
+  await p.hoverOn(`a[data-id="${ids[ids.length - 1]}"]`);
+  await sleep(400);
+  const rested = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/"));
+  rows.push(["resting on one fetches that one", rested.length === 1 && rested[0].endsWith(`/${ids[ids.length - 1]}`),
+    rested.length === 1 ? "the row the pointer rested on, and only that" : `${rested.length} fetched: ${rested.join(", ") || "nothing"}`]);
   return rows;
 }
 

@@ -101,3 +101,51 @@ export function meta(c) {
     `<button data-act="closebrowse">Close folder</button>` +
     `</div>`;
 }
+
+/* ---------- the sidebar's folder rows ----------
+ * One level of a folder, fetched the first time it is unfolded, and
+ * re-listed in place when it changes on disk. In app.js until 1.17, when the
+ * first-paint budget asked for 0.5 KB and these were what a reader with no
+ * folder open never used. */
+
+const entryHtml = (c, rootId, e) => e.dir
+  ? `<li class="b-dir"><details data-root="${rootId}" data-path="${c.esc(e.path)}"><summary>${c.icon("folder", 14)}<span class="nm">${c.esc(e.name)}</span>${c.chev}${c.plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${c.esc(e.path)}"></ul></details></li>`
+  : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${c.esc(e.path)}" data-tip="${c.esc(e.path)}" data-tip-mono>${c.docIco()}<span class="title">${c.esc(e.name)}</span><span class="k">${c.fmtSize(e.size)}</span></a></li>`;
+
+const NONE = `<li class="b-empty">No files here</li>`;
+
+/** Fetch one directory level the first time its folder is opened. */
+export async function fill(c, ul) {
+  if (!ul || ul.dataset.loaded) return;
+  ul.dataset.loaded = "1";
+  ul.innerHTML = c.skRows;
+  const rootId = ul.dataset.root, path = ul.dataset.path || "";
+  const entries = await c.getJson(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`);
+  if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = c.noReach("dir", "li"); return; }
+  if (!entries.length) { ul.innerHTML = NONE; return; }
+  ul.innerHTML = entries.map(e => entryHtml(c, rootId, e)).join("");
+  c.markActive();
+}
+
+/** The folder changed on disk: re-list it, keeping the nodes that are still there
+ *  so expanded subfolders stay expanded and nothing flickers. */
+export async function reload(c, ul) {
+  if (!ul || !ul.dataset.loaded) return;
+  const rootId = ul.dataset.root, path = ul.dataset.path || "";
+  const entries = await c.getJson(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`);
+  if (!Array.isArray(entries) || !ul.isConnected) return;
+  const old = new Map([...ul.children].map(li => [li.querySelector("[data-path]")?.dataset.path, li]));
+  const tpl = document.createElement("template");
+  const nodes = entries.map(e => {
+    const li = old.get(e.path);
+    if (li && li.classList.contains(e.dir ? "b-dir" : "b-file")) {
+      const k = li.querySelector(".k"); if (k) k.textContent = c.fmtSize(e.size);
+      return li;
+    }
+    tpl.innerHTML = entryHtml(c, rootId, e);
+    return tpl.content.firstElementChild;
+  });
+  if (!nodes.length) { ul.innerHTML = NONE; return; }
+  ul.replaceChildren(...nodes);
+  c.markActive();
+}

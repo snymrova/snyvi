@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.16.0"
+version = "1.17.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -54,6 +54,11 @@ mime_guess = "2"
 html-escape = "0.2"
 similar = "2"
 ignore = "0.4"
+# Arenas committed ahead of time, the default (1.15.0 audit, finding 12).
+# Tried lazily for 1.17.0 with MIMALLOC_ARENA_EAGER_COMMIT=0
+# MIMALLOC_ALLOW_THP=0 on the stock binary: the hook's peak stayed 13.3 MB
+# and the daemon's settled rows moved within noise, so it stays as it is.
+# The same two variables are the A/B for next time; no build is needed.
 mimalloc = { version = "0.1", default-features = false }
 # Only for `mi_collect`: a render thread hands back what it freed before it
 # goes idle (platform::release_thread_memory). The same library mimalloc links.

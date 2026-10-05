@@ -19,10 +19,16 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
-/// How often the daemon looks at the files open in browse mode.
+/// How often the daemon looks at the files open in browse mode, while
+/// something is changing; after a minute in which nothing did, a few times
+/// a second becomes once in two (`BROWSE_SLOW`, `BROWSE_SETTLE`). An editor
+/// at work is seen within the tick; a folder opened and left is four stats
+/// a second for nobody, all afternoon (finding 13).
 const BROWSE_TICK: Duration = Duration::from_millis(250);
+const BROWSE_SLOW: Duration = Duration::from_secs(2);
+const BROWSE_SETTLE: Duration = Duration::from_secs(60);
 /// How often it checks whether there is anything to look at.
 const BROWSE_IDLE: Duration = Duration::from_secs(1);
 /// How often `snyvi watch` looks at its files.
@@ -114,6 +120,10 @@ impl<K: Hash + Eq> Default for Tracker<K> {
 pub fn spawn_browse_watcher(app: Arc<App>) {
     tokio::spawn(async move {
         let mut tracker: Tracker<(String, String)> = Tracker::new();
+        // When something last changed, or the watched set did: the tick
+        // slows a minute after.
+        let mut moved = Instant::now();
+        let mut keys: Vec<(String, String)> = Vec::new();
         loop {
             let watched = if app.pages.load(std::sync::atomic::Ordering::Relaxed) == 0 {
                 Vec::new()
@@ -122,8 +132,17 @@ pub fn spawn_browse_watcher(app: Arc<App>) {
             };
             if watched.is_empty() {
                 tracker.clear();
+                keys.clear();
                 tokio::time::sleep(BROWSE_IDLE).await;
                 continue;
+            }
+            let now: Vec<(String, String)> = watched
+                .iter()
+                .map(|w| (w.root.clone(), w.rel.clone()))
+                .collect();
+            if now != keys {
+                keys = now;
+                moved = Instant::now();
             }
             // A stat is microseconds on a local disk, but a network mount can stall,
             // and the executor has two threads to serve pages with.
@@ -141,6 +160,7 @@ pub fn spawn_browse_watcher(app: Arc<App>) {
             tracker.retain(|k| stamps.iter().any(|(w, _)| w.root == k.0 && w.rel == k.1));
             for (w, s) in stamps {
                 if tracker.observe((w.root.clone(), w.rel.clone()), s) {
+                    moved = Instant::now();
                     emit(
                         &app,
                         "changed",
@@ -148,9 +168,20 @@ pub fn spawn_browse_watcher(app: Arc<App>) {
                     );
                 }
             }
-            tokio::time::sleep(BROWSE_TICK).await;
+            tokio::time::sleep(browse_tick(moved.elapsed())).await;
         }
     });
+}
+
+/// The browse watcher's tick, from how long since anything it watches
+/// changed: quick while a file is being edited, slow once nothing has
+/// moved for a minute.
+fn browse_tick(quiet_for: Duration) -> Duration {
+    if quiet_for >= BROWSE_SETTLE {
+        BROWSE_SLOW
+    } else {
+        BROWSE_TICK
+    }
 }
 
 /// The dev loop's other half: when `SNYVI_UI_DIR` is set, watch those four
@@ -295,6 +326,17 @@ fn clock() -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn the_browse_tick_slows_after_a_quiet_minute() {
+        assert_eq!(browse_tick(Duration::ZERO), BROWSE_TICK);
+        assert_eq!(
+            browse_tick(BROWSE_SETTLE - Duration::from_secs(1)),
+            BROWSE_TICK
+        );
+        assert_eq!(browse_tick(BROWSE_SETTLE), BROWSE_SLOW);
+        assert_eq!(browse_tick(Duration::from_secs(3600)), BROWSE_SLOW);
+    }
 
     fn at(secs: u64, len: u64) -> Option<Stamp> {
         Some(Stamp {

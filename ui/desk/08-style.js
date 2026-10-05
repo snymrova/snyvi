@@ -417,14 +417,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* How far an agent has got: a slot every line keeps between its circle and
  * its text, 10 px, so a line that is picked up does not step right. Read is
  * a small ring, planned the plan's page (it opens it), working a dot that
- * breathes while the panel's agent is at it. Centred on the first line. */
+ * breathes three times when the panel's agent takes it up -- each draw of the
+ * rail is a new three, and nothing paints in between. Centred on the first line. */
 .dk-stage { position: relative; flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin: 8px -2px 0 -3px; padding: 0; color: var(--fg-3); }
 .dk-stage.read::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); }
 .dk-stage.planned svg { width: 10px; height: 10px; }
 .dk-stage.planned:hover { color: var(--accent); }
 .dk-stage.planned::before { content: ""; position: absolute; inset: -4px; }
 .dk-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.dk-stage.working.busy::before { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
+.dk-stage.working.busy::before { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out 3; }
 @keyframes dk-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dk-stage.working::before { animation: none; } }
 /* A line's pictures: one mark at the end of its text, with their count, that

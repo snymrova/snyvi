@@ -3,15 +3,86 @@
 //! behind, and the focus beacon desktop notifications read.
 
 use super::*;
+use axum::body::Bytes;
+use std::collections::HashMap;
+
+/// Which pages have said they are in front, by the id each page picks for
+/// itself, with the number of its last word. A page says so when it gains
+/// focus or comes into view, says not when it loses it, goes out of view or
+/// is left, and says it again when its stream comes back -- and nothing in
+/// between: a window in front all afternoon is one request, where it was one
+/// every three seconds (finding 13). By page, so two tabs cannot take each
+/// other's word, and numbered, so a word that arrives late is not the last.
+static FOCUSED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, (u64, bool)>>> =
+    std::sync::LazyLock::new(Default::default);
+/// More pages than anyone keeps open: past it the oldest words are dropped.
+const FOCUS_PAGES: usize = 64;
+
+/// What a page posts: in front or not, who it is, and which of its words
+/// this is. No body is a page from before the words existed, which posted
+/// only while in front, every three seconds.
+#[derive(Deserialize, Default)]
+pub(crate) struct FocusBody {
+    focused: Option<bool>,
+    page: Option<String>,
+    seq: Option<u64>,
+}
 
 /// Open tabs report focus so arrivals only raise a desktop notification when nobody is looking.
-pub(crate) async fn focus(State(app): S, headers: HeaderMap) -> Response {
+pub(crate) async fn focus(State(app): S, headers: HeaderMap, body: Bytes) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
-    *app.last_focus.lock().unwrap() = Instant::now();
+    let b: FocusBody = serde_json::from_slice(&body).unwrap_or_default();
+    let focused = b.focused.unwrap_or(true);
+    if let Some(page) = b.page.filter(|p| !p.is_empty() && p.len() <= 64) {
+        let seq = b.seq.unwrap_or(0);
+        let mut m = FOCUSED.lock().unwrap();
+        if m.get(&page).is_none_or(|(last, _)| seq >= *last) {
+            if m.len() >= FOCUS_PAGES && !m.contains_key(&page) {
+                // Unfocused words first: they say nothing a missing one does not.
+                if let Some(k) = m.iter().find(|(_, v)| !v.1).map(|(k, _)| k.clone()) {
+                    m.remove(&k);
+                } else {
+                    m.clear();
+                }
+            }
+            m.insert(page, (seq, focused));
+        }
+    }
+    if focused {
+        *app.last_focus.lock().unwrap() = Instant::now();
+    }
     StatusCode::NO_CONTENT.into_response()
 }
+
+/// Whether a page is in front now: one said so and pages are open still, or
+/// one said so a moment ago (a page from before `focused` was a word).
+pub(crate) fn focused(app: &App) -> bool {
+    if app.last_focus.lock().unwrap().elapsed() < FOCUS_FOR {
+        return true;
+    }
+    let mut m = FOCUSED.lock().unwrap();
+    // No page open: whatever they said went with them.
+    if app.pages.load(Ordering::Relaxed) == 0 {
+        m.clear();
+        return false;
+    }
+    m.values().any(|(_, f)| *f)
+}
+
+/// How long since a page was in front, for the updater's doors: none while
+/// one is.
+pub(crate) fn focus_age(app: &App) -> std::time::Duration {
+    if focused(app) {
+        std::time::Duration::ZERO
+    } else {
+        app.last_focus.lock().unwrap().elapsed()
+    }
+}
+
+/// How long a page's last word that it was in front is good for on its own.
+const FOCUS_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 
 pub(crate) fn notify_desktop(app: &App, doc: &Doc) {
     if std::env::var("SNYVI_NOTIFY")
@@ -20,9 +91,7 @@ pub(crate) fn notify_desktop(app: &App, doc: &Doc) {
     {
         return;
     }
-    let focused_recently =
-        app.last_focus.lock().unwrap().elapsed() < std::time::Duration::from_secs(4);
-    if focused_recently {
+    if focused(app) {
         return;
     }
     // Clicking it opens the document where the reader reads: the window it

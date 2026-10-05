@@ -150,3 +150,28 @@ export function plan(title = "rampscan — plan of action") {
   }
   return out.join("\n") + "\n";
 }
+
+/** A plan with the code in it: 200 fenced Rust blocks of twenty-six lines
+ *  behind a sentence of prose each, 400 KB in all -- the document that paid
+ *  a full highlight per block when the renderer's cap was per block (1.15.0
+ *  audit, finding 6). bench/open.mjs times its round trip and src/bench.rs
+ *  its render; both say what a 256 KB budget per document does to it. */
+export function blocks(n = 200) {
+  const out = ["# The plan, with the code in it", "", "A design document that quotes the implementation it describes, section by section.", ""];
+  for (let b = 0; b < n; b++) {
+    out.push(`## Block ${b}`, "", "What this block does, in a sentence or two of prose, so the document is a plan and not a listing.", "", "```rust");
+    for (let i = 0; i < 26; i++) out.push(`pub fn step_${b}_${i}(x: u32) -> Result<u32, Error> { Ok(x + ${i}) } // step`);
+    out.push("```", "");
+  }
+  return out.join("\n") + "\n";
+}
+
+/** A document with its pictures below the fold: forty paragraphs, then
+ *  `n` images by relative path, which the daemon serves from beside the file
+ *  it was sent from. bench/open.mjs counts how many of them the page fetches
+ *  at the open: the browser asks for every one unless the `<img>` says
+ *  `loading="lazy"`, which 1.18.0 adds (1.15.0 audit, finding 16). */
+export function pictures(n = 12) {
+  return "# A document with pictures\n\n" + prose(40) + "\n" +
+    Array.from({ length: n }, (_, i) => `![picture ${i + 1}](pic-${i}.png)\n`).join("\n");
+}

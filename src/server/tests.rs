@@ -693,7 +693,8 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let (_tmp, router, leaves) = gated_router("snyvi-routes");
 
     // The table is the router. Git on Windows checks this file out with CRLF.
-    // `router`, and the panels' routes it merges.
+    // `router`, the panels' routes it merges, and the receive route it builds
+    // apart for its body limit.
     let src = include_str!("mod.rs").replace("\r\n", "\n");
     let routes_in = |name: &str| {
         let routed = &src[src.find(name).unwrap()..];
@@ -702,7 +703,9 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
             + routed.matches("post(").count()
             + routed.matches(".delete(").count()
     };
-    let n = routes_in("\nfn router(") + routes_in("\nfn pane_routes(");
+    let n = routes_in("\nfn router(")
+        + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn receive_route(");
     assert_eq!(
         n,
         ROUTES.len(),
@@ -1330,4 +1333,30 @@ async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
     assert_eq!(s, StatusCode::FORBIDDEN, "not a picture, a video or a song");
     let (s, _, _) = get(format!("/files/{id}/../outside.mp4"), None).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "outside the project");
+}
+
+/// A send bigger than axum's 2 MB default reaches `receive` and is refused
+/// by the cap that is actually snyvi's, with its reason: an agent that sends
+/// too much is told how much is too much, not handed a bare 413.
+#[tokio::test]
+async fn an_oversize_send_is_refused_with_its_size_not_a_bare_413() {
+    let (_tmp, router, leaves) = gated_router("snyvi-oversize");
+    let content = "x".repeat(crate::receive::MAX_BYTES + 1);
+    let body =
+        serde_json::to_string(&serde_json::json!({ "content": content, "title": "Too much" }))
+            .unwrap();
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/docs")
+        .header("host", &leaves.host)
+        .header("origin", &leaves.origin)
+        .header("authorization", &leaves.bearer)
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("larger than 32 MB"), "{text}");
 }

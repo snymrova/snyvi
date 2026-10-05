@@ -212,13 +212,16 @@
     // project stays open while its row offers Undo.
     (gone && gone.where === "proj" && gone.pid === String(p.id));
 
+  /** What a row says its document weighs, when the daemon said: the hover
+   *  prefetch in 07-nav.js leaves a long one for the click. */
+  const sizeOf = d => d.size ? ` data-size="${d.size}"` : "";
   const docRow = d => {
     noteKnown(d);
     const ago = relShort(d.received_at);
     // Not "active": markActive puts that on, so the rows a reader moves between
     // draw the same and a move between two of them costs no redraw.
     const cls = waitingRow(d) ? "new" : "";
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${cut(d, mid(d.title, roomFor(ago)))}>${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${sizeOf(d)}${cut(d, mid(d.title, roomFor(ago)))}>${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
   };
   /** The ✕ on a document's row takes it out of the inbox. It is said as a
    *  removal because that is what it is: the daemon keeps the document, and

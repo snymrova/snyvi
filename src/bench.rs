@@ -71,6 +71,13 @@ struct Fixtures {
     md_2k: &'static str,
     md_100k: String,
     md_1m: String,
+    /// A plan an agent wrote with the code in it: 200 fenced Rust blocks of
+    /// some twenty-six lines each, 400 KB in all -- the shape of a design document
+    /// that quotes the implementation, and the one that showed every block
+    /// paying the full highlight because the cap was per block (1.15.0 audit,
+    /// finding 6). The budget is the 1 MB Markdown row's: the highlighter is
+    /// allowed 256 KB per document and the rest is finished in the background.
+    md_blocks: String,
     code_10k: String,
     code_100k: String,
 }
@@ -95,10 +102,27 @@ Another paragraph. Then more prose, because most documents are mostly prose, and
                 .map(|i| format!("fn f{i}(x: u32) -> u32 {{ x + {i} }} // line\n"))
                 .collect()
         };
+        let blocks = |n: usize| -> String {
+            (0..n)
+                .map(|b| {
+                    let mut s = format!(
+                        "## Block {b}\n\nWhat this block does, in a sentence or two of prose, so the document is a plan and not a listing.\n\n```rust\n"
+                    );
+                    for i in 0..26 {
+                        s.push_str(&format!(
+                            "pub fn step_{b}_{i}(x: u32) -> Result<u32, Error> {{ Ok(x + {i}) }} // step\n"
+                        ));
+                    }
+                    s.push_str("```\n\n");
+                    s
+                })
+                .collect()
+        };
         Fixtures {
             md_2k: section,
             md_100k: repeat(100 * 1024),
             md_1m: repeat(1024 * 1024),
+            md_blocks: blocks(200),
             code_10k: code(10_000),
             code_100k: code(100_000),
         }
@@ -134,6 +158,13 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
             400.0,
         ),
         (
+            "markdown 400 KB, 200 rust blocks (highlight budget 256 KB)",
+            render::Kind::Markdown,
+            None,
+            &f.md_blocks,
+            400.0,
+        ),
+        (
             "rust 10k lines (highlighted)",
             render::Kind::Code,
             Some("rs"),
@@ -150,7 +181,7 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
     ];
     println!("renderer init: {init_ms:.1} ms   (budget factor {factor})\n");
     println!(
-        "{:<48} {:>9} {:>9}   {:>9}   {:>9}",
+        "{:<60} {:>9} {:>9}   {:>9}   {:>9}",
         "case", "ms", "MB/s", "html KB", "budget"
     );
     let mut failed = false;
@@ -171,7 +202,7 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
         failed |= !ok;
         let mbs = src.len() as f64 / 1e6 / (best / 1000.0);
         println!(
-            "{name:<48} {best:>9.1} {mbs:>9.1}   {:>9}   {budget:>7.0}{}",
+            "{name:<60} {best:>9.1} {mbs:>9.1}   {:>9}   {budget:>7.0}{}",
             out_len / 1024,
             if ok { " ok" } else { " OVER" }
         );

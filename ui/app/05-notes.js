@@ -252,5 +252,17 @@
   }
 
   // ---------- focus beacon for desktop notifications ----------
-  const beacon = () => { if (document.hasFocus() && document.visibilityState === "visible") fetch("/api/focus", { method: "POST", keepalive: true }).catch(() => {}); };
-  window.addEventListener("focus", beacon); document.addEventListener("visibilitychange", beacon); setInterval(beacon, 3000); beacon();
+  // Said when it changes, and not on a clock: in front, or not, by a name
+  // this page picks and a count, so another tab cannot take its word and a
+  // late one is not the last. Leaving always says not; a stream that comes
+  // back says again (the daemon may be a new process: `sayFocus(true)`).
+  let inFront = null, focusSeq = 0;
+  const pageMark = Math.random().toString(36).slice(2);
+  function sayFocus(again, leaving) {
+    const now = !leaving && document.hasFocus() && !document.hidden;
+    if (now !== inFront || again) fetch("/api/focus", { method: "POST", keepalive: true, body: JSON.stringify({ focused: inFront = now, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
+  }
+  const beacon = () => sayFocus();
+  addEventListener("focus", beacon); addEventListener("blur", beacon); document.addEventListener("visibilitychange", beacon);
+  addEventListener("pagehide", () => sayFocus(1, 1));
+  beacon();

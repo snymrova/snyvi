@@ -200,6 +200,10 @@ pub(crate) fn waiting_named(app: &App, ids: &[String]) -> Vec<serde_json::Value>
         .collect()
 }
 
+/// The restart watcher's clock: with a restart waiting, and without one.
+const RESTART_TICK: std::time::Duration = std::time::Duration::from_secs(5);
+const RESTART_IDLE_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The pending restart, as health and `snyvi restart` see it.
 pub(crate) fn restart_json(app: &App) -> serde_json::Value {
     match *app.restart.lock().unwrap() {
@@ -216,16 +220,23 @@ pub(crate) fn restart_json(app: &App) -> serde_json::Value {
 
 /// Carries out a pending restart once the panes are quiet. Looked at when
 /// something changes -- a restart asked for, an agent's state, a pane's
-/// process -- and every five seconds regardless, since "quiet" is partly a
-/// clock: a pane stops being busy ninety seconds after its last output with
-/// nothing to say so.
+/// process, a check of the manifest -- and on a clock regardless, since
+/// "quiet" is partly a clock: a pane stops being busy ninety seconds after
+/// its last output with nothing to say so. Every five seconds while a
+/// restart is waiting, and every thirty with none pending, when the clock
+/// only ages the update block and opens the day's slot.
 pub(crate) fn spawn_restart_watcher(app: Arc<App>) {
     tokio::spawn(async move {
         let mut changes = app.events.subscribe();
         loop {
+            let every = if app.restart.lock().unwrap().is_some() {
+                RESTART_TICK
+            } else {
+                RESTART_IDLE_TICK
+            };
             tokio::select! {
                 _ = app.restart_wake.notified() => {}
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                _ = tokio::time::sleep(every) => {}
                 m = changes.recv() => {
                     // Only a pane's word matters here; everything else on
                     // the stream is documents.
@@ -285,7 +296,7 @@ pub(crate) fn doors(app: &App) -> crate::update::Doors {
     crate::update::Doors {
         windows: app.windows.load(Ordering::Relaxed),
         pages: streams.saturating_sub(agents),
-        focus_age: app.last_focus.lock().unwrap().elapsed(),
+        focus_age: focus_age(app),
         busy: !app.panes.busy().is_empty(),
     }
 }
@@ -515,6 +526,9 @@ pub(crate) async fn health(State(app): S) -> Json<serde_json::Value> {
         // How many pane processes are running, so `snyvi bench` and a person
         // with curl can see what a desk is costing without a window open.
         "panes": app.panes.running(),
+        // How many times it has run `git status` for them: a desk left at
+        // its prompt should add nothing here (bench/webkit.py --git).
+        "git_runs": crate::pane::git_runs(),
         // Which agents hold a stream right now, by the name each gave.
         "agents": app.online(),
         // The bundle this daemon serves, so a page that reconnects after an

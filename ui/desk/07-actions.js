@@ -496,7 +496,7 @@ export function open(c) {
   document.addEventListener("keyup", pickKey);
   addEventListener("scroll", hidePick, true);
   addEventListener("resize", onResize);
-  clock = setInterval(() => { if (current()) rail(); }, 30000);
+  clock = setInterval(() => { if (current() && !document.hidden) rail(); }, 30000);
   if (d && docsAt !== d.id) docs();
   const v = views.get(focused);
   if (v) setTimeout(() => v.body.focus(), 0);
