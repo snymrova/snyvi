@@ -127,12 +127,18 @@
     const held = gone && gone.where === "proj" && gone.qDoc && !queueIds.has(gone.id);
     if (held) rows.splice(Math.min(gone.qAt, rows.length), 0, queueRow(gone.qDoc, gone.closing ? " held leaving" : " held"));
     const empty = (!n || !head) && !left.length && !ghost && !held;
-    const onRow = queueEl.contains(document.activeElement) && document.activeElement.dataset.id;
-    queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
+    const qh = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
       rows.join("") +
       (n > shown ? `<li class="t-more"><a href="/inbox" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
-    // A keyboard on a row stays on it, as it does in the tree.
-    if (onRow) queueEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
+    // The same rows as last time are left alone, as the tree's are: a draw
+    // that changes nothing here must not cost a layout. A row mid-motion
+    // carries its delay in the string, so it is drawn again until it is done.
+    if (qh !== drawnQueue) {
+      const onRow = queueEl.contains(document.activeElement) && document.activeElement.dataset.id;
+      queueEl.innerHTML = drawnQueue = qh;
+      // A keyboard on a row stays on it, as it does in the tree.
+      if (onRow) queueEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
+    }
     lastQueue = state.queue.slice(0, QUEUE_ROWS);
     // Marked read from the bar: the bar says so and holds the Undo, in the
     // same card at the same place, until the drain runs out (DESIGN §4.4).
@@ -364,7 +370,7 @@
    *  every document in the library on every page open — 13,000 rows and a
    *  718 ms task at 3000 documents — and what is behind a row is now two
    *  numbers until a reader asks for it. */
-  let drawnTree = null;
+  let drawnTree = null, drawnQueue = null, drawnInbox = null, recutDone = true;
   const treeTouched = new MutationObserver(() => { drawnTree = null; });
   treeTouched.observe(treeEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
   /** The daemon's projects, and the one whose last document was just removed:
@@ -413,19 +419,17 @@
     window.__perf && window.__perf.renders++;
     const projects = heldTree();
     const total = state.tree.reduce((n, p) => n + p.docs, 0);
-    // A link, so the keyboard reaches it: a div with a click handler is a row
-    // Tab walks straight past.
-    inboxRowEl.innerHTML = secHead("inbox", "Inbox") +
-      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
-    renderQueue();
-    renderBrowse();
-    renderDesks();
-    if (!projects.length) {
-      treeEl.innerHTML = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
-      return;
-    }
-    // Measured rather than assumed, because the gutter resizes the sidebar,
-    // and once per draw rather than once per row.
+    const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
+    const put = projects.length - drawn.length;
+    // A read of the page's layout that follows a write lays the sidebar out
+    // again on the spot, so a draw reads as little as it can after it writes:
+    // the title width before anything is written, the room the Inbox has
+    // once the sections above it stand (one layout, and none when they did
+    // not change), and the width the rows ended at not at all -- the
+    // observer below says. This used to read between its writes two to four
+    // times a draw, on every save of a file an agent was editing.
+    // The title width is measured rather than assumed, because the gutter
+    // resizes the sidebar, and once per draw rather than once per row.
     if (fitCtx && treeEl.clientWidth) {
       const cs = getComputedStyle(treeEl);
       const f = `550 ${cs.fontSize} ${cs.fontFamily}`;
@@ -434,6 +438,21 @@
         if (timeCtx) timeCtx.font = `10px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
       }
       titleRoom = roomIn(treeEl.clientWidth);
+    }
+    // A link, so the keyboard reaches it: a div with a click handler is a row
+    // Tab walks straight past. Written only when it changed, as every section is.
+    const inbox = secHead("inbox", "Inbox") +
+      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
+    if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
+    renderQueue();
+    renderBrowse();
+    renderDesks();
+    awayRowSeen = put > 0;
+    const cap = projects.length ? (capSeen = inboxCap(awayRowSeen)) : 0;
+    if (!projects.length) {
+      const h = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
+      if (h !== drawnTree) { treeEl.innerHTML = drawnTree = h; treeTouched.takeRecords(); }
+      return;
     }
     // What the page has open, before it is taken apart. `toggle` is queued
     // rather than dispatched where the click happens, so a reader can have a
@@ -450,8 +469,6 @@
     // No label: the projects hang under Inbox, which is what they are.
     let h = treeOff ? noReach("tree") : "";
     const waitingIn = new Set(state.queue.map(d => String(d.project_id)));
-    const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
-    const put = projects.length - drawn.length;
     const row = p => {
       // In its own place, at its own height, so nothing below it moves while
       // the offer stands and nothing moves again when it is taken.
@@ -469,8 +486,6 @@
     // have open, or whose row is offering an Undo, stays in view under it: a
     // row never goes away from under a reading. One project past the cap is
     // drawn rather than said, since "1 more" would take the same room.
-    awayRowSeen = put > 0;
-    const cap = capSeen = inboxCap(awayRowSeen);
     const upto = drawn.length > cap + 1 ? cap : drawn.length;
     const past = drawn.slice(upto);
     const hidden = past.filter(p => !projOpen(p) && awayJust !== String(p.id) && !(gone && gone.proj === p));
@@ -496,19 +511,30 @@
       else if (onRow) treeEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
       drawnTree = h;
       treeTouched.takeRecords();
-    }
-    // The scrollbar exists only once the rows do, and takes width from the
-    // column the titles were just cut to -- so a tree that overflows was cut
-    // against a width that stopped being true as it was drawn. Once more.
-    if (fitCtx && treeEl.clientWidth && !recut && roomIn(treeEl.clientWidth) !== titleRoom) {
-      recut = true;
-      try { renderTree(); } finally { recut = false; }
-      return;
+      // The rows changed, so the column may have: the recut below is armed.
+      if (!recut) recutDone = false;
     }
     // A project the reader has open that this tab has never filled: the "…" is
     // on screen, so fetching it now is what turns it into rows.
     for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
   }
+
+  /* The scrollbar exists only once the rows do, and takes width from the
+   * column the titles were just cut to -- so a tree that overflows was cut
+   * against a width that stopped being true as it was drawn. Once more, when
+   * the browser says the column changed, and from what it says: asking the
+   * page for its width right after the write would lay it out on the spot.
+   * Once per draw of the rows, as before, so two widths that each cause the
+   * other cannot trade places all day. #tree has no padding, so the box the
+   * observer reports is the width the titles are cut to. */
+  try {
+    new ResizeObserver(es => {
+      const w = Math.round(es[es.length - 1].contentRect.width);
+      if (recutDone || !fitCtx || !w || roomIn(w) === titleRoom) return;
+      recutDone = recut = true;
+      try { renderTree(); markActive(); } finally { recut = false; }
+    }).observe(treeEl);
+  } catch {}
 
   /* The first draw can land before Inter has, and a fallback font measures
    * narrower -- titles are then cut to a width the real font overflows, and
