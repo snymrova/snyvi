@@ -1331,3 +1331,27 @@ async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
     let (s, _, _) = get(format!("/files/{id}/../outside.mp4"), None).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "outside the project");
 }
+
+/// A send bigger than axum's 2 MB default reaches `receive` and is refused
+/// by the cap that is actually snyvi's, with its reason: an agent that sends
+/// too much is told how much is too much, not handed a bare 413.
+#[tokio::test]
+async fn an_oversize_send_is_refused_with_its_size_not_a_bare_413() {
+    let (_tmp, router, leaves) = gated_router("snyvi-oversize");
+    let content = "x".repeat(crate::receive::MAX_BYTES + 1);
+    let body = serde_json::to_string(&serde_json::json!({ "content": content, "title": "Too much" })).unwrap();
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/docs")
+        .header("host", &leaves.host)
+        .header("origin", &leaves.origin)
+        .header("authorization", &leaves.bearer)
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("larger than 32 MB"), "{text}");
+}

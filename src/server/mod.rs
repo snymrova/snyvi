@@ -375,7 +375,14 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/workflows/{id}/tree", get(workflow_tree))
         .route("/api/inbox", get(inbox))
         .route("/api/search", get(search))
-        .route("/api/docs", post(receive_doc))
+        // Up to what `receive` takes, with room for the fields around the
+        // content, so a send over axum's 2 MB default reaches it and one
+        // over the cap is refused with its real size, not a bare 413.
+        .route(
+            "/api/docs",
+            post(receive_doc)
+                .layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES + 64 * 1024)),
+        )
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
         .route("/api/docs/{id}/read", post(mark_read))
@@ -635,12 +642,19 @@ pub(crate) fn emit(app: &App, name: &str, data: serde_json::Value) {
 
 /// The `doc` event every arrival ends in, shaped one way for the three
 /// routes a document comes in by.
+///
+/// It carries the one project that moved, as the tree lists it (`project`)
+/// and as expanding it would (`rows`, the default caps), so a page patches
+/// that project and redraws once rather than fetching the whole tree and the
+/// project's rows back on every save of a file an agent is editing.
 fn emit_doc(app: &App, received: &receive::Received) {
     let doc = &received.doc;
+    let project = app.store.project_row(doc.project_id).ok().flatten();
+    let rows = project_rows(app, doc.project_id, TREE_WORKFLOWS, TREE_DOCS, None);
     emit(
         app,
         "doc",
-        json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) }),
+        json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app), "project": project, "rows": rows }),
     );
 }
 
