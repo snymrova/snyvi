@@ -66,21 +66,20 @@
    * bounds its diagrams: forty entries was forty documents of any size, and a
    * tab left open all day over long files is the tab this project promises
    * stays small. Summed at each fetch rather than kept, since a dozen places
-   * drop an entry; the oldest go first, and never the one just fetched. */
-  const CACHE_BYTES = 8 << 20;
-  const docSize = j => (j.html || "").length;
+   * drop an entry; the oldest go first, and never the one just fetched.
+ * Eight megabytes of rendered html. */
   async function fetchDoc(id) {
     if (state.cache.has(id)) return state.cache.get(id);
     const r = await fetch(`/api/docs/${id}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     state.cache.set(id, j);
-    let bytes = 0;
-    for (const v of state.cache.values()) bytes += docSize(v);
+    let n = 0;
+    for (const v of state.cache.values()) n += v.html?.length || 0;
     for (const [k, v] of state.cache) {
-      if (bytes <= CACHE_BYTES || k === id) break;
+      if (n <= 8 << 20 || k === id) break;
       state.cache.delete(k);
-      bytes -= docSize(v);
+      n -= v.html?.length || 0;
     }
     return j;
   }

@@ -259,13 +259,10 @@
   let inFront = null, focusSeq = 0;
   const pageMark = Math.random().toString(36).slice(2);
   function sayFocus(again, leaving) {
-    const now = !leaving && document.hasFocus() && document.visibilityState === "visible";
-    if (now === inFront && !again) return;
-    inFront = now;
-    fetch("/api/focus", { method: "POST", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ focused: now, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
+    const now = !leaving && document.hasFocus() && !document.hidden;
+    if (now !== inFront || again) fetch("/api/focus", { method: "POST", keepalive: true, body: JSON.stringify({ focused: inFront = now, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
   }
   const beacon = () => sayFocus();
-  for (const ev of ["focus", "blur"]) window.addEventListener(ev, beacon);
-  window.addEventListener("pagehide", () => sayFocus(true, true));
-  document.addEventListener("visibilitychange", beacon);
+  addEventListener("focus", beacon); addEventListener("blur", beacon); document.addEventListener("visibilitychange", beacon);
+  addEventListener("pagehide", () => sayFocus(1, 1));
   beacon();

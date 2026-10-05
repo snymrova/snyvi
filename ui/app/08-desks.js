@@ -397,8 +397,7 @@
     es.onopen = async () => {
       // A first connection is not a return.
       if (root.dataset.link !== "off") return;
-      linked(true);
-      sayFocus(true);
+      linked(true); sayFocus(true);
       // The daemon on the port now may be a newer build than the one that
       // served this page: its bundle is the one to run, so start over on it.
       // Otherwise catch up on what arrived while nothing was heard.
@@ -438,20 +437,17 @@
       // away any more: the sidebar never holds back something waiting to be
       // read. Taking it out of the set is enough -- the refresh below draws it.
       if (d && away.delete(String(d.project_id))) saveAway();
-      // One project moved, and the event carries it: its row and its rows
-      // go in and the sidebar is drawn once (`patchTree`). This used to pull
-      // the whole library back down on every arrival, then one project's
-      // rows on every arrival -- a file saved every few seconds paid a tree
-      // and a project every few seconds. The fetch remains for a daemon that
-      // sends no rows, and for a reader's lifted cap the rows would re-cap.
+      // One project moved, and the event carries its row and rows: they go
+      // in and the sidebar is drawn once (`patchTree`), where a save used to
+      // refetch the tree and the project. The fetch remains for a daemon
+      // that sends no rows, and for a lifted cap the rows would re-cap.
       // An overwrite of a document already here is not an arrival: refresh it where
       // it is if it is on screen, never navigate to it, and never toast — a file
       // being watched changes on every save.
       if (j.existing) {
         if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
         else state.cache.delete(d.id);
-        if (patchTree(j)) { renderTree(); markActive(); }
-        else await refreshTree(d.project_id);
+        if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
         deskDocs();
         return;
       }
