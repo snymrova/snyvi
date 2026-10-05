@@ -50,7 +50,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { plan } from "./fixture.mjs";
+import { plan, blocks, pictures } from "./fixture.mjs";
 import { probe } from "./page.mjs";
 import { launch, killTree, pageLoad, evaluate, call, sleep, tab } from "./chrome.mjs";
 
@@ -98,6 +98,11 @@ const code = () =>
  * instead of an open. render::HIGHLIGHT_CAP in src/render.rs. */
 const HIGHLIGHT_CAP = 256 * 1024;
 const note = () => "# A note\n\nOne short paragraph, which is most of what an agent sends.\n";
+/* The pictures fixture's images: one transparent pixel each, written beside
+ * the document so the daemon has a real file to serve for every `<img>`.
+ * What is counted is requests, not bytes, so the pixel is enough. */
+const PICTURES = 12;
+const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 
 /* ---------- what runs inside the page ---------- */
 
@@ -232,6 +237,38 @@ async function openDoc(id) {
     lines: pre ? pre.getElementsByClassName("ln").length : 0,
     scrollHeight: document.querySelector("#main").scrollHeight,
   };
+}
+
+/** Open the pictures document and count the images the page asked for while
+ *  it was going up. Resource timing is the witness: every `<img>` the browser
+ *  decided to fetch leaves an entry with `initiatorType` "img", whether the
+ *  file came back or not. The timings are cleared first so an earlier open
+ *  cannot be counted against this one, and the wait after the swap is long
+ *  enough for a browser that fetches lazily to have fetched what is in view
+ *  -- which, for a document whose pictures are all below the fold, is none. */
+async function openForImages(id) {
+  const doc = document.querySelector("#doc");
+  const row = document.querySelector(`a[data-id="${id}"]`);
+  if (!row) return { ok: false, why: `no sidebar row for ${id}` };
+  if (location.pathname === `/d/${id}`) return { ok: false, why: "that document is already open" };
+  performance.clearResourceTimings();
+  const swapped = new Promise(res => {
+    const mo = new MutationObserver(() => {
+      if (doc.querySelector(".prose:not(.sk-body)")) { mo.disconnect(); res(); }
+    });
+    mo.observe(doc, { childList: true });
+  });
+  row.click();
+  await swapped;
+  await new Promise(r => setTimeout(r, 1500));
+  const imgs = doc.querySelectorAll(".prose img").length;
+  const fetched = performance.getEntriesByType("resource").filter(e => e.initiatorType === "img").length;
+  const main = document.querySelector("#main");
+  // How far down the first picture sits, so the row can say the fixture is
+  // what it claims: pictures the reader cannot see yet.
+  const first = doc.querySelector(".prose img");
+  const below = first ? Math.round(first.getBoundingClientRect().top - main.getBoundingClientRect().top - main.clientHeight) : null;
+  return { ok: location.pathname === `/d/${id}`, why: "opened", imgs, fetched, below };
 }
 
 /** The same document with the chunks' containment forced off.
@@ -394,10 +431,15 @@ async function main() {
       note: join(tmp, "note.md"),
       plan: join(tmp, "plan.md"),
       code: join(tmp, "handlers.rs"),
+      blocks: join(tmp, "plan-with-code.md"),
+      pics: join(tmp, "pictures.md"),
     };
     writeFileSync(files.note, note());
     writeFileSync(files.plan, plan());
     writeFileSync(files.code, code());
+    writeFileSync(files.blocks, blocks());
+    writeFileSync(files.pics, pictures(PICTURES));
+    for (let i = 0; i < PICTURES; i++) writeFileSync(join(tmp, `pic-${i}.png`), PIXEL);
     const codeBytes = readFileSync(files.code).length;
     if (codeBytes >= HIGHLIGHT_CAP) {
       throw new Error(`the code fixture is ${(codeBytes / 1024).toFixed(0)} KB, over the renderer's ${HIGHLIGHT_CAP / 1024} KB highlight cap: `
@@ -405,8 +447,12 @@ async function main() {
         + `Shorten the line or lower SNYVI_BENCH_LINES.`);
     }
     const sizes = Object.fromEntries(Object.entries(files).map(([k, f]) => [k, readFileSync(f).length]));
-    // Sent last, so all three are unread rows at the top of the queue.
+    // The three everyday documents are sent last, so they are the unread rows
+    // at the top of the queue; the two below them are opened once each and
+    // take no part in the churn.
     const ids = {
+      pics: idOf(send(files.pics, "Pictures")),
+      blocks: idOf(send(files.blocks, "The plan, with code")),
       note: idOf(send(files.note, "A note")),
       plan: idOf(send(files.plan, "The plan")),
       code: idOf(send(files.code, "handlers.rs")),
@@ -422,7 +468,7 @@ async function main() {
      * here is how this waits -- and the answer is the daemon column, taken
      * against a daemon with nothing else to do. */
     const api = {};
-    for (const kind of ["note", "plan", "code"]) api[kind] = await apiMs(ids[kind]);
+    for (const kind of ["note", "plan", "code", "blocks"]) api[kind] = await apiMs(ids[kind]);
 
     const browser = await launch(join(tmp, "chrome"));
     chromeProc = browser.proc;
@@ -441,11 +487,15 @@ async function main() {
     // One open each, in the order a reader would meet them, with the page's
     // counts read while the document is still on screen.
     const opens = {};
-    for (const kind of ["note", "plan", "code"]) {
+    for (const kind of ["note", "plan", "code", "blocks"]) {
       const r = await bestOpen(cdp, sessionId, ids[kind]);
       if (!r.ok) throw new Error(`${kind}: ${r.why}`);
       opens[kind] = { ...r, bytes: sizes[kind], api: api[kind] };
     }
+    // The pictures, once: what the page fetched for a document whose images
+    // are all below the fold.
+    const pics = await evaluate(cdp, sessionId, call(openForImages, ids.pics));
+    if (!pics.ok) throw new Error(`pictures: ${pics.why}`);
 
     // What holding the long one costs, counted where nothing else is held.
     const held = await holdings(cdp, ids.code);
@@ -465,13 +515,22 @@ async function main() {
     // handed over, pasted into a window with nothing in it.
     let cold = { fcp: null, boot: 0 };
     for (let i = 0; i < TRIES; i++) {
-      const c = await coldLoad(cdp, sessionId, ids.plan);
+      const c = await coldLoad(cdp, sessionId, `/d/${ids.plan}`);
       if (c.fcp !== null && (cold.fcp === null || c.fcp < cold.fcp)) cold = c;
+    }
+    // And the other cold open: the window itself, with nothing asked for.
+    // Home draws its first paint empty and fills it from a fetch (1.15.0
+    // audit, finding 16); this is where that shows, and where 1.18.0's
+    // server-rendered skeleton is measured against.
+    let home = { fcp: null, boot: 0 };
+    for (let i = 0; i < TRIES; i++) {
+      const c = await coldLoad(cdp, sessionId, "/");
+      if (c.fcp !== null && (home.fcp === null || c.fcp < home.fcp)) home = c;
     }
 
     const resident = residentMb(await health());
 
-    failed = report({ opens, held, churned, heap: { before: heapBefore, after: heapAfter }, cold, resident, throttle });
+    failed = report({ opens, pics, held, churned, heap: { before: heapBefore, after: heapAfter }, cold, home, resident, throttle });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -511,16 +570,16 @@ const metrics = async (cdp, sessionId) => {
 };
 const gc = (cdp, sessionId) => cdp.send("HeapProfiler.collectGarbage", {}, sessionId);
 
-/** A page load at `/d/<id>`, and the paint the browser reports for it. The
+/** A page load at `path`, and the paint the browser reports for it. The
  *  probe from bench/page.mjs is already installed on every new document, so
  *  this costs a navigation and a read.
  *
  *  Polled rather than read once: the load event and the contentful paint are
  *  not ordered with respect to each other, and reading straight after the
  *  load reported no paint at all on the first run of this file. */
-async function coldLoad(cdp, sessionId, id) {
-  const loaded = pageLoad(cdp, sessionId, "the document, cold");
-  await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/d/${id}` }, sessionId);
+async function coldLoad(cdp, sessionId, path) {
+  const loaded = pageLoad(cdp, sessionId, `${path}, cold`);
+  await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}${path}` }, sessionId);
   await loaded;
   let perf = null, fcp = null;
   for (let i = 0; i < 60 && fcp === null; i++) {
@@ -561,7 +620,7 @@ function residentMb({ pid }) {
 
 /* ---------- the numbers, and the budgets ---------- */
 
-function report({ opens, held, churned, heap, cold, resident, throttle }) {
+function report({ opens, pics, held, churned, heap, cold, home, resident, throttle }) {
   let failed = false;
   const kb = n => n / 1024;
 
@@ -576,6 +635,10 @@ function report({ opens, held, churned, heap, cold, resident, throttle }) {
     ["a note, 0.1 KB", opens.note, 100, "the floor: what an open costs before the document does"],
     ["a plan, 54 KB", opens.plan, 150, "the everyday open"],
     [`${CODE_LINES} lines of Rust`, opens.code, 800, "the one chunking is for"],
+    /* The 1 MB render row's budget at CI's factor, as a round trip: the
+     * renderer highlights 256 KB of a document and finishes the rest behind
+     * it, so two hundred blocks cost what one long file does. */
+    ["a plan with 200 code blocks", opens.blocks, 1200, `${(opens.blocks.bytes / 1024).toFixed(0)} KB of plan quoting its code`],
   ];
   for (const [name, o, budget, why] of clocks) {
     const b = budget * FACTOR;
@@ -585,10 +648,17 @@ function report({ opens, held, churned, heap, cold, resident, throttle }) {
     console.log(`${name.padEnd(28)}${o.api.ms.toFixed(0).padStart(8)}${o.shell.toFixed(0).padStart(8)}${o.fetch.toFixed(0).padStart(8)}${o.paint.toFixed(0).padStart(8)}${o.total.toFixed(0).padStart(8)}${(SHARED ? `(${b.toFixed(0)})` : b.toFixed(0)).padStart(9)}${verdict} ${why}`);
   }
   const coldB = 250 * FACTOR;
-  const coldOk = cold.fcp !== null && cold.fcp <= coldB;
-  if (!SHARED) failed ||= !coldOk;
-  console.log(`${"cold page load, first paint".padEnd(28)}${"".padStart(32)}${(cold.fcp === null ? "—" : cold.fcp.toFixed(0)).padStart(8)}${(SHARED ? `(${coldB.toFixed(0)})` : coldB.toFixed(0)).padStart(9)}` +
-    `${coldOk ? " ok  " : SHARED ? " high" : " OVER"} a link, pasted into an empty window`);
+  for (const [name, c, why] of [
+    ["cold page load, first paint", cold, "a link, pasted into an empty window"],
+    // Home gets the document page's budget and no more: the window is the
+    // first thing a reader sees, and it is not allowed to be the slow one.
+    ["home, first paint", home, "the window itself, with nothing asked for"],
+  ]) {
+    const ok = c.fcp !== null && c.fcp <= coldB;
+    if (!SHARED) failed ||= !ok;
+    console.log(`${name.padEnd(28)}${"".padStart(32)}${(c.fcp === null ? "—" : c.fcp.toFixed(0)).padStart(8)}${(SHARED ? `(${coldB.toFixed(0)})` : coldB.toFixed(0)).padStart(9)}` +
+      `${ok ? " ok  " : SHARED ? " high" : " OVER"} ${why}`);
+  }
   if (SHARED) {
     console.log("\na budget in brackets is measured and not enforced: this machine's speed is\nnot snyvi's to promise. Everything below is enforced everywhere.");
   }
@@ -624,6 +694,20 @@ function report({ opens, held, churned, heap, cold, resident, throttle }) {
     const ok = value !== null && value <= budget;
     failed ||= !ok;
     console.log(`${name.padEnd(36)}${String(value === null ? "—" : value).padStart(8)}${String(Math.round(budget)).padStart(9)}${ok ? " ok  " : " OVER"} ${why}`);
+  }
+  /* Measured and not yet enforced: a count that is known to be over until
+   * the change that fixes it lands. The pictures row is here so 1.17.0 has
+   * the before on record; 1.18.0 puts `loading="lazy"` on every rendered
+   * `<img>` and moves this row up into `rows`, where OVER fails the build. */
+  {
+    const ok = pics.fetched <= 0;
+    const fixture = pics.imgs === PICTURES && pics.below !== null && pics.below > 0;
+    console.log(`${"pictures fetched at the open".padEnd(36)}${String(pics.fetched).padStart(8)}${"(0)".padStart(9)}${ok ? " ok  " : " high"} ` +
+      (fixture ? `${pics.imgs} pictures, the first ${pics.below} px below the fold; enforced from 1.18.0`
+        : `fixture wrong: ${pics.imgs} of ${PICTURES} pictures in the page, first one ${pics.below} px past the fold`));
+    // The fixture itself is enforced: a count against a document whose
+    // pictures were on screen, or missing, would say nothing either way.
+    failed ||= !fixture;
   }
 
   /* Rows that have to be able to fail the other way round, or they prove
