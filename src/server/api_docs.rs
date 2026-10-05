@@ -535,7 +535,13 @@ pub(crate) async fn receive_doc(
             if !received.existing {
                 notify_desktop(&app, &doc);
             }
-            if received.needs_full_highlight {
+            // A code file past the cap, or a Markdown document big enough
+            // that its blocks may have run past the budget: the pass itself
+            // checks the stored page for a pending mark before it renders.
+            if received.needs_full_highlight
+                || (doc.kind == crate::render::Kind::Markdown
+                    && doc.size as usize > crate::render::HIGHLIGHT_CAP)
+            {
                 spawn_full_highlight(app.clone(), doc.id.clone(), doc.lang.clone());
             }
             // The rail's outline, ready before the reader opens it.
@@ -666,10 +672,30 @@ pub(crate) const LARGE_RENDER: usize = 512 * 1024;
 pub(crate) fn spawn_full_highlight(app: Arc<App>, id: String, lang: Option<String>) {
     tokio::task::spawn_blocking(move || {
         let stored = {
+            let Ok(Some(doc)) = app.store.get(&id) else {
+                return;
+            };
             let Ok(src) = app.store.source(&id) else {
                 return;
             };
-            let html = app.renderer.render_code_uncapped(lang.as_deref(), &src);
+            let html = match doc.kind {
+                // Rendered the way receive::page did, less the budget: the
+                // leading H1 the title already shows comes off, and relative
+                // pictures resolve beside the file.
+                crate::render::Kind::Markdown => {
+                    let Ok(current) = app.store.html(&id) else {
+                        return;
+                    };
+                    if !crate::render::has_pending_highlight(&current) {
+                        return;
+                    }
+                    let body = crate::render::strip_leading_h1(&src, &doc.title);
+                    let base = doc.source_path.as_ref().map(|_| format!("/files/{id}/"));
+                    app.renderer
+                        .render_markdown_uncapped(body.as_deref().unwrap_or(&src), base.as_deref())
+                }
+                _ => app.renderer.render_code_uncapped(lang.as_deref(), &src),
+            };
             app.store.replace_html(&id, &html).is_ok()
         };
         // A full highlight only runs on a file past the highlight cap, so it
