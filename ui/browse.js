@@ -96,7 +96,6 @@ export function meta(c) {
     previewButton() +
     (p ? `<a href="${rawUrl(r.id, p)}" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` : "") +
     `<button data-act="copybrowse">Copy path</button>` +
-    `<button data-act="terminal" data-tip="${esc(r.path + (p ? "/" + p : ""))}" data-tip-mono>Open terminal here</button>` +
     `<button data-act="reveal" data-tip="${esc(r.path + (p ? "/" + p : ""))}" data-tip-mono>Open in file manager</button>` +
     `<a href="/b/${r.id}" data-browse="${r.id}" data-path="">Folder contents</a>` +
     `<button data-act="closebrowse">Close folder</button>` +

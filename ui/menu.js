@@ -79,15 +79,8 @@ export async function make(ctx, f) {
   } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 
-/** The studio desk: the one there is, the closed one back, or New studio
- *  desk's dialog (studio.js) -- from the + menu, the palette and Home. */
-export function studioDesk(ctx) {
-  return ctx.studio().then(m => m.newDesk(ctx, { hold: claudeHere }), e => ctx.toast("Could not open the studio", { sub: e }));
-}
-
 /** Whether `claude` can run here: on the daemon's PATH, or set up (which
  *  it would not be without it). */
-const claudeHere = () => hasClaude();
 async function hasClaude() {
   try {
     const a = await (await fetch("/api/agents")).json();
@@ -189,20 +182,10 @@ export function rename(ctx, holder, what, id, typed, why) {
   input.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
 }
 
-export async function terminal(ctx, body) {
-  const { toast } = ctx;
-  try {
-    const r = await fetch("/api/terminal", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    });
-    const j = await r.json().catch(() => ({}));
-    // The terminal opening is the answer; only a refusal is said.
-    if (!r.ok) toast("Could not open a terminal", { sub: new Error(j.error || `${r.status}`) });
-  } catch (e) { toast("Could not open a terminal", { sub: e }); }
-}
-/** The same place, in the file manager -- Files, Finder, Explorer. The same
- *  ids go over and the daemon resolves them the same way; a desk's folder
- *  goes with the capability, behind the desk's gate. */
+/** The place the reader is looking at, in the file manager -- Files,
+ *  Finder, Explorer. Ids go over, never a path: the daemon resolves the
+ *  folder itself. A desk's folder goes with the capability, behind the
+ *  desk's gate. */
 export async function reveal(ctx, body) {
   const { toast } = ctx;
   try {
@@ -245,13 +228,11 @@ function remove(ctx, id, el) {
 
 
 
-/** A panel on a desk, started, and the desk shown: the desk's own +. A
- *  studio desk's is its Claude. */
-async function newPanel(ctx, d) {
-  const id = d.id, studio = d.kind === "studio";
+/** A panel on a desk, started, and the desk shown: the desk's own +. */
+async function newPanel(ctx, id) {
   try {
-    const p = await ctx.api(`/api/desks/${id}/panes`, studio ? { cmd: "claude" } : {});
-    await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: studio ? p.pane.cmd || "claude" : "" });
+    const p = await ctx.api(`/api/desks/${id}/panes`, {});
+    await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     await ctx.load();
     ctx.show(id, true);
   } catch (e) { ctx.toast("Could not open a panel", { sub: e }); }
@@ -280,7 +261,7 @@ async function dropDesk(ctx, id) {
  *  code its button already runs -- the row's ✕, the rail's Close, the desk
  *  glyph -- reached through `ctx`, so the menu cannot drift into a second
  *  copy of any of it. A thing that cannot be done here is left out, never
- *  greyed: a browser tab has no desks and no terminals, and its menus say so
+ *  greyed: a browser tab has no desks, and its menus say so
  *  by not offering them. Open or show comes first, then change it, then copy
  *  or reveal, and remove or close last, in the danger colour, below a rule.
  *  The desk's own surfaces -- a panel, a rail row, a note, a point -- are the
@@ -290,7 +271,6 @@ async function dropDesk(ctx, id) {
 const RULE = "rule";
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
-  const term = body => capability && { label: "Open terminal here", run: () => terminal(ctx, body) };
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
@@ -306,7 +286,7 @@ function entries(ctx, el, byKey = false) {
       capability && { label: "New desk here", run: () => make(ctx, f) },
       ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })) : []),
       capability && RULE,
-      term({ root: f.root, path: f.path }), files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
+      files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
       root && RULE, root && { label: "Close folder", danger: true, run: () => ctx.closeRoot(f.root) },
     ] };
   }
@@ -314,7 +294,7 @@ function entries(ctx, el, byKey = false) {
     const root = el.dataset.browse, path = el.dataset.path || "", r = ctx.state.browse.find(x => x.id === root), abs = r ? r.path + (path ? "/" + path : "") : "";
     return { head: path.split("/").pop() || abs, items: [
       { label: "Open", moves: 1, run: () => ctx.browse(root, path, true) }, RULE,
-      term({ root, path }), files({ root, path }), abs && copyIt(abs, "Copy path"),
+      files({ root, path }), abs && copyIt(abs, "Copy path"),
     ] };
   }
   if (el.matches(".t-proj > summary")) {
@@ -325,7 +305,7 @@ function entries(ctx, el, byKey = false) {
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
       ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
       { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
-      term({ project: pid }), files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
+      files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
       { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
     ] };
   }
@@ -335,7 +315,7 @@ function entries(ctx, el, byKey = false) {
       { label: "Open", moves: 1, run: () => ctx.open(id) },
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
-      term({ doc: id }), files({ doc: id }), RULE,
+      files({ doc: id }), RULE,
       { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }
@@ -348,15 +328,14 @@ function entries(ctx, el, byKey = false) {
     if (!d || !capability) return null;
     return { head: d.name, items: [
       !here && { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.length < (d.kind === "studio" ? 1 : ctx.state.desks.per_desk) && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, d) },
+      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      dk && { label: "Keys…", run: () => dk.keysHere() },
-      dk && d.kind === "studio" && { label: "Studio folder…", run: () => dk.studioHere() }, RULE,
+      dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
-      term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
+      files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
       { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }
@@ -371,11 +350,6 @@ function entries(ctx, el, byKey = false) {
       places.length && RULE,
       { label: "Another folder…", run: () => pick(ctx, true) },
       { label: "A shell in your home folder", moves: 1, run: () => make(ctx, null) },
-      RULE,
-      // The studio desk is a folder's pictures, video and sound with one
-      // Claude under them; its dialog asks for the folder, and once there
-      // is one, this opens it (studio.js).
-      { label: "Studio desk…", moves: 1, run: () => studioDesk(ctx) },
     ] };
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;

@@ -772,3 +772,60 @@ fn an_older_database_keeps_its_desk_order_on_the_upgrade() {
     let made = store.create_desk("/w", Some("new")).unwrap();
     assert_eq!(store.desks().unwrap().last().map(|d| d.id), Some(made.id));
 }
+
+/// A 1.15 database with a studio desk in it opens as a terminal desk on the
+/// same folder, with its panel, and nothing else about it changes.
+#[test]
+fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
+    let dir = tempdir::Dir::new("snyvi-retire-studio");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let (studio, pane) = {
+        let s = Store::open(&paths).unwrap();
+        let d = s.create_desk("/home/me/Studio", Some("studio")).unwrap();
+        let crate::desk::Opened::Pane(p) = s.open_pane(d.id, "/home/me/Studio", "claude").unwrap()
+        else {
+            panic!("a pane")
+        };
+        (d.id, p.id)
+    };
+    // What 1.15 wrote for it, at 1.15's schema version.
+    let conn = rusqlite::Connection::open(&paths.db_path).unwrap();
+    conn.execute_batch(&format!(
+        "UPDATE desks SET kind = 'studio', boards = root, row = 0.62 WHERE id = {studio};
+         PRAGMA user_version = 3;"
+    ))
+    .unwrap();
+    drop(conn);
+
+    let s = Store::open(&paths).unwrap();
+    let d = s.desk(studio).unwrap().unwrap();
+    assert_eq!(
+        (d.name.as_str(), d.root.as_str()),
+        ("studio", "/home/me/Studio")
+    );
+    assert_eq!(d.panes.len(), 1);
+    assert_eq!(d.panes[0].id, pane);
+    let conn = rusqlite::Connection::open(&paths.db_path).unwrap();
+    let (kind, boards): (String, String) = conn
+        .query_row(
+            &format!("SELECT kind, boards FROM desks WHERE id = {studio}"),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(kind, "terminal");
+    assert_eq!(boards, "/home/me/Studio", "the column is left as it was");
+    // And it takes the four panels every desk holds.
+    for _ in 1..crate::desk::PER_DESK {
+        assert!(matches!(
+            s.open_pane(studio, "/home/me/Studio", "").unwrap(),
+            crate::desk::Opened::Pane(_)
+        ));
+    }
+}

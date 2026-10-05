@@ -992,25 +992,41 @@ pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Res
     }
 }
 
-/// What the studio desk this pane is on has (`read_studio`).
-pub fn read_studio(paths: &Paths, pane: &str) -> Result<Value> {
+/// The value of one of this panel's desk's keys, for `snyvi key NAME`: the
+/// panel is `SNYVI_SESSION`, which only a snyvi panel has, so the command
+/// works there and nowhere else.
+pub fn key(paths: &Paths, name: &str) -> Result<String> {
+    let pane = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|p| crate::pane::valid_id(p))
+        .ok_or_else(|| anyhow!("snyvi key works inside a snyvi panel; this shell is not one"))?;
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
             "no token at {}; is the daemon running as this user?",
             paths.token_path.display()
         )
     })?;
-    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/studio", config::base_url()))
-        .header("Authorization", &format!("Bearer {token}"))
-        .config()
-        .timeout_global(Some(Duration::from_secs(5)))
-        .http_status_as_error(false)
-        .build()
-        .call()
-        .context("asking snyvi")?;
+    let mut resp = ureq::get(&format!(
+        "{}/api/panes/{pane}/keys/{name}",
+        config::base_url()
+    ))
+    .header("Authorization", &format!("Bearer {token}"))
+    .config()
+    .timeout_global(Some(Duration::from_secs(5)))
+    .http_status_as_error(false)
+    .build()
+    .call()
+    .context("asking snyvi")?;
     match resp.status().as_u16() {
-        200 => Ok(resp.body_mut().read_json()?),
-        404 => bail!("{}", said(&mut resp)),
+        200 => Ok(resp.body_mut().read_to_string()?),
+        400 => bail!("{}", said(&mut resp)),
+        // A 404 with no word of its own is the pane, not the key.
+        404 => match said(&mut resp) {
+            s if s == "snyvi refused it" => bail!(
+                "snyvi has no running panel by this id (or the daemon is older than this command)"
+            ),
+            s => bail!("{s}"),
+        },
         s => bail!("snyvi answered {s}"),
     }
 }

@@ -26,11 +26,6 @@ pub(crate) const MMD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/mmd.js")
 /// desk pays nothing for it.
 pub(crate) const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
 
-/// A studio desk's view and New desk's studio dialog, joined from
-/// ui/studio/*.js: fetched the first time either is asked for, so a reader
-/// with only terminal desks never fetches it.
-pub(crate) const STUDIO_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/studio.js"));
-
 /// The window's frame -- the bar's three buttons and what drags -- fetched
 /// only inside the native window, since a tab has no window to frame.
 pub(crate) const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
@@ -503,7 +498,6 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("mmd.js", MMD_JS, JS),
     // The desk view, on the same terms as the diagram driver.
     ("desk.js", DESK_JS, JS),
-    ("studio.js", STUDIO_JS, JS),
     ("frame.js", FRAME_JS, JS),
     ("game.js", GAME_JS, JS),
     ("about.js", ABOUT_JS, JS),
@@ -573,7 +567,11 @@ pub(crate) async fn asset_mermaid() -> Response {
 
 /// Images referenced relatively from a document, resolved against the source file's
 /// directory and confined to the project root. Image types only.
-pub(crate) async fn doc_file(State(app): S, Path((id, rel)): Path<(String, String)>) -> Response {
+pub(crate) async fn doc_file(
+    State(app): S,
+    Path((id, rel)): Path<(String, String)>,
+    req: HeaderMap,
+) -> Response {
     let Ok(Some(doc)) = app.store.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -588,7 +586,10 @@ pub(crate) async fn doc_file(State(app): S, Path((id, rel)): Path<(String, Strin
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    if !render::is_image_ext(&ext) {
+    // A picture, or a video or song the document plays in place; nothing
+    // else beside a document is the page's to fetch.
+    let media = render::media_kind(&ext).is_some();
+    if !render::is_image_ext(&ext) && !media {
         return StatusCode::FORBIDDEN.into_response();
     }
     let (Ok(canon), Ok(root)) = (
@@ -599,6 +600,21 @@ pub(crate) async fn doc_file(State(app): S, Path((id, rel)): Path<(String, Strin
     };
     if !canon.starts_with(&root) {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if media {
+        // Streamed, a range at a time, so a player can seek and a long take
+        // is never whole in the daemon.
+        let mut headers = HeaderMap::new();
+        if let Ok(v) =
+            HeaderValue::from_str(mime_guess::from_ext(&ext).first_or_octet_stream().as_ref())
+        {
+            headers.insert(header::CONTENT_TYPE, v);
+        }
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, max-age=300"),
+        );
+        return serve_file(&canon, headers, &req).await;
     }
     match tokio::fs::read(&canon).await {
         Ok(bytes) => {

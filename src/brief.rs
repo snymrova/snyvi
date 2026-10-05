@@ -81,12 +81,13 @@ pub fn brief(
         };
         lines.push(format!("Left off ({who}, {}): {}", ago(now - l.at), l.text));
     }
-    // By name only. The values are in the panel's environment, which is the
-    // one place they go; the agent is told what it has, never what it is.
+    // By name only. A value reaches a command through `snyvi key`, which the
+    // shell expands, and the environment of a panel started after it was
+    // added; the agent is told what it has, never what it is.
     if !keys.is_empty() {
         let names: Vec<&str> = keys.iter().map(|k| k.name.as_str()).collect();
         lines.push(format!(
-            "This desk has these keys in its environment, by name: {}. Use them where a tool expects them; never print one.",
+            "This desk has these keys, by name: {}. In a command use $(snyvi key NAME), which works for a key added after this panel started too; never print one.",
             names.join(", ")
         ));
     }
@@ -224,18 +225,7 @@ pub fn changes(c: &Changes) -> String {
     if !gone.is_empty() {
         lines.push(format!("Taken off the list: {}.", gone.join("; ")));
     }
-    let new_keys: Vec<&str> = c
-        .keys
-        .iter()
-        .filter(|k| k.created_at > c.since)
-        .map(|k| k.name.as_str())
-        .collect();
-    if !new_keys.is_empty() {
-        lines.push(format!(
-            "New key on this desk, in the environment of panels started from now on: {}.",
-            new_keys.join(", ")
-        ));
-    }
+    lines.extend(new_keys(c.keys, c.since));
     // Only `working`, and only another pane's: it is the one stage that
     // says "leave it to them". `read` and `planned` carry no pane, so this
     // pane's own would come back to it as news.
@@ -306,6 +296,25 @@ pub fn changes(c: &Changes) -> String {
     capped(lines)
 }
 
+/// The news line for keys kept since `since`, by name: usable at once with
+/// `snyvi key`, so a key added mid-session needs no restart.
+fn new_keys(keys: &[DeskKey], since: i64) -> Option<String> {
+    let names: Vec<&str> = keys
+        .iter()
+        .filter(|k| k.created_at > since)
+        .map(|k| k.name.as_str())
+        .collect();
+    let name = match names.as_slice() {
+        [] => return None,
+        [one] => *one,
+        _ => "NAME",
+    };
+    Some(format!(
+        "New key on this desk: {}. Use it now in a command as $(snyvi key {name}); no restart needed.",
+        names.join(", ")
+    ))
+}
+
 /// One line of at most `chars` characters, cut where a character ends.
 fn cut(text: &str, chars: usize) -> String {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -335,8 +344,6 @@ mod tests {
             col: 0.5,
             row: 0.5,
             created_at: 0,
-            kind: crate::desk::TERMINAL.into(),
-            boards: String::new(),
             full_slot: 0,
             left_off: left,
             visited_at: 0,
@@ -488,7 +495,7 @@ mod tests {
         let b = brief(&desk(1, None), 1, &[], &keys, None, 200);
         assert!(
             b.contains(
-                "\nThis desk has these keys in its environment, by name: GH_TOKEN, OPENROUTER_API_KEY. Use them where a tool expects them; never print one."
+                "\nThis desk has these keys, by name: GH_TOKEN, OPENROUTER_API_KEY. In a command use $(snyvi key NAME), which works for a key added after this panel started too; never print one."
             ),
             "{b}"
         );
@@ -506,7 +513,7 @@ mod tests {
         assert_eq!(
             c,
             "Since your last turn, on this desk (from snyvi; context, not a request):\n\
-             New key on this desk, in the environment of panels started from now on: OPENROUTER_API_KEY."
+             New key on this desk: OPENROUTER_API_KEY. Use it now in a command as $(snyvi key OPENROUTER_API_KEY); no restart needed."
         );
     }
 

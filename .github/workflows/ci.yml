@@ -232,12 +232,11 @@ jobs:
         # claude at all, a taken port, no browser, install-cli. See
         # bench/onboarding.sh and the 0.17 notes in docs/ROADMAP.md.
         run: HOMEDIR=/tmp/snyvi-first B=target/release/snyvi bash bench/onboarding.sh
-      - name: The terminal button opens nothing it should not
-        # The one endpoint in snyvi whose effect is a process, so the one worth
-        # checking from the outside. A runner has no display, which is the
-        # guard's whole case -- a daemon reached over ssh declines rather than
-        # fails -- and it is also the only place guaranteed not to have one.
-        # See docs/TERMINAL.md.
+      - name: Nothing opens a terminal any more
+        # 1.16 took Open terminal here away: a desk is the terminal. The route
+        # that started one is gone, not merely refused, and a foreign page is
+        # still turned away at the Origin before it learns even that.
+        # See docs/TERMINAL.md §10.
         run: |
           set -e
           export SNYVI_DATA_DIR=/tmp/snyvi-ci SNYVI_CONFIG_DIR=/tmp/snyvi-ci-cfg SNYVI_PORT=7791
@@ -245,13 +244,10 @@ jobs:
           post() { curl -s -o /dev/null -w '%{http_code}' -X POST \
             -H 'content-type: application/json' "$@" \
             -d "{\"doc\":\"$docid\"}" http://127.0.0.1:7791/api/terminal; }
-          # The page has no token, so the gate is the Origin: a foreign page is
-          # refused, and so is a request carrying neither.
-          test "$(post)" = "403"
           test "$(post -H 'Origin: https://evil.example')" = "403"
           test "$(post -H 'Origin: http://127.0.0.1:7791' -H 'Sec-Fetch-Site: cross-site')" = "403"
-          # Allowed through, and still opens nothing, because there is no screen.
-          test "$(post -H 'Origin: http://127.0.0.1:7791')" = "503"
+          # The page's own Origin reaches the router, which has no such route.
+          test "$(post -H 'Origin: http://127.0.0.1:7791')" = "404"
           # On the process name and not the command line: `pgrep -f` matches the
           # pattern where it appears in this script's own arguments, which is a
           # green check that would have gone red for the wrong reason.

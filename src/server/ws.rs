@@ -113,7 +113,7 @@ pub(crate) async fn desk_socket(
         )
             .into_response();
     }
-    // The same check the terminal button is behind, for the same reason: a page
+    // The same check Open in file manager is behind, for the same reason: a page
     // on another origin is refused, and a local process with no browser sends
     // neither header and is refused too.
     if !from_this_page(&headers) {

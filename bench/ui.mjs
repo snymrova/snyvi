@@ -1651,8 +1651,9 @@ async function asideRows(p, base, token) {
   return rows;
 }
 
-/** An Open in file manager beside every Open terminal here: the document's, the
- *  browsed folder's, and the folder row's menu. The daemon resolves the ids
+/** Open in file manager where a folder is in view, and no Open terminal
+ *  here anywhere (retired in 1.16: a desk is the terminal): the document's,
+ *  the browsed folder's, and the folder row's menu. The daemon resolves the ids
  *  itself and hands the folder to the desktop's opener -- stubbed for the
  *  probe, which reads back what it was handed. */
 async function revealRows(p, browsed, folder, tmp) {
@@ -1664,10 +1665,12 @@ async function revealRows(p, browsed, folder, tmp) {
   await p.clickOn(".inbox a[data-id]");
   await until(`location.pathname.startsWith("/d/")`);
   const inDoc = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
+  const termDoc = await p.ev(`!!document.querySelector('#meta [data-act="terminal"]')`);
   await p.goto(`${browsed.replace(/\/$/, "")}/notes.md`);
   const inBrowse = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
-  rows.push(["Open in file manager beside Open terminal here", inDoc && inBrowse,
-    !inDoc ? "a document's meta has none" : inBrowse ? "in a document's meta and a browsed file's" : "a browsed file's meta has none"]);
+  const termBrowse = await p.ev(`!!document.querySelector('#meta [data-act="terminal"]')`);
+  rows.push(["Open in file manager, and no Open terminal here", inDoc && inBrowse && !termDoc && !termBrowse,
+    !inDoc ? "a document's meta has none" : !inBrowse ? "a browsed file's meta has none" : termDoc || termBrowse ? "Open terminal here is still drawn" : "in a document's meta and a browsed file's, alone"]);
 
   if (process.platform === "win32") { rows.push(["the folder a file sits in is opened", true, "not clicked on Windows, where Explorer itself would open"]); return rows; }
   if (existsSync(opened)) unlinkSync(opened);
@@ -2425,13 +2428,10 @@ async function projectDeskRows(cdp, base, token, tmp) {
     await p.clickOn("#desk-nav .s-add");
     const asked = await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
     const menu = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`) : [];
-    // The places first, the home folder last of them; the studio, another
-    // kind of desk, under its own rule after them.
     const none = (await desks()).length === before, at = proj ? menu.indexOf(proj.name) : -1;
-    const places = menu.filter(t => t !== "Studio desk…"), homeLast = /home folder/.test(places[places.length - 1] || "") && menu[menu.length - 1] === "Studio desk…";
-    rows.push(["+ New desk asks where first", asked && none && at >= 0 && homeLast,
+    rows.push(["+ New desk asks where first", asked && none && at >= 0 && /home folder/.test(menu[menu.length - 1] || ""),
       !proj ? "the probe's sends made no project on its folder" : !asked ? "no menu under the +" : !none ? "a desk was made before anything was chosen"
-        : at < 0 ? `the project is not offered: ${menu.join(" · ")}` : !homeLast ? `the home folder is not last of the places, then the studio: ${menu.join(" · ")}` : `${menu.join(" · ")}, and no desk yet`]);
+        : at < 0 ? `the project is not offered: ${menu.join(" · ")}` : !/home folder/.test(menu[menu.length - 1] || "") ? `the home folder is not last: ${menu.join(" · ")}` : `${menu.join(" · ")}, and no desk yet`]);
 
     if (at >= 0) {
       await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.trim() === ${JSON.stringify(proj.name)})`)}"]`);

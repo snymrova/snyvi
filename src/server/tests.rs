@@ -1,9 +1,9 @@
 //! The server's tests, with the route table every route must be in.
 
 use super::{
-    desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS, BOOT_JS,
-    BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS, LOOK_JS,
-    MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
+    desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
+    BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS,
+    LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
 };
 use super::{
     new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
@@ -369,7 +369,6 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Reader,
         true,
     ),
-    ("POST", "/api/terminal", Some("{}"), Gate::Reader, true),
     ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
     (
         "POST",
@@ -387,53 +386,6 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/browse/pick", None, Gate::Desk, false),
-    // A studio desk's (`studio_routes`).
-    ("POST", "/api/studio/pick", None, Gate::Desk, false),
-    (
-        "POST",
-        "/api/desks/1/studio-folder",
-        Some(r#"{"path":"/nowhere/at/all"}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/studio/1/look?rel=", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/studio/1/keep",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/studio/1/hide",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/studio/1/unhide",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    // Behind the host gate alone, as browse mode's raw route is.
-    ("GET", "/api/studio/1/raw/a.png", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/studio/1/selection",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "GET",
-        "/api/panes/0123456789abcdef0123456789abcdef/studio",
-        None,
-        Gate::Token,
-        true,
-    ),
     ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
     ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
     ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
@@ -638,6 +590,13 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/api/panes/nope/brief", None, Gate::Token, true),
     ("GET", "/api/panes/nope/changes", None, Gate::Token, true),
     (
+        "GET",
+        "/api/panes/nope/keys/GH_TOKEN",
+        None,
+        Gate::Token,
+        true,
+    ),
+    (
         "POST",
         "/api/panes/nope/leftoff",
         Some("{}"),
@@ -743,9 +702,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
             + routed.matches("post(").count()
             + routed.matches(".delete(").count()
     };
-    let n = routes_in("\nfn router(")
-        + routes_in("\nfn pane_routes(")
-        + routes_in("\nfn studio_routes(");
+    let n = routes_in("\nfn router(") + routes_in("\nfn pane_routes(");
     assert_eq!(
         n,
         ROUTES.len(),
@@ -1214,4 +1171,163 @@ fn settings_written_by_the_app_are_applied_before_first_paint() {
         );
         assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
     }
+}
+
+/// `snyvi key NAME` answers with the value of a key the pane's desk has --
+/// its own, or the every-desk one, its own first -- marks it used, and
+/// refuses another desk's, a name that is not one, and a key whose value is
+/// gone, saying so by name only.
+#[test]
+fn a_panel_reads_its_own_desks_keys_and_no_other_desks() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-pane-key");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let store = Store::open(&paths).unwrap();
+    let secrets = crate::secrets::Secrets::file_only(tmp.path.join("keys.json"));
+    let a = store.create_desk("/tmp/a", Some("a")).unwrap().id;
+    let b = store.create_desk("/tmp/b", Some("b")).unwrap().id;
+    let every = crate::desk::EVERY_DESK;
+    for (desk, name, value) in [
+        (a, "ELEVENLABS_API_KEY", "a-eleven"),
+        (b, "OTHER_KEY", "b-other"),
+        (every, "GH_TOKEN", "every-gh"),
+        (a, "GH_TOKEN", "a-gh"),
+        (every, "OPENAI_API_KEY", "every-openai"),
+    ] {
+        store.add_desk_key(desk, name, "").unwrap();
+        secrets.keep(desk, name, value).unwrap();
+    }
+
+    assert_eq!(
+        desk_key(&store, &secrets, a, "ELEVENLABS_API_KEY").unwrap(),
+        "a-eleven"
+    );
+    assert_eq!(
+        desk_key(&store, &secrets, a, "GH_TOKEN").unwrap(),
+        "a-gh",
+        "its own first"
+    );
+    assert_eq!(
+        desk_key(&store, &secrets, b, "GH_TOKEN").unwrap(),
+        "every-gh"
+    );
+    assert_eq!(
+        desk_key(&store, &secrets, a, "OPENAI_API_KEY").unwrap(),
+        "every-openai"
+    );
+    assert!(
+        store
+            .desk_keys(a)
+            .unwrap()
+            .iter()
+            .any(|k| k.name == "ELEVENLABS_API_KEY" && k.used_at > 0),
+        "a read marks the key used"
+    );
+
+    let (s, why) = desk_key(&store, &secrets, a, "OTHER_KEY").unwrap_err();
+    assert_eq!(s, StatusCode::NOT_FOUND, "another desk's key");
+    assert!(
+        why.contains("OTHER_KEY") && !why.contains("b-other"),
+        "{why}"
+    );
+    let (s, _) = desk_key(&store, &secrets, a, "lower; rm").unwrap_err();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "not a name");
+    secrets.forget(a, "ELEVENLABS_API_KEY");
+    let (s, why) = desk_key(&store, &secrets, a, "ELEVENLABS_API_KEY").unwrap_err();
+    assert_eq!(s, StatusCode::NOT_FOUND, "a name whose value is gone");
+    assert!(why.contains("add it again"), "{why}");
+}
+
+/// A video beside a sent document plays from `/files/`: a range at a time,
+/// so it can seek. The folder's bounds and the kinds it serves stay as they
+/// were: a file of another kind, or one outside the project, is refused.
+#[tokio::test]
+async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-doc-media");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let proj = tmp.path.join("proj");
+    std::fs::create_dir_all(proj.join(".git")).unwrap();
+    let take: Vec<u8> = (0..100u8).collect();
+    std::fs::write(proj.join("take.mp4"), &take).unwrap();
+    std::fs::write(proj.join("notes.txt"), "not for the page").unwrap();
+    std::fs::write(tmp.path.join("outside.mp4"), &take).unwrap();
+    let plan = proj.join("plan.md");
+    std::fs::write(&plan, "![take](take.mp4)").unwrap();
+    let plan = plan.to_string_lossy().to_string();
+
+    let token = crate::config::load_or_create_token(&paths).unwrap();
+    let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+    let store = Store::open(&paths).unwrap();
+    let doc = store
+        .insert(
+            "abcdef0123",
+            crate::store::NewDoc {
+                project_root: &proj.to_string_lossy(),
+                project_name: "proj",
+                workflow_key: "w",
+                workflow_title: "w",
+                title: "plan",
+                kind: crate::render::Kind::Markdown,
+                lang: None,
+                source_path: Some(&plan),
+                branch: None,
+                origin: "cli",
+                sender: "",
+                desk: None,
+                source: b"![take](take.mp4)",
+                staged: None,
+                search_body: "",
+                html: "",
+            },
+        )
+        .unwrap();
+    let router = router(new_app(&paths, store, token, window, None, None));
+    let host = format!("127.0.0.1:{}", crate::config::port());
+    let get = |path: String, range: Option<&'static str>| {
+        let router = router.clone();
+        let host = host.clone();
+        async move {
+            let mut req = axum::http::Request::builder()
+                .uri(path)
+                .header("host", host);
+            if let Some(r) = range {
+                req = req.header("range", r);
+            }
+            let resp = router
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (status, headers, body)
+        }
+    };
+
+    let id = &doc.id;
+    let (s, h, body) = get(format!("/files/{id}/take.mp4"), Some("bytes=10-19")).await;
+    assert_eq!(s, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(&body[..], &take[10..20]);
+    assert_eq!(h[header::CONTENT_RANGE], "bytes 10-19/100");
+    assert_eq!(h[header::CONTENT_TYPE], "video/mp4");
+    let (s, _, body) = get(format!("/files/{id}/take.mp4"), None).await;
+    assert_eq!((s, body.len()), (StatusCode::OK, 100));
+
+    let (s, _, _) = get(format!("/files/{id}/notes.txt"), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "not a picture, a video or a song");
+    let (s, _, _) = get(format!("/files/{id}/../outside.mp4"), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "outside the project");
 }

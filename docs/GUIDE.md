@@ -538,18 +538,25 @@ value once, name the variable it goes in (`OPENROUTER_API_KEY`,
 it. The value goes to your keychain -- Keychain on macOS, Credential
 Manager on Windows -- or, on Linux and wherever no keychain answers, to a
 file only you can read beside snyvi's own token, the way `gh` and `aws`
-keep theirs; it is never shown again, and snyvi keeps only the name. Every panel started on the desk from then on has it in its
-environment, open panels get it when they next start, and the brief tells
-Claude the names, never the values. A desk's own key shadows an
+keep theirs; it is never shown again, and snyvi keeps only the name. A
+panel on the desk can use it at once, open ones included: `snyvi key
+NAME` in a panel prints the value, so a command says `curl -H
+"xi-api-key: $(snyvi key ELEVENLABS_API_KEY)" ...` and the shell, not
+the conversation, carries it. It works only inside a panel, and only for
+that desk's keys and the every-desk ones. Panels started after the key
+was added also have it in their environment. The brief tells Claude the
+names and the `$(snyvi key NAME)` way to use them, never the values, and
+the next prompt after you add one says it is there. A desk's own key shadows an
 every-desk one of the same name. ✕ on a row offers Undo for a few
 seconds, then the value is gone -- the one removal in snyvi that is not
 kept, because a kept secret is still a secret. Closing
 a desk keeps its keys; `snyvi prune` ends them with the desk. Home's right
 column lists every key by name, with the desks it is on and when a panel
-last started with it. snyvi never uses a key itself, and no tool lets an
-agent read one. It is in the environment, though, and an environment is
-shared: the panel's shell, the agent in it and every program that agent
-runs see the variable the way they see `PATH`. A key on a desk is a key
+last started with it. snyvi never uses a key itself, and no MCP tool
+hands one over: a tool's answer would land in the conversation. A key is
+the panel's to use, though: the shell, the agent in it and every program
+that agent runs can ask `snyvi key` or see the variable the way they see
+`PATH`. A key on a desk is a key
 you would hand to anything you run on that desk. On Linux the file it
 rests in is readable by your user alone, as snyvi's own token is.
 
@@ -806,59 +813,6 @@ daemon, so it is the number `snyvi --version` prints -- where the
 documents and the settings live, what Claude Code has of it, the
 license and the repository. *Reset snyvi…* is described under
 [Uninstalling](#uninstalling).
-
-## Studio desks
-
-The studio desk is a desk for making pictures, video and sound: one folder,
-shown in a **viewer**, with **one** Claude panel under it that fills it.
-Make it from New desk → **Studio desk…**, which asks only for its folder
-(`~/Studio` is offered; **Change…** opens the desktop's own dialog). It is
-also in the palette (`new desk`) and under Home's **+ New desk**. It needs
-Claude Code: without it the dialog says so and points to Agents, and no desk
-is made. There is one studio desk: asked for again, it opens, and a closed
-one comes back as you left it -- its notes, its hides, and Claude's
-conversation to resume. **Studio folder…** in its ⋯ menu moves the whole
-desk to another folder (what you hid in the old one is let go); Claude
-follows the next time its panel starts. Claude starts in that folder, so its
-trust prompt names it.
-
-**You ask, Claude makes.** There is no form: you tell Claude in the panel
-what you want, and it makes it with its own tools -- a provider's API with a
-key from the desk's **Keys…** (in its ⋯ menu; the empty studio offers it
-while the desk has none), or a command line tool. A key reaches Claude when
-its panel starts, so Claude asks you to add one there and start it again;
-Resume keeps the conversation. What it makes shows in the viewer as it lands
-on disk.
-
-**Claude arranges, the rail shows.** Claude puts what it makes into folders,
-up to three deep, and the rail lists them where a terminal desk lists its
-panels: first the **Claude** row (what it is doing, with stop and start),
-then what it all **cost**, then **Assets**: its folders, each with how many
-things are in it. A click shows a folder in the viewer. A folder may hold a
-`folder.json` that Claude writes -- `title`, `order`, `note`, `picks`, and
-at the top a `budget` -- and the rail and the viewer follow it. Briefs,
-plans and other writing reach you as documents, in the rail's
-**Documents**, never in the viewer.
-
-**Look, keep, react.** The viewer is the open folder's pictures, videos and
-sounds, newest first unless its `folder.json` gives an order. Click one to
-see it large in the same space, ← → to step, Esc to go back. Under it, one
-thin bar: **★ Keep**, **Tell Claude…** (its path into the panel, for you to
-finish) and **Info** (the prompt, the model, the seed, the cost). ★ writes
-the file's name into that folder's `folder.json` `picks`, where Claude reads
-it. **Hide** is on the right-click menu and ⌫: off the viewer, never off the
-disk, with its Undo in the tile's place; **N hidden · Show** at the foot of
-the folder puts it back. A tile dragged onto the panel goes in as its path.
-
-**Scripts save tokens.** The second time Claude makes the same kind of call
--- text-to-image on one service, say -- its brief has it write a script in
-the folder's `.scripts/` instead, which saves the file and the JSON beside
-it and prints only the path, so the service's raw answer never fills its
-context. Keys come from the environment, never the script, and
-`.scripts/README.md` lists what is there for the next session to reuse.
-snyvi never runs a script; Claude runs them in the panel, where you see
-them. What you open, and what you ★, reach Claude with your next message;
-`read_studio` tells it what the desk has.
 
 ## Appearance
 
@@ -1376,10 +1330,10 @@ a link into a browsed file is how one agent tells you where to look.
 
 **Open in file manager**, under the file or folder you are reading, shows
 it in Files, Finder or Explorer; a file opens the folder it sits in. It
-is beside **Open terminal here**, in a folder's right-click menu too, and
-a desk's **Folder** line in its rail does the same for the desk's folder.
-The page sends only the id of what you are reading and the daemon works
-out the folder itself, as it does for the terminal.
+is in a folder's right-click menu too, and a desk's **Folder** line in
+its rail does the same for the desk's folder. The page sends only the id
+of what you are reading and the daemon works out the folder itself. For a
+shell in a folder, open a desk on it.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does
@@ -1414,7 +1368,11 @@ text under it, and the document fills it in when it arrives.
 Mermaid blocks render as diagrams; the library is embedded and loaded
 only on pages that have one, after the text has painted. Relative
 images in a document sent by path are served from the file's directory,
-confined to the project root and to image types.
+confined to the project root and to pictures, video and sound. An image
+whose path is a video or a song, `![take 2](take2.mp4)`, plays in place:
+a player with controls, seeking as it goes, in a box that holds its size
+before the video arrives. So several takes go in one document, to be
+watched and chosen from.
 
 Search understands `p:project` and `kind:md|code|diff|text` prefixes.
 Documents from one Claude Code session share a workflow whether they

@@ -314,6 +314,9 @@ impl Renderer {
         let raw = mark_links(&raw);
         let t_md = t.elapsed();
         let out = if has_raw_html { sanitize(&raw) } else { raw };
+        // After the sanitizer, which keeps `<img>` and would drop a player:
+        // what turns into one here is only what survived it.
+        let out = players(out);
         if trace {
             eprintln!(
                 "  markdown: comrak+highlight {:.1} ms, sanitize {:.1} ms{} ({} KB -> {} KB)",
@@ -1224,6 +1227,61 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
     }
 }
 
+/// A Markdown image whose path is a video or a song, `![take 2](take2.mp4)`,
+/// becomes a player for it, the alt text its title. Done on the finished
+/// HTML, where comrak (`<img src=".." alt=".." />`) and ammonia
+/// (`<img src=".." alt="..">`) both write the attributes escaped and
+/// double-quoted, so they are copied across as they are.
+///
+/// A video sits in a 16:9 box from the first paint, letterboxed, so the page
+/// does not move when the take's own size arrives; a song's controls are one
+/// fixed height. Inline styles, as `media_body`: app.css is first paint.
+fn players(html: String) -> String {
+    const IMG: &str = "<img src=\"";
+    if !html.contains(IMG) {
+        return html;
+    }
+    let attr = |tag: &str, name: &str| -> Option<String> {
+        let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+        let end = tag[at..].find('"')?;
+        Some(tag[at..at + end].to_string())
+    };
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    while let Some(i) = rest.find(IMG) {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let Some(close) = tail.find('>') else {
+            break;
+        };
+        let tag = &tail[..=close];
+        let src = attr(tag, "src").unwrap_or_default();
+        let path = src.split(['?', '#']).next().unwrap_or("");
+        match media_kind(&ext_of(path)) {
+            Some(kind) => {
+                let title = attr(tag, "alt").filter(|a| !a.is_empty());
+                let title = title.map(|t| format!(" title=\"{t}\"")).unwrap_or_default();
+                if kind == "video" {
+                    out.push_str(&format!(
+                        "<video controls preload=\"metadata\" src=\"{src}\"{title} \
+                         style=\"display:block;width:100%;aspect-ratio:16/9;max-height:70vh;\
+                         object-fit:contain;background:#000;border-radius:var(--radius)\"></video>"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "<audio controls preload=\"metadata\" src=\"{src}\"{title} \
+                         style=\"display:block;width:100%;height:54px\"></audio>"
+                    ));
+                }
+            }
+            None => out.push_str(tag),
+        }
+        rest = &tail[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Relative image paths resolve against the source document's directory via `/files/<id>/`.
 fn rewrite_image_url(base: &str, url: &str) -> String {
     let u = url.trim();
@@ -1618,6 +1676,49 @@ mod tests {
         assert!(html.contains("src=\"/files/abc/shot.png\""), "{html}");
         let plain = r.render(Kind::Markdown, None, "![alt](shot.png)");
         assert!(plain.contains("src=\"shot.png\""), "{plain}");
+    }
+
+    #[test]
+    fn a_video_or_a_song_in_markdown_plays_in_place() {
+        let r = Renderer::new();
+        let md = |src: &str| r.render_with_base(Kind::Markdown, None, src, Some("/files/abc/"));
+        for (file, tag) in [
+            (
+                "take2.mp4",
+                "<video controls preload=\"metadata\" src=\"/files/abc/take2.mp4\"",
+            ),
+            (
+                "cut.webm",
+                "<video controls preload=\"metadata\" src=\"/files/abc/cut.webm\"",
+            ),
+            (
+                "song.mp3",
+                "<audio controls preload=\"metadata\" src=\"/files/abc/song.mp3\"",
+            ),
+            (
+                "bed.ogg",
+                "<audio controls preload=\"metadata\" src=\"/files/abc/bed.ogg\"",
+            ),
+        ] {
+            let html = md(&format!("Here:\n\n![take \"2\"]({file})\n"));
+            assert!(html.contains(tag), "{file}: {html}");
+            assert!(
+                html.contains("title=\"take &quot;2&quot;\""),
+                "{file}: {html}"
+            );
+            assert!(!html.contains("<img"), "{file}: {html}");
+        }
+        // A video's box is there before its size is known, so nothing moves.
+        assert!(md("![a](a.mp4)").contains("aspect-ratio:16/9"));
+        // A picture stays a picture, and a query is not an extension.
+        assert!(md("![a](a.png)").contains("<img src=\"/files/abc/a.png\""));
+        assert!(md("![a](a.mp4?t=3)").contains("<video"));
+        // Raw HTML takes the sanitizer's road and still gets its player, but
+        // a player written by hand does not get through.
+        let raw =
+            md("<b>hi</b>\n\n![a](a.mp4)\n\n<video src=\"x.mp4\" onplay=\"alert(1)\"></video>");
+        assert_eq!(raw.matches("<video").count(), 1, "{raw}");
+        assert!(!raw.contains("onplay"), "{raw}");
     }
 
     #[test]

@@ -5,9 +5,6 @@ fn db() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(POS_COLUMN).unwrap();
-    for c in KIND_COLUMNS {
-        conn.execute_batch(c).unwrap();
-    }
     conn
 }
 
@@ -643,7 +640,7 @@ fn panes_fill_the_lowest_free_slot_and_the_fifth_is_refused() {
         assert!(matches!(pane(&mut conn, d), Opened::Pane(_)));
     }
     assert_eq!(slots(&conn, d), vec![1, 2, 3, 4]);
-    assert!(matches!(pane(&mut conn, d), Opened::DeskFull(_)));
+    assert!(matches!(pane(&mut conn, d), Opened::DeskFull));
 
     let first = get(&conn, d).unwrap().unwrap().panes[0].id.clone();
     let tx = conn.transaction().unwrap();
@@ -720,7 +717,7 @@ fn twelve_panes_on_three_desks_all_open() {
         for _ in 0..PER_DESK {
             assert!(matches!(pane(&mut conn, *d), Opened::Pane(_)));
         }
-        assert!(matches!(pane(&mut conn, *d), Opened::DeskFull(_)));
+        assert!(matches!(pane(&mut conn, *d), Opened::DeskFull));
     }
     assert_eq!(panes_open(&conn).unwrap(), 3 * PER_DESK);
 
@@ -872,7 +869,7 @@ fn a_closed_pane_does_not_come_back_to_a_full_desk() {
     }
     assert!(matches!(
         restore_pane(&mut conn, &first.id).unwrap(),
-        Restored::DeskFull(_)
+        Restored::DeskFull
     ));
     assert_eq!(closed_on(&conn, d).unwrap(), vec![first.id.clone()]);
 }
@@ -1210,91 +1207,4 @@ fn an_order_is_the_whole_list_of_open_desks_or_nothing() {
     assert!(!reorder(&mut conn, &[c, b, a]).unwrap(), "a closed desk");
     assert!(reorder(&mut conn, &[b, a]).unwrap());
     assert_eq!(order(&conn), ["b", "a"]);
-}
-
-/// A studio desk is made a studio desk and stays one: it says so in every
-/// read, holds one panel (a second is refused, and so is a closed one coming
-/// back beside it), and starts with the gallery taking most of the height.
-#[test]
-fn a_studio_desk_keeps_its_kind_and_holds_one_panel() {
-    let mut conn = db();
-    let t = create(&conn, "/p", None, 0).unwrap();
-    assert_eq!(t.kind, TERMINAL);
-    assert_eq!(t.boards, "");
-    let s = create_studio(&conn, "/p", None, "/b/p 2", 0).unwrap();
-    assert_eq!(s.name, "p 2");
-    let read = get(&conn, s.id).unwrap().unwrap();
-    assert_eq!(
-        (read.kind.as_str(), read.boards.as_str()),
-        (STUDIO, "/b/p 2")
-    );
-    assert!(read.row > 0.5);
-    assert!(list(&conn)
-        .unwrap()
-        .iter()
-        .any(|d| d.id == s.id && d.kind == STUDIO));
-
-    assert!(matches!(pane(&mut conn, s.id), Opened::Pane(_)));
-    assert!(matches!(pane(&mut conn, s.id), Opened::DeskFull(1)));
-    let first = get(&conn, s.id).unwrap().unwrap().panes[0].id.clone();
-    let tx = conn.transaction().unwrap();
-    close_pane(&tx, &first, 1).unwrap();
-    tx.commit().unwrap();
-    assert!(matches!(pane(&mut conn, s.id), Opened::Pane(_)));
-    assert!(matches!(
-        restore_pane(&mut conn, &first).unwrap(),
-        Restored::DeskFull(1)
-    ));
-    // Nothing in this module writes the kind after the insert.
-    let src = include_str!("../desk.rs");
-    assert!(!src.contains("SET kind"));
-}
-
-/// There is one studio desk. A closed one is what New studio desk brings
-/// back, the newest closed first; and a closed one does not come back
-/// beside an open one. Pointed at another folder, the whole desk moves.
-#[test]
-fn a_closed_studio_desk_comes_back_rather_than_a_second() {
-    let mut conn = db();
-    let t = create(&conn, "/w", None, 0).unwrap();
-    assert_eq!(closed_studio(&conn).unwrap(), None);
-    let a = create_studio(&conn, "/S", None, "/S", 0).unwrap();
-    assert_eq!(closed_studio(&conn).unwrap(), None, "open is not closed");
-    close(&mut conn, a.id, 5).unwrap();
-    close(&mut conn, t.id, 6).unwrap();
-    assert_eq!(
-        closed_studio(&conn).unwrap(),
-        Some(a.id),
-        "a terminal desk is not one"
-    );
-    assert!(
-        !studio_taken(&conn, a.id).unwrap(),
-        "nothing open beside it"
-    );
-
-    let b = create_studio(&conn, "/T", None, "/T", 7).unwrap();
-    assert!(studio_taken(&conn, a.id).unwrap());
-    assert!(
-        !studio_taken(&conn, t.id).unwrap(),
-        "a terminal desk comes back"
-    );
-    assert!(
-        !studio_taken(&conn, b.id).unwrap(),
-        "an open one is not reopened"
-    );
-    close(&mut conn, b.id, 9).unwrap();
-    assert_eq!(
-        closed_studio(&conn).unwrap(),
-        Some(b.id),
-        "the newest closed"
-    );
-
-    assert!(reopen(&mut conn, a.id).unwrap());
-    assert!(set_boards(&conn, a.id, "/U").unwrap());
-    let moved = get(&conn, a.id).unwrap().unwrap();
-    assert_eq!((moved.root.as_str(), moved.boards.as_str()), ("/U", "/U"));
-    assert!(
-        !set_boards(&conn, t.id, "/U").unwrap(),
-        "closed, and a terminal desk"
-    );
 }

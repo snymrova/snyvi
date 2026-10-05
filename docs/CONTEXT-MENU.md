@@ -1,6 +1,8 @@
 # Context menus, from the ground up
 
-Desk notes #10 and #18 ("rethink context menu"). Status: plan, nothing built.
+Desk notes #10 and #18 ("rethink context menu"). Status: built in 1.6.0.
+Since 1.16, no menu has **Open terminal here** (desk note #81,
+`TERMINAL.md` section 10); the lists below are as they were planned.
 Branch point: `claude/desk-paint` @ 6619993 (1.5.0).
 
 ## Where it stands

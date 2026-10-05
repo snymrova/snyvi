@@ -16,9 +16,15 @@
 //! in size, for boxes that have it.
 //!
 //! A value goes one way: from the reader's paste into the keychain or the
-//! file, and from there into a panel's environment at its start. It is never
-//! in a row, a response, an event, a log line or a tool result. snyvi never
-//! uses one itself -- it keeps, it hands over, it calls nothing.
+//! file, and from there into a panel's environment at its start, or to
+//! `snyvi key NAME` run in a panel of its desk (`/api/panes/{id}/keys/{name}`,
+//! behind the token and a running pane), whose output a command expands with
+//! `$(...)` so the shell carries it and the conversation never does. That is
+//! the one response a value is in; it is never in a row, an event, a log line
+//! or a tool result. Whoever holds the token and a live pane's id can ask --
+//! the same boundary as the rest of the daemon, and on macOS it means the
+//! Keychain's per-application prompt is the daemon's, not the asker's. snyvi
+//! never uses one itself -- it keeps, it hands over, it calls nothing.
 //!
 //! The keychain's client blocks: every call here is made from a blocking
 //! thread (`tokio::task::spawn_blocking`), never from the async ones.

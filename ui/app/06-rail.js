@@ -400,7 +400,7 @@
       `<button data-act="delete">Remove<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
       (d.source_path ? `<button data-act="copypath" data-tip="${esc(d.source_path)}" data-tip-mono>Copy path</button>` : "") +
-      (state.folder ? `<button data-act="terminal" data-tip="${esc(state.folder)}" data-tip-mono>Open terminal here</button><button data-act="reveal" data-tip="${esc(state.folder)}" data-tip-mono>Open in file manager</button>` : "") +
+      (state.folder ? `<button data-act="reveal" data-tip="${esc(state.folder)}" data-tip-mono>Open in file manager</button>` : "") +
       `</div>` + historyBox();
   }
   const rawUrl = (rootId, path) => `/api/browse/${rootId}/raw/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -427,24 +427,16 @@
       const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
       copied(full, b);
     }
-    if (b.dataset.act === "terminal") openTerminal();
     if (b.dataset.act === "reveal") openFolder();
     if (b.dataset.act === "closebrowse") closeRoot(state.browseRoot.id);
   });
 
-  /** Open the machine's own terminal where the reader is looking.
-   *
-   *  What is sent is an id, never a path: the daemon resolves the directory
-   *  itself, so nothing typed into a document can reach one. Nothing comes back
-   *  either -- the terminal's output is the terminal's. See docs/TERMINAL.md.
-   *
-   *  The request carries no token because this page has none, and is allowed
-   *  through by being same-origin instead; a page on another origin is refused
-   *  by the daemon. */
-  /** Where the terminal and the file manager open when nothing is named:
-   *  the folder or the document on the page (menu.js, `terminal`, `reveal`). */
+  /** Where the file manager opens when nothing is named: the folder or the
+   *  document on the page (menu.js, `reveal`). What is sent is an id, never a
+   *  path: the daemon resolves the directory itself, and the request carries
+   *  no token because this page has none -- it is allowed through by being
+   *  same-origin, and a page on another origin is refused. */
   const here = () => state.view === "browse" ? { root: state.browseRoot.id, path: state.browsePath || "" } : { doc: state.doc.id };
-  const openTerminal = (body = here()) => act("terminal", body);
   const openFolder = (body = here()) => act("reveal", body);
 
   /** Pin or unpin a document: the meta pane's button, `p`, a row's menu.
