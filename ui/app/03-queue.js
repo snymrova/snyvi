@@ -611,6 +611,33 @@
     markActive();
   }
 
+  /** A `doc` event carries the one project that moved: its row as /api/tree
+   *  has it, and its sessions as /api/projects/{id}/tree has them under the
+   *  default caps. Put in here, so a save fetches nothing (audit finding 4:
+   *  a file saved every few seconds pulled the tree and the project back down
+   *  every few seconds). The row goes where /api/tree would put it. The
+   *  sessions replace what this tab holds only when it holds the project,
+   *  and never when a cap the reader lifted, or the session being read,
+   *  would come back capped: then it is false, and the fetch it was. */
+  function patchTree(j) {
+    const p = j.project, rows = j.rows;
+    if (!p || !Array.isArray(rows)) return false;
+    const pid = String(p.id);
+    state.tree = state.tree.filter(x => String(x.id) !== pid).concat(p)
+      .sort((a, b) => (b.latest || 0) - (a.latest || 0) || b.id - a.id);
+    treeOff = false;
+    const had = state.sub.get(pid);
+    if (!had) return true;
+    if (liftedCaps.has(pid)) return false;
+    const whole = w => liftedWorkflows.has(w.id) || (state.doc && state.doc.workflow_id === w.id);
+    for (const w of had) {
+      const r = whole(w) && rows.find(x => x.id === w.id);
+      if (whole(w) && (!r || r.docs.length < r.total)) return false;
+    }
+    state.sub.set(pid, rows);
+    return true;
+  }
+
   /** The library moved: refetch the project rows, and the subtrees this tab has
    *  already filled. Dropping them instead would collapse an expanded project
    *  to a "…" under the reader. `only` narrows it to one project, which is what
