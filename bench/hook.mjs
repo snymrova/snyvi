@@ -36,7 +36,7 @@
  */
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, copyFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, copyFileSync, existsSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, basename } from "node:path";
 
@@ -91,17 +91,26 @@ const STRACE = (() => {
 
 /** One hook run: the event on stdin, the pane in the environment. With
  *  strace: every execve, thread start and connect it made, counted. */
-function runHook(BIN, env, event, { pane = PANE, trace = true } = {}) {
+function runHook(BIN, env, event, { pane = PANE, trace = true, limit = 30_000 } = {}) {
   const out = join(env.SNYVI_DATA_DIR, `strace-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
   const e = { ...env };
   if (pane) e.SNYVI_SESSION = pane; else delete e.SNYVI_SESSION;
   const traced = trace && STRACE;
   const cmd = traced ? STRACE : BIN;
   const argv = traced ? ["-f", "-qq", "-e", "trace=execve,clone,clone3,connect", "-o", out, BIN, "hook"] : ["hook"];
+  // Output goes to files, not pipes: a hook that starts a daemon hands it
+  // its stdout, and a pipe held open by a daemon is a bench that never
+  // returns (what a 1.16 hook with no daemon did here). The clock is cut
+  // at `limit` for the same reason -- strace -f follows that daemon too.
+  const o = `${out}.out`, er = `${out}.err`;
+  const fo = openSync(o, "w"), fe = openSync(er, "w");
   const t0 = performance.now();
-  const r = spawnSync(cmd, argv, { env: e, input: JSON.stringify(event), encoding: "utf8", timeout: 30_000 });
+  const r = spawnSync(cmd, argv, { env: e, input: JSON.stringify(event), stdio: ["pipe", fo, fe], timeout: limit, killSignal: "SIGKILL" });
+  closeSync(fo); closeSync(fe);
   const ms = Math.round(performance.now() - t0);
-  const counts = { execs: null, threads: null, connects: null, serve: null, ms };
+  const read = f => { try { return readFileSync(f, "utf8"); } catch { return ""; } finally { rmSync(f, { force: true }); } };
+  const stdout = read(o), stderr = read(er);
+  const counts = { execs: null, threads: null, connects: null, serve: null, ms, cut: !!r.error || r.signal != null };
   if (traced && existsSync(out)) {
     const text = readFileSync(out, "utf8");
     const lines = text.split("\n");
@@ -118,7 +127,7 @@ function runHook(BIN, env, event, { pane = PANE, trace = true } = {}) {
     counts.connects = lines.filter(l => /\bconnect\(/.test(l) && new RegExp(`htons\\(${PORT}\\)`).test(l) && !/resumed/.test(l)).length;
     rmSync(out, { force: true });
   }
-  return { ...counts, status: r.status, stdout: r.stdout || "", stderr: r.stderr || "" };
+  return { ...counts, status: r.status, stdout, stderr };
 }
 
 /* ---------- the daemon, by its pid ---------- */
@@ -212,8 +221,8 @@ async function main() {
     const write = { hook_event_name: "PostToolUse", cwd: tmp, session_id: SESSION, tool_name: "Write", tool_input: { file_path: md, content: "x" }, tool_response: {} };
     // Outside a panel: the auto-send path alone, which is what every
     // `init-claude --auto` install runs on every Markdown write.
-    const r = runHook(BIN, env, write, { pane: null });
-    row("no daemon, .md Write: ms", r.ms, 1600, "Claude's turn waits this long");
+    const r = runHook(BIN, env, write, { pane: null, limit: 12_000 });
+    row("no daemon, .md Write: ms", r.ms, 1600, r.cut ? "cut at 12 s: the hook had not returned" : "Claude's turn waits this long");
     // A daemon started by the hook answers the port within a second or two
     // of the hook returning; one that was not started never does.
     await sleep(1500);
@@ -222,7 +231,7 @@ async function main() {
     if (started) await endWhatever(base);
     // And inside a panel, a session starting with no daemon: the brief is
     // asked for with a short wait and nothing printed.
-    const r2 = runHook(BIN, env, events[0][1]);
+    const r2 = runHook(BIN, env, events[0][1], { limit: 12_000 });
     row("no daemon, SessionStart: ms", r2.ms, 1600, "");
     row("no daemon, SessionStart: child processes", r2.execs, 0, "");
     if (await health(base)) { row("no daemon, SessionStart: daemons started", 1, 0, ""); await endWhatever(base); }

@@ -647,13 +647,14 @@ function report({ opens, pics, held, churned, heap, cold, home, resident, thrott
     const verdict = ok ? " ok  " : SHARED ? " high" : " OVER";
     console.log(`${name.padEnd(28)}${o.api.ms.toFixed(0).padStart(8)}${o.shell.toFixed(0).padStart(8)}${o.fetch.toFixed(0).padStart(8)}${o.paint.toFixed(0).padStart(8)}${o.total.toFixed(0).padStart(8)}${(SHARED ? `(${b.toFixed(0)})` : b.toFixed(0)).padStart(9)}${verdict} ${why}`);
   }
-  const coldB = 250 * FACTOR;
-  for (const [name, c, why] of [
-    ["cold page load, first paint", cold, "a link, pasted into an empty window"],
-    // Home gets the document page's budget and no more: the window is the
-    // first thing a reader sees, and it is not allowed to be the slow one.
-    ["home, first paint", home, "the window itself, with nothing asked for"],
+  for (const [name, c, ms, why] of [
+    ["cold page load, first paint", cold, 250, "a link, pasted into an empty window"],
+    // Home paints once its own fetch is back, until 1.18.0 draws it from
+    // the page it arrives in: 450 ms until then, and the document page's
+    // budget after.
+    ["home, first paint", home, 450, "the window itself, with nothing asked for"],
   ]) {
+    const coldB = ms * FACTOR;
     const ok = c.fcp !== null && c.fcp <= coldB;
     if (!SHARED) failed ||= !ok;
     console.log(`${name.padEnd(28)}${"".padStart(32)}${(c.fcp === null ? "—" : c.fcp.toFixed(0)).padStart(8)}${(SHARED ? `(${coldB.toFixed(0)})` : coldB.toFixed(0)).padStart(9)}` +

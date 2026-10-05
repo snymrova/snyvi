@@ -31,7 +31,12 @@
  *                    delete by rowid below is not the delete the daemon runs.
  *   fts-replace      Page misses for the delete the daemon runs on a save,
  *                    `DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM
- *                    docs WHERE id = ?)`, under 64 KB of pages.
+ *                    docs WHERE id = ?)`, under 64 KB of pages. The bench
+ *                    runs that statement itself, so this row holds the
+ *                    statement's cost, not the daemon's choice of it: a
+ *                    daemon gone back to deleting by id would still pass
+ *                    here. That is held in src/store/tests.rs, by counting
+ *                    the virtual machine's steps for the delete it runs.
  *
  * The 1.16 form, by id, is run on the same database and printed for the
  * record. It is not enforced: it is the number this bench exists to leave
@@ -47,7 +52,7 @@ const args = process.argv.slice(2);
 const CHECK = args.includes("--check");
 const KEEP = args.includes("--keep");
 const BIN = resolve(flag("--bin") || "./target/release/snyvi");
-const PORT = flag("--port") || "7818";   // 7816 restart.mjs, 7817 update.mjs; see the list in ui.mjs
+const PORT = flag("--port") || "7820";   // 7816 restart.mjs, 7817-7818 update.mjs (7818 its fake GitHub); see the list in ui.mjs
 const DOCS = Number(process.env.SNYVI_BENCH_DOCS || flag("--docs") || 500);
 /* 64 KB of pages, whatever the page size: one FTS5 structure read, the
  * row and its segment, and nothing like a scan. */

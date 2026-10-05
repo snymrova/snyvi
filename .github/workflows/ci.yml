@@ -176,6 +176,23 @@ jobs:
         # through, rolls back a build that will not start, and goes back on
         # request. Never the daemon on 7777, never GitHub.
         run: node bench/update.mjs
+      - name: What a hook costs the turn
+        # A daemon of its own on a spare port, and Claude Code's events fed
+        # to `snyvi hook` under strace: one connection and no thread per
+        # prompt, no snyvi at all for another server's tool, and with no
+        # daemon a Markdown save returns inside 1.6 s and starts nothing.
+        # Counts, so they hold on any runner. See the top of bench/hook.mjs.
+        run: |
+          command -v strace >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq strace; }
+          node bench/hook.mjs --check
+      - name: What a save costs the search index
+        # Five hundred plans in and saved again through a daemon of its own,
+        # then the database read with the sqlite3 shell: every index row on
+        # its document's rowid, and the delete a save runs under 64 KB of
+        # pages. See the top of bench/store.mjs.
+        run: |
+          command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
+          node bench/store.mjs --check
       - name: What the page weighs
         # The four assets the page cannot start without, fetched from a
         # daemon this starts and gzipped as it serves them -- not read out of
