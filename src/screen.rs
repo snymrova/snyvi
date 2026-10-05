@@ -385,6 +385,17 @@ impl Screen {
         self.clears
     }
 
+    /// `ESC [ 3 J`. The lines not yet framed go too, and count as gone:
+    /// `lines_ever` never goes back.
+    fn clear_scrollback(&mut self) {
+        self.sb_first += self.scrollback.len() + self.pushed.len();
+        self.scrollback.clear();
+        self.scrollback_bytes = 0;
+        self.pushed.clear();
+        self.sb_cleared = true;
+        self.clears += 1;
+    }
+
     /// When a synchronized update still open should be framed anyway -- the
     /// time it began plus `at_most` -- or `None` when there is none to wait
     /// for. A program that opens one and never closes it (it crashed, it was
@@ -1321,16 +1332,7 @@ impl vte::Perform for Screen {
                             self.erase(r, 0, self.cols);
                         }
                     }
-                    3 => {
-                        // The lines not yet framed went too, and count as
-                        // gone: `lines_ever` never goes back.
-                        self.sb_first += self.scrollback.len() + self.pushed.len();
-                        self.scrollback.clear();
-                        self.scrollback_bytes = 0;
-                        self.pushed.clear();
-                        self.sb_cleared = true;
-                        self.clears += 1;
-                    }
+                    3 => self.clear_scrollback(),
                     _ => {}
                 }
             }

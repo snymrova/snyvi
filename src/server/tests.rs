@@ -693,7 +693,8 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let (_tmp, router, leaves) = gated_router("snyvi-routes");
 
     // The table is the router. Git on Windows checks this file out with CRLF.
-    // `router`, and the panels' routes it merges.
+    // `router`, the panels' routes it merges, and the receive route it builds
+    // apart for its body limit.
     let src = include_str!("mod.rs").replace("\r\n", "\n");
     let routes_in = |name: &str| {
         let routed = &src[src.find(name).unwrap()..];
@@ -702,7 +703,9 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
             + routed.matches("post(").count()
             + routed.matches(".delete(").count()
     };
-    let n = routes_in("\nfn router(") + routes_in("\nfn pane_routes(");
+    let n = routes_in("\nfn router(")
+        + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn receive_route(");
     assert_eq!(
         n,
         ROUTES.len(),

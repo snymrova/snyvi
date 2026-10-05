@@ -351,6 +351,15 @@ fn pane_routes() -> Router<Arc<App>> {
 /// The test `every_route_answers_to_its_gate_and_to_this_host_only` sends a
 /// request to each of these; a route added here and not there fails it on
 /// the count, which is the point.
+/// The receive endpoint, taking up to what `receive` takes with room for
+/// the fields around the content: a send over axum's 2 MB default reaches
+/// it, and one over the cap is refused with its real size, not a bare 413.
+fn receive_route() -> axum::routing::MethodRouter<Arc<App>> {
+    post(receive_doc).layer(axum::extract::DefaultBodyLimit::max(
+        receive::MAX_BYTES + 64 * 1024,
+    ))
+}
+
 fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/", get(shell_home))
@@ -375,15 +384,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/workflows/{id}/tree", get(workflow_tree))
         .route("/api/inbox", get(inbox))
         .route("/api/search", get(search))
-        // Up to what `receive` takes, with room for the fields around the
-        // content, so a send over axum's 2 MB default reaches it and one
-        // over the cap is refused with its real size, not a bare 413.
-        .route(
-            "/api/docs",
-            post(receive_doc).layer(axum::extract::DefaultBodyLimit::max(
-                receive::MAX_BYTES + 64 * 1024,
-            )),
-        )
+        .route("/api/docs", receive_route())
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
         .route("/api/docs/{id}/read", post(mark_read))
