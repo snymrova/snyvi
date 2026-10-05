@@ -38,6 +38,10 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/pane.rs` | 2175 | a PTY and the process on it; `SNYVI_SESSION` and key values into the env |
 | `src/screen.rs` | 1995 | vte → cells → frames the page paints |
 | `src/prompt.rs` | 571 | snyvi's own shell prompt |
+| `src/studio.rs` | — | the studio desk: its folder, its hides, the agent's command |
+| `src/studio/folder.rs` | — | a studio folder read from disk: the tree, one folder's files, folder.json, the ★, spend |
+| `src/studio/brief.rs` | — | the studio block of the brief (folders, scripts), and what the agent hears next |
+| `src/server/api_studio.rs` | — | the studio desk's routes, and the agent's `read_studio` |
 | `src/secrets.rs` | 282 | desk key values: keychain on macOS/Windows, 0600 file on Linux |
 | `src/capability.rs` | 184 | the window's 32-byte capability, minted per launch, saved 0600 |
 | `src/config.rs` | 101 | paths, port, the write token |
@@ -75,6 +79,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/index.html`, `ui/boot.js`, `ui/app.css`, `ui/themes.css` | — | first paint | shell, theme before paint, styles |
 | `ui/app/01-shell.js` … `10-boot.js` | 119–871 each | first paint | `app.js`, as ten parts in one function scope: shell and helpers, tree, queue and what moved, documents and connect, notes and live refresh, the rail, navigation, desks, what snyvi says back, boot. `build.rs` joins them in name order |
 | `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
+| `ui/studio/01-new.js` … `09-style.js` | — | lazy | `studio.js`: New studio desk, the viewer (grid and large view), the rail's folder rows, ★ and hide |
 | `ui/home.js` | 1221 | lazy | Home |
 | `ui/about.js` | 1025 | lazy | About, updates that ask |
 | `ui/mmd.js` | 987 | lazy | Mermaid driver |

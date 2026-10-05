@@ -169,6 +169,21 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    `every_desk_route_is_behind_the_gate` holds the order of those checks,
    and that the store is reached for nothing else.
 
+6. **A studio desk runs nothing of its own, and calls no model.** What
+   makes a picture is the agent's own tools in its panel, and the scripts it
+   keeps in `.scripts/`, which snyvi never runs. snyvi reads the files it
+   writes and writes into the folder one thing: the reader's ★, as a name in
+   `picks` of that folder's `folder.json`, every other field kept, never over
+   a `folder.json` that does not parse
+   (`a_star_lands_in_folder_json_and_keeps_the_rest`). A hide is snyvi's own
+   row. `read_studio` (token + running pane on a studio desk) answers names,
+   never a key's value or another desk. The media route
+   (`/api/studio/{id}/raw/…`) is behind the host gate alone, as browse mode's
+   raw route is: an `<img>` cannot carry the capability, it serves only
+   pictures, video and sound, inert, from the folder the reader chose, and
+   nothing outside it or in a dot-folder
+   (`nothing_is_read_outside_the_studio_folder`).
+
 One consequence to know about: **a capability dies with the daemon that
 minted it.** After a restart or an upgrade, an open window's socket is
 refused, and the desk says so and asks for the window to be reopened.

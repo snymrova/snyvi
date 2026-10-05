@@ -7,21 +7,13 @@ async function act(b, byKey) {
   const e0 = rowErr;
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
+  // The studio's rows in the rail are studio.js's to act on.
+  if (a && a.startsWith("st-")) { if (st && st.railAct) st.railAct(b); return; }
   try {
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
-    else if (a === "new") {
-      // Pressed while it cannot: it says why, as ⌃⌥N does.
-      const why = noNew(d);
-      if (why) return ctx.toast("New panel", why);
-      const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
-      focused = j.pane.id;
-      await ctx.refresh();
-      // Asking for a pane is asking for a shell: it starts, and the Start bar
-      // is for a pane whose process ended, not one just made.
-      const nv = views.get(j.pane.id);
-      if (nv) { await run(nv, ""); nv.body.focus(); }
-    } else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
+    else if (a === "new") { const why = noNew(d); if (why) return ctx.toast("New panel", why); await newPane(d); }
+    else if (a === "stop" && v) await ctx.api(`/api/panes/${v.id}/stop`, {});
     else if (a === "start" && v) run(v, v.start.querySelector("input").value);
     else if (a === "all") { for (const x of views.values()) if (!x.status.running) await run(x, x.status.cmd || x.pane.cmd || ""); }
     else if (a === "close" && v) await closePanel(v, byKey);
@@ -182,6 +174,19 @@ async function act(b, byKey) {
         () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
   } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e); }
+}
+
+/** A new panel on desk `d`, started and focused: the + and ⌃⌥N, once
+ *  `noNew` has said it can. Asking for a pane is asking for a shell -- the
+ *  Start bar is for a pane whose process ended, not one just made -- and a
+ *  studio desk's one panel is its Claude, in its folder. */
+async function newPane(d) {
+  const studio = d.kind === "studio";
+  const j = await ctx.api(`/api/desks/${d.id}/panes`, studio ? { cmd: "claude" } : {});
+  focused = j.pane.id;
+  await ctx.refresh();
+  const nv = views.get(j.pane.id);
+  if (nv) { await run(nv, studio ? j.pane.cmd || "claude" : ""); nv.body.focus(); }
 }
 
 /** What each of the rail's other buttons was asked to do, for its error. */
@@ -470,6 +475,7 @@ export function open(c) {
   style();
   if (first) measure();
   if (deskId !== c.id) {
+    if (st) st.unmount();
     for (const v of [...views.values()]) dropView(v);
     docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); hidePoints();
     focused = null; full = false; keysClose();
@@ -566,6 +572,8 @@ export function textSize(step) {
 export function actions(el) {
   const R = "rule", d = current();
   if (!d) return null;
+  // A file in the viewer, a folder in the rail: the studio's to offer.
+  if (st && d.kind === "studio" && el.closest(".st, .st-view, .dk-sf")) return st.actions(el);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
   if (pane) {
     const id = pane.matches(".dk-pane") ? pane.querySelector("[data-focus]")?.dataset.focus : pane.closest(".pn")?.dataset.id;
@@ -659,6 +667,8 @@ export const isFull = () => full;
 export const startAll = () => act({ dataset: { a: "all" } });
 export const renameHere = () => { const d = current(); if (d) renameDesk(d); };
 export const keysHere = () => { const d = current(); if (d) keysSheet(d); };
+/** The studio desk's folder, pointed elsewhere: its ⋯ menu. */
+export const studioHere = () => { if (st) st.studioFolder(); };
 
 export function update(desks) {
   if (!ctx) return;
@@ -669,6 +679,7 @@ export function update(desks) {
   if (reading != null) { if (d) { sync(d); rail(); } else { ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = ""; } return; }
   if (!d || !ctx.docEl.querySelector(".dk")) { draw(); return; }
   ctx.docEl.querySelector(".dk-name").textContent = d.name;
+  if (d.kind === "studio" && st) st.update();
   sync(d);
   rail();
 }
@@ -689,6 +700,7 @@ export function aside(docId) {
 
 export function close() {
   if (!ctx) return;
+  if (st) st.unmount();
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
   deskId = null; reading = null;

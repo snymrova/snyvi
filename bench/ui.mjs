@@ -2425,10 +2425,13 @@ async function projectDeskRows(cdp, base, token, tmp) {
     await p.clickOn("#desk-nav .s-add");
     const asked = await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
     const menu = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`) : [];
+    // The places first, the home folder last of them; the studio, another
+    // kind of desk, under its own rule after them.
     const none = (await desks()).length === before, at = proj ? menu.indexOf(proj.name) : -1;
-    rows.push(["+ New desk asks where first", asked && none && at >= 0 && /home folder/.test(menu[menu.length - 1] || ""),
+    const places = menu.filter(t => t !== "Studio desk…"), homeLast = /home folder/.test(places[places.length - 1] || "") && menu[menu.length - 1] === "Studio desk…";
+    rows.push(["+ New desk asks where first", asked && none && at >= 0 && homeLast,
       !proj ? "the probe's sends made no project on its folder" : !asked ? "no menu under the +" : !none ? "a desk was made before anything was chosen"
-        : at < 0 ? `the project is not offered: ${menu.join(" · ")}` : !/home folder/.test(menu[menu.length - 1] || "") ? `the home folder is not last: ${menu.join(" · ")}` : `${menu.join(" · ")}, and no desk yet`]);
+        : at < 0 ? `the project is not offered: ${menu.join(" · ")}` : !homeLast ? `the home folder is not last of the places, then the studio: ${menu.join(" · ")}` : `${menu.join(" · ")}, and no desk yet`]);
 
     if (at >= 0) {
       await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.trim() === ${JSON.stringify(proj.name)})`)}"]`);

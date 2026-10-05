@@ -372,7 +372,9 @@ function header(v) {
   const c = $(".pn-cmd");
   // Its title as the rail writes it: Claude Code puts its spinner's frame at
   // the front (◑, ✳), and the state beside it already says it is working.
-  if (c) { c.textContent = short(v); v.pane.name && v.status.title ? (c.dataset.tip = v.status.title) : delete c.dataset.tip; }
+  // The studio desk's one panel is its Claude, and says so: never the
+  // command line it was started with.
+  if (c) { c.textContent = current()?.kind === "studio" ? v.pane.name || "Claude" : short(v); v.pane.name && v.status.title ? (c.dataset.tip = v.status.title) : delete c.dataset.tip; }
   // The branch and whether the tree is modified: snyvi's own answer, not the
   // prompt's, so a pane whose shell it cannot dress says both too.
   $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";

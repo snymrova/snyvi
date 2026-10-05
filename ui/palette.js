@@ -111,10 +111,13 @@ function deskItems(q) {
     // Until the words are nearly typed, one row that opens the list, so an
     // "n" is not answered with every project.
     const w = l.slice(9).trim();
-    if (l.length < 5) out.push({ cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell" });
+    if (l.length < 5) out.push({ cmd: "desk", t: "New desk…", s: "For a project, another folder, a shell, or a studio" });
     else {
       for (const f of d.places()) if (!w || f.name.toLowerCase().includes(w)) out.push({ newdesk: f, t: `New desk · ${f.name}`, s: f.abs });
       if (!w) out.push({ newdesk: "home", t: "New desk · a shell", s: state.desks.home || "~" });
+      // The studio, while there is none open: the one there is is a desk row below.
+      if ((!w || "studio".startsWith(w)) && !state.desks.desks.some(k => k.kind === "studio"))
+        out.push({ studio: true, t: "New desk · studio", s: state.desks.studio_closed ? "Your studio desk, back as you left it" : "Pictures, video and sound, with Claude making them" });
     }
   }
   for (const k of state.desks.desks) if (!l || k.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: k.id, t: `Desk · ${k.name}`, s: k.root });
@@ -127,7 +130,7 @@ const COMMANDS = [
   { cmd: "home", t: "Home", key: "h", s: "What needs you, the desks, and what is waiting" },
   { cmd: "inbox", t: "Inbox", key: "i", s: "Every document, newest first" },
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
-  { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
+  { cmd: "desk", t: "New desk…", s: "For a project, another folder, a shell, or a studio", window: true },
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
   { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
   { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
@@ -219,7 +222,7 @@ function pick(it) {
   }
   const { state } = d;
   it.theme ? d.setTheme(it.theme) : it.pick ? d.act("pick") : it.line ? d.gotoLine(it.line)
-    : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? d.showDesk(it.desk, true)
+    : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.studio ? d.act("studioDesk") : it.desk ? d.showDesk(it.desk, true)
       : it.file ? d.showBrowse(state.browseRoot.id, it.file, true) : d.showDoc(it.id, true);
 }
 

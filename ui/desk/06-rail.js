@@ -55,7 +55,7 @@ function rail() {
   const { esc } = ctx, j = ctx.desks;
   const dot = v => v.status.blocked ? "!" : v.status.agent === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
-  const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} open on every desk`;
+  const here = `${d.panes.length} of ${capOf(d)} on this desk`, total = `${j.panes} open on every desk`;
   const why = noNew(d);
   const dl0 = docsAt === d.id ? docList : [];
   // A row just removed keeps its place through a read that no longer has it.
@@ -84,6 +84,12 @@ function rail() {
       `</span></li>` +
       (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc);
   };
+  // A panel just closed keeps its row, with its Undo.
+  const closed = closedRow && closedRow.desk === d.id
+    ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "";
+  // A studio desk's rail opens on its Claude and its folders, where a
+  // terminal desk's lists its panels (`studioTop`).
+  const studio = d.kind === "studio";
   // Replacing the rail takes the focus off whatever had it. A field open on
   // the list has to know that is what happened, and not a reader clicking
   // away, so the replacement says so while it is under way.
@@ -91,16 +97,16 @@ function rail() {
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
-    `<div data-part="rail.panels"><div class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
-    `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
-      ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
+    (studio ? studioTop(d, vs, dot, closed, esc) :
+    `<div data-part="rail.panels"><div class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${capOf(d)}</i></span></div>` +
+    `<ul class="dk-panes">` + vs.map(paneRow).join("") + closed + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></div>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></div>`) +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded. The row's
     // [n] says which panel sent it.
-    `<details class="dk-sec" data-sec="docs" data-part="rail.docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" data-tip="Documents" data-tip-sub="What the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${live.length ? `<span class="n">${live.length}${waiting ? ` · <b>${waiting} waiting</b>` : ""}</span>` : ""}</summary>` +
+    `<details class="dk-sec" data-sec="docs" data-part="rail.docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" data-tip="Documents" data-tip-sub="${studio ? "What Claude has sent you" : "What the panels on this desk have sent"}, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${live.length ? `<span class="n">${live.length}${waiting ? ` · <b>${waiting} waiting</b>` : ""}</span>` : ""}</summary>` +
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. One line of title, then who sent it and
     // when: the panel by the name it was started with, which holds still, and
@@ -109,7 +115,7 @@ function rail() {
     // opens them here, met where the scroll runs out rather than under it.
     (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
       (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
-      : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
+      : docsOff === d.id ? noReach("docs") : offs.length ? "" : studio ? `<p class="dk-empty">What Claude sends you lands here: briefs, plans, notes on the work.</p>` : waitingFirst(d)) +
     // What the reader removed from this list, named, and there to open or put back.
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
       (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
@@ -122,6 +128,33 @@ function rail() {
   // tick of the clock.
   if (drew) { vs.forEach(named); noteFocus(); docsScroll(docsTop); loadImgs(); }
   meta();
+}
+
+/** The top of a studio desk's rail: its one Claude, as a row that says what
+ *  it is doing, with stop and start; what it all cost; and Assets, its folders as
+ *  studio.js read them (`railRows`), each a click from the viewer. Before
+ *  studio.js is in, Assets says it is being read. */
+function studioTop(d, vs, dot, closed, esc) {
+  const v = vs[0], s = v && v.status;
+  const need = s && (s.agent === "needs_you" || s.blocked);
+  const word = !v ? "not started" : need ? "needs you" : s.agent === "working" ? "working" : s.agent === "done" ? "done" : s.running ? "ready" : "stopped";
+  const cp = s ? ctxPct(s) : null;
+  const claude = v
+    // Never marked as the one on the page: on a studio desk that is the
+    // folder open, and two marked rows would say neither.
+    ? `<li class="dk-pane dk-claude${need ? " blk" : s.running ? " run" : ""}">` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="nm">Claude</span><span class="dk-word">${word}</span>${cp == null ? "" : `<span class="${ctxCls(cp)}">${cp}%</span>`}</button>` +
+      `<span class="dk-tools">` +
+      (s.running ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop Claude" aria-label="Stop Claude">${ico("stop")}</button>`
+        : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start Claude" aria-label="Start Claude">${ico("play")}</button>`) +
+      (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" data-tip="Resume conversation" data-tip-sub="${s.running ? `Types ${esc(resumeWord(v))} into the shell, for you to run` : "The one Claude last had here"}" aria-label="Resume Claude's conversation">${ico("again")}</button>` : "") +
+      `</span></li>` + (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc)
+    : closed ? "" : `<li class="dk-pane dk-claude"><button type="button" class="dk-focus" data-a="new"><span class="dot">○</span><span class="nm">Claude</span><span class="dk-word">${word}</span></button>` +
+      `<span class="dk-tools"><button type="button" data-a="new" data-tip="Start Claude" aria-label="Start Claude">${ico("play")}</button></span></li>`;
+  const r = st && st.railRows ? st.railRows() : null;
+  return `<div data-part="rail.claude"><ul class="dk-panes">${claude}${closed}</ul>${r ? r.spent : ""}</div>` +
+    `<details class="dk-sec" data-sec="assets" data-part="rail.assets"${secFolded("assets") ? "" : " open"}><summary class="t-label dk-lab" data-tip="Assets" data-tip-sub="What Claude made, in the folders it arranged · a click shows one in the viewer">Assets<span class="s-chev" aria-hidden="true"></span>${r && r.n ? `<span class="n">${r.n}</span>` : ""}</summary>` +
+    (r ? r.folders : `<p class="dk-empty">Reading…</p>`) + `</details>`;
 }
 
 /** A document's row in the rail, or the row it leaves behind when it is
@@ -242,6 +275,8 @@ function named(v) {
   const here = v.status.cwd || v.pane.cwd;
   b.dataset.tip = what(v);
   if (here) b.dataset.tipSub = tilde(here); else delete b.dataset.tipSub;
+  // The studio's row says Claude and what it is doing, drawn with the rail.
+  if (b.closest(".dk-claude")) return;
   b.querySelector(".nm").textContent = short(v);
   const cp = ctxPct(v.status);
   let c = b.querySelector(".ctx");

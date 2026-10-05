@@ -26,6 +26,11 @@ pub(crate) const MMD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/mmd.js")
 /// desk pays nothing for it.
 pub(crate) const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
 
+/// A studio desk's view and New desk's studio dialog, joined from
+/// ui/studio/*.js: fetched the first time either is asked for, so a reader
+/// with only terminal desks never fetches it.
+pub(crate) const STUDIO_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/studio.js"));
+
 /// The window's frame -- the bar's three buttons and what drags -- fetched
 /// only inside the native window, since a tab has no window to frame.
 pub(crate) const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
@@ -498,6 +503,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("mmd.js", MMD_JS, JS),
     // The desk view, on the same terms as the diagram driver.
     ("desk.js", DESK_JS, JS),
+    ("studio.js", STUDIO_JS, JS),
     ("frame.js", FRAME_JS, JS),
     ("game.js", GAME_JS, JS),
     ("about.js", ABOUT_JS, JS),

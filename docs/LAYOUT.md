@@ -49,6 +49,21 @@ The Documents list is a box of its own height (`min(360px, 45vh)`) and
 scrolls inside the rail, so a long day of sends never pushes Notes out of
 reach.
 
+## A studio desk
+
+`main.page` on a studio desk is its viewer over its one panel, and its rail
+opens on its Claude and its Assets.
+
+| Name | What it is | Where |
+|---|---|---|
+| `studio` | the viewer, between the desk's head and its panel | `.st-host` · `studioFrame()` in `desk.js` |
+| `studio.viewer` | the open folder's pictures, videos and sounds as a grid; one of them large in the same space, with its thin bar (★ Keep, Tell Claude…, Info) | `drawGallery()` · `04-gallery.js`, `openView()` · `05-view.js` |
+| `studio.agent` | the one panel, docked under the line that is dragged (`.st-div`) | `.dk-grid` |
+| `rail.claude` | in place of `rail.panels`: one row for Claude (what it is doing, stop, start), and what it all cost | `studioTop()` · `desk/06-rail.js`, `railRows()` · `studio/03-rail.js` |
+| `rail.assets` | Assets: the studio folder's folders, three deep, titled and ordered by their `folder.json`; a click opens one in the viewer | `railRows()` · `studio/03-rail.js` |
+
+`rail.docs`, `rail.notes` and `rail.points` are a desk's, as on any desk.
+
 ## Home
 
 | Name | What it is | Where |

@@ -371,6 +371,9 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // were made in, so nothing moves on the upgrade.
     (2, desk::POS_COLUMN),
     (2, "UPDATE desks SET pos = id"),
+    // 1.15: a desk's kind, and a studio desk's folder.
+    (3, desk::KIND_COLUMNS[0]),
+    (3, desk::KIND_COLUMNS[1]),
 ];
 
 /// Bring a database to the newest version in `MIGRATIONS`.
@@ -415,6 +418,8 @@ impl Store {
         // Desks live in the same database and in tables of their own; see
         // `crate::desk` for why that separation is the whole of the boundary.
         conn.execute_batch(desk::SCHEMA)?;
+        // A studio desk's own rows: hides.
+        conn.execute_batch(crate::studio::SCHEMA)?;
         // Migrations for databases created before these columns existed.
         // Keys used to be case-sensitive, so the same workflow could exist twice.
         // Fold the duplicates into the oldest row; harmless once there are none.
@@ -1353,6 +1358,20 @@ impl Store {
 
     pub fn create_desk(&self, root: &str, name: Option<&str>) -> Result<Desk> {
         desk::create(&self.conn.lock().unwrap(), root, name, now())
+    }
+
+    /// A studio desk on `folder`, which is both where its panel starts and
+    /// what its viewer shows, named for the folder unless `name` says.
+    pub fn create_studio_desk(&self, folder: &str, name: Option<&str>) -> Result<Desk> {
+        let conn = self.conn.lock().unwrap();
+        let name = desk::name_for(&conn, folder, name)?;
+        desk::create_studio(&conn, folder, Some(&name), folder, now())
+    }
+
+    /// Run `f` on the database, for `crate::studio`, whose tables are its
+    /// own and whose queries live beside them, as `desk`'s do.
+    pub fn studio<T>(&self, f: impl FnOnce(&mut rusqlite::Connection) -> Result<T>) -> Result<T> {
+        f(&mut self.conn.lock().unwrap())
     }
 
     pub fn reorder_desks(&self, ids: &[i64]) -> Result<bool> {

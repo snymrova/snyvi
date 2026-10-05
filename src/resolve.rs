@@ -164,15 +164,15 @@ mod tests {
     fn a_folder_has_no_line_and_a_name_with_a_colon_is_still_found() {
         let t = tree();
         let desk = t.path().join("desk").canonicalize().unwrap();
-        let f = find("src", &[desk.clone()], None).unwrap();
+        let f = find("src", std::slice::from_ref(&desk), None).unwrap();
         assert!(f.dir && f.line.is_none());
-        let f = find("./src/", &[desk.clone()], None).unwrap();
+        let f = find("./src/", std::slice::from_ref(&desk), None).unwrap();
         assert_eq!(f.path, desk.join("src"));
         // Not a name Windows allows.
         #[cfg(unix)]
         {
             std::fs::write(desk.join("a:12"), "x").unwrap();
-            let f = find("a:12", &[desk.clone()], None).unwrap();
+            let f = find("a:12", std::slice::from_ref(&desk), None).unwrap();
             assert_eq!((f.path, f.line), (desk.join("a:12"), None));
         }
     }
@@ -188,7 +188,10 @@ mod tests {
         let abs = home.join(".claude/settings.json");
         assert_eq!(find(abs.to_str().unwrap(), &[], None).unwrap().path, abs);
         // A base is not needed, and not used: an absolute path is itself.
-        assert_eq!(find("/no/such/snyvi/path", &[home.clone()], None), None);
+        assert_eq!(
+            find("/no/such/snyvi/path", std::slice::from_ref(&home), None),
+            None
+        );
     }
 
     #[test]

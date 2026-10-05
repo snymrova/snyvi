@@ -992,6 +992,29 @@ pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Res
     }
 }
 
+/// What the studio desk this pane is on has (`read_studio`).
+pub fn read_studio(paths: &Paths, pane: &str) -> Result<Value> {
+    let token = config::read_token(paths).ok_or_else(|| {
+        anyhow!(
+            "no token at {}; is the daemon running as this user?",
+            paths.token_path.display()
+        )
+    })?;
+    let mut resp = ureq::get(&format!("{}/api/panes/{pane}/studio", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .context("asking snyvi")?;
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        404 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// A write an agent makes on its own pane, `/api/panes/{path}`, with the token.
 fn pane_post(paths: &Paths, path: &str, body: Value) -> Result<ureq::http::Response<ureq::Body>> {
     let token = config::read_token(paths).ok_or_else(|| {

@@ -693,6 +693,10 @@ pub(crate) struct TerminalBody {
     pub(crate) desk: Option<i64>,
     /// A project's root, as the sidebar's project rows know it.
     pub(crate) project: Option<i64>,
+    /// With `desk`, a folder on the studio desk, relative to its folder ("" for
+    /// the folder itself), resolved inside it as the media route is.
+    #[serde(default)]
+    pub(crate) board: Option<String>,
 }
 
 /// The directory a terminal would open in for a document, if one exists.
@@ -824,7 +828,15 @@ pub(crate) fn folder_of(app: &App, b: &TerminalBody) -> Option<std::path::PathBu
             .flatten()
             .and_then(|d| doc_folder(app, &d))
     } else if let Some(id) = b.desk {
-        app.store.desk(id).ok().flatten().map(|d| d.root.into())
+        let d = app.store.desk(id).ok().flatten()?;
+        match &b.board {
+            Some(rel) if d.kind == crate::desk::STUDIO => std::path::Path::new(&d.boards)
+                .canonicalize()
+                .ok()
+                .and_then(|boards| crate::studio::folder::resolve(&boards, rel).ok())
+                .and_then(dir_of),
+            _ => Some(d.root.into()),
+        }
     } else if let Some(id) = b.project {
         app.store.project_root(id).map(Into::into)
     } else {
