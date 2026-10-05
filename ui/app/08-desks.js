@@ -437,10 +437,9 @@
       // away any more: the sidebar never holds back something waiting to be
       // read. Taking it out of the set is enough -- the refresh below draws it.
       if (d && away.delete(String(d.project_id))) saveAway();
-      // One project moved, and the event carries its row and rows: they go
-      // in and the sidebar is drawn once (`patchTree`), where a save used to
-      // refetch the tree and the project. The fetch remains for a daemon
-      // that sends no rows, and for a lifted cap the rows would re-cap.
+      // A save in place carries its project's row and rows: they go in and
+      // the sidebar is drawn once (`patchTree`), where a save used to
+      // refetch the tree and the project. An arrival still fetches.
       // An overwrite of a document already here is not an arrival: refresh it where
       // it is if it is on screen, never navigate to it, and never toast — a file
       // being watched changes on every save.
@@ -474,9 +473,8 @@
       if (!opens) wash([d.id]);
       holdQueue();   // a burst's events carry counts ahead of the rows this page holds
       state.cache.delete(d.id);
-      const patched = patchTree(j);
       renderTree(); markActive();
-      if (!patched) await refreshTree(d.project_id);
+      await refreshTree(d.project_id);
       deskDocs();
       // First in the library, wherever the reader is -- on a desk, most
       // often -- and not just first into an empty inbox: a reader with a

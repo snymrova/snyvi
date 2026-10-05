@@ -610,30 +610,33 @@
     markActive();
   }
 
-  /** A `doc` event carries the one project that moved: its row as /api/tree
-   *  has it, and its sessions as /api/projects/{id}/tree has them under the
-   *  default caps. Put in here, so a save fetches nothing (audit finding 4:
-   *  a file saved every few seconds pulled the tree and the project back down
-   *  every few seconds). The row goes where /api/tree would put it. The
-   *  sessions replace what this tab holds only when it holds the project,
-   *  and never when a cap the reader lifted, or the session being read,
-   *  would come back capped: then it is false, and the fetch it was. */
+  /** A save in place carries the one project that moved: its row as
+   *  /api/tree has it, and its sessions as /api/projects/{id}/tree has them
+   *  under the default caps. Put in here, so a save fetches nothing (audit
+   *  finding 4: a file saved every few seconds pulled the tree and the
+   *  project back down every few seconds). Only for a save in place, which
+   *  adds and takes away no row: a session this tab holds whole and the
+   *  event capped keeps the rows past the cap as they were. False, and the
+   *  fetch it was, for a daemon that sends no rows or a cap the reader
+   *  lifted. An arrival still fetches: it moves rows between versions. */
   function patchTree(j) {
     const p = j.project, rows = j.rows;
     if (!p || !Array.isArray(rows)) return false;
-    const pid = String(p.id);
+    const pid = String(p.id), had = state.sub.get(pid);
+    if (had && liftedCaps.has(pid)) return false;
     state.tree = state.tree.filter(x => String(x.id) !== pid).concat(p)
       .sort((a, b) => (b.latest || 0) - (a.latest || 0) || b.id - a.id);
     treeOff = false;
-    const had = state.sub.get(pid);
     if (!had) return true;
-    if (liftedCaps.has(pid)) return false;
-    const whole = w => liftedWorkflows.has(w.id) || (state.doc && state.doc.workflow_id === w.id);
-    for (const w of had) {
-      const r = whole(w) && rows.find(x => x.id === w.id);
-      if (whole(w) && (!r || r.docs.length < r.total)) return false;
-    }
-    state.sub.set(pid, rows);
+    const whole = w => liftedWorkflows.has(w.id) || state.doc?.workflow_id === w.id;
+    const next = rows.map(r => {
+      const w = had.find(x => x.id === r.id);
+      if (!w || !whole(w) || r.docs.length >= r.total) return r;
+      const ids = new Set(r.docs.map(d => d.id));
+      return { ...r, docs: r.docs.concat(w.docs.filter(d => !ids.has(d.id))) };
+    });
+    for (const w of had) if (whole(w) && !next.some(x => x.id === w.id)) next.unshift(w);
+    state.sub.set(pid, next);
     return true;
   }
 
