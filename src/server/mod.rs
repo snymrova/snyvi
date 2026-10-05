@@ -11,7 +11,6 @@ mod api_agent;
 mod api_browse;
 mod api_desk;
 mod api_docs;
-mod api_studio;
 mod assets;
 mod auth;
 mod events;
@@ -24,7 +23,6 @@ use api_agent::*;
 use api_browse::*;
 use api_desk::*;
 use api_docs::*;
-use api_studio::*;
 use assets::*;
 use auth::*;
 use events::*;
@@ -170,9 +168,6 @@ pub struct App {
     /// The account's rate-limit windows, as the last status line in a panel
     /// said them: account-wide, so the latest is the one. Home's quota.
     pub quota: std::sync::Mutex<Option<serde_json::Value>>,
-    /// What the reader did in the studio desk's viewer, for its agent at its
-    /// next prompt (`crate::studio::brief::Live`).
-    pub studio: crate::studio::brief::Live,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -320,7 +315,6 @@ fn new_app(
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
         quota: Default::default(),
-        studio: Default::default(),
     })
 }
 
@@ -349,22 +343,6 @@ fn pane_routes() -> Router<Arc<App>> {
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
         )
-}
-
-/// A studio desk's routes (`api_studio`), merged into `router` as a
-/// panel's are, so it stays one screen; the route table in `tests` counts
-/// these too.
-fn studio_routes() -> Router<Arc<App>> {
-    Router::new()
-        .route("/api/studio/pick", post(studio_pick))
-        .route("/api/desks/{id}/studio-folder", post(studio_folder))
-        .route("/api/studio/{id}/look", get(studio_look))
-        .route("/api/studio/{id}/keep", post(studio_keep))
-        .route("/api/studio/{id}/hide", post(studio_hide))
-        .route("/api/studio/{id}/unhide", post(studio_unhide))
-        .route("/api/studio/{id}/raw/{*rel}", get(studio_raw))
-        .route("/api/studio/{id}/selection", post(studio_selection))
-        .route("/api/panes/{id}/studio", get(pane_read_studio))
 }
 
 /// Every route -- a panel's merged in from `pane_routes` -- and the one layer
@@ -480,7 +458,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
-        .merge(studio_routes())
         .merge(pane_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))

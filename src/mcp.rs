@@ -125,9 +125,6 @@ struct Session {
     // The client's name from `initialize`, kept for every send after it, so
     // the connect page can say which agent last worked and when.
     sender: Option<String>,
-    // A studio desk's panel: its folder is in the environment
-    // (`SNYVI_STUDIO`), and read_studio is offered.
-    studio: bool,
 }
 
 /// A tool's handler: the arguments in, the `result` of `tools/call` out.
@@ -146,7 +143,6 @@ const TOOLS: &[(&str, Tool)] = &[
     ("suggest_desk_note", Session::suggest_desk_note),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
-    ("read_studio", Session::read_studio),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -160,7 +156,6 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
             .ok()
             .filter(|p| crate::pane::valid_id(p)),
         sender: None,
-        studio: std::env::var("SNYVI_STUDIO").is_ok_and(|b| !b.is_empty()),
     };
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
@@ -250,9 +245,6 @@ impl Session {
                         leave_off_spec(),
                         name_spec(),
                     ]);
-                }
-                if self.pane.is_some() && self.studio {
-                    tools.push(read_studio_spec());
                 }
                 Ok(json!({ "tools": tools }))
             }
@@ -410,22 +402,6 @@ impl Session {
         }
     }
 
-    fn read_studio(&self, _args: &Value) -> Value {
-        match self
-            .pane
-            .as_deref()
-            .map(|p| client::read_studio(&self.paths, p))
-        {
-            Some(Ok(v)) => json!({
-                "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }],
-                "structuredContent": v,
-                "isError": false
-            }),
-            Some(Err(e)) => said(format!("snyvi could not read the studio: {e}"), true),
-            None => said("This session is not running in a snyvi desk.", true),
-        }
-    }
-
     fn leave_off(&self, args: &Value) -> Value {
         let text = arg(args, "text");
         match self.pane.as_deref() {
@@ -563,20 +539,6 @@ fn suggest_spec() -> Value {
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
-    })
-}
-
-const READ_STUDIO_DESCRIPTION: &str = "What this studio desk has: its folder, what the user has open in the viewer, \
-the key names on it (their values are in your environment), and the scripts kept in .scripts/. The user's stars are \
-in each folder's folder.json picks.";
-
-fn read_studio_spec() -> Value {
-    json!({
-        "name": "read_studio",
-        "title": "Read this studio desk",
-        "description": READ_STUDIO_DESCRIPTION,
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
     })
 }
 

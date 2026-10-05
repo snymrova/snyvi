@@ -84,8 +84,6 @@
     // A desk is panels, so it is drawn as four of them; the prompt is kept
     // for a real shell, and a desk no longer looks like one.
     desk: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.8"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.8"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.8"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.8"/>',
-    // A studio desk is a gallery: a frame with a picture in it.
-    studio: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m4.5 18 5-5 3 3 2.5-2.5 4.5 4.5"/>',
     folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/>',
     doc: '<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M9 13h6M9 16.5h6"/>',
     // One glyph per concept (docs/DESIGN.md §8.3), drawn, never typed: a
@@ -195,7 +193,7 @@
    *  the same project, and this is where the sidebar says so. */
   /** The desk's live state on its project's row, in the Desks rows' colours:
    *  a panel running, or one waiting on the reader. Idle says nothing. */
-  const deskState = d => { const m = mark3(d.panes, d); return m === "!" ? " blk" : m === "●" ? " on" : ""; };
+  const deskState = d => { const m = mark3(d.panes); return m === "!" ? " blk" : m === "●" ? " on" : ""; };
   /** One folder however it was spelled: a trailing slash is not another place. */
   const sameRoot = (a, b) => !!a && !!b && a.replace(/(.)\/+$/, "$1") === b.replace(/(.)\/+$/, "$1");
   const projDeskBtn = p => {

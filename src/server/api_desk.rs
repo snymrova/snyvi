@@ -149,19 +149,8 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                     })
                 })
                 .collect();
-            // A studio desk's card shows its newest pictures.
-            let thumbs = if d.kind == crate::desk::STUDIO {
-                let thumbs = std::path::Path::new(&d.boards)
-                    .canonicalize()
-                    .map(|b| crate::studio::folder::newest(&b, 4))
-                    .unwrap_or_default();
-                json!(thumbs.into_iter().map(|(rel, kind)| json!({ "rel": rel, "kind": kind })).collect::<Vec<_>>())
-            } else {
-                json!([])
-            };
             json!({
                 "id": d.id, "name": d.name, "root": d.root, "left_off": d.left_off,
-                "kind": d.kind, "thumbs": thumbs,
                 "visited_at": d.visited_at, "parked": d.parked, "touched": touched,
                 "panes": panes, "open": open, "done": notes_done, "suggested": suggested, "next": next,
                 "last": last, "git": git.as_deref(), "pulse": pulse,
@@ -316,14 +305,6 @@ pub(crate) struct NewDeskBody {
     pub(crate) project: Option<i64>,
     #[serde(default)]
     pub(crate) name: Option<String>,
-    /// `"studio"` for a studio desk; anything else, or nothing, is a
-    /// terminal desk. Fixed once the desk is made.
-    #[serde(default)]
-    pub(crate) kind: Option<String>,
-    /// A studio desk's folder, absolute: picked with `/api/studio/pick`, or
-    /// the `~/Studio` offered, made if only its last part is missing.
-    #[serde(default)]
-    pub(crate) folder: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -365,10 +346,6 @@ pub(crate) async fn desks(
             "home": dirs::home_dir(),
             "panes": panes,
             "per_desk": crate::desk::PER_DESK,
-            // The folder New studio desk offers, and the closed studio desk
-            // it brings back instead, when there is one.
-            "studio_offer": dirs::home_dir().map(|h| crate::studio::offered(&h)),
-            "studio_closed": app.store.studio(|c| crate::desk::closed_studio(c)).ok().flatten(),
         }))
         .into_response(),
         (Err(e), _) | (_, Err(e)) => err(e),
@@ -403,9 +380,6 @@ pub(crate) async fn create_desk(
 ) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
-    }
-    if b.kind.as_deref() == Some(crate::desk::STUDIO) {
-        return studio_desk(&app, &b);
     }
     // No folder is the home directory, which the daemon names and the page
     // does not: nothing from the page reaches the filesystem on this path.
@@ -454,67 +428,12 @@ pub(crate) async fn create_desk(
         .as_deref()
         .and_then(clean_name)
         .or(fallback.map(String::from));
-    let made = app
-        .store
-        .create_desk(&dir.to_string_lossy(), name.as_deref());
-    match made {
-        Ok(desk) => {
-            desks_moved(&app);
-            (StatusCode::CREATED, Json(json!({ "desk": desk }))).into_response()
-        }
-        Err(e) => err(e),
-    }
-}
-
-/// The studio desk, on the folder the reader chose: its panel starts there
-/// and its viewer shows it. There is one: asked for again, the one there is
-/// comes back (200, `existing`), for the page to open -- and a closed one
-/// is reopened, with its notes, its hides and the panel that can resume its
-/// conversation (`reopened`), rather than a second made. A folder that is
-/// not one, or cannot be made, is a 400 with why.
-fn studio_desk(app: &App, b: &NewDeskBody) -> Response {
-    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
-    let open = |app: &App| {
-        app.store
-            .desks()
-            .map(|ds| ds.into_iter().find(|d| d.kind == crate::desk::STUDIO))
-    };
-    match open(app) {
-        Ok(Some(d)) => return Json(json!({ "desk": d, "existing": true })).into_response(),
-        Ok(None) => {}
-        Err(e) => return err(e),
-    }
-    match app.store.studio(|c| crate::desk::closed_studio(c)) {
-        Ok(Some(id)) => {
-            if let Err(e) = app.store.reopen_desk(id) {
-                return err(e);
-            }
-            desks_moved(app);
-            return match open(app) {
-                Ok(Some(d)) => {
-                    Json(json!({ "desk": d, "existing": true, "reopened": true })).into_response()
-                }
-                Ok(None) => StatusCode::NOT_FOUND.into_response(),
-                Err(e) => err(e),
-            };
-        }
-        Ok(None) => {}
-        Err(e) => return err(e),
-    }
-    let Some(want) = b.folder.as_deref().filter(|f| !f.trim().is_empty()) else {
-        return bad("choose the studio's folder".into());
-    };
-    let dir = match crate::studio::make_folder(want) {
-        Ok(dir) => dir,
-        Err(e) => return bad(e.to_string()),
-    };
-    let name = b.name.as_deref().and_then(clean_name);
     match app
         .store
-        .create_studio_desk(&dir.to_string_lossy(), name.as_deref())
+        .create_desk(&dir.to_string_lossy(), name.as_deref())
     {
         Ok(desk) => {
-            desks_moved(app);
+            desks_moved(&app);
             (StatusCode::CREATED, Json(json!({ "desk": desk }))).into_response()
         }
         Err(e) => err(e),
@@ -1176,7 +1095,6 @@ pub(crate) async fn delete_desk(
             for p in &panes {
                 app.panes.forget(p);
             }
-            app.studio.forget(id);
             desks_moved(&app);
             Json(json!({ "ok": true, "restore": format!("/api/desks/{id}/reopen") }))
                 .into_response()
@@ -1187,8 +1105,7 @@ pub(crate) async fn delete_desk(
 }
 
 /// A closed desk back, with its notes and the panels that closed with it,
-/// stopped: the Undo on a close, and its row in the Removed list. A studio
-/// desk does not come back beside another one: there is one studio desk.
+/// stopped: the Undo on a close, and its row in the Removed list.
 pub(crate) async fn reopen_desk(
     State(app): S,
     headers: HeaderMap,
@@ -1197,17 +1114,6 @@ pub(crate) async fn reopen_desk(
 ) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
-    }
-    match app.store.studio(|c| crate::desk::studio_taken(c, id)) {
-        Ok(true) => {
-            return (
-                StatusCode::CONFLICT,
-                Json(json!({ "error": "there is a studio desk already" })),
-            )
-                .into_response()
-        }
-        Ok(false) => {}
-        Err(e) => return err(e),
     }
     match app.store.reopen_desk(id) {
         Ok(true) => {
@@ -1237,38 +1143,21 @@ pub(crate) async fn open_pane(
     let Ok(Some(desk)) = app.store.desk(id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let studio = desk.kind == crate::desk::STUDIO;
-    let mut cmd = b.cmd.unwrap_or_default();
-    // A studio desk's one panel is its Claude, in the studio folder.
-    if studio && crate::studio::stale_cmd(&cmd) {
-        cmd = crate::studio::AGENT_CMD.into();
-    }
-    let cwd = if studio { &desk.boards } else { &desk.root };
-    match app.store.open_pane(desk.id, cwd, cmd.trim()) {
+    let cmd = b.cmd.unwrap_or_default();
+    match app.store.open_pane(desk.id, &desk.root, cmd.trim()) {
         Ok(crate::desk::Opened::Pane(pane)) => {
             desks_moved(&app);
             (StatusCode::CREATED, Json(json!({ "pane": pane }))).into_response()
         }
         // Full: another desk takes the next pane. There is no cap across desks.
-        Ok(crate::desk::Opened::DeskFull(cap)) => desk_full(cap),
+        Ok(crate::desk::Opened::DeskFull) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
+        )
+            .into_response(),
         Ok(crate::desk::Opened::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
-}
-
-/// The 409 for a desk with no slot left: four on a terminal desk, the one
-/// agent panel on a studio desk.
-fn desk_full(cap: i64) -> Response {
-    let error = if cap == 1 {
-        "a studio desk holds one panel".to_string()
-    } else {
-        format!("this desk holds {cap}")
-    };
-    (
-        StatusCode::CONFLICT,
-        Json(json!({ "error": error, "full": "desk" })),
-    )
-        .into_response()
 }
 
 pub(crate) async fn close_pane(
@@ -1309,7 +1198,11 @@ pub(crate) async fn restore_pane(
             desks_moved(&app);
             Json(json!({ "pane": pane })).into_response()
         }
-        Ok(crate::desk::Restored::DeskFull(cap)) => desk_full(cap),
+        Ok(crate::desk::Restored::DeskFull) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
+        )
+            .into_response(),
         Ok(crate::desk::Restored::Gone) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
@@ -1400,11 +1293,6 @@ pub(crate) async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // The studio folder, when the panel is on the studio desk.
-    let studio_dir = match app.store.desk(placed.desk_id) {
-        Ok(Some(d)) if d.kind == crate::desk::STUDIO => Some(d.boards),
-        _ => None,
-    };
     let lapsed = b.resume && b.marked && !app.panes.marked(&id);
     let offer = lapsed && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
@@ -1420,12 +1308,7 @@ pub(crate) async fn start_pane(
         }
         placed.pane.resume.clone()
     } else {
-        let mut cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
-        // A studio desk's panel is its Claude: never a bare shell, nor the
-        // `--add-dir` command an older build gave it.
-        if studio_dir.is_some() && crate::studio::stale_cmd(&cmd) {
-            cmd = crate::studio::AGENT_CMD.into();
-        }
+        let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
         if cmd.trim() != placed.pane.cmd {
             let _ = app.store.set_pane_cmd(&id, &cmd);
         }
@@ -1433,14 +1316,7 @@ pub(crate) async fn start_pane(
     };
     let live = app.panes.get(&id);
     // Where the shell last was; the desk's own folder if that one is gone.
-    // A studio desk's Claude starts in the studio folder, always, so its
-    // trust prompt names that folder.
-    let cwd = if let Some(dir) = studio_dir
-        .as_deref()
-        .filter(|d| std::path::Path::new(d).is_dir())
-    {
-        dir
-    } else if std::path::Path::new(&placed.pane.cwd).is_dir() {
+    let cwd = if std::path::Path::new(&placed.pane.cwd).is_dir() {
         placed.pane.cwd.as_str()
     } else {
         placed.root.as_str()
@@ -1449,7 +1325,7 @@ pub(crate) async fn start_pane(
     // blocking thread, into the child's environment and nowhere else. A key
     // whose value is nowhere is not set at all.
     let keys = app.store.desk_keys(placed.desk_id).unwrap_or_default();
-    let mut env: Vec<(String, String)> = if keys.is_empty() {
+    let env: Vec<(String, String)> = if keys.is_empty() {
         Vec::new()
     } else {
         let secrets = app.secrets.clone();
@@ -1465,11 +1341,6 @@ pub(crate) async fn start_pane(
             .cloned()
             .collect();
         let _ = app.store.touch_desk_keys(&found);
-    }
-    // A studio desk's panel knows its folder, for its scripts and for
-    // snyvi's read_studio tool.
-    if let Some(dir) = &studio_dir {
-        env.push(("SNYVI_STUDIO".into(), dir.clone()));
     }
     let start = crate::pane::Start {
         cwd,

@@ -387,53 +387,6 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/browse/pick", None, Gate::Desk, false),
-    // A studio desk's (`studio_routes`).
-    ("POST", "/api/studio/pick", None, Gate::Desk, false),
-    (
-        "POST",
-        "/api/desks/1/studio-folder",
-        Some(r#"{"path":"/nowhere/at/all"}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/studio/1/look?rel=", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/studio/1/keep",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/studio/1/hide",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/studio/1/unhide",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    // Behind the host gate alone, as browse mode's raw route is.
-    ("GET", "/api/studio/1/raw/a.png", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/studio/1/selection",
-        Some(r#"{"rel":"a.png"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "GET",
-        "/api/panes/0123456789abcdef0123456789abcdef/studio",
-        None,
-        Gate::Token,
-        true,
-    ),
     ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
     ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
     ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
@@ -750,9 +703,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
             + routed.matches("post(").count()
             + routed.matches(".delete(").count()
     };
-    let n = routes_in("\nfn router(")
-        + routes_in("\nfn pane_routes(")
-        + routes_in("\nfn studio_routes(");
+    let n = routes_in("\nfn router(") + routes_in("\nfn pane_routes(");
     assert_eq!(
         n,
         ROUTES.len(),

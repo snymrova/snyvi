@@ -79,15 +79,8 @@ export async function make(ctx, f) {
   } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 
-/** The studio desk: the one there is, the closed one back, or New studio
- *  desk's dialog (studio.js) -- from the + menu, the palette and Home. */
-export function studioDesk(ctx) {
-  return ctx.studio().then(m => m.newDesk(ctx, { hold: claudeHere }), e => ctx.toast("Could not open the studio", { sub: e }));
-}
-
 /** Whether `claude` can run here: on the daemon's PATH, or set up (which
  *  it would not be without it). */
-const claudeHere = () => hasClaude();
 async function hasClaude() {
   try {
     const a = await (await fetch("/api/agents")).json();
@@ -245,13 +238,11 @@ function remove(ctx, id, el) {
 
 
 
-/** A panel on a desk, started, and the desk shown: the desk's own +. A
- *  studio desk's is its Claude. */
-async function newPanel(ctx, d) {
-  const id = d.id, studio = d.kind === "studio";
+/** A panel on a desk, started, and the desk shown: the desk's own +. */
+async function newPanel(ctx, id) {
   try {
-    const p = await ctx.api(`/api/desks/${id}/panes`, studio ? { cmd: "claude" } : {});
-    await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: studio ? p.pane.cmd || "claude" : "" });
+    const p = await ctx.api(`/api/desks/${id}/panes`, {});
+    await ctx.api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     await ctx.load();
     ctx.show(id, true);
   } catch (e) { ctx.toast("Could not open a panel", { sub: e }); }
@@ -348,12 +339,11 @@ function entries(ctx, el, byKey = false) {
     if (!d || !capability) return null;
     return { head: d.name, items: [
       !here && { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.length < (d.kind === "studio" ? 1 : ctx.state.desks.per_desk) && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, d) },
+      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      dk && { label: "Keys…", run: () => dk.keysHere() },
-      dk && d.kind === "studio" && { label: "Studio folder…", run: () => dk.studioHere() }, RULE,
+      dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
       term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
@@ -371,11 +361,6 @@ function entries(ctx, el, byKey = false) {
       places.length && RULE,
       { label: "Another folder…", run: () => pick(ctx, true) },
       { label: "A shell in your home folder", moves: 1, run: () => make(ctx, null) },
-      RULE,
-      // The studio desk is a folder's pictures, video and sound with one
-      // Claude under them; its dialog asks for the folder, and once there
-      // is one, this opens it (studio.js).
-      { label: "Studio desk…", moves: 1, run: () => studioDesk(ctx) },
     ] };
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;

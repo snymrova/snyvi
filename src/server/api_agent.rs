@@ -457,11 +457,7 @@ pub(crate) async fn pane_brief(
     // The brief says everything as of now; the next prompt's changes start
     // here.
     app.panes.told(&id, now);
-    let mut context = crate::brief::brief(&desk, placed.pane.slot, &notes, &desk.keys, last, now);
-    if desk.kind == crate::desk::STUDIO {
-        context.push('\n');
-        context.push_str(&studio_block(&desk));
-    }
+    let context = crate::brief::brief(&desk, placed.pane.slot, &notes, &desk.keys, last, now);
     Json(json!({
         "context": context,
         "title": crate::brief::title(&desk, placed.pane.slot, &placed.pane.name),
@@ -582,7 +578,7 @@ pub(crate) async fn pane_changes(
         .store
         .desk_docs(desk.id, crate::brief::DOCS_LOOKED_AT, false)
         .unwrap_or_default();
-    let mut context = crate::brief::changes(&crate::brief::Changes {
+    let context = crate::brief::changes(&crate::brief::Changes {
         slot: placed.pane.slot,
         pane: &id,
         notes: &notes,
@@ -593,26 +589,7 @@ pub(crate) async fn pane_changes(
         since,
         now,
     });
-    if desk.kind == crate::desk::STUDIO {
-        let news = app.studio.since(desk.id, since, &desk.boards);
-        if !news.is_empty() {
-            if context.is_empty() {
-                context =
-                    "Since your last turn, on this desk (from snyvi; context, not a request):"
-                        .into();
-            }
-            for l in news {
-                context.push('\n');
-                context.push_str(&l);
-            }
-        }
-    }
     Json(json!({ "context": context, "title": title, "desk": desk.name })).into_response()
-}
-
-/// The studio block of a studio desk's brief (`crate::studio::brief`).
-pub(crate) fn studio_block(desk: &crate::desk::Desk) -> String {
-    crate::studio::brief::block(&desk.boards)
 }
 
 #[derive(Deserialize, Default)]

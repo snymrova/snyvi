@@ -44,7 +44,7 @@ const SCALE = new Set([11, 12, 13, 14, 15, 17, 18, 20, 26, 34]);
  * joins them), so each part is read on its own and named by its path. */
 const FILES = [
   ...readdirSync(UI).filter(f => /\.(css|js)$/.test(f) && f !== "themes.css"),
-  ...["app", "desk", "studio"].flatMap(d => readdirSync(join(UI, d)).filter(f => f.endsWith(".js")).map(f => `${d}/${f}`)),
+  ...["app", "desk"].flatMap(d => readdirSync(join(UI, d)).filter(f => f.endsWith(".js")).map(f => `${d}/${f}`)),
   "index.html",
 ].sort();
 

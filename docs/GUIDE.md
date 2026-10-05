@@ -807,59 +807,6 @@ documents and the settings live, what Claude Code has of it, the
 license and the repository. *Reset snyvi…* is described under
 [Uninstalling](#uninstalling).
 
-## Studio desks
-
-The studio desk is a desk for making pictures, video and sound: one folder,
-shown in a **viewer**, with **one** Claude panel under it that fills it.
-Make it from New desk → **Studio desk…**, which asks only for its folder
-(`~/Studio` is offered; **Change…** opens the desktop's own dialog). It is
-also in the palette (`new desk`) and under Home's **+ New desk**. It needs
-Claude Code: without it the dialog says so and points to Agents, and no desk
-is made. There is one studio desk: asked for again, it opens, and a closed
-one comes back as you left it -- its notes, its hides, and Claude's
-conversation to resume. **Studio folder…** in its ⋯ menu moves the whole
-desk to another folder (what you hid in the old one is let go); Claude
-follows the next time its panel starts. Claude starts in that folder, so its
-trust prompt names it.
-
-**You ask, Claude makes.** There is no form: you tell Claude in the panel
-what you want, and it makes it with its own tools -- a provider's API with a
-key from the desk's **Keys…** (in its ⋯ menu; the empty studio offers it
-while the desk has none), or a command line tool. A key reaches Claude when
-its panel starts, so Claude asks you to add one there and start it again;
-Resume keeps the conversation. What it makes shows in the viewer as it lands
-on disk.
-
-**Claude arranges, the rail shows.** Claude puts what it makes into folders,
-up to three deep, and the rail lists them where a terminal desk lists its
-panels: first the **Claude** row (what it is doing, with stop and start),
-then what it all **cost**, then **Assets**: its folders, each with how many
-things are in it. A click shows a folder in the viewer. A folder may hold a
-`folder.json` that Claude writes -- `title`, `order`, `note`, `picks`, and
-at the top a `budget` -- and the rail and the viewer follow it. Briefs,
-plans and other writing reach you as documents, in the rail's
-**Documents**, never in the viewer.
-
-**Look, keep, react.** The viewer is the open folder's pictures, videos and
-sounds, newest first unless its `folder.json` gives an order. Click one to
-see it large in the same space, ← → to step, Esc to go back. Under it, one
-thin bar: **★ Keep**, **Tell Claude…** (its path into the panel, for you to
-finish) and **Info** (the prompt, the model, the seed, the cost). ★ writes
-the file's name into that folder's `folder.json` `picks`, where Claude reads
-it. **Hide** is on the right-click menu and ⌫: off the viewer, never off the
-disk, with its Undo in the tile's place; **N hidden · Show** at the foot of
-the folder puts it back. A tile dragged onto the panel goes in as its path.
-
-**Scripts save tokens.** The second time Claude makes the same kind of call
--- text-to-image on one service, say -- its brief has it write a script in
-the folder's `.scripts/` instead, which saves the file and the JSON beside
-it and prints only the path, so the service's raw answer never fills its
-context. Keys come from the environment, never the script, and
-`.scripts/README.md` lists what is there for the next session to reuse.
-snyvi never runs a script; Claude runs them in the panel, where you see
-them. What you open, and what you ★, reach Claude with your next message;
-`read_studio` tells it what the desk has.
-
 ## Appearance
 
 Five buttons sit at the foot of the sidebar -- theme, accent, Aa, width,

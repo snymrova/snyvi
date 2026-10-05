@@ -22,11 +22,8 @@ let gridWatch = null;
  *  in the head and the row in the rail -- ask this, so they never disagree. */
 function noNew(d) {
   const j = ctx.desks;
-  if (d.kind === "studio") return d.panes.length ? "A studio desk holds one panel" : "";
   return d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}` : "";
 }
-/** How many panels a desk holds: four, or a studio desk's one. */
-const capOf = d => d.kind === "studio" ? 1 : ctx.desks.per_desk;
 
 function layout() {
   const d = current(), grid = ctx.docEl.querySelector(".dk-grid");
@@ -65,9 +62,7 @@ function layout() {
   }
   for (const v of shown) catchUp(v);
   pace();
-  if (!all.length) grid.innerHTML = d.kind === "studio"
-    ? `<p class="dk-none">Claude isn't running here. <button type="button" data-a="new">Start Claude</button></p>`
-    : `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
+  if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
   leftOffSlot(d);
   keysSlot(d);
@@ -302,19 +297,12 @@ function draw() {
     return;
   }
   document.title = `${d.name} · desk`;
-  // A studio desk is its viewer over its one panel, with the line between
-  // them to drag; it has no + (one panel is the whole of its grid). Its
-  // folders are in the rail, and where its folder is in its ⋯ menu.
-  const studio = d.kind === "studio";
-  docEl.innerHTML = `<div class="dk${studio ? " dk-studio" : ""}"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span>` +
-    `<span class="dk-tabs"></span>` +
-    (studio ? "" : `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>`) +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
+    `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
-    (studio ? `<div class="st-frame"><div class="st-host" data-part="studio"></div><div class="dk-div st-div" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div><div class="dk-grid" data-part="studio.agent"></div></div>`
-      : `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>`) + `<div class="dk-live vh" aria-live="polite"></div></div>`;
+    `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div><div class="dk-live vh" aria-live="polite"></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
-  if (studio) studioFrame(d);
   gridWatch?.disconnect();
   let seen = 0;
   gridWatch = new ResizeObserver(([en]) => { const w = Math.round(en.contentRect.width); if (w !== seen) { seen = w; if (current()) layout(); } });
@@ -322,87 +310,6 @@ function draw() {
   sync(d);
   dividers();
   rail();
-}
-
-// ---------- a studio desk ----------
-
-/** The studio's module (studio.js), once a studio desk has been drawn. */
-let st = null;
-
-/** A studio desk's frame: the studio drawn in its host, the line between it
- *  and the panel dragged (the desk's `row`, kept as a terminal desk's
- *  divider is), and the rail told when the studio is in. */
-function studioFrame(d) {
-  const frame = ctx.docEl.querySelector(".st-frame");
-  const rows = f => { frame.style.setProperty("--st-a", `${Math.round(f * 1000)}fr`); frame.style.setProperty("--st-b", `${Math.round((1 - f) * 1000)}fr`); };
-  rows(d.row);
-  const div = frame.querySelector(".st-div");
-  const set = f => { const c = current(); if (!c) return; c.row = Math.max(0.2, Math.min(0.9, f)); rows(c.row); };
-  const save = () => { const c = current(); if (c) ctx.api(`/api/desks/${c.id}/layout`, { col: c.col, row: c.row }).catch(() => {}); };
-  div.addEventListener("pointerdown", e => {
-    if (e.button !== 0) return;
-    div.setPointerCapture(e.pointerId);
-    ctx.root.dataset.resizing = "1";
-    const r = frame.getBoundingClientRect();
-    const move = ev => set((ev.clientY - r.top) / r.height);
-    const up = () => { delete ctx.root.dataset.resizing; div.removeEventListener("pointermove", move); div.removeEventListener("pointerup", up); save(); };
-    div.addEventListener("pointermove", move);
-    div.addEventListener("pointerup", up);
-    e.preventDefault();
-  });
-  div.addEventListener("dblclick", () => { set(0.62); save(); });
-  div.addEventListener("keydown", e => {
-    const c = current(), k = { ArrowUp: -0.03, ArrowDown: 0.03 }[e.key];
-    if (!c || k == null) return;
-    set(c.row + (e.shiftKey ? k * 3 : k)); save();
-    e.preventDefault(); e.stopPropagation();
-  });
-  studioDrop(frame.querySelector(".dk-grid"));
-  if (!ctx.studio) return;
-  const host = frame.querySelector(".st-host");
-  ctx.studio().then(m => {
-    st = m;
-    if (!host.isConnected || current()?.id !== d.id) return;
-    m.mount(host, studioCtx());
-  }, e => { host.innerHTML = `<p class="dk-none">Could not load the studio · ${ctx.esc(ctx.sayErr(e).why)} <button type="button" data-a="desk">Retry</button></p>`; });
-}
-
-/** What the studio is handed: the page's helpers, and a way back into the
- *  desk's one panel. */
-function studioCtx() {
-  return {
-    desk: () => current(), api: ctx.api, esc: ctx.esc, glyph: ctx.glyph, plural: ctx.plural,
-    // The page's toast takes its options as one object; the desk's, in order.
-    toast: (t, o = {}) => ctx.toast(t, o.sub, o.go, o.action),
-    relShort: ctx.relShort, fmt: ctx.fmt, sayErr: ctx.sayErr, reveal: ctx.reveal, menu: ctx.menu, keyHint: ctx.keyHint,
-    home: () => ctx.desks && ctx.desks.home,
-    refresh: () => ctx.refresh(),
-    // The desk's Keys sheet: the provider keys its Claude starts with.
-    keys: () => { const d = current(); if (d) keysSheet(d); },
-    // The studio's rows in the rail (`studioTop`) changed: the rail again.
-    rail: () => { if (current()?.kind === "studio") rail(); },
-    panel: () => { const d = current(); return d && d.panes[0] ? views.get(d.panes[0].id) : null; },
-    focusPanel: () => { const d = current(), v = d && d.panes[0] && views.get(d.panes[0].id); if (v) { focused = v.id; v.body.focus(); } },
-    // Text into the panel as a paste, for the reader to finish and send:
-    // false when no program is running there to take it.
-    type: text => { const d = current(), v = d && d.panes[0] && views.get(d.panes[0].id); if (!v || !v.status.running) return false; v.typed = Date.now(); input(v, bracket(v, text)); v.body.focus(); return true; },
-  };
-}
-
-/** A tile dropped on the studio's panel goes in as its path, a paste: the
- *  same as Tell Claude…. Only a drag from the viewer, which carries the
- *  studio's own type; anything else is the window's. */
-function studioDrop(grid) {
-  const ours = e => e.dataTransfer && [...e.dataTransfer.types].includes("application/x-snyvi-board");
-  grid.addEventListener("dragover", e => { if (ours(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; grid.classList.add("st-drop"); } });
-  grid.addEventListener("dragleave", e => { if (!grid.contains(e.relatedTarget)) grid.classList.remove("st-drop"); });
-  grid.addEventListener("drop", e => {
-    grid.classList.remove("st-drop");
-    if (!ours(e)) return;
-    e.preventDefault(); e.stopPropagation();
-    const t = e.dataTransfer.getData("text/plain");
-    if (t && !studioCtx().type(t + " ")) ctx.toast("The panel is not running", "Start it, then drop it again");
-  });
 }
 
 /** Views for the desk's panes: the ones already here kept, scrollback and
@@ -427,7 +334,7 @@ function sync(d) {
 
 function list() {
   const ds = ctx.desks ? ctx.desks.desks : [];
-  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is one project: its folder, and up to four terminal panels side by side in it. A new one asks where: a project snyvi knows, another folder, or a shell in your home folder. Or it is the studio: Claude making pictures, video and sound in one folder.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
+  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is one project: its folder, and up to four terminal panels side by side in it. A new one asks where: a project snyvi knows, another folder, or a shell in your home folder.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
     (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "panel")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
 }
 
