@@ -53,6 +53,34 @@ const MAX_FRACTION: f64 = 0.85;
 /// one, so a database made new must not have it before the step adds it.
 pub const POS_COLUMN: &str = "ALTER TABLE desks ADD COLUMN pos INTEGER NOT NULL DEFAULT 0";
 
+/// 1.15: what kind of desk it is, and a studio desk's folder (the column is
+/// named `boards`, for what the folder first held). Version 3
+/// of `store::MIGRATIONS`, on the same terms as `POS_COLUMN`. The kind is
+/// written once, when the desk is made, and nothing updates it: a terminal
+/// desk and a studio desk are laid out differently from the first paint, and
+/// one that turned into the other would leave its panels or its viewer
+/// stranded in a layout that has no place for them.
+pub const KIND_COLUMNS: [&str; 2] = [
+    "ALTER TABLE desks ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal'",
+    "ALTER TABLE desks ADD COLUMN boards TEXT NOT NULL DEFAULT ''",
+];
+
+/// The two kinds of desk. A terminal desk is up to four panels in a grid; a
+/// studio desk is a folder drawn as a viewer, with one panel docked under it
+/// for the agent that fills it (`crate::studio`).
+pub const TERMINAL: &str = "terminal";
+pub const STUDIO: &str = "studio";
+
+/// How many panes a desk of `kind` holds: a studio desk has one agent and
+/// one place for it.
+pub fn cap(kind: &str) -> i64 {
+    if kind == STUDIO {
+        1
+    } else {
+        PER_DESK
+    }
+}
+
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS desks (
   id INTEGER PRIMARY KEY,
@@ -140,6 +168,11 @@ pub struct Desk {
     /// Where the horizontal divider sits, as a fraction of the height.
     pub row: f64,
     pub created_at: i64,
+    /// `TERMINAL` or `STUDIO`, fixed when the desk was made.
+    pub kind: String,
+    /// A studio desk's folder, absolute; empty on a terminal desk.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub boards: String,
     /// The slot shown alone, full view, or 0 for the grid. Kept, so a desk
     /// comes back the way it was left; a close renumbers it with the slots.
     pub full_slot: i64,
@@ -408,8 +441,19 @@ pub struct Placed {
 #[derive(Debug)]
 pub enum Opened {
     Pane(Pane),
-    DeskFull,
+    /// The desk holds this many already (`cap`).
+    DeskFull(i64),
     NoSuchDesk,
+}
+
+/// The lowest slot free on a desk that holds `cap`, read inside the caller's
+/// transaction so two requests together cannot both take the last one.
+fn free_slot(tx: &rusqlite::Transaction, desk_id: i64, cap: i64) -> Result<Option<i64>> {
+    let taken: Vec<i64> = tx
+        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
+        .query_map(params![desk_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok((1..=cap).find(|s| !taken.contains(s)))
 }
 
 /// How long a panel's name is, at most: a head's worth, like a desk's.
@@ -489,18 +533,46 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
 /// three rows all reading `snyvi` is a list that cannot be used: the folder's
 /// own name is taken when it is free, and numbered when it is not.
 pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Result<Desk> {
+    insert(conn, root, name, TERMINAL, "", now)
+}
+
+/// A new studio desk on a folder, showing `boards` (an absolute folder the
+/// caller has checked, `crate::studio::folder_ok`; today the same folder).
+pub fn create_studio(
+    conn: &Connection,
+    root: &str,
+    name: Option<&str>,
+    boards: &str,
+    now: i64,
+) -> Result<Desk> {
+    insert(conn, root, name, STUDIO, boards, now)
+}
+
+/// The name a desk on `root` would get now.
+pub fn name_for(conn: &Connection, root: &str, name: Option<&str>) -> Result<String> {
     let wanted = name
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| derive_name(root));
-    let name = free_name(conn, &wanted)?;
+    free_name(conn, &wanted)
+}
+
+fn insert(
+    conn: &Connection,
+    root: &str,
+    name: Option<&str>,
+    kind: &str,
+    boards: &str,
+    now: i64,
+) -> Result<Desk> {
+    let name = name_for(conn, root, name)?;
     // Last in the reader's order, as a desk made now always was. Past the
     // closed ones too, which keep their places for a reopen.
     conn.execute(
-        "INSERT INTO desks(name, root, col, row, created_at, pos)
-         VALUES(?1, ?2, 0.5, 0.5, ?3, (SELECT COALESCE(MAX(pos), 0) + 1 FROM desks))",
-        params![name, root, now],
+        "INSERT INTO desks(name, root, col, row, created_at, pos, kind, boards)
+         VALUES(?1, ?2, 0.5, ?4, ?3, (SELECT COALESCE(MAX(pos), 0) + 1 FROM desks), ?5, ?6)",
+        params![name, root, now, row_for(kind), kind, boards],
     )?;
     let id = conn.last_insert_rowid();
     Ok(Desk {
@@ -508,8 +580,10 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         name,
         root: root.to_string(),
         col: 0.5,
-        row: 0.5,
+        row: row_for(kind),
         created_at: now,
+        kind: kind.to_string(),
+        boards: boards.to_string(),
         full_slot: 0,
         left_off: None,
         visited_at: 0,
@@ -517,6 +591,51 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         keys: Vec::new(),
         panes: Vec::new(),
     })
+}
+
+/// Where a new desk's horizontal divider starts. On a studio desk it is the
+/// line between the gallery and the agent docked under it, and the gallery
+/// is what the desk is for.
+fn row_for(kind: &str) -> f64 {
+    if kind == STUDIO {
+        0.62
+    } else {
+        0.5
+    }
+}
+
+/// Point a studio desk at another folder (absolute, checked by the
+/// caller). The desk moves with it: a studio desk's root is its folder, and
+/// the head, the sidebar and the menus' paths read the root. A terminal desk
+/// has no studio folder, and is not given one: false.
+pub fn set_boards(conn: &Connection, id: i64, boards: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desks SET boards = ?2, root = ?2 WHERE id = ?1 AND kind = 'studio' AND closed_at = 0",
+        params![id, boards],
+    )? == 1)
+}
+
+/// The studio desk closed most lately, while pruning has not taken it: what
+/// New studio desk brings back rather than making a second.
+pub fn closed_studio(conn: &Connection) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM desks WHERE kind = 'studio' AND closed_at != 0 ORDER BY closed_at DESC, id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Whether reopening desk `id` would make a second studio desk: it is a
+/// closed studio desk, and another studio desk is open.
+pub fn studio_taken(conn: &Connection, id: i64) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM desks WHERE id = ?1 AND kind = 'studio' AND closed_at != 0)
+            AND EXISTS(SELECT 1 FROM desks WHERE kind = 'studio' AND closed_at = 0)",
+        params![id],
+        |r| r.get(0),
+    )?)
 }
 
 /// The reader's order for the desks: `ids` is every open desk, top first.
@@ -841,23 +960,18 @@ pub fn open_pane(
     now: i64,
 ) -> Result<Opened> {
     let tx = conn.transaction()?;
-    let exists: bool = tx
+    let Some(kind) = tx
         .query_row(
-            "SELECT 1 FROM desks WHERE id = ?1 AND closed_at = 0",
+            "SELECT kind FROM desks WHERE id = ?1 AND closed_at = 0",
             params![desk_id],
-            |_| Ok(()),
+            |r| r.get::<_, String>(0),
         )
         .optional()?
-        .is_some();
-    if !exists {
+    else {
         return Ok(Opened::NoSuchDesk);
-    }
-    let taken: Vec<i64> = tx
-        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
-        .query_map(params![desk_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    let Some(slot) = (1..=PER_DESK).find(|s| !taken.contains(s)) else {
-        return Ok(Opened::DeskFull);
+    };
+    let Some(slot) = free_slot(&tx, desk_id, cap(&kind))? else {
+        return Ok(Opened::DeskFull(cap(&kind)));
     };
     let id = pane_id()?;
     tx.execute(
@@ -962,8 +1076,8 @@ pub fn close_pane(tx: &rusqlite::Transaction, id: &str, now: i64) -> Result<Opti
 #[derive(Debug)]
 pub enum Restored {
     Pane(Pane),
-    /// Its desk filled up while it was closed.
-    DeskFull,
+    /// Its desk filled up while it was closed: it holds this many (`cap`).
+    DeskFull(i64),
     /// Not a closed pane: pruned, already back, or never one.
     Gone,
 }
@@ -983,12 +1097,13 @@ pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
     else {
         return Ok(Restored::Gone);
     };
-    let taken: Vec<i64> = tx
-        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
-        .query_map(params![desk_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    let Some(slot) = (1..=PER_DESK).find(|s| !taken.contains(s)) else {
-        return Ok(Restored::DeskFull);
+    let kind: String = tx.query_row(
+        "SELECT kind FROM desks WHERE id = ?1",
+        params![desk_id],
+        |r| r.get(0),
+    )?;
+    let Some(slot) = free_slot(&tx, desk_id, cap(&kind))? else {
+        return Ok(Restored::DeskFull(cap(&kind)));
     };
     tx.execute(
         "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, created_at)
@@ -1765,7 +1880,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, kind, boards";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -1776,6 +1891,8 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
         col: r.get(3)?,
         row: r.get(4)?,
         created_at: r.get(5)?,
+        kind: r.get(15)?,
+        boards: r.get(16)?,
         full_slot: r.get(6)?,
         left_off: if text.is_empty() {
             None

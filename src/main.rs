@@ -32,6 +32,7 @@ mod store;
 /// it: under `SNYVI_UI_DIR` an asset kept as parts is joined the same way
 /// (`server::assets`), and the scanner's tests are in `cargo test`.
 mod strip;
+mod studio;
 mod text;
 mod update;
 mod version;

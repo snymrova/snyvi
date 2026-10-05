@@ -382,7 +382,7 @@
     if (state.view !== "home") return;
     if (push) main.scrollTo({ top: 0, behavior: "instant" });
     await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates,
-      next: openNext, newDesk: b => act("make", null), notes: () => state.notes });
+      next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), notes: () => state.notes });
     if (push) swapIn();
     afterRender();
   }

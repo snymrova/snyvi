@@ -335,6 +335,8 @@ mod tests {
             col: 0.5,
             row: 0.5,
             created_at: 0,
+            kind: crate::desk::TERMINAL.into(),
+            boards: String::new(),
             full_slot: 0,
             left_off: left,
             visited_at: 0,

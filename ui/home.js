@@ -174,6 +174,10 @@ const CSS = `
 .hm-dk-top .hm-dots { align-self: center; }
 .hm-dk-top .fact { color: var(--fg-3); }
 .hm-dk-top .hm-dk-n { margin-left: auto; }
+/* A studio desk's newest pictures. */
+.hm-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 2px 0 8px; }
+.hm-thumbs a { display: block; aspect-ratio: 4 / 3; border-radius: var(--r-sm); overflow: hidden; background: var(--code-bg); }
+.hm-thumbs img, .hm-thumbs video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .hm-dk-left { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin: 0 0 6px; font-size: var(--fs-small); line-height: 1.55; color: var(--fg-2); overflow: hidden; }
 .hm-dk-left b { font-weight: 500; color: var(--fg-3); margin-right: 6px; }
 .hm-dk .hm-next { margin: 0; }
@@ -518,11 +522,19 @@ function pickOf(j) {
   return { hero, rest: live.filter(d => d !== hero), isKept: !!hero && hero.id === k };
 }
 
+/** A studio desk's newest pictures, linking to the desk. */
+function thumbs(d) {
+  const { esc } = c, t = d.thumbs || [];
+  if (!t.length) return "";
+  const src = r => `/api/studio/${d.id}/raw/${r.split("/").map(encodeURIComponent).join("/")}`;
+  return `<div class="hm-thumbs">${t.map(x => `<a href="/desk/${d.id}" data-desk="${d.id}" tabindex="-1" aria-hidden="true">${x.kind === "video" ? `<video src="${src(x.rel)}#t=0.1" preload="metadata" muted></video>` : `<img src="${src(x.rel)}" alt="" loading="lazy" decoding="async">`}</a>`).join("")}</div>`;
+}
+
 function pick(j) {
   const { esc, plural } = c;
   const box = body => `<section class="hm-pick" aria-label="Pick up" data-part="home.pick">${body}</section>`;
   if (!j.desks) return box(`<p class="hm-quiet">Desks are in the snyvi window; a browser tab cannot see them. Everything your agents sent is in <a href="/inbox" data-nav="inbox">the Inbox</a>.</p>`);
-  if (!j.desks.length) return box(`<h2>Pick up</h2><p class="hm-quiet">No desks yet. A desk is one project: its folder, and up to four panels in it.</p><div class="hm-pk-go"><button type="button" class="btn btn-primary" data-hm="newdesk">+ New desk</button></div>`);
+  if (!j.desks.length) return box(`<h2>Pick up</h2><p class="hm-quiet">No desks yet. A desk is one project: its folder, and up to four panels in it. Or a studio: Claude making pictures, video and sound.</p><div class="hm-pk-go"><button type="button" class="btn btn-primary" data-hm="newdesk" data-newdesk>+ New desk</button></div>`);
   const { hero: d, rest, isKept } = pickOf(j);
   if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Take one down in Projects when you are ready for it.</p>`);
   const l = d.left_off, x = d.last;
@@ -547,7 +559,7 @@ function pick(j) {
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
   return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span>${spark(d.pulse)}</div>` +
-    left + next + facts +
+    thumbs(d) + left + next + facts +
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
     (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Keep this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Kept here · Follow the last touched" : "Keep here"}</button>` : "") +
     `</div>` + chips);
@@ -787,7 +799,7 @@ function desksList(j) {
     return `<div class="hm-dk">` +
       `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
       `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
-      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) +
+      thumbs(d) + left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) +
       `<div class="hm-dk-foot">${foot}${spark(d.pulse)}</div></div>`;
   };
   return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +

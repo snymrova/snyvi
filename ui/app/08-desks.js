@@ -15,7 +15,7 @@
     const headers = { "content-type": type || "application/json", "x-snyvi-capability": capability };
     const r = await fetch(path, body === undefined ? { headers } : { method: "POST", headers, body: type ? body : JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { body: j, status: r.status });
     return j;
   }
   /** A desk route's bytes, for what an <img> cannot fetch itself: it has no
@@ -36,6 +36,12 @@
    * are wrappers rather than references because several of them are declared
    * further down this file. */
   let acts = null, actsLoading = null;
+  /* The studio desk's view -- its viewer, and its rows in the rail -- and New
+   * desk's studio dialog: ui/studio/*.js, joined into studio.js, fetched the
+   * first time either is asked for. A reader with only terminal desks never
+   * fetches it. One loader, so the desk view and the menu share the module. */
+  let studioLoading = null;
+  const studioUse = () => (studioLoading ||= import(`/assets/studio.js${boot.v ? `?v=${boot.v}` : ""}`).catch(e => { studioLoading = null; throw e; }));
   const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
   const actsCtx = {
     state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl,
@@ -60,7 +66,10 @@
     putAway: pid => putAway(String(pid)),
     applyRename: (what, id) => applyRename(what, id),
     places: () => deskPlaces(),
+    studio: () => studioUse(),
     hold: id => heldPanes.add(id),
+    // Agents: where Claude Code is set up, or said to be missing.
+    agents: () => showConnect(true),
     // The desks moved in the reader's order (menu.js, `moveDesk`).
     drawDesks: () => renderDesks(),
     focusDesk: id => deskNav.querySelector(`a[data-desk="${id}"]`)?.focus({ preventScroll: false }),
@@ -145,7 +154,7 @@
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
       const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
-        `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
+        `${icon(d.kind === "studio" ? "studio" : "desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
         `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
@@ -193,7 +202,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, studio: studioUse, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {

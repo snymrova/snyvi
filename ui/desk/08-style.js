@@ -109,6 +109,36 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-cap { font-family: var(--mono); font-size: 11px; color: var(--fg-3); margin-left: auto; padding: 2px 0 2px 5px; font-variant-numeric: tabular-nums; }
 .dk-tabs:not(:empty) + .dk-cap { margin-left: 0; }
 .dk-grid { flex: 1; min-height: 0; display: grid; gap: 6px; position: relative; }
+/* A studio desk: its viewer over its one panel, the line between them the
+ * desk's \`row\` (--st-a over --st-b), dragged. Full view, and the narrow view's Agent
+ * tab, are the panel alone. The viewer's own rules come with studio.js. */
+.st-frame { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(120px, var(--st-a, 62fr)) 8px minmax(90px, var(--st-b, 38fr)); }
+.st-frame > .st-host { min-height: 0; min-width: 0; overflow: hidden; position: relative; }
+.st-frame > .dk-grid { min-height: 0; }
+.st-frame > .st-div { position: relative; z-index: auto; cursor: row-resize; border-radius: 3px; }
+.st-div::after { content: ""; position: absolute; left: 30%; right: 30%; top: 3px; height: 2px; border-radius: 1px; background: var(--rule-2); }
+.st-div:hover::after, .st-div:focus-visible::after { background: var(--accent); }
+:root[data-full] .st-frame, .st-frame[data-tab="agent"] { grid-template-rows: 0 0 1fr; }
+:root[data-full] .st-frame > :not(.dk-grid), .st-frame[data-tab="agent"] > .st-div { visibility: hidden; }
+.st-frame[data-tab="agent"] > .st-host { overflow: visible; z-index: 1; }
+/* The studio desk's rail: its one Claude, what it cost, its folders. The
+ * rows are drawn here, not with studio.js: the rail is up before it loads. */
+.dk-claude .dk-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); font-size: var(--fs-micro); }
+.dk-claude.blk .dk-word { color: var(--warn); }
+.dk-claude.on .dk-word { color: inherit; opacity: .75; }
+.dk-spent { margin: 4px 0 0; padding: 0 8px; font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.dk-spent.over { color: var(--warn); }
+.dk-sf { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px 8px 4px calc(8px + var(--d, 0) * 14px); border-radius: 6px; text-align: left; color: var(--fg-2); transition: background var(--t), color var(--t); }
+.dk-sf:hover { background: var(--rule); color: var(--fg); }
+.dk-sf.on { background: var(--accent-bg); color: var(--accent); }
+.dk-sf .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-sf .n { flex: none; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.dk-sf.on .n { color: inherit; opacity: .8; }
+.dk-sf-c { flex: none; position: relative; width: 8px; height: 8px; }
+.dk-sf-c::before { content: ""; position: absolute; inset: 1px 2px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); opacity: .5; }
+.dk-sf-c.open::before { transform: rotate(45deg); }
+.dk-sf-c.none::before { display: none; }
+.dk-grid.st-drop { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: var(--r-sm); }
 .dk-none { color: var(--fg-3); padding: 24px; }
 .dk-none button { color: var(--accent); }
 .dk-div { position: absolute; z-index: 2; }
