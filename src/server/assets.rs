@@ -573,7 +573,11 @@ pub(crate) async fn asset_mermaid() -> Response {
 
 /// Images referenced relatively from a document, resolved against the source file's
 /// directory and confined to the project root. Image types only.
-pub(crate) async fn doc_file(State(app): S, Path((id, rel)): Path<(String, String)>) -> Response {
+pub(crate) async fn doc_file(
+    State(app): S,
+    Path((id, rel)): Path<(String, String)>,
+    req: HeaderMap,
+) -> Response {
     let Ok(Some(doc)) = app.store.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -588,7 +592,10 @@ pub(crate) async fn doc_file(State(app): S, Path((id, rel)): Path<(String, Strin
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    if !render::is_image_ext(&ext) {
+    // A picture, or a video or song the document plays in place; nothing
+    // else beside a document is the page's to fetch.
+    let media = render::media_kind(&ext).is_some();
+    if !render::is_image_ext(&ext) && !media {
         return StatusCode::FORBIDDEN.into_response();
     }
     let (Ok(canon), Ok(root)) = (
@@ -599,6 +606,21 @@ pub(crate) async fn doc_file(State(app): S, Path((id, rel)): Path<(String, Strin
     };
     if !canon.starts_with(&root) {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if media {
+        // Streamed, a range at a time, so a player can seek and a long take
+        // is never whole in the daemon.
+        let mut headers = HeaderMap::new();
+        if let Ok(v) =
+            HeaderValue::from_str(mime_guess::from_ext(&ext).first_or_octet_stream().as_ref())
+        {
+            headers.insert(header::CONTENT_TYPE, v);
+        }
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, max-age=300"),
+        );
+        return serve_file(&canon, headers, &req).await;
     }
     match tokio::fs::read(&canon).await {
         Ok(bytes) => {

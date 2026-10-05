@@ -1292,3 +1292,92 @@ fn a_panel_reads_its_own_desks_keys_and_no_other_desks() {
     assert_eq!(s, StatusCode::NOT_FOUND, "a name whose value is gone");
     assert!(why.contains("add it again"), "{why}");
 }
+
+/// A video beside a sent document plays from `/files/`: a range at a time,
+/// so it can seek. The folder's bounds and the kinds it serves stay as they
+/// were: a file of another kind, or one outside the project, is refused.
+#[tokio::test]
+async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-doc-media");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let proj = tmp.path.join("proj");
+    std::fs::create_dir_all(proj.join(".git")).unwrap();
+    let take: Vec<u8> = (0..100u8).collect();
+    std::fs::write(proj.join("take.mp4"), &take).unwrap();
+    std::fs::write(proj.join("notes.txt"), "not for the page").unwrap();
+    std::fs::write(tmp.path.join("outside.mp4"), &take).unwrap();
+    let plan = proj.join("plan.md");
+    std::fs::write(&plan, "![take](take.mp4)").unwrap();
+    let plan = plan.to_string_lossy().to_string();
+
+    let token = crate::config::load_or_create_token(&paths).unwrap();
+    let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+    let store = Store::open(&paths).unwrap();
+    let doc = store
+        .insert(
+            "abcdef0123",
+            crate::store::NewDoc {
+                project_root: &proj.to_string_lossy(),
+                project_name: "proj",
+                workflow_key: "w",
+                workflow_title: "w",
+                title: "plan",
+                kind: crate::render::Kind::Markdown,
+                lang: None,
+                source_path: Some(&plan),
+                branch: None,
+                origin: "cli",
+                sender: "",
+                desk: None,
+                source: b"![take](take.mp4)",
+                staged: None,
+                search_body: "",
+                html: "",
+            },
+        )
+        .unwrap();
+    let router = router(new_app(&paths, store, token, window, None, None));
+    let host = format!("127.0.0.1:{}", crate::config::port());
+    let get = |path: String, range: Option<&'static str>| {
+        let router = router.clone();
+        let host = host.clone();
+        async move {
+            let mut req = axum::http::Request::builder()
+                .uri(path)
+                .header("host", host);
+            if let Some(r) = range {
+                req = req.header("range", r);
+            }
+            let resp = router
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (status, headers, body)
+        }
+    };
+
+    let id = &doc.id;
+    let (s, h, body) = get(format!("/files/{id}/take.mp4"), Some("bytes=10-19")).await;
+    assert_eq!(s, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(&body[..], &take[10..20]);
+    assert_eq!(h[header::CONTENT_RANGE], "bytes 10-19/100");
+    assert_eq!(h[header::CONTENT_TYPE], "video/mp4");
+    let (s, _, body) = get(format!("/files/{id}/take.mp4"), None).await;
+    assert_eq!((s, body.len()), (StatusCode::OK, 100));
+
+    let (s, _, _) = get(format!("/files/{id}/notes.txt"), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "not a picture, a video or a song");
+    let (s, _, _) = get(format!("/files/{id}/../outside.mp4"), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "outside the project");
+}

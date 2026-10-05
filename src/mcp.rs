@@ -22,7 +22,8 @@ in the viewer to be read.\n\n\
 What snyvi shows, and when to choose it:\n\
 - A plan, report or review: Markdown. Mermaid code blocks are drawn as diagrams, so draw a flow, a sequence \
 or a structure rather than describing it. Images in Markdown show only when the document is sent by `path` \
-(they are read from beside the file).\n\
+(they are read from beside the file); a video or a song beside it plays in place the same way, \
+`![take 2](take2.mp4)`, so several takes can be shown in one document to choose from.\n\
 - Something visual or interactive -- a mockup, a comparison, a chart, a clickable prototype: one \
 self-contained HTML file. It opens as a real page and its scripts run, but it cannot make network requests, \
 so inline its CSS, JS and images (data: URIs); a <script src> from a CDN does load.\n\
