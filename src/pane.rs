@@ -86,6 +86,11 @@ const GIT_FLOOR: Duration = Duration::from_secs(10);
 /// a minute of quiet.
 const GIT_BACKOFF: u32 = 10;
 const GIT_AT_MOST: Duration = Duration::from_secs(60);
+/// A folder a page is watching is asked again after this much quiet even if
+/// nothing in it printed: a commit made from another terminal or an editor
+/// changes the tree without a word from the pane. Once a minute per watched
+/// folder, where it was twenty times.
+const GIT_QUIET: Duration = Duration::from_secs(60);
 /// How many times this daemon has run `git status`, for `/api/health` and
 /// the bench row that holds a desk at its prompt to none of them.
 static GIT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -132,10 +137,10 @@ struct Asked {
 /// asked: yes. Otherwise only once the floor and the cost back-off have
 /// passed, and only when something could have changed the answer: a pane
 /// in the folder printed since the last ask -- a command ran, an agent
-/// wrote -- or a page began watching that was not. A shell at its prompt
-/// all day prints nothing, and its folder is asked nothing: `git status`
-/// every three seconds for a desk nobody is typing in was most of what an
-/// idle daemon did.
+/// wrote -- or a page began watching that was not; and, while a page is
+/// watching, once in `GIT_QUIET` regardless, for a tree changed from
+/// outside. `git status` every three seconds for a desk nobody is typing in
+/// was most of what an idle daemon did.
 fn status_due(
     now: Instant,
     last: Option<Asked>,
@@ -146,7 +151,9 @@ fn status_due(
     if now < a.at + (a.cost * GIT_BACKOFF).clamp(GIT_FLOOR, GIT_AT_MOST) {
         return false;
     }
-    watchers > a.watchers || printed.is_some_and(|p| p > a.at)
+    watchers > a.watchers
+        || printed.is_some_and(|p| p > a.at)
+        || (watchers > 0 && now >= a.at + GIT_QUIET)
 }
 
 /// What the rail and the sidebar say about a pane, sent whenever it changes.
@@ -287,6 +294,9 @@ struct Inner {
     filed: bool,
     kept: usize,
     txt_bytes: usize,
+    /// The screen's `clears` when the files were last written whole: a
+    /// `clear` since means what is on disk is what the reader cleared.
+    clears: u64,
     /// Bumped by each start, so the threads of a process that has been
     /// replaced do not write into the one that replaced it.
     run: u64,
@@ -358,6 +368,13 @@ impl Inner {
     fn take_text(&mut self) -> Text {
         let screen = self.screen.screen_text();
         let screen_bytes = bytes(screen.iter().map(String::len));
+        // A `clear` since the last whole write: what is on disk, and the
+        // last run's text above it, are what the reader cleared. A pane with
+        // a page open has had this done by `frame_now` already.
+        if self.screen.clears() != self.clears {
+            self.old.clear();
+            self.filed = false;
+        }
         let since = if self.filed {
             self.screen.kept_since(self.kept)
         } else {
@@ -390,6 +407,7 @@ impl Inner {
         self.kept = self.screen.lines_ever() - (kept - present);
         self.txt_bytes = bytes(lines.iter().map(String::len));
         self.filed = true;
+        self.clears = self.screen.clears();
         Text::Whole {
             lines: lines.to_vec(),
             screen: screen.to_vec(),
@@ -544,6 +562,7 @@ impl Panes {
                 filed: false,
                 kept: 0,
                 txt_bytes: 0,
+                clears: 0,
                 run: 0,
                 cwd: String::new(),
                 started: Instant::now(),
@@ -635,7 +654,10 @@ impl Panes {
             }
             // Not asked: the tree is as it was last said to be. Asked and
             // not answered -- no repository, git missing -- it is clean.
-            let dirty = if ask {
+            // Outside the desk's folder it is never asked, and says clean:
+            // a pane that `cd`s into another repository does not carry the
+            // desk's mark with it.
+            let dirty = if ask || !f.home {
                 Some(dirty.unwrap_or(false))
             } else {
                 None
@@ -1468,6 +1490,7 @@ impl Live {
         // A new screen counts its lines from nought: the files hold the
         // last run's, and the next write is the whole text.
         i.filed = false;
+        i.clears = 0;
         i.parser = vte::Parser::new();
         i.run += 1;
         let run = i.run;
@@ -1961,8 +1984,8 @@ mod tests {
     }
 
     /// A folder is asked about its tree once, and then only when a pane in
-    /// it printed or a page began watching -- never on the clock alone, and
-    /// never sooner than the floor however much is printed.
+    /// it printed, a page began watching, or a watched folder has been quiet
+    /// a minute -- never sooner than the floor however much is printed.
     #[test]
     fn a_folder_is_asked_about_its_tree_only_when_something_could_have_changed_it() {
         let t0 = Instant::now();
@@ -2001,6 +2024,14 @@ mod tests {
         assert!(
             !status_due(later, Some(asked), None, 0),
             "one stopped watching: nothing new to say"
+        );
+        assert!(
+            status_due(t0 + GIT_QUIET, Some(asked), None, 1),
+            "a watched folder is asked after a quiet minute: a commit from outside shows"
+        );
+        assert!(
+            !status_due(t0 + GIT_QUIET * 5, Some(asked), None, 0),
+            "an unwatched one is not"
         );
         let slow = Asked {
             cost: Duration::from_secs(3),
@@ -2366,6 +2397,18 @@ mod tests {
         assert!(matches!(&text, Text::More { lines, .. } if lines.len() == 1));
         panes.write(id, text);
         assert_eq!(panes.read_text(id), want);
+
+        // `clear`, with no page open to frame it: what is on disk is what
+        // the reader cleared, and the next write is the whole text again --
+        // not the lines since, appended to the cleared ones.
+        feed("\x1b[3J\x1b[H\x1b[2Jafter\r\n".to_string());
+        let want = whole();
+        assert!(!want.iter().any(|l| l.contains("line 10")), "cleared");
+        let text = live.inner.lock().unwrap().take_text();
+        assert!(matches!(text, Text::Whole { .. }), "after a clear: whole");
+        panes.write(id, text);
+        assert_eq!(panes.read_text(id), want);
+        assert!(!panes.read_text(id).iter().any(|l| l.contains("zzz")));
     }
 
     /// A key buys one fast frame for the output that follows it, and only

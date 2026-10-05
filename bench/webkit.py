@@ -109,10 +109,12 @@ QUIET = 2.0
 # happening at all, and with four panels at work that no page is watching.
 DAEMON_IDLE = 0.5
 DAEMON_UNWATCHED = 1.0
-# `git status` runs for four shells at their prompt, watched: a handful while
-# the daemon finds each panel's folder, and then none at all.
+# `git status` runs for four shells at their prompt in one folder, watched: a
+# handful while the daemon finds each panel's folder, and then the one recheck
+# a minute a watched folder gets for a tree changed from outside (GIT_QUIET in
+# src/pane.rs) -- two, for a window that straddles one.
 GIT_FIRST_MINUTE = 24
-GIT_QUIET_MINUTE = 0
+GIT_QUIET_MINUTE = 2
 IDLE_SECONDS = 60
 # Coming back to a desk whose panels are full: each panel's snapshot drawn
 # within this many ms of its arriving, and none of them bigger than this many
@@ -533,8 +535,11 @@ def quiet(name, m, what=""):
 
 
 def git_runs(base):
+    """The daemon's count of `git status` runs, or None from a daemon that
+    keeps none -- which is a row that cannot pass, not a zero."""
     with urllib.request.urlopen(base + "/api/health") as r:
-        return int(json.loads(r.read()).get("git_runs", 0))
+        n = json.loads(r.read()).get("git_runs")
+        return None if n is None else int(n)
 
 
 def git_rows(env, base):
@@ -570,6 +575,10 @@ def git_rows(env, base):
         n1 = git_runs(base)
         v.wait(60_000)
         n2 = git_runs(base)
+        if None in (n0, n1, n2):
+            rows.append(("4 shells at their prompt, git in a minute", False,
+                         "this daemon does not count its git runs (/api/health has no git_runs)"))
+            return rows
         rows.append(("4 shells at their prompt, git in a minute", n1 - n0 <= GIT_FIRST_MINUTE,
                      f"{n1 - n0} runs of git status, budget {GIT_FIRST_MINUTE}"))
         rows.append(("and in the quiet minute after", n2 - n1 <= GIT_QUIET_MINUTE,

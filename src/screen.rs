@@ -239,6 +239,10 @@ pub struct Screen {
     pushed: Vec<Line>,
     /// The page's copy of the scrollback is to be emptied: `ESC [ 3 J`.
     sb_cleared: bool,
+    /// How many times it has been, ever: what a pane's saved text compares
+    /// against, since `sb_cleared` is spent by the next frame and a pane
+    /// with no page open is never framed.
+    clears: u64,
     dropped: usize,
     /// How many lines have ever left the front of `scrollback`, so that
     /// `sb_first + i` names line `i` for as long as it is kept: a page asking
@@ -288,6 +292,7 @@ impl Screen {
             scrollback_bytes: 0,
             pushed: Vec::new(),
             sb_cleared: false,
+            clears: 0,
             dropped: 0,
             sb_first: 0,
             shifted: 0,
@@ -373,6 +378,11 @@ impl Screen {
     /// with it.
     pub fn scrollback_cleared(&self) -> bool {
         self.sb_cleared
+    }
+
+    /// How many times the scrollback has been cleared since this screen began.
+    pub fn clears(&self) -> u64 {
+        self.clears
     }
 
     /// When a synchronized update still open should be framed anyway -- the
@@ -1312,11 +1322,14 @@ impl vte::Perform for Screen {
                         }
                     }
                     3 => {
-                        self.sb_first += self.scrollback.len();
+                        // The lines not yet framed went too, and count as
+                        // gone: `lines_ever` never goes back.
+                        self.sb_first += self.scrollback.len() + self.pushed.len();
                         self.scrollback.clear();
                         self.scrollback_bytes = 0;
                         self.pushed.clear();
                         self.sb_cleared = true;
+                        self.clears += 1;
                     }
                     _ => {}
                 }
@@ -1687,6 +1700,28 @@ mod tests {
         let f = s.frame("p", &mut shown).expect("the clear goes out");
         assert!(f.contains("\"sbclear\":1"));
         assert!(!s.scrollback_cleared(), "and down once it has");
+    }
+
+    /// A clear before any frame took the lines just scrolled off with it, and
+    /// counts them as gone: the count of lines ever kept never goes back, so
+    /// a pane appending its text from a mark cannot skip what follows.
+    #[test]
+    fn a_clear_never_takes_the_line_count_back() {
+        let (mut s, mut p) = screen(10, 2);
+        feed(&mut s, &mut p, "one\r\ntwo\r\nthree\r\nfour");
+        let before = s.lines_ever();
+        assert!(before > 0);
+        assert_eq!(s.clears(), 0);
+        feed(&mut s, &mut p, "\x1b[3J");
+        assert_eq!(s.clears(), 1);
+        assert!(
+            s.lines_ever() >= before,
+            "{} then {}",
+            before,
+            s.lines_ever()
+        );
+        feed(&mut s, &mut p, "\r\nfive\r\nsix");
+        assert!(s.lines_ever() > before);
     }
 
     /// What Claude Code's caret said each of these is, typed into its prompt
