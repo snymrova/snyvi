@@ -144,7 +144,7 @@ function keysSheet(d) {
       <datalist id="dk-key-names">${PROVIDERS.map(([p, n]) => `<option value="${n}">${p}</option>`).join("")}</datalist>
       <label><span>Value</span><input name="value" type="password" autocomplete="new-password" required placeholder="paste it here"></label>
       <div class="dk-keys-w"><span>Where</span><label><input type="radio" name="every" value="" checked> this desk</label><label><input type="radio" name="every" value="1"> every desk</label><button type="submit">Keep</button></div>
-      <p class="dk-keys-say" role="status">Kept where only you can read it and never shown again. Panels started from now on have it; open panels get it when they next start.</p>
+      <p class="dk-keys-say" role="status">Kept where only you can read it and never shown again. Panels on this desk can use it now, as $(snyvi key NAME).</p>
     </form>`;
   sheet.querySelector("form").addEventListener("submit", e => keyAdd(d, e));
   // What is typed is the sheet's: the page's own keys stay out of it.
@@ -190,8 +190,8 @@ async function keyAdd(d, e) {
     const j = await ctx.api(`/api/desks/${d.id}/keys`, { name, value, every, provider: provider(name) });
     f.value.value = ""; f.name.value = "";
     say.textContent = j.kept === "file"
-      ? `${name} is kept in a file only you can read. Panels started from now on have it; open panels get it when they next start.`
-      : `${name} is kept in your keychain. Panels started from now on have it; open panels get it when they next start.`;
+      ? `${name} is kept in a file only you can read. Panels on this desk can use it now, as $(snyvi key ${name}).`
+      : `${name} is kept in your keychain. Panels on this desk can use it now, as $(snyvi key ${name}).`;
     f.name.focus();
   } catch (err) { say.textContent = `Could not keep it · ${ctx.sayErr(err).why}`; }
   btn.disabled = false;

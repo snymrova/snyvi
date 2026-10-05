@@ -470,6 +470,77 @@ pub(crate) async fn pane_brief(
     .into_response()
 }
 
+/// One of this pane's desk's keys, by name: what `snyvi key NAME` prints, so
+/// a command in the panel can say `$(snyvi key NAME)` and the shell, not the
+/// conversation, carries the value. A key added after the panel started is
+/// usable at once, with no restart. The token and a running pane, as the
+/// brief: only the pane's own desk and the every-desk keys, never another
+/// desk's. The value is the body and nothing else, never stored on the way.
+pub(crate) async fn pane_key(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, name)): Path<(String, String)>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let held = app.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        desk_key(&held.store, &held.secrets, placed.desk_id, &name)
+    })
+    .await
+    .unwrap_or(Err((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "could not read the key".into(),
+    )));
+    match found {
+        Ok(value) => (
+            [
+                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            value,
+        )
+            .into_response(),
+        Err((status, why)) => (status, Json(json!({ "error": why }))).into_response(),
+    }
+}
+
+/// The value of the key `name` as desk `desk_id` sees it -- its own, or the
+/// every-desk one -- marked used. The keychain blocks: call it from a
+/// blocking thread. A refusal says what to do, by name only.
+pub(crate) fn desk_key(
+    store: &Store,
+    secrets: &crate::secrets::Secrets,
+    desk_id: i64,
+    name: &str,
+) -> std::result::Result<String, (StatusCode, String)> {
+    if let Err(why) = crate::secrets::valid_name(name) {
+        return Err((StatusCode::BAD_REQUEST, why.to_string()));
+    }
+    let keys = store.desk_keys(desk_id).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not read the desk's keys".to_string(),
+        )
+    })?;
+    let Some(key) = keys.into_iter().find(|k| k.name == name) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("this desk has no key called {name}; add it under ⋯ Keys… on the desk"),
+        ));
+    };
+    let Some(value) = secrets.value(key.desk_id, &key.name) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("{name} is on this desk but its value is gone; add it again under ⋯ Keys…"),
+        ));
+    };
+    let _ = store.touch_desk_keys(&[key]);
+    Ok(value)
+}
+
 /// What changed on this pane's desk since snyvi last spoke to its agent
 /// (`crate::brief::changes`): what the UserPromptSubmit hook hands Claude with
 /// the prompt. The same gate and switch as the brief. Empty when nothing

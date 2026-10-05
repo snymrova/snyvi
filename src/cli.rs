@@ -172,6 +172,11 @@ enum Cmd {
         #[arg(long)]
         back: bool,
     },
+    /// Print one of this desk's keys, for a command in a snyvi panel: `curl -H "x-api-key: $(snyvi key NAME)" ...`. Works only inside a panel; a key added after the panel started works at once.
+    Key {
+        /// The key's name, as the desk's Keys list shows it.
+        name: String,
+    },
     /// Show daemon status.
     Status,
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
@@ -300,6 +305,16 @@ pub(crate) fn run() -> Result<()> {
             Some(UpdateCmd::Off) => client::update_auto(&paths, false),
             None => client::update(&paths, client::UpdateOpts { now, to, back }),
         },
+        Cmd::Key { name } => {
+            use std::io::Write;
+            // No newline: `$(...)` would drop it anyway, and a pipe should get
+            // the value exactly.
+            let value = client::key(&paths, &name)?;
+            let mut out = std::io::stdout().lock();
+            out.write_all(value.as_bytes())?;
+            out.flush()?;
+            Ok(())
+        }
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),

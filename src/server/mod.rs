@@ -342,6 +342,7 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/name", post(pane_name))
         .route("/api/panes/{id}/brief", get(pane_brief))
         .route("/api/panes/{id}/changes", get(pane_changes))
+        .route("/api/panes/{id}/keys/{name}", get(pane_key))
         .route("/api/panes/{id}/leftoff", post(pane_left_off))
         .route("/api/panes/{id}/suggest", post(pane_suggest_note))
         .route(
