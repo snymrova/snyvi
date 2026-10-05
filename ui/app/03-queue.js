@@ -511,9 +511,11 @@
       else if (onRow) treeEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
       drawnTree = h;
       treeTouched.takeRecords();
-      // The rows changed, so the column may have: the recut below is armed.
-      if (!recut) recutDone = false;
     }
+    // Any write above may have moved the column -- the rows, or a queue or a
+    // desk list that brought the scrollbar in -- so the recut is armed. It
+    // runs only if the width it was cut for is not the width there is.
+    if (!recut) recutDone = false;
     // A project the reader has open that this tab has never filled: the "…" is
     // on screen, so fetching it now is what turns it into rows.
     for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
@@ -654,7 +656,7 @@
    * the page they open, paid when a folder is first unfolded. A filled tree
    * implies the chunk, so a reload with none loaded has nothing to re-list. */
   const treeCtx = () => ({ esc, icon, chev, plusDesk, docIco, fmtSize, skRows, noReach, markActive, getJson });
-  const fillTree = ul => { if (ul && !ul.dataset.loaded) browseUse().then(m => m.fill(treeCtx(), ul), () => {}); };
+  const fillTree = ul => { if (ul && !ul.dataset.loaded) browseUse().then(m => m.fill(treeCtx(), ul), () => { ul.innerHTML = noReach("dir", "li"); }); };
   const reloadTree = ul => { if (browseMod) browseMod.reload(treeCtx(), ul); };
   treesEl.addEventListener("toggle", e => {
     const d = e.target;
