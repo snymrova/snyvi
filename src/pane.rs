@@ -2256,7 +2256,7 @@ mod tests {
         assert!(seen.contains(cwd.split('/').next_back().unwrap()), "{seen}");
         assert_eq!(exit, Some(3));
         // And what it left is on disk, for a restart to grey out.
-        let text = panes.read_text(&id).join("\n");
+        let text = panes.read_text(id).join("\n");
         assert!(text.contains(&format!("pane={id}")), "{text}");
     }
 

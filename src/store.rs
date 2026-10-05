@@ -188,8 +188,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(id UNINDEXED, title, body
 /// anyone searches for is in the first half-megabyte of a 32 MB file.
 const FTS_INSERT: &str =
     "INSERT INTO docs_fts(rowid, id, title, body) SELECT rowid, ?1, ?2, ?3 FROM docs WHERE id = ?1";
-const FTS_DELETE: &str = "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
-
+const FTS_DELETE: &str =
+    "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
 
 const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot";
 const DOC_FROM: &str =

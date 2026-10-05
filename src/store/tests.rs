@@ -854,8 +854,10 @@ fn fts_drift(conn: &Connection) -> i64 {
 }
 
 fn is_head(conn: &Connection, id: &str) -> i64 {
-    conn.query_row("SELECT is_head FROM docs WHERE id = ?1", params![id], |r| r.get(0))
-        .unwrap()
+    conn.query_row("SELECT is_head FROM docs WHERE id = ?1", params![id], |r| {
+        r.get(0)
+    })
+    .unwrap()
 }
 
 /// A save takes the document's index row out by its rowid: the same few
@@ -881,7 +883,11 @@ fn a_save_takes_its_index_row_out_by_rowid_not_by_a_scan() {
         }
     }
     let conn = s.conn.lock().unwrap();
-    assert_eq!(fts_drift(&conn), 0, "every index row sits at its document's rowid");
+    assert_eq!(
+        fts_drift(&conn),
+        0,
+        "every index row sits at its document's rowid"
+    );
 
     let tx = conn.unchecked_transaction().unwrap();
     let at_400 = vm_steps(&tx, FTS_DELETE, &ids[200]);
@@ -924,8 +930,15 @@ fn a_save_that_changed_nothing_leaves_the_index_alone() {
     let r = s.replace(&a.id, again).unwrap();
     assert_eq!(r.id, a.id);
     assert_eq!(s.html(&a.id).unwrap(), "<p>rendered again</p>");
-    assert_eq!(s.search("alpha", 5).unwrap().len(), 1, "the index row it had");
-    assert!(s.search("omega", 5).unwrap().is_empty(), "and not a new one");
+    assert_eq!(
+        s.search("alpha", 5).unwrap().len(),
+        1,
+        "the index row it had"
+    );
+    assert!(
+        s.search("omega", 5).unwrap().is_empty(),
+        "and not a new one"
+    );
     let conn = s.conn.lock().unwrap();
     assert_eq!(fts_drift(&conn), 0);
     let rows: i64 = conn
@@ -1015,7 +1028,8 @@ fn a_desks_list_is_read_through_its_index() {
             .collect::<std::result::Result<_, _>>()
             .unwrap();
         assert!(
-            plan.iter().any(|l| l.contains("docs USING INDEX docs_desk")),
+            plan.iter()
+                .any(|l| l.contains("docs USING INDEX docs_desk")),
             "off={off}: {plan:?}"
         );
     }
@@ -1042,7 +1056,10 @@ fn a_1_16_database_comes_forward_once() {
             .insert(&new_id("1"), version_of("/p/F.md", "F", "one alpha", "w"))
             .unwrap();
         let v2 = s
-            .insert(&new_id("2"), version_of("/p/F.md", "F v2", "two bravo", "w"))
+            .insert(
+                &new_id("2"),
+                version_of("/p/F.md", "F v2", "two bravo", "w"),
+            )
             .unwrap();
         let loose = s
             .insert(&new_id("n"), new_doc("Notes", "elsewhere charlie", "w"))
@@ -1084,7 +1101,11 @@ fn a_1_16_database_comes_forward_once() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((docs, fts), (3, 3), "one index row a document, the newer kept");
+    assert_eq!(
+        (docs, fts),
+        (3, 3),
+        "one index row a document, the newer kept"
+    );
     let kept: String = conn
         .query_row(
             "SELECT body FROM docs_fts WHERE id = ?1",
@@ -1130,9 +1151,18 @@ fn the_project_row_a_doc_event_carries_is_the_trees_row() {
     assert_eq!(listed.len(), 1);
     assert_eq!(
         (row.id, row.docs, row.workflows, row.latest),
-        (listed[0].id, listed[0].docs, listed[0].workflows, listed[0].latest)
+        (
+            listed[0].id,
+            listed[0].docs,
+            listed[0].workflows,
+            listed[0].latest
+        )
     );
-    assert_eq!((row.docs, row.workflows), (1, 1), "the head's workflow only");
+    assert_eq!(
+        (row.docs, row.workflows),
+        (1, 1),
+        "the head's workflow only"
+    );
     assert!(s.project_row(999).unwrap().is_none());
 }
 

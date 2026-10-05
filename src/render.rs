@@ -288,9 +288,7 @@ impl Renderer {
     /// and the Rust grammar alone has some hundreds. Once after the daemon
     /// binds, off the request path; the snippets touch the contexts ordinary
     /// code goes through (a signature, a string, a comment, a number).
-    // Called from the daemon once it has bound (server/mod.rs); nothing else
-    // in the binary reaches it, and the test below does not count.
-    #[allow(dead_code)]
+    // Called from the daemon once it has bound (server/mod.rs).
     pub fn warm(&self) {
         const SNIPPETS: &[(&str, &str)] = &[
             ("rs", "use std::io;\n/// doc\npub fn f(x: u32) -> Result<String, io::Error> {\n    let s = format!(\"{x}\"); // c\n    if x > 1 { Ok(s) } else { Err(io::Error::other(\"no\")) }\n}\n"),

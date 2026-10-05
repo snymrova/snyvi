@@ -1339,7 +1339,9 @@ async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
 async fn an_oversize_send_is_refused_with_its_size_not_a_bare_413() {
     let (_tmp, router, leaves) = gated_router("snyvi-oversize");
     let content = "x".repeat(crate::receive::MAX_BYTES + 1);
-    let body = serde_json::to_string(&serde_json::json!({ "content": content, "title": "Too much" })).unwrap();
+    let body =
+        serde_json::to_string(&serde_json::json!({ "content": content, "title": "Too much" }))
+            .unwrap();
     let req = axum::http::Request::builder()
         .method("POST")
         .uri("/api/docs")

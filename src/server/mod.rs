@@ -380,8 +380,9 @@ fn router(app: Arc<App>) -> Router {
         // over the cap is refused with its real size, not a bare 413.
         .route(
             "/api/docs",
-            post(receive_doc)
-                .layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES + 64 * 1024)),
+            post(receive_doc).layer(axum::extract::DefaultBodyLimit::max(
+                receive::MAX_BYTES + 64 * 1024,
+            )),
         )
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
@@ -598,6 +599,12 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // and the watcher would apply it again.
     spawn_restart_watcher(leaving.clone());
     spawn_update_checker(leaving.clone());
+    // The commonest grammars compiled now, off the request path, so the
+    // first Rust file of the day renders at the speed of the second.
+    {
+        let warm = leaving.clone();
+        tokio::task::spawn_blocking(move || warm.renderer.warm());
+    }
     // An install from an older snyvi gets the hooks that tell a panel what
     // Claude is doing, without the reader running `init-claude` again. Only
     // where our hook already is and names this binary, and only once this
