@@ -409,6 +409,8 @@
     return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
   }
   function renderTree() {
+    // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
+    window.__perf && window.__perf.renders++;
     const projects = heldTree();
     const total = state.tree.reduce((n, p) => n + p.docs, 0);
     // A link, so the keyboard reaches it: a div with a click handler is a row
