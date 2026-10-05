@@ -193,48 +193,6 @@ pub fn app_bundles(name: &str) -> Vec<std::path::PathBuf> {
     out.into_iter().filter(|p| p.is_dir()).collect()
 }
 
-/// Open the machine's own terminal, with its working directory set.
-///
-/// snyvi passes no command. That is the whole of why this exists and an
-/// embedded terminal does not: the only input is a directory snyvi already
-/// holds, nothing a document contains reaches a command line, and nothing comes
-/// back -- output goes to the terminal, which snyvi neither reads nor renders.
-/// `docs/TERMINAL.md` has the argument.
-///
-/// Guarded by `has_display`, so a daemon reached over ssh declines rather than
-/// failing: this is the same question as opening a window, and gets the same
-/// answer. Best effort otherwise, exactly like `app_mode_browsers` -- the
-/// candidates are tried in order and the first one that starts wins, since a
-/// program that is not installed is a spawn that returns Err rather than
-/// something to go looking for first.
-///
-/// The working directory is set on the child as well as passed as a flag. The
-/// flag is what a terminal reads when it hands the directory to a server it
-/// talks to rather than opening the window itself; the child's own directory is
-/// what a terminal that takes no flag uses. Neither covers the list alone.
-pub fn open_terminal(dir: &std::path::Path) -> bool {
-    if !has_display() {
-        return false;
-    }
-    for args in terminals(dir) {
-        let Some((program, rest)) = args.split_first() else {
-            continue;
-        };
-        let mut cmd = Command::new(program);
-        cmd.args(rest)
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        if cmd.spawn().is_ok() {
-            return true;
-        }
-    }
-    false
-}
-
 /// Ask the desktop for a folder, with its own dialog, and wait for the answer.
 ///
 /// `Ok(None)` is the reader closing the dialog; `Err` is a desktop with no
@@ -310,76 +268,6 @@ pub fn pick_folder() -> Result<Option<std::path::PathBuf>, String> {
     } else {
         "the desktop's folder dialog could not be started".into()
     })
-}
-
-/// The terminals to try, in order, with the argument each one takes for a
-/// working directory -- which is not uniform, so the flag travels with the name
-/// rather than being assumed.
-///
-/// `$TERMINAL` is honoured first and passed no flag at all, because the whole
-/// point of it is that snyvi does not know which program it names. It is also
-/// often unset exactly where it would be most useful: the daemon is started by
-/// the reader's first `snyvi send`, or by `systemd --user` at login, and neither
-/// carries much of an environment. The list below is not a fallback for the
-/// unusual machine, it is the path that runs on the ordinary one.
-fn terminals(dir: &std::path::Path) -> Vec<Vec<String>> {
-    let d = dir.to_string_lossy().into_owned();
-    let mut out: Vec<Vec<String>> = vec![];
-    let _ = &d;
-    #[cfg(target_os = "windows")]
-    {
-        // Windows Terminal ships with Windows 11 and is the one most likely to
-        // be wanted; a console by way of `start` is what is there when it is
-        // not. The empty argument after `start` is the window title, which it
-        // would otherwise take from the program name that follows.
-        out.push(vec!["wt.exe".into(), "-d".into(), d.clone()]);
-        out.push(vec![
-            "cmd.exe".into(),
-            "/C".into(),
-            "start".into(),
-            String::new(),
-            "cmd.exe".into(),
-        ]);
-    }
-    #[cfg(target_os = "macos")]
-    out.push(vec![
-        "open".into(),
-        "-a".into(),
-        "Terminal".into(),
-        d.clone(),
-    ]);
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        if let Some(t) = std::env::var_os("TERMINAL") {
-            let t = t.to_string_lossy().into_owned();
-            if !t.trim().is_empty() {
-                out.push(vec![t]);
-            }
-        }
-        for (name, flag) in [
-            ("gnome-terminal", Some("--working-directory")),
-            ("konsole", Some("--workdir")),
-            ("xfce4-terminal", Some("--working-directory")),
-            ("alacritty", Some("--working-directory")),
-            ("kitty", Some("--directory")),
-            ("foot", Some("--working-directory")),
-            ("ptyxis", Some("--working-directory")),
-            // wezterm wants a subcommand before it will take a directory.
-            ("wezterm", None),
-            // Debian's alternative is a symlink to any of the above and so
-            // takes none of their flags. It inherits the directory instead.
-            ("x-terminal-emulator", None),
-        ] {
-            let mut argv = vec![name.to_string()];
-            if name == "wezterm" {
-                argv.extend(["start".to_string(), "--cwd".to_string(), d.clone()]);
-            } else if let Some(f) = flag {
-                argv.extend([f.to_string(), d.clone()]);
-            }
-            out.push(argv);
-        }
-    }
-    out
 }
 
 /// Run a program that might be installed as a shell script rather than an
@@ -880,40 +768,7 @@ pub fn release_freed_memory() {
 
 #[cfg(test)]
 mod tests {
-    use super::{sound_for, terminals, Sound};
-    use std::path::Path;
-
-    /// The property the whole feature rests on, stated so it cannot quietly
-    /// stop being true: snyvi hands a terminal a directory, and never anything
-    /// a shell could run. A candidate that grew an `-e` or a `--command` would
-    /// turn "open a terminal here" into the executor that `docs/TERMINAL.md`
-    /// declines.
-    ///
-    /// The directory has a space in it, so a candidate that had taken to
-    /// building a command line out of it rather than passing it as one
-    /// argument would fail here rather than on someone's machine.
-    #[test]
-    fn a_terminal_is_asked_for_a_directory_and_never_for_a_command() {
-        let dir = Path::new("/tmp/a folder");
-        let candidates = terminals(dir);
-        assert!(!candidates.is_empty(), "no terminal is ever tried");
-        for argv in &candidates {
-            let (_program, rest) = argv.split_first().expect("a candidate with no program");
-            for arg in rest {
-                let allowed = arg.starts_with('-')      // a flag
-                    || arg.starts_with('/')             // a flag, on Windows
-                    || arg.is_empty()                   // `start`'s window title
-                    || arg == "start"                   // wezterm's and cmd's subcommand
-                    || arg == "cmd.exe"                 // what `start` is asked to start
-                    || arg == "Terminal"                // what `open -a` is asked to open
-                    || *arg == dir.to_string_lossy();
-                assert!(
-                    allowed,
-                    "{argv:?} passes {arg:?}, which is neither a flag nor the directory"
-                );
-            }
-        }
-    }
+    use super::{sound_for, Sound};
 
     /// A burst of arrivals is one sound. Twelve files from an agent are twelve
     /// notifications, and the reader who asked for a sound asked to be told,
@@ -941,22 +796,5 @@ mod tests {
             sound_for(Some(true), &mut last, t0 + Duration::from_millis(2000)),
             Sound::Asked
         );
-    }
-
-    /// Every candidate has to be told the directory one way or another: by a
-    /// flag, or by inheriting the working directory `open_terminal` sets on the
-    /// child. The second is invisible here, so this only checks that a
-    /// candidate carrying a flag carries the directory with it.
-    #[test]
-    fn a_flag_never_arrives_without_the_directory_it_is_for() {
-        let dir = Path::new("/tmp/a folder");
-        for argv in terminals(dir) {
-            let takes_dir = argv.iter().any(|a| *a == dir.to_string_lossy());
-            let has_flag = argv[1..].iter().any(|a| a.starts_with('-'));
-            assert!(
-                !has_flag || takes_dir,
-                "{argv:?} passes a flag but never the directory"
-            );
-        }
     }
 }

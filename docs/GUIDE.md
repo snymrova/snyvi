@@ -1323,10 +1323,10 @@ a link into a browsed file is how one agent tells you where to look.
 
 **Open in file manager**, under the file or folder you are reading, shows
 it in Files, Finder or Explorer; a file opens the folder it sits in. It
-is beside **Open terminal here**, in a folder's right-click menu too, and
-a desk's **Folder** line in its rail does the same for the desk's folder.
-The page sends only the id of what you are reading and the daemon works
-out the folder itself, as it does for the terminal.
+is in a folder's right-click menu too, and a desk's **Folder** line in
+its rail does the same for the desk's folder. The page sends only the id
+of what you are reading and the daemon works out the folder itself. For a
+shell in a folder, open a desk on it.
 
 Opening a folder requires the daemon token, because it exposes those
 files to the browser. Reading inside a folder you already opened does

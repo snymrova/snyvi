@@ -369,7 +369,6 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Reader,
         true,
     ),
-    ("POST", "/api/terminal", Some("{}"), Gate::Reader, true),
     ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
     (
         "POST",

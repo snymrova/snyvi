@@ -182,20 +182,10 @@ export function rename(ctx, holder, what, id, typed, why) {
   input.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
 }
 
-export async function terminal(ctx, body) {
-  const { toast } = ctx;
-  try {
-    const r = await fetch("/api/terminal", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    });
-    const j = await r.json().catch(() => ({}));
-    // The terminal opening is the answer; only a refusal is said.
-    if (!r.ok) toast("Could not open a terminal", { sub: new Error(j.error || `${r.status}`) });
-  } catch (e) { toast("Could not open a terminal", { sub: e }); }
-}
-/** The same place, in the file manager -- Files, Finder, Explorer. The same
- *  ids go over and the daemon resolves them the same way; a desk's folder
- *  goes with the capability, behind the desk's gate. */
+/** The place the reader is looking at, in the file manager -- Files,
+ *  Finder, Explorer. Ids go over, never a path: the daemon resolves the
+ *  folder itself. A desk's folder goes with the capability, behind the
+ *  desk's gate. */
 export async function reveal(ctx, body) {
   const { toast } = ctx;
   try {
@@ -271,7 +261,7 @@ async function dropDesk(ctx, id) {
  *  code its button already runs -- the row's ✕, the rail's Close, the desk
  *  glyph -- reached through `ctx`, so the menu cannot drift into a second
  *  copy of any of it. A thing that cannot be done here is left out, never
- *  greyed: a browser tab has no desks and no terminals, and its menus say so
+ *  greyed: a browser tab has no desks, and its menus say so
  *  by not offering them. Open or show comes first, then change it, then copy
  *  or reveal, and remove or close last, in the danger colour, below a rule.
  *  The desk's own surfaces -- a panel, a rail row, a note, a point -- are the
@@ -281,7 +271,6 @@ async function dropDesk(ctx, id) {
 const RULE = "rule";
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
-  const term = body => capability && { label: "Open terminal here", run: () => terminal(ctx, body) };
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
@@ -297,7 +286,7 @@ function entries(ctx, el, byKey = false) {
       capability && { label: "New desk here", run: () => make(ctx, f) },
       ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })) : []),
       capability && RULE,
-      term({ root: f.root, path: f.path }), files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
+      files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
       root && RULE, root && { label: "Close folder", danger: true, run: () => ctx.closeRoot(f.root) },
     ] };
   }
@@ -305,7 +294,7 @@ function entries(ctx, el, byKey = false) {
     const root = el.dataset.browse, path = el.dataset.path || "", r = ctx.state.browse.find(x => x.id === root), abs = r ? r.path + (path ? "/" + path : "") : "";
     return { head: path.split("/").pop() || abs, items: [
       { label: "Open", moves: 1, run: () => ctx.browse(root, path, true) }, RULE,
-      term({ root, path }), files({ root, path }), abs && copyIt(abs, "Copy path"),
+      files({ root, path }), abs && copyIt(abs, "Copy path"),
     ] };
   }
   if (el.matches(".t-proj > summary")) {
@@ -316,7 +305,7 @@ function entries(ctx, el, byKey = false) {
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
       ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
       { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
-      term({ project: pid }), files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
+      files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
       { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
     ] };
   }
@@ -326,7 +315,7 @@ function entries(ctx, el, byKey = false) {
       { label: "Open", moves: 1, run: () => ctx.open(id) },
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
-      term({ doc: id }), files({ doc: id }), RULE,
+      files({ doc: id }), RULE,
       { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }
@@ -346,7 +335,7 @@ function entries(ctx, el, byKey = false) {
       dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
-      term({ desk: id }), files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
+      files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
       { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }

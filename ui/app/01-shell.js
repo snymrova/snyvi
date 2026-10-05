@@ -17,7 +17,7 @@
     previous: boot.previous || null,
     versions: [],               // ids of every snapshot of the open document, newest first
 
-    folder: boot.folder || null,   // where "Open terminal here" would open, if anywhere
+    folder: boot.folder || null,   // where "Open in file manager" would open, if anywhere
     queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
     waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
     cache: new Map(),           // id -> {doc, html, previous}

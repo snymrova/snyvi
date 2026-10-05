@@ -1651,8 +1651,9 @@ async function asideRows(p, base, token) {
   return rows;
 }
 
-/** An Open in file manager beside every Open terminal here: the document's, the
- *  browsed folder's, and the folder row's menu. The daemon resolves the ids
+/** Open in file manager where a folder is in view, and no Open terminal
+ *  here anywhere (retired in 1.16: a desk is the terminal): the document's,
+ *  the browsed folder's, and the folder row's menu. The daemon resolves the ids
  *  itself and hands the folder to the desktop's opener -- stubbed for the
  *  probe, which reads back what it was handed. */
 async function revealRows(p, browsed, folder, tmp) {
@@ -1664,10 +1665,12 @@ async function revealRows(p, browsed, folder, tmp) {
   await p.clickOn(".inbox a[data-id]");
   await until(`location.pathname.startsWith("/d/")`);
   const inDoc = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
+  const termDoc = await p.ev(`!!document.querySelector('#meta [data-act="terminal"]')`);
   await p.goto(`${browsed.replace(/\/$/, "")}/notes.md`);
   const inBrowse = await until(`!!document.querySelector('#meta [data-act="reveal"]')`, 20);
-  rows.push(["Open in file manager beside Open terminal here", inDoc && inBrowse,
-    !inDoc ? "a document's meta has none" : inBrowse ? "in a document's meta and a browsed file's" : "a browsed file's meta has none"]);
+  const termBrowse = await p.ev(`!!document.querySelector('#meta [data-act="terminal"]')`);
+  rows.push(["Open in file manager, and no Open terminal here", inDoc && inBrowse && !termDoc && !termBrowse,
+    !inDoc ? "a document's meta has none" : !inBrowse ? "a browsed file's meta has none" : termDoc || termBrowse ? "Open terminal here is still drawn" : "in a document's meta and a browsed file's, alone"]);
 
   if (process.platform === "win32") { rows.push(["the folder a file sits in is opened", true, "not clicked on Windows, where Explorer itself would open"]); return rows; }
   if (existsSync(opened)) unlinkSync(opened);

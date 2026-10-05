@@ -91,7 +91,7 @@ pub(crate) async fn doc_json(State(app): S, Path(id): Path<String>) -> Response 
                 "history": history,
                 "preview": preview,
                 "preview_url": preview.map(|_| format!("/api/docs/{id}/blob")),
-                // So the page knows whether there is a terminal button to draw.
+                // So the page knows whether there is a file-manager button to draw.
                 // A control that is disabled and cannot say why is worse than
                 // no control, and the directory is not something the page can
                 // work out for itself -- it is a parent path on a machine whose
@@ -685,7 +685,7 @@ pub(crate) fn spawn_full_highlight(app: Arc<App>, id: String, lang: Option<Strin
 /// Opening a folder exposes its files, so this one needs the token. Reading inside a
 /// root the user already opened does not.
 #[derive(Deserialize)]
-pub(crate) struct TerminalBody {
+pub(crate) struct FolderBody {
     pub(crate) doc: Option<String>,
     pub(crate) root: Option<String>,
     pub(crate) path: Option<String>,
@@ -695,7 +695,7 @@ pub(crate) struct TerminalBody {
     pub(crate) project: Option<i64>,
 }
 
-/// The directory a terminal would open in for a document, if one exists.
+/// The directory Open in file manager opens for a document, if one exists.
 ///
 /// In order: the folder the file was sent from, then the project's root. The
 /// second is the case that matters. `source_path` is an `Option` and a document
@@ -711,56 +711,14 @@ pub(crate) fn doc_folder(app: &App, doc: &Doc) -> Option<std::path::PathBuf> {
         .find(|d: &std::path::PathBuf| d.is_dir())
 }
 
-/// Open the machine's own terminal, in the directory the reader is looking at.
-///
-/// The only thing this takes from the caller is an id snyvi already holds; the
-/// directory is looked up here, no command is passed, and nothing comes back.
-/// `docs/TERMINAL.md` has the argument, and section 3 of it has what is
-/// deliberately absent.
-pub(crate) async fn terminal(
-    State(app): S,
-    headers: HeaderMap,
-    Query(q): Query<std::collections::HashMap<String, String>>,
-    Json(b): Json<TerminalBody>,
-) -> Response {
-    if let Some(no) = refuse_folder(&app, &headers, &q, &b) {
-        return no;
-    }
-    let Some(dir) = folder_of(&app, &b) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "no folder to open" })),
-        )
-            .into_response();
-    };
-    // `open_terminal` refuses without a display as well; asking here is only so
-    // that the two ways of having no terminal say different things.
-    if !platform::has_display() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "no desktop session to open a terminal in" })),
-        )
-            .into_response();
-    }
-    if platform::open_terminal(&dir) {
-        Json(json!({ "dir": dir })).into_response()
-    } else {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "no terminal found on this machine" })),
-        )
-            .into_response()
-    }
-}
-
 /// Open the folder the reader is looking at in the system's file manager.
-/// The same ids in and the same guard as `terminal`; `platform::open_folder`
-/// does the opening.
+/// Only an id snyvi already holds comes in; the directory is looked up here
+/// (`folder_of`), and `platform::open_folder` does the opening.
 pub(crate) async fn reveal(
     State(app): S,
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
-    Json(b): Json<TerminalBody>,
+    Json(b): Json<FolderBody>,
 ) -> Response {
     if let Some(no) = refuse_folder(&app, &headers, &q, &b) {
         return no;
@@ -792,12 +750,12 @@ pub(crate) async fn reveal(
 
 /// Who may open a folder: a desk's only behind the desk's own gate, since a
 /// desk is reached by nothing less; anything else from this page or with the
-/// token, as `terminal` always was.
+/// token (`refuse_reader`).
 pub(crate) fn refuse_folder(
     app: &App,
     headers: &HeaderMap,
     q: &std::collections::HashMap<String, String>,
-    b: &TerminalBody,
+    b: &FolderBody,
 ) -> Option<Response> {
     if b.desk.is_some() {
         return refuse_desk(app, headers, q);
@@ -807,8 +765,8 @@ pub(crate) fn refuse_folder(
 
 /// The folder a request names, looked up here from an id snyvi already
 /// holds, so nothing the caller types is ever a path. One function for
-/// `terminal` and `reveal`, so the two can never open different places.
-pub(crate) fn folder_of(app: &App, b: &TerminalBody) -> Option<std::path::PathBuf> {
+/// `reveal` and anything after it, so no two can open different places.
+pub(crate) fn folder_of(app: &App, b: &FolderBody) -> Option<std::path::PathBuf> {
     let dir = if let Some(id) = b.root.as_deref() {
         // `resolve` is what keeps a path from the caller inside the root it
         // names -- the same guard `browse_file` reads its bytes through. A file

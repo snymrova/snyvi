@@ -3,8 +3,9 @@
 Written 2026-09-12, after a question about giving the desktop app a
 terminal to run commands from.
 
-**Status.** Section 5 has landed. A button in the document header and the
-browse header opens the *system* terminal in the right directory.
+**Status.** Section 5 landed, and was retired in 1.16 (section 10): the
+button that opened the *system* terminal is gone, because a desk is the
+terminal now. Open in file manager, which grew up beside it, stays.
 
 **The embedded terminal of section 3 was declined here and has since been
 built, as desks** (`docs/DESK.md`). Sections 1 to 8 are kept as they were
@@ -377,3 +378,17 @@ and desktop. The window gained no IPC surface: it still only receives a URL,
 now with the capability on the fragment. The two bad placements became one
 placement with a gate.
 
+## 10. Retired: Open terminal here (1.16)
+
+Desk note #81, "remove open terminal feature". Once desks shipped, the
+button opened a second terminal beside the four a desk already has, in the
+same folder, outside snyvi, where nothing it did came back. It was one more
+item in every menu for something a panel does better, and it was the last
+place snyvi started a program the reader had not chosen in a panel.
+
+What went: `POST /api/terminal`, `platform::open_terminal` and its list of
+terminals, the button in a document's and a browsed file's meta, and the
+entry in the folder, project, document and desk menus. What stayed is what
+grew up beside it: `POST /api/reveal` (Open in file manager), with the
+same ids in, the same gate, and the same lookup (`folder_of`), so a path
+from the page still never reaches the filesystem.

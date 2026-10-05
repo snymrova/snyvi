@@ -368,10 +368,10 @@ pub(crate) fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json:
 /// A new desk, on a folder, on a project's folder, or on none.
 ///
 /// The folder arrives as a root id and a relative path rather than as an
-/// absolute one, so it goes through `resolve` -- the same guard the terminal
-/// button and every byte `browse_file` reads go through, which is what keeps a
-/// path from the page inside the root it names. A project arrives as its id,
-/// and its folder is the one the store recorded, as the terminal button's is.
+/// absolute one, so it goes through `resolve` -- the same guard Open in file
+/// manager and every byte `browse_file` reads go through, which is what keeps
+/// a path from the page inside the root it names. A project arrives as its id,
+/// and its folder is the one the store recorded, as Open in file manager's is.
 pub(crate) async fn create_desk(
     State(app): S,
     headers: HeaderMap,

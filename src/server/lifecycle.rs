@@ -849,7 +849,7 @@ pub(crate) struct ResetBody {
 /// in an empty library. The one action here that cannot be undone, and the one
 /// that asks for a number rather than a click.
 ///
-/// A same-origin POST is accepted beside the token, as `terminal` explains:
+/// A same-origin POST is accepted beside the token, as `refuse_reader` explains:
 /// the page has no token, and the dialog is the page's.
 /// "1 document", "3 documents": the reset refusals are read by a person.
 pub(crate) fn docs(n: i64) -> String {

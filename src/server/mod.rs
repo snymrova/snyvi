@@ -403,7 +403,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/update/auto", post(update_auto))
         .route("/api/update/later", post(update_later))
         .route("/api/reset", get(reset_census).post(reset))
-        .route("/api/terminal", post(terminal))
         .route("/api/reveal", post(reveal))
         .route("/api/resolve", post(resolve_path))
         .route("/api/browse", get(browse_list).post(browse_open))
