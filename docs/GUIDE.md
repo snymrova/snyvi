@@ -538,18 +538,25 @@ value once, name the variable it goes in (`OPENROUTER_API_KEY`,
 it. The value goes to your keychain -- Keychain on macOS, Credential
 Manager on Windows -- or, on Linux and wherever no keychain answers, to a
 file only you can read beside snyvi's own token, the way `gh` and `aws`
-keep theirs; it is never shown again, and snyvi keeps only the name. Every panel started on the desk from then on has it in its
-environment, open panels get it when they next start, and the brief tells
-Claude the names, never the values. A desk's own key shadows an
+keep theirs; it is never shown again, and snyvi keeps only the name. A
+panel on the desk can use it at once, open ones included: `snyvi key
+NAME` in a panel prints the value, so a command says `curl -H
+"xi-api-key: $(snyvi key ELEVENLABS_API_KEY)" ...` and the shell, not
+the conversation, carries it. It works only inside a panel, and only for
+that desk's keys and the every-desk ones. Panels started after the key
+was added also have it in their environment. The brief tells Claude the
+names and the `$(snyvi key NAME)` way to use them, never the values, and
+the next prompt after you add one says it is there. A desk's own key shadows an
 every-desk one of the same name. ✕ on a row offers Undo for a few
 seconds, then the value is gone -- the one removal in snyvi that is not
 kept, because a kept secret is still a secret. Closing
 a desk keeps its keys; `snyvi prune` ends them with the desk. Home's right
 column lists every key by name, with the desks it is on and when a panel
-last started with it. snyvi never uses a key itself, and no tool lets an
-agent read one. It is in the environment, though, and an environment is
-shared: the panel's shell, the agent in it and every program that agent
-runs see the variable the way they see `PATH`. A key on a desk is a key
+last started with it. snyvi never uses a key itself, and no MCP tool
+hands one over: a tool's answer would land in the conversation. A key is
+the panel's to use, though: the shell, the agent in it and every program
+that agent runs can ask `snyvi key` or see the variable the way they see
+`PATH`. A key on a desk is a key
 you would hand to anything you run on that desk. On Linux the file it
 rests in is readable by your user alone, as snyvi's own token is.
 
@@ -1361,7 +1368,11 @@ text under it, and the document fills it in when it arrives.
 Mermaid blocks render as diagrams; the library is embedded and loaded
 only on pages that have one, after the text has painted. Relative
 images in a document sent by path are served from the file's directory,
-confined to the project root and to image types.
+confined to the project root and to pictures, video and sound. An image
+whose path is a video or a song, `![take 2](take2.mp4)`, plays in place:
+a player with controls, seeking as it goes, in a box that holds its size
+before the video arrives. So several takes go in one document, to be
+watched and chosen from.
 
 Search understands `p:project` and `kind:md|code|diff|text` prefixes.
 Documents from one Claude Code session share a workflow whether they
