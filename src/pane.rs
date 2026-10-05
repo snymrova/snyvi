@@ -635,7 +635,11 @@ impl Panes {
             }
             // Not asked: the tree is as it was last said to be. Asked and
             // not answered -- no repository, git missing -- it is clean.
-            let dirty = if ask { Some(dirty.unwrap_or(false)) } else { None };
+            let dirty = if ask {
+                Some(dirty.unwrap_or(false))
+            } else {
+                None
+            };
             for l in f.panes {
                 l.set_git(branch.clone().unwrap_or_default(), dirty);
             }
@@ -1982,7 +1986,12 @@ mod tests {
             "a pane printed since: asked"
         );
         assert!(
-            !status_due(t0 + GIT_FLOOR / 2, Some(asked), Some(t0 + Duration::from_secs(1)), 1),
+            !status_due(
+                t0 + GIT_FLOOR / 2,
+                Some(asked),
+                Some(t0 + Duration::from_secs(1)),
+                1
+            ),
             "but not before the floor"
         );
         assert!(
@@ -1998,16 +2007,31 @@ mod tests {
             ..asked
         };
         assert!(
-            !status_due(t0 + Duration::from_secs(29), Some(slow), Some(t0 + Duration::from_secs(1)), 1),
+            !status_due(
+                t0 + Duration::from_secs(29),
+                Some(slow),
+                Some(t0 + Duration::from_secs(1)),
+                1
+            ),
             "a slow repository backs off past the floor"
         );
-        assert!(status_due(t0 + Duration::from_secs(31), Some(slow), Some(t0 + Duration::from_secs(1)), 1));
+        assert!(status_due(
+            t0 + Duration::from_secs(31),
+            Some(slow),
+            Some(t0 + Duration::from_secs(1)),
+            1
+        ));
         let glacial = Asked {
             cost: Duration::from_secs(30),
             ..asked
         };
         assert!(
-            status_due(t0 + GIT_AT_MOST + Duration::from_secs(1), Some(glacial), Some(t0 + Duration::from_secs(1)), 1),
+            status_due(
+                t0 + GIT_AT_MOST + Duration::from_secs(1),
+                Some(glacial),
+                Some(t0 + Duration::from_secs(1)),
+                1
+            ),
             "and never further than the most"
         );
     }
@@ -2269,31 +2293,51 @@ mod tests {
         let want = whole();
         assert!(want.len() > 9_000, "the scrollback holds the lines");
         panes.persist_all(false);
-        assert_eq!(panes.read_text(id), want, "the first write is the whole text");
+        assert_eq!(
+            panes.read_text(id),
+            want,
+            "the first write is the whole text"
+        );
         assert!(dir.path.join("panes").join(format!("{id}.scr")).exists());
 
         // Five hundred more, and a prompt left on the screen: the lines go
         // on the end, the screen is written afresh, and the lock is held
         // for as long as the handles take to clone.
-        feed((10_000..10_500).map(|k| format!("line {k}\r\n")).collect::<String>() + "$ ");
+        feed(
+            (10_000..10_500)
+                .map(|k| format!("line {k}\r\n"))
+                .collect::<String>()
+                + "$ ",
+        );
         let want = whole();
         let text = {
             let mut i = live.inner.lock().unwrap();
             let t0 = Instant::now();
             let text = i.take_text();
             let held = t0.elapsed();
-            assert!(held < Duration::from_millis(10), "the lock was held {held:?}");
+            assert!(
+                held < Duration::from_millis(10),
+                "the lock was held {held:?}"
+            );
             text
         };
         match &text {
             Text::More { lines, screen, .. } => {
                 assert_eq!(lines.len(), 500, "the lines that left the screen since");
-                assert_eq!(screen.last().map(String::as_str), Some("$"), "the screen, trailing blanks trimmed");
+                assert_eq!(
+                    screen.last().map(String::as_str),
+                    Some("$"),
+                    "the screen, trailing blanks trimmed"
+                );
             }
             Text::Whole { .. } => panic!("the second write is the lines since, not the whole"),
         }
         panes.write(id, text);
-        assert_eq!(panes.read_text(id), want, "in pieces reads back as the whole");
+        assert_eq!(
+            panes.read_text(id),
+            want,
+            "in pieces reads back as the whole"
+        );
 
         // The screen alone changing is the screen file alone, rewritten.
         feed("\x1b[2K\r$ ls".to_string());
@@ -2310,7 +2354,10 @@ mod tests {
         let want = whole();
         assert!(bytes(want.iter().map(String::len)) <= screen::SCROLLBACK_BYTES);
         let text = live.inner.lock().unwrap().take_text();
-        assert!(matches!(text, Text::Whole { .. }), "over the cap: whole again");
+        assert!(
+            matches!(text, Text::Whole { .. }),
+            "over the cap: whole again"
+        );
         panes.write(id, text);
         assert_eq!(panes.read_text(id), want);
         feed("one more\r\n".to_string());

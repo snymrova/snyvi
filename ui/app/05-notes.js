@@ -252,5 +252,15 @@
   }
 
   // ---------- focus beacon for desktop notifications ----------
-  const beacon = () => { if (document.hasFocus() && document.visibilityState === "visible") fetch("/api/focus", { method: "POST", keepalive: true }).catch(() => {}); };
-  window.addEventListener("focus", beacon); document.addEventListener("visibilitychange", beacon); setInterval(beacon, 3000); beacon();
+  // Said when it changes, and not on a clock: in front, or not. The daemon
+  // keeps the last word for as long as this page's stream is open.
+  let inFront = null;
+  const beacon = () => {
+    const now = document.hasFocus() && document.visibilityState === "visible";
+    if (now === inFront) return;
+    inFront = now;
+    fetch("/api/focus", { method: "POST", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ focused: now }) }).catch(() => {});
+  };
+  for (const ev of ["focus", "blur", "pagehide"]) window.addEventListener(ev, beacon);
+  document.addEventListener("visibilitychange", beacon);
+  beacon();
