@@ -282,27 +282,6 @@ impl Renderer {
         self.markdown(source, file_base, usize::MAX)
     }
 
-    /// Parse a few lines in the grammars most documents arrive in, so the
-    /// first Rust file of the day does not pay for compiling the grammar's
-    /// regexes: syntect compiles each one the first time a line reaches it,
-    /// and the Rust grammar alone has some hundreds. Once after the daemon
-    /// binds, off the request path; the snippets touch the contexts ordinary
-    /// code goes through (a signature, a string, a comment, a number).
-    // Called from the daemon once it has bound (server/mod.rs).
-    pub fn warm(&self) {
-        const SNIPPETS: &[(&str, &str)] = &[
-            ("rs", "use std::io;\n/// doc\npub fn f(x: u32) -> Result<String, io::Error> {\n    let s = format!(\"{x}\"); // c\n    if x > 1 { Ok(s) } else { Err(io::Error::other(\"no\")) }\n}\n"),
-            ("js", "import { a } from \"./a.js\";\n// c\nexport async function f(x = 1) {\n  const s = `${x}`;\n  return x > 1 ? s : await a(s);\n}\n"),
-            ("ts", "import { a } from \"./a\";\nexport async function f(x: number = 1): Promise<string> {\n  const s: string = `${x}`; // c\n  return x > 1 ? s : await a(s);\n}\n"),
-            ("py", "import os\n\ndef f(x: int = 1) -> str:\n    \"\"\"doc\"\"\"\n    s = f\"{x}\"  # c\n    return s if x > 1 else os.getcwd()\n"),
-            ("sh", "#!/bin/sh\n# c\nf() {\n  local x=\"$1\"\n  if [ \"$x\" -gt 1 ]; then echo \"${x}\"; fi\n}\n"),
-            ("json", "{\"a\": [1, 2.5, true, null], \"b\": {\"c\": \"d\"}}\n"),
-        ];
-        for (lang, src) in SNIPPETS {
-            let _ = self.code(Some(lang), src, HIGHLIGHT_CAP);
-        }
-    }
-
     /// `budget` is the bytes of code this document may highlight before the
     /// rest goes in plain: `HIGHLIGHT_CAP` at receive time, no limit for the
     /// background pass.
@@ -1909,20 +1888,6 @@ mod tests {
         assert_eq!(html.matches(PENDING).count(), 1);
         // The block after it still gets what budget is left.
         assert!(html.contains("<pre class=\"code\" data-lang=\"Rust\"><code><span class=\"ln\"><span class=\"k\">fn</span>"));
-    }
-
-    #[test]
-    fn warm_changes_nothing_but_the_clock() {
-        let r = r();
-        let src = "fn main() { let s = \"x\"; } // c\n";
-        let before = r.render(Kind::Code, Some("rs"), src);
-        r.warm();
-        assert_eq!(r.render(Kind::Code, Some("rs"), src), before);
-        assert!(
-            before.contains("class=\"k\"")
-                && before.contains("class=\"s\"")
-                && before.contains("class=\"c\"")
-        );
     }
 
     #[test]
