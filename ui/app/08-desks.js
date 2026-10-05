@@ -398,6 +398,7 @@
       // A first connection is not a return.
       if (root.dataset.link !== "off") return;
       linked(true);
+      sayFocus(true);
       // The daemon on the port now may be a newer build than the one that
       // served this page: its bundle is the one to run, so start over on it.
       // Otherwise catch up on what arrived while nothing was heard.

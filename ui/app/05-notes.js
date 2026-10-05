@@ -252,15 +252,20 @@
   }
 
   // ---------- focus beacon for desktop notifications ----------
-  // Said when it changes, and not on a clock: in front, or not. The daemon
-  // keeps the last word for as long as this page's stream is open.
-  let inFront = null;
-  const beacon = () => {
-    const now = document.hasFocus() && document.visibilityState === "visible";
-    if (now === inFront) return;
+  // Said when it changes, and not on a clock: in front, or not, by a name
+  // this page picks and a count, so another tab cannot take its word and a
+  // late one is not the last. Leaving always says not; a stream that comes
+  // back says again (the daemon may be a new process: `sayFocus(true)`).
+  let inFront = null, focusSeq = 0;
+  const pageMark = Math.random().toString(36).slice(2);
+  function sayFocus(again, leaving) {
+    const now = !leaving && document.hasFocus() && document.visibilityState === "visible";
+    if (now === inFront && !again) return;
     inFront = now;
-    fetch("/api/focus", { method: "POST", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ focused: now }) }).catch(() => {});
-  };
-  for (const ev of ["focus", "blur", "pagehide"]) window.addEventListener(ev, beacon);
+    fetch("/api/focus", { method: "POST", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify({ focused: now, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
+  }
+  const beacon = () => sayFocus();
+  for (const ev of ["focus", "blur"]) window.addEventListener(ev, beacon);
+  window.addEventListener("pagehide", () => sayFocus(true, true));
   document.addEventListener("visibilitychange", beacon);
   beacon();
