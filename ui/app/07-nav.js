@@ -61,9 +61,20 @@
     } });
   });
 
+  /* A document is fetched ahead for a row the pointer rests on, not for
+   * every row it crosses on the way: a hand moving down the sidebar fetched
+   * one whole rendered document per row (audit finding 5). 150 ms is a rest;
+   * a row over 256 KB is left for the click, since a prefetch that size is
+   * a long document's whole cost for a hover. Rows say their size where the
+   * daemon told them it (`data-size`). */
+  let dwell = 0, dwellOn = null;
   document.addEventListener("mouseover", e => {
     const a = e.target.closest("a[data-id]");
-    if (a && !state.cache.has(a.dataset.id)) fetchDoc(a.dataset.id).catch(() => {});
+    if (a === dwellOn) return;
+    clearTimeout(dwell);
+    dwellOn = a;
+    if (!a || state.cache.has(a.dataset.id) || +a.dataset.size > 256 * 1024) return;
+    dwell = setTimeout(() => { if (dwellOn === a) fetchDoc(a.dataset.id).catch(() => {}); }, 150);
   });
   window.addEventListener("popstate", () => {
     const d = location.pathname.match(/^\/d\/([a-z0-9]+)$/);

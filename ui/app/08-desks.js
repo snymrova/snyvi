@@ -364,18 +364,14 @@
 
   /** What a page that was away has to ask for, since it heard no events. */
   async function catchUp() {
-    try {
-      const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
-      if (Array.isArray(q)) {
-        state.queue = q;
-        // Fewer than the page ever holds means these are all there are.
-        state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
-      }
-    } catch {}
-    try {
-      const n = await (await fetch("/api/notes")).json();
-      if (Array.isArray(n.notes)) { state.notes = withOwn(n.notes); renderNote(); }
-    } catch {}
+    const q = await getJson(`/api/queue?limit=${QUEUE_HELD}`);
+    if (Array.isArray(q)) {
+      state.queue = q;
+      // Fewer than the page ever holds means these are all there are.
+      state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
+    }
+    const n = await getJson("/api/notes");
+    if (n && Array.isArray(n.notes)) { state.notes = withOwn(n.notes); renderNote(); }
     await refreshTree();
     if (state.view === "inbox") showInbox(false);
   }
@@ -393,6 +389,8 @@
     else root.dataset.link = "off";
   }
 
+  /** An event's body, or null for one that is not JSON. */
+  const parse = ev => { try { return JSON.parse(ev.data); } catch { return null; } };
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? `?window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
@@ -403,8 +401,7 @@
       // The daemon on the port now may be a newer build than the one that
       // served this page: its bundle is the one to run, so start over on it.
       // Otherwise catch up on what arrived while nothing was heard.
-      let h = null;
-      try { h = await (await fetch("/api/health")).json(); } catch {}
+      const h = await getJson("/api/health");
       if (h && h.v && boot.v && h.v !== boot.v) { location.reload(); return; }
       if (h) { setOnline(h.agents); setUpd(h.update); }
       catchUp();
@@ -420,21 +417,21 @@
 
     // An agent arrived or left: its process opened or ended a stream.
     es.addEventListener("agents", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       setOnline(j.online);
     });
     // The updater's word: first on every stream, then whenever it changes.
     es.addEventListener("update", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       setUpd(j);
     });
     // An agent left a note, or a reader looked at one somewhere.
     es.addEventListener("notes", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       if (Array.isArray(j.notes)) { state.notes = withOwn(j.notes); renderNote(); }
     });
     es.addEventListener("doc", async ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       const d = j.doc;
       // A project that was put away and has just been written to is not put
       // away any more: the sidebar never holds back something waiting to be
@@ -509,18 +506,18 @@
     // A document was opened somewhere -- this tab, another, the window -- and
     // is off the queue everywhere.
     es.addEventListener("read", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       if (Array.isArray(j.ids)) dropFromQueue(j.ids, j.waiting);
       deskDocs();
     });
     // A large code file finished highlighting in the background: swap the body in place.
     es.addEventListener("rendered", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       refreshDoc(j.id);
     });
     // Something in a browsed folder changed on disk: the open file, or a listed folder.
     es.addEventListener("changed", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       if (j.dir) {
         reloadTree(browseEl.querySelector(`.b-tree[data-root="${j.root}"][data-path="${CSS.escape(j.path)}"]`));
         if (browsing() && state.browseRoot.id === j.root && !state.browsePath && j.path === "") showBrowse(j.root, "", false);
@@ -529,7 +526,7 @@
       if (browsing() && state.browseRoot.id === j.root && state.browsePath === j.path) refreshBrowsed();
     });
     es.addEventListener("deleted", async ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       const turn = opening;
       state.cache.delete(j.id);
       depart([j.id]);
@@ -543,7 +540,7 @@
     // A delete that was taken back, in every tab and the window: the row is
     // where it was, and so is its place in the queue if it never got read.
     es.addEventListener("restored", async ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       if (j.waiting != null) state.waiting = j.waiting;
       if (j.id != null) wash([j.id]);
       await refreshTree(j.doc && j.doc.project_id);
@@ -554,7 +551,7 @@
     // The library is gone, from this tab or another: every page starts over.
     es.addEventListener("reset", () => panelMod().then(m => m.afterReset(), () => location.replace("/")));
     es.addEventListener("browse", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       state.browse = j.roots || [];
       renderBrowse();
     });
@@ -565,10 +562,10 @@
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
     // An agent ticked a line on a desk's list.
-    es.addEventListener("desknotes", ev => { try { const j = JSON.parse(ev.data); if (desk && desk.notesChanged) desk.notesChanged(j.desk); } catch {} });
+    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); });
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
       renderDesks();
     });
@@ -576,7 +573,7 @@
     for (const ev of ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored"]) es.addEventListener(ev, homeTick);
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {
-      let j; try { j = JSON.parse(ev.data); } catch { return; }
+      const j = parse(ev); if (!j) return;
       if (j.project != null) applyRename("project", j.project);
       else if (j.workflow != null) applyRename("workflow", j.workflow);
     });

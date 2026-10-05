@@ -9,6 +9,8 @@
    * reading a paragraph looks like -- and with several agents sending, the
    * document changed under them many times an hour. Now it is a row at the
    * top of the sidebar, a bar above the document, and `n`. */
+  /** One GET, as JSON, or null: what every ask of the daemon below wants. */
+  const getJson = async u => { try { return await (await fetch(u)).json(); } catch { return null; } };
   const QUEUE_ROWS = 6;    // in the sidebar; the inbox lists the rest
   const QUEUE_HELD = 24;   // what a page opens with and keeps; the count is the daemon's, whatever is held
   /** Whether a row is on the queue: held here, or marked by the daemon on a
@@ -26,13 +28,11 @@
     if (state.queue.length >= QUEUE_HELD || state.waiting <= state.queue.length) return;
     clearTimeout(holdTimer);
     holdTimer = setTimeout(async () => {
-      try {
-        const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
-        if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
-      } catch {}
+      const q = await getJson(`/api/queue?limit=${QUEUE_HELD}`);
+      if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
     }, 150);
   }
-  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" data-tip="${esc(d.title)}" data-tip-sub="${esc(d.project)} · ${fmt(d.received_at)}" data-tip-overflow>${docIco()}<span class="title" data-tip-cut>${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
+  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}"${sizeOf(d)} data-tip="${esc(d.title)}" data-tip-sub="${esc(d.project)} · ${fmt(d.received_at)}" data-tip-overflow>${docIco()}<span class="title" data-tip-cut>${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
@@ -566,10 +566,8 @@
     const q = new URLSearchParams();
     if (liftedCaps.has(pid)) { q.set("workflows", "0"); q.set("docs", "0"); }
     if (state.doc && String(state.doc.project_id) === pid) q.set("whole", state.doc.workflow_id);
-    try {
-      const wfs = await (await fetch(`/api/projects/${pid}/tree${q.size ? `?${q}` : ""}`)).json();
-      if (Array.isArray(wfs)) state.sub.set(pid, wfs);
-    } catch {}
+    const wfs = await getJson(`/api/projects/${pid}/tree${q.size ? `?${q}` : ""}`);
+    if (Array.isArray(wfs)) state.sub.set(pid, wfs);
     filling.delete(pid);
     // A session a reader had opened out in full, refetched capped: put it back.
     await Promise.all((state.sub.get(pid) || [])
@@ -582,8 +580,7 @@
   /** One session, whole, dropped into the subtree it belongs to. What "N older"
    *  asks for, and what puts a lifted cap back after a refetch. */
   async function fillWorkflow(wid, pid) {
-    let w;
-    try { w = await (await fetch(`/api/workflows/${wid}/tree`)).json(); } catch { return; }
+    const w = await getJson(`/api/workflows/${wid}/tree`);
     if (!w || !Array.isArray(w.docs)) return;
     const wfs = state.sub.get(String(pid));
     if (!wfs) return;
@@ -643,7 +640,7 @@
    *  to a "…" under the reader. `only` narrows it to one project, which is what
    *  an arrival needs — nothing else in the library moved.  */
   async function refreshTree(only) {
-    const r = await fetch("/api/tree").catch(() => null), j = r?.ok && await r.json().catch(() => null);
+    const j = await getJson("/api/tree");
     treeOff = !Array.isArray(j);
     if (!treeOff) state.tree = j;
     const pids = only != null ? [String(only)] : [...state.sub.keys()];
@@ -662,8 +659,7 @@
     ul.dataset.loaded = "1";
     ul.innerHTML = skRows;
     const rootId = ul.dataset.root, path = ul.dataset.path || "";
-    let entries;
-    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch {}
+    const entries = await getJson(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`);
     if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = noReach("dir", "li"); return; }
     if (!entries.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
     ul.innerHTML = entries.map(e => entryHtml(rootId, e)).join("");
@@ -675,8 +671,7 @@
   async function reloadTree(ul) {
     if (!ul || !ul.dataset.loaded) return;
     const rootId = ul.dataset.root, path = ul.dataset.path || "";
-    let entries;
-    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { return; }
+    const entries = await getJson(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`);
     if (!Array.isArray(entries) || !ul.isConnected) return;
     const old = new Map([...ul.children].map(li => [li.querySelector("[data-path]")?.dataset.path, li]));
     const tpl = document.createElement("template");
