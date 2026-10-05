@@ -67,12 +67,18 @@ const PERSIST_EVERY: Duration = Duration::from_secs(15);
 /// scrollback cap, and a working panel's screen is never still for fifteen
 /// seconds.
 const PERSIST_SCREEN_EVERY: Duration = Duration::from_secs(60);
-/// How often a running pane's folder is asked whether its tree is modified.
-/// This is the half of the prompt that costs a process (`crate::prompt` reads
-/// the branch itself, out of .git/HEAD), which is exactly why it happens here
-/// and not there: nobody waits for it, and a folder that answers slowly is
-/// asked less often rather than making a prompt stutter.
+/// How often a running pane's folder is looked at: the branch comes off
+/// .git/HEAD, a file read, this often. Whether the tree is modified is the
+/// half of the prompt that costs a process (`crate::prompt` reads the branch
+/// itself, out of .git/HEAD), which is exactly why it happens here and not
+/// there: nobody waits for it, and a folder that answers slowly is asked
+/// less often rather than making a prompt stutter. And it is asked only
+/// when something could have changed it: see `status_due`.
 const GIT_EVERY: Duration = Duration::from_secs(3);
+/// A folder's tree is asked about no more often than this, however much its
+/// panes print: an agent at work prints every second, and ten seconds is
+/// soon enough for a header to say the tree is dirty.
+const GIT_FLOOR: Duration = Duration::from_secs(10);
 /// A folder is asked again no sooner than ten times what the last answer cost,
 /// and no later than this. A repository big enough to take a second is worth
 /// a minute of quiet.
@@ -110,6 +116,36 @@ const WORKING_SILENT: Duration = Duration::from_secs(10 * 60);
 /// watcher, a dev server -- counts for at most this long, or an update
 /// would wait on it forever.
 const PRINTING_AT_MOST: Duration = Duration::from_secs(2 * 3600);
+
+/// A folder's last `git status`: when it was asked, what it cost, and how
+/// many pages were watching its panes then. What `status_due` reads.
+#[derive(Clone, Copy, Debug)]
+struct Asked {
+    at: Instant,
+    cost: Duration,
+    watchers: usize,
+}
+
+/// Whether a folder's tree is asked about on this tick. A folder never
+/// asked: yes. Otherwise only once the floor and the cost back-off have
+/// passed, and only when something could have changed the answer: a pane
+/// in the folder printed since the last ask -- a command ran, an agent
+/// wrote -- or a page began watching that was not. A shell at its prompt
+/// all day prints nothing, and its folder is asked nothing: `git status`
+/// every three seconds for a desk nobody is typing in was most of what an
+/// idle daemon did.
+fn status_due(
+    now: Instant,
+    last: Option<Asked>,
+    printed: Option<Instant>,
+    watchers: usize,
+) -> bool {
+    let Some(a) = last else { return true };
+    if now < a.at + (a.cost * GIT_BACKOFF).clamp(GIT_FLOOR, GIT_AT_MOST) {
+        return false;
+    }
+    watchers > a.watchers || printed.is_some_and(|p| p > a.at)
+}
 
 /// What the rail and the sidebar say about a pane, sent whenever it changes.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -339,9 +375,9 @@ type CwdSink = Box<dyn Fn(&str, &str) + Send + Sync>;
 pub struct Panes {
     live: Mutex<HashMap<String, Arc<Live>>>,
     dir: PathBuf,
-    /// When each folder may be asked about its tree again. Keyed by folder,
-    /// not by pane: two panes in one folder are one question.
-    git: Mutex<HashMap<String, Instant>>,
+    /// When each folder was last asked about its tree, and at what cost.
+    /// Keyed by folder, not by pane: two panes in one folder are one question.
+    git: Mutex<HashMap<String, Asked>>,
     /// The daemon's event stream, for the `panes` event the sidebar draws its
     /// dots from. Held here rather than an `App`, so a pane can say it changed
     /// without knowing what a server is.
@@ -442,26 +478,38 @@ impl Panes {
         l
     }
 
-    /// What each running pane's folder is on, asked of git and told to the
-    /// pages that are watching. One question per folder per tick, and a folder
-    /// that answers slowly is asked less often: see `GIT_BACKOFF`. Only for a
-    /// pane a page is watching: with no window open, or a desk nobody is
-    /// showing, it was a `git status` every three seconds for nobody. A pane
-    /// watched again is asked on the next tick.
+    /// What each running pane's folder is on, read off the repository every
+    /// tick and told to the pages that are watching; and whether its tree
+    /// has changes, asked of git only when something could have changed it
+    /// (`status_due`), and of a folder that answers slowly less often still
+    /// (`GIT_BACKOFF`). Only for a pane a page is watching: with no window
+    /// open, or a desk nobody is showing, it was a `git status` every three
+    /// seconds for nobody. A pane watched again is asked on the next tick.
     async fn git_tick(self: &Arc<Self>) {
         self.follow_folders();
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
-        // Each folder, whether a pane in it is inside its desk's folder, and
-        // the panes in it.
-        let mut by_dir: HashMap<String, (bool, Vec<Arc<Live>>)> = HashMap::new();
+        // Each folder: whether a pane in it is inside its desk's folder, the
+        // panes in it, how many pages watch them, and when one last printed.
+        #[derive(Default)]
+        struct Folder {
+            home: bool,
+            panes: Vec<Arc<Live>>,
+            watchers: usize,
+            printed: Option<Instant>,
+        }
+        let mut by_dir: HashMap<String, Folder> = HashMap::new();
         for l in live {
-            if l.tx.receiver_count() == 0 {
+            let watchers = l.tx.receiver_count();
+            if watchers == 0 {
                 continue;
             }
             if let Some((cwd, home)) = l.running_in() {
+                let wrote = l.inner.lock().unwrap().wrote;
                 let e = by_dir.entry(cwd).or_default();
-                e.0 |= home;
-                e.1.push(l);
+                e.home |= home;
+                e.watchers += watchers;
+                e.printed = e.printed.max(Some(wrote));
+                e.panes.push(l);
             }
         }
         // A folder nothing runs in any more is not worth remembering.
@@ -469,23 +517,17 @@ impl Panes {
             .lock()
             .unwrap()
             .retain(|d, _| by_dir.contains_key(d));
-        for (dir, (home, panes)) in by_dir {
+        for (dir, f) in by_dir {
             let now = Instant::now();
-            if self
-                .git
-                .lock()
-                .unwrap()
-                .get(&dir)
-                .is_some_and(|due| now < *due)
-            {
-                continue;
-            }
+            let last = self.git.lock().unwrap().get(&dir).copied();
+            // Whether the tree has changes runs git, which only the desk's
+            // own folder gets to steer, and only when there is something
+            // new to ask about.
+            let ask = f.home && status_due(now, last, f.printed, f.watchers);
             let d = dir.clone();
             let Ok((branch, dirty)) = tokio::task::spawn_blocking(move || {
                 let p = std::path::Path::new(&d);
-                // The branch is read from files; whether the tree has changes
-                // runs git, which only the desk's own folder gets to steer.
-                let dirty = if home {
+                let dirty = if ask {
                     GIT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     crate::project::modified(p)
                 } else {
@@ -497,11 +539,19 @@ impl Panes {
             else {
                 continue;
             };
-            let cost = now.elapsed();
-            let next = now + (cost * GIT_BACKOFF).clamp(GIT_EVERY, GIT_AT_MOST);
-            self.git.lock().unwrap().insert(dir, next);
-            for l in panes {
-                l.set_git(branch.clone().unwrap_or_default(), dirty.unwrap_or(false));
+            if ask {
+                let asked = Asked {
+                    at: now,
+                    cost: now.elapsed(),
+                    watchers: f.watchers,
+                };
+                self.git.lock().unwrap().insert(dir, asked);
+            }
+            // Not asked: the tree is as it was last said to be. Asked and
+            // not answered -- no repository, git missing -- it is clean.
+            let dirty = if ask { Some(dirty.unwrap_or(false)) } else { None };
+            for l in f.panes {
+                l.set_git(branch.clone().unwrap_or_default(), dirty);
             }
         }
     }
@@ -1588,8 +1638,11 @@ impl Live {
 
     /// What git said, kept and sent on only when it is news. A header that
     /// redraws every few seconds for no change is a header that flickers.
-    fn set_git(&self, branch: String, dirty: bool) {
+    /// `dirty` is None when the tree was not asked about this tick, and
+    /// stays what it was.
+    fn set_git(&self, branch: String, dirty: Option<bool>) {
         let mut i = self.inner.lock().unwrap();
+        let dirty = dirty.unwrap_or(i.status.dirty);
         if i.status.branch == branch && i.status.dirty == dirty {
             return;
         }
@@ -1759,6 +1812,62 @@ mod tests {
         assert_ne!(f(999_999), f(1_000_000), "999k is not 1.0M");
         assert_ne!(f(10_000), f(1_000_000), "10k is not 1.0M");
         assert_eq!(ctx_figure(None), None);
+    }
+
+    /// A folder is asked about its tree once, and then only when a pane in
+    /// it printed or a page began watching -- never on the clock alone, and
+    /// never sooner than the floor however much is printed.
+    #[test]
+    fn a_folder_is_asked_about_its_tree_only_when_something_could_have_changed_it() {
+        let t0 = Instant::now();
+        assert!(status_due(t0, None, None, 1), "never asked: asked");
+        let asked = Asked {
+            at: t0,
+            cost: Duration::from_millis(20),
+            watchers: 1,
+        };
+        let later = t0 + GIT_FLOOR * 2;
+        assert!(
+            !status_due(later, Some(asked), Some(t0 - Duration::from_secs(1)), 1),
+            "a prompt that printed nothing since is not asked, however long ago"
+        );
+        assert!(
+            !status_due(later, Some(asked), None, 1),
+            "nor one that never printed"
+        );
+        assert!(
+            status_due(later, Some(asked), Some(t0 + Duration::from_secs(1)), 1),
+            "a pane printed since: asked"
+        );
+        assert!(
+            !status_due(t0 + GIT_FLOOR / 2, Some(asked), Some(t0 + Duration::from_secs(1)), 1),
+            "but not before the floor"
+        );
+        assert!(
+            status_due(later, Some(asked), None, 2),
+            "a page began watching: asked, printed or not"
+        );
+        assert!(
+            !status_due(later, Some(asked), None, 0),
+            "one stopped watching: nothing new to say"
+        );
+        let slow = Asked {
+            cost: Duration::from_secs(3),
+            ..asked
+        };
+        assert!(
+            !status_due(t0 + Duration::from_secs(29), Some(slow), Some(t0 + Duration::from_secs(1)), 1),
+            "a slow repository backs off past the floor"
+        );
+        assert!(status_due(t0 + Duration::from_secs(31), Some(slow), Some(t0 + Duration::from_secs(1)), 1));
+        let glacial = Asked {
+            cost: Duration::from_secs(30),
+            ..asked
+        };
+        assert!(
+            status_due(t0 + GIT_AT_MOST + Duration::from_secs(1), Some(glacial), Some(t0 + Duration::from_secs(1)), 1),
+            "and never further than the most"
+        );
     }
 
     #[test]
