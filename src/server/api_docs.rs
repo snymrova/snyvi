@@ -501,6 +501,16 @@ pub(crate) async fn receive_doc(
         )
             .into_response();
     }
+    // In a task of its own, which the handler only waits on: a hook gives
+    // up after a second and a half, and a dropped connection drops the
+    // handler with it -- the document would be stored and no page told.
+    let task = tokio::spawn(receive_and_tell(app, payload));
+    task.await.unwrap_or_else(|e| err(anyhow::anyhow!(e)))
+}
+
+/// Everything a send does once it is let in: render and store, tell every
+/// page, then the work that follows a document in.
+async fn receive_and_tell(app: Arc<App>, payload: Payload) -> Response {
     // Rendering is CPU work; keep it off the async executor.
     let app2 = app.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -513,7 +523,8 @@ pub(crate) async fn receive_doc(
                 .as_ref()
                 .and_then(|p| std::fs::metadata(p).ok())
                 .is_some_and(|m| m.len() > LARGE_RENDER as u64);
-        let received = receive::receive(&app2.store, &app2.renderer, payload);
+        let received = receive::receive(&app2.store, &app2.renderer, payload)
+            .map(|r| (doc_event(&app2, &r), r));
         crate::platform::release_thread_memory();
         (received, large)
     })
@@ -528,8 +539,8 @@ pub(crate) async fn receive_doc(
         received
     });
     match result {
-        Ok(Ok(received)) => {
-            emit_doc(&app, &received);
+        Ok(Ok((event, received))) => {
+            emit(&app, "doc", event);
             let doc = received.doc;
             let url = format!("{}/d/{}", config::base_url(), doc.id);
             if !received.existing {
@@ -670,42 +681,69 @@ pub(crate) async fn restore_asides(
 pub(crate) const LARGE_RENDER: usize = 512 * 1024;
 
 pub(crate) fn spawn_full_highlight(app: Arc<App>, id: String, lang: Option<String>) {
+    // One pass per document at a time. A save that lands while one runs is
+    // picked up by it: the pass goes round again until what it wrote is of
+    // the source that is there now.
+    static RUNNING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    if !RUNNING.lock().unwrap().insert(id.clone()) {
+        return;
+    }
     tokio::task::spawn_blocking(move || {
-        let stored = {
+        loop {
             let Ok(Some(doc)) = app.store.get(&id) else {
+                RUNNING.lock().unwrap().remove(&id);
                 return;
             };
-            let Ok(src) = app.store.source(&id) else {
-                return;
-            };
-            let html = match doc.kind {
-                // Rendered the way receive::page did, less the budget: the
-                // leading H1 the title already shows comes off, and relative
-                // pictures resolve beside the file.
-                crate::render::Kind::Markdown => {
-                    let Ok(current) = app.store.html(&id) else {
-                        return;
-                    };
-                    if !crate::render::has_pending_highlight(&current) {
-                        return;
-                    }
-                    let body = crate::render::strip_leading_h1(&src, &doc.title);
-                    let base = doc.source_path.as_ref().map(|_| format!("/files/{id}/"));
-                    app.renderer
-                        .render_markdown_uncapped(body.as_deref().unwrap_or(&src), base.as_deref())
-                }
-                _ => app.renderer.render_code_uncapped(lang.as_deref(), &src),
-            };
-            app.store.replace_html(&id, &html).is_ok()
-        };
-        // A full highlight only runs on a file past the highlight cap, so it
-        // is always a large render; the source and HTML are dropped above.
-        // Nobody waits on this thread, so the trim can run here.
-        crate::platform::release_freed_memory();
-        if stored {
-            emit(&app, "rendered", json!({ "id": id }));
+            let stored = full_highlight(&app, &doc, lang.as_deref());
+            // A full highlight only runs on a file past the highlight cap, so
+            // it is always a large render; the source and HTML are dropped.
+            // Nobody waits on this thread, so the trim can run here.
+            crate::platform::release_freed_memory();
+            if stored {
+                emit(&app, "rendered", json!({ "id": id }));
+            }
+            let mut running = RUNNING.lock().unwrap();
+            let now = app.store.get(&id).ok().flatten().map(|d| d.content_hash);
+            if now.as_deref() != Some(doc.content_hash.as_str()) && now.is_some() {
+                drop(running);
+                continue;
+            }
+            running.remove(&id);
+            return;
         }
     });
+}
+
+/// One document's page, highlighted whole and stored if it is still of the
+/// source it was rendered from. True when it was stored.
+fn full_highlight(app: &App, doc: &Doc, lang: Option<&str>) -> bool {
+    let id = &doc.id;
+    let Ok(src) = app.store.source(id) else {
+        return false;
+    };
+    let html = match doc.kind {
+        // Rendered the way receive::page did, less the budget: the leading
+        // H1 the title already shows comes off, and relative pictures
+        // resolve beside the file.
+        crate::render::Kind::Markdown => {
+            let Ok(current) = app.store.html(id) else {
+                return false;
+            };
+            if !crate::render::has_pending_highlight(&current) {
+                return false;
+            }
+            let body = crate::render::strip_leading_h1(&src, &doc.title);
+            let base = doc.source_path.as_ref().map(|_| format!("/files/{id}/"));
+            app.renderer
+                .render_markdown_uncapped(body.as_deref().unwrap_or(&src), base.as_deref())
+        }
+        _ => app.renderer.render_code_uncapped(lang, &src),
+    };
+    matches!(
+        app.store.replace_html_if(id, &html, &doc.content_hash),
+        Ok(true)
+    )
 }
 
 /// Opening a folder exposes its files, so this one needs the token. Reading inside a

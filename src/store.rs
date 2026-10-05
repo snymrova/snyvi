@@ -661,10 +661,14 @@ impl Store {
     pub fn replace(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
         let (hash, size) = self.put_source(id, &d)?;
-        fs::write(self.html_path(id), d.html)?;
         // The source changed under it, so the outline is worked out again.
         let _ = fs::remove_file(self.outline_path(id));
         let mut conn = self.conn.lock().unwrap();
+        // The page is written under the lock, with the hash that says which
+        // source it is of: a background highlight checks that hash under the
+        // same lock before it writes (`replace_html_if`), so it can never put
+        // an older render over this one.
+        fs::write(self.html_path(id), d.html)?;
         let tx = conn.transaction()?;
         let before: Option<(String, i64, Option<String>)> = tx
             .query_row(
@@ -694,8 +698,22 @@ impl Store {
         self.get(id)?.context("replaced document vanished")
     }
 
-    pub fn replace_html(&self, id: &str, html: &str) -> Result<()> {
-        Ok(fs::write(self.html_path(id), html)?)
+    /// The page, written only if the document is still the source `hash`
+    /// names. False when a newer save got there first; its render stands.
+    pub fn replace_html_if(&self, id: &str, html: &str, hash: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let now: Option<String> = conn
+            .query_row(
+                "SELECT content_hash FROM docs WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if now.as_deref() != Some(hash) {
+            return Ok(false);
+        }
+        fs::write(self.html_path(id), html)?;
+        Ok(true)
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Doc>> {

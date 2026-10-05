@@ -1182,3 +1182,26 @@ fn a_tree_row_carries_its_documents_size() {
     let json = serde_json::to_value(&wfs[0].docs[0]).unwrap();
     assert_eq!(json["size"], 12);
 }
+
+/// A background highlight writes its page only over the source it rendered:
+/// a save that landed meanwhile keeps its own page.
+#[test]
+fn a_late_highlight_does_not_write_over_a_newer_save() {
+    let (s, _d) = temp_store();
+    let a = s
+        .insert(&new_id("a"), new_doc("A", "first draft", "w"))
+        .unwrap();
+    let old_hash = a.content_hash.clone();
+    let mut newer = new_doc("A", "second draft", "w");
+    newer.html = "<p>the newer save</p>";
+    let b = s.replace(&a.id, newer).unwrap();
+    assert_ne!(b.content_hash, old_hash);
+    assert!(!s
+        .replace_html_if(&a.id, "<p>highlighted first draft</p>", &old_hash)
+        .unwrap());
+    assert_eq!(s.html(&a.id).unwrap(), "<p>the newer save</p>");
+    assert!(s
+        .replace_html_if(&a.id, "<p>highlighted second draft</p>", &b.content_hash)
+        .unwrap());
+    assert_eq!(s.html(&a.id).unwrap(), "<p>highlighted second draft</p>");
+}
