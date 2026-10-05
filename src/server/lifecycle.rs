@@ -515,6 +515,9 @@ pub(crate) async fn health(State(app): S) -> Json<serde_json::Value> {
         // How many pane processes are running, so `snyvi bench` and a person
         // with curl can see what a desk is costing without a window open.
         "panes": app.panes.running(),
+        // How many times it has run `git status` for them: a desk left at
+        // its prompt should add nothing here (bench/webkit.py --git).
+        "git_runs": crate::pane::git_runs(),
         // Which agents hold a stream right now, by the name each gave.
         "agents": app.online(),
         // The bundle this daemon serves, so a page that reconnects after an

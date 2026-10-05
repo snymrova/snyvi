@@ -78,6 +78,14 @@ const GIT_EVERY: Duration = Duration::from_secs(3);
 /// a minute of quiet.
 const GIT_BACKOFF: u32 = 10;
 const GIT_AT_MOST: Duration = Duration::from_secs(60);
+/// How many times this daemon has run `git status`, for `/api/health` and
+/// the bench row that holds a desk at its prompt to none of them.
+static GIT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `git status` runs so far: see `GIT_RUNS`.
+pub fn git_runs() -> u64 {
+    GIT_RUNS.load(std::sync::atomic::Ordering::Relaxed)
+}
 /// How long after its last output a pane still counts as busy, for a restart
 /// that waits for quiet. A build that prints a line a minute is not done; a
 /// shell at its prompt has printed nothing for longer than this.
@@ -478,6 +486,7 @@ impl Panes {
                 // The branch is read from files; whether the tree has changes
                 // runs git, which only the desk's own folder gets to steer.
                 let dirty = if home {
+                    GIT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     crate::project::modified(p)
                 } else {
                     None
