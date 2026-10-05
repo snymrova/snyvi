@@ -649,45 +649,13 @@
     markActive();
   }
 
-  const entryHtml = (rootId, e) => e.dir
-    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${icon("folder", 14)}<span class="nm">${esc(e.name)}</span>${chev}${plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
-    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" data-tip="${esc(e.path)}" data-tip-mono>${docIco()}<span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
-
-  /** Fetch one directory level the first time its folder is opened. */
-  async function fillTree(ul) {
-    if (!ul || ul.dataset.loaded) return;
-    ul.dataset.loaded = "1";
-    ul.innerHTML = skRows;
-    const rootId = ul.dataset.root, path = ul.dataset.path || "";
-    const entries = await getJson(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`);
-    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = noReach("dir", "li"); return; }
-    if (!entries.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
-    ul.innerHTML = entries.map(e => entryHtml(rootId, e)).join("");
-    markActive();
-  }
-
-  /** The folder changed on disk: re-list it, keeping the nodes that are still there
-   *  so expanded subfolders stay expanded and nothing flickers. */
-  async function reloadTree(ul) {
-    if (!ul || !ul.dataset.loaded) return;
-    const rootId = ul.dataset.root, path = ul.dataset.path || "";
-    const entries = await getJson(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`);
-    if (!Array.isArray(entries) || !ul.isConnected) return;
-    const old = new Map([...ul.children].map(li => [li.querySelector("[data-path]")?.dataset.path, li]));
-    const tpl = document.createElement("template");
-    const nodes = entries.map(e => {
-      const li = old.get(e.path);
-      if (li && li.classList.contains(e.dir ? "b-dir" : "b-file")) {
-        const k = li.querySelector(".k"); if (k) k.textContent = fmtSize(e.size);
-        return li;
-      }
-      tpl.innerHTML = entryHtml(rootId, e);
-      return tpl.content.firstElementChild;
-    });
-    if (!nodes.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
-    ul.replaceChildren(...nodes);
-    markActive();
-  }
+  /* The sidebar's folder rows are browse.js's since 1.17: the fetch, the
+   * rows and the re-list on a change on disk went out of first paint with
+   * the page they open, paid when a folder is first unfolded. A filled tree
+   * implies the chunk, so a reload with none loaded has nothing to re-list. */
+  const treeCtx = () => ({ esc, icon, chev, plusDesk, docIco, fmtSize, skRows, noReach, markActive, getJson });
+  const fillTree = ul => { if (ul && !ul.dataset.loaded) browseUse().then(m => m.fill(treeCtx(), ul), () => {}); };
+  const reloadTree = ul => { if (browseMod) browseMod.reload(treeCtx(), ul); };
   treesEl.addEventListener("toggle", e => {
     const d = e.target;
     if (d.dataset && d.dataset.root && d.open) {
