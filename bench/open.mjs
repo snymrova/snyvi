@@ -447,15 +447,17 @@ async function main() {
         + `Shorten the line or lower SNYVI_BENCH_LINES.`);
     }
     const sizes = Object.fromEntries(Object.entries(files).map(([k, f]) => [k, readFileSync(f).length]));
-    // The three everyday documents are sent last, so they are the unread rows
-    // at the top of the queue; the two below them are opened once each and
-    // take no part in the churn.
+    // The three everyday documents are sent after the plan with code, so
+    // they are unread rows near the top of the queue; the plan with code is
+    // opened once and takes no part in the churn. The pictures go last: they
+    // are opened after everything else, by their row, and a row sent first
+    // has been pushed past the queue's six by then.
     const ids = {
-      pics: idOf(send(files.pics, "Pictures")),
       blocks: idOf(send(files.blocks, "The plan, with code")),
       note: idOf(send(files.note, "A note")),
       plan: idOf(send(files.plan, "The plan")),
       code: idOf(send(files.code, "handlers.rs")),
+      pics: idOf(send(files.pics, "Pictures")),
     };
 
     /* Asked for once each, before a browser exists, and this is not just a
@@ -493,7 +495,12 @@ async function main() {
       opens[kind] = { ...r, bytes: sizes[kind], api: api[kind] };
     }
     // The pictures, once: what the page fetched for a document whose images
-    // are all below the fold.
+    // are all below the fold. From the inbox, as every open above is: its
+    // list holds every document waiting, where the sidebar shows six.
+    const back = pageLoad(cdp, sessionId, "the inbox");
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/inbox` }, sessionId);
+    await back;
+    await sleep(300);
     const pics = await evaluate(cdp, sessionId, call(openForImages, ids.pics));
     if (!pics.ok) throw new Error(`pictures: ${pics.why}`);
 
