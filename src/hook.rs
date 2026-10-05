@@ -233,16 +233,28 @@ pub fn run(paths: &Paths) -> Result<()> {
             .get()
             .filter(|s| crate::desk::valid_session(s));
         let starting = name == "SessionStart";
-        if state.is_some() || (starting && session.is_some()) {
+        let said = state.is_some() || (starting && session.is_some());
+        // The two events that also ask the daemon something tell it the
+        // state in the same request; a daemon from before 1.17 answers
+        // without taking it, and is told the way it knows, after.
+        let asks = starting || name == "UserPromptSubmit";
+        if said && !asks {
             client::agent_state(paths, pane, state, session);
         }
+        let tell_anyway = |heard: Option<&client::Said>| {
+            if said && heard.is_some_and(|h| !h.applied) {
+                client::agent_state(paths, pane, state, session);
+            }
+        };
         // The desk brief, on every start -- a new session, a resume, a
         // /clear, a compaction, a fork -- so what Claude knows about the desk
         // comes back each time its context does. Claude's first reply waits
         // for this: `client::brief` gives up after half a second, and then
         // nothing is printed and Claude starts as it would have.
         if starting {
-            if let Some(b) = client::brief(paths, pane) {
+            let b = client::brief(paths, pane, session);
+            tell_anyway(b.as_ref());
+            if let Some(b) = b {
                 if let Some(out) = session_start_output(&event, &b.context, &b.title, &b.desk) {
                     println!("{out}");
                 }
@@ -256,8 +268,9 @@ pub fn run(paths: &Paths) -> Result<()> {
         // printed. It rides on the reader's own message, so snyvi still
         // never starts a turn.
         if name == "UserPromptSubmit" {
-            if let Some(out) = client::changes(paths, pane)
-                .and_then(|c| prompt_output(&event, &c.context, &c.title, &c.desk))
+            let c = client::changes(paths, pane, state, session);
+            tell_anyway(c.as_ref());
+            if let Some(out) = c.and_then(|c| prompt_output(&event, &c.context, &c.title, &c.desk))
             {
                 println!("{out}");
             }
@@ -1197,7 +1210,7 @@ mod tests {
     #[test]
     fn the_hook_never_reaches_a_function_that_starts_a_daemon() {
         let src = include_str!("hook.rs");
-        let allowed = ["send_quick", "agent_state", "brief", "changes"];
+        let allowed = ["send_quick", "agent_state", "brief", "changes", "Said"];
         for (i, line) in src.lines().enumerate() {
             let mut rest = line;
             while let Some(at) = rest.find("client::") {

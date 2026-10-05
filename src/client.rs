@@ -966,6 +966,10 @@ pub struct Said {
     pub context: String,
     pub title: String,
     pub desk: String,
+    /// Whether the daemon took the agent's state and session from the same
+    /// request (1.17 on). One from before read the question alone, and the
+    /// hook tells it the state the old way, in a request of its own.
+    pub applied: bool,
 }
 
 fn said_by(v: &Value) -> Said {
@@ -974,17 +978,38 @@ fn said_by(v: &Value) -> Said {
         context: s("context"),
         title: s("title"),
         desk: s("desk"),
+        applied: v.get("state").is_some(),
     }
 }
 
-/// The desk brief for a Claude starting in this pane (`crate::brief`).
+/// The query that carries what the hook says about its agent along with
+/// what it asks: `pane_agent`'s two fields, so the asking is one request.
+fn agent_query(state: Option<&str>, session: Option<&str>) -> String {
+    let mut q = String::new();
+    for (k, v) in [("state", state), ("session", session)] {
+        if let Some(v) = v {
+            q.push(if q.is_empty() { '?' } else { '&' });
+            q.push_str(k);
+            q.push('=');
+            q.push_str(&crate::browse::urlencode(v));
+        }
+    }
+    q
+}
+
+/// The desk brief for a Claude starting in this pane (`crate::brief`), and
+/// the session the hook names, told in the same request.
 /// Asked from the SessionStart hook, which Claude's first reply waits on, so
 /// on `agent_state`'s terms: never starts a daemon, half a second at most,
 /// and nothing at all on any failure.
-pub fn brief(paths: &Paths, pane: &str) -> Option<Said> {
+pub fn brief(paths: &Paths, pane: &str, session: Option<&str>) -> Option<Said> {
     let token = config::read_token(paths)?;
     let mut resp = agent()
-        .get(&format!("{}/api/panes/{pane}/brief", config::base_url()))
+        .get(&format!(
+            "{}/api/panes/{pane}/brief{}",
+            config::base_url(),
+            agent_query(None, session)
+        ))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_millis(500)))
@@ -1001,13 +1026,24 @@ pub fn brief(paths: &Paths, pane: &str) -> Option<Said> {
 
 /// What changed on this pane's desk since snyvi last spoke to its agent
 /// (`crate::brief::changes`), for the UserPromptSubmit hook to hand Claude
-/// with the prompt, and the session's title as the panel's name now has it.
+/// with the prompt, and the session's title as the panel's name now has it;
+/// what the prompt says about the agent -- `working`, and its session --
+/// goes in the same request.
 /// The context is empty when nothing changed, and `None` when there is no
 /// daemon, no token, or no answer in half a second: the prompt never waits.
-pub fn changes(paths: &Paths, pane: &str) -> Option<Said> {
+pub fn changes(
+    paths: &Paths,
+    pane: &str,
+    state: Option<&str>,
+    session: Option<&str>,
+) -> Option<Said> {
     let token = config::read_token(paths)?;
     let mut resp = agent()
-        .get(&format!("{}/api/panes/{pane}/changes", config::base_url()))
+        .get(&format!(
+            "{}/api/panes/{pane}/changes{}",
+            config::base_url(),
+            agent_query(state, session)
+        ))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_millis(500)))
@@ -1294,4 +1330,55 @@ pub fn window_is_up() -> bool {
     health()
         .and_then(|h| h.get("window").and_then(Value::as_bool))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The state and session ride on the brief's and the changes' own
+    /// request, encoded, and nothing is sent for a field the event lacks.
+    #[test]
+    fn the_agent_rides_on_the_question() {
+        assert_eq!(agent_query(None, None), "");
+        assert_eq!(agent_query(Some("working"), None), "?state=working");
+        assert_eq!(
+            agent_query(
+                Some("needs_you"),
+                Some("11111111-2222-4333-8444-555555555555")
+            ),
+            "?state=needs_you&session=11111111-2222-4333-8444-555555555555"
+        );
+        assert_eq!(agent_query(Some(""), None), "?state=");
+    }
+
+    /// A daemon that took the state says so; one from before 1.17 does not,
+    /// and the hook then tells it the old way.
+    #[test]
+    fn an_answer_says_whether_the_state_was_taken() {
+        let new = said_by(&serde_json::json!({ "context": "", "title": "t", "state": "" }));
+        assert!(new.applied);
+        let old = said_by(&serde_json::json!({ "context": "", "title": "t" }));
+        assert!(!old.applied);
+        assert_eq!(old.title, "t");
+    }
+
+    /// `127.0.0.1` is answered from the string, with no lookup and no thread.
+    #[test]
+    fn the_loopback_resolver_reads_the_literal() {
+        use ureq::unversioned::resolver::Resolver;
+        let uri: ureq::http::Uri = "http://127.0.0.1:7777/api/health".parse().unwrap();
+        let got = Loopback
+            .resolve(
+                &uri,
+                &ureq::config::Config::builder().build(),
+                ureq::unversioned::transport::NextTimeout {
+                    after: ureq::unversioned::transport::time::Duration::NotHappening,
+                    reason: ureq::Timeout::Global,
+                },
+            )
+            .unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], "127.0.0.1:7777".parse().unwrap());
+    }
 }
