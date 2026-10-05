@@ -144,6 +144,10 @@ impl Line {
     pub fn text(&self) -> String {
         self.runs.iter().map(|(t, _)| t.as_str()).collect()
     }
+    /// How long that text is, without making it.
+    pub fn text_len(&self) -> usize {
+        self.runs.iter().map(|(t, _)| t.len()).sum()
+    }
 }
 
 /// What the page holds: the grid as it was last sent, and where the cursor
@@ -620,7 +624,19 @@ impl Screen {
     pub fn text(&self) -> Vec<String> {
         let mut lines: Vec<String> = self.scrollback.iter().map(Line::text).collect();
         lines.extend(self.pushed.iter().map(Line::text));
+        lines.extend(self.screen_text());
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        lines
+    }
+
+    /// The screen alone as plain lines, trailing blank lines dropped: the
+    /// part of `text` that changes while a program is at its prompt, and the
+    /// part a pane writes down on its own between the lines that leave it.
+    pub fn screen_text(&self) -> Vec<String> {
         let main = self.stash.as_ref().map(|(g, _)| g).unwrap_or(&self.grid);
+        let mut lines = Vec::with_capacity(main.len());
         for row in main {
             let mut s = String::new();
             for c in row.iter().filter(|c| c.width > 0) {
@@ -632,6 +648,28 @@ impl Screen {
             lines.pop();
         }
         lines
+    }
+
+    /// How many lines are kept past the screen right now.
+    pub fn kept_lines(&self) -> usize {
+        self.scrollback.len() + self.pushed.len()
+    }
+
+    /// The lines kept past the screen from the one `lines_ever` would have
+    /// counted as `from` on, as handles rather than text, so a pane can take
+    /// them under its lock and spell them out after. None when some of them
+    /// have been dropped off the front since: what was written down in turn
+    /// has a gap, and has to be written down whole.
+    pub fn kept_since(&self, from: usize) -> Option<Vec<Line>> {
+        let skip = from.checked_sub(self.sb_first)?;
+        Some(
+            self.scrollback
+                .iter()
+                .chain(self.pushed.iter())
+                .skip(skip)
+                .cloned()
+                .collect(),
+        )
     }
 
     // ---------- scrollback ----------

@@ -17,11 +17,13 @@
 //! windows on one pane agree with each other and with the screen.
 //!
 //! What a pane leaves behind when its process ends or the daemon stops is its
-//! last screen as plain text, in `panes/<id>.txt` beside the store. It comes
-//! back greyed after a restart -- the last thing the reader saw -- and it is
-//! plain text on purpose: colour on a screen nobody can type into is noise.
+//! text as plain lines beside the store: the lines that left its screen in
+//! `panes/<id>.txt`, appended to as they go, and the screen itself in
+//! `panes/<id>.scr`. It comes back greyed after a restart -- the last thing
+//! the reader saw -- and it is plain text on purpose: colour on a screen
+//! nobody can type into is noise.
 
-use crate::screen::{self, Screen, Shown};
+use crate::screen::{self, Line, Screen, Shown};
 use anyhow::{bail, Context, Result};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -276,6 +278,15 @@ struct Inner {
     unsaved_lines: bool,
     /// When the text was last written down.
     saved_at: Instant,
+    /// The files on disk hold `old`, the kept lines up to `kept` (counted as
+    /// `Screen::lines_ever` counts them) and a screen: the next write can be
+    /// the lines since and the screen alone. False when they hold something
+    /// else -- nothing yet, a previous run, a scrollback since cleared --
+    /// and the next write is the whole text. `txt_bytes` is the size of the
+    /// lines file as written, for the cap on it.
+    filed: bool,
+    kept: usize,
+    txt_bytes: usize,
     /// Bumped by each start, so the threads of a process that has been
     /// replaced do not write into the one that replaced it.
     run: u64,
@@ -329,9 +340,81 @@ impl Inner {
             self.old.clear();
             self.unsaved = true;
             self.unsaved_lines = true;
+            self.filed = false;
         }
         self.screen.frame(id, &mut self.shown)
     }
+
+    /// What has to be written down, taken under the lock and as little of it
+    /// as that: the lines kept since the last write and the screen, as
+    /// handles, with the text itself made after the lock is let go. A tick
+    /// used to spell out the whole two megabytes of a long session under the
+    /// pane's lock every fifteen seconds, with the frame task waiting on it
+    /// (finding 10). The whole text goes only when the files do not hold
+    /// what this would add to -- the first write, a cleared scrollback, a
+    /// line the screen has already dropped off its front -- or when adding
+    /// would take the lines file past the scrollback cap: then it is cut
+    /// from the front once, as `keep_text` cuts, and the appending resumes.
+    fn take_text(&mut self) -> Text {
+        let screen = self.screen.screen_text();
+        let screen_bytes = bytes(screen.iter().map(String::len));
+        let since = if self.filed {
+            self.screen.kept_since(self.kept)
+        } else {
+            None
+        };
+        if let Some(lines) = since {
+            let more = bytes(lines.iter().map(Line::text_len));
+            if self.txt_bytes + more + screen_bytes <= screen::SCROLLBACK_BYTES {
+                let first = self.txt_bytes == 0;
+                self.kept = self.screen.lines_ever();
+                self.txt_bytes += more;
+                return Text::More {
+                    lines,
+                    first,
+                    screen,
+                };
+            }
+        }
+        let text = self.screen.text();
+        let kept = self.screen.kept_lines();
+        // The screen's lines in `text` are all of it after the kept ones --
+        // unless trailing blank lines took the end off the kept ones too.
+        // Those are not written, and are counted as not yet kept, so the
+        // next write brings them along with whatever follows them.
+        let present = text.len().min(kept);
+        let shown = text.len() - present;
+        let all = keep_text(&self.old, text);
+        let split = all.len().saturating_sub(shown);
+        let (lines, screen) = all.split_at(split);
+        self.kept = self.screen.lines_ever() - (kept - present);
+        self.txt_bytes = bytes(lines.iter().map(String::len));
+        self.filed = true;
+        Text::Whole {
+            lines: lines.to_vec(),
+            screen: screen.to_vec(),
+        }
+    }
+}
+
+/// What a write to disk carries: the pane's text whole, or only what is
+/// new since the last one. See `Inner::take_text`.
+enum Text {
+    Whole {
+        lines: Vec<String>,
+        screen: Vec<String>,
+    },
+    More {
+        lines: Vec<Line>,
+        /// The lines file is empty so far: no newline before the first.
+        first: bool,
+        screen: Vec<String>,
+    },
+}
+
+/// The size of lines as a file holds them, a newline each.
+fn bytes(lens: impl Iterator<Item = usize>) -> usize {
+    lens.map(|n| n + 1).sum()
 }
 
 pub struct Live {
@@ -458,6 +541,9 @@ impl Panes {
                 unsaved: false,
                 unsaved_lines: false,
                 saved_at: Instant::now(),
+                filed: false,
+                kept: 0,
+                txt_bytes: 0,
                 run: 0,
                 cwd: String::new(),
                 started: Instant::now(),
@@ -898,11 +984,11 @@ impl Panes {
                 i.unsaved.then(|| {
                     i.unsaved = false;
                     i.unsaved_lines = false;
-                    keep_text(&i.old, i.screen.text())
+                    i.take_text()
                 })
             };
             if let Some(text) = text {
-                self.write_text(&l.id, &text);
+                self.write(&l.id, text);
             }
             l.stop();
         }
@@ -933,8 +1019,9 @@ impl Panes {
 
     /// Write down the text of every pane that is due (`PERSIST_EVERY`,
     /// `PERSIST_SCREEN_EVERY`), or of every pane that changed at all. Blocking
-    /// work: the text is built under the pane's lock and written to disk, so
-    /// the tick runs it on a blocking thread, not on one of the two workers.
+    /// work: what is new is taken under the pane's lock, spelled out after
+    /// it and written to disk, so the tick runs it on a blocking thread, not
+    /// on one of the two workers.
     fn persist_all(&self, all: bool) {
         let panes: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in panes {
@@ -953,9 +1040,9 @@ impl Panes {
                 i.unsaved = false;
                 i.unsaved_lines = false;
                 i.saved_at = Instant::now();
-                keep_text(&i.old, i.screen.text())
+                i.take_text()
             };
-            self.write_text(&l.id, &text);
+            self.write(&l.id, text);
         }
     }
 
@@ -969,8 +1056,16 @@ impl Panes {
             .is_some_and(|m| std::ptr::eq(Arc::as_ptr(m), l))
     }
 
+    /// A pane's text is two files: the lines that have left its screen,
+    /// `.txt`, appended to as they do, and the screen itself, `.scr`,
+    /// rewritten whole -- a few dozen lines. A daemon before 1.17 wrote the
+    /// lot into `.txt`, which reads back the same with no `.scr` beside it.
     fn text_path(&self, id: &str) -> PathBuf {
         self.dir.join(format!("{id}.txt"))
+    }
+
+    fn screen_path(&self, id: &str) -> PathBuf {
+        self.dir.join(format!("{id}.scr"))
     }
 
     fn read_text(&self, id: &str) -> Vec<String> {
@@ -979,19 +1074,63 @@ impl Panes {
         if !valid_id(id) {
             return Vec::new();
         }
-        std::fs::read_to_string(self.text_path(id))
-            .map(|s| s.lines().map(str::to_string).collect())
-            .unwrap_or_default()
+        let read = |p: PathBuf| {
+            std::fs::read_to_string(p)
+                .map(|s| s.lines().map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let mut lines = read(self.text_path(id));
+        lines.extend(read(self.screen_path(id)));
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        // Appends between two whole writes can carry the lines file a
+        // screen past the cap; what comes back is held to it as it goes in.
+        keep_text(&[], lines)
     }
 
-    fn write_text(&self, id: &str, lines: &[String]) {
+    /// Writes `t` down: the whole text as two fresh files, or the lines
+    /// since the last write onto the end of one and the screen afresh.
+    fn write(&self, id: &str, t: Text) {
         if !valid_id(id) {
             return;
         }
         let _ = std::fs::create_dir_all(&self.dir);
-        let tmp = self.dir.join(format!("{id}.tmp"));
-        if std::fs::write(&tmp, lines.join("\n")).is_ok() {
-            let _ = std::fs::rename(&tmp, self.text_path(id));
+        let whole = |path: PathBuf, text: String| {
+            let tmp = path.with_extension("tmp");
+            if std::fs::write(&tmp, text).is_ok() {
+                let _ = std::fs::rename(&tmp, path);
+            }
+        };
+        match t {
+            Text::Whole { lines, screen } => {
+                whole(self.text_path(id), lines.join("\n"));
+                whole(self.screen_path(id), screen.join("\n"));
+            }
+            Text::More {
+                lines,
+                first,
+                screen,
+            } => {
+                if !lines.is_empty() {
+                    let mut more = String::new();
+                    for (n, l) in lines.iter().enumerate() {
+                        if n > 0 || !first {
+                            more.push('\n');
+                        }
+                        more.push_str(&l.text());
+                    }
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(self.text_path(id))
+                    {
+                        let _ = f.write_all(more.as_bytes());
+                    }
+                }
+                whole(self.screen_path(id), screen.join("\n"));
+            }
         }
     }
 
@@ -1322,6 +1461,9 @@ impl Live {
         if !previous.is_empty() {
             i.old = keep_text(&i.old, previous);
         }
+        // A new screen counts its lines from nought: the files hold the
+        // last run's, and the next write is the whole text.
+        i.filed = false;
         i.parser = vte::Parser::new();
         i.run += 1;
         let run = i.run;
@@ -1418,14 +1560,14 @@ impl Live {
             i.unsaved = false;
             i.unsaved_lines = false;
             i.saved_at = Instant::now();
-            (i.status.clone(), keep_text(&i.old, i.screen.text()))
+            (i.status.clone(), i.take_text())
         };
         {
             // A pane discarded is killed on its way out, and this runs after:
             // writing here would bring back the file `discard` just deleted.
             let _w = panes.writing.lock().unwrap();
             if panes.holds(self) {
-                panes.write_text(&self.id, &text);
+                panes.write(&self.id, text);
             }
         }
         let _ = self.tx.send(status_frame(&self.id, &status).into());
@@ -2090,9 +2232,93 @@ mod tests {
         assert!(seen.contains(cwd.split('/').next_back().unwrap()), "{seen}");
         assert_eq!(exit, Some(3));
         // And what it left is on disk, for a restart to grey out.
-        let text =
-            std::fs::read_to_string(dir.path.join("panes").join(format!("{id}.txt"))).unwrap();
-        assert!(text.contains(&format!("pane={id}")));
+        let text = panes.read_text(&id).join("\n");
+        assert!(text.contains(&format!("pane={id}")), "{text}");
+    }
+
+    /// A pane's text goes to disk in pieces -- the lines since the last
+    /// write onto the end of one file, the screen into another -- and reads
+    /// back as the whole, the same bytes the old whole write would have
+    /// made; past the cap it is cut from the front once, as before; and the
+    /// lock is held for the handles, not for the text.
+    #[tokio::test]
+    async fn what_a_pane_writes_down_in_pieces_reads_back_whole() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-persist");
+        let (events, _) = broadcast::channel(16);
+        let panes = Panes::new(&dir.path, events);
+        let id = "0f0e0d0c0b0a09080706050403020101";
+        let live = panes.get(id);
+        let feed = |text: String| {
+            let mut i = live.inner.lock().unwrap();
+            let Inner {
+                screen,
+                parser,
+                unsaved,
+                unsaved_lines,
+                ..
+            } = &mut *i;
+            screen.feed(parser, text.as_bytes());
+            *unsaved = true;
+            *unsaved_lines = true;
+        };
+        let whole = || {
+            let i = live.inner.lock().unwrap();
+            keep_text(&i.old, i.screen.text())
+        };
+        feed((0..10_000).map(|k| format!("line {k}\r\n")).collect());
+        let want = whole();
+        assert!(want.len() > 9_000, "the scrollback holds the lines");
+        panes.persist_all(false);
+        assert_eq!(panes.read_text(id), want, "the first write is the whole text");
+        assert!(dir.path.join("panes").join(format!("{id}.scr")).exists());
+
+        // Five hundred more, and a prompt left on the screen: the lines go
+        // on the end, the screen is written afresh, and the lock is held
+        // for as long as the handles take to clone.
+        feed((10_000..10_500).map(|k| format!("line {k}\r\n")).collect::<String>() + "$ ");
+        let want = whole();
+        let text = {
+            let mut i = live.inner.lock().unwrap();
+            let t0 = Instant::now();
+            let text = i.take_text();
+            let held = t0.elapsed();
+            assert!(held < Duration::from_millis(10), "the lock was held {held:?}");
+            text
+        };
+        match &text {
+            Text::More { lines, screen, .. } => {
+                assert_eq!(lines.len(), 500, "the lines that left the screen since");
+                assert_eq!(screen.last().map(String::as_str), Some("$"), "the screen, trailing blanks trimmed");
+            }
+            Text::Whole { .. } => panic!("the second write is the lines since, not the whole"),
+        }
+        panes.write(id, text);
+        assert_eq!(panes.read_text(id), want, "in pieces reads back as the whole");
+
+        // The screen alone changing is the screen file alone, rewritten.
+        feed("\x1b[2K\r$ ls".to_string());
+        let want = whole();
+        let text = live.inner.lock().unwrap().take_text();
+        assert!(matches!(&text, Text::More { lines, .. } if lines.is_empty()));
+        panes.write(id, text);
+        assert_eq!(panes.read_text(id), want);
+
+        // Past the cap: cut from the front once, as `keep_text` cuts, and
+        // then in pieces again.
+        let big = "z".repeat(1000);
+        feed((0..2_500).map(|_| format!("{big}\r\n")).collect());
+        let want = whole();
+        assert!(bytes(want.iter().map(String::len)) <= screen::SCROLLBACK_BYTES);
+        let text = live.inner.lock().unwrap().take_text();
+        assert!(matches!(text, Text::Whole { .. }), "over the cap: whole again");
+        panes.write(id, text);
+        assert_eq!(panes.read_text(id), want);
+        feed("one more\r\n".to_string());
+        let want = whole();
+        let text = live.inner.lock().unwrap().take_text();
+        assert!(matches!(&text, Text::More { lines, .. } if lines.len() == 1));
+        panes.write(id, text);
+        assert_eq!(panes.read_text(id), want);
     }
 
     /// A key buys one fast frame for the output that follows it, and only
