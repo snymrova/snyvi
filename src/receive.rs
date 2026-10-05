@@ -58,6 +58,24 @@ pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MEDIA_BYTES: u64 = 1024 * 1024 * 1024;
 /// Automatic sends of the same file within this window overwrite the latest snapshot.
 const COALESCE_SECS: i64 = 180;
+/// How much of a document's text goes into the search index: the first half
+/// megabyte, like the outline's cap. A 32 MB log is searched by the thing
+/// it is about, which is at the top; indexing all of it is what made a save
+/// of it cost a re-tokenise of all of it.
+pub const SEARCH_CAP: usize = 512 * 1024;
+
+/// The text that is indexed: the whole of it up to `SEARCH_CAP`, cut on a
+/// character boundary.
+pub fn search_text(text: &str) -> &str {
+    if text.len() <= SEARCH_CAP {
+        return text;
+    }
+    let mut end = SEARCH_CAP;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
 
 /// Sends nobody asked for one at a time: the Claude Code hook fires on every edit,
 /// `snyvi watch` on every save. They coalesce with each other.
@@ -299,7 +317,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         desk: from.as_ref(),
         source: &b.bytes,
         staged: b.staged.as_ref(),
-        search_body: &b.text,
+        search_body: search_text(&b.text),
         html: &html,
     };
 
@@ -352,6 +370,20 @@ mod tests {
             token_path: dir.path.join("token"),
         };
         (Store::open(&paths).unwrap(), Renderer::new(), dir)
+    }
+
+    /// What goes into the search index stops at the cap, on a character,
+    /// so a 32 MB log costs a save half a megabyte of tokenising and not
+    /// all of it.
+    #[test]
+    fn the_indexed_text_is_capped_on_a_character() {
+        let short = "a plan";
+        assert_eq!(search_text(short), short);
+        let long = "é".repeat(SEARCH_CAP);
+        let cut = search_text(&long);
+        assert!(cut.len() <= SEARCH_CAP);
+        assert!(cut.len() >= SEARCH_CAP - 1);
+        assert!(cut.chars().all(|c| c == 'é'));
     }
 
     #[test]

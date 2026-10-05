@@ -44,6 +44,9 @@ pub struct TreeDoc {
     /// so a project expanded later marks its rows without the page holding
     /// the whole queue.
     pub unread: bool,
+    /// Its size in bytes, so the page can decide what a hover is allowed to
+    /// fetch ahead of a click without asking.
+    pub size: i64,
 }
 
 /// A document as the desk's rail lists it: what a pane on this desk sent,
@@ -175,6 +178,18 @@ CREATE INDEX IF NOT EXISTS docs_recv ON docs(received_at DESC);
 CREATE INDEX IF NOT EXISTS docs_wf ON docs(workflow_id, received_at);
 CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(id UNINDEXED, title, body, tokenize='unicode61');
 "#;
+
+/// The search index's row for a document sits at the document's rowid in
+/// `docs`, so taking it out on a save is one lookup: `id` is UNINDEXED, and
+/// a delete by it read the whole index -- 18.7 MB at 541 documents, on every
+/// save of anything. `docs` has an implicit rowid that nothing renumbers:
+/// `VACUUM` runs only in `reset`, after every table is emptied. The body
+/// indexed is the first `SEARCH_CAP` bytes of the text (receive.rs); what
+/// anyone searches for is in the first half-megabyte of a 32 MB file.
+const FTS_INSERT: &str =
+    "INSERT INTO docs_fts(rowid, id, title, body) SELECT rowid, ?1, ?2, ?3 FROM docs WHERE id = ?1";
+const FTS_DELETE: &str = "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
+
 
 const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot";
 const DOC_FROM: &str =
@@ -376,7 +391,89 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, desk::KIND_COLUMNS[1]),
     // 1.16: the studio retired; its desk is a terminal desk.
     (4, desk::RETIRE_STUDIO),
+    // 1.17: what used to run on every start with its errors dropped. Keys
+    // used to be case-sensitive, so the same workflow could exist twice;
+    // the duplicates fold into the oldest row.
+    (
+        5,
+        "UPDATE docs SET workflow_id = (
+             SELECT MIN(w2.id) FROM workflows w2
+             JOIN workflows w1 ON w1.id = docs.workflow_id
+             WHERE w2.project_id = w1.project_id AND LOWER(w2.key) = LOWER(w1.key)
+         );
+         DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs);
+         UPDATE workflows SET key = LOWER(key) WHERE key <> LOWER(key);",
+    ),
+    // 1.17: the search index realigned so each row sits at its document's
+    // rowid (see `FTS_DELETE`), bodies cut to what is indexed from now on.
+    // One pass over the index, once. A document that somehow had two index
+    // rows keeps the newer.
+    (
+        5,
+        "CREATE TEMP TABLE fts_at AS
+             SELECT d.rowid AS r, MAX(f.rowid) AS fr FROM docs_fts f JOIN docs d ON d.id = f.id GROUP BY d.rowid;
+         CREATE TEMP TABLE fts_rows AS
+             SELECT t.r AS r, f.id AS id, f.title AS title, substr(f.body, 1, 524288) AS body
+             FROM fts_at t JOIN docs_fts f ON f.rowid = t.fr;
+         DELETE FROM docs_fts;
+         INSERT INTO docs_fts(rowid, id, title, body) SELECT r, id, title, body FROM fts_rows;
+         DROP TABLE fts_rows;
+         DROP TABLE fts_at;",
+    ),
+    // 1.17: whether a row is the newest live version of its file, kept by
+    // every write that can change it (`rehead`), so the lists read a column
+    // where they used to run a subquery per row.
+    (
+        6,
+        "ALTER TABLE docs ADD COLUMN is_head INTEGER NOT NULL DEFAULT 1",
+    ),
+    (
+        6,
+        "UPDATE docs SET is_head = CASE
+             WHEN rowid = (SELECT d2.rowid FROM docs d2
+                           WHERE d2.project_id = docs.project_id AND d2.source_path = docs.source_path
+                             AND d2.deleted_at = 0
+                           ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1) THEN 1
+             ELSE 0 END
+         WHERE source_path IS NOT NULL",
+    ),
 ];
+
+/// A desk's list, read through `docs_desk` (desk, on or off the list, when):
+/// the one index a four-column `WHERE` on a desk's documents needs, and
+/// `?1` the desk, `?2` the limit.
+fn desk_docs_sql(off: bool) -> String {
+    format!(
+        "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
+         FROM live_docs d JOIN projects p ON p.id = d.project_id
+         WHERE d.desk_id = ?1 AND d.desk_off {}
+           AND (d.source_path IS NULL
+                OR d.rowid = (SELECT d2.rowid FROM live_docs d2
+                              WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
+                                AND d2.source_path = d.source_path
+                              ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1))
+         ORDER BY {} d.received_at DESC, d.rowid DESC LIMIT ?2",
+        if off { "> 0" } else { "= 0" },
+        if off { "d.desk_off DESC," } else { "" },
+    )
+}
+
+/// Keep `is_head` true on exactly the newest live version of one file, after
+/// a write that could have moved it: a version arriving, going, coming back,
+/// or being pruned. Every row of the file is set, so a row that stops being
+/// the head says so too. The subquery is constant for the statement, so
+/// SQLite runs it once and the rest is one pass over the file's versions.
+fn rehead(conn: &Connection, project_id: i64, source_path: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE docs SET is_head = CASE
+             WHEN rowid = (SELECT d2.rowid FROM docs d2
+                           WHERE d2.project_id = ?1 AND d2.source_path = ?2 AND d2.deleted_at = 0
+                           ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1) THEN 1
+             ELSE 0 END
+         WHERE project_id = ?1 AND source_path = ?2",
+        params![project_id, source_path],
+    )
+}
 
 /// Bring a database to the newest version in `MIGRATIONS`.
 fn migrate(conn: &Connection) -> Result<()> {
@@ -420,19 +517,6 @@ impl Store {
         // Desks live in the same database and in tables of their own; see
         // `crate::desk` for why that separation is the whole of the boundary.
         conn.execute_batch(desk::SCHEMA)?;
-        // Migrations for databases created before these columns existed.
-        // Keys used to be case-sensitive, so the same workflow could exist twice.
-        // Fold the duplicates into the oldest row; harmless once there are none.
-        conn.execute_batch(
-            "UPDATE docs SET workflow_id = (
-                 SELECT MIN(w2.id) FROM workflows w2
-                 JOIN workflows w1 ON w1.id = docs.workflow_id
-                 WHERE w2.project_id = w1.project_id AND LOWER(w2.key) = LOWER(w1.key)
-             );
-             DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs);
-             UPDATE workflows SET key = LOWER(key) WHERE key <> LOWER(key);",
-        )
-        .ok();
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
@@ -452,17 +536,20 @@ impl Store {
         // ordering everywhere breaks ties with it, and a view has none of its
         // own. It is rebuilt at every start, so a column added by a migration
         // is in it on the run that adds the column.
+        //
+        // Which row is the head is a column, `is_head`, kept by `rehead` on
+        // every write that can move it. It used to be a subquery in the view,
+        // run once per row of every list: forty steps a document, on each
+        // redraw of the sidebar.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS docs_unread ON docs(unread, received_at);
              CREATE INDEX IF NOT EXISTS docs_path ON docs(project_id, source_path, received_at);
+             CREATE INDEX IF NOT EXISTS docs_desk ON docs(desk_id, desk_off, received_at);
+             CREATE INDEX IF NOT EXISTS docs_head ON docs(project_id, is_head, deleted_at, received_at);
              DROP VIEW IF EXISTS live_docs;
              CREATE VIEW live_docs AS SELECT rowid AS rowid, * FROM docs WHERE deleted_at = 0;
              DROP VIEW IF EXISTS head_docs;
-             CREATE VIEW head_docs AS SELECT * FROM live_docs d
-               WHERE d.source_path IS NULL
-                  OR d.rowid = (SELECT d2.rowid FROM live_docs d2
-                                WHERE d2.project_id = d.project_id AND d2.source_path = d.source_path
-                                ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1);",
+             CREATE VIEW head_docs AS SELECT * FROM live_docs d WHERE d.is_head = 1;",
         )?;
         Ok(Store {
             conn: Mutex::new(conn),
@@ -523,15 +610,12 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13, ?14, ?15, ?16)",
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13, ?14, ?15, ?16, 1)",
             params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, size, now, d.source_path, d.branch, hash, d.origin, d.sender,
                 d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot)],
         )?;
-        tx.execute(
-            "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
-            params![id, d.title, d.search_body],
-        )?;
+        tx.execute(FTS_INSERT, params![id, d.title, d.search_body])?;
         // A newer version of a file takes the older one's place on the queue
         // rather than queueing beside it. The older row is in no list any more
         // (see `head_docs`), and a count of rows nobody can reach is a badge
@@ -542,6 +626,7 @@ impl Store {
                 "UPDATE docs SET unread = 0 WHERE project_id = ?1 AND source_path = ?2 AND id != ?3 AND unread = 1",
                 params![project_id, sp, id],
             )?;
+            rehead(&tx, project_id, sp)?;
         }
         tx.commit()?;
         Ok(Doc {
@@ -567,22 +652,44 @@ impl Store {
 
     /// Overwrite an existing document's content in place (used to coalesce rapid
     /// hook-driven edits of the same file into one snapshot).
+    ///
+    /// The HTML is always written: a renderer or a theme can change what the
+    /// same source looks like. The search index is rewritten only when the
+    /// source did change -- the row's `content_hash` says -- since
+    /// re-tokenising a body that is the same body is the one cost of a save
+    /// that buys nothing.
     pub fn replace(&self, id: &str, d: NewDoc) -> Result<Doc> {
         let now = now();
         let (hash, size) = self.put_source(id, &d)?;
         fs::write(self.html_path(id), d.html)?;
         // The source changed under it, so the outline is worked out again.
         let _ = fs::remove_file(self.outline_path(id));
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let before: Option<(String, i64, Option<String>)> = tx
+            .query_row(
+                "SELECT content_hash, project_id, source_path FROM docs WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((old_hash, project_id, source_path)) = before else {
+            anyhow::bail!("replaced document vanished");
+        };
+        tx.execute(
             "UPDATE docs SET title = ?2, kind = ?3, lang = ?4, size = ?5, received_at = ?6, branch = ?7, content_hash = ?8 WHERE id = ?1",
             params![id, d.title, d.kind.as_str(), d.lang, size, now, d.branch, hash],
         )?;
-        conn.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
-        conn.execute(
-            "INSERT INTO docs_fts(id, title, body) VALUES(?1, ?2, ?3)",
-            params![id, d.title, d.search_body],
-        )?;
+        if old_hash != hash {
+            tx.execute(FTS_DELETE, params![id])?;
+            tx.execute(FTS_INSERT, params![id, d.title, d.search_body])?;
+        }
+        // It moved to now, which can only confirm it as the head; set all the
+        // same, so the column is a fact and not an argument.
+        if let Some(sp) = &source_path {
+            rehead(&tx, project_id, sp)?;
+        }
+        tx.commit()?;
         drop(conn);
         self.get(id)?.context("replaced document vanished")
     }
@@ -778,7 +885,7 @@ impl Store {
         let Some((project_id, source_path)) = found else {
             return Ok(0);
         };
-        let n = match source_path {
+        let n = match &source_path {
             Some(sp) => tx.execute(
                 "UPDATE docs SET deleted_at = ?3 WHERE project_id = ?1 AND source_path = ?2 AND deleted_at = 0",
                 params![project_id, sp, at],
@@ -788,6 +895,9 @@ impl Store {
                 params![id, at],
             )?,
         };
+        if let Some(sp) = &source_path {
+            rehead(&tx, project_id, sp)?;
+        }
         tx.commit()?;
         Ok(n)
     }
@@ -809,7 +919,7 @@ impl Store {
         };
         // Exactly the versions that went with it, matched on the instant they
         // went: a version deleted on its own, earlier, stays deleted.
-        let n = match source_path {
+        let n = match &source_path {
             Some(sp) => tx.execute(
                 "UPDATE docs SET deleted_at = 0 WHERE project_id = ?1 AND source_path = ?2 AND deleted_at = ?3",
                 params![project_id, sp, at],
@@ -819,6 +929,9 @@ impl Store {
                 params![id],
             )?,
         };
+        if let Some(sp) = &source_path {
+            rehead(&tx, project_id, sp)?;
+        }
         tx.commit()?;
         Ok(n > 0)
     }
@@ -1044,9 +1157,26 @@ impl Store {
             return Ok(victims);
         }
         let tx = conn.transaction()?;
+        // The files whose newest version may be among the victims: a pruned
+        // head hands the row to the version before it.
+        let mut files: std::collections::BTreeSet<(i64, String)> = Default::default();
         for (id, _) in &victims {
-            tx.execute("DELETE FROM docs_fts WHERE id = ?1", params![id])?;
+            let file: Option<(i64, Option<String>)> = tx
+                .query_row(
+                    "SELECT project_id, source_path FROM docs WHERE id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((pid, Some(sp))) = file {
+                files.insert((pid, sp));
+            }
+            // The index row first: it is found through the document's row.
+            tx.execute(FTS_DELETE, params![id])?;
             tx.execute("DELETE FROM docs WHERE id = ?1", params![id])?;
+        }
+        for (pid, sp) in &files {
+            rehead(&tx, *pid, sp)?;
         }
         tx.execute(
             "DELETE FROM workflows WHERE id NOT IN (SELECT DISTINCT workflow_id FROM docs)",
@@ -1098,6 +1228,31 @@ impl Store {
         Ok(rows)
     }
 
+    /// One project's row, as `projects` would list it: what a `doc` event
+    /// carries so a page can patch the one project that moved instead of
+    /// fetching the tree again. None for a project with no documents.
+    pub fn project_row(&self, project_id: i64) -> Result<Option<TreeProject>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT p.id, p.name, p.root, COUNT(d.id), COUNT(DISTINCT d.workflow_id), MAX(d.received_at)
+             FROM projects p JOIN head_docs d ON d.project_id = p.id
+             WHERE p.id = ?1 GROUP BY p.id",
+            params![project_id],
+            |r| {
+                Ok(TreeProject {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    root: r.get(2)?,
+                    docs: r.get(3)?,
+                    workflows: r.get(4)?,
+                    latest: r.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     /// What one project holds: its `workflows` most recent sessions, each
     /// carrying its `docs` newest documents and saying how many it has.
     ///
@@ -1134,7 +1289,7 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         let mut doc_stmt = conn.prepare(
-            "SELECT id, title, kind, received_at, pinned, unread FROM head_docs
+            "SELECT id, title, kind, received_at, pinned, unread, size FROM head_docs
              WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
         for w in &mut wfs {
@@ -1172,7 +1327,7 @@ impl Store {
         };
         w.docs = conn
             .prepare(
-                "SELECT id, title, kind, received_at, pinned, unread FROM head_docs
+                "SELECT id, title, kind, received_at, pinned, unread, size FROM head_docs
                  WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
             )?
             .query_map(params![workflow_id], row_to_tree_doc)?
@@ -1316,19 +1471,7 @@ impl Store {
     pub fn desk_docs(&self, desk_id: i64, limit: usize, off: bool) -> Result<Vec<DeskDoc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(&format!(
-                "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
-                 FROM live_docs d JOIN projects p ON p.id = d.project_id
-                 WHERE d.desk_id = ?1 AND d.desk_off {}
-                   AND (d.source_path IS NULL
-                        OR d.rowid = (SELECT d2.rowid FROM live_docs d2
-                                      WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
-                                        AND d2.source_path = d.source_path
-                                      ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1))
-                 ORDER BY {} d.received_at DESC, d.rowid DESC LIMIT ?2",
-                if off { "> 0" } else { "= 0" },
-                if off { "d.desk_off DESC," } else { "" },
-            ))?
+            .prepare(&desk_docs_sql(off))?
             .query_map(params![desk_id, limit as i64], |r| {
                 Ok(DeskDoc {
                     id: r.get(0)?,
@@ -1676,7 +1819,7 @@ pub struct Census {
     pub desks: i64,
 }
 
-/// A tree row, which is the five columns of a document the sidebar draws and
+/// A tree row, which is the six columns of a document the sidebar draws and
 /// none of the rest. Shared by the two queries that return them.
 fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
     Ok(TreeDoc {
@@ -1686,6 +1829,7 @@ fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
         received_at: r.get(3)?,
         pinned: r.get::<_, i64>(4)? != 0,
         unread: r.get::<_, i64>(5)? != 0,
+        size: r.get(6)?,
     })
 }
 
