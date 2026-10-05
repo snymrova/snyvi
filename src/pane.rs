@@ -2261,10 +2261,22 @@ mod tests {
             titles.iter().any(|t| t == "c"),
             "the header hears titles: {titles:?}"
         );
+        // The bell's word on the page-wide stream goes out just after the
+        // status says blocked -- `changed`, once the pane's lock is let go --
+        // so it is waited for, not taken to be there already.
+        let mut dots: Vec<String> = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !dots.iter().any(|m| m.contains("\"blocked\":true"))
+            && tokio::time::Instant::now() < deadline
+        {
+            while let Ok(m) = ev.try_recv() {
+                dots.push(m);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         // A repeat of what was said is not said again.
         let s = panes.status(id);
         panes.changed(id, &s);
-        let mut dots = Vec::new();
         while let Ok(m) = ev.try_recv() {
             dots.push(m);
         }
