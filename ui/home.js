@@ -354,7 +354,7 @@ let ticker = 0, drawnDay = 0;
 function tick() {
   if (ticker) return;
   ticker = setInterval(() => {
-    if (!c || c.view() !== "home") return;
+    if (!c || c.view() !== "home" || document.hidden) return;
     if (startOfDay(Date.now() / 1000) !== drawnDay && last) return draw(last);
     const t = c.docEl.querySelector(".hm-time");
     const now = hhmm();

@@ -325,6 +325,6 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     if (!r.ok) throw new Error(`${r.status}`);
   }
   // "3 min ago" stays true without anything arriving.
-  setInterval(() => { if (liveNotes().length && !noteGone && !noteEl.matches(":hover, :focus-within")) renderNote(); }, 60000);
+  setInterval(() => { if (!document.hidden && liveNotes().length && !noteGone && !noteEl.matches(":hover, :focus-within")) renderNote(); }, 60000);
   return { render: renderNote };
 }
