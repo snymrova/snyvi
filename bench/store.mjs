@@ -31,7 +31,8 @@
  *                    delete by rowid below is not the delete the daemon runs.
  *   fts-replace      Page misses for the delete the daemon runs on a save,
  *                    `DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM
- *                    docs WHERE id = ?)`, under 64 KB of pages. The bench
+ *                    docs WHERE id = ?)`, under the deleted row's own text
+ *                    plus 96 KB of pages. The bench
  *                    runs that statement itself, so this row holds the
  *                    statement's cost, not the daemon's choice of it: a
  *                    daemon gone back to deleting by id would still pass
@@ -54,9 +55,12 @@ const KEEP = args.includes("--keep");
 const BIN = resolve(flag("--bin") || "./target/release/snyvi");
 const PORT = flag("--port") || "7820";   // 7816 restart.mjs, 7817-7818 update.mjs (7818 its fake GitHub); see the list in ui.mjs
 const DOCS = Number(process.env.SNYVI_BENCH_DOCS || flag("--docs") || 500);
-/* 64 KB of pages, whatever the page size: one FTS5 structure read, the
- * row and its segment, and nothing like a scan. */
-const BUDGET_BYTES = 64 * 1024;
+/* Over the deleted row's own text: the trees above it and FTS5's own
+ * bookkeeping -- its structure record, and the share of an incremental merge
+ * a write does. Measured cold at 17 pages of 4 KB with 500 documents and 19
+ * with 2,000: it grows with the depth of the trees. Deleting by id, as 1.16
+ * did, read 182 pages at 500 and grows with the library. */
+const BUDGET_BYTES = 96 * 1024;
 
 function flag(name) {
   const i = args.indexOf(name);
@@ -170,6 +174,12 @@ async function main() {
     const pages = Number(query(db, "SELECT COUNT(*) FROM docs_fts_data")) ;
     const victim = ids[Math.floor(ids.length / 2)];
 
+    // A delete reads the row it deletes -- FTS5 tokenises the old text to
+    // take it out -- so its own text is the floor of what it costs. The
+    // budget is that and a constant for the trees above it; a delete that
+    // looks through the library costs the library instead.
+    const own = Number(query(db, `SELECT length(title) + length(body) FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = '${victim}')`));
+    const budget = own + BUDGET_BYTES;
     // What the daemon runs on a save, measured cold.
     const byRowid = misses(db, `DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = '${victim}');`);
     // What it ran through 1.16, for the record, on a fresh copy so the first
@@ -181,8 +191,8 @@ async function main() {
 
     row("fts aligned", drifted + orphans, 0, drifted === 0 && orphans === 0,
       `${indexed} index rows for ${total} documents after ${replaced} saves: ${drifted} with a rowid of their own, ${orphans} orphaned`);
-    row("fts-replace, delete by rowid", byRowid.misses * pageSize, BUDGET_BYTES, byRowid.misses * pageSize <= BUDGET_BYTES,
-      `${byRowid.misses} page misses of ${pageSize} B${byRowid.fullscan != null ? `, ${byRowid.fullscan} fullscan steps` : ""}`);
+    row("fts-replace, delete by rowid", byRowid.misses * pageSize, budget, byRowid.misses * pageSize <= budget,
+      `${byRowid.misses} page misses of ${pageSize} B; budget is its own ${own} B of text + ${BUDGET_BYTES}${byRowid.fullscan != null ? `, ${byRowid.fullscan} fullscan steps` : ""}`);
     rows.push(["  (delete by id, as 1.16 did)", byId.misses * pageSize, null, true,
       `${byId.misses} page misses, ${pages} pages in the index${byId.fullscan != null ? `, ${byId.fullscan} fullscan steps` : ""}`]);
 
