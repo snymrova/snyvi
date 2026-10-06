@@ -29,6 +29,10 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/browse.rs` | 818 | a folder read from disk, nothing stored |
 | `src/watch.rs` | 357 | mtime change detection for browse and `snyvi watch` |
 | `src/aside.rs` | 217 | a line beside the work |
+| `src/thread.rs` | 1151 | threads, turns (Your turn) and suggested panels: the tables, the stages, who is told what (#90) |
+| `src/server/api_thread.rs` | 734 | threads over HTTP: the agent's and the mod's on `/api/panes/{id}/…`, the page's on `/api/desks/{id}/…`, the held question's long-poll |
+| `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
+| `src/mcp/threads.rs` | 247 | the six #90 MCP tools: start_thread, move_thread, ask, hand_over, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |
 | `src/git.rs` | 251 | branch, dirt, unpushed, recent commits for Home |
 | `src/resolve.rs` | 211 | a Ctrl-clicked word → a path |

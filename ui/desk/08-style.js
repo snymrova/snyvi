@@ -396,7 +396,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * the list is two lines tall, one line of text or two, so the numbers fall
  * in one rhythm and a row taken off holds the same room as its Undo. */
 .dk-lead { flex: none; display: flex; flex-direction: column; align-items: center; width: 26px; margin-left: 3px; }
-.dk-num { margin-top: 5px; padding: 0 2px; border-radius: 3px; font-family: var(--mono); font-size: 9.5px; line-height: 15px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
+.dk-num { margin-top: 5px; padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 15px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-num, .dk-num[data-said] { opacity: 1; }
 .dk-num:hover { color: var(--accent); }
 .dk-num[data-said] { color: var(--ok); }
@@ -451,7 +451,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-stage.planned:hover { color: var(--accent); }
 .dk-stage.planned::before { content: ""; position: absolute; inset: -4px; }
 .dk-stage.working:not(:has(.c))::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.dk-stage.working .c { min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-family: var(--mono); font-size: 9.5px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.dk-stage.working .c { min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-family: var(--mono); font-size: var(--fs-micro); font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
 .dk-stage.working.busy::before, .dk-stage.working.busy .c { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out 3; }
 @keyframes dk-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dk-stage.working::before, .dk-stage.working .c { animation: none; } }

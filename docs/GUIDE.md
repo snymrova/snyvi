@@ -485,7 +485,7 @@ the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and five more inside a desk. `send_document` is
+That exposes two MCP tools, and more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
 URL, and its description tells Claude what snyvi can show and when to pick
 each -- Markdown with Mermaid for a plan, one self-contained HTML file for a
@@ -494,8 +494,11 @@ one, and [Asides](#asides) below says what it is for. Offered only to a
 Claude running in a desk's panel: `read_desk_notes` reads that desk's
 notes, `tick_desk_note` ticks one done (with the commit, the document and a
 link to where the work can be seen), `suggest_desk_note` offers a line you
-can keep or not, `leave_off` says in a sentence where the work stands, and
-`name_panel` names the panel it runs in. The tool descriptions tell Claude
+can keep or not, `leave_off` says in a sentence where the work stands,
+`name_panel` names the panel it runs in, and six more file the work itself
+([Threads and Your turn](#threads-and-your-turn) below): `start_thread` and
+`move_thread`, `ask` and `hand_over`, `suggest_panel` and `suggest_desk`.
+The tool descriptions tell Claude
 when to use each; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
@@ -989,6 +992,63 @@ code, diffs, tables, images, and previewed pages and PDFs.
 
 `w` overrides the cap for prose too. Combined with `\` and `t`, which
 hide the sidebar and the rail, it gives the document the whole window.
+
+## Threads and Your turn
+
+What wears a maker down is rarely the work; it is the bookkeeping around it.
+Which notes are one piece of work, which folder and branch it lives in, what
+was decided in a chat last Tuesday, and what is waiting on *you*. A Claude in
+a desk's panel files that for you, and the rail shows it at the top, above
+the panels, only when there is something to show.
+
+- **A thread** is one arc of work: a name, the notes it answers, the folder
+  it lives in, and a stage -- idea, planned, building, review, waiting,
+  shipped, or parked with the next step to pick it up by. Claude starts one
+  with `start_thread` when it takes the work on and moves it with
+  `move_thread`. The card shows the branch, the commits and the PR, and
+  *Decided*: the questions you answered on it. A note in a thread wears a
+  small chip with the thread's name. Right-click a card, or its ⋯, to move,
+  park, rename or remove it; ✕ leaves its Undo in the row, as everywhere.
+- **Your turn** is what only you can do: a decision (`ask`, with two to four
+  options and the one Claude recommends), or a hand-over (`hand_over`): try
+  it, merge it, add a key. Answer on the rail or on Home. Your answer goes
+  with your next message to the panel that asked; while that panel is idle,
+  **Send now** types it in and presses Enter for you. snyvi never starts a
+  turn by itself.
+- **Suggested** is a panel or a desk Claude thinks the work wants, with the
+  exact command it would run. **Open panel** opens it on this desk and runs
+  that command; **Open desk** makes a desk for the folder. Nothing opens
+  until you click, and three wait at most.
+
+Home lists **Your turn · across desks**, answerable in place, and
+**Threads** by stage: what is moving, what is parked and with what next
+step, and what shipped this week. The desk brief names a desk's threads and
+what is on you, and each prompt's changes carry your answers and the moves
+you made.
+
+### The snyvi mod in panels
+
+With Claude Code 2.1.287 or later, a panel's Claude also loads the *snyvi
+mod*: a small plugin that runs inside Claude Code, built into snyvi and
+written to snyvi's data folder. The daemon names it in
+`CLAUDE_CODE_PLUGIN_DIRS` for the panels it starts, so nothing is installed
+into `~/.claude`, a `claude` in a plain terminal has no mod, and it is
+always the version of the snyvi that started the panel. In a panel with it:
+
+- One dim line above the prompt says the panel's thread and what is on you:
+  `▸ Home + friends · building · claude/asides · 3 commits · your turn: try it`.
+- Claude's own questions (its multiple-choice dialog) appear under Your turn
+  too. Answer in the terminal or in snyvi; the first answer is the one
+  Claude gets, and the other side closes.
+- The branch, the commits and the PR are *seen* from what git and gh did in
+  the panel, and the checks on a PR are read once a minute until it merges.
+- `/note …` puts a line on the desk's notes while Claude works, with no turn
+  spent; `/turn`, `/park …` and `/thread` say or do the rest.
+
+It only talks to the local daemon, with the panel's own token, about the
+panel it runs in. It never starts a turn and never approves or blocks a
+tool. About has the switch, *Claude Code mod in panels*; a panel started
+before you flip it picks the change up at its next start.
 
 ## The rail
 
