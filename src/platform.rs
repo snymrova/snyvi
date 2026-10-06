@@ -235,10 +235,17 @@ pub async fn pick_folder(
         }
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
         vec![
+            // Started in the home folder, where its New folder button is:
+            // left to itself zenity 4 opens on Recent, which is no folder
+            // and has none, and a new project needs one made. GTK 4 reads
+            // `--filename` as a folder and a name to select in it -- the home
+            // folder alone opens its parent -- so the name is one that is not
+            // there, and the dialog opens in home with nothing selected.
             vec![
                 "zenity".into(),
                 "--file-selection".into(),
                 "--directory".into(),
+                format!("--filename={home}/.snyvi-opens-here"),
                 format!("--title={title}"),
             ],
             vec![
