@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS threads (
   next TEXT NOT NULL DEFAULT '',
   by TEXT NOT NULL DEFAULT '',
   pane TEXT NOT NULL DEFAULT '',
+  moved_by TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   moved_at INTEGER NOT NULL,
   shipped_at INTEGER NOT NULL DEFAULT 0,
@@ -156,6 +157,10 @@ pub struct Thread {
     /// `move_thread` and `hand_over` act on without naming it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub pane: String,
+    /// Who moved it last: a pane's id, or empty for the reader on the page.
+    /// What tells a panel of a move that was not its own.
+    #[serde(skip)]
+    pub moved_by: String,
     pub created_at: i64,
     pub moved_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
@@ -281,7 +286,7 @@ fn desk_open(conn: &Connection, desk_id: i64) -> Result<bool> {
 // --- threads ---------------------------------------------------------------
 
 const THREAD_COLS: &str = "id, desk_id, name, stage, folder, branch, branch_seen, commits, pr, ci, merged, merged_at,
-     next, by, pane, created_at, moved_at, shipped_at, removed_at";
+     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by";
 
 fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
     Ok(Thread {
@@ -304,6 +309,7 @@ fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         moved_at: r.get(16)?,
         shipped_at: r.get(17)?,
         removed_at: r.get(18)?,
+        moved_by: r.get(19)?,
         notes: Vec::new(),
     })
 }
@@ -461,7 +467,7 @@ pub fn start(conn: &mut Connection, desk_id: i64, s: &Start, now: i64) -> Result
             // The stage is kept unless one was asked for: starting a thread
             // that is already building does not send it back to planned.
             tx.execute(
-                "UPDATE threads SET pane = ?3, moved_at = ?4,
+                "UPDATE threads SET pane = ?3, moved_by = ?3, moved_at = ?4,
                    folder = CASE WHEN ?5 = '' THEN folder ELSE ?5 END,
                    stage = CASE WHEN ?6 = '' THEN stage ELSE ?6 END,
                    shipped_at = CASE WHEN ?6 = 'shipped' THEN ?4 ELSE shipped_at END
@@ -481,8 +487,8 @@ pub fn start(conn: &mut Connection, desk_id: i64, s: &Start, now: i64) -> Result
                 return Ok(Started::Full);
             }
             tx.execute(
-                "INSERT INTO threads(desk_id, name, stage, folder, by, pane, created_at, moved_at, shipped_at)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, CASE WHEN ?3 = 'shipped' THEN ?7 ELSE 0 END)",
+                "INSERT INTO threads(desk_id, name, stage, folder, by, pane, moved_by, created_at, moved_at, shipped_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?7, CASE WHEN ?3 = 'shipped' THEN ?7 ELSE 0 END)",
                 params![desk_id, name, stage, folder, by, s.pane, now],
             )?;
             (tx.last_insert_rowid(), false)
@@ -565,6 +571,7 @@ pub fn move_thread(
            pr = CASE WHEN ?5 = '' THEN pr ELSE ?5 END,
            name = CASE WHEN ?6 = '' THEN name ELSE ?6 END,
            pane = CASE WHEN ?7 = '' THEN pane ELSE ?7 END,
+           moved_by = ?7,
            moved_at = ?8,
            shipped_at = CASE WHEN ?3 = 'shipped' AND stage != 'shipped' THEN ?8
                              WHEN ?3 != '' AND ?3 != 'shipped' THEN 0 ELSE shipped_at END
@@ -658,8 +665,9 @@ pub fn restore(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     )? > 0)
 }
 
-/// Threads moved since `since` by anyone but `pane`, and merges seen since
-/// then by anyone: what a panel is told at its next prompt.
+/// Threads moved since `since` by anyone but `pane` -- the reader on the page
+/// among them -- and merges seen since then by anyone: what a panel is told
+/// at its next prompt.
 pub fn moved_since(
     conn: &Connection,
     desk_id: i64,
@@ -668,7 +676,7 @@ pub fn moved_since(
 ) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0
-         AND ((moved_at > ?2 AND pane != ?3) OR merged_at > ?2) ORDER BY moved_at, id LIMIT 8"
+         AND ((moved_at > ?2 AND moved_by != ?3) OR merged_at > ?2) ORDER BY moved_at, id LIMIT 8"
     ))?;
     let v = st
         .query_map(params![desk_id, since, pane], row_to_thread)?

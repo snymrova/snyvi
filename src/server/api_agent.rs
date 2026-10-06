@@ -509,10 +509,25 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let context = crate::brief::brief(
+    let (threads, waiting) = app
+        .store
+        .threads(|c, _| {
+            Ok((
+                crate::thread::for_desk(c, desk.id)?,
+                crate::thread::waiting(c)?,
+            ))
+        })
+        .unwrap_or_default();
+    let waiting: Vec<_> = waiting.into_iter().filter(|w| w.desk_id == desk.id).collect();
+    let work = crate::brief::Work {
+        notes: &notes,
+        threads: &threads,
+        waiting: &waiting,
+    };
+    let context = crate::brief::brief_of(
         &desk,
         placed.pane.slot,
-        &notes,
+        &work,
         &desk.keys,
         &friends,
         last,
@@ -618,12 +633,26 @@ pub(crate) async fn pane_changes(
         Ok(s) => s,
         Err(no) => return *no,
     };
-    if !brief_on(&app) {
-        return Json(json!({ "context": "", "state": state })).into_response();
-    }
     let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // The reader's answers on Your turn reach the panel whatever else is
+    // said: they are the reader speaking, not context snyvi adds, so the
+    // brief's switch and a daemon that has just started do not hold them.
+    let live: Vec<String> = desk
+        .panes
+        .iter()
+        .filter(|p| app.panes.is_running(&p.id))
+        .map(|p| p.id.clone())
+        .collect();
+    let answers = app
+        .store
+        .threads(|c, now| crate::thread::take_untold(c, desk.id, &id, &live, now))
+        .unwrap_or_default();
+    if !brief_on(&app) {
+        let context = crate::brief::answers_only(&answers);
+        return Json(json!({ "context": context, "state": state })).into_response();
+    }
     // The session's title goes with every answer, so a panel named since the
     // session started gives the session its name at the next prompt.
     let title = crate::brief::title(&desk, placed.pane.slot, &placed.pane.name);
@@ -634,8 +663,22 @@ pub(crate) async fn pane_changes(
     let now = crate::store::now();
     let since = match app.panes.told(&id, now) {
         Some(since) if since > 0 => since,
-        _ => return quiet(),
+        _ if answers.is_empty() => return quiet(),
+        _ => {
+            let context = crate::brief::answers_only(&answers);
+            return Json(json!({ "context": context, "title": title, "desk": desk.name, "state": state }))
+                .into_response();
+        }
     };
+    let (threads, opened) = app
+        .store
+        .threads(|c, now| {
+            Ok((
+                crate::thread::moved_since(c, desk.id, &id, since)?,
+                crate::thread::take_opened(c, desk.id, &id, now)?,
+            ))
+        })
+        .unwrap_or_default();
     let mut notes = app.store.desk_notes(desk.id).unwrap_or_default();
     settle_stages(&app, &mut notes);
     let removed = app
@@ -656,6 +699,10 @@ pub(crate) async fn pane_changes(
         left_off: desk.left_off.as_ref(),
         since,
         now,
+        panes: &desk.panes,
+        answers: &answers,
+        threads: &threads,
+        opened: &opened,
     });
     Json(json!({ "context": context, "title": title, "desk": desk.name, "state": state }))
         .into_response()
