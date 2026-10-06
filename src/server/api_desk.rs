@@ -1522,8 +1522,8 @@ pub(crate) struct ResolveBody {
 /// then the folder open for reading.
 ///
 /// Behind the desk's gate, as the folder dialog is: the answer says whether a
-/// path exists, and the click opens it -- a file in the reader, a folder in
-/// the file manager. Nothing is run.
+/// path exists, and the click opens it in the folder reader -- a file at its
+/// line, a folder on its folder page. Nothing is run.
 pub(crate) async fn resolve_path(
     State(app): S,
     headers: HeaderMap,
@@ -1585,28 +1585,11 @@ pub(crate) async fn resolve_path(
     if !b.open {
         return Json(json!({ "kind": kind, "path": shown, "line": found.line })).into_response();
     }
-    if found.dir {
-        if !platform::has_display() {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": "no desktop session to open a folder in" })),
-            )
-                .into_response();
-        }
-        return if platform::open_folder(&found.path) {
-            Json(json!({ "kind": kind, "path": shown })).into_response()
-        } else {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": "nothing on this machine opens folders" })),
-            )
-                .into_response()
-        };
-    }
-    // A file opens in the folder reader: under a folder already open for
-    // reading when it is in one, or else under the first of the bases it is
-    // in -- the panel's desk, the document's project -- or else its own
-    // folder. A folder opened here is a row under Folders, as any other.
+    // A file or a folder opens in the folder reader: under a folder already
+    // open for reading when it is in one, or else under the first of the
+    // bases it is in -- the panel's desk, the document's project -- or else
+    // a file's own folder, or the folder itself. A folder opened here is a
+    // row under Folders, as any other.
     let roots: Vec<(String, std::path::PathBuf)> = app
         .browse
         .list()
@@ -1621,7 +1604,13 @@ pub(crate) async fn resolve_path(
                 .rev()
                 .filter_map(|b| b.canonicalize().ok())
                 .find(|b| found.path.starts_with(b))
-                .or_else(|| found.path.parent().map(|p| p.to_path_buf()));
+                .or_else(|| {
+                    if found.dir {
+                        Some(found.path.clone())
+                    } else {
+                        found.path.parent().map(|p| p.to_path_buf())
+                    }
+                });
             let Some(root) = dir.and_then(|d| app.browse.open(&d).ok()) else {
                 return StatusCode::NOT_FOUND.into_response();
             };

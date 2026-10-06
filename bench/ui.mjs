@@ -210,6 +210,11 @@ async function main() {
     mkdirSync(folder);
     writeFileSync(join(folder, "notes.md"), plan("browsed notes"));
     writeFileSync(join(folder, "code.rs"), Array.from({ length: 400 }, (_, i) => `fn line_${i + 1}() { /* ${i + 1} */ }`).join("\n") + "\n");
+    // A folder inside it, and a file that names one inside that, for #91's
+    // rows: a folder Ctrl-clicked, and a ▸ row, open on the folder page.
+    mkdirSync(join(folder, "sub", "inner"), { recursive: true });
+    writeFileSync(join(folder, "sub", "where.md"), "# Where\n\nThe deep one is in inner/ now.\n");
+    writeFileSync(join(folder, "sub", "inner", "deep.md"), "# Deep\n");
     const browsed = execFileSync(BIN, ["browse", folder, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
     if (!/\/b\//.test(browsed)) throw new Error(`snyvi browse printed no URL:\n${browsed}`);
     // One send through the MCP server, the way an agent's does it, so the row
@@ -251,6 +256,7 @@ async function main() {
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
+    await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
     await section("a window to hand a link to", () => windowRows(p, url, base, mcpSend));
@@ -1686,6 +1692,64 @@ async function revealRows(p, browsed, folder, tmp) {
   const noDisplay = !handed && /no desktop session/.test(said);
   rows.push(["the folder a file sits in is opened", handed === want || noDisplay,
     handed === want ? `the opener was handed ${handed}` : noDisplay ? "no display in this run, and the daemon said so" : handed ? `the opener was handed ${handed}, not ${want}` : `nothing was opened; the page said "${said}"`]);
+  return rows;
+}
+
+/** #91: a folder Ctrl-clicked in what is being read opens on snyvi's folder
+ *  page, never the file manager; a ▸ row there opens the folder it names, ▴ ..
+ *  goes back up, and an address ending in `/` is that folder's listing. In a
+ *  tab of its own, with the capability Ctrl-click asks the daemon with. */
+async function folderRows(cdp, base, browsed) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const root = browsed.replace(/\/$/, ""), id = root.split("/").pop();
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
+  const ctrl = type => cdp.send("Input.dispatchKeyEvent", { type, key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17, modifiers: type === "keyUp" ? 0 : 2 }, sessionId);
+  const listed = `[...document.querySelectorAll("#doc .inbox .title")].map(t => t.textContent).join(" · ")`;
+  const at = path => `location.pathname === ${JSON.stringify(path)}`;
+  const said = () => q.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
+  try {
+    await q.goto(`${root}#cap=${cap}`);
+    await until(`/▸ sub/.test(${listed})`);
+    await q.clickOn(`#doc .inbox a[data-path="sub/"]`);
+    const into = await until(`${at(`/b/${id}/sub/`)} && /inner/.test(${listed})`);
+    const list = await q.ev(listed);
+    rows.push(["a ▸ folder on the folder page opens it", into && /▴ \.\./.test(list),
+      into ? `/b/…/sub/: ${list}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
+    await q.clickOn(`#doc .inbox a[data-path=""]`);
+    const up = await until(`${at(`/b/${id}`)} && /▸ sub/.test(${listed})`);
+    rows.push(["and ▴ .. goes back up", up, up ? "the folder's own listing again" : `at ${await q.ev("location.pathname")}`]);
+
+    await q.goto(`${root}/sub/inner/`);
+    const loaded = await until(`/deep\.md/.test(${listed})`);
+    rows.push(["an address ending in / is that folder's listing", loaded, loaded ? await q.ev(listed) : `the page shows "${await q.ev(listed)}"`]);
+
+    // A path in a file being read, Ctrl-clicked: `inner/` is a folder beside it.
+    await q.goto(`${root}/sub/where.md`);
+    await until(`/inner\//.test(document.querySelector("#doc .prose")?.textContent || "")`);
+    const word = await q.ev(`(() => { const p = [...document.querySelectorAll("#doc .prose p")].find(e => e.textContent.includes("inner/"));
+      if (!p) return null; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n, off = p.textContent.indexOf("inner/") + 2;
+      while ((n = w.nextNode()) && off >= n.length) off -= n.length; const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 1);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    if (word) {
+      await ctrl("rawKeyDown");
+      await sleep(300);
+      await mouse("mouseMoved", word.x, word.y, { modifiers: 2 });
+      const lined = await until(`!!document.querySelector(".path-ul i")`, 30);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, word.x, word.y, { button: "left", clickCount: 1, modifiers: 2 });
+      await ctrl("keyUp");
+      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\.md/.test(${listed})`);
+      const toast = await said();
+      rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", lined && opened && !/file manager/.test(toast),
+        !lined ? "Ctrl never underlined inner/" : !opened ? `at ${await q.ev("location.pathname")}, and the page said "${toast}"` : /file manager/.test(toast) ? `it still says "${toast}"` : "inner/ listed in snyvi, with deep.md in it"]);
+    } else rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", false, "inner/ is not in the file as read"]);
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
   return rows;
 }
 

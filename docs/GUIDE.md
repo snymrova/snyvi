@@ -792,8 +792,11 @@ does, and only http and https links count.
 A path works the same way, in a panel and in what you are reading: hold
 **Ctrl** over `src/app.js:120`, `~/.claude/settings.json` or `../notes/`
 and it is underlined only if it is there. Ctrl-click opens a file in
-snyvi's reader, at the line when one follows it, and a folder in your file
-manager. A relative path is looked for where it was printed: in a panel,
+snyvi's reader, at the line when one follows it, and a folder on snyvi's
+folder page, under Folders: under the desk's own row when the folder is
+inside the desk, so `src/` opens as the desk's `src`, not as a new row.
+**▸** goes into a folder there, **▴ ..** back up, and **Open in file
+manager** beside it opens it in Files, Finder or Explorer. A relative path is looked for where it was printed: in a panel,
 the folder its program is in, then the desk's; in a document, the folder of
 the file it was sent from, then its desk's, then its project's; in the
 folder reader, the file's own folder. Nothing is ever run. This needs the

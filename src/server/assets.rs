@@ -698,16 +698,16 @@ pub(crate) async fn browse_shell(app: Arc<App>, id: String, path: String) -> Res
         )
             .into_response();
     };
-    // Land on the README when no file was asked for.
+    // Land on the README when no file was asked for. A path ending in `/` is
+    // a folder inside the root, and the page lists it (ui/browse.js `show`).
     let path = if path.is_empty() {
         app.browse.landing(&id).unwrap_or_default()
     } else {
         path
     };
-    let title = if path.is_empty() {
-        root.name.clone()
-    } else {
-        path.clone()
+    let title = match path.trim_end_matches('/') {
+        "" => root.name.clone(),
+        p => p.to_string(),
     };
     let boot = json!({
         "view": "browse",

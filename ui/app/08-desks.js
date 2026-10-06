@@ -520,7 +520,7 @@
       const j = parse(ev); if (!j) return;
       if (j.dir) {
         reloadTree(browseEl.querySelector(`.b-tree[data-root="${j.root}"][data-path="${CSS.escape(j.path)}"]`));
-        if (browsing() && state.browseRoot.id === j.root && !state.browsePath && j.path === "") showBrowse(j.root, "", false);
+        if (browsing() && state.browseRoot.id === j.root && !state.browsePath && j.path === (state.browseIn || "")) showBrowse(j.root, j.path && j.path + "/", false);
         return;
       }
       if (browsing() && state.browseRoot.id === j.root && state.browsePath === j.path) refreshBrowsed();

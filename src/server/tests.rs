@@ -1495,6 +1495,61 @@ async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() 
     assert!(note["from"].is_null());
 }
 
+/// A Ctrl-clicked folder opens in the folder reader, never the file manager:
+/// under the panel's desk when it is inside it, at its path there, or else as
+/// a row of its own under Folders. A folder that is not there is a 404.
+#[tokio::test]
+async fn a_ctrl_clicked_folder_opens_in_the_reader() {
+    let desk_dir = crate::store::tempdir::Dir::new("snyvi-resolve-desk");
+    std::fs::create_dir_all(desk_dir.path.join("src")).unwrap();
+    std::fs::create_dir_all(desk_dir.path.join("a/b")).unwrap();
+    let away = crate::store::tempdir::Dir::new("snyvi-resolve-away");
+    let root = desk_dir.path.to_string_lossy().into_owned();
+    let at = std::sync::Mutex::new((0, String::new()));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-resolve-dir", |store| {
+        let desk = store.create_desk(&root, Some("ledger")).unwrap();
+        if let crate::desk::Opened::Pane(p) = store.open_pane(desk.id, &root, "").unwrap() {
+            *at.lock().unwrap() = (desk.id, p.id);
+        }
+    });
+    let (desk, pane) = at.into_inner().unwrap();
+    let click = |word: &str| {
+        let body = serde_json::json!({ "word": word, "desk": desk, "pane": pane, "open": true });
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/resolve")
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header(CAPABILITY_HEADER, &leaves.cap)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        router.clone().oneshot(req)
+    };
+    async fn answer(resp: axum::response::Response) -> serde_json::Value {
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    let src = answer(click("src").await.unwrap()).await;
+    assert_eq!(src["kind"], "dir");
+    assert_eq!(src["rel"], "src", "{src}");
+    let deep = answer(click("a/b").await.unwrap()).await;
+    assert_eq!(deep["rel"], "a/b");
+    assert_eq!(deep["root"], src["root"], "the desk's folder, opened once");
+
+    let other = answer(click(&away.path.to_string_lossy()).await.unwrap()).await;
+    assert_eq!(other["kind"], "dir");
+    assert_eq!(other["rel"], "", "a folder outside the desk is its own row");
+    assert_ne!(other["root"], src["root"]);
+
+    let gone = click(&desk_dir.path.join("nope").to_string_lossy())
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
 /// Asides turned off in About: an agent's aside is refused with words it can
 /// read back, nothing is kept, and turning them on takes the next one.
 #[tokio::test]

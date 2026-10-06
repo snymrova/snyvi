@@ -1,6 +1,6 @@
 /* A path the reader Ctrl-clicks: in a desk's panel, and in what is being
  * read -- a document, or a file in the folder reader. A file opens here in
- * the reader, at its line; a folder opens in the file manager.
+ * the reader, at its line; a folder opens here on its folder page.
  *
  * Fetched the first time Ctrl is held in a window that holds the desk's
  * capability: a browser tab without one cannot ask, so it never loads this.
@@ -68,13 +68,13 @@ export function init(c) {
 }
 
 /** Open what a word names: a file here in the reader, at its line, a folder
- *  in the file manager. `from` is where it was clicked, as `/api/resolve`
- *  takes it. */
+ *  on its folder page (`sub/`). `from` is where it was clicked, as
+ *  `/api/resolve` takes it. */
 async function open(from, word) {
   let j;
   try { j = await ctx.api("/api/resolve", { ...from, word, open: true }); }
   catch (e) { ctx.toast(`Could not open ${word}`, { sub: e }); return; }
-  if (j.kind === "dir") { ctx.toast("Opened in the file manager", { sub: j.path, face: null }); return; }
+  if (j.kind === "dir") return ctx.browse(j.root, j.rel && j.rel + "/");
   await ctx.browse(j.root, j.rel);
   if (j.line) ctx.landLine(j.line);
 }
