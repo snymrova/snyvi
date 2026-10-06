@@ -63,6 +63,7 @@ pub fn brief(
     slot: i64,
     notes: &[DeskNote],
     keys: &[DeskKey],
+    friends: &[String],
     last: Option<LastDoc>,
     now: i64,
 ) -> String {
@@ -89,6 +90,13 @@ pub fn brief(
         lines.push(format!(
             "This desk has these keys, by name: {}. In a command use $(snyvi key NAME), which works for a key added after this panel started too; never print one.",
             names.join(", ")
+        ));
+    }
+    // Who a document can be offered to. Names only; the reader presses Send.
+    if !friends.is_empty() {
+        lines.push(format!(
+            "The user's friends on snyvi, who can be offered a document with offer_document (the user decides whether it goes): {}.",
+            friends.join(", ")
         ));
     }
     let open: Vec<&DeskNote> = notes
@@ -398,6 +406,7 @@ mod tests {
             2,
             &notes,
             &[],
+            &[],
             Some(LastDoc {
                 id: "82cc8f2d3c",
                 title: "Plan: migration",
@@ -452,6 +461,7 @@ mod tests {
             1,
             &[note(3, "icon", false), busy, mine],
             &[],
+            &[],
             None,
             0,
         );
@@ -460,10 +470,16 @@ mod tests {
             "{b}"
         );
         assert!(!b.contains("#5 ("), "{b}");
-        assert!(
-            !brief(&desk(2, None), 1, &[note(3, "icon", false)], &[], None, 0)
-                .contains("Being worked on")
-        );
+        assert!(!brief(
+            &desk(2, None),
+            1,
+            &[note(3, "icon", false)],
+            &[],
+            &[],
+            None,
+            0
+        )
+        .contains("Being worked on"));
     }
 
     fn doc(id: &str, title: &str, slot: i64, at: i64) -> DeskDoc {
@@ -492,7 +508,7 @@ mod tests {
             used_at: 0,
         };
         let keys = [key("GH_TOKEN", 10), key("OPENROUTER_API_KEY", 150)];
-        let b = brief(&desk(1, None), 1, &[], &keys, None, 200);
+        let b = brief(&desk(1, None), 1, &[], &keys, &[], None, 200);
         assert!(
             b.contains(
                 "\nThis desk has these keys, by name: GH_TOKEN, OPENROUTER_API_KEY. In a command use $(snyvi key NAME), which works for a key added after this panel started too; never print one."
@@ -617,14 +633,16 @@ mod tests {
             at: 0,
             ..LeftOff::default()
         };
-        let b = brief(&desk(1, Some(left)), 1, &notes, &[], None, 0);
+        let b = brief(&desk(1, Some(left)), 1, &notes, &[], &[], None, 0);
         assert!(b.len() <= BRIEF_BYTES, "{}", b.len());
         assert!(b.contains("(20): "), "{b}");
         assert!(b.contains("; and 15 more."), "{b}");
         assert!(b.contains("Left off (the user, just now)"), "{b}");
         // An empty desk is one line: where it is.
         assert_eq!(
-            brief(&desk(0, None), 1, &[], &[], None, 0).lines().count(),
+            brief(&desk(0, None), 1, &[], &[], &[], None, 0)
+                .lines()
+                .count(),
             1
         );
     }

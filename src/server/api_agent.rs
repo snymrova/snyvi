@@ -501,7 +501,23 @@ pub(crate) async fn pane_brief(
     // The brief says everything as of now; the next prompt's changes start
     // here.
     app.panes.told(&id, now);
-    let context = crate::brief::brief(&desk, placed.pane.slot, &notes, &desk.keys, last, now);
+    let friends: Vec<String> = app
+        .store
+        .peers()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| p.removed_at == 0)
+        .map(|p| p.name)
+        .collect();
+    let context = crate::brief::brief(
+        &desk,
+        placed.pane.slot,
+        &notes,
+        &desk.keys,
+        &friends,
+        last,
+        now,
+    );
     Json(json!({
         "context": context,
         "title": crate::brief::title(&desk, placed.pane.slot, &placed.pane.name),

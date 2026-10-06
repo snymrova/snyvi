@@ -3,6 +3,7 @@
 
 use crate::config::Paths;
 use crate::desk::{self, Desk, Opened, Origin, Placed};
+use crate::peer;
 use crate::render::Kind;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -31,6 +32,10 @@ pub struct Doc {
     pub content_hash: String,
     /// The desk and slot it was sent from, when it was sent from a pane.
     pub desk: Option<Origin>,
+    /// Who sent it: the MCP client's name, or a friend's (`origin` is
+    /// `peer`), so the head can say "from Trapti". Empty otherwise.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sender: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -191,7 +196,7 @@ const FTS_INSERT: &str =
 const FTS_DELETE: &str =
     "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
 
-const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot";
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 /// The same join over `head_docs`: what every list of documents reads, so one
@@ -517,6 +522,8 @@ impl Store {
         // Desks live in the same database and in tables of their own; see
         // `crate::desk` for why that separation is the whole of the boundary.
         conn.execute_batch(desk::SCHEMA)?;
+        // Friends, and what is on its way to or from one (`crate::peer`).
+        conn.execute_batch(peer::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
@@ -647,6 +654,7 @@ impl Store {
             origin: d.origin.to_string(),
             content_hash: hash,
             desk: d.desk.cloned(),
+            sender: d.sender.to_string(),
         })
     }
 
@@ -1147,6 +1155,16 @@ impl Store {
 
     /// Title a workflow yourself, replacing the guess taken from its first document.
     /// The key stays as it was, so the session that owns it still lands here.
+    /// A project's derived name follows what it is named for -- a friend's
+    /// project follows the friend -- unless the reader named it themselves.
+    pub fn rename_project_by_root(&self, root: &str, name: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE projects SET name = ?2 WHERE root = ?1 AND renamed = 0",
+            params![root, name],
+        )? > 0)
+    }
+
     pub fn rename_workflow(&self, id: i64, title: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
@@ -1584,6 +1602,128 @@ impl Store {
         desk::mark_offer(&self.conn.lock().unwrap(), ids)
     }
 
+    // ---- friends (`crate::peer`) ------------------------------------------------
+    //
+    // Thin, like the desk's: the SQL is in `peer`, the lock and the clock are
+    // here, so `api_peer` and the link never see a connection.
+
+    /// Every friend, removed ones included (`peer::list`).
+    pub fn peers(&self) -> Result<Vec<peer::Peer>> {
+        peer::list(&self.conn.lock().unwrap())
+    }
+
+    pub fn peer(&self, id: i64) -> Result<Option<peer::Peer>> {
+        peer::get(&self.conn.lock().unwrap(), id)
+    }
+
+    /// By address: the sender a frame names, looked up before it is opened.
+    pub fn peer_by_key(&self, key: &str) -> Result<Option<peer::Peer>> {
+        peer::by_sign_key(&self.conn.lock().unwrap(), key)
+    }
+
+    /// By the name the reader gave them, as an agent's offer says it.
+    pub fn peer_by_name(&self, name: &str) -> Result<Option<peer::Peer>> {
+        peer::by_name(&self.conn.lock().unwrap(), name)
+    }
+
+    /// Pin a friend's keys at pairing (`peer::pin`): the row as it stands,
+    /// its name kept if the reader renamed them before.
+    pub fn pin_peer(&self, p: &peer::Peer) -> Result<peer::Peer> {
+        peer::pin(&self.conn.lock().unwrap(), p, now())
+    }
+
+    pub fn rename_peer(&self, id: i64, name: &str) -> Result<bool> {
+        peer::rename(&self.conn.lock().unwrap(), id, name)
+    }
+
+    pub fn mute_peer(&self, id: i64, muted: bool) -> Result<bool> {
+        peer::mute(&self.conn.lock().unwrap(), id, muted)
+    }
+
+    /// Off the list, keys kept (`peer::remove`).
+    pub fn remove_peer(&self, id: i64) -> Result<bool> {
+        peer::remove(&self.conn.lock().unwrap(), id, now())
+    }
+
+    pub fn restore_peer(&self, id: i64) -> Result<bool> {
+        peer::restore(&self.conn.lock().unwrap(), id)
+    }
+
+    /// Something came from them (`from`) or went to them: the dates Home shows.
+    pub fn touch_peer(&self, id: i64, from: bool) -> Result<()> {
+        peer::touch(&self.conn.lock().unwrap(), id, from, now())
+    }
+
+    /// Queue a document for a friend (`peer::queue`): the frame's id, one per
+    /// document and friend, so a resend replaces at the relay.
+    pub fn peer_queue(&self, p: &peer::Peer, doc_id: &str) -> Result<String> {
+        peer::queue(&self.conn.lock().unwrap(), p, doc_id, now())
+    }
+
+    /// What has not gone yet: (frame id, friend, document, tries).
+    pub fn peer_unsent(&self) -> Result<Vec<(String, i64, String, i64)>> {
+        peer::unsent(&self.conn.lock().unwrap())
+    }
+
+    pub fn peer_sent(&self, id: &str) -> Result<()> {
+        peer::sent(&self.conn.lock().unwrap(), id, now())
+    }
+
+    pub fn peer_failed(&self, id: &str, why: &str) -> Result<()> {
+        peer::failed(&self.conn.lock().unwrap(), id, why)
+    }
+
+    /// A friend's lines waiting on Home (`peer::notes_waiting`).
+    pub fn peer_notes(&self) -> Result<Vec<peer::PeerNote>> {
+        peer::notes_waiting(&self.conn.lock().unwrap())
+    }
+
+    pub fn peer_note_arrived(&self, peer_id: i64, text: &str) -> Result<i64> {
+        peer::note_arrived(&self.conn.lock().unwrap(), peer_id, text, now())
+    }
+
+    /// `what`: taken, remove, restore (`peer::settle_note`).
+    pub fn settle_peer_note(&self, id: i64, what: &str) -> Result<bool> {
+        peer::settle_note(&self.conn.lock().unwrap(), id, what, now())
+    }
+
+    /// An agent's offers still open (`peer::offers_open`).
+    pub fn peer_offers(&self) -> Result<Vec<peer::Offer>> {
+        peer::offers_open(&self.conn.lock().unwrap())
+    }
+
+    pub fn peer_offer(&self, peer_id: i64, doc_id: &str, pane: &str, by: &str) -> Result<i64> {
+        peer::offer(&self.conn.lock().unwrap(), peer_id, doc_id, pane, by, now())
+    }
+
+    pub fn peer_offer_get(&self, id: i64) -> Result<Option<peer::Offer>> {
+        peer::offer_get(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn answer_peer_offer(&self, id: i64, sent: bool) -> Result<bool> {
+        peer::answer_offer(&self.conn.lock().unwrap(), id, sent, now())
+    }
+
+    pub fn drop_peer_offers_of(&self, pane: &str) -> Result<usize> {
+        peer::drop_offers_of(&self.conn.lock().unwrap(), pane, now())
+    }
+
+    /// Whether a frame from the relay was already brought in (`peer::taken`):
+    /// the link may be handed one twice when its ack was lost.
+    pub fn peer_taken(&self, id: &str) -> Result<bool> {
+        peer::taken(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn peer_take(&self, id: &str) -> Result<()> {
+        peer::take(&self.conn.lock().unwrap(), id, now())
+    }
+
+    /// Forget what was taken more than eight days ago: the relay itself
+    /// keeps nothing past seven, so nothing older can come again.
+    pub fn prune_peer_taken(&self) -> Result<usize> {
+        peer::prune_taken(&self.conn.lock().unwrap(), now() - peer::TAKEN_KEPT)
+    }
+
     /// Where a pane's shell has moved to (`desk::set_cwd`).
     pub fn set_pane_cwd(&self, id: &str, cwd: &str) -> Result<bool> {
         desk::set_cwd(&self.conn.lock().unwrap(), id, cwd)
@@ -1814,6 +1954,7 @@ impl Store {
         // seen snyvi. So the census counts them, the sentence names them, and
         // the daemon checks their number as it checks the documents'.
         desk::clear(&conn)?;
+        peer::clear(&conn)?;
         conn.execute_batch("VACUUM;")?;
         drop(conn);
         if let Ok(entries) = fs::read_dir(&self.docs_dir) {
@@ -1877,6 +2018,7 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
                 slot: r.get(18)?,
             }),
         },
+        sender: r.get(19)?,
     })
 }
 

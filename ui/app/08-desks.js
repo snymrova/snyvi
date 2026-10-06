@@ -38,7 +38,7 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl,
+    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView,
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
     load: () => loadDesks(),
@@ -391,6 +391,11 @@
 
   /** An event's body, or null for one that is not JSON. */
   const parse = ev => { try { return JSON.parse(ev.data); } catch { return null; } };
+  /** A line from a friend arrived, or an agent offered a document to one:
+   *  peer.js says so where the reader is (`event`). */
+  const onPeer = ev => { const j = parse(ev); j && peerUse().then(m => m.event(peerCtx, j), () => {}); };
+  /** Home shows a little of all of these; each one reads it again, soon. */
+  const HOME_EVENTS = ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? `?window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
@@ -564,8 +569,8 @@
       for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
       renderDesks();
     });
-    // Home shows a little of all of these; each one reads it again, soon.
-    for (const ev of ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored"]) es.addEventListener(ev, homeTick);
+    for (const ev of ["peeroffers", "peernotes"]) es.addEventListener(ev, onPeer);
+    for (const ev of HOME_EVENTS) es.addEventListener(ev, homeTick);
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {
       const j = parse(ev); if (!j) return;

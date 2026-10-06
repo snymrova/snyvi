@@ -198,7 +198,7 @@ jobs:
         # daemon this starts and gzipped as it serves them -- not read out of
         # ui/, which stopped being the same bytes when build.rs began taking
         # the comments out. Two things fail a push: first paint over the
-        # budget bench/bytes.mjs states (55 KB today), and an asset that does not
+        # budget bench/bytes.mjs states (56 KB today), and an asset that does not
         # parse as served, which is the strip's own safety net.
         run: node bench/bytes.mjs --check
       - name: The design system's debt only goes down
@@ -284,6 +284,29 @@ jobs:
           curl -sf "$url" | grep -q "second draft"
           grep -q "watched.md → $url" /tmp/watch.err
           ./target/release/snyvi stop
+
+  relay:
+    # The relay two snyvis meet through (relay/): wrangler dev on a spare
+    # port, workerd local, every route driven as the daemon drives it. Never
+    # a deploy, which is `npm run deploy` by hand with the account's token.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+        env:
+          CI: "1"
+          WRANGLER_SEND_METRICS: "false"
 
   installer:
     # The one-liner, run for real, in three distributions: the per-user

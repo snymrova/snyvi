@@ -60,7 +60,7 @@ const KB = 1024;
 // 1.7.1 took it back down to 52 KB, and paid for the sidebar's rail on the
 // way: look.js, note.js and the letter keys in keys.js left first paint, and
 // the diagram, game and about/reset styles went to the chunks that draw them.
-const BUDGET = 55 * KB;   // docs/BRAINSTORM.md:35; 52 until 1.9.0 (the Inbox cap, the mascot faces), 54 until 1.10.0 (note stages, the foot's version, the waiting bar's ✕)
+const BUDGET = 56 * KB;   // docs/BRAINSTORM.md:35; 52 until 1.9.0 (the Inbox cap, the mascot faces), 54 until 1.10.0 (note stages, the foot's version, the waiting bar's ✕), 55 until 1.18.0 (a friend's snyvi: Send to…, a line, an offer; 1.17.0 left 7 B, and the narrow window's sheet went to menu.js to pay part of it)
 
 /* The four the page cannot start without: the document it is served, the
  * script that boots it, and the two the boot pulls in. Fonts are woff2 and
@@ -73,7 +73,7 @@ const FIRST = [["index.html", "/"], ["boot.js", "/assets/boot.js"], ["app.css", 
  * measured the way the four above are. desk.js is the second chunk, and the
  * one the measurement below was taken to make the case for: the pane view,
  * paid when a desk is opened in the window and never in a tab. */
-const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"], ["palette.js", "/assets/palette.js", "⌘K is pressed"], ["look.js", "/assets/look.js", "the page is idle, or the foot column is reached"], ["note.js", "/assets/note.js", "an aside is there to show"], ["tip.js", "/assets/tip.js", "a control is first rested on, or Tab"], ["home.js", "/assets/home.js", "Home is shown: the mark, or /"], ["toast.js", "/assets/toast.js", "snyvi first has something to say"], ["diff.js", "/assets/diff.js", "two versions are compared, or a diff read split"], ["browse.js", "/assets/browse.js", "a folder or a file on disk is opened"], ["paths.js", "/assets/paths.js", "Ctrl is held in the window"]];
+const CHUNKS = [["mmd.js", "/assets/mmd.js", "the first diagram"], ["desk.js", "/assets/desk.js", "a desk is opened"], ["frame.js", "/assets/frame.js", "the native window"], ["game.js", "/assets/game.js", "the rocket is pressed"], ["about.js", "/assets/about.js", "about, reset or connect is opened"], ["find.js", "/assets/find.js", "`/` searches a document"], ["keys.js", "/assets/keys.js", "⌃B wakes the letter keys"], ["menu.js", "/assets/menu.js", "a folder or a desk is right-clicked"], ["palette.js", "/assets/palette.js", "⌘K is pressed"], ["look.js", "/assets/look.js", "the page is idle, or the foot column is reached"], ["note.js", "/assets/note.js", "an aside is there to show"], ["tip.js", "/assets/tip.js", "a control is first rested on, or Tab"], ["home.js", "/assets/home.js", "Home is shown: the mark, or /"], ["peer.js", "/assets/peer.js", "a friend is paired, or a document sent to one"], ["toast.js", "/assets/toast.js", "snyvi first has something to say"], ["diff.js", "/assets/diff.js", "two versions are compared, or a diff read split"], ["browse.js", "/assets/browse.js", "a folder or a file on disk is opened"], ["paths.js", "/assets/paths.js", "Ctrl is held in the window"]];
 
 const kb = n => (n / KB).toFixed(1) + " KB";
 
@@ -103,7 +103,9 @@ let tmp = "";
 async function main() {
   tmp = mkdtempSync(join(tmpdir(), "snyvi-bytes-bench-"));
   const env = { ...process.env, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
-  let failed = false;
+  // `unparsed` apart from `failed`: a page over its budget is failed too, and
+  // the parse row read "ok" over a home.js the browser refused to load.
+  let failed = false, unparsed = false;
   try {
     // The daemon starts the way anything starts it: a send.
     const md = join(tmp, "one.md");
@@ -116,7 +118,7 @@ async function main() {
       rows.push([name, body.length, gzipSync(body, { level: 9 }).length]);
       if (name.endsWith(".js") && !parses(name, body.toString())) {
         console.error(`bytes: ${name} is not valid JavaScript as served`);
-        failed = true;
+        failed = unparsed = true;
       }
     }
     const raw = rows.reduce((t, r) => t + r[1], 0);
@@ -137,7 +139,7 @@ async function main() {
       if (name === "desk.js") desk = g;
       if (!parses(name, body.toString(), true)) {
         console.error(`bytes: ${name} is not valid JavaScript as served`);
-        failed = true;
+        failed = unparsed = true;
       }
       deferred.push([name, g, until]);
     }
@@ -168,7 +170,7 @@ async function main() {
     if (over > 0) failed = true;
     console.log(`  ${"first paint against its budget".padEnd(38)}${over > 0 ? " FAIL" : " ok  "} ${
       over > 0 ? `${kb(total)}, ${kb(over)} over ${kb(BUDGET)}` : `${kb(total)} of ${kb(BUDGET)}, ${kb(-over)} spare`}`);
-    console.log(`  ${"every asset parses as served".padEnd(38)}${failed && over <= 0 ? " FAIL" : " ok  "} the strip in build.rs did not eat one`);
+    console.log(`  ${"every asset parses as served".padEnd(38)}${unparsed ? " FAIL" : " ok  "} ${unparsed ? "one is named above" : "the strip in build.rs did not eat one"}`);
     const onlyTwo = firstThemes.join() === "ink";
     if (!onlyTwo) failed = true;
     console.log(`  ${"first paint has Paper and Ink only".padEnd(38)}${onlyTwo ? " ok  " : " FAIL"} ${

@@ -53,6 +53,7 @@ fn strip_ui() {
         ("note.js", strip::Lang::Js),
         ("tip.js", strip::Lang::Js),
         ("home.js", strip::Lang::Js),
+        ("peer.js", strip::Lang::Js),
         ("toast.js", strip::Lang::Js),
         ("diff.js", strip::Lang::Js),
         ("browse.js", strip::Lang::Js),

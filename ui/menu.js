@@ -313,7 +313,10 @@ function entries(ctx, el, byKey = false) {
     const id = el.dataset.id, d = docById(ctx, id), path = d && d.source_path;
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
       { label: "Open", moves: 1, run: () => ctx.open(id) },
-      { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) }, RULE,
+      { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) },
+      // To a friend's snyvi (docs/PEER.md): the sheet lists the friends, or
+      // says where to make one.
+      ctx.peerCtx && { label: "Send to a friend…", run: () => ctx.peerCtx.peer().then(m => m.send(ctx.peerCtx, id, d ? d.title : ""), () => ctx.toast("Could not open Send to…")) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
       files({ doc: id }), RULE,
       { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
@@ -610,6 +613,26 @@ export function unpop(back = true) {
   const b = popBtn; popBtn = null;
   b?.classList.remove("on"); b?.setAttribute("aria-expanded", "false");
   if (back && b?.isConnected) b.focus({ preventScroll: true });
+  return true;
+}
+/* The contents as a sheet over a window under 1100 px (app.js
+ * `toggleSheet`), fetched with this file on the first press, as the popover
+ * is. It opens on the current section, which the hidden pane could not
+ * scroll to, and closing it gives the focus back to what opened it. */
+let sheetBack = null;
+export function openSheet(ctx, which, opener) {
+  if (root.dataset.sheet === which) return;
+  sheetBack = opener;
+  root.dataset.sheet = which;
+  ctx.keepCurInView(true);
+  const toc = $("#toc");
+  (toc.querySelector("a.cur") || toc.querySelector("a") || $("#meta").querySelector("button, a") || $("#rail")).focus({ preventScroll: true });
+}
+export function closeSheet() {
+  if (!root.dataset.sheet) return false;
+  delete root.dataset.sheet;
+  const back = sheetBack; sheetBack = null;
+  if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
   return true;
 }
 function wirePop(popEl) {

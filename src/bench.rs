@@ -490,6 +490,25 @@ fn files_under(dir: &Path) -> Vec<String> {
 
 // ---------- the daemon, as a process ----------
 
+/// The binary's budget, in MB. 15 until 1.7.0, when the daemon began
+/// updating itself: the manifest's signature, the checksums, reading a
+/// tarball and a zip, and the icons
+/// `install-desktop` writes came to about half a megabyte. 16 until 1.8.0:
+/// Home, the update card, the desk brief and suggested notes, and the
+/// design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
+/// 16.4 on Windows). 16.5 until 1.10.0: pictures on notes, note stages and
+/// the Home of desks and notes took the musl build to 16.6 MB. 17 held
+/// in 1.13.0: the desks' keys and the changes at each prompt came to
+/// 0.05 MB once Linux was left without a keychain client, which was 1.8 MB
+/// of D-Bus for encryption at rest (src/secrets.rs says why). 17 until
+/// 1.18.0: a friend's snyvi (docs/PEER.md) took Linux from 16.7 to 17.4
+/// MB, about half a megabyte of it the feature's own symbols -- 340 KB of
+/// Ed25519, X25519, ChaCha20-Poly1305 and SPAKE2, 140 KB of the pairing,
+/// the link and the routes -- and the rest what they instantiate in tokio
+/// and core. Without the precomputed tables it is 43 KB less, not enough
+/// to matter; the feature is what the half megabyte buys.
+const BINARY_MB: f64 = 18.0;
+
 /// Returns whether any row was over budget.
 ///
 /// Every timing is the best of three, like the render rows, and for the same
@@ -515,24 +534,13 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     let mut rows = Rows { failed: false };
 
     let size = std::fs::metadata(&exe)?.len() as f64 / MB;
-    // 15 MB until 1.7.0, when the daemon began updating itself: the manifest's
-    // signature, the checksums, reading a tarball and a zip, and the icons
-    // `install-desktop` writes came to about half a megabyte. 16 until 1.8.0:
-    // Home, the update card, the desk brief and suggested notes, and the
-    // design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
-    // 16.4 on Windows). 16.5 until 1.10.0: pictures on notes, note stages and
-    // the Home of desks and notes took the musl build to 16.6 MB. 17 held
-    // in 1.13.0: the desks' keys and the changes at each prompt came to
-    // 0.05 MB once Linux was left without a keychain client, which was 1.8 MB
-    // of D-Bus for encryption at rest (src/secrets.rs says why).
-    //
     // What ships is built with fat LTO (release.yml). A CI job that turns it
     // off to save build time (the desktops, Windows, Intel Mac) measures a
     // binary nobody downloads -- 16.6 MB on Windows for 14.3 shipped -- so
     // there the row is printed and not enforced.
     let lto_off = std::env::var("CARGO_PROFILE_RELEASE_LTO")
         .is_ok_and(|v| matches!(v.as_str(), "off" | "false"));
-    rows.size("binary size, snyvi", size, 17.0, lto_off);
+    rows.size("binary size, snyvi", size, BINARY_MB, lto_off);
 
     // Three cold starts: the first also creates the database and the token,
     // and the two after it open what the first left, which is every start

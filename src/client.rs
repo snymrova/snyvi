@@ -1093,6 +1093,21 @@ pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Res
     }
 }
 
+/// Offer a document to a friend, from this pane: `offer_document`. The
+/// daemon writes the question for the reader and sends nothing.
+pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/offer"),
+        serde_json::json!({ "to": to, "doc": id, "by": by }),
+    )?;
+    match resp.status().as_u16() {
+        201 => Ok(resp.body_mut().read_json()?),
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// The value of one of this panel's desk's keys, for `snyvi key NAME`: the
 /// panel is `SNYVI_SESSION`, which only a snyvi panel has, so the command
 /// works there and nowhere else.

@@ -328,25 +328,15 @@
    * wide layout keeps, the button in #chrome does the same for a finger, and
    * Escape or a tap on the scrim closes it. The contents inside the sheet
    * open on the current section, which the hidden pane could not scroll to.
-   * The sidebar has no sheet: narrow, it is its rail (below). */
+   * The sidebar has no sheet: narrow, it is its rail (below). What the
+   * sheet does is menu.js's (`openSheet`, `closeSheet`), as the folded
+   * rail's popover is: fetched on the first press under 1100 px, so a wide
+   * window never pays for it. Open means loaded. The opener is taken now,
+   * as the reader presses, not when the chunk lands. */
   const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
   const sideEl = $("#side");
-  let sheetOpener = null;
-  function openSheet(which, opener) {
-    if (root.dataset.sheet === which) return;
-    sheetOpener = opener || document.activeElement;
-    root.dataset.sheet = which;
-    keepCurInView(true);
-    (tocEl.querySelector("a.cur") || tocEl.querySelector("a") || metaEl.querySelector("button, a") || rail).focus({ preventScroll: true });
-  }
-  function closeSheet() {
-    if (!root.dataset.sheet) return false;
-    delete root.dataset.sheet;
-    const back = sheetOpener; sheetOpener = null;
-    if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
-    return true;
-  }
-  const toggleSheet = (which, opener) => root.dataset.sheet === which ? closeSheet() : openSheet(which, opener);
+  function closeSheet() { return !!root.dataset.sheet && acts.closeSheet(); }
+  const toggleSheet = (which, opener = document.activeElement) => root.dataset.sheet === which ? closeSheet() : useActs().then(m => m.openSheet(actsCtx, which, opener));
   $("#scrim").addEventListener("click", () => { closeSheet(); closePop(); });
   /** A pane folded (`t`, `\`, or the button at its top) at a width where it
    *  is a column, not a sheet. Remembered. The rail folds away and its

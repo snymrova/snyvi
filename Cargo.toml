@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.17.0"
+version = "1.18.0"
 edition = "2021"
 description = "A fast, beautiful viewer for the documents your agents produce"
 license = "MIT"
@@ -22,6 +22,7 @@ exclude = [
     "/docs/media",
     "/bench",
     "/.github",
+    "/relay",
 ]
 
 # The oldest snyvi-app this daemon is happy with. The release job copies it
@@ -45,6 +46,16 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 ureq = { version = "3", features = ["json"] }
+# The link to the relay (`server::peer_link`): one WebSocket per daemon, so a
+# friend's document arrives the moment it lands and the mailbox sleeps in
+# between. tungstenite is in the tree already through axum's `ws`; the TLS
+# half shares rustls and webpki-roots with ureq, so the link itself adds
+# little (tokio-rustls, 8 KB). What the feature costs -- 0.7 MB, mostly the
+# cryptography below -- is measured in src/bench.rs (`BINARY_MB`).
+# futures-util is only for `StreamExt`/`SinkExt` on that socket, and axum
+# carries it already.
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 blake3 = "1"
 dirs = "6"
 getrandom = "0.3"
@@ -80,6 +91,15 @@ semver = "1"
 sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
+# A friend's snyvi (src/peer.rs): the daemon's identity and the sealed frame
+# two of them pass through the relay. Three primitives and the PAKE, 0.2 MB
+# together under the release profile: Ed25519 for the address and the
+# signature, X25519 and XChaCha20-Poly1305 for the box, SPAKE2 for the minute
+# of pairing over a spoken code. blake3 derives every key; no hkdf, no snow.
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets", "precomputed-tables"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+spake2 = "0.4"
 
 [dev-dependencies]
 # The router test sends every route a request without a port: tower's

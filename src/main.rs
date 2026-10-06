@@ -13,6 +13,7 @@ mod git;
 mod hook;
 mod mcp;
 mod pane;
+mod peer;
 mod platform;
 mod project;
 mod prompt;
