@@ -8,6 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
+    if (d && await filedAct(a, b, d)) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -566,6 +567,8 @@ export function textSize(step) {
 export function actions(el) {
   const R = "rule", d = current();
   if (!d) return null;
+  const card = el.closest(".dk-thread");
+  if (card) return threadMenu(card);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
   if (pane) {
     const id = pane.matches(".dk-pane") ? pane.querySelector("[data-focus]")?.dataset.focus : pane.closest(".pn")?.dataset.id;

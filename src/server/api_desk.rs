@@ -33,9 +33,26 @@ pub(crate) async fn home(
     } else {
         (serde_json::Value::Null, serde_json::Value::Null)
     };
+    // Your turn across desks, and the threads by stage (`crate::thread`):
+    // behind the same gate as the desks they are on.
+    let (turns, threads) = if gated {
+        app.store
+            .threads(|c, now| {
+                Ok((
+                    crate::thread::waiting(c)?,
+                    crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
+                ))
+            })
+            .map(|(t, th)| (json!(t), json!(th)))
+            .unwrap_or((serde_json::Value::Null, serde_json::Value::Null))
+    } else {
+        (serde_json::Value::Null, serde_json::Value::Null)
+    };
     Json(json!({
         "desks": desks,
         "days": days,
+        "turns": turns,
+        "threads": threads,
         "queue": app.store.queue(5).unwrap_or_default(),
         // Arrived: the newest unread, so Home is still one read.
         "arrived": app.store.newest_unread(ARRIVED).unwrap_or_default(),
@@ -47,6 +64,9 @@ pub(crate) async fn home(
     }))
     .into_response()
 }
+
+/// How long a shipped thread stays on Home's Threads: a week.
+pub(crate) const THREADS_SHIPPED_SHOWN: i64 = 7 * 86_400;
 
 /// How many days of rows Home's log is sent: a week, and the day before it,
 /// so "this week" is whole on any day it is read.

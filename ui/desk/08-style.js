@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS;
+  s.textContent = CSS + THREAD_CSS;
   document.head.append(s);
 }
 

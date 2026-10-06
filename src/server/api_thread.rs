@@ -6,7 +6,10 @@
 //! saw git and gh do, mirrors Claude's own question and waits for its answer
 //! there too. The page answers, moves, parks and puts away on
 //! `/api/desks/{id}/…`, behind the desk's gate, with the desk in every
-//! `WHERE`. Every change is one `threads` event with the desk's id.
+//! `WHERE`. Every change is the `desknotes` event the list already sends,
+//! with the desk's id: a thread is the folder its notes sit in, the rail and
+//! Home already read again on it, and the window's first paint needs no
+//! new listener for it.
 
 use super::*;
 use crate::thread::{self, Ask, Asked, Move, Moved, Seen, Start, Started, Suggest, Suggested};
@@ -17,7 +20,7 @@ type Q = Query<std::collections::HashMap<String, String>>;
 /// Every window showing this desk -- its rail, Home -- asks again; a held
 /// question in the mod wakes on it too (`pane_wait_turn`).
 pub(crate) fn threads_moved(app: &App, desk: i64) {
-    emit(app, "threads", json!({ "desk": desk }));
+    notes_moved(app, desk);
 }
 
 fn refused(code: StatusCode, error: impl Into<String>) -> Response {
@@ -58,12 +61,10 @@ pub(crate) async fn pane_start_thread(
     match app.store.threads(|c, now| thread::start(c, desk, &s, now)) {
         Ok(Started::New(t)) => {
             threads_moved(&app, desk);
-            notes_moved(&app, desk);
             (StatusCode::CREATED, Json(json!({ "thread": t, "again": false }))).into_response()
         }
         Ok(Started::Again(t)) => {
             threads_moved(&app, desk);
-            notes_moved(&app, desk);
             Json(json!({ "thread": t, "again": true })).into_response()
         }
         Ok(Started::Empty) => refused(StatusCode::BAD_REQUEST, "start_thread needs a name"),
@@ -97,7 +98,6 @@ fn moved(app: &App, desk: i64, r: anyhow::Result<Moved>) -> Response {
     match r {
         Ok(Moved::Thread(t)) => {
             threads_moved(app, desk);
-            notes_moved(app, desk);
             Json(json!({ "thread": t })).into_response()
         }
         Ok(Moved::BadStage) => refused(
@@ -430,12 +430,12 @@ pub(crate) async fn pane_wait_turn(
             Ok(None) => return StatusCode::NOT_FOUND.into_response(),
             Err(e) => return err(e),
         }
-        // Any `threads` event for this desk is a reason to look again; a
-        // lagged receiver looks again too.
+        // Any change to a desk's list or threads is a reason to look again;
+        // a lagged receiver looks again too.
         let woke = tokio::time::timeout_at(deadline, async {
             loop {
                 match rx.recv().await {
-                    Ok(m) if m.starts_with("threads\n") => break,
+                    Ok(m) if m.starts_with("desknotes\n") => break,
                     Ok(_) => continue,
                     Err(broadcast::error::RecvError::Lagged(_)) => break,
                     Err(broadcast::error::RecvError::Closed) => break,
@@ -582,10 +582,16 @@ pub(crate) async fn desk_move_thread(
     moved(&app, id, r)
 }
 
-/// ✕ and its Undo, for a thread, a turn or a suggestion -- and Open, which
-/// for a suggestion only settles it: the page opens the panel or the desk on
-/// the routes it always has. The path's last word says which.
+/// ✕ and its Undo, for a thread, a turn or a suggestion -- and Open. For a
+/// suggested panel Open only settles it: the page opens the panel on the
+/// route it always has, with the command the card showed. For a suggested
+/// desk the daemon makes the desk here, from the folder on the row: the page
+/// can only name a folder the picker gave it, and the reader's click on the
+/// card is the pick.
 fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
+    if (what, act) == ("suggestions", "open") {
+        return open_suggestion(app, id, row);
+    }
     let r = app.store.threads(|c, now| {
         Ok(match (what, act) {
             ("threads", "remove") => thread::remove(c, id, row, now)?,
@@ -593,7 +599,6 @@ fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
             ("turns", "remove") => thread::remove_turn(c, id, row, now)?,
             ("turns", "restore") => thread::restore_turn(c, id, row)?,
             ("suggestions", "dismiss") => thread::settle(c, id, row, "dismissed", now)?.is_some(),
-            ("suggestions", "open") => thread::settle(c, id, row, "opened", now)?.is_some(),
             ("suggestions", "restore") => thread::unsettle(c, id, row)?,
             _ => false,
         })
@@ -601,12 +606,38 @@ fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
     match r {
         Ok(true) => {
             threads_moved(app, id);
-            if what == "threads" {
-                notes_moved(app, id);
-            }
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+fn open_suggestion(app: &App, id: i64, row: i64) -> Response {
+    let card = match app.store.threads(|c, _| thread::suggestion(c, id, row)) {
+        Ok(Some(s)) if s.settled_at == 0 => s,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    let mut made = serde_json::Value::Null;
+    if card.kind == "desk" {
+        let dir = std::path::PathBuf::from(&card.folder);
+        if !dir.is_absolute() || !dir.is_dir() {
+            return refused(StatusCode::BAD_REQUEST, "that folder is not there");
+        }
+        match app.store.create_desk(&dir.to_string_lossy(), None) {
+            Ok(desk) => {
+                desks_moved(app);
+                made = json!(desk);
+            }
+            Err(e) => return err(e),
+        }
+    }
+    match app.store.threads(|c, now| thread::settle(c, id, row, "opened", now)) {
+        Ok(_) => {
+            threads_moved(app, id);
+            Json(json!({ "ok": true, "desk": made })).into_response()
+        }
         Err(e) => err(e),
     }
 }

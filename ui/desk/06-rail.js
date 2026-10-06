@@ -93,7 +93,7 @@ function rail() {
   drawing = true;
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + filedSecs(d) +
     `<div data-part="rail.panels"><div class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
@@ -125,7 +125,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); docsScroll(docsTop); loadImgs(); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); }
   meta();
 }
 
@@ -370,7 +370,7 @@ function noteRow(x, esc) {
     `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
     stageMark(x, esc) +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
-    picMark(x, esc) +
+    picMark(x, esc) + threadChip(x, esc) +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
     (x.done && x.done_by ? byLine(x, esc) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
@@ -631,6 +631,7 @@ function waitingFirst(d) {
  *  desk's, and a field left open on this one must not reopen on that one. */
 function forgetNotes() {
   clearTimeout(backTimer);
+  forgetFiled();
   noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesKept.clear();
   clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
@@ -670,7 +671,7 @@ const stillOpen = x => !x.done && !x.gone && !x.suggested_by;
  *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --
  *  the list is read, and the rail redraws around it, as after a tick here. */
 export function notesChanged(id) {
-  if (ctx && id === deskId) getNotes(id, true);
+  if (ctx && id === deskId) { getNotes(id, true); getFiled(id, true); }
 }
 
 /** Put the open field back after a redraw, with what was typed into it and the
