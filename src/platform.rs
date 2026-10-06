@@ -922,13 +922,15 @@ mod pick_tests {
     }
 
     /// Ending a process is not instant everywhere: a second to be gone.
-    fn gone_soon(pid: u32) -> bool {
+    /// Waited on the runtime, not the thread: tokio reaps a child it killed
+    /// on a later turn, and until then `kill -0` still finds the zombie.
+    async fn gone_soon(pid: u32) -> bool {
         let until = Instant::now() + Duration::from_secs(5);
         while Instant::now() < until {
             if !alive(pid) {
                 return true;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
         false
     }
@@ -945,7 +947,10 @@ mod pick_tests {
         let _ = tokio::time::timeout(Duration::from_millis(1500), asking).await;
         let pid = pid.load(Ordering::SeqCst);
         assert_ne!(pid, 0, "the dialog started");
-        assert!(gone_soon(pid), "the dialog's process outlived the asking");
+        assert!(
+            gone_soon(pid).await,
+            "the dialog's process outlived the asking"
+        );
     }
 
     #[tokio::test]
@@ -965,7 +970,7 @@ mod pick_tests {
             started.elapsed() < Duration::from_secs(2),
             "cancel ends it at once"
         );
-        assert!(gone_soon(pid.load(Ordering::SeqCst)));
+        assert!(gone_soon(pid.load(Ordering::SeqCst)).await);
     }
 
     #[tokio::test]
@@ -977,7 +982,7 @@ mod pick_tests {
         })
         .await;
         assert!(matches!(answer, Some(Ok(None))));
-        assert!(gone_soon(pid.load(Ordering::SeqCst)));
+        assert!(gone_soon(pid.load(Ordering::SeqCst)).await);
     }
 
     #[tokio::test]

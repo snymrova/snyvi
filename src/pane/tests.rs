@@ -502,7 +502,12 @@ async fn a_verbatim_folder_starts_the_panel_in_that_folder() {
 fn a_panel_starts_outside_the_session_that_started_the_daemon() {
     let made = || {
         let mut c = CommandBuilder::new("x");
-        for k in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "NO_COLOR", "PATH_KEPT"] {
+        for k in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "NO_COLOR",
+            "PATH_KEPT",
+        ] {
             c.env(k, "1");
         }
         c
