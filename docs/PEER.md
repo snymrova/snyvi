@@ -21,7 +21,7 @@ flowchart LR
   W -->|pushed down the daemon's WebSocket, delete on ack| R
   subgraph T["Trapti's snyvi"]
     R[verify, open] --> I[Inbox · From Sunny]
-    R --> N[Home · a line from Sunny]
+    R --> N[Home · Arrived · a line from Sunny]
   end
 ```
 
@@ -98,10 +98,13 @@ and no file manager, only Rename and Remove. The head says *from Trapti · verif
 second send of the same file is a version of the same row. A muted
 friend's documents arrive read.
 
-A line for the notes waits on Home -- *"water the beans" — from Trapti* --
-with **Keep**, which puts it in the note bar for the reader to choose a
-desk and press Enter, and ✕. Nothing received is typed into a desk or
-run; a frame is content.
+A line for the notes waits on Home, in **Arrived** -- *"water the beans"
+from Trapti* -- with **Keep on…**, which puts it on the desk the reader
+picks in one click, and ✕. The line on the desk keeps who sent it
+(`desk_notes.sent_by`): the rail says *from Trapti* under it and the brief
+writes `#93 water the beans (from Trapti)`. Ticking it sends nothing back.
+Arrived cannot be hidden, so a line is never out of sight. Nothing received
+is typed into a desk or run; a frame is content.
 
 ## What an agent gets
 
@@ -166,5 +169,5 @@ the deploy.
 `src/peer.rs` (keys, code, frame, relay client, the link's pieces, the
 tables), `src/server/api_peer.rs` (routes, pairing tasks, what to do with
 a frame), `src/server/peer_link.rs` (the socket to the relay),
-`ui/peer.js` (the sheets), `ui/home.js` (Friends), `relay/` (the Worker).
+`ui/peer.js` (the sheets), `ui/home.js` (Arrived, Friends), `relay/` (the Worker).
 `SNYVI_RELAY` points a daemon at another relay.

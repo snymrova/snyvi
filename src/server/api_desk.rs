@@ -37,6 +37,8 @@ pub(crate) async fn home(
         "desks": desks,
         "days": days,
         "queue": app.store.queue(5).unwrap_or_default(),
+        // Arrived: the newest unread, so Home is still one read.
+        "arrived": app.store.newest_unread(ARRIVED).unwrap_or_default(),
         "waiting": waiting(&app),
         "update": update_json(&app),
         "agents": app.online(),
@@ -49,6 +51,10 @@ pub(crate) async fn home(
 /// How many days of rows Home's log is sent: a week, and the day before it,
 /// so "this week" is whole on any day it is read.
 pub(crate) const DAYS_SHOWN: i64 = 8;
+
+/// How many documents Home's Arrived is sent: as many as it shows, with
+/// the offers and a friend's lines ahead of them.
+pub(crate) const ARRIVED: usize = 5;
 
 /// How many of a desk's open lines Home shows under it before "and N more".
 pub(crate) const HOME_NOTES: usize = 5;

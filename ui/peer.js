@@ -4,8 +4,9 @@
  * sides compare), Send to… (a document to one of the friends), a line for a
  * friend's notes, and an agent's offer (Send, or Not now). Each is one box
  * over the page, built here and gone when it closes, so a reader who never
- * pairs never fetches a byte of this. Home's Friends section and the
- * document menu are where these are opened from (ui/home.js, ui/menu.js);
+ * pairs never fetches a byte of this. Home (Friends, Arrived, the foot's
+ * Pair with a friend…) and the document menu are where these are opened
+ * from (ui/home.js, ui/menu.js);
  * the daemon's side is src/server/api_peer.rs.
  *
  * Nothing here holds state but the open box. Everything else comes from
@@ -126,7 +127,7 @@ async function start(ctx, url, body) {
   open("Pair with a friend",
     (made
       ? `<p>Say this to your friend, or send it. It works once, for ten minutes.</p><div class="pr-code" aria-label="Your code">${esc(r.code)}</div>` +
-        `<p class="pr-quiet">They type it under <b>Pair with a friend</b> on their Home, or open <span style="font-family:var(--mono)">snyvi://pair/${esc(r.code)}</span>.</p>`
+        `<p class="pr-quiet">They type it under <b>Pair with a friend…</b> at the foot of their Home, or open <span style="font-family:var(--mono)">snyvi://pair/${esc(r.code)}</span>.</p>`
       : `<p>Waiting for <span style="font-family:var(--mono)">${esc(r.code)}</span> to meet its other half…</p>`) +
     `<div class="pr-emoji" aria-live="polite"></div><div class="pr-said" aria-live="polite">Waiting for the other side…</div>` +
     `<div class="pr-foot"><button type="button" data-pr="close">Cancel</button></div>`);
@@ -171,7 +172,7 @@ export async function send(ctx, docId, title = "") {
     (list.length
       ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
         `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; they see it under <b>From ${esc(j.me.name)}</b>. The relay holds it seven days at most, unread or not.</p>`
-      : `<p>No friends yet. <b>Pair with a friend</b> on Home makes one.</p>`) +
+      : `<p>No friends yet. <b>Pair with a friend…</b> at the foot of Home makes one.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
   box.addEventListener("click", async e => {
     const b = e.target.closest("button[data-peer]");
@@ -221,7 +222,7 @@ export function note(ctx, peerId, name) {
  *  from a friend is a toast that opens Home, unless it came quietly. */
 export function event(ctx, j) {
   if (j.offer != null) offer(ctx, j);
-  else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: "waiting on Home, under Friends", kind: "news", go: ctx.home });
+  else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: j.desk ? `a suggestion on ${j.desk}` : "waiting on Home, under Arrived", kind: "news", go: ctx.home });
 }
 
 export function offer(ctx, o) {

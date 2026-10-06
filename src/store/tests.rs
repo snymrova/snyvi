@@ -467,6 +467,8 @@ fn a_file_sent_again_is_one_row_with_its_versions_behind_it() {
     assert_eq!(titles(s.inbox(10).unwrap()), vec!["Notes", "Script v3"]);
     let wfs = s.project_tree(first.project_id, 0, 0).unwrap();
     assert_eq!(titles(s.queue(10).unwrap()), vec!["Script v3", "Notes"]);
+    // Home's Arrived reads the same rows the other way: newest first.
+    assert_eq!(titles(s.newest_unread(10).unwrap()), vec!["Notes", "Script v3"]);
     assert_eq!(
         wfs[0]
             .docs

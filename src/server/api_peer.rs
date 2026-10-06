@@ -398,18 +398,32 @@ pub(crate) async fn peer_note(
 pub(crate) struct SettleBody {
     #[serde(default)]
     pub(crate) what: String,
+    /// For `keep`: the desk the line goes on.
+    #[serde(default)]
+    pub(crate) desk: i64,
 }
 
 /// `POST /api/peers/notes/{id}`: a waiting line was kept on a desk, put
-/// away, or brought back (`what`: taken, remove, restore).
+/// away, or brought back (`what`: taken, remove, restore) -- or is kept on
+/// a desk here and now (`keep`, with `desk`): Home's Keep on…, one click.
+/// The line becomes the desk's, with the friend's name on it (`sent_by`),
+/// and the answer carries it so the row's Undo can take it off again.
+/// That one writes a desk's list, so it is behind the desk's capability.
 pub(crate) async fn peer_note_settle(
     State(app): S,
     headers: HeaderMap,
     Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
     Json(b): Json<SettleBody>,
 ) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
+    }
+    if b.what == "keep" {
+        if let Some(no) = refuse_desk(&app, &headers, &q) {
+            return no;
+        }
+        return keep_line(&app, id, b.desk);
     }
     match app.store.settle_peer_note(id, &b.what) {
         Ok(true) => {
@@ -417,6 +431,39 @@ pub(crate) async fn peer_note_settle(
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A friend's waiting line, put on a desk: the desk's line, then the
+/// waiting one settled. A full desk says so and the line stays waiting.
+fn keep_line(app: &Arc<App>, id: i64, desk: i64) -> Response {
+    let Ok(Some(n)) = app
+        .store
+        .peer_notes()
+        .map(|ns| ns.into_iter().find(|n| n.id == id))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(Some(d)) = app.store.desk(desk) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "no such desk" })),
+        )
+            .into_response();
+    };
+    match app.store.add_desk_note_from(desk, &n.text, &n.from) {
+        Ok(Some(note)) => {
+            let _ = app.store.settle_peer_note(id, "taken");
+            emit(app, "desknotes", json!({ "desk": desk }));
+            emit(app, "peernotes", json!({}));
+            Json(json!({ "note": note, "desk": desk, "name": d.name })).into_response()
+        }
+        Ok(None) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("{} keeps {} notes; take one off first", d.name, crate::desk::NOTES_PER_DESK) })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -478,6 +525,10 @@ pub(crate) async fn doc_send(
 pub(crate) struct AnswerBody {
     #[serde(default)]
     pub(crate) send: bool,
+    /// Not now, taken back: the offer is open again, as long as its panel's
+    /// program still runs. The Undo on Home's row.
+    #[serde(default)]
+    pub(crate) undo: bool,
 }
 
 /// `POST /api/peers/offers/{id}`: the reader's Send or Not now on an agent's
@@ -490,6 +541,16 @@ pub(crate) async fn offer_answer(
 ) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
+    }
+    if b.undo {
+        return match app.store.reopen_peer_offer(id) {
+            Ok(true) => {
+                emit(&app, "peeroffers", json!({}));
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Ok(false) => StatusCode::NOT_FOUND.into_response(),
+            Err(e) => err(e),
+        };
     }
     let Ok(Some(o)) = app.store.peer_offer_get(id) else {
         return StatusCode::NOT_FOUND.into_response();

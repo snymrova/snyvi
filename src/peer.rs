@@ -703,7 +703,7 @@ pub fn backoff(attempt: u32) -> Duration {
 // ---- the store -----------------------------------------------------------------
 
 /// A friend: keys pinned at pairing, a name the reader may change.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Peer {
     pub id: i64,
     /// The address: their Ed25519 public key, as the relay spells it.
@@ -1116,6 +1116,16 @@ pub fn answer_offer(conn: &Connection, id: i64, sent: bool, now: i64) -> Result<
     )? > 0)
 }
 
+/// Not now, taken back: open again, when it was answered No and its pane
+/// has not since been swept (`drop_offers_of` answers No too, so the
+/// caller asks only within its Undo's few seconds).
+pub fn reopen_offer(conn: &Connection, id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE peer_offers SET answered_at = 0 WHERE id = ?1 AND answered_at != 0 AND sent = 0",
+        params![id],
+    )? > 0)
+}
+
 /// Offers from a pane whose program ended are dropped unsent.
 pub fn drop_offers_of(conn: &Connection, pane: &str, now: i64) -> Result<usize> {
     Ok(conn.execute(
@@ -1465,6 +1475,12 @@ mod tests {
         assert_eq!(open[0].to, "T");
         assert!(answer_offer(&conn, o, true, 601).unwrap());
         assert!(!answer_offer(&conn, o, true, 601).unwrap(), "answered once");
+        assert!(!reopen_offer(&conn, o).unwrap(), "a sent offer stays sent");
+        let no = offer(&conn, t2.id, "doc1", "pane-b", "Claude", 601).unwrap();
+        assert!(answer_offer(&conn, no, false, 601).unwrap());
+        assert!(reopen_offer(&conn, no).unwrap(), "Not now has an Undo");
+        assert_eq!(offers_open(&conn).unwrap().len(), 1);
+        assert!(answer_offer(&conn, no, false, 601).unwrap());
         offer(&conn, t2.id, "doc1", "pane-a", "Claude", 602).unwrap();
         assert_eq!(drop_offers_of(&conn, "pane-a", 603).unwrap(), 1);
         assert!(offers_open(&conn).unwrap().is_empty());

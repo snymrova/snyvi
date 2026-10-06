@@ -1071,13 +1071,27 @@ takes the desk out of Pick up, and keeps it on a Parked shelf under the
 cards with that step until you take it down. Nothing on a parked desk is
 closed.
 
-**Today** has the time, the date and this month, Monday first, with today
-ringed. Only the time changes as it runs, so nothing you are typing in is
-touched. Hide it and the date comes back beside the title.
+The date is beside the title.
+
+**Arrived** heads the right-hand column: what came, in one place. An
+agent's offer to send a document to a friend comes first, since it asks
+you something -- Send or Not now in its row, and Not now has an Undo.
+Then a friend's lines, with **Keep on…**, which puts one on a desk in a
+click with their name on it, and ✕. Then the newest documents you have
+not read; a click opens one, and it leaves the list. Five rows at most,
+and "Everything in the Inbox →" when more are waiting. Arrived cannot be
+hidden, so nothing that arrives is put out of sight.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown
-full again. **snyvi** has the update card.
+full again. When an update is ready, its card heads the column.
+
+**Friends** shows once you have paired with someone: a line each, with
+**Note…** for a line on their Home and **⋯** for Mute and Remove. **Keys**
+is folded until you open it, and stays as you left it.
+
+The foot says which snyvi this is, with *Check for updates* and *Pair with
+a friend…*.
 
 Git is read only in a desk's own folder, never in your home directory,
 read-only and with a two-second limit, and nothing leaves the machine.

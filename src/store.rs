@@ -1101,6 +1101,19 @@ impl Store {
         Ok(rows)
     }
 
+    /// The newest documents still unread, newest first: Home's Arrived,
+    /// which reads what came last, where the queue reads oldest first.
+    pub fn newest_unread(&self, limit: usize) -> Result<Vec<Doc>> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(&format!(
+                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
+            ))?
+            .query_map(params![limit as i64], row_to_doc)?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
     /// How many are on the queue: what the bar says, however many rows the
     /// page was sent.
     pub fn waiting(&self) -> Result<i64> {
@@ -1718,6 +1731,10 @@ impl Store {
 
     pub fn answer_peer_offer(&self, id: i64, sent: bool) -> Result<bool> {
         peer::answer_offer(&self.conn.lock().unwrap(), id, sent, now())
+    }
+
+    pub fn reopen_peer_offer(&self, id: i64) -> Result<bool> {
+        peer::reopen_offer(&self.conn.lock().unwrap(), id)
     }
 
     pub fn drop_peer_offers_of(&self, pane: &str) -> Result<usize> {

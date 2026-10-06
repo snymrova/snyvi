@@ -1595,3 +1595,80 @@ async fn an_aside_is_refused_while_asides_are_off() {
     assert_eq!(resp.status(), StatusCode::CREATED);
     assert_eq!(kept(router, &leaves.host).await, 1);
 }
+
+/// Home's Keep on…: a friend's waiting line goes on a desk in one click,
+/// with their name on it, and only from the window -- it writes a desk's list.
+#[tokio::test]
+async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
+    let root = crate::store::tempdir::Dir::new("snyvi-keep-line-desk");
+    let dir = root.path.to_string_lossy().into_owned();
+    let at = std::sync::Mutex::new((0, 0));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-keep-line", |store| {
+        let desk = store.create_desk(&dir, Some("Garden")).unwrap();
+        let p = store
+            .pin_peer(&crate::peer::Peer {
+                sign_key: "SIGN".into(),
+                box_key: "BOX".into(),
+                name: "Trapti".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let n = store.peer_note_arrived(p.id, "water the beans").unwrap();
+        *at.lock().unwrap() = (desk.id, n);
+    });
+    let (desk, line) = at.into_inner().unwrap();
+    let keep = |cap: bool| {
+        let mut req = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/peers/notes/{line}"))
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("content-type", "application/json");
+        if cap {
+            req = req.header(CAPABILITY_HEADER, &leaves.cap);
+        }
+        let body = serde_json::json!({ "what": "keep", "desk": desk }).to_string();
+        router.clone().oneshot(req.body(Body::from(body)).unwrap())
+    };
+    let read = |uri: String| {
+        let req = axum::http::Request::builder()
+            .uri(uri)
+            .header("host", &leaves.host)
+            .header(CAPABILITY_HEADER, &leaves.cap)
+            .body(Body::empty())
+            .unwrap();
+        router.clone().oneshot(req)
+    };
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    assert_eq!(
+        keep(false).await.unwrap().status(),
+        StatusCode::FORBIDDEN,
+        "a tab has no desks to keep it on"
+    );
+    let kept = keep(true).await.unwrap();
+    assert_eq!(kept.status(), StatusCode::OK);
+    let kept = json(kept).await;
+    assert_eq!(kept["name"], "Garden");
+    assert_eq!(kept["note"]["sent_by"], "Trapti");
+    let notes = json(read(format!("/api/desks/{desk}/notes")).await.unwrap()).await;
+    let ours = notes["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["text"] == "water the beans")
+        .cloned()
+        .unwrap();
+    assert_eq!(ours["sent_by"], "Trapti");
+    assert!(ours.get("suggested_by").is_none(), "the reader's, not a question");
+    let peers = json(read("/api/peers".into()).await.unwrap()).await;
+    assert_eq!(peers["notes"], serde_json::json!([]), "no longer waiting");
+    assert_eq!(
+        keep(true).await.unwrap().status(),
+        StatusCode::NOT_FOUND,
+        "kept once"
+    );
+}
