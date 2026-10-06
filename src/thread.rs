@@ -516,6 +516,9 @@ pub struct Move {
     /// The pane it was said from, or empty for the page -- which does not
     /// take the thread from the pane that has it.
     pub pane: String,
+    /// The reader moved it (the page, or `/park` in the panel): the move is
+    /// news to every panel, the one it was typed in too.
+    pub reader: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -571,12 +574,22 @@ pub fn move_thread(
            pr = CASE WHEN ?5 = '' THEN pr ELSE ?5 END,
            name = CASE WHEN ?6 = '' THEN name ELSE ?6 END,
            pane = CASE WHEN ?7 = '' THEN pane ELSE ?7 END,
-           moved_by = ?7,
+           moved_by = ?9,
            moved_at = ?8,
            shipped_at = CASE WHEN ?3 = 'shipped' AND stage != 'shipped' THEN ?8
                              WHEN ?3 != '' AND ?3 != 'shipped' THEN 0 ELSE shipped_at END
          WHERE desk_id = ?1 AND id = ?2",
-        params![desk_id, t.id, m.stage, next, pr, name, m.pane, now],
+        params![
+            desk_id,
+            t.id,
+            m.stage,
+            next,
+            pr,
+            name,
+            m.pane,
+            now,
+            if m.reader { "" } else { m.pane.as_str() }
+        ],
     )?;
     link_notes(&tx, desk_id, t.id, &m.notes)?;
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");

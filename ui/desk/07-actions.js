@@ -116,6 +116,8 @@ async function act(b, byKey) {
     else if (a === "img-back") imgBack();
     else if (a === "pend-x") { pending = []; rail(); }
     else if (a === "note-sha" || a === "want-copy") copySha(b);
+    // A line's number has no room for "copied": its tick says so instead.
+    else if (a === "note-num") copySha(b, "✓");
     else if (a === "note-doc") ctx.read(b.dataset.d);
     else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
     else if (a === "note-keep") {
@@ -637,6 +639,7 @@ export function actions(el) {
       { label: "Edit", run: does("note-edit") },
       { label: x.done ? "Untick" : "Tick", run: does("note-tick") },
       { label: "Add a picture…", run: () => pickImages(x.id) },
+      { label: `Copy #${x.id}`, run: () => copySha(note.querySelector(".dk-num"), "✓") },
       ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
       ...(x.done && x.done_commit ? [{ label: "Copy commit", run: () => copySha(note.querySelector(".dk-sha")) }] : []), R,
       { label: "Remove from the list", danger: true, run: does("note-x") },

@@ -508,6 +508,7 @@ async function openAbout(d) {
   if (d.capability) {
     fact("Desk brief", switchRow(d, "/api/brief", "on · a Claude starting in a panel is told about its desk", "off · Claude starts in a panel knowing nothing of its desk"));
     fact("Asides", switchRow(d, "/api/asides", "on · an agent may leave a line at the foot of the sidebar", "off · an agent's aside is refused; snyvi's own first lines still show"));
+    fact("Claude Code mod in panels", switchRow(d, "/api/claude-mod", "on · a panel's Claude shows its thread above the prompt, puts its questions on Your turn, and takes /note", "off · panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
   }
   fact("Binary", a.binary, "path");
   fact("Documents", a.data_dir, "path");

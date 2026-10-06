@@ -92,6 +92,9 @@ pub(crate) struct MoveBody {
     pr: String,
     name: String,
     notes: Vec<i64>,
+    /// The reader moved it from the panel (the mod's `/park`): told to the
+    /// panel's Claude at its next prompt, as a move on the page is.
+    reader: bool,
 }
 
 fn moved(app: &App, desk: i64, r: anyhow::Result<Moved>) -> Response {
@@ -130,6 +133,7 @@ pub(crate) async fn pane_move_thread(
         name: String::new(),
         notes: b.notes,
         pane: id,
+        reader: b.reader,
     };
     let desk = placed.desk_id;
     let r = app.store.threads(|c, now| thread::move_thread(c, desk, None, &m, now));
@@ -392,6 +396,7 @@ pub(crate) async fn pane_band(
             "line": band_line(t.as_ref(), &waiting),
             "thread": t,
             "waiting": waiting.len(),
+            "turns": waiting.iter().map(|w| json!({ "kind": w.kind, "text": w.text })).collect::<Vec<_>>(),
         }))
         .into_response(),
         Err(e) => err(e),
@@ -577,6 +582,7 @@ pub(crate) async fn desk_move_thread(
         name: b.name,
         notes: b.notes,
         pane: String::new(),
+        reader: true,
     };
     let r = app.store.threads(|c, now| thread::move_thread(c, id, Some(t), &m, now));
     moved(&app, id, r)

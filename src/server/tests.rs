@@ -800,6 +800,14 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    ("GET", "/api/claude-mod", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/claude-mod",
+        Some(r#"{"on":true}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/desks", None, Gate::Open, true),
     ("GET", "/desk/1", None, Gate::Open, true),
 ];

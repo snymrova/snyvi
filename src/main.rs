@@ -5,6 +5,7 @@ mod brief;
 mod browse;
 mod capability;
 mod cli;
+mod claude_mod;
 mod client;
 mod config;
 mod desk;

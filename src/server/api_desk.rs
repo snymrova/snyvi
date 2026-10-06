@@ -1029,6 +1029,30 @@ pub(crate) async fn set_brief_setting(
     switch(&app, &headers, &q, "brief", brief_on, Some(b.on))
 }
 
+/// Whether a panel's Claude Code is given the snyvi mod (`crate::claude_mod`):
+/// on when the `claude` here has mods, unless the reader turned it off in
+/// About. A file, like the brief's, read at every panel's start.
+pub(crate) fn mod_on(app: &App) -> bool {
+    !off_flag(app, "claude-mod").exists() && crate::claude_mod::claude_has_mods()
+}
+
+pub(crate) async fn mod_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    switch(&app, &headers, &q, "claude-mod", mod_on, None)
+}
+
+pub(crate) async fn set_mod_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<SwitchBody>,
+) -> Response {
+    switch(&app, &headers, &q, "claude-mod", mod_on, Some(b.on))
+}
+
 pub(crate) async fn asides_setting(
     State(app): S,
     headers: HeaderMap,
@@ -1392,7 +1416,7 @@ pub(crate) async fn start_pane(
     // blocking thread, into the child's environment and nowhere else. A key
     // whose value is nowhere is not set at all.
     let keys = app.store.desk_keys(placed.desk_id).unwrap_or_default();
-    let env: Vec<(String, String)> = if keys.is_empty() {
+    let mut env: Vec<(String, String)> = if keys.is_empty() {
         Vec::new()
     } else {
         let secrets = app.secrets.clone();
@@ -1408,6 +1432,14 @@ pub(crate) async fn start_pane(
             .cloned()
             .collect();
         let _ = app.store.touch_desk_keys(&found);
+    }
+    // The snyvi mod, for a Claude Code started in this panel: its folder is
+    // named here and nowhere else (`crate::claude_mod`).
+    if mod_on(&app) {
+        env.push((
+            "CLAUDE_CODE_PLUGIN_DIRS".into(),
+            crate::claude_mod::plugin_dirs(&crate::claude_mod::dir(&app.paths)),
+        ));
     }
     let start = crate::pane::Start {
         cwd,
