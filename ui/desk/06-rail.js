@@ -64,8 +64,10 @@ function rail() {
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
   // The latest six, and always the one on the page: a document being read
   // is never the one the rail hides. The count names what is not shown.
-  const shown = docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading);
-  const rest = dl.length - shown.length, folds = docsAll && dl.length > DOCS_SHOWN;
+  // A search shows every title that has what was typed, and nothing folds.
+  const q = docsFind.trim().toLowerCase(), found = q ? dl.filter(x => x.title.toLowerCase().includes(q)) : null;
+  const shown = found || (docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading));
+  const rest = found ? 0 : dl.length - shown.length, folds = !found && docsAll && dl.length > DOCS_SHOWN;
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
   const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
@@ -108,7 +110,9 @@ function rail() {
     // not its title, which ticks. The row on the page gets its second line.
     // The rest, named rather than listed: one row at the end of the box that
     // opens them here, met where the scroll runs out rather than under it.
+    (dl.length > DOCS_FIND || docsFind ? `<input class="dk-find" type="search" spellcheck="false" autocomplete="off" placeholder="Find a document" aria-label="Find a document on this desk by its title" value="${esc(docsFind)}">` : "") +
     (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
+      (found && !found.length ? `<li><p class="dk-empty">No title has “${esc(docsFind.trim())}”</p></li>` : "") +
       (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
       : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
     // What the reader removed from this list, named, and there to open or put back.
@@ -121,7 +125,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); noteFocus(); docsScroll(docsTop); loadImgs(); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); docsScroll(docsTop); loadImgs(); }
   meta();
 }
 
@@ -156,10 +160,34 @@ function docsScroll(top) {
   else if (b.bottom > a.bottom) ul.scrollTop += b.bottom - a.bottom;
 }
 
-/** Leaving a desk leaves its removed list, and a row's Undo, with it. */
+/** Leaving a desk leaves its removed list, a row's Undo and a search with it. */
 function forgetDocs() {
   clearTimeout(docTimer);
   docOff = []; offShown = false; docGone = null; docSeen = null;
+  docsFind = ""; findCaret = 0; findOn = false;
+}
+
+/** The documents' search field, after a redraw made it again: what was
+ *  typed narrows the list as it is typed, and the focus and the caret go
+ *  back where they were. */
+function findFocus() {
+  const inp = ctx.tocEl.querySelector(".dk-find");
+  if (!inp) { findOn = false; return; }
+  inp.addEventListener("focus", () => { findOn = true; });
+  inp.addEventListener("blur", () => { if (!drawing) findOn = false; });
+  inp.addEventListener("input", () => { docsFind = inp.value; findCaret = inp.selectionStart; rail(); });
+  inp.addEventListener("keydown", e => {
+    // The desk gives every other key to the shell in the focused panel.
+    e.stopPropagation();
+    // Enter opens the first match; Escape empties the field, and leaves it
+    // when it is empty already.
+    if (e.key === "Enter") { e.preventDefault(); ctx.tocEl.querySelector(".dk-docs:not(.dk-offs) a[data-read]")?.click(); }
+    else if (e.key === "Escape") { e.preventDefault(); if (docsFind) { docsFind = ""; findCaret = 0; rail(); } else inp.blur(); }
+  });
+  if (!findOn) return;
+  inp.focus();
+  const at = Math.min(findCaret, inp.value.length);
+  inp.setSelectionRange(at, at);
 }
 
 /** Where each desk's repository lives on the web, by desk id: `{ url, at,

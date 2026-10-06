@@ -282,7 +282,11 @@ the inbox, a folder, another desk -- lets the desk go as before.
 The list is asked for again when the page hears a
 document arrive, get opened, deleted, restored or pinned -- asked for, not
 told, since those events reach tabs too and only the window holds the
-capability that answers. Forty is the cap; the library has the rest.
+capability that answers. Forty is the cap; the library has the rest. Past
+twelve, a *Find a document* field heads the list: typing narrows it to every
+title that has the text, not only the newest six, Enter opens the first,
+and Escape empties it. What is typed, the caret and the focus outlive the
+rail's redraws, and its keys never reach the panel's shell.
 
 `SNYVI_SESSION` decides which pane a document is attributed to. The hook's
 `cwd → session` map (`src/session.rs`) still decides which workflow a

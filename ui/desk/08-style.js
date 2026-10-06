@@ -285,6 +285,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The rest of the documents, as one row under the latest: the count is the
  * number the rail is not showing, so it changes as they arrive. */
 .dk-more { margin-top: 2px; font-variant-numeric: tabular-nums; }
+/* A long list's search, at its head: a field the width of a row. */
+.dk-find { display: block; box-sizing: border-box; width: calc(100% - 16px); margin: 2px 8px 4px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); font: inherit; font-size: var(--fs-small); color: var(--fg); }
+.dk-find::placeholder { color: var(--fg-3); }
 /* A document row: a page icon at the left, in the accent while the
  * document waits to be read, then the title, the pane it came from and its
  * age. */
