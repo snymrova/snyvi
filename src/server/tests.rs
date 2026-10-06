@@ -695,13 +695,7 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
-    (
-        "POST",
-        "/api/panes/nope/ask",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
+    ("POST", "/api/panes/nope/ask", Some("{}"), Gate::Token, true),
     (
         "POST",
         "/api/panes/nope/handover",
@@ -730,20 +724,8 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
-    (
-        "GET",
-        "/api/panes/nope/band",
-        None,
-        Gate::Token,
-        true,
-    ),
-    (
-        "GET",
-        "/api/panes/nope/turns/1",
-        None,
-        Gate::Token,
-        true,
-    ),
+    ("GET", "/api/panes/nope/band", None, Gate::Token, true),
+    ("GET", "/api/panes/nope/turns/1", None, Gate::Token, true),
     (
         "POST",
         "/api/panes/nope/turns/1",
@@ -758,13 +740,7 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
-    (
-        "GET",
-        "/api/desks/1/threads",
-        None,
-        Gate::Desk,
-        true,
-    ),
+    ("GET", "/api/desks/1/threads", None, Gate::Desk, true),
     (
         "POST",
         "/api/desks/1/threads/1/move",

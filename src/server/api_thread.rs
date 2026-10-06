@@ -61,7 +61,11 @@ pub(crate) async fn pane_start_thread(
     match app.store.threads(|c, now| thread::start(c, desk, &s, now)) {
         Ok(Started::New(t)) => {
             threads_moved(&app, desk);
-            (StatusCode::CREATED, Json(json!({ "thread": t, "again": false }))).into_response()
+            (
+                StatusCode::CREATED,
+                Json(json!({ "thread": t, "again": false })),
+            )
+                .into_response()
         }
         Ok(Started::Again(t)) => {
             threads_moved(&app, desk);
@@ -136,7 +140,9 @@ pub(crate) async fn pane_move_thread(
         reader: b.reader,
     };
     let desk = placed.desk_id;
-    let r = app.store.threads(|c, now| thread::move_thread(c, desk, None, &m, now));
+    let r = app
+        .store
+        .threads(|c, now| thread::move_thread(c, desk, None, &m, now));
     moved(&app, desk, r)
 }
 
@@ -196,7 +202,13 @@ pub(crate) async fn pane_hand_over(
     pane_turn(app, headers, id, b, false).await
 }
 
-async fn pane_turn(app: Arc<App>, headers: HeaderMap, id: String, b: AskBody, decide: bool) -> Response {
+async fn pane_turn(
+    app: Arc<App>,
+    headers: HeaderMap,
+    id: String,
+    b: AskBody,
+    decide: bool,
+) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,
@@ -322,7 +334,10 @@ pub(crate) async fn pane_seen(
         Err(no) => return *no,
     };
     let desk = placed.desk_id;
-    match app.store.threads(|c, now| thread::seen(c, desk, &id, &b, now)) {
+    match app
+        .store
+        .threads(|c, now| thread::seen(c, desk, &id, &b, now))
+    {
         Ok(Some(t)) => {
             threads_moved(&app, desk);
             Json(json!({ "thread": t })).into_response()
@@ -584,7 +599,9 @@ pub(crate) async fn desk_move_thread(
         pane: String::new(),
         reader: true,
     };
-    let r = app.store.threads(|c, now| thread::move_thread(c, id, Some(t), &m, now));
+    let r = app
+        .store
+        .threads(|c, now| thread::move_thread(c, id, Some(t), &m, now));
     moved(&app, id, r)
 }
 
@@ -639,7 +656,10 @@ fn open_suggestion(app: &App, id: i64, row: i64) -> Response {
             Err(e) => return err(e),
         }
     }
-    match app.store.threads(|c, now| thread::settle(c, id, row, "opened", now)) {
+    match app
+        .store
+        .threads(|c, now| thread::settle(c, id, row, "opened", now))
+    {
         Ok(_) => {
             threads_moved(app, id);
             Json(json!({ "ok": true, "desk": made })).into_response()
@@ -694,15 +714,15 @@ pub(crate) async fn desk_answer_turn(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.threads(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now)) {
+    match app
+        .store
+        .threads(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now))
+    {
         Ok(Some(turn)) => {
             threads_moved(&app, id);
             Json(json!({ "turn": turn })).into_response()
         }
-        Ok(None) => refused(
-            StatusCode::CONFLICT,
-            "it was answered already, or put away",
-        ),
+        Ok(None) => refused(StatusCode::CONFLICT, "it was answered already, or put away"),
         Err(e) => err(e),
     }
 }

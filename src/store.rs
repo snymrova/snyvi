@@ -4,8 +4,8 @@
 use crate::config::Paths;
 use crate::desk::{self, Desk, Opened, Origin, Placed};
 use crate::peer;
-use crate::thread;
 use crate::render::Kind;
+use crate::thread;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;

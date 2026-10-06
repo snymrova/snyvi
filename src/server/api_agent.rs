@@ -518,7 +518,10 @@ pub(crate) async fn pane_brief(
             ))
         })
         .unwrap_or_default();
-    let waiting: Vec<_> = waiting.into_iter().filter(|w| w.desk_id == desk.id).collect();
+    let waiting: Vec<_> = waiting
+        .into_iter()
+        .filter(|w| w.desk_id == desk.id)
+        .collect();
     let work = crate::brief::Work {
         notes: &notes,
         threads: &threads,
@@ -666,8 +669,10 @@ pub(crate) async fn pane_changes(
         _ if answers.is_empty() => return quiet(),
         _ => {
             let context = crate::brief::answers_only(&answers);
-            return Json(json!({ "context": context, "title": title, "desk": desk.name, "state": state }))
-                .into_response();
+            return Json(
+                json!({ "context": context, "title": title, "desk": desk.name, "state": state }),
+            )
+            .into_response();
         }
     };
     let (threads, opened) = app

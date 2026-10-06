@@ -285,7 +285,8 @@ fn desk_open(conn: &Connection, desk_id: i64) -> Result<bool> {
 
 // --- threads ---------------------------------------------------------------
 
-const THREAD_COLS: &str = "id, desk_id, name, stage, folder, branch, branch_seen, commits, pr, ci, merged, merged_at,
+const THREAD_COLS: &str =
+    "id, desk_id, name, stage, folder, branch, branch_seen, commits, pr, ci, merged, merged_at,
      next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by";
 
 fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
@@ -523,7 +524,8 @@ pub struct Move {
 
 #[derive(Debug, PartialEq)]
 pub enum Moved {
-    Thread(Thread),
+    /// Boxed: a thread is far bigger than the refusals.
+    Thread(Box<Thread>),
     BadStage,
     BadPr,
     NoThread,
@@ -594,7 +596,7 @@ pub fn move_thread(
     link_notes(&tx, desk_id, t.id, &m.notes)?;
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
-    Ok(Moved::Thread(t))
+    Ok(Moved::Thread(Box::new(t)))
 }
 
 /// What the snyvi mod saw the panel's git and gh do.
@@ -681,12 +683,7 @@ pub fn restore(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
 /// Threads moved since `since` by anyone but `pane` -- the reader on the page
 /// among them -- and merges seen since then by anyone: what a panel is told
 /// at its next prompt.
-pub fn moved_since(
-    conn: &Connection,
-    desk_id: i64,
-    pane: &str,
-    since: i64,
-) -> Result<Vec<Thread>> {
+pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0
          AND ((moved_at > ?2 AND moved_by != ?3) OR merged_at > ?2) ORDER BY moved_at, id LIMIT 8"
@@ -699,7 +696,8 @@ pub fn moved_since(
 
 // --- turns -----------------------------------------------------------------
 
-const TURN_COLS: &str = "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
+const TURN_COLS: &str =
+    "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
      answer, answered_in, answered_at, told_at, created_at, removed_at";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
@@ -787,7 +785,8 @@ pub struct Ask {
 
 #[derive(Debug, PartialEq)]
 pub enum Asked {
-    Turn(Turn),
+    /// Boxed, as `Moved::Thread`.
+    Turn(Box<Turn>),
     Full,
     Empty,
     /// `decide` needs two to four options; the others take none.
@@ -863,17 +862,7 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
     let id = tx.last_insert_rowid();
     let t = turn(&tx, desk_id, id)?.expect("the row just written");
     tx.commit()?;
-    Ok(Asked::Turn(t))
-}
-
-/// The answers a kind takes, when it is not `decide`: what the buttons say.
-pub fn answers_for(kind: &str) -> &'static [&'static str] {
-    match kind {
-        "try" => &["Looks good", "Needs changes"],
-        "merge" => &["Merged"],
-        "key" => &["Added"],
-        _ => &[],
-    }
+    Ok(Asked::Turn(Box::new(t)))
 }
 
 /// Answer a turn. `in_` is `snyvi` or `panel`. A `decide` answer is one of its
@@ -970,18 +959,6 @@ pub fn take_untold(
     Ok(mine)
 }
 
-/// A thread's decisions: the `decide` turns answered on it, oldest first.
-pub fn decided(conn: &Connection, desk_id: i64, thread: i64) -> Result<Vec<Turn>> {
-    let mut st = conn.prepare(&format!(
-        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0
-         AND kind = 'decide' AND answered_at != 0 ORDER BY answered_at, id LIMIT 20"
-    ))?;
-    let v = st
-        .query_map(params![desk_id, thread], row_to_turn)?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(v)
-}
-
 // --- suggestions -----------------------------------------------------------
 
 const SUG_COLS: &str =
@@ -1039,7 +1016,8 @@ pub struct Suggest {
 
 #[derive(Debug, PartialEq)]
 pub enum Suggested {
-    Card(Suggestion),
+    /// Boxed, as `Moved::Thread`.
+    Card(Box<Suggestion>),
     Full,
     Empty,
     /// `suggest_desk` for a folder that already has a desk: the desk is there.
@@ -1056,7 +1034,9 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     let folder = line(&s.folder, PATH_CHARS);
     let why = line(&s.why, 200);
     let by = line(&s.by, 60);
-    if why.is_empty() || (kind == "panel" && cmd.is_empty()) || (kind == "desk" && folder.is_empty())
+    if why.is_empty()
+        || (kind == "panel" && cmd.is_empty())
+        || (kind == "desk" && folder.is_empty())
     {
         return Ok(Suggested::Empty);
     }
@@ -1093,7 +1073,7 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     let id = tx.last_insert_rowid();
     let card = suggestion(&tx, desk_id, id)?.expect("the row just written");
     tx.commit()?;
-    Ok(Suggested::Card(card))
+    Ok(Suggested::Card(Box::new(card)))
 }
 
 /// The reader opened it, or put it away with ✕. Settled once.
@@ -1132,7 +1112,12 @@ pub fn unsettle(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
 
 /// Suggestions this pane made that the reader has opened and it has not been
 /// told of; marked told.
-pub fn take_opened(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Result<Vec<Suggestion>> {
+pub fn take_opened(
+    conn: &Connection,
+    desk_id: i64,
+    pane: &str,
+    now: i64,
+) -> Result<Vec<Suggestion>> {
     let mut st = conn.prepare(&format!(
         "SELECT {SUG_COLS} FROM desk_suggestions WHERE desk_id = ?1 AND pane = ?2
          AND outcome = 'opened' AND told_at = 0 ORDER BY settled_at, id LIMIT 4"

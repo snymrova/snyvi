@@ -397,6 +397,7 @@ fn thread_routes() -> Router<Arc<App>> {
             get(pane_wait_turn).post(pane_answer_turn),
         )
         .route("/api/panes/{id}/note", post(pane_note))
+        .route("/api/claude-mod", get(mod_setting).post(set_mod_setting))
         .route("/api/desks/{id}/threads", get(desk_threads))
         .route("/api/desks/{id}/threads/{row}/move", post(desk_move_thread))
         .route("/api/desks/{id}/threads/{row}/{act}", post(desk_thread_act))
@@ -530,7 +531,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/asides", get(asides_setting).post(set_asides_setting))
-        .route("/api/claude-mod", get(mod_setting).post(set_mod_setting))
         // Friends (`api_peer`): the reader's actions from this page or with
         // the token, the reads open like the project list is.
         .merge(pane_routes())
@@ -642,12 +642,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
-    // The snyvi mod a panel's Claude Code loads (`crate::claude_mod`): this
-    // version's files on disk, and whether the `claude` here has mods.
-    crate::claude_mod::warm();
-    if let Err(e) = crate::claude_mod::write(&paths, &config::base_url()) {
-        eprintln!("snyvi: could not write the Claude Code mod: {e}");
-    }
+    crate::claude_mod::start(&paths);
     let router = router(app);
 
     let addr = format!("127.0.0.1:{}", config::port());

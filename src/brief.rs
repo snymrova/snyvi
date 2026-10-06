@@ -313,7 +313,11 @@ pub fn answers_only(answers: &[Turn]) -> String {
     if lines.is_empty() {
         return String::new();
     }
-    capped(std::iter::once(CHANGES_HEAD.to_string()).chain(lines).collect())
+    capped(
+        std::iter::once(CHANGES_HEAD.to_string())
+            .chain(lines)
+            .collect(),
+    )
 }
 
 /// The lines as one text, cut at `BRIEF_BYTES`: a line that would cross it is
@@ -357,11 +361,10 @@ pub struct Changes<'a> {
     pub opened: &'a [Suggestion],
 }
 
-/// What changed on the desk since `since`, for the pane in `slot`, or empty
-/// when nothing did. The pane's own ticks, left-off, marks and documents are
-/// not news to it and are left out; a suggestion is for the reader, not read
-/// back to an agent. Capped like the brief, with the list first.
-pub fn changes(c: &Changes) -> String {
+/// What came of the reader's answers, the suggestions they opened, and the
+/// threads moved by someone else or merged: the head of the changes, since an
+/// answer matters more than a filed document.
+fn filed_news(c: &Changes) -> Vec<String> {
     let mut lines: Vec<String> = answer_lines(c.answers);
     for s in c.opened {
         lines.push(if s.kind == "desk" {
@@ -401,6 +404,15 @@ pub fn changes(c: &Changes) -> String {
             ));
         }
     }
+    lines
+}
+
+/// What changed on the desk since `since`, for the pane in `slot`, or empty
+/// when nothing did. The pane's own ticks, left-off, marks and documents are
+/// not news to it and are left out; a suggestion is for the reader, not read
+/// back to an agent. Capped like the brief, with the list first.
+pub fn changes(c: &Changes) -> String {
+    let mut lines: Vec<String> = filed_news(c);
     let line = |n: &DeskNote| format!("#{} \"{}\"", n.id, cut(&n.text, LINE_CHARS));
     let new: Vec<String> = c
         .notes

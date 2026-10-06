@@ -104,7 +104,7 @@ function turnRow(d, w, esc) {
   const link = /^https?:\/\//.test(w.link || "") ? `<button type="button" class="tn-opt quiet" data-a="tn-link" data-u="${esc(w.link)}" data-tip="${esc(w.link)}">Open ↗</button>` : "";
   return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
     `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link && !link ? ` · ${esc(w.link)}` : ""}</p>` +
-    `<div class="tn-acts">${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Put away: ${esc(w.text)}">${ico("x")}</button></div>` +
+    `<div class="tn-acts">${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     (other ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "") +
     `</li>` + errLine(`w${w.id}`, esc);
 }

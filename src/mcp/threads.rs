@@ -101,7 +101,12 @@ fn card(t: &Value) -> String {
     let notes: Vec<String> = t
         .get("notes")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_i64).map(|n| format!("#{n}")).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_i64)
+                .map(|n| format!("#{n}"))
+                .collect()
+        })
         .unwrap_or_default();
     if !notes.is_empty() {
         parts.push(notes.join(" "));
@@ -127,7 +132,8 @@ fn notes_arg(args: &Value) -> Vec<i64> {
         .unwrap_or_default()
 }
 
-const NO_DESK: &str = "This session is not running in a snyvi desk, so there is no desk to file it on.";
+const NO_DESK: &str =
+    "This session is not running in a snyvi desk, so there is no desk to file it on.";
 
 impl Session {
     fn thread_call(&self, path: &str, body: Value) -> Result<Value, Value> {
@@ -200,7 +206,10 @@ impl Session {
             "by": self.by(),
         });
         match self.thread_call("suggest-panel", body) {
-            Ok(_) => said("Suggested; the user opens it or not. Mention it in your reply.", false),
+            Ok(_) => said(
+                "Suggested; the user opens it or not. Mention it in your reply.",
+                false,
+            ),
             Err(e) => e,
         }
     }
@@ -210,7 +219,10 @@ impl Session {
             "kind": "desk", "folder": arg(args, "folder"), "why": arg(args, "why"), "by": self.by(),
         });
         match self.thread_call("suggest-desk", body) {
-            Ok(_) => said("Suggested; the user opens it or not. Mention it in your reply.", false),
+            Ok(_) => said(
+                "Suggested; the user opens it or not. Mention it in your reply.",
+                false,
+            ),
             Err(e) => e,
         }
     }

@@ -87,14 +87,22 @@ fn moving_the_panes_thread_parks_and_ships_it() {
         pane: "p1".into(),
         ..Move::default()
     };
-    let Moved::Thread(t) = move_thread(&mut conn, d, None, &mv("parked", "rebase first"), 20).unwrap() else {
+    let Moved::Thread(t) =
+        move_thread(&mut conn, d, None, &mv("parked", "rebase first"), 20).unwrap()
+    else {
         panic!()
     };
-    assert_eq!((t.stage.as_str(), t.next.as_str()), ("parked", "rebase first"));
+    assert_eq!(
+        (t.stage.as_str(), t.next.as_str()),
+        ("parked", "rebase first")
+    );
     let Moved::Thread(t) = move_thread(&mut conn, d, None, &mv("building", ""), 30).unwrap() else {
         panic!()
     };
-    assert_eq!((t.stage.as_str(), t.next.as_str(), t.shipped_at), ("building", "", 0));
+    assert_eq!(
+        (t.stage.as_str(), t.next.as_str(), t.shipped_at),
+        ("building", "", 0)
+    );
     let Moved::Thread(t) = move_thread(&mut conn, d, None, &mv("shipped", ""), 40).unwrap() else {
         panic!()
     };
@@ -105,7 +113,10 @@ fn moving_the_panes_thread_parks_and_ships_it() {
         pane: "p9".into(),
         ..Move::default()
     };
-    assert_eq!(move_thread(&mut conn, d, None, &other, 50).unwrap(), Moved::NoThread);
+    assert_eq!(
+        move_thread(&mut conn, d, None, &other, 50).unwrap(),
+        Moved::NoThread
+    );
     assert_eq!(
         move_thread(&mut conn, d, None, &mv("done", ""), 50).unwrap(),
         Moved::BadStage
@@ -118,7 +129,9 @@ fn moving_the_panes_thread_parks_and_ships_it() {
 fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     let mut conn = db();
     let (d, _) = desk(&mut conn);
-    assert!(seen(&mut conn, d, "p1", &Seen::default(), 1).unwrap().is_none());
+    assert!(seen(&mut conn, d, "p1", &Seen::default(), 1)
+        .unwrap()
+        .is_none());
     start_as(&mut conn, d, "A", "p1", &[]);
     let s = |branch: &str, commits: i64| Seen {
         branch: branch.into(),
@@ -127,9 +140,16 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     };
     seen(&mut conn, d, "p1", &s("claude/a", 0), 2).unwrap();
     seen(&mut conn, d, "p1", &s("", 1), 3).unwrap();
-    let t = seen(&mut conn, d, "p1", &s("claude/a", 2), 4).unwrap().unwrap();
-    assert_eq!((t.branch.as_str(), t.commits, t.seen), ("claude/a", 3, true));
-    let t = seen(&mut conn, d, "p1", &s("claude/b", 1), 5).unwrap().unwrap();
+    let t = seen(&mut conn, d, "p1", &s("claude/a", 2), 4)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (t.branch.as_str(), t.commits, t.seen),
+        ("claude/a", 3, true)
+    );
+    let t = seen(&mut conn, d, "p1", &s("claude/b", 1), 5)
+        .unwrap()
+        .unwrap();
     assert_eq!(t.commits, 1);
     let m = Seen {
         pr: "https://github.com/o/r/pull/57".into(),
@@ -137,7 +157,10 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
         ..Seen::default()
     };
     let t = seen(&mut conn, d, "p1", &m, 6).unwrap().unwrap();
-    assert_eq!((t.pr.as_str(), t.merged.as_str(), t.merged_at), ("57", "7e1c0a2", 6));
+    assert_eq!(
+        (t.pr.as_str(), t.merged.as_str(), t.merged_at),
+        ("57", "7e1c0a2", 6)
+    );
     let t = seen(&mut conn, d, "p1", &m, 7).unwrap().unwrap();
     assert_eq!(t.merged_at, 6);
     // Nothing that is not a branch gets in.
@@ -159,14 +182,21 @@ fn a_question_is_answered_once_and_told_once() {
         pane: "p1".into(),
         ..Ask::default()
     };
-    assert_eq!(ask(&mut conn, d, &q(&["10"]), 1).unwrap(), Asked::BadOptions);
+    assert_eq!(
+        ask(&mut conn, d, &q(&["10"]), 1).unwrap(),
+        Asked::BadOptions
+    );
     let Asked::Turn(t) = ask(&mut conn, d, &q(&["After 5", "After 10"]), 1).unwrap() else {
         panic!()
     };
     assert_eq!(t.recommended, 1);
-    let a = answer(&conn, d, t.id, "After 10", "snyvi", 2).unwrap().unwrap();
+    let a = answer(&conn, d, t.id, "After 10", "snyvi", 2)
+        .unwrap()
+        .unwrap();
     assert_eq!(a.answered_in, "snyvi");
-    assert!(answer(&conn, d, t.id, "After 5", "panel", 3).unwrap().is_none());
+    assert!(answer(&conn, d, t.id, "After 5", "panel", 3)
+        .unwrap()
+        .is_none());
     let live = vec!["p1".to_string(), "p2".to_string()];
     assert!(take_untold(&conn, d, "p2", &live, 4).unwrap().is_empty());
     assert_eq!(take_untold(&conn, d, "p1", &live, 4).unwrap().len(), 1);
@@ -235,7 +265,10 @@ fn suggestions_wait_settle_and_are_told_once() {
         why: "its own project".into(),
         ..Suggest::default()
     };
-    assert_eq!(suggest(&mut conn, d, &desk_card, 1).unwrap(), Suggested::HasDesk(d));
+    assert_eq!(
+        suggest(&mut conn, d, &desk_card, 1).unwrap(),
+        Suggested::HasDesk(d)
+    );
     let panel = Suggest {
         kind: "panel".into(),
         name: "test window".into(),
@@ -264,7 +297,10 @@ fn suggestions_wait_settle_and_are_told_once() {
 #[test]
 fn a_pr_is_a_number() {
     assert_eq!(pr_number("#57").as_deref(), Some("57"));
-    assert_eq!(pr_number("https://github.com/o/r/pull/57/").as_deref(), Some("57"));
+    assert_eq!(
+        pr_number("https://github.com/o/r/pull/57/").as_deref(),
+        Some("57")
+    );
     assert_eq!(pr_number("57; rm -rf"), None);
     assert!(branch_ok("claude/threads"));
     assert!(!branch_ok("a..b"));

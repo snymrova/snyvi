@@ -25,7 +25,10 @@ const FILES: [(&str, &str); 4] = [
         include_str!("../mod/.claude-plugin/plugin.json"),
     ),
     ("hooks/hooks.json", include_str!("../mod/hooks/hooks.json")),
-    ("hooks/register.tsx", include_str!("../mod/hooks/register.tsx")),
+    (
+        "hooks/register.tsx",
+        include_str!("../mod/hooks/register.tsx"),
+    ),
     ("types/index.d.ts", include_str!("../mod/types/index.d.ts")),
 ];
 
@@ -81,7 +84,16 @@ pub fn claude_has_mods() -> bool {
     HAS_MODS.get().copied().unwrap_or(false)
 }
 
-pub fn warm() {
+/// At the daemon's start: this version's files on disk, and whether the
+/// `claude` here has mods.
+pub fn start(paths: &Paths) {
+    warm();
+    if let Err(e) = write(paths, &crate::config::base_url()) {
+        eprintln!("snyvi: could not write the Claude Code mod: {e}");
+    }
+}
+
+fn warm() {
     std::thread::spawn(|| {
         let ok = crate::platform::find_on_path("claude")
             .and_then(|exe| {
@@ -137,7 +149,8 @@ mod tests {
             assert!(root.join(rel).is_file(), "{rel}");
         }
         let link: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join("snyvi.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(root.join("snyvi.json")).unwrap())
+                .unwrap();
         assert_eq!(link["url"], "http://127.0.0.1:7999");
         let manifest: serde_json::Value = serde_json::from_str(FILES[0].1).unwrap();
         assert_eq!(manifest["version"], crate::version::VERSION);
