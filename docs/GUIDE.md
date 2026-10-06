@@ -1223,6 +1223,13 @@ It is a channel from the agent to you and nothing comes back: an aside is
 not an instruction to anything. A reply is a line you type in the panel,
 like any other.
 
+If you would rather no agent left you a line at all, About has an
+**Asides** row: Turn off, and the daemon refuses every aside, saying
+"asides are off in About" to the agent that sent it, which is told not to
+send another. The ✕ on each aside stays the way to say no to one; this is
+the way to say no to all of them. snyvi's own first lines, which point you
+at what is new, are not an agent's and still show. Turn on puts it back.
+
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.
 

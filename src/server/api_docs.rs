@@ -607,6 +607,15 @@ pub(crate) async fn receive_aside(
         )
             .into_response();
     }
+    // Turned off in About: the door is closed, whoever knocks. The words are
+    // what the agent reads back, and its tool says not to try again.
+    if !asides_on(&app) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "asides are off in About" })),
+        )
+            .into_response();
+    }
     // Where it came from, for the click; the token above is the only gate.
     let from = crate::receive::pane_origin(&app.store, n.pane.as_deref());
     match app.asides.add(n, from, crate::store::now()) {

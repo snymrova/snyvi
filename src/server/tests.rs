@@ -579,6 +579,14 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    ("GET", "/api/asides", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/asides",
+        Some(r#"{"on":true}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/panes/nope/delete", None, Gate::Desk, true),
     ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
     (
@@ -1485,4 +1493,50 @@ async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() 
     )
     .await;
     assert!(note["from"].is_null());
+}
+
+/// Asides turned off in About: an agent's aside is refused with words it can
+/// read back, nothing is kept, and turning them on takes the next one.
+#[tokio::test]
+async fn an_aside_is_refused_while_asides_are_off() {
+    let (tmp, router, leaves) = gated_router("snyvi-asides-off");
+    let send = || {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/notes")
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("authorization", &leaves.bearer)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"text":"Four evenings, and it held."}"#))
+            .unwrap()
+    };
+    let off = tmp.path.join("config").join("asides-off");
+    std::fs::write(&off, b"").unwrap();
+    let resp = router.clone().oneshot(send()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("asides are off in About"));
+    async fn kept(router: Router, host: &str) -> usize {
+        let req = axum::http::Request::builder()
+            .uri("/api/notes")
+            .header("host", host)
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["notes"]
+            .as_array()
+            .map_or(0, Vec::len)
+    }
+    assert_eq!(
+        kept(router.clone(), &leaves.host).await,
+        0,
+        "a refused aside is not kept"
+    );
+
+    std::fs::remove_file(&off).unwrap();
+    let resp = router.clone().oneshot(send()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(kept(router, &leaves.host).await, 1);
 }

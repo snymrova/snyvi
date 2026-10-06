@@ -936,7 +936,54 @@ pub(crate) async fn remove_desk_key(
 /// the reader turned it off in About. A file, not a row: the hook's route
 /// reads it on every session start, and it is the daemon's own setting.
 pub(crate) fn brief_on(app: &App) -> bool {
-    !app.paths.config_dir.join("brief-off").exists()
+    !off_flag(app, "brief").exists()
+}
+
+/// Whether an agent's aside is taken: on unless the reader turned asides off
+/// in About. A file, like the brief's, read on every aside.
+pub(crate) fn asides_on(app: &App) -> bool {
+    !off_flag(app, "asides").exists()
+}
+
+/// The file that says one of About's switches is off: `brief-off`, `asides-off`.
+fn off_flag(app: &App, name: &str) -> std::path::PathBuf {
+    app.paths.config_dir.join(format!("{name}-off"))
+}
+
+fn set_switch(app: &App, name: &str, on: bool) -> std::io::Result<()> {
+    let flag = off_flag(app, name);
+    if on {
+        match std::fs::remove_file(&flag) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    } else {
+        std::fs::create_dir_all(&app.paths.config_dir).and_then(|_| std::fs::write(&flag, b""))
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SwitchBody {
+    pub(crate) on: bool,
+}
+
+/// One of About's switches, read or set by the window: `GET` says whether it
+/// is on, `POST {on}` sets it and says the same.
+fn switch(
+    app: &App,
+    headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+    name: &str,
+    on: fn(&App) -> bool,
+    to: Option<bool>,
+) -> Response {
+    if let Some(no) = refuse_desk(app, headers, q) {
+        return no;
+    }
+    match to.map_or(Ok(()), |to| set_switch(app, name, to)) {
+        Ok(()) => Json(json!({ "on": on(app) })).into_response(),
+        Err(e) => err(e.into()),
+    }
 }
 
 pub(crate) async fn brief_setting(
@@ -944,39 +991,33 @@ pub(crate) async fn brief_setting(
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if let Some(no) = refuse_desk(&app, &headers, &q) {
-        return no;
-    }
-    Json(json!({ "on": brief_on(&app) })).into_response()
-}
-
-#[derive(Deserialize)]
-pub(crate) struct BriefBody {
-    pub(crate) on: bool,
+    switch(&app, &headers, &q, "brief", brief_on, None)
 }
 
 pub(crate) async fn set_brief_setting(
     State(app): S,
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
-    Json(b): Json<BriefBody>,
+    Json(b): Json<SwitchBody>,
 ) -> Response {
-    if let Some(no) = refuse_desk(&app, &headers, &q) {
-        return no;
-    }
-    let flag = app.paths.config_dir.join("brief-off");
-    let done = if b.on {
-        match std::fs::remove_file(&flag) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        }
-    } else {
-        std::fs::create_dir_all(&app.paths.config_dir).and_then(|_| std::fs::write(&flag, b""))
-    };
-    match done {
-        Ok(()) => Json(json!({ "on": brief_on(&app) })).into_response(),
-        Err(e) => err(e.into()),
-    }
+    switch(&app, &headers, &q, "brief", brief_on, Some(b.on))
+}
+
+pub(crate) async fn asides_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    switch(&app, &headers, &q, "asides", asides_on, None)
+}
+
+pub(crate) async fn set_asides_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<SwitchBody>,
+) -> Response {
+    switch(&app, &headers, &q, "asides", asides_on, Some(b.on))
 }
 
 pub(crate) async fn rename_desk(

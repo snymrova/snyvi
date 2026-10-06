@@ -189,6 +189,12 @@ or hearts (a waiting note is the lit nub); no hover lines; no peek. Under
 `prefers-reduced-motion` the creature keeps its faces and loses its
 movement (§7.3).
 
+Its sibling for agents is **Asides** in About, stored as `asides-off` in
+the settings folder: off, the daemon refuses every agent's aside with
+"asides are off in About", which the agent reads back and is told not to
+try again. snyvi's own first lines are not agents' and still show. The
+quiet switch quiets the creature; this one quiets the agents.
+
 ---
 
 ## 3. Voice and words
