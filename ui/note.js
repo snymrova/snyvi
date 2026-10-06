@@ -119,6 +119,18 @@ const OWN = mod => ({
   "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
 });
 
+/** Where a click on an aside leads: the document it is about, the part of
+ *  /start one of snyvi's own lines points into, or the panel that said it,
+ *  where a reply is typed. */
+const noteGoTo = (n, esc, showDesk) => n.about ? ` data-about="${esc(n.about)}"` : n.href ? ` data-href="${esc(n.href)}"` : n.from && showDesk ? ` data-desk="${+n.from.id}" data-slot="${+n.from.slot}"` : "";
+function noteGo(el, showDoc, showStart, showDesk) {
+  if (!el) return;
+  const d = el.dataset;
+  if (d.about) showDoc(d.about, true);
+  else if (d.href) showStart(true, d.href.slice(d.href.indexOf("#")));
+  else if (d.desk) showDesk(+d.desk, true, +d.slot || 0);
+}
+
 /** `showDesk` comes only in the desktop window: a browser tab runs no desks,
  *  so there an aside from a panel leads nowhere and says nothing about one. */
 export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo, peek }) {
@@ -168,10 +180,7 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
   function noteBy(n) {
     return [n.sender && `via ${esc(n.sender)}`, n.from ? `on ${esc(n.from.name)} [${+n.from.slot}]` : n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
   }
-  /** Where a click on an aside leads: the document it is about, the part of
-   *  /start one of snyvi's own lines points into, or the panel that said it,
-   *  where a reply is typed. */
-  const goTo = n => n.about ? ` data-about="${esc(n.about)}"` : n.href ? ` data-href="${esc(n.href)}"` : n.from && showDesk ? ` data-desk="${+n.from.id}" data-slot="${+n.from.slot}"` : "";
+  const goTo = n => noteGoTo(n, esc, showDesk), go = el => noteGo(el, showDoc, showStart, showDesk);
   let noteHtml = "";
   function renderNote() {
     // snyvi's own lines come in by name; their words are filled in here.
@@ -265,13 +274,6 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     seeNotes();
     go(e.target.closest("[data-about], [data-href], [data-desk]"));
   });
-  function go(el) {
-    if (!el) return;
-    const d = el.dataset;
-    if (d.about) showDoc(d.about, true);
-    else if (d.href) showStart(true, d.href.slice(d.href.indexOf("#")));
-    else if (d.desk) showDesk(+d.desk, true, +d.slot || 0);
-  }
   noteEl.addEventListener("keydown", e => {
     // Esc closes the aside the hand is on, and goes no further: not back a
     // page, which is what it does with nothing over the page.

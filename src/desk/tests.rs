@@ -921,9 +921,18 @@ fn a_friends_line_keeps_its_sender() {
     };
     assert_eq!(s.sent_by, "Trapti");
     assert!(keep_note(&conn, d, s.id).unwrap());
-    let kept = notes(&conn, d).unwrap().into_iter().find(|n| n.id == s.id).unwrap();
-    assert_eq!((kept.suggested_by.as_str(), kept.sent_by.as_str()), ("", "Trapti"));
-    let home = add_note_from(&mut conn, d, "seed list", "Trapti", 2).unwrap().unwrap();
+    let kept = notes(&conn, d)
+        .unwrap()
+        .into_iter()
+        .find(|n| n.id == s.id)
+        .unwrap();
+    assert_eq!(
+        (kept.suggested_by.as_str(), kept.sent_by.as_str()),
+        ("", "Trapti")
+    );
+    let home = add_note_from(&mut conn, d, "seed list", "Trapti", 2)
+        .unwrap()
+        .unwrap();
     assert_eq!(home.sent_by, "Trapti");
     assert_eq!(notes(&conn, d).unwrap().last().unwrap().sent_by, "Trapti");
     let mine = add_note(&mut conn, d, "mine", 3).unwrap().unwrap();

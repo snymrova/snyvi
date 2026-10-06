@@ -1680,7 +1680,10 @@ async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
         .cloned()
         .unwrap();
     assert_eq!(ours["sent_by"], "Trapti");
-    assert!(ours.get("suggested_by").is_none(), "the reader's, not a question");
+    assert!(
+        ours.get("suggested_by").is_none(),
+        "the reader's, not a question"
+    );
     let peers = json(read("/api/peers".into()).await.unwrap()).await;
     assert_eq!(peers["notes"], serde_json::json!([]), "no longer waiting");
     assert_eq!(
@@ -1834,7 +1837,8 @@ fn a_pages_pictures_travel_inside_it() {
     std::fs::write(proj.join("draw.svg"), b"<svg/>").unwrap();
     std::fs::write(tmp.path.join("away.png"), b"AWAY").unwrap();
     let page = proj.join("plan.md");
-    let md = "![shot](img/shot.png) ![svg](draw.svg) ![away](../away.png) ![web](https://x.dev/a.png)";
+    let md =
+        "![shot](img/shot.png) ![svg](draw.svg) ![away](../away.png) ![web](https://x.dev/a.png)";
     let out = inline_pictures(md, &page, 1 << 20);
     assert!(
         out.starts_with(&format!(
@@ -1844,7 +1848,10 @@ fn a_pages_pictures_travel_inside_it() {
         "{out}"
     );
     assert!(out.contains("![svg](draw.svg)"));
-    assert!(out.contains("![away](../away.png)"), "not outside its project");
+    assert!(
+        out.contains("![away](../away.png)"),
+        "not outside its project"
+    );
     assert!(out.contains("![web](https://x.dev/a.png)"));
     assert_eq!(
         inline_pictures(md, &page, 4),

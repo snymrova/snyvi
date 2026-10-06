@@ -43,6 +43,12 @@ fn version_of<'a>(path: &'a str, title: &'a str, src: &'a str, wf: &'a str) -> N
     }
 }
 
+/// What an old database lacks of 1.19's columns: a fixture that winds the
+/// schema version back takes them off too, so step 7 adds them as it would.
+const OLD_1_19: &str = "ALTER TABLE peers DROP COLUMN desk_id;
+     ALTER TABLE peer_outbox DROP COLUMN text;
+     ALTER TABLE desk_notes DROP COLUMN sent_by;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -468,7 +474,10 @@ fn a_file_sent_again_is_one_row_with_its_versions_behind_it() {
     let wfs = s.project_tree(first.project_id, 0, 0).unwrap();
     assert_eq!(titles(s.queue(10).unwrap()), vec!["Script v3", "Notes"]);
     // Home's Arrived reads the same rows the other way: newest first.
-    assert_eq!(titles(s.newest_unread(10).unwrap()), vec!["Notes", "Script v3"]);
+    assert_eq!(
+        titles(s.newest_unread(10).unwrap()),
+        vec!["Notes", "Script v3"]
+    );
     assert_eq!(
         wfs[0]
             .docs
@@ -805,6 +814,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
     conn.execute_batch(&format!(
         "UPDATE desks SET kind = 'studio', boards = root, row = 0.62 WHERE id = {studio};
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
+         {OLD_1_19}
          PRAGMA user_version = 3;"
     ))
     .unwrap();
@@ -1082,6 +1092,7 @@ fn a_1_16_database_comes_forward_once() {
              INSERT INTO docs_fts(id, title, body) VALUES('{loose}', 'Notes', 'elsewhere charlie newest');
              INSERT INTO workflows(project_id, key, title, created_at) VALUES({project}, 'W', 'W', 0);
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
+             {OLD_1_19}
              PRAGMA user_version = 4;"
         ))
         .unwrap();
@@ -1237,7 +1248,10 @@ fn a_lineage_moves_whole_onto_a_desk() {
     assert_eq!(moved.workflow, "sent", "the workflow goes with it");
     let newer = s.get(&two.id).unwrap().unwrap();
     assert_eq!(newer.project_id, moved.project_id, "every version");
-    assert_eq!(s.previous(&newer).unwrap().map(|p| p.id), Some(one.id.clone()));
+    assert_eq!(
+        s.previous(&newer).unwrap().map(|p| p.id),
+        Some(one.id.clone())
+    );
     assert_eq!(
         s.get(&other.id).unwrap().unwrap().project_id,
         one.project_id,
@@ -1246,5 +1260,8 @@ fn a_lineage_moves_whole_onto_a_desk() {
     let on_desk = s.desk_docs(3, 10, false).unwrap();
     assert_eq!(on_desk.len(), 1, "one row on the desk's list");
     assert_eq!(on_desk[0].id, two.id);
-    assert!(s.move_lineage("nope", "/w/garden", "garden", &garden).unwrap().is_none());
+    assert!(s
+        .move_lineage("nope", "/w/garden", "garden", &garden)
+        .unwrap()
+        .is_none());
 }

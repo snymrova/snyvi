@@ -51,7 +51,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-keys-b .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 .dk-keys-b.none { color: var(--fg-3); }
 @keyframes dk-kept { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
-.dk-keys-b.kept, .dk-key.new { animation: dk-kept 1.6s ease-out; }
+.dk-keys-b.kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
 @media (prefers-reduced-motion: reduce) { .dk-keys-b.kept, .dk-key.new { animation: none; } }
 .dk-keys-sheet { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop); width: min(460px, calc(100vw - 32px)); padding: 8px 10px 10px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-small); color: var(--fg-2); text-align: left; white-space: normal; cursor: auto; }
 .dk-keys-h { color: var(--fg-3); padding: 0 2px 6px; border-bottom: 1px solid var(--rule); margin-bottom: 2px; }

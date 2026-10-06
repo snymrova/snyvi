@@ -2261,7 +2261,10 @@ mod tests {
         assert_eq!(data_uri("image/png", b"Man"), "data:image/png;base64,TWFu");
         assert_eq!(data_uri("image/png", b"Ma"), "data:image/png;base64,TWE=");
         assert_eq!(data_uri("image/png", b"M"), "data:image/png;base64,TQ==");
-        assert_eq!(data_uri("image/png", &[0xfb, 0xff]), "data:image/png;base64,+/8=");
+        assert_eq!(
+            data_uri("image/png", &[0xfb, 0xff]),
+            "data:image/png;base64,+/8="
+        );
     }
 
     /// The pictures of a Markdown page, found where Markdown has them and
@@ -2287,8 +2290,14 @@ mod tests {
             .map(|(a, u)| (a.to_string(), u.to_string()))
         );
         let shown = stayed_with(md, "Trapti");
-        assert!(shown.contains("*(a picture that stayed with Trapti: `shot.png`)*"), "{shown}");
-        assert!(shown.contains("![web](https://x.dev/a.png \"t\")"), "a link out is left");
+        assert!(
+            shown.contains("*(a picture that stayed with Trapti: `shot.png`)*"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("![web](https://x.dev/a.png \"t\")"),
+            "a link out is left"
+        );
         assert!(shown.contains("![in code](c.png)"), "code is code");
         assert!(shown.contains("![](#x)"));
         assert!(relative_url("a/b.png") && !relative_url("data:image/png;base64,x"));

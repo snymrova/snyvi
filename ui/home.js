@@ -264,7 +264,8 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-keys > summary { list-style: none; cursor: pointer; }
 .hm-keys > summary::-webkit-details-marker { display: none; }
 .hm-keys > summary > .s-chev { margin-left: 2px; }
-.hm-keys > summary > .hm-hide { margin-left: auto; }
+.hm-keys { position: relative; }
+.hm-keys > .hm-hide { position: absolute; top: 0; right: 0; }
 .hm-keys:not([open]) > summary { margin-bottom: 0; }
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-meta a { color: inherit; text-decoration: none; }
@@ -1018,7 +1019,7 @@ function lineRow(n, j) {
   return `<li data-part="home.arrived.line"><span class="hm-ag" aria-hidden="true">“</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
     (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${age(n.arrived_at)} ago</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on… ▾</button>` : "") +
-      `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Put away the line from ${esc(n.from)}" data-tip="Put it away" data-tip-sub="Undo brings it back">✕</button>`) +
+      `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
 }
 
@@ -1054,10 +1055,10 @@ async function arrivedClick(k, id, b) {
     try {
       const r = await postJson(`/api/peers/offers/${id}`, { send: k === "aoffer" });
       sayRow("o" + id, o, k === "anot" ? "Not sent" : r.sent ? `Sent to ${o.to}` : `Queued for ${o.to}; it goes when the relay can be reached`, k === "anot" ? "aundo" : "");
-    } catch (e) { b.disabled = false; c.peerCtx.toast("Could not answer it", { sub: e.message }); }
+    } catch (e) { b.disabled = false; c.peerCtx.toast("Could not answer it", { sub: c.peerCtx.sayErr(e).why }); }
     soonRefresh();
   } else if (k === "aundo") {
-    try { await postJson(`/api/peers/offers/${id}`, { undo: true }); } catch (e) { c.peerCtx.toast("Could not take it back", { sub: e.message }); return true; }
+    try { await postJson(`/api/peers/offers/${id}`, { undo: true }); } catch (e) { c.peerCtx.toast("Could not take it back", { sub: c.peerCtx.sayErr(e).why }); return true; }
     clearTimeout(arrSaid.get("o" + id)?.t); arrSaid.delete("o" + id); soonRefresh();
   } else if (k === "akeep") {
     keepOpen = keepOpen === id ? 0 : id; draw(last);
@@ -1068,8 +1069,8 @@ async function arrivedClick(k, id, b) {
     const n = (peers?.notes || []).find(x => x.id === id) || arrSaid.get("n" + id)?.item;
     b.disabled = true;
     try { await postJson(`/api/peers/notes/${id}`, { what: k === "fdrop" ? "remove" : "restore" }); }
-    catch (e) { b.disabled = false; c.peerCtx.toast("Could not do that", { sub: e.message }); return true; }
-    if (k === "fdrop" && n) sayRow("n" + id, n, "Put away", "fundrop");
+    catch (e) { b.disabled = false; c.peerCtx.toast("Could not do that", { sub: c.peerCtx.sayErr(e).why }); return true; }
+    if (k === "fdrop" && n) sayRow("n" + id, n, "Removed", "fundrop");
     else { clearTimeout(arrSaid.get("n" + id)?.t); arrSaid.delete("n" + id); }
     soonRefresh();
   } else return false;
@@ -1096,7 +1097,7 @@ async function undoKeep(id) {
   try {
     await c.deskApi(`/api/desks/${s.item.desk}/notes/${s.item.note}/remove`, {});
     await postJson(`/api/peers/notes/${id}`, { what: "restore" });
-  } catch (e) { c.peerCtx.toast("Could not take it back", { sub: e.message }); return; }
+  } catch (e) { c.peerCtx.toast("Could not take it back", { sub: c.peerCtx.sayErr(e).why }); return; }
   clearTimeout(s.t); arrSaid.delete("n" + id); soonRefresh();
 }
 
@@ -1123,8 +1124,10 @@ const setKeysOpen = on => { try { localStorage.setItem("snyvi.home.keys", on ? "
  *  looked at now and then, not something the evening starts from. */
 function keysW(j) {
   const { esc } = c, n = keysOf(j).length;
-  return `<details class="hm-w hm-keys" data-w="keys" data-part="home.keys"${keysOpen() ? " open" : ""}><summary class="hm-wh"><h2>Keys${n ? ` <span class="n">${n}</span>` : ""}</h2><span class="s-chev" aria-hidden="true"></span>` +
-    `<button type="button" class="hm-hide" data-hm="hide" data-k="keys" data-tip="Hide ${esc("Keys")}" data-tip-sub="Show brings it back" aria-label="Hide Keys">✕</button></summary>${keys(j)}</details>`;
+  return `<details class="hm-w hm-keys" data-w="keys" data-part="home.keys"${keysOpen() ? " open" : ""}><summary class="hm-wh"><h2>Keys${n ? ` <span class="n">${n}</span>` : ""}</h2><span class="s-chev" aria-hidden="true"></span></summary>` +
+    // Its ✕ beside the head and not in it: a button inside a <summary> is
+    // a control inside a control.
+    `<button type="button" class="hm-hide" data-hm="hide" data-k="keys" data-tip="Hide ${esc("Keys")}" data-tip-sub="Show brings it back" aria-label="Hide Keys">✕</button>${keys(j)}</details>`;
 }
 function keys(j) {
   const { esc } = c;
@@ -1291,7 +1294,7 @@ async function friendClick(k, id, b) {
   else if (k === "fdeskto") {
     deskOpen = 0;
     try { await c.deskApi(`/api/peers/${id}/desk`, { desk: +b.dataset.n }); }
-    catch (e) { c.peerCtx.toast("Could not change that", { sub: e.message }); draw(last); return; }
+    catch (e) { c.peerCtx.toast("Could not change that", { sub: c.peerCtx.sayErr(e).why }); draw(last); return; }
     const f = friendsOf().find(x => x.id === id);
     if (f) f.desk_id = +b.dataset.n;
     draw(last); c.docEl.querySelector(`[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true });

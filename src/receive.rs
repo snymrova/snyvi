@@ -807,7 +807,10 @@ mod tests {
         )
         .unwrap();
         let (root, _, _) = desk_project(&garden.path.to_string_lossy());
-        assert_eq!(s.project_root(got.doc.project_id).as_deref(), Some(root.as_str()));
+        assert_eq!(
+            s.project_root(got.doc.project_id).as_deref(),
+            Some(root.as_str())
+        );
         assert_eq!(got.doc.desk, Some(at));
         assert_eq!(got.doc.origin, "peer");
         assert_eq!(got.doc.sender, "Trapti");
