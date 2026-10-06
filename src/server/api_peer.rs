@@ -670,14 +670,16 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
             continue;
         }
         let went = match send_one(app, &me, &name, &row) {
-            Ok(true) => {
+            Ok(peer::Deposit::Sent) => {
                 let _ = app.store.peer_sent(frame_id);
                 let _ = app.store.touch_peer(peer_id, false);
                 moved = true;
                 true
             }
-            Ok(false) => {
-                let _ = app.store.peer_failed(frame_id, "their mailbox is full");
+            // Waiting, not failing: the next retry tries again, and the
+            // tries are kept for what is really wrong.
+            Ok(peer::Deposit::Later(why)) => {
+                let _ = app.store.peer_waiting(frame_id, why);
                 false
             }
             Err(e) => {
@@ -693,7 +695,12 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
     all
 }
 
-fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow::Result<bool> {
+fn send_one(
+    app: &App,
+    me: &Identity,
+    name: &str,
+    row: &peer::Unsent,
+) -> anyhow::Result<peer::Deposit> {
     let (frame_id, doc_id) = (row.id.as_str(), row.doc_id.as_str());
     let p = app
         .store
@@ -706,12 +713,12 @@ fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow:
             name: name.to_string(),
         };
         let frame = peer::seal(me, &p, &content, b"")?;
-        return peer::deposit(&p.sign_key, frame_id, &frame);
+        return peer::deposit(me, &p.sign_key, frame_id, &frame);
     }
     let Some(doc) = app.store.get(doc_id)? else {
         // The document went while the frame waited: nothing to send, done.
         app.store.peer_sent(frame_id)?;
-        return Ok(true);
+        return Ok(peer::Deposit::Sent);
     };
     let mut bytes = std::fs::read(app.store.src_path(doc_id))?;
     // Checked at the Send button too; this is the document that grew while
@@ -721,7 +728,11 @@ fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow:
     }
     // A page's own pictures go inside it, so they arrive with it.
     let room = peer::SEND_MAX.saturating_sub(bytes.len());
-    let with = match (doc.kind, doc.source_path.as_deref(), std::str::from_utf8(&bytes)) {
+    let with = match (
+        doc.kind,
+        doc.source_path.as_deref(),
+        std::str::from_utf8(&bytes),
+    ) {
         (crate::render::Kind::Markdown, Some(file), Ok(text)) => {
             Some(inline_pictures(text, std::path::Path::new(file), room))
         }
@@ -742,7 +753,7 @@ fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow:
         id: doc.id.clone(),
     };
     let frame = peer::seal(me, &p, &content, &bytes)?;
-    peer::deposit(&p.sign_key, frame_id, &frame)
+    peer::deposit(me, &p.sign_key, frame_id, &frame)
 }
 
 /// A Markdown document's own pictures, put into it as `data:` URLs so they
@@ -1047,7 +1058,9 @@ pub(crate) async fn doc_save(
     else {
         return (
             StatusCode::CONFLICT,
-            Json(json!({ "error": "keep it on a desk first; it is saved into that desk's folder" })),
+            Json(
+                json!({ "error": "keep it on a desk first; it is saved into that desk's folder" }),
+            ),
         )
             .into_response();
     };
@@ -1097,7 +1110,11 @@ pub(crate) fn file_name(doc: &crate::store::Doc) -> String {
     sent.unwrap_or_else(|| {
         let ext = match doc.kind {
             crate::render::Kind::Markdown => "md",
-            _ => doc.lang.as_deref().filter(|l| l.len() <= 8).unwrap_or("txt"),
+            _ => doc
+                .lang
+                .as_deref()
+                .filter(|l| l.len() <= 8)
+                .unwrap_or("txt"),
         };
         format!("{}.{ext}", slug(&doc.title))
     })

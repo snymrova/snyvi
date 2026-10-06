@@ -29,3 +29,104 @@ new_sqlite_classes = ["Room", "Mailbox"]
 # a line per request would be a list of who talks to whom.
 [observability]
 enabled = false
+
+# The limits, counted per Cloudflare location, in windows of 60 s. Keyed by
+# who is asking (src/index.ts says by what); an IP only where nothing else
+# is, because many people can share one. An honest daemon makes a few calls
+# a minute; a pairing is 4 to 8.
+
+[[ratelimits]]
+name = "LIMIT_FLOOD"   # by IP, everything: a backstop
+namespace_id = "1101"
+simple = { limit = 600, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_FIRST"   # by IP: a mailbox's first sign-in, a room's first message
+namespace_id = "1102"
+simple = { limit = 5, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_ROOM"    # by room id
+namespace_id = "1103"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_INBOX"   # by address, signed
+namespace_id = "1104"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_SEND"    # by sender, signed
+namespace_id = "1105"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_SEND_BIG"
+namespace_id = "1106"
+simple = { limit = 8, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_UNSIGNED"   # by IP: 1.18.0 daemons, until REQUIRE_SIGNED
+namespace_id = "1107"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_UNSIGNED_BIG"
+namespace_id = "1108"
+simple = { limit = 8, period = 60 }
+
+# `npm test` runs `wrangler dev --env test`: the same Worker, with the IP
+# limits out of the way (every test comes from 127.0.0.1) and RELAY_TEST,
+# which turns on the two /_test routes the tests look inside a mailbox
+# with. The room's limit keeps its real number: each test has its own room,
+# and one test spends a room's 30. Never deployed.
+[env.test]
+vars = { RELAY_TEST = "1" }
+
+[[env.test.durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[env.test.durable_objects.bindings]]
+name = "MAILBOX"
+class_name = "Mailbox"
+
+[[env.test.ratelimits]]
+name = "LIMIT_FLOOD"
+namespace_id = "2101"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_FIRST"
+namespace_id = "2102"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_ROOM"
+namespace_id = "2103"
+simple = { limit = 30, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_INBOX"
+namespace_id = "2104"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_SEND"
+namespace_id = "2105"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_SEND_BIG"
+namespace_id = "2106"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_UNSIGNED"
+namespace_id = "2107"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_UNSIGNED_BIG"
+namespace_id = "2108"
+simple = { limit = 100000, period = 60 }

@@ -1215,7 +1215,12 @@ impl Store {
         {
             let mut conn = self.conn.lock().unwrap();
             let tx = conn.transaction()?;
-            let Some((from, path, wf_key, wf_title)): Option<(i64, Option<String>, String, String)> = tx
+            let Some((from, path, wf_key, wf_title)): Option<(
+                i64,
+                Option<String>,
+                String,
+                String,
+            )> = tx
                 .query_row(
                     "SELECT d.project_id, d.source_path, w.key, w.title FROM live_docs d
                      JOIN workflows w ON w.id = d.workflow_id WHERE d.id = ?1",
@@ -1769,6 +1774,10 @@ impl Store {
         peer::failed(&self.conn.lock().unwrap(), id, why)
     }
 
+    pub fn peer_waiting(&self, id: &str, why: &str) -> Result<()> {
+        peer::waiting(&self.conn.lock().unwrap(), id, why)
+    }
+
     /// A friend's lines waiting on Home (`peer::notes_waiting`).
     pub fn peer_notes(&self) -> Result<Vec<peer::PeerNote>> {
         peer::notes_waiting(&self.conn.lock().unwrap())
@@ -1966,12 +1975,29 @@ impl Store {
     }
 
     /// A friend's line as a suggestion on their desk (`desk::suggest_note_from`).
-    pub fn suggest_desk_note_from(&self, desk_id: i64, text: &str, name: &str) -> Result<desk::Suggested> {
-        desk::suggest_note_from(&mut self.conn.lock().unwrap(), desk_id, text, name, name, now())
+    pub fn suggest_desk_note_from(
+        &self,
+        desk_id: i64,
+        text: &str,
+        name: &str,
+    ) -> Result<desk::Suggested> {
+        desk::suggest_note_from(
+            &mut self.conn.lock().unwrap(),
+            desk_id,
+            text,
+            name,
+            name,
+            now(),
+        )
     }
 
     /// A friend's line kept on a desk from Home (`desk::add_note_from`).
-    pub fn add_desk_note_from(&self, desk_id: i64, text: &str, name: &str) -> Result<Option<desk::DeskNote>> {
+    pub fn add_desk_note_from(
+        &self,
+        desk_id: i64,
+        text: &str,
+        name: &str,
+    ) -> Result<Option<desk::DeskNote>> {
         desk::add_note_from(&mut self.conn.lock().unwrap(), desk_id, text, name, now())
     }
 
