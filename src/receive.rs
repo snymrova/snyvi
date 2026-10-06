@@ -36,6 +36,21 @@ pub struct Payload {
     /// was not started in the pane cannot name it.
     #[serde(default)]
     pub pane: Option<String>,
+    /// A friend's document, opened by `crate::peer` from a frame their key
+    /// signed. Never on the wire: a send cannot claim to be from a friend.
+    #[serde(skip)]
+    pub peer: Option<FromPeer>,
+}
+
+/// What a frame from a friend carries into `receive`: who, and the bytes.
+#[derive(Clone, Debug, Default)]
+pub struct FromPeer {
+    pub name: String,
+    pub sign_key: String,
+    pub bytes: Vec<u8>,
+    /// The sender's file name, if the document was a file there: only its
+    /// extension is used, to tell a picture from a page.
+    pub file: Option<String>,
 }
 
 pub struct Received {
@@ -98,6 +113,28 @@ struct Body {
 
 fn read(store: &Store, p: &Payload) -> Result<Body> {
     let body = match (&p.content, &p.path) {
+        // A friend's bytes, as they came: a picture stays bytes, a page is
+        // text. No path is read -- the file name is a hint and nothing more.
+        _ if p.peer.is_some() => {
+            let fp = p.peer.as_ref().unwrap();
+            let name = fp.file.as_deref().unwrap_or("");
+            let ext = render::ext_of(name);
+            let opaque = render::is_image_ext(&ext)
+                || render::preview_kind(&ext) == Some("pdf")
+                || render::looks_binary(&fp.bytes);
+            Body {
+                text: if opaque {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&fp.bytes).into_owned()
+                },
+                bytes: fp.bytes.clone(),
+                // The name alone, as the path: it tells a picture from a page,
+                // and a second send of the same file lands as a version.
+                path: fp.file.clone().filter(|f| !f.trim().is_empty()),
+                staged: None,
+            }
+        }
         (Some(c), _) => Body {
             bytes: c.clone().into_bytes(),
             text: c.clone(),
@@ -220,11 +257,38 @@ fn workflow(
         from.map(|o| o.name.clone())
             .unwrap_or_else(|| project.to_string())
     });
+    if let Some(fp) = &p.peer {
+        return ("sent".to_string(), format!("Sent by {}", fp.name));
+    }
     match (plan_home.as_ref().or(p.workflow.as_ref()), &p.session) {
         (Some(w), _) if !w.trim().is_empty() => (w.trim().to_string(), w.trim().to_string()),
         (_, Some(s)) if !s.trim().is_empty() => (s.trim().to_string(), title.to_string()),
         _ => ("manual".to_string(), "Sent manually".to_string()),
     }
+}
+
+/// The project a document goes to, as (root, name, branch): from the
+/// sender's cwd, else from the file's location. A friend's document goes to
+/// the friend's own project, whose root is no folder on this machine
+/// (`peer::Peer::project_root`), so the sidebar gains one row per friend and
+/// nothing else.
+fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
+    if let Some(fp) = &p.peer {
+        return (
+            format!("peer:{}", fp.sign_key),
+            format!("From {}", fp.name),
+            None,
+        );
+    }
+    let anchor: PathBuf = p
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| b.path.as_deref().map(PathBuf::from))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    let proj = project::resolve(&anchor);
+    let branch = project::branch(&proj.root);
+    (proj.root.to_string_lossy().to_string(), proj.name, branch)
 }
 
 pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
@@ -243,16 +307,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
             slot: placed.pane.slot,
         });
 
-    // Project: from the sender's cwd, else from the file's location.
-    let anchor: PathBuf = p
-        .cwd
-        .as_deref()
-        .map(PathBuf::from)
-        .or_else(|| b.path.as_deref().map(PathBuf::from))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-    let proj = project::resolve(&anchor);
-    let root = proj.root.to_string_lossy().to_string();
-    let branch = project::branch(&proj.root);
+    let (root, proj_name, branch) = place(&p, &b);
 
     // Same file, same bytes as the latest snapshot: hand back that document rather
     // than storing a duplicate (an explicit send after a hook send, or vice versa).
@@ -278,7 +333,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let (kind, lang) = classify(renderer, &b, p.lang.as_deref());
     let title = render::title_for(p.title.as_deref(), kind, b.path.as_deref(), &b.text);
 
-    let (wf_name, wf_title) = workflow(&p, origin, from.as_ref(), &proj.name, &title);
+    let (wf_name, wf_title) = workflow(&p, origin, from.as_ref(), &proj_name, &title);
 
     // A hook firing on every edit would otherwise fill a workflow with near-identical
     // snapshots; within a short window, overwrite the last one instead.
@@ -304,7 +359,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
 
     let new_doc = NewDoc {
         project_root: &root,
-        project_name: &proj.name,
+        project_name: &proj_name,
         workflow_key: &wf_key,
         workflow_title: &wf_title,
         title: &title,
@@ -599,6 +654,83 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got.doc.kind, Kind::Text);
+    }
+
+    /// A friend's document goes to the friend's own project, under their
+    /// name, from the bytes the frame carried and no file on this machine.
+    #[test]
+    fn a_friends_document_lands_in_their_project() {
+        let (s, r, _d) = setup();
+        let from = FromPeer {
+            name: "Trapti".into(),
+            sign_key: "KEY".into(),
+            bytes: b"# Garden\n\nbeans".to_vec(),
+            file: Some("garden.md".into()),
+        };
+        let got = receive(
+            &s,
+            &r,
+            Payload {
+                title: Some("Garden".into()),
+                origin: Some("peer".into()),
+                sender: Some("Trapti".into()),
+                peer: Some(from.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(got.doc.project, "From Trapti");
+        assert_eq!(got.doc.workflow_title, "Sent by Trapti");
+        assert_eq!(got.doc.origin, "peer");
+        assert_eq!(got.doc.sender, "Trapti");
+        assert_eq!(got.doc.kind, Kind::Markdown);
+        assert_eq!(
+            s.project_root(got.doc.project_id).as_deref(),
+            Some("peer:KEY")
+        );
+        assert!(s.html(&got.doc.id).unwrap().contains("beans"));
+        // The same bytes again: the same row. New bytes: a new version of it.
+        let again = receive(
+            &s,
+            &r,
+            Payload {
+                origin: Some("peer".into()),
+                peer: Some(from.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(again.existing);
+        let mut v2 = from.clone();
+        v2.bytes = b"# Garden\n\npeas".to_vec();
+        let newer = receive(
+            &s,
+            &r,
+            Payload {
+                origin: Some("peer".into()),
+                peer: Some(v2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(newer.supersedes.as_deref(), Some(got.doc.id.as_str()));
+        // A picture stays a picture.
+        let png = FromPeer {
+            bytes: b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR".to_vec(),
+            file: Some("shot.png".into()),
+            ..from
+        };
+        let pic = receive(
+            &s,
+            &r,
+            Payload {
+                origin: Some("peer".into()),
+                peer: Some(png),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(pic.doc.kind, Kind::Image);
     }
 
     #[test]

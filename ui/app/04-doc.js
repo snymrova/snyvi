@@ -291,6 +291,13 @@
   /* After the Undo has gone: "N removed · Show" at the foot of the Inbox,
    * drawn by home.js (`removedLine`), the chunk for the pages that list. */
   const homeUse = () => (homeLoading ||= import(`/assets/home.js${boot.v ? `?v=${boot.v}` : ""}`)).then(m => (homeMod = m));
+  /** A friend's snyvi (docs/PEER.md): pairing, Send to…, a line, an agent's
+   *  offer. All of it is peer.js, fetched on the first of those and never on
+   *  a read; first paint has no room to spare, so only the wiring is here.
+   *  No promise kept: the module map already holds a loaded one, and a
+   *  failed fetch is simply tried again on the next click. */
+  const peerUse = () => import(`/assets/peer.js${boot.v ? `?v=${boot.v}` : ""}`);
+  const peerCtx = { esc, rel, sayErr, toast, peer: peerUse, home: () => showHome(true) };
   const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------
@@ -393,7 +400,7 @@
     catch { homeLoading = null; if (state.view === "home") docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1>${noReach("home")}</div>`; return; }
     if (state.view !== "home") return;
     if (push) main.scrollTo({ top: 0, behavior: "instant" });
-    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates,
+    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
       next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), notes: () => state.notes });
     if (push) swapIn();
     afterRender();
@@ -409,6 +416,8 @@
     if (w === "pick") act("pick", true);
     else if (w === "place") { const f = welcomePlaces[+b.dataset.i]; if (f) act("make", f); }
     else if (w === "connect") connectClaude(b);
+    // Send to… in a document's head: the sheet, for this document.
+    else if (w === "send") peerUse().then(m => m.send(peerCtx, b.dataset.send, b.dataset.sendTitle), () => toast("Could not open Send to…"));
   });
   /** Connect Claude Code, from the Agents page or a desk's panel: it asks,
    *  in place, then runs `init-claude` in the daemon. */

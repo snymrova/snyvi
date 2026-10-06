@@ -86,7 +86,7 @@ pub(crate) async fn doc_json(State(app): S, Path(id): Path<String>) -> Response 
             let preview = render::preview_kind(&doc_ext(&doc));
             Json(json!({
                 "doc": doc,
-                "html": doc_html(&doc, &body),
+                "html": doc_html(&doc, &body, has_friends(&app)),
                 "previous": previous,
                 "history": history,
                 "preview": preview,

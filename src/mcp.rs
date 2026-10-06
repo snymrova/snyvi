@@ -2,7 +2,7 @@
 //! beside the work, and -- only to an agent running in a desk's pane --
 //! read_desk_notes, which reads that desk's list, mark_desk_note, saying how
 //! far the agent has got with a line, tick_desk_note, marking a line done,
-//! suggest_desk_note, offering one for the reader to keep,
+//! suggest_desk_note, offering one for the reader to keep, offer_document, asking that one go to a friend,
 //! leave_off, saying where the work was left, and name_panel, which names the
 //! panel the agent runs in. And four prompts, the loop's own slash commands
 //! (`PROMPTS`). Newline-delimited JSON-RPC 2.0, as the MCP stdio transport
@@ -87,6 +87,12 @@ keep it. Suggest rarely and only what the user would want to track themselves; n
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters.";
 
+const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on \
+snyvi, by the friend's name (the desk brief lists them) and the document's id from send_document. Nothing is \
+sent by this call: the user is shown the offer where they are, with your name on it, and presses Send or Not \
+now. Offer only when the user asked for something to go to that friend, or the work plainly is for them; never \
+to a name that is not on the list. Say in your reply that you offered it and that the user decides.";
+
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session is running in, so the user can tell their \
 panels apart at a glance: a few words for what you are working on in it, like \"auth refactor\" or \"fix CI\". \
 Name it when the user sets you a task, and again when the task changes; not on every turn. The name shows in the \
@@ -143,6 +149,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("suggest_desk_note", Session::suggest_desk_note),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
+    ("offer_document", Session::offer_document),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -244,6 +251,7 @@ impl Session {
                         suggest_spec(),
                         leave_off_spec(),
                         name_spec(),
+                        offer_spec(),
                     ]);
                 }
                 Ok(json!({ "tools": tools }))
@@ -421,6 +429,26 @@ impl Session {
                     Err(e) => said(format!("snyvi did not take it: {e}"), true),
                 }
             }
+        }
+    }
+
+    /// `offer_document`: the question goes to the reader; nothing is sent.
+    fn offer_document(&self, args: &Value) -> Value {
+        let to = arg(args, "to");
+        let id = arg(args, "id");
+        match self.pane.as_deref() {
+            None => said("This session is not running in a snyvi desk, so there is no one to offer to.", true),
+            Some(p) => match client::offer_document(&self.paths, p, &to, &id, self.by()) {
+                Ok(v) => said(
+                    format!(
+                        "Offered \"{}\" to {}; the user decides whether it goes. Say so in your reply.",
+                        v.get("title").and_then(Value::as_str).unwrap_or(&id),
+                        v.get("to").and_then(Value::as_str).unwrap_or(&to)
+                    ),
+                    false,
+                ),
+                Err(e) => said(format!("snyvi did not take the offer: {e}"), true),
+            },
         }
     }
 
@@ -645,6 +673,24 @@ fn prompt_text(p: &Prompt, arg: Option<&str>) -> String {
     }
 }
 
+fn offer_spec() -> Value {
+    json!({
+        "name": "offer_document",
+        "title": "Offer a document to a friend",
+        "description": OFFER_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "The friend's name, as the desk brief lists it." },
+                "id": { "type": "string", "description": "The document's id, as send_document answered it." }
+            },
+            "required": ["to", "id"],
+            "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+    })
+}
+
 fn name_spec() -> Value {
     json!({
         "name": "name_panel",
@@ -797,6 +843,7 @@ fn call_send(
         origin: Some("mcp".into()),
         sender: sender.map(str::to_string),
         pane: None,
+        peer: None,
     };
     let resp = client::send(paths, &payload)?;
     Ok(Sent {
@@ -985,6 +1032,17 @@ mod tests {
         assert!(
             PROMPTS[0].text.contains("leave_off") && PROMPTS[0].text.contains("read_desk_notes")
         );
+    }
+
+    #[test]
+    fn the_offer_tool_names_a_friend_and_a_document_and_sends_nothing_itself() {
+        let spec = offer_spec();
+        assert_eq!(spec["inputSchema"]["required"], json!(["to", "id"]));
+        assert!(spec["description"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing is sent by this call"));
+        assert!(TOOLS.iter().any(|(n, _)| *n == "offer_document"));
     }
 
     #[test]

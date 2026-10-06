@@ -264,6 +264,7 @@ a.hm-panels:hover { color: var(--fg); }
 const WIDGETS = [
   ["desks", "Projects"],
   ["today", "Today"],
+  ["friends", "Friends"],
   ["keys", "Keys"],
   ["claude", "Claude"],
   ["snyvi", "snyvi"],
@@ -281,6 +282,11 @@ let c = null, last = null, soon = 0, reading = 0, sheet = null;
 let parking = 0, parkDraft = "", parkFailed = false, justParked = 0, parkedT = 0;
 /** What the week's button last said, in its own place, for a while. */
 let weekSaid = null;
+/** Friends (docs/PEER.md): the last /api/peers answer, drawn beside the
+ *  desks; the friend just removed, who keeps a row with an Undo for a
+ *  moment; the friend's line the bar is carrying, settled when Enter adds
+ *  it; and a friend's line just put away, with its Undo. */
+let peers = null, justRemoved = 0, removedT = 0, carrying = 0, noteGone = 0, noteGoneT = 0;
 /** The note bar: the desk chosen on its chip (0 is Pick up's), what is typed
  *  in it and the pictures waiting on that line (both kept across the redraws
  *  an event brings), and what the last Enter did, said in the bar's own row. */
@@ -373,11 +379,16 @@ async function refresh() {
   if (!c || c.view() !== "home") return;
   const turn = ++reading;
   let j;
+  const friends = fetch("/api/peers").then(r => r.ok ? r.json() : null, () => null);
   try { j = c.capability ? await c.deskApi("/api/home") : await (await fetch("/api/home")).json(); }
   catch { if (!last) c.docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1><p>snyvi did not answer. <button type="button" class="btn" data-hm="retry">Try again</button></p></div>`; return; }
+  peers = (await friends) || peers;
   if (turn !== reading || c.view() !== "home") return;
   last = j;
   draw(j);
+  // A friend's code in the address (snyvi://pair/<code>): the sheet, once.
+  const code = new URLSearchParams(location.search).get("pair");
+  if (code) { history.replaceState(history.state, "", "/"); c.peerCtx.peer().then(m => m.pair(c.peerCtx, code), () => {}); }
 }
 
 // ---------- time, in the reader's own days ----------
@@ -432,8 +443,11 @@ function draw(j) {
     `<section class="hm-w" data-w="${key}" data-part="home.${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
     `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="Show brings it back" aria-label="Hide ${esc(title)}">✕</button></div>${body}</section>`;
   drawnDay = startOfDay(Date.now() / 1000);
+  const fr = friendsOf();
   const side = [
     w("today", "Today", today()),
+    w("friends", "Friends", friends(), fr.length ? ` <span class="n">${fr.length}</span>` : "",
+      `<button type="button" class="hm-link hm-act" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair…</button>`),
     w("keys", "Keys", keys(j), keysOf(j).length ? ` <span class="n">${keysOf(j).length}</span>` : ""),
     w("claude", "Claude", claude(j)),
     w("snyvi", "snyvi", `<div class="hm-upd"></div>` + `<p class="hm-quiet hm-uptodate">snyvi ${esc(j.version || "")} · <button type="button" class="uc-link" data-hm="check">Check for updates</button></p>`),
@@ -919,6 +933,43 @@ function today() {
  *  which desks have it (or every desk), and when a panel last started with
  *  it. Names only -- Home is never sent a value -- and nothing is added
  *  here: a key is a desk's, and goes in from that desk's head. */
+/* ---------- friends (docs/PEER.md) ---------- */
+
+const friendsOf = () => (peers?.friends || []).filter(f => !f.removed_at);
+
+/** The friends, a line a friend sent that waits for a desk, an agent's
+ *  offer the reader has not answered, and the one just removed with its
+ *  Undo. Every action is in the row (docs/DESIGN.md §4). */
+function friends() {
+  const { esc } = c;
+  if (!peers) return `<p class="hm-quiet">Could not read the friends.</p>`;
+  const rows = peers.friends || [], live = rows.filter(f => !f.removed_at || f.id === justRemoved), gone = rows.filter(f => f.removed_at && f.id !== justRemoved);
+  let out = "";
+  const notes = (peers.notes || []).filter(n => n.id !== noteGone);
+  if (notes.length || noteGone) out += `<ul class="hm-list hm-fnotes">${notes.map(n =>
+    `<li class="hm-pj"><span class="hm-pw"><span class="hm-t">“${esc(n.text)}”</span><span class="hm-t hm-quiet">from ${esc(n.from)} · ${age(n.arrived_at)}</span></span>` +
+    `<button type="button" class="hm-link" data-hm="fkeep" data-k="${n.id}" data-tip="Keep it" data-tip-sub="into the bar: pick a desk, press Enter">Keep</button>` +
+    `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}">✕</button></li>`).join("")}${
+    noteGone ? `<li class="hm-pj"><span class="hm-s">Removed</span><button type="button" class="hm-link hm-undo" data-hm="fundrop" data-k="${noteGone}">Undo</button></li>` : ""}</ul>`;
+  for (const o of peers.offers || []) out += `<p class="hm-quiet hm-offer">${esc(o.by || "An agent")} offers <b>${esc(o.title || "a document")}</b> to ${esc(o.to)} · <button type="button" class="hm-link" data-hm="foffer" data-k="${o.id}">Send?</button></p>`;
+  if (!live.length && !gone.length) return out + `<p class="hm-quiet">Nobody yet. Pair once, with three words said over a call, and a document's menu gains Send to…</p>`;
+  out += `<ul class="hm-list">${live.map(f => f.id === justRemoved
+    ? `<li class="hm-pj"><span class="hm-pw"><span class="hm-t">${esc(f.name)}</span></span><span class="hm-s">Removed</span><button type="button" class="hm-link hm-undo" data-hm="frestore" data-k="${f.id}">Undo</button></li>`
+    : `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-pw"><span class="hm-kn">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>` +
+      `<span class="hm-t hm-quiet">paired ${age(f.paired_at)}${f.last_from ? ` · from them ${age(f.last_from)}` : ""}${f.last_to ? ` · sent ${age(f.last_to)}` : ""}</span></span>` +
+      `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>` +
+      `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
+      `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" aria-label="Remove ${esc(f.name)}" data-tip="Remove" data-tip-sub="keys kept; Restore brings them back">✕</button></li>`).join("")}</ul>`;
+  if (gone.length) out += `<p class="hm-quiet">Removed: ${gone.map(f => `${esc(f.name)} <button type="button" class="hm-link" data-hm="frestore" data-k="${f.id}">Restore</button>`).join(" · ")}</p>`;
+  return out;
+}
+
+async function friendAct(k, id) {
+  const r = await fetch(`/api/peers/${id}/${k}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => null);
+  if (!r || !r.ok) { c.peerCtx.toast(`Could not ${k} the friend`, { sub: r ? `snyvi answered ${r.status}` : "snyvi did not answer" }); return false; }
+  return true;
+}
+
 function keysOf(j) {
   const by = new Map();
   for (const d of j.desks || []) for (const k of d.keys || []) {
@@ -1016,6 +1067,7 @@ function wire() {
       if (justParked === id) { justParked = 0; clearTimeout(parkedT); }
       soonRefresh();
     }
+    else friendClick(k, id, b);
   });
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
@@ -1079,6 +1131,50 @@ function wire() {
   });
 }
 
+/** Friends: the sheets are peer.js's; the row's own actions are here. Out
+ *  of `wire` so that stays a screen (bench/size.mjs). */
+async function friendClick(k, id, b) {
+  if (k === "pair") c.peerCtx.peer().then(m => m.pair(c.peerCtx), () => c.peerCtx.toast("Could not open the pairing sheet"));
+  else if (k === "fnote") { const f = friendsOf().find(x => x.id === id); if (f) c.peerCtx.peer().then(m => m.note(c.peerCtx, id, f.name), () => {}); }
+  else if (k === "foffer") { const o = (peers?.offers || []).find(x => x.id === id); if (o) c.peerCtx.peer().then(m => m.offer(c.peerCtx, o), () => {}); }
+  else if (k === "fmute") {
+    const f = friendsOf().find(x => x.id === id);
+    const r = await fetch(`/api/peers/${id}/mute`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ muted: !f?.muted }) }).catch(() => null);
+    if (!r?.ok) c.peerCtx.toast("Could not change that"); else soonRefresh();
+  }
+  else if (k === "fremove") {
+    b.disabled = true;
+    if (!(await friendAct("remove", id))) return;
+    justRemoved = id; clearTimeout(removedT);
+    removedT = setTimeout(() => { justRemoved = 0; if (c?.view() === "home") draw(last); }, SAID_MS);
+    soonRefresh();
+  }
+  else if (k === "frestore") {
+    b.disabled = true;
+    if (!(await friendAct("restore", id))) return;
+    if (justRemoved === id) { justRemoved = 0; clearTimeout(removedT); }
+    soonRefresh();
+  }
+  // A friend's line: Keep puts it in the bar -- the reader picks the desk
+  // and presses Enter, as for a line of their own -- and the row is
+  // settled when it lands. ✕ puts it away, with an Undo.
+  else if (k === "fkeep") {
+    const n = (peers?.notes || []).find(x => x.id === id);
+    if (!n) return;
+    barDraft = n.text; carrying = id; menu = null; draw(last); focusBar(); lit();
+    say({ err: `From ${n.from} · pick a desk on the chip and press Enter` });
+    sayNow();
+  }
+  else if (k === "fdrop" || k === "fundrop") {
+    b.disabled = true;
+    const r = await fetch(`/api/peers/notes/${id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ what: k === "fdrop" ? "remove" : "restore" }) }).catch(() => null);
+    if (!r?.ok) { c.peerCtx.toast("Could not do that"); return; }
+    if (k === "fdrop") { noteGone = id; clearTimeout(noteGoneT); noteGoneT = setTimeout(() => { noteGone = 0; if (c?.view() === "home") draw(last); }, SAID_MS); }
+    else { noteGone = 0; clearTimeout(noteGoneT); }
+    soonRefresh();
+  }
+}
+
 /** Tick a line where it stands, or untick one just ticked. The circle fills
  *  at once and the daemon is told after; the row keeps its place, struck
  *  through, for TICK_MS, and a no puts the circle back and says so in the row. */
@@ -1123,6 +1219,10 @@ async function addNote() {
   let lost = 0;
   if (r?.note) for (const f of pics) { try { await c.deskApi(`/api/desks/${d.id}/notes/${r.note.id}/image`, f, f.type); } catch { lost++; } }
   if (r?.note) { if (d.next.length < 5) d.next.push({ id: r.note.id, text: r.note.text }); d.open += 1; }
+  if (r?.note && carrying) {
+    const was = carrying; carrying = 0;
+    fetch(`/api/peers/notes/${was}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ what: "taken" }) }).catch(() => {});
+  }
   say(lost ? { err: `Added to ${d.name}, without ${lost === 1 ? "the picture" : c.plural(lost, "picture")}` } : { desk: d.id, name: d.name, id: r?.note?.id, text });
   if (c.view() === "home") draw(last);
   soonRefresh();

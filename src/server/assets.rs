@@ -76,6 +76,8 @@ pub(crate) const TIP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/tip.js")
 /// Home, the page the mark opens: fetched when it is first shown, so a
 /// reader who goes straight to a document never pays for it.
 pub(crate) const HOME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/home.js"));
+/// A friend's snyvi: the pairing, Send to…, a line, an agent's offer (`ui/peer.js`).
+pub(crate) const PEER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/peer.js"));
 
 /// The toast, fetched the first time snyvi has something to say.
 pub(crate) const TOAST_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/toast.js"));
@@ -357,13 +359,34 @@ pub fn fmt_time(ts: i64) -> String {
 }
 
 /// Server-side document markup, mirrored by `renderDoc` in app.js.
-pub(crate) fn doc_html(doc: &Doc, body: &str) -> String {
+pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
     let e = html_escape::encode_text;
-    let mut sub = format!("{} · {}", e(&doc.project), e(&doc.workflow_title));
+    // A friend's document says who, and that the signature checked: the
+    // only way a document gets `peer` as its origin is through a frame that
+    // opened under a pinned key (`crate::peer::open`).
+    let mut sub = if doc.origin == "peer" && !doc.sender.is_empty() {
+        format!(
+            "from {} · verified · {}",
+            e(&doc.sender),
+            e(&doc.workflow_title)
+        )
+    } else {
+        format!("{} · {}", e(&doc.project), e(&doc.workflow_title))
+    };
     if let Some(b) = &doc.branch {
         sub.push_str(&format!(" · <span class=\"branch\">{}</span>", e(b)));
     }
     sub.push_str(&format!(" · {}", fmt_time(doc.received_at)));
+    // Send to…, only once there is a friend to send to: the page wires the
+    // click (`ui/peer.js`). In the sub line, so the head is the same height
+    // with it and without.
+    if friends {
+        sub.push_str(&format!(
+            " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
+            e(&doc.id),
+            e(&doc.title)
+        ));
+    }
     format!(
         "<header class=\"doc-head\"><h1 class=\"doc-title\">{}</h1><p class=\"doc-sub\">{}</p></header><article class=\"prose kind-{}\">{}</article>",
         e(&doc.title),
@@ -371,6 +394,15 @@ pub(crate) fn doc_html(doc: &Doc, body: &str) -> String {
         doc.kind.as_str(),
         render::chunk_code(body)
     )
+}
+
+/// Is there a friend to send a document to? What decides whether a head
+/// grows Send to….
+pub(crate) fn has_friends(app: &App) -> bool {
+    app.store
+        .peers()
+        .map(|ps| ps.iter().any(|p| p.removed_at == 0))
+        .unwrap_or(false)
 }
 
 /// `/`: Home, the page the mark opens -- what needs the reader, the desks,
@@ -448,7 +480,12 @@ pub(crate) async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response
     let preview = render::preview_kind(&doc_ext(&doc));
     let boot = json!({ "view": "doc", "tree": tree, "sub": sub, "doc": doc, "previous": previous, "folder": folder, "browse": app.browse.list(), "version": VERSION,
         "preview": preview, "preview_url": preview.map(|_| format!("/api/docs/{id}/blob")) });
-    shell(&app, boot, &doc_html(&doc, &body), &title)
+    shell(
+        &app,
+        boot,
+        &doc_html(&doc, &body, has_friends(&app)),
+        &title,
+    )
 }
 
 /// So nothing about a desk is in this answer: the page asks for it with the
@@ -510,6 +547,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("note.js", NOTE_JS, JS),
     ("tip.js", TIP_JS, JS),
     ("home.js", HOME_JS, JS),
+    ("peer.js", PEER_JS, JS),
     ("toast.js", TOAST_JS, JS),
     ("diff.js", DIFF_JS, JS),
     ("browse.js", BROWSE_JS, JS),

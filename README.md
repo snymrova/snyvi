@@ -79,6 +79,14 @@ panel says whether its agent is working, done, or waiting on you.
   </picture>
 </p>
 
+## A friend's snyvi
+
+Pair once, with three words said over a call, and a document's menu gains
+**Send to…** It lands in your friend's sidebar under *From you* within a
+second, sealed to their key on the way; a relay holds the ciphertext for a
+week at most, reads none of it, and keeps it for a snyvi that is asleep. An agent can offer a document to a friend, and you press
+Send. Nothing else travels.
+
 ## Room to focus
 
 When one agent needs all of you, fold the sidebar and the rail away and give

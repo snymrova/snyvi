@@ -1,0 +1,825 @@
+//! A friend's snyvi, over HTTP: pairing, the friends list, a document or a
+//! line sent to one, an agent's offer, and what is done with a frame a
+//! friend sent -- brought in through `receive::receive` like everything
+//! else. The cryptography and the relay's protocol are in `crate::peer`;
+//! the socket that waits at the relay is `peer_link`; this file is the
+//! daemon's side of both.
+//!
+//! Every reader's action here is behind `refuse_reader` -- this page, or the
+//! token -- and never a desk's capability: a tab can send a document to a
+//! friend as well as the window can. The one agent route, `/offer`, is behind
+//! the token and a running pane like the rest of a panel's, and it sends
+//! nothing: it writes an offer the reader answers.
+
+use super::*;
+use crate::peer::{self, Content, Identity, PairState, Peer, Waiting};
+use std::collections::HashMap;
+
+/// What the daemon holds in memory for its friends: its own keys once read,
+/// the pairings under way, and the link's wake-up.
+#[derive(Default)]
+pub(crate) struct Peers {
+    /// The identity, read from the keychain once per process.
+    pub identity: std::sync::Mutex<Option<Identity>>,
+    /// Pairings under way or lately finished, by code.
+    pub pairings: std::sync::Mutex<HashMap<String, Pairing>>,
+    /// Woken when there is something to send, or a friend was added or
+    /// removed: the link (`peer_link`) flushes the outbox, opens, or closes.
+    pub wake: tokio::sync::Notify,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Pairing {
+    pub state: PairState,
+    /// When the code dies; the entry is forgotten a while after.
+    pub until: i64,
+}
+
+/// How many pairings may wait at once. One is the case; a few is a reader
+/// who typed the wrong code twice.
+const PAIRINGS_MAX: usize = 5;
+/// A finished pairing stays readable this long after its code died.
+const PAIRING_KEPT: i64 = 600;
+/// A frame that fails this many times is left in the outbox, not retried.
+const TRIES_MAX: i64 = 20;
+/// What the reader is told at the Send button, and what a queued frame's
+/// row says, when a document is over `peer::SEND_MAX`.
+const TOO_LARGE: &str = "too large to send to a friend (over 8 MB)";
+
+/// The identity, minting one if there is none. Blocking: the keychain.
+pub(crate) fn identity_blocking(app: &App) -> anyhow::Result<Identity> {
+    if let Some(id) = app.peers.identity.lock().unwrap().clone() {
+        return Ok(id);
+    }
+    let id = Identity::load_or_mint(&app.secrets)?;
+    *app.peers.identity.lock().unwrap() = Some(id.clone());
+    Ok(id)
+}
+
+/// The identity if one was ever minted; never mints. What the link asks,
+/// so a daemon nobody has paired touches no keychain.
+pub(crate) fn identity_if_any(app: &App) -> Option<Identity> {
+    if let Some(id) = app.peers.identity.lock().unwrap().clone() {
+        return Some(id);
+    }
+    let id = Identity::load(&app.secrets)?;
+    *app.peers.identity.lock().unwrap() = Some(id.clone());
+    Some(id)
+}
+
+/// The name a friend sees this snyvi as. What the reader typed when pairing,
+/// kept in one file; the account's name until then.
+pub(crate) fn my_name(paths: &Paths) -> String {
+    std::fs::read_to_string(paths.config_dir.join("peer-name"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "a friend".to_string())
+        })
+}
+
+fn set_my_name(paths: &Paths, name: &str) {
+    let name: String = name.trim().chars().take(60).collect();
+    if name.is_empty() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&paths.config_dir);
+    let _ = std::fs::write(paths.config_dir.join("peer-name"), name);
+}
+
+fn peers_moved(app: &App) {
+    emit(app, "peers", json!({}));
+}
+
+/// `GET /api/peers`: the friends, the lines waiting, the offers open, and
+/// what this snyvi is called. Open, as the project list is: names and
+/// dates, no keys that open anything.
+pub(crate) async fn peers_list(State(app): S) -> Response {
+    let friends = app.store.peers().unwrap_or_default();
+    let notes = app.store.peer_notes().unwrap_or_default();
+    let offers = app.store.peer_offers().unwrap_or_default();
+    Json(json!({
+        "friends": friends,
+        "notes": notes,
+        "offers": offers,
+        "me": { "name": my_name(&app.paths) },
+        "relay": peer::relay(),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct PairBody {
+    #[serde(default)]
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) code: String,
+}
+
+fn too_many(app: &App) -> bool {
+    let now = crate::store::now();
+    let mut p = app.peers.pairings.lock().unwrap();
+    p.retain(|_, x| x.until + PAIRING_KEPT > now);
+    p.values().filter(|x| x.state == PairState::Waiting).count() >= PAIRINGS_MAX
+}
+
+/// `POST /api/peers/pair`: mint a code and wait in its room for whoever
+/// types it. The answer is the code to say and when it dies.
+pub(crate) async fn pair_start(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<PairBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    if too_many(&app) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "error": "a few codes are already waiting; let one run out" })),
+        )
+            .into_response();
+    }
+    let code = match peer::mint_code() {
+        Ok(c) => c,
+        Err(e) => return err(e),
+    };
+    set_my_name(&app.paths, &b.name);
+    let until = start_pairing(&app, code.clone(), my_name(&app.paths));
+    Json(json!({ "code": code, "until": until })).into_response()
+}
+
+/// `POST /api/peers/join`: the other side's code, typed.
+pub(crate) async fn pair_join(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<PairBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let code = match peer::normalize_code(&b.code) {
+        Ok(c) => c,
+        Err(why) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": why })),
+            )
+                .into_response()
+        }
+    };
+    if too_many(&app) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "error": "a few codes are already waiting; let one run out" })),
+        )
+            .into_response();
+    }
+    if app.peers.pairings.lock().unwrap().contains_key(&code) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "that is this snyvi's own code" })),
+        )
+            .into_response();
+    }
+    set_my_name(&app.paths, &b.name);
+    let until = start_pairing(&app, code.clone(), my_name(&app.paths));
+    Json(json!({ "code": code, "until": until })).into_response()
+}
+
+/// `GET /api/peers/pair/{code}`: where it has got to.
+pub(crate) async fn pair_state(State(app): S, Path(code): Path<String>) -> Response {
+    let p = app.peers.pairings.lock().unwrap().get(&code).cloned();
+    match p {
+        Some(p) => Json(json!({ "pairing": p.state, "until": p.until })).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// One side of a pairing, on a thread of its own, from the code to the
+/// pinned row. Returns when the code dies.
+fn start_pairing(app: &Arc<App>, code: String, name: String) -> i64 {
+    let until = crate::store::now() + peer::CODE_TTL;
+    app.peers.pairings.lock().unwrap().insert(
+        code.clone(),
+        Pairing {
+            state: PairState::Waiting,
+            until,
+        },
+    );
+    let app = app.clone();
+    tokio::spawn(async move {
+        let app2 = app.clone();
+        let c = code.clone();
+        let r = tokio::task::spawn_blocking(move || -> anyhow::Result<(Peer, String)> {
+            let me = identity_blocking(&app2)?;
+            peer::pair(&me, &c, &name, until)
+        })
+        .await;
+        let state = match r {
+            Ok(Ok((p, emoji))) => match app.store.pin_peer(&p) {
+                Ok(pinned) => {
+                    eprintln!("snyvi: paired with {}", pinned.name);
+                    peers_moved(&app);
+                    app.peers.wake.notify_one();
+                    PairState::Done {
+                        emoji,
+                        name: pinned.name,
+                        peer: pinned.id,
+                    }
+                }
+                Err(e) => PairState::Failed { why: e.to_string() },
+            },
+            Ok(Err(e)) => PairState::Failed {
+                why: format!("{e:#}"),
+            },
+            Err(e) => PairState::Failed { why: e.to_string() },
+        };
+        if let Some(p) = app.peers.pairings.lock().unwrap().get_mut(&code) {
+            p.state = state.clone();
+        }
+        emit(&app, "pairing", json!({ "code": code, "pairing": state }));
+    });
+    until
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct NameBody {
+    #[serde(default)]
+    pub(crate) name: String,
+}
+
+pub(crate) async fn peer_rename(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<NameBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.rename_peer(id, &b.name) {
+        Ok(true) => {
+            // The friend's project row follows their name, unless the reader
+            // named that themselves.
+            if let Ok(Some(p)) = app.store.peer(id) {
+                let _ = app
+                    .store
+                    .rename_project_by_root(&p.project_root(), &p.project_name());
+            }
+            peers_moved(&app);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct MuteBody {
+    #[serde(default)]
+    pub(crate) muted: bool,
+}
+
+pub(crate) async fn peer_mute(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<MuteBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.mute_peer(id, b.muted) {
+        Ok(true) => {
+            peers_moved(&app);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// ✕ on a friend: off the list, keys kept, nothing more arrives from them
+/// until Restore. A document already here stays, as every document does.
+pub(crate) async fn peer_remove(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.remove_peer(id) {
+        Ok(true) => {
+            peers_moved(&app);
+            // The link closes when that was the last friend.
+            app.peers.wake.notify_one();
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+pub(crate) async fn peer_restore(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.restore_peer(id) {
+        Ok(true) => {
+            peers_moved(&app);
+            app.peers.wake.notify_one();
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct TextBody {
+    #[serde(default)]
+    pub(crate) text: String,
+}
+
+/// `POST /api/peers/{id}/note`: a line for a friend's notes, sealed and
+/// left at the relay now. Not queued: a line is said or it is not.
+pub(crate) async fn peer_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<TextBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let text: String = b.text.trim().chars().take(peer::NOTE_CHARS).collect();
+    if text.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "a line of text" })),
+        )
+            .into_response();
+    }
+    let Ok(Some(p)) = app.store.peer(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if p.removed_at != 0 {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "this friend was removed; Restore them first" })),
+        )
+            .into_response();
+    }
+    let app2 = app.clone();
+    let r = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+        let me = identity_blocking(&app2)?;
+        let content = Content::Note {
+            text: text.clone(),
+            name: my_name(&app2.paths),
+        };
+        let frame = peer::seal(&me, &p, &content, b"")?;
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let id = blake3::hash(&nonce).to_hex().to_string();
+        let sent = peer::deposit(&p.sign_key, &id, &frame)?;
+        if sent {
+            let _ = app2.store.touch_peer(p.id, false);
+        }
+        Ok(sent)
+    })
+    .await;
+    match r {
+        Ok(Ok(true)) => {
+            peers_moved(&app);
+            Json(json!({ "sent": true })).into_response()
+        }
+        Ok(Ok(false)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "their mailbox is full; try later" })),
+        )
+            .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("{e:#}") })),
+        )
+            .into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct SettleBody {
+    #[serde(default)]
+    pub(crate) what: String,
+}
+
+/// `POST /api/peers/notes/{id}`: a waiting line was kept on a desk, put
+/// away, or brought back (`what`: taken, remove, restore).
+pub(crate) async fn peer_note_settle(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<SettleBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.settle_peer_note(id, &b.what) {
+        Ok(true) => {
+            emit(&app, "peernotes", json!({}));
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct SendBody {
+    #[serde(default)]
+    pub(crate) peer: i64,
+}
+
+/// `POST /api/docs/{id}/send`: this document to that friend. Queued, so a
+/// relay that is away tonight gets it tomorrow, and tried now.
+pub(crate) async fn doc_send(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<SendBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let Ok(Some(doc)) = app.store.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(Some(p)) = app.store.peer(b.peer) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "no such friend" })),
+        )
+            .into_response();
+    };
+    if p.removed_at != 0 {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "this friend was removed; Restore them first" })),
+        )
+            .into_response();
+    }
+    if doc.size as usize > peer::SEND_MAX {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({ "error": TOO_LARGE })),
+        )
+            .into_response();
+    }
+    let frame = match app.store.peer_queue(&p, &id) {
+        Ok(f) => f,
+        Err(e) => return err(e),
+    };
+    let app2 = app.clone();
+    let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
+        .await
+        .unwrap_or(false);
+    peers_moved(&app);
+    Json(json!({ "sent": sent, "to": p.name })).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct AnswerBody {
+    #[serde(default)]
+    pub(crate) send: bool,
+}
+
+/// `POST /api/peers/offers/{id}`: the reader's Send or Not now on an agent's
+/// offer. Send queues the document as a Send to… would.
+pub(crate) async fn offer_answer(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<AnswerBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let Ok(Some(o)) = app.store.peer_offer_get(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // Too large is said before the offer is answered, so it stays open and
+    // the reader can press Not now with the reason in front of them.
+    if b.send {
+        if let Ok(Some(doc)) = app.store.get(&o.doc_id) {
+            if doc.size as usize > peer::SEND_MAX {
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    Json(json!({ "error": TOO_LARGE })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    if let Err(e) = app.store.answer_peer_offer(id, b.send) {
+        return err(e);
+    }
+    emit(&app, "peeroffers", json!({}));
+    if !b.send {
+        return Json(json!({ "sent": false })).into_response();
+    }
+    let Ok(Some(p)) = app.store.peer(o.peer_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let frame = match app.store.peer_queue(&p, &o.doc_id) {
+        Ok(f) => f,
+        Err(e) => return err(e),
+    };
+    let app2 = app.clone();
+    let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
+        .await
+        .unwrap_or(false);
+    peers_moved(&app);
+    Json(json!({ "sent": sent, "to": p.name })).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct OfferBody {
+    #[serde(default)]
+    pub(crate) to: String,
+    #[serde(default)]
+    pub(crate) doc: String,
+    #[serde(default)]
+    pub(crate) by: String,
+}
+
+/// `POST /api/panes/{id}/offer`: `offer_document`. An agent in a panel asks
+/// that a document go to a friend; the reader is shown the question where
+/// they are and presses Send, or not. Nothing leaves on the agent's word.
+pub(crate) async fn pane_offer(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<OfferBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let to = b.to.trim();
+    if to.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "offer_document needs the friend's name" })),
+        )
+            .into_response();
+    }
+    let Ok(Some(p)) = app.store.peer_by_name(to) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": format!("the user has no friend called {to}; they pair from Home") }))).into_response();
+    };
+    let Ok(Some(doc)) = app.store.get(b.doc.trim()) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "no document by that id; send_document answers with one" })),
+        )
+            .into_response();
+    };
+    match app.store.peer_offer(p.id, &doc.id, &id, &b.by) {
+        Ok(offer_id) => {
+            emit(
+                &app,
+                "peeroffers",
+                json!({ "offer": offer_id, "to": p.name, "title": doc.title, "by": b.by, "desk": placed.desk_name }),
+            );
+            (
+                StatusCode::CREATED,
+                Json(json!({ "to": p.name, "title": doc.title })),
+            )
+                .into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// Send what is queued: every unsent frame, or the one named. Blocking.
+/// `true` when the named one went, or when every one did.
+pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
+    let Ok(rows) = app.store.peer_unsent() else {
+        return false;
+    };
+    let Ok(me) = identity_blocking(app) else {
+        return false;
+    };
+    let name = my_name(&app.paths);
+    let mut all = true;
+    let mut moved = false;
+    for (frame_id, peer_id, doc_id, tries) in rows {
+        if only.is_some_and(|o| o != frame_id) {
+            continue;
+        }
+        if tries >= TRIES_MAX {
+            all = false;
+            continue;
+        }
+        let went = match send_one(app, &me, &name, &frame_id, peer_id, &doc_id) {
+            Ok(true) => {
+                let _ = app.store.peer_sent(&frame_id);
+                let _ = app.store.touch_peer(peer_id, false);
+                moved = true;
+                true
+            }
+            Ok(false) => {
+                let _ = app.store.peer_failed(&frame_id, "their mailbox is full");
+                false
+            }
+            Err(e) => {
+                let _ = app.store.peer_failed(&frame_id, &format!("{e:#}"));
+                false
+            }
+        };
+        all &= went;
+    }
+    if moved && only.is_none() {
+        peers_moved(app);
+    }
+    all
+}
+
+fn send_one(
+    app: &App,
+    me: &Identity,
+    name: &str,
+    frame_id: &str,
+    peer_id: i64,
+    doc_id: &str,
+) -> anyhow::Result<bool> {
+    let p = app
+        .store
+        .peer(peer_id)?
+        .ok_or_else(|| anyhow::anyhow!("no such friend"))?;
+    let Some(doc) = app.store.get(doc_id)? else {
+        // The document went while the frame waited: nothing to send, done.
+        app.store.peer_sent(frame_id)?;
+        return Ok(true);
+    };
+    let bytes = std::fs::read(app.store.src_path(doc_id))?;
+    // Checked at the Send button too; this is the document that grew while
+    // the frame waited for the relay.
+    if bytes.len() > peer::SEND_MAX {
+        anyhow::bail!("{TOO_LARGE}");
+    }
+    let content = Content::Document {
+        title: doc.title.clone(),
+        lang: doc.lang.clone(),
+        file: doc
+            .source_path
+            .as_deref()
+            .and_then(|sp| std::path::Path::new(sp).file_name())
+            .map(|f| f.to_string_lossy().to_string()),
+        name: name.to_string(),
+        id: doc.id.clone(),
+    };
+    let frame = peer::seal(me, &p, &content, &bytes)?;
+    peer::deposit(&p.sign_key, frame_id, &frame)
+}
+
+/// One frame from the relay, with its bytes: kept, or dropped, and `true`
+/// when it was kept. Blocking. The decisions in order: not from a friend's
+/// key, or a friend since removed -- dropped unopened; brought in already
+/// (`peer_taken`: the link may be handed a frame twice when its ack was
+/// lost) -- dropped; over the cap -- dropped; does not open, or cannot be
+/// kept -- dropped with a line on stderr; else `arrived`, and its id
+/// remembered. The caller acks every one of these; an `Err` is the store
+/// not answering, and the frame is left at the relay for the next catch-up.
+pub(crate) fn take_in(
+    app: &Arc<App>,
+    me: &Identity,
+    w: &Waiting,
+    bytes: Vec<u8>,
+) -> anyhow::Result<bool> {
+    let friend = app
+        .store
+        .peer_by_key(&w.sender)?
+        .filter(|p| p.removed_at == 0);
+    let Some(p) = friend else {
+        return Ok(false);
+    };
+    if app.store.peer_taken(&w.id)? {
+        return Ok(false);
+    }
+    if w.size as usize > peer::FRAME_MAX || bytes.len() > peer::FRAME_MAX {
+        return Ok(false);
+    }
+    match peer::open(me, &p, &bytes) {
+        Ok((content, body)) => {
+            if let Err(e) = arrived(app, &p, content, body) {
+                eprintln!("snyvi: a document from {} could not be kept: {e:#}", p.name);
+                return Ok(false);
+            }
+            app.store.peer_take(&w.id)?;
+            Ok(true)
+        }
+        Err(e) => {
+            eprintln!("snyvi: a frame from {} was dropped: {e:#}", p.name);
+            Ok(false)
+        }
+    }
+}
+
+/// The inbox swept over HTTP: what the link does when the socket will not
+/// open. Blocking. Each frame goes through `take_in` and is acked, opened
+/// or not, so the relay holds nothing twice; one from a key that is not a
+/// friend's is never downloaded.
+pub(crate) fn bring_in(app: &Arc<App>, me: &Identity) -> anyhow::Result<usize> {
+    let waiting = peer::inbox(me)?;
+    let mut n = 0;
+    for w in waiting {
+        let friend = app
+            .store
+            .peer_by_key(&w.sender)?
+            .filter(|p| p.removed_at == 0);
+        let fetch =
+            friend.is_some() && !app.store.peer_taken(&w.id)? && w.size as usize <= peer::FRAME_MAX;
+        if fetch {
+            let bytes = peer::fetch(me, &w.id)?;
+            if take_in(app, me, &w, bytes)? {
+                n += 1;
+            }
+        }
+        peer::ack(me, &w.id)?;
+    }
+    Ok(n)
+}
+
+/// One opened frame, kept: a document through `receive`, a line to the
+/// waiting list. A muted friend's arrives read, so nothing lights up.
+fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow::Result<()> {
+    let _ = app.store.touch_peer(p.id, true);
+    match content {
+        Content::Document {
+            title, lang, file, ..
+        } => {
+            let payload = Payload {
+                title: Some(title),
+                lang,
+                origin: Some("peer".into()),
+                sender: Some(p.name.clone()),
+                peer: Some(crate::receive::FromPeer {
+                    name: p.name.clone(),
+                    sign_key: p.sign_key.clone(),
+                    bytes: body,
+                    file,
+                }),
+                ..Default::default()
+            };
+            let received = receive::receive(&app.store, &app.renderer, payload)?;
+            if p.muted {
+                let _ = app.store.mark_read(&received.doc.id);
+            }
+            let mut ev = doc_event(app, &received);
+            ev["from"] = json!(p.name);
+            ev["quiet"] = json!(p.muted);
+            emit(app, "doc", ev);
+            if !p.muted && !received.existing {
+                eprintln!("snyvi: {} sent \"{}\"", p.name, received.doc.title);
+            }
+        }
+        Content::Note { text, .. } => {
+            app.store.peer_note_arrived(p.id, &text)?;
+            emit(
+                app,
+                "peernotes",
+                json!({ "from": p.name, "quiet": p.muted }),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// An offer from a panel whose program ended is answered No: the agent that
+/// asked is gone, and nothing is sent later on a question nobody can see
+/// the context of any more.
+pub(crate) fn sweep_offers(app: &App) {
+    let Ok(offers) = app.store.peer_offers() else {
+        return;
+    };
+    let mut dropped = 0;
+    for o in offers {
+        if !o.pane.is_empty() && !app.panes.is_running(&o.pane) {
+            dropped += app.store.drop_peer_offers_of(&o.pane).unwrap_or(0);
+        }
+    }
+    if dropped > 0 {
+        emit(app, "peeroffers", json!({}));
+    }
+}

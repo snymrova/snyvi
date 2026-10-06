@@ -4,17 +4,21 @@
 //! the host gate), `assets` (what the browser loads), `api_docs` (the library),
 //! `api_desk` (the page's side of a desk), `api_agent` (the agent's side), `ws`
 //! (the desk socket), `events` (SSE), `api_browse` (folders read from disk),
-//! `lifecycle` (restart, update, reset). This file holds what they share: the
-//! `App`, the router, `run`, and the one way a document is told to every page.
+//! `lifecycle` (restart, update, reset), `api_peer` (a friend's snyvi) and
+//! `peer_link` (the socket that waits at the relay for a friend's frame).
+//! This file holds what they share: the `App`, the router, `run`, and the
+//! one way a document is told to every page.
 
 mod api_agent;
 mod api_browse;
 mod api_desk;
 mod api_docs;
+mod api_peer;
 mod assets;
 mod auth;
 mod events;
 mod lifecycle;
+mod peer_link;
 #[cfg(test)]
 mod tests;
 mod ws;
@@ -23,11 +27,13 @@ use api_agent::*;
 use api_browse::*;
 use api_desk::*;
 use api_docs::*;
+use api_peer::*;
 use assets::*;
 use auth::*;
 use events::*;
 use lifecycle::*;
 pub use lifecycle::{relaunch, Leaving};
+use peer_link::*;
 use ws::*;
 
 use crate::browse::Browser;
@@ -168,6 +174,9 @@ pub struct App {
     /// The account's rate-limit windows, as the last status line in a panel
     /// said them: account-wide, so the latest is the one. Home's quota.
     pub quota: std::sync::Mutex<Option<serde_json::Value>>,
+    /// Friends: the daemon's own keys once read, the pairings under way, and
+    /// the link's wake-up. See `api_peer`, `peer_link` and `crate::peer`.
+    pub peers: api_peer::Peers,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -315,7 +324,27 @@ fn new_app(
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
         quota: Default::default(),
+        peers: Default::default(),
     })
+}
+
+/// A friend's snyvi, `/api/peers/*` and Send to… (`api_peer`, docs/PEER.md):
+/// pairing, the friends, their lines, an agent's offers. Their own function
+/// for the same reason as `pane_routes`; the route table counts these too.
+fn peer_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/peers", get(peers_list))
+        .route("/api/peers/pair", post(pair_start))
+        .route("/api/peers/join", post(pair_join))
+        .route("/api/peers/pair/{code}", get(pair_state))
+        .route("/api/peers/{id}/rename", post(peer_rename))
+        .route("/api/peers/{id}/mute", post(peer_mute))
+        .route("/api/peers/{id}/remove", post(peer_remove))
+        .route("/api/peers/{id}/restore", post(peer_restore))
+        .route("/api/peers/{id}/note", post(peer_note))
+        .route("/api/peers/notes/{id}", post(peer_note_settle))
+        .route("/api/peers/offers/{id}", post(offer_answer))
+        .route("/api/docs/{id}/send", post(doc_send))
 }
 
 /// A panel's routes, `/api/panes/{id}/*`: the page's (close, restore,
@@ -339,6 +368,7 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/keys/{name}", get(pane_key))
         .route("/api/panes/{id}/leftoff", post(pane_left_off))
         .route("/api/panes/{id}/suggest", post(pane_suggest_note))
+        .route("/api/panes/{id}/offer", post(pane_offer))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
@@ -466,7 +496,10 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
+        // Friends (`api_peer`): the reader's actions from this page or with
+        // the token, the reads open like the project list is.
         .merge(pane_routes())
+        .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
         .fallback(not_found)
@@ -600,6 +633,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // and the watcher would apply it again.
     spawn_restart_watcher(leaving.clone());
     spawn_update_checker(leaving.clone());
+    // The link to the relay, for as long as there is a friend: what they
+    // send arrives as it lands, page open or not.
+    spawn_peer_link(leaving.clone());
     // An install from an older snyvi gets the hooks that tell a panel what
     // Claude is doing, without the reader running `init-claude` again. Only
     // where our hook already is and names this binary, and only once this

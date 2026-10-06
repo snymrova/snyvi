@@ -409,6 +409,7 @@ fn send(
         origin: Some("cli".into()),
         sender: None,
         pane: None,
+        peer: None,
     };
     let resp = client::send(paths, &payload)?;
     let url = resp

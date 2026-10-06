@@ -3,7 +3,7 @@
 use super::{
     desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
     BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS,
-    LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, TIP_JS, TOAST_JS,
+    LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
 };
 use super::{
     new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
@@ -533,6 +533,44 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    // Friends. Pair and join are asked only to refuse: let through, they
+    // mint a key into the keychain and open a room at the relay.
+    ("GET", "/api/peers", None, Gate::Open, true),
+    ("POST", "/api/peers/pair", Some("{}"), Gate::Reader, false),
+    ("POST", "/api/peers/join", Some("{}"), Gate::Reader, false),
+    ("GET", "/api/peers/pair/nope", None, Gate::Open, true),
+    (
+        "POST",
+        "/api/peers/1/rename",
+        Some(r#"{"name":"x"}"#),
+        Gate::Reader,
+        true,
+    ),
+    ("POST", "/api/peers/1/mute", Some("{}"), Gate::Reader, true),
+    ("POST", "/api/peers/1/remove", None, Gate::Reader, true),
+    ("POST", "/api/peers/1/restore", None, Gate::Reader, true),
+    (
+        "POST",
+        "/api/peers/1/note",
+        Some(r#"{"text":"x"}"#),
+        Gate::Reader,
+        true,
+    ),
+    ("POST", "/api/peers/notes/1", Some("{}"), Gate::Reader, true),
+    (
+        "POST",
+        "/api/peers/offers/1",
+        Some("{}"),
+        Gate::Reader,
+        true,
+    ),
+    (
+        "POST",
+        "/api/docs/nope/send",
+        Some("{}"),
+        Gate::Reader,
+        true,
+    ),
     ("GET", "/api/brief", None, Gate::Desk, true),
     (
         "POST",
@@ -611,6 +649,13 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/panes/nope/offer",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     ("GET", "/desks", None, Gate::Open, true),
     ("GET", "/desk/1", None, Gate::Open, true),
 ];
@@ -693,8 +738,8 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let (_tmp, router, leaves) = gated_router("snyvi-routes");
 
     // The table is the router. Git on Windows checks this file out with CRLF.
-    // `router`, the panels' routes it merges, and the receive route it builds
-    // apart for its body limit.
+    // `router`, the panels' and the friends' routes it merges, and the
+    // receive route it builds apart for its body limit.
     let src = include_str!("mod.rs").replace("\r\n", "\n");
     let routes_in = |name: &str| {
         let routed = &src[src.find(name).unwrap()..];
@@ -705,6 +750,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     };
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn peer_routes(")
         + routes_in("\nfn receive_route(");
     assert_eq!(
         n,
@@ -1069,6 +1115,7 @@ fn every_id_the_script_uses_unguarded_is_in_the_page() {
         ("note.js", NOTE_JS),
         ("tip.js", TIP_JS),
         ("home.js", HOME_JS),
+        ("peer.js", PEER_JS),
         ("toast.js", TOAST_JS),
         ("diff.js", DIFF_JS),
         ("browse.js", BROWSE_JS),
