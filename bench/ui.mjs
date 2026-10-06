@@ -3252,13 +3252,25 @@ async function costRows(p, url, base, token, tmp, arrive) {
   // its way to a row does to the rows on the way. Over documents this page
   // has never fetched -- arrivals, whose cache entry the page drops -- so a
   // fetch would show. Then it rests on the last, and that one may come.
+  // How long the pointer sat on each row is read on the page's own clock:
+  // a busy runner can stretch a 50 ms step past the 150 ms rest, and a row
+  // the pointer truly rested on may be fetched. Only rows crossed under
+  // 140 ms are charged.
   const fresh = [];
   for (let i = 0; i < 8; i++) fresh.push((await arrive({ name: `sweep-${i}.md`, body: `# Swept ${i}\n\nA row the pointer crosses.\n` })).id);
   for (let i = 0; i < 40 && !(await p.ev(`!!document.querySelector('#trees a[data-id="${fresh[fresh.length - 1]}"]')`)); i++) await sleep(100);
   await sleep(400);
   const swept = (await p.ev(`[...document.querySelectorAll("#trees a[data-id]")].map(a => a.dataset.id)`)).filter(id => fresh.includes(id));
   const ids = [...new Set(swept)];
-  await p.ev(`window.__cost.api.length = 0`);
+  await p.ev(`(() => {
+    window.__cost.api.length = 0;
+    const S = window.__sweep = [];
+    document.addEventListener("mouseover", e => {
+      const id = e.target.closest?.("a[data-id]")?.dataset.id || null;
+      if (!S.length || S[S.length - 1][0] !== id) S.push([id, performance.now()]);
+    }, true);
+    return 1;
+  })()`);
   for (const id of ids) {
     const at = await p.ui("center", `a[data-id="${id}"]`);
     await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, p.s);
@@ -3266,9 +3278,17 @@ async function costRows(p, url, base, token, tmp, arrive) {
   }
   await p.pointerAway();
   await sleep(400);
-  const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/"));
-  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && crossed.length === 0,
-    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep` : crossed.length ? `${crossed.length} documents fetched for ${ids.length} rows crossed` : `${ids.length} rows crossed in ${ids.length * 50} ms, nothing fetched`]);
+  const sweep = await p.ev(`window.__sweep.slice()`);
+  const dwell = new Map();
+  sweep.forEach(([id, t], i) => { if (id && sweep[i + 1]) dwell.set(id, Math.max(dwell.get(id) || 0, sweep[i + 1][1] - t)); });
+  const quick = ids.filter(id => dwell.has(id) && dwell.get(id) < 140);
+  const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/") && quick.includes(a.split("/")[3]));
+  const slow = ids.length - quick.length;
+  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && quick.length >= 4 && crossed.length === 0,
+    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep`
+      : quick.length < 4 ? `only ${quick.length} of ${ids.length} rows crossed under 140 ms, too slow a sweep to judge`
+      : crossed.length ? `${crossed.length} documents fetched for ${quick.length} rows crossed under 140 ms`
+      : `${quick.length} rows crossed under 140 ms, nothing fetched${slow ? ` (${slow} the runner held longer, not charged)` : ""}`]);
   await p.ev(`window.__cost.api.length = 0`);
   await p.hoverOn(`a[data-id="${ids[ids.length - 1]}"]`);
   await sleep(400);
