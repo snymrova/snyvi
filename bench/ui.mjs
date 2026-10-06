@@ -1725,12 +1725,12 @@ async function folderRows(cdp, base, browsed) {
     rows.push(["and ▴ .. goes back up", up, up ? "the folder's own listing again" : `at ${await q.ev("location.pathname")}`]);
 
     await q.goto(`${root}/sub/inner/`);
-    const loaded = await until(`/deep\.md/.test(${listed})`);
+    const loaded = await until(`/deep\\.md/.test(${listed})`);
     rows.push(["an address ending in / is that folder's listing", loaded, loaded ? await q.ev(listed) : `the page shows "${await q.ev(listed)}"`]);
 
     // A path in a file being read, Ctrl-clicked: `inner/` is a folder beside it.
     await q.goto(`${root}/sub/where.md`);
-    await until(`/inner\//.test(document.querySelector("#doc .prose")?.textContent || "")`);
+    await until(`/inner\\//.test(document.querySelector("#doc .prose")?.textContent || "")`);
     const word = await q.ev(`(() => { const p = [...document.querySelectorAll("#doc .prose p")].find(e => e.textContent.includes("inner/"));
       if (!p) return null; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n, off = p.textContent.indexOf("inner/") + 2;
       while ((n = w.nextNode()) && off >= n.length) off -= n.length; const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 1);
@@ -1742,7 +1742,7 @@ async function folderRows(cdp, base, browsed) {
       const lined = await until(`!!document.querySelector(".path-ul i")`, 30);
       for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, word.x, word.y, { button: "left", clickCount: 1, modifiers: 2 });
       await ctrl("keyUp");
-      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\.md/.test(${listed})`);
+      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\\.md/.test(${listed})`);
       const toast = await said();
       rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", lined && opened && !/file manager/.test(toast),
         !lined ? "Ctrl never underlined inner/" : !opened ? `at ${await q.ev("location.pathname")}, and the page said "${toast}"` : /file manager/.test(toast) ? `it still says "${toast}"` : "inner/ listed in snyvi, with deep.md in it"]);

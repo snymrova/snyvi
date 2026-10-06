@@ -1071,7 +1071,9 @@ pub(crate) async fn doc_save(
         Ok(Ok(at)) => {
             let rel = at
                 .strip_prefix(&d.root)
-                .map(|r| r.to_string_lossy().to_string())
+                // The same on every system: it is said to the reader, and a
+                // path inside a folder reads with /.
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| at.to_string_lossy().to_string());
             Json(json!({ "path": at, "rel": rel, "desk": d.name })).into_response()
         }
