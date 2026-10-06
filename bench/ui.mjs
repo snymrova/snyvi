@@ -19,6 +19,8 @@
  *   node bench/ui.mjs            report
  *   node bench/ui.mjs --check    and exit non-zero if a row fails
  *   node bench/ui.mjs --only "a desk|folder"   only the sections whose name it matches
+ *   node bench/ui.mjs --before "a folder, opened in snyvi"   the sections up to that one
+ *   node bench/ui.mjs --from "a folder, opened in snyvi"     that one and the rest
  *
  * Counts and positions only, no clocks, so every row is enforced on every
  * machine. Chromium is driven the way browser.mjs drives it, over the
@@ -239,8 +241,22 @@ async function main() {
 
     const sections = [];
     // `--only <pattern>` runs the sections whose name it matches, for work on one.
+    // `--before <name>` and `--from <name>` cut the run in two at a section,
+    // which is how CI runs the halves side by side; each half starts on a
+    // daemon of its own, so neither may lean on what the other left.
     const only = flag("--only") && new RegExp(flag("--only"));
-    const section = async (name, rows) => { if (!only || only.test(name)) sections.push([name, await rows()]); };
+    const from = flag("--from"), before = flag("--before");
+    let inRange = !from;
+    const seen = new Set();
+    const section = async (name, rows) => {
+      seen.add(name);
+      if (name === from) inRange = true;
+      if (name === before) inRange = false;
+      if (!inRange || (only && !only.test(name))) return;
+      const t = Date.now();
+      const r = await rows();
+      sections.push([`${name}  (${((Date.now() - t) / 1000).toFixed(1)} s)`, r]);
+    };
     await section("the rail, 1280 px wide", () => railRows(p, url, md, send));
     await section("narrow windows", () => narrowRows(p, url));
     await section("the sidebar, folded to its rail", () => sideRailRows(p, url, arrive));
@@ -281,6 +297,8 @@ async function main() {
     // And after it, because it takes the daemon.
     await section("a daemon that stops, and the page that follows", () => stopRows(p, base, tmp, env, second));
 
+    // A cut named wrong would run nothing, or everything, and say ok.
+    for (const cut of [from, before]) if (cut && !seen.has(cut)) throw new Error(`no section is named "${cut}"`);
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
       console.log(title);
@@ -3002,9 +3020,12 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
     // The panes were started at 80x24 before the page fitted them: the size to
-    // come back to is the one they settle at.
+    // come back to is the one they settle at. A size, and not just "not
+    // 80x24": the screen is empty for a moment while the panel is redrawn,
+    // which once ended the wait before the fit, and ⌃0 then went back to
+    // the fit and not to the 80x24 read too soon.
     await until(`(${size}) !== ""`);
-    await until(`(${size}) !== "80x24"`, 30);
+    await until(`!["", "80x24"].includes(${size})`, 100);
     await sleep(300);
     const was = await q.ev(size);
     await walk(q, "a desk");
@@ -3252,13 +3273,25 @@ async function costRows(p, url, base, token, tmp, arrive) {
   // its way to a row does to the rows on the way. Over documents this page
   // has never fetched -- arrivals, whose cache entry the page drops -- so a
   // fetch would show. Then it rests on the last, and that one may come.
+  // How long the pointer sat on each row is read on the page's own clock:
+  // a busy runner can stretch a 50 ms step past the 150 ms rest, and a row
+  // the pointer truly rested on may be fetched. Only rows crossed under
+  // 140 ms are charged.
   const fresh = [];
   for (let i = 0; i < 8; i++) fresh.push((await arrive({ name: `sweep-${i}.md`, body: `# Swept ${i}\n\nA row the pointer crosses.\n` })).id);
   for (let i = 0; i < 40 && !(await p.ev(`!!document.querySelector('#trees a[data-id="${fresh[fresh.length - 1]}"]')`)); i++) await sleep(100);
   await sleep(400);
   const swept = (await p.ev(`[...document.querySelectorAll("#trees a[data-id]")].map(a => a.dataset.id)`)).filter(id => fresh.includes(id));
   const ids = [...new Set(swept)];
-  await p.ev(`window.__cost.api.length = 0`);
+  await p.ev(`(() => {
+    window.__cost.api.length = 0;
+    const S = window.__sweep = [];
+    document.addEventListener("mouseover", e => {
+      const id = e.target.closest?.("a[data-id]")?.dataset.id || null;
+      if (!S.length || S[S.length - 1][0] !== id) S.push([id, performance.now()]);
+    }, true);
+    return 1;
+  })()`);
   for (const id of ids) {
     const at = await p.ui("center", `a[data-id="${id}"]`);
     await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, p.s);
@@ -3266,9 +3299,17 @@ async function costRows(p, url, base, token, tmp, arrive) {
   }
   await p.pointerAway();
   await sleep(400);
-  const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/"));
-  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && crossed.length === 0,
-    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep` : crossed.length ? `${crossed.length} documents fetched for ${ids.length} rows crossed` : `${ids.length} rows crossed in ${ids.length * 50} ms, nothing fetched`]);
+  const sweep = await p.ev(`window.__sweep.slice()`);
+  const dwell = new Map();
+  sweep.forEach(([id, t], i) => { if (id && sweep[i + 1]) dwell.set(id, Math.max(dwell.get(id) || 0, sweep[i + 1][1] - t)); });
+  const quick = ids.filter(id => dwell.has(id) && dwell.get(id) < 140);
+  const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/") && quick.includes(a.split("/")[3]));
+  const slow = ids.length - quick.length;
+  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && quick.length >= 4 && crossed.length === 0,
+    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep`
+      : quick.length < 4 ? `only ${quick.length} of ${ids.length} rows crossed under 140 ms, too slow a sweep to judge`
+      : crossed.length ? `${crossed.length} documents fetched for ${quick.length} rows crossed under 140 ms`
+      : `${quick.length} rows crossed under 140 ms, nothing fetched${slow ? ` (${slow} the runner held longer, not charged)` : ""}`]);
   await p.ev(`window.__cost.api.length = 0`);
   await p.hoverOn(`a[data-id="${ids[ids.length - 1]}"]`);
   await sleep(400);
