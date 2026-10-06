@@ -249,9 +249,12 @@ movement (§7.3).
 Reset is the one place that **deletes** ("This deletes 142 documents").
 Everything that can be undone **removes**. Both are true in 1.7.2.
 
-Agents read snyvi's words too: the MCP aside description doesn't invite "a
-gentle nudge after a long stretch", and it says "waiting in snyvi", not
-"queue".
+Agents read snyvi's words too, and it says "waiting in snyvi", not "queue".
+The MCP aside description lets an agent speak about the person at the work,
+not only the work -- four evenings on the migration, a late hour with the
+tests green -- on one rule: cite something that happened here, or say
+nothing. A line that reads the person rather than the record is wrong the
+first time it is slightly off.
 
 ### 3.4 Patterns
 

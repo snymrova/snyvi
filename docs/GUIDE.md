@@ -1182,6 +1182,14 @@ the way, what it would do next, what it is unsure of -- and until this
 existed the only way to say it was to make it a document, which put it
 in your library and your unread count as though it were one.
 
+Sometimes the sentence is about you rather than the work: that the
+migration held after four evenings on it, that it is past one and the
+tests are green and the rest keeps. An agent may say that, a few times
+in a long session at most, and only about something that happened here
+-- a note it ticked, a commit, a test, where the desk left off. It never
+guesses at how you feel, and an aside that gives no reason in the record
+is one it was told not to send.
+
 `send_aside` is for that sentence, and it is deliberately small. An
 aside is at most 280 characters; past that it is a document and
 `send_document` is the tool for it. Asides are kept in memory, the last

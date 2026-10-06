@@ -2053,9 +2053,12 @@ page away; it is a line at the foot of the sidebar, where the reader
 looks when they choose to.
 
 *"Something inferred about the reader reads as surveillance."* Nothing
-is inferred. A note is a sentence an agent chose to write about the
-work it is doing, the way a friend at the next desk would -- not a
-reading of the person.
+is inferred beyond the record. A note is a sentence an agent chose to
+write about the work it is doing, the way a friend at the next desk
+would. It may be about the person at the work -- the description
+invites that now -- but it must cite what happened here: a
+note ticked, a commit, a test, a left-off line. It is never a reading
+of the person.
 
 *"There is no test for 'the message was welcome'."* There is no test,
 so the design makes the question small: 280 characters, the last five

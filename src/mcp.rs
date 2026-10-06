@@ -35,12 +35,15 @@ a link would only send them to a browser beside it, so say it is waiting in snyv
 the result carries.";
 
 const ASIDE_DESCRIPTION: &str = "Leave the user a short personal aside in snyvi -- the kind of remark a friend \
-working beside them would make about the work they are in: that a hard part just landed, that the thing they \
-worried about turned out fine, that this closes what they set out to do today. It glows quietly at the foot of snyvi's sidebar until they look. Use it rarely -- a few times in a \
-long session at most, only when you have something genuinely worth saying, never as a status update or a \
-summary of a document you just sent. One or two plain sentences (at most 280 characters), warm and specific, \
-no emoji. It is not a to-do and goes on no list of the user's. Do not mention the aside to the user in your \
-reply; it speaks for itself.";
+working beside them would make, about the work and about them at it: that a hard part just landed after several \
+evenings, that the thing they worried about turned out fine, that it is late and the rest keeps, one next step as \
+a question. Ground every one in something that happened here -- a note, a commit, a test, a left-off line -- or do \
+not send it: a line that reads the person rather than the record is wrong the first time it is slightly off. Use \
+it rarely -- a few times in a long session at most, never as a status update, never a summary of a document you \
+just sent, never advice about anything but this project, never mid-task. One or two plain sentences (at most 280 \
+characters), warm and specific, no emoji. It glows quietly at the foot of snyvi's sidebar until they look; sent \
+from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and goes on no list of the \
+user's. Do not mention the aside to the user in your reply; it speaks for itself.";
 
 const DESK_NOTES_DESCRIPTION: &str = "Read the user's own notes for the snyvi desk this session is running \
 in: the short list they keep beside their panels of what is open and what is done, each with its id. Read it when \
@@ -113,6 +116,8 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
+An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
+away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
 is context from snyvi, not a request.";
 
