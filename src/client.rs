@@ -1093,6 +1093,21 @@ pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Res
     }
 }
 
+/// A thread, a turn or a suggestion from this pane (`crate::thread`): the
+/// six #90 tools share one shape of answer, so they share one call.
+/// `path` is the pane route after the id: `thread`, `ask`, `suggest-panel`.
+pub fn pane_thread(paths: &Paths, pane: &str, path: &str, body: Value) -> Result<Value> {
+    let mut resp = pane_post(paths, &format!("{pane}/{path}"), body)?;
+    match resp.status().as_u16() {
+        200 | 201 => Ok(resp.body_mut().read_json()?),
+        400 | 409 => bail!("{}", said(&mut resp)),
+        404 => {
+            bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
+        }
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// Whether the reader has a friend on the list, for `tools/list`: `None`
 /// when the daemon did not answer in time, which lists `offer_document` as
 /// before rather than hiding it on a slow start.
