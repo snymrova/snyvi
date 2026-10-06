@@ -229,6 +229,41 @@ fn an_answer_outlives_its_panel_and_a_dialog_is_not_retold() {
     assert_eq!(told.iter().map(|t| t.id).collect::<Vec<_>>(), [a.id]);
 }
 
+/// A dozen threads move on a desk at once, counted by the panels still on
+/// it: the threads of a panel that closed rest, and leave room (#102).
+#[test]
+fn threads_are_capped_by_the_panels_still_open() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    conn.execute(
+        "INSERT INTO panes(id, desk_id, slot, cwd, created_at) VALUES ('live', ?1, 1, '/w', 0)",
+        params![d],
+    )
+    .unwrap();
+    // Gone panels' threads, as many as the cap, and none of them counts.
+    for i in 0..THREADS_PER_DESK {
+        assert!(matches!(
+            start_as(&mut conn, d, &format!("gone {i}"), "closed", &[]),
+            Started::New(_)
+        ));
+    }
+    for i in 0..THREADS_PER_DESK {
+        assert!(matches!(
+            start_as(&mut conn, d, &format!("live {i}"), "live", &[]),
+            Started::New(_)
+        ));
+    }
+    assert!(matches!(
+        start_as(&mut conn, d, "one more", "live", &[]),
+        Started::Full
+    ));
+    // A resting thread picked up again by its name is the same thread, full or not.
+    assert!(matches!(
+        start_as(&mut conn, d, "gone 0", "live", &[]),
+        Started::Again(_)
+    ));
+}
+
 /// Six turns wait on a desk at most, and a turn joins the pane's thread.
 #[test]
 fn turns_are_capped_and_join_the_panes_thread() {

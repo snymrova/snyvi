@@ -111,7 +111,8 @@ pub const KINDS: [&str; 5] = ["decide", "try", "merge", "key", "run"];
 /// a terminal on the reader's click.
 pub const CMD_BYTES: usize = 2048;
 
-/// Threads a desk holds that are not shipped or put away. A desk is a project;
+/// Threads a desk holds that are not shipped, put away, or left by a panel
+/// that closed. A desk is a project;
 /// past a dozen arcs at once it is a backlog, and the notes are for that.
 pub const THREADS_PER_DESK: i64 = 12;
 
@@ -490,9 +491,13 @@ pub fn start(conn: &mut Connection, desk_id: i64, s: &Start, now: i64) -> Result
             (id, true)
         }
         None => {
+            // Open is moving and held by a panel still on the desk: a thread
+            // whose panel closed rests on the rail (#102), and a desk where
+            // panels came and went is not full of them.
             let open: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM threads WHERE desk_id = ?1 AND removed_at = 0
-                 AND stage NOT IN ('shipped', 'parked')",
+                 AND stage NOT IN ('shipped', 'parked')
+                 AND (pane = '' OR pane IN (SELECT id FROM panes WHERE desk_id = ?1))",
                 params![desk_id],
                 |r| r.get(0),
             )?;

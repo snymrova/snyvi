@@ -35,16 +35,52 @@ const slotOf = (d, pane) => d.panes.find(p => p.id === pane)?.slot;
 /** A row put away: the same Undo room a note's ✕ leaves. */
 const goneRow = (k, id, text, esc) => `<li class="dk-note gone" role="status"><span class="nm">${esc(text)}</span><button type="button" class="dk-undo" data-a="fd-back" data-k="${k}" data-i="${id}">Undo</button></li>` + errLine(`${k}${id}`, esc);
 
+/** A thread is live while its panel is on this desk and it is moving. One
+ *  whose panel closed, one parked, one no panel holds: it rests (#102). */
+const threadLive = (d, t) => t.stage !== "parked" && t.stage !== "shipped" && !!slotOf(d, t.pane);
+/** Why a resting thread rests, in its row. */
+const restWhy = t => t.stage === "parked" ? "parked" : t.pane ? "panel closed" : "no panel";
+/** How long a resting thread stays on the rail after its last move. It is
+ *  kept, and a panel that picks it up again brings it back. */
+const RESTING_SHOWN = 3 * 86400;
+
+/** The threads moving now, as cards, and under them the rest, folded to one
+ *  line: a panel closed mid-work leaves nothing to tidy by hand. The live
+ *  ones are what "moving" counts. */
 function threadSec(d, f) {
   const { esc } = ctx, now = Date.now() / 1000;
-  const shown = f.threads.filter(t => t.stage !== "shipped" || now - (t.shipped_at || t.moved_at) < SHIPPED_SHOWN);
+  const top = [], resting = [];
+  for (const t of f.threads) {
+    if (t.stage === "shipped") { if (now - (t.shipped_at || t.moved_at) < SHIPPED_SHOWN) top.push(t); }
+    else if (threadLive(d, t)) top.push(t);
+    else if (now - t.moved_at < RESTING_SHOWN || (thField && thField.id === t.id)) resting.push(t);
+  }
   const gone = filedGone && filedGone.k === "t" ? filedGone : null;
-  if (!shown.length && !gone) return "";
-  const moving = shown.filter(t => t.stage !== "shipped" && t.stage !== "parked").length;
-  const rows = shown.map(t => threadCard(d, t, f, esc)).join("") + (gone ? goneRow("t", gone.id, gone.text, esc) : "");
+  if (!top.length && !resting.length && !gone) return "";
+  const moving = top.filter(t => t.stage !== "shipped").length;
+  const rows = top.map(t => threadCard(d, t, f, esc)).join("") + (gone ? goneRow("t", gone.id, gone.text, esc) : "");
+  const rest = resting.length ? `<details class="dk-sec th-rest" data-sec="threads-rest"${restOpen() ? " open" : ""}>` +
+    `<summary class="th-rest-h" data-tip="Resting" data-tip-sub="Threads no panel on this desk is moving: parked, or their panel closed. A panel that picks one up brings it back; after three quiet days it leaves the rail, kept">Resting<span class="n">${resting.length}</span><span class="s-chev" aria-hidden="true"></span></summary>` +
+    `<ul class="dk-threads">${resting.map(t => thField && thField.id === t.id ? threadCard(d, t, f, esc) : restRow(t, esc)).join("")}</ul></details>` : "";
   return `<details class="dk-sec dk-filed" data-sec="threads" data-part="rail.threads"${secFolded("threads") ? "" : " open"}>` +
     `<summary class="t-label dk-lab" data-tip="Threads" data-tip-sub="Pieces of work an agent filed on this desk: their notes, where they live, and what was decided">Threads<span class="s-chev" aria-hidden="true"></span>${moving ? `<span class="n">${moving} moving</span>` : ""}</summary>` +
-    `<ul class="dk-threads">${rows}</ul></details>`;
+    (rows ? `<ul class="dk-threads">${rows}</ul>` : "") + rest + `</details>`;
+}
+
+/** How many of the desk's threads are moving, for the folded rail's strip. */
+const threadsMoving = d => filedAt === d.id ? filed.threads.filter(t => threadLive(d, t)).length : 0;
+
+/** Resting is folded until the reader opens it: `folded` stores "0" for open. */
+const restOpen = () => { try { return localStorage.getItem(FOLD("threads-rest")) === "0"; } catch { return false; } };
+
+/** A resting thread: one line, its name, its stage and why it rests, and
+ *  the same ⋯ a card has. */
+function restRow(t, esc) {
+  const why = restWhy(t);
+  return `<li class="dk-thread rest" data-t="${t.id}"><div class="th-top">` +
+    `<span class="th-name" data-tip="${esc(t.name)}" data-tip-sub="${esc(t.stage)} · ${why}${t.next ? ` · next: ${esc(t.next)}` : ""}${t.folder ? ` · ${esc(tilde(t.folder))}` : ""}" data-tip-overflow>${esc(t.name)}</span>` +
+    `<span class="th-why">${t.stage === "parked" ? "parked" : `${esc(t.stage)} · ${why}`}</span>` +
+    `<button type="button" class="th-more" data-a="th-menu" data-t="${t.id}" data-tip="Move, park, rename or remove" aria-label="What to do with ${esc(t.name)}">⋯</button></div></li>` + errLine(`t${t.id}`, esc);
 }
 
 /** The stage bar: six steps filled up to where the thread is; parked is its
@@ -398,6 +434,15 @@ const THREAD_CSS = `
 .dk-threads, .dk-turn-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .dk-thread, .dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
 .dk-thread.shipped { opacity: .7; }
+/* Resting: one quiet line under the cards, folded; each thread in it a row. */
+.th-rest { margin-top: 6px; }
+.th-rest-h { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: var(--fs-micro); color: var(--fg-3); }
+.th-rest-h .n { font-variant-numeric: tabular-nums; }
+.th-rest .s-chev { margin-left: 0; }
+.th-rest .dk-threads { gap: 2px; }
+.dk-thread.rest { padding: 3px 4px 3px 8px; background: none; border-style: dashed; }
+.dk-thread.rest .th-name { font-weight: 500; color: var(--fg-2); }
+.th-why { flex: none; font-size: var(--fs-micro); color: var(--fg-3); }
 .th-top { display: flex; align-items: center; gap: 6px; }
 .th-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .th-more { flex: none; width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; color: var(--fg-3); cursor: pointer; font: inherit; line-height: 1; }
