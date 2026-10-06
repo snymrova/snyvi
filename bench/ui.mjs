@@ -3183,7 +3183,7 @@ async function motionRows(p, url, arrive) {
   // resumes it, and the animation's own clock restarts from zero.
   await sleep(300);
   const second = await arrive();
-  await until(`/^2 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  await until(`/^1\\/2/.test(document.querySelector("#queue-bar").textContent)`);
   const resumed = await p.ev(`(() => { const li = document.querySelector('#queue li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
   rows.push(["once, whatever the tree does under it", resumed >= 250 && resumed < 700, resumed < 0 ? "the wash is gone or was never there" : `the wash is ${resumed} ms in, on a row rebuilt by the next arrival`]);
   const bar = await p.ev(`(() => { const qb = document.querySelector("#queue-bar .qb"); const n = qb && qb.querySelector(".qb-n");
@@ -3221,7 +3221,7 @@ async function motionRows(p, url, arrive) {
   // Under reduced motion there is no motion: not slower, none.
   await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] }, p.s);
   await arrive();
-  await until(`/^2 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  await until(`/^1\\/2/.test(document.querySelector("#queue-bar").textContent)`);
   const quiet = await anims();
   await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "" }] }, p.s);
   rows.push(["reduced motion means none", quiet.length === 0, quiet.length ? `${quiet.length} still running: ${[...new Set(quiet.map(a => a.name))].join(", ")}` : "no animation on the page at all"]);
