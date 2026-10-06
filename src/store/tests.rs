@@ -1275,3 +1275,79 @@ fn a_lineage_moves_whole_onto_a_desk() {
         .unwrap()
         .is_none());
 }
+
+/// A folder's fingerprint is kept with its row, and a friend's frame finds
+/// the folders that have it -- by the repository or by the remote -- and
+/// never a friend's own row.
+#[test]
+fn folders_are_found_by_their_fingerprint() {
+    let (s, _d) = temp_store();
+    s.insert(&new_id("a"), new_doc("A", "a", "w")).unwrap();
+    let mut wt = new_doc("B", "b", "w");
+    wt.project_root = "/p-wt";
+    wt.project_name = "p-wt";
+    s.insert(&new_id("b"), wt).unwrap();
+    let print = crate::git::Print {
+        repo: Some("r1".into()),
+        remote: Some("m1".into()),
+    };
+    assert_eq!(s.roots_to_print(now() + 1).unwrap(), vec!["/p", "/p-wt"]);
+    s.set_print("/p", Some(&print)).unwrap();
+    s.set_print(
+        "/p-wt",
+        Some(&crate::git::Print {
+            repo: Some("r1".into()),
+            remote: None,
+        }),
+    )
+    .unwrap();
+    assert!(s.roots_to_print(now() - 10).unwrap().is_empty(), "both read just now");
+    assert_eq!(s.print_of("/p").unwrap().unwrap().0, print);
+    assert_eq!(s.print_of("/nowhere").unwrap(), None);
+    let by = |repo: Option<&str>, remote: Option<&str>| {
+        s.roots_by_print(&crate::peer::Folder {
+            repo: repo.map(str::to_string),
+            remote: remote.map(str::to_string),
+            ..Default::default()
+        })
+        .unwrap()
+        .into_iter()
+        .map(|(r, _)| r)
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(by(Some("r1"), None), vec!["/p", "/p-wt"], "a clone and its worktree");
+    assert_eq!(by(None, Some("m1")), vec!["/p"], "a shallow clone, by its remote");
+    assert_eq!(by(Some("r2"), Some("m2")), Vec::<String>::new());
+    assert_eq!(by(None, None), Vec::<String>::new(), "a frame from before 1.22");
+    // Unread folders and a folder in no repository: an empty print matches nothing.
+    s.set_print("/p-wt", None).unwrap();
+    assert_eq!(by(Some(""), Some("")), Vec::<String>::new());
+    assert_eq!(by(Some("r1"), None), vec!["/p"]);
+}
+
+/// A frame of a kind this snyvi cannot read is held once, however often the
+/// relay hands it over, until it is read or too old.
+#[test]
+fn a_frame_from_a_newer_snyvi_is_held() {
+    let (s, _d) = temp_store();
+    let p = s
+        .pin_peer(&peer::Peer {
+            id: 0,
+            sign_key: "KEY".into(),
+            box_key: "BOX".into(),
+            name: "Trapti".into(),
+            paired_at: 0,
+            muted: false,
+            removed_at: 0,
+            last_from: 0,
+            last_to: 0,
+            desk_id: 0,
+        })
+        .unwrap();
+    s.peer_hold("f1", p.id, b"sealed").unwrap();
+    s.peer_hold("f1", p.id, b"sealed").unwrap();
+    assert_eq!(s.peer_held().unwrap(), vec![("f1".to_string(), p.id, b"sealed".to_vec())]);
+    assert_eq!(s.prune_peer_held().unwrap(), 0, "a month to wait");
+    s.peer_unhold("f1").unwrap();
+    assert!(s.peer_held().unwrap().is_empty());
+}

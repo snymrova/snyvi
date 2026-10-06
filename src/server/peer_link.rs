@@ -20,7 +20,8 @@
 //! and is acked down the socket; "ping" every 45 s keeps the line and is
 //! answered by the relay without waking the mailbox; a wake (a friend added,
 //! something to send) flushes the outbox; and every ten minutes the frames
-//! the relay once refused with "full" are tried again.
+//! the relay once refused with "full" are tried again. Beside it, a round
+//! every ten minutes fingerprints the reader's folders (`spawn_prints`).
 
 use super::*;
 use crate::peer::{self, Identity, Waiting};
@@ -58,6 +59,7 @@ enum Left {
 
 /// The task: beside the update checker, for the life of the daemon.
 pub(crate) fn spawn_peer_link(app: Arc<App>) {
+    spawn_prints(app.clone());
     tokio::spawn(async move {
         // Failed tries since the last open link; 0 while it is open.
         let mut attempt: u32 = 0;
@@ -108,6 +110,52 @@ pub(crate) fn spawn_peer_link(app: Arc<App>) {
     });
 }
 
+/// How long after a start the reader's folders are first fingerprinted,
+/// and how often after that a round looks for one not read for a day.
+const PRINTS_FIRST: Duration = Duration::from_secs(20);
+const PRINTS_EVERY: Duration = Duration::from_secs(600);
+/// At most this many folders a round, each two or three git commands.
+const PRINTS_ROUND: usize = 40;
+
+/// The fingerprints of the reader's folders (`git::print`), kept fresh while
+/// there is a friend to be sent things by: what a friend's document is filed
+/// by (`api_peer::file_into`). Only the folders snyvi already has a row for,
+/// and never `~`; with no friend, no git runs for this at all.
+fn spawn_prints(app: Arc<App>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(PRINTS_FIRST).await;
+        loop {
+            if has_friends(&app) {
+                let app_b = app.clone();
+                let _ = tokio::task::spawn_blocking(move || print_folders(&app_b)).await;
+            }
+            tokio::time::sleep(PRINTS_EVERY).await;
+        }
+    });
+}
+
+/// One round: the folders whose fingerprint is a day old or was never read.
+/// One that is gone, or in no repository, is marked read with no print, so
+/// it is not asked again until tomorrow.
+pub(crate) fn print_folders(app: &App) -> usize {
+    let before = crate::store::now() - PRINT_KEPT;
+    let Ok(roots) = app.store.roots_to_print(before) else {
+        return 0;
+    };
+    let mut n = 0;
+    for root in roots.into_iter().take(PRINTS_ROUND) {
+        let dir = std::path::Path::new(&root);
+        let print = if dir.is_dir() {
+            crate::git::print(dir)
+        } else {
+            None
+        };
+        n += print.is_some() as usize;
+        let _ = app.store.set_print(&root, print.as_ref());
+    }
+    n
+}
+
 /// The identity, when there is a friend to wait for. Never mints one: a
 /// daemon nobody has paired touches no keychain and no relay.
 async fn friend_identity(app: &Arc<App>) -> Option<Identity> {
@@ -152,9 +200,11 @@ async fn linked(app: &Arc<App>, me: &Identity, mut socket: Socket) -> anyhow::Re
     // Housekeeping on every open, off the runtime: ids too old to recur,
     // offers whose panel ended, and whatever is queued to go.
     let app_b = app.clone();
+    let me_b = me.clone();
     tokio::task::spawn_blocking(move || {
         let _ = app_b.store.prune_peer_taken();
         sweep_offers(&app_b);
+        read_held(&app_b, &me_b);
         flush_outbox(&app_b, None);
     })
     .await?;

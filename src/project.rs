@@ -108,13 +108,15 @@ pub fn modified(dir: &Path) -> Option<bool> {
     out.status.success().then_some(!out.stdout.is_empty())
 }
 
-/// Current branch name, if the project is a git repo. Cheap: reads .git/HEAD.
+/// Current branch name, if the project is a git repo. Cheap: reads HEAD, in
+/// `.git` or -- in a worktree, where `.git` is a file -- in the folder it
+/// names (`head_of`). Only `root`'s own: a folder in no repository is on no
+/// branch, whatever repository is above it.
 pub fn branch(root: &Path) -> Option<String> {
-    let head = std::fs::read_to_string(root.join(".git/HEAD")).ok()?;
-    let head = head.trim();
-    head.strip_prefix("ref: refs/heads/")
-        .map(str::to_string)
-        .or_else(|| Some(head.chars().take(8).collect()))
+    if !root.join(".git").exists() {
+        return None;
+    }
+    head_of(root)
 }
 
 #[cfg(test)]
@@ -157,6 +159,9 @@ mod tests {
         std::fs::create_dir_all(&tree).unwrap();
         std::fs::write(tree.join(".git"), format!("gitdir: {}\n", real.display())).unwrap();
         assert_eq!(head_of(&tree).as_deref(), Some("side"));
+        // And a project there says its branch, as a document's head shows it.
+        assert_eq!(branch(&tree).as_deref(), Some("side"));
+        assert_eq!(branch(&tree.join("sub")), None, "only the root's own");
     }
 
     #[test]

@@ -239,7 +239,23 @@ export function head(ctx, b) {
   const id = b.dataset.send, title = b.dataset.sendTitle || "";
   if (b.dataset.act === "keep") return keepOn(ctx, [id], title);
   if (b.dataset.act === "save") return save(ctx, id, b);
+  if (b.dataset.act === "unfile") return unfile(ctx, id, b);
   return send(ctx, id, title);
+}
+
+/** Move to From <friend>: a friend's document that was filed into one of
+ *  the reader's folders (both have the repository) or kept on a desk goes
+ *  back under the friend's row, every version with it. Said where the
+ *  button was; the head is drawn again as it lands, with Keep on a desk… */
+async function unfile(ctx, id, b) {
+  b.disabled = true;
+  try {
+    await post(`/api/docs/${encodeURIComponent(id)}/unfile`, {});
+    if (b.isConnected) { const s = Object.assign(document.createElement("span"), { textContent: "Moved to their row" }); s.setAttribute("role", "status"); b.replaceWith(s); }
+  } catch (e) {
+    b.disabled = false;
+    ctx.toast("Could not move it", { sub: ctx.sayErr(e).why });
+  }
 }
 
 /** Keep a friend's documents on a desk: each, with every version of it,

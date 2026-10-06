@@ -287,7 +287,17 @@ pub fn emoji(a: &[u8; 32], b: &[u8; 32]) -> String {
 
 // ---- the frame ------------------------------------------------------------------
 
+/// What the frames say, as a number: 1 from 1.22, when a frame began to say
+/// which repository it is about. A frame without one is older.
+pub const CONTENT_V: u32 = 1;
+
 /// What travels inside a frame.
+///
+/// Every field added after 1.18 is optional, so an older snyvi still opens
+/// a newer frame (it ignores what it does not know) and a newer one opens an
+/// older frame. A `kind` this snyvi does not know opens as `Other` and is
+/// held (`Store::peer_hold`), so a newer friend's frame is read once this
+/// snyvi is new enough, not dropped.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase", tag = "kind")]
 pub enum Content {
@@ -302,9 +312,85 @@ pub enum Content {
         name: String,
         /// The sender's id for it, so a resend lands as one row.
         id: String,
+        /// The folder it is about, so it lands in the reader's own row for
+        /// that folder (`Folder`).
+        #[serde(flatten)]
+        at: Folder,
     },
     /// A line for the reader's notes, with the sender's name.
-    Note { text: String, name: String },
+    Note {
+        text: String,
+        name: String,
+        #[serde(flatten)]
+        at: Folder,
+    },
+    /// A kind a newer snyvi sends: opened, held, read after an update.
+    #[serde(other)]
+    Other,
+}
+
+/// Which folder a frame is about, in words both sides can check without
+/// sharing a path: the repository's fingerprint (`crate::git::print`), the
+/// file's place inside it, and the branch. Each side keeps its own folders;
+/// the reader's snyvi looks for the one it already has
+/// (`Store::projects_by_print`) and never anywhere else.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Folder {
+    /// blake3 over the sorted root commits. Not in a shallow clone, whose
+    /// oldest commits only look like roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// blake3 over the remote's web address, for the shallow clone; a fork
+    /// has its own remote and the same `repo`, so either matching is enough.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    /// The file's path inside the repository, with `/`: only when it is in
+    /// there. Untrusted on arrival (`safe_path`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// A file outside the repository, a plan in a scratch folder: blake3 of
+    /// its path on the sender's machine, so its versions land as one row and
+    /// the path itself does not travel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// `CONTENT_V` when sent; 0 from a snyvi before 1.22.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub v: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl Folder {
+    /// Whether it names a repository at all.
+    pub fn named(&self) -> bool {
+        self.repo.is_some() || self.remote.is_some()
+    }
+}
+
+/// A path a friend's frame says a file has inside the repository, if it is
+/// one that stays inside: relative, no `..`, no drive, nothing a terminal
+/// would act on, not too long. A `\` from Windows reads as `/`. Anything
+/// else is no path, and the document lands by name, as before 1.22.
+pub fn safe_path(p: &str) -> Option<String> {
+    let p = p.replace('\\', "/");
+    if p.is_empty() || p.len() > 400 || p.starts_with('/') || p.chars().any(char::is_control) {
+        return None;
+    }
+    let parts: Vec<&str> = p.split('/').collect();
+    if parts.first().is_some_and(|f| f.contains(':')) {
+        return None;
+    }
+    if parts
+        .iter()
+        .any(|c| c.is_empty() || *c == "." || *c == "..")
+    {
+        return None;
+    }
+    Some(p)
 }
 
 /// A payload is the content's JSON, its length first, then the body bytes
@@ -944,7 +1030,27 @@ CREATE TABLE IF NOT EXISTS peer_taken (
   id TEXT PRIMARY KEY,
   at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS peer_held (
+  id TEXT PRIMARY KEY,
+  peer_id INTEGER NOT NULL REFERENCES peers(id),
+  bytes BLOB NOT NULL,
+  held_at INTEGER NOT NULL
+);
 "#;
+
+/// 1.22: each folder's fingerprint (`crate::git::print`) and when it was
+/// read, and who sent a friend's document, by key: what `unfile` moves it
+/// back under. Version 10 of `store::MIGRATIONS`.
+pub const COLUMNS_1_22: [&str; 4] = [
+    "ALTER TABLE projects ADD COLUMN repo TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN remote TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN printed_at INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE docs ADD COLUMN peer_key TEXT NOT NULL DEFAULT ''",
+];
+
+/// How long a frame of a kind this snyvi cannot read is held for an update
+/// that can: a month, then it goes.
+pub const HELD_KEPT: i64 = 30 * 86_400;
 
 /// 1.19: the desk a friend's things land on (0: their own row), and a line
 /// in the outbox. Version 7 of `store::MIGRATIONS`, not in `SCHEMA`: that
@@ -1160,6 +1266,79 @@ pub fn waiting(conn: &Connection, id: &str, why: &str) -> Result<()> {
     Ok(())
 }
 
+/// What waits in the outbox, for the friends list to show: each frame not
+/// gone, what it is, how often it failed and why. A frame at `stopped` tries
+/// is not tried again until the reader says Retry.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct Outgoing {
+    pub id: String,
+    pub peer_id: i64,
+    /// The document's title, or the line.
+    pub what: String,
+    pub queued_at: i64,
+    pub tries: i64,
+    pub error: String,
+}
+
+pub fn outgoing(conn: &Connection) -> Result<Vec<Outgoing>> {
+    let rows = conn
+        .prepare(
+            "SELECT o.id, o.peer_id, COALESCE(d.title, o.text), o.queued_at, o.tries, o.error
+             FROM peer_outbox o JOIN peers p ON p.id = o.peer_id LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
+             WHERE o.sent_at = 0 AND p.removed_at = 0 ORDER BY o.queued_at, o.id",
+        )?
+        .query_map([], |r| {
+            Ok(Outgoing {
+                id: r.get(0)?,
+                peer_id: r.get(1)?,
+                what: r.get(2)?,
+                queued_at: r.get(3)?,
+                tries: r.get(4)?,
+                error: r.get(5)?,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
+/// Try a frame again from the start: Retry, on one that stopped.
+pub fn retry(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE peer_outbox SET tries = 0, error = '' WHERE id = ?1 AND sent_at = 0",
+        params![id],
+    )? > 0)
+}
+
+/// A frame that opened as a kind this snyvi does not know (`Content::Other`),
+/// held as it came -- sealed, as the relay had it -- for a newer snyvi to
+/// open. The same frame twice is one row.
+pub fn hold(conn: &Connection, id: &str, peer_id: i64, bytes: &[u8], now: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO peer_held(id, peer_id, bytes, held_at) VALUES(?1, ?2, ?3, ?4)",
+        params![id, peer_id, bytes, now],
+    )?;
+    Ok(())
+}
+
+/// Every held frame: (id, friend, the sealed bytes), oldest first.
+pub fn held(conn: &Connection) -> Result<Vec<(String, i64, Vec<u8>)>> {
+    let rows = conn
+        .prepare("SELECT id, peer_id, bytes FROM peer_held ORDER BY held_at, id")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
+/// A held frame read at last, or one too old to wait for: gone.
+pub fn unhold(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM peer_held WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+pub fn prune_held(conn: &Connection, before: i64) -> Result<usize> {
+    Ok(conn.execute("DELETE FROM peer_held WHERE held_at < ?1", params![before])?)
+}
+
 /// A friend's line arrives.
 pub fn note_arrived(conn: &Connection, peer_id: i64, text: &str, now: i64) -> Result<i64> {
     let text: String = text.trim().chars().take(NOTE_CHARS).collect();
@@ -1316,7 +1495,7 @@ pub fn prune_taken(conn: &Connection, before: i64) -> Result<usize> {
 }
 
 pub fn clear(conn: &Connection) -> Result<()> {
-    conn.execute_batch("DELETE FROM peer_taken; DELETE FROM peer_offers; DELETE FROM peer_notes; DELETE FROM peer_outbox; DELETE FROM peers;")?;
+    conn.execute_batch("DELETE FROM peer_held; DELETE FROM peer_taken; DELETE FROM peer_offers; DELETE FROM peer_notes; DELETE FROM peer_outbox; DELETE FROM peers;")?;
     Ok(())
 }
 
@@ -1419,6 +1598,7 @@ mod tests {
             file: None,
             name: "Sunny".into(),
             id: "abc123".into(),
+            at: Folder::default(),
         };
         let frame = seal(
             &sunny,
@@ -1471,6 +1651,7 @@ mod tests {
             &Content::Note {
                 text: "water the beans".into(),
                 name: "Sunny".into(),
+                at: Folder::default(),
             },
             b"",
         )
@@ -1748,5 +1929,60 @@ mod tests {
             backoff(40) <= BACKOFF_MAX.mul_f64(1.3),
             "capped, not overflowed"
         );
+    }
+
+    #[test]
+    fn a_frame_says_its_folder_and_older_and_newer_frames_still_open() {
+        let doc = Content::Document {
+            title: "Plan".into(),
+            lang: None,
+            file: Some("PLAN.md".into()),
+            name: "Trapti".into(),
+            id: "d1".into(),
+            at: Folder {
+                repo: Some("r".repeat(32)),
+                remote: None,
+                path: Some("docs/PLAN.md".into()),
+                key: None,
+                branch: Some("main".into()),
+                v: CONTENT_V,
+            },
+        };
+        let (got, body) = unpack(&pack(&doc, b"x")).unwrap();
+        assert_eq!(got, doc);
+        assert_eq!(body, b"x");
+        // What 1.21 sends: no folder at all.
+        let old = br#"{"kind":"document","title":"T","name":"S","id":"i","file":"a.md"}"#;
+        let got: Content = serde_json::from_slice(old).unwrap();
+        assert!(matches!(got, Content::Document { ref at, .. } if *at == Folder::default()));
+        // What 1.21 reads of a 1.22 frame: the same fields it knew, the rest ignored.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "lowercase", tag = "kind")]
+        enum Was {
+            Document { title: String, file: Option<String>, name: String, id: String },
+            Note { text: String, name: String },
+        }
+        let json = serde_json::to_vec(&doc).unwrap();
+        let was: Was = serde_json::from_slice(&json).unwrap();
+        assert!(matches!(was, Was::Document { ref title, ref file, .. } if title == "Plan" && file.as_deref() == Some("PLAN.md")));
+        let note = Content::Note { text: "hi".into(), name: "S".into(), at: Folder { repo: Some("r".into()), v: CONTENT_V, ..Default::default() } };
+        let was: Was = serde_json::from_slice(&serde_json::to_vec(&note).unwrap()).unwrap();
+        assert!(matches!(was, Was::Note { ref text, .. } if text == "hi"));
+        // A kind from a snyvi newer than this one opens, as Other.
+        let newer = br#"{"kind":"receipt","of":"d1","v":2}"#;
+        assert_eq!(serde_json::from_slice::<Content>(newer).unwrap(), Content::Other);
+    }
+
+    #[test]
+    fn a_path_from_a_friend_stays_inside_the_folder() {
+        assert_eq!(safe_path("docs/PLAN.md").as_deref(), Some("docs/PLAN.md"));
+        assert_eq!(safe_path("docs\\PLAN.md").as_deref(), Some("docs/PLAN.md"));
+        assert_eq!(safe_path("PLAN.md").as_deref(), Some("PLAN.md"));
+        for bad in [
+            "", "/etc/passwd", "../x.md", "docs/../../x", "C:/x.md", "c:x.md", "a//b", "./a", "a/\u{1b}[2J",
+        ] {
+            assert_eq!(safe_path(bad), None, "{bad:?}");
+        }
+        assert_eq!(safe_path(&"a/".repeat(201)), None);
     }
 }

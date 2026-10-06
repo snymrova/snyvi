@@ -192,6 +192,65 @@ pub fn web_url(url: &str) -> Option<String> {
     Some(format!("{web}://{host}/{path}"))
 }
 
+/// A repository as two snyvis can name it to each other without a path:
+/// what a friend's frame says it is about (`crate::peer::Folder`), and what
+/// `projects` keeps for each folder the reader has, to find it by.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Print {
+    /// blake3 over the sorted root commits: the same in every clone, fork
+    /// and worktree of it, whatever its remote. `None` in a shallow clone,
+    /// whose oldest commits only look like roots.
+    pub repo: Option<String>,
+    /// blake3 over the remote's web address (`web_url`), lower-cased: the
+    /// shallow clone's way of being found.
+    pub remote: Option<String>,
+}
+
+/// The fingerprint of the repository `root` is in. Blocking, two or three
+/// git commands through `run`, so call it off the async runtime: the
+/// daemon's sweep (`server::peer_link`) and a send do. `None` for a folder
+/// in no repository, the home directory's, or where git did not answer.
+pub fn print(root: &Path) -> Option<Print> {
+    let top = repository(root)?;
+    if dirs::home_dir().is_some_and(|h| same(&h, &top)) {
+        return None;
+    }
+    let shallow = run(root, &["rev-parse", "--is-shallow-repository"])
+        .is_some_and(|s| s.trim() == "true");
+    let repo = if shallow {
+        None
+    } else {
+        run(root, &["rev-list", "--max-parents=0", "HEAD"]).and_then(|out| roots_print(&out))
+    };
+    let remote = run(root, &["config", "--get-regexp", r"^remote\..*\.url$"])
+        .and_then(|out| remote(&out))
+        .and_then(|url| web_url(&url))
+        .map(|web| remote_print(&web));
+    (repo.is_some() || remote.is_some()).then_some(Print { repo, remote })
+}
+
+/// `git rev-list --max-parents=0 HEAD`, one hash a line, as one print: sorted,
+/// so the order git walks them in does not matter.
+fn roots_print(out: &str) -> Option<String> {
+    let mut roots: Vec<&str> = out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if roots.is_empty() {
+        return None;
+    }
+    roots.sort_unstable();
+    roots.dedup();
+    let h = blake3::hash(format!("snyvi repo v1 {}", roots.join(" ")).as_bytes());
+    Some(h.to_hex()[..32].to_string())
+}
+
+fn remote_print(web: &str) -> String {
+    let h = blake3::hash(format!("snyvi remote v1 {}", web.to_lowercase()).as_bytes());
+    h.to_hex()[..32].to_string()
+}
+
 /// The top of the repository `dir` is in, found by looking for `.git` on the
 /// way up -- no process for a folder that is in none.
 fn repository(dir: &Path) -> Option<PathBuf> {
@@ -415,5 +474,56 @@ mod tests {
         if repository(&dir.path).is_none() {
             assert!(read(&dir.path, 0).is_none());
         }
+    }
+
+    #[test]
+    fn a_clone_and_a_worktree_have_the_print_their_repository_has() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-git-print");
+        let (a, b, w, other) = (
+            dir.path.join("a"),
+            dir.path.join("b"),
+            dir.path.join("w"),
+            dir.path.join("other"),
+        );
+        let git = |at: &Path, args: &[&str]| run(at, args).is_some();
+        let commit = |at: &Path, m: &str| {
+            git(
+                at,
+                &[
+                    "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                    "commit", "-q", "--allow-empty", "-m", m,
+                ],
+            )
+        };
+        for d in [&a, &other] {
+            std::fs::create_dir_all(d).unwrap();
+            if !git(d, &["init", "-q"]) {
+                return; // no git here
+            }
+        }
+        assert_eq!(print(&a), None, "no commit yet, no remote: nothing to name it by");
+        assert!(commit(&a, "first") && commit(&a, "second") && commit(&other, "first"));
+        let pa = print(&a).expect("a repository with a commit");
+        assert!(pa.repo.is_some() && pa.remote.is_none());
+        assert!(git(&dir.path, &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]));
+        assert!(git(&a, &["worktree", "add", "-q", w.to_str().unwrap()]));
+        assert_eq!(print(&b).and_then(|p| p.repo), pa.repo, "a clone");
+        assert_eq!(print(&w).and_then(|p| p.repo), pa.repo, "a worktree");
+        assert_eq!(print(&a.join("sub")).and_then(|p| p.repo), None, "not a folder that is there");
+        assert_ne!(print(&other).and_then(|p| p.repo), pa.repo, "another repository");
+        // A remote names it too, whatever the case of its address.
+        assert!(git(&b, &["remote", "set-url", "origin", "git@GitHub.com:O/R.git"]));
+        assert_eq!(
+            print(&b).and_then(|p| p.remote),
+            Some(remote_print("https://github.com/o/r"))
+        );
+    }
+
+    #[test]
+    fn the_roots_are_one_print_in_any_order() {
+        assert_eq!(roots_print("b\na\n"), roots_print("a\nb\n"));
+        assert_ne!(roots_print("a\n"), roots_print("a\nb\n"));
+        assert_eq!(roots_print("\n"), None);
+        assert_eq!(roots_print("a").map(|p| p.len()), Some(32));
     }
 }
