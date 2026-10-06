@@ -386,6 +386,8 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/browse/pick", None, Gate::Desk, false),
+    // With no dialog open, a cancel wakes nothing: safe to let through.
+    ("POST", "/api/browse/pick/cancel", None, Gate::Desk, true),
     ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
     ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
     ("GET", "/api/browse/nope/tree", None, Gate::Open, true),

@@ -814,8 +814,7 @@ export function connectAsk(b, { api, done, sayErr, mascotHead }) {
  * first. The answer is a folder, from the desktop's own dialog or from the
  * projects snyvi already knows -- it never looks through folders itself.
  * Nothing about agents is here: that is asked inside the desk, if at all. */
-export function welcome({ cap, places, home, mascot, esc }) {
-  const tilde = p => (home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p);
+export function welcome({ cap, places, tilde, mascot, esc }) {
   const ask = cap ? `<h2 class="w-q">What are you working on?</h2>` +
     `<button type="button" class="w-btn w-pick" data-w="pick">Choose its folder…</button>` +
     (places.length ? `<p class="w-or">Or one snyvi already knows:</p><ul class="w-places">${places.map((f, i) =>

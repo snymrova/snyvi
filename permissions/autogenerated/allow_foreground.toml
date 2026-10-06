@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-allow-foreground"
+description = "Enables the allow_foreground command without any pre-configured scope."
+commands.allow = ["allow_foreground"]
+
+[[permission]]
+identifier = "deny-allow-foreground"
+description = "Denies the allow_foreground command without any pre-configured scope."
+commands.deny = ["allow_foreground"]

@@ -1220,14 +1220,17 @@ impl Live {
         };
         let pair = pty.openpty(size).context("opening a terminal")?;
         let (mut cmd, born) = command(s.cmd, s.accent);
-        cmd.cwd(s.cwd);
+        // A root stored as Windows' `canonicalize` spells it is `\\?\D:\…`,
+        // which cmd.exe takes for a UNC path: it starts in C:\Windows
+        // instead, and Claude Code with it. The process gets the plain
+        // spelling of the same folder; what is stored and compared is left
+        // as it is.
+        cmd.cwd(dunce::simplified(std::path::Path::new(s.cwd)));
         i.cwd = s.cwd.to_string();
         i.started = Instant::now();
         i.arrived = false;
         i.root = s.root.to_string();
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
-        cmd.env("TERM_PROGRAM", "snyvi");
+        fresh_env(&mut cmd, std::env::var_os("CLAUDECODE").is_some());
         cmd.env("SNYVI_SESSION", &self.id);
         cmd.env("SNYVI_DESK", s.desk);
         cmd.env("SNYVI_SLOT", s.slot.to_string());
@@ -1672,6 +1675,46 @@ fn apply(c: &mut CommandBuilder, d: &crate::prompt::Dress) {
     }
 }
 
+/// What Claude Code puts in the environment of a command it runs, to tell
+/// that command it runs inside a session. A daemon started from there -- by
+/// the first `snyvi send` a hook makes, or by hand from an agent's shell --
+/// carries them, and a panel is not inside that session: Claude in it would
+/// call itself a child, save no transcript, and talk to the wrong parent.
+const AGENT_ENV: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "AI_AGENT",
+];
+
+/// And what an agent's tool sets so that the command's output reads well in a
+/// transcript: no color, no prompt for a password. A panel is a terminal a
+/// reader looks at. Taken out only when the daemon itself was started inside
+/// a session; a reader's own `NO_COLOR`, set for every program, is kept.
+const AGENT_TOOL_ENV: &[&str] = &["NO_COLOR", "FORCE_COLOR", "GIT_TERMINAL_PROMPT"];
+
+/// A panel starts as a fresh terminal would, not as a command an agent ran.
+fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
+    for k in AGENT_ENV {
+        cmd.env_remove(k);
+    }
+    if inside {
+        for k in AGENT_TOOL_ENV {
+            cmd.env_remove(k);
+        }
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "snyvi");
+}
+
 fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
     let typed = typed.trim();
     #[cfg(unix)]
@@ -1975,6 +2018,85 @@ mod tests {
         let text =
             std::fs::read_to_string(dir.path.join("panes").join(format!("{id}.txt"))).unwrap();
         assert!(text.contains(&format!("pane={id}")));
+    }
+
+    /// A desk whose folder was stored as `canonicalize` spells it on Windows,
+    /// `\\?\D:\…`, starts its panel in that folder -- not in C:\Windows,
+    /// where cmd.exe goes for a path it takes as UNC, and where Claude Code
+    /// then asked to be trusted.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_verbatim_folder_starts_the_panel_in_that_folder() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-pane-unc");
+        let (events, _) = broadcast::channel(16);
+        let panes = Panes::new(&dir.path, events);
+        let id = "00112233445566778899aabbccddeef0";
+        let live = panes.get(id);
+        let (_, mut rx) = live.attach();
+        let cwd = std::fs::canonicalize(&dir.path)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(cwd.starts_with(r"\\?\"), "the case this is about: {cwd}");
+        live.start(
+            Start {
+                cwd: &cwd,
+                root: &cwd,
+                cmd: "cd",
+                desk: "d",
+                slot: 1,
+                cols: 400,
+                rows: 10,
+                accent: "",
+                offer: false,
+                env: &[],
+            },
+            &panes,
+        )
+        .unwrap();
+        let mut seen = String::new();
+        let mut done = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !done && tokio::time::Instant::now() < deadline {
+            let Ok(Ok(msg)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await else {
+                break;
+            };
+            let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+            if v["t"] == "frame" {
+                seen.push_str(&msg);
+            }
+            done = v["t"] == "status" && v["s"]["running"] == false;
+        }
+        while let Ok(Ok(msg)) = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
+            seen.push_str(&msg);
+        }
+        assert!(!seen.contains("UNC paths are not supported"), "{seen}");
+        let name = dir.path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(seen.contains(&name), "the panel is not in {name}: {seen}");
+    }
+
+    /// A daemon started inside a Claude Code session gives its panels none of
+    /// that session: Claude in a panel is not its child, and is in color. A
+    /// reader's own `NO_COLOR` stays when the daemon was not started there.
+    #[test]
+    fn a_panel_starts_outside_the_session_that_started_the_daemon() {
+        let made = || {
+            let mut c = CommandBuilder::new("x");
+            for k in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "NO_COLOR", "PATH_KEPT"] {
+                c.env(k, "1");
+            }
+            c
+        };
+        let mut c = made();
+        fresh_env(&mut c, true);
+        assert!(c.get_env("CLAUDECODE").is_none());
+        assert!(c.get_env("CLAUDE_CODE_CHILD_SESSION").is_none());
+        assert!(c.get_env("NO_COLOR").is_none());
+        assert!(c.get_env("PATH_KEPT").is_some());
+        let mut c = made();
+        fresh_env(&mut c, false);
+        assert!(c.get_env("CLAUDE_CODE_CHILD_SESSION").is_none());
+        assert!(c.get_env("NO_COLOR").is_some());
     }
 
     /// A key buys one fast frame for the output that follows it, and only

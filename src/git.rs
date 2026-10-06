@@ -210,7 +210,8 @@ fn run(dir: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = Command::new("git");
     cmd.args(["-c", "core.fsmonitor=false", "--no-optional-locks"])
         .args(args)
-        .current_dir(dir)
+        // Plain, not `\\?\`: git's own runtime reads its working directory.
+        .current_dir(dunce::simplified(dir))
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -29,12 +29,23 @@ let picking = false;
 export async function pick(ctx, forDesk = false) {
   const { capability, state, toast, browseEl } = ctx;
   if (!capability) { toast("Folders open from the snyvi window", { sub: "or from a terminal · snyvi browse <folder>", face: null }); return; }
-  if (picking) return;
+  if (picking) { alreadyOpen(ctx); return; }
   picking = true;
   browseEl.classList.add("picking");
+  // The daemon keeps the dialog open only while this request waits: a page
+  // that goes says so at once, and the dialog goes with it.
+  const ac = new AbortController(), gone = () => ac.abort();
+  addEventListener("pagehide", gone);
   try {
-    const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } });
-    if (r.status === 204) return;   // closed without a choice
+    // The dialog's process is the daemon's, and Windows lets it come to the
+    // front only if the window -- in front, since the reader just clicked
+    // it -- passes that on (src/bin/app.rs). A tab, or a window older than
+    // the command, says nothing, and the dialog opens where it would have.
+    await window.__TAURI_INTERNALS__?.invoke("allow_foreground").catch(() => {});
+    const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability }, signal: ac.signal });
+    if (r.status === 204) return;   // closed without a choice, cancelled, or given up on
+    // Asked for by another page, or by this one before a reload.
+    if (r.status === 409) { alreadyOpen(ctx); return; }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toast("Could not open a folder", { sub: new Error(j.error || `${r.status}`) }); return; }
     if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
@@ -53,8 +64,15 @@ export async function pick(ctx, forDesk = false) {
     const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
     if (d) d.open = true;
     ctx.browse(j.root.id, "", true);
-  } catch (e) { toast("Could not open a folder", { sub: e }); }
-  finally { picking = false; browseEl.classList.remove("picking"); }
+  } catch (e) { if (!ac.signal.aborted) toast("Could not open a folder", { sub: e }); }
+  finally { picking = false; browseEl.classList.remove("picking"); removeEventListener("pagehide", gone); }
+}
+
+/** Never a click that does nothing: the dialog asked for first may be behind
+ *  this window, and the reader is told where -- and can close it from here. */
+function alreadyOpen({ capability, toast }) {
+  toast("A folder dialog is already open", { sub: "It may be behind this window · Alt+Tab to it", face: null,
+    action: { label: "Cancel it", run: () => fetch("/api/browse/pick/cancel", { method: "POST", headers: { "x-snyvi-capability": capability } }).catch(() => {}) } });
 }
 
 /** A new desk on folder `f` -- a folder under Folders, or a project by its

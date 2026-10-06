@@ -377,6 +377,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    document keeps the browser's. A placeholder is faint ink; a row dragged
    is not a link picture; a native control left anywhere wears the accent. */
 #trees, #toc, #meta, #pop, #ctx, #palette-list, .help-body { scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
+/* On Windows, Chromium (WebView2, Edge) answers `scrollbar-width` and
+   `scrollbar-color` with the classic control: a track, and an arrow button
+   at each end. It draws the bar below only where both are `auto`, so on
+   Windows they are put back to `auto` everywhere -- over the ids above and
+   the panel's own, hence the !important -- and every bar, the panels', the
+   lists' and the document's, is a slim rounded thumb on no track. */
+[data-os="win"] * { scrollbar-width: auto !important; scrollbar-color: auto !important; }
+[data-os="win"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-os="win"] ::-webkit-scrollbar-track, [data-os="win"] ::-webkit-scrollbar-corner { background: transparent; }
+[data-os="win"] ::-webkit-scrollbar-button { display: none; }
+[data-os="win"] ::-webkit-scrollbar-thumb { background: var(--rule-2); border: 2px solid transparent; border-radius: 5px; background-clip: padding-box; }
+[data-os="win"] ::-webkit-scrollbar-thumb:hover { background-color: var(--fg-3); }
 ::placeholder { color: var(--fg-3); opacity: 1; }
 :is(#side, #rail, #pop) a { -webkit-user-drag: none; }
 :is(#side, #pop) summary { list-style: none; }

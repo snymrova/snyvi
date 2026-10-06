@@ -243,12 +243,13 @@
       items = r?.ok ? await r.json().catch(() => null) : null;
     }
     boot.inbox = null; boot.agents = null;
-    // Nothing to read, and no desk yet: the page is Welcome -- which project
-    // first -- at the inbox's own address. A window that has desks and no
-    // documents yet says where they will land. Nothing *said* is not
+    // Nothing to read, and no desk yet: the page at `/` is Welcome -- which
+    // project first. The Inbox asked for by name -- a click, or `/inbox`
+    // drawn again by a refresh -- is the Inbox's own empty state, as is a
+    // window that has desks and no documents yet. Nothing *said* is not
     // nothing there: that is its own line, never Welcome.
     let welcomeHtml = items ? null : `<div class="inbox-head"><h1>Inbox</h1>${noReach("inbox")}</div>`;
-    if (items && !items.length) {
+    if (items && !items.length && !push && location.pathname === "/") {
       if (capability && !state.desks) await loadDesks();
       if (!capability || !(state.desks && state.desks.desks.length)) welcomeHtml = await welcomePage();
     }
@@ -348,7 +349,7 @@
     let m;
     try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); return ""; }
     welcomePlaces = capability ? deskPlaces() : [];
-    return m.welcome({ cap: !!capability, places: welcomePlaces, home: state.desks && state.desks.home, mascot: mascotHead("glad"), esc });
+    return m.welcome({ cap: !!capability, places: welcomePlaces, tilde, mascot: mascotHead("glad"), esc });
   }
   async function showWelcome(push = true) {
     if (push) leave();

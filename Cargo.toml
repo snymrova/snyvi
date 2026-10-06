@@ -31,11 +31,11 @@ exclude = [
 # them. Bump it by hand, to the version being released, whenever the window's
 # own code changes: src/desktop.rs, src/bin/app.rs, tauri.conf.json, the frame.
 [package.metadata.snyvi]
-app_min = "1.8.0"
+app_min = "1.15.0"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-std", "io-util", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-std", "io-util", "sync", "time", "signal", "process"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 comrak = { version = "0.39", default-features = false }
 syntect = { version = "5", default-features = false, features = ["default-onig", "dump-create"] }
@@ -54,6 +54,9 @@ mime_guess = "2"
 html-escape = "0.2"
 similar = "2"
 ignore = "0.4"
+# A Windows folder without `\\?\` where Windows allows it; nothing elsewhere.
+# Already in the tree through tauri and others.
+dunce = "1"
 mimalloc = { version = "0.1", default-features = false }
 # Only for `mi_collect`: a render thread hands back what it freed before it
 # goes idle (platform::release_thread_memory). The same library mimalloc links.
@@ -182,6 +185,9 @@ windows-sys = { version = "0.60", features = [
   # For `snyvi bench`, which reads the daemon's working set the way /proc gives
   # it the resident set on Linux.
   "Win32_System_ProcessStatus",
+  # For the window's `allow_foreground`, which lets the folder dialog the
+  # daemon shows come to the front (src/bin/app.rs).
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 # The native keychain for the desks' key values: Keychain on macOS, Credential

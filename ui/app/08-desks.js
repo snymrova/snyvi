@@ -85,9 +85,8 @@
    *  one row a folder, less any that already has a desk -- that one is a
    *  click on its row away, and a second desk on it is its menu's to offer. */
   function deskPlaces() {
-    const trim = p => p && p.replace(/(.)\/+$/, "$1");
-    const home = trim(state.desks && state.desks.home), taken = new Set(state.desks ? state.desks.desks.map(d => trim(d.root)) : []), out = [];
-    const put = (abs, f) => { const k = trim(abs); if (k && k !== home && !taken.has(k)) { taken.add(k); out.push({ abs, ...f }); } };
+    const home = pathKey(state.desks && state.desks.home), taken = new Set(state.desks ? state.desks.desks.map(d => pathKey(d.root)) : []), out = [];
+    const put = (abs, f) => { const k = pathKey(abs); if (k && k !== home && !taken.has(k)) { taken.add(k); out.push({ abs, ...f }); } };
     for (const p of state.tree) if (!away.has(String(p.id))) put(p.root, { project: p.id, name: p.name });
     for (const r of state.browse) put(r.path, { root: r.id, path: "", name: r.name });
     return out;
@@ -193,7 +192,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
