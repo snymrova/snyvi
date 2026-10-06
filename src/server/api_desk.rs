@@ -37,6 +37,8 @@ pub(crate) async fn home(
         "desks": desks,
         "days": days,
         "queue": app.store.queue(5).unwrap_or_default(),
+        // Arrived: the newest unread, so Home is still one read.
+        "arrived": app.store.newest_unread(ARRIVED).unwrap_or_default(),
         "waiting": waiting(&app),
         "update": update_json(&app),
         "agents": app.online(),
@@ -49,6 +51,10 @@ pub(crate) async fn home(
 /// How many days of rows Home's log is sent: a week, and the day before it,
 /// so "this week" is whole on any day it is read.
 pub(crate) const DAYS_SHOWN: i64 = 8;
+
+/// How many documents Home's Arrived is sent: as many as it shows, with
+/// the offers and a friend's lines ahead of them.
+pub(crate) const ARRIVED: usize = 5;
 
 /// How many of a desk's open lines Home shows under it before "and N more".
 pub(crate) const HOME_NOTES: usize = 5;
@@ -936,7 +942,54 @@ pub(crate) async fn remove_desk_key(
 /// the reader turned it off in About. A file, not a row: the hook's route
 /// reads it on every session start, and it is the daemon's own setting.
 pub(crate) fn brief_on(app: &App) -> bool {
-    !app.paths.config_dir.join("brief-off").exists()
+    !off_flag(app, "brief").exists()
+}
+
+/// Whether an agent's aside is taken: on unless the reader turned asides off
+/// in About. A file, like the brief's, read on every aside.
+pub(crate) fn asides_on(app: &App) -> bool {
+    !off_flag(app, "asides").exists()
+}
+
+/// The file that says one of About's switches is off: `brief-off`, `asides-off`.
+fn off_flag(app: &App, name: &str) -> std::path::PathBuf {
+    app.paths.config_dir.join(format!("{name}-off"))
+}
+
+fn set_switch(app: &App, name: &str, on: bool) -> std::io::Result<()> {
+    let flag = off_flag(app, name);
+    if on {
+        match std::fs::remove_file(&flag) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    } else {
+        std::fs::create_dir_all(&app.paths.config_dir).and_then(|_| std::fs::write(&flag, b""))
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SwitchBody {
+    pub(crate) on: bool,
+}
+
+/// One of About's switches, read or set by the window: `GET` says whether it
+/// is on, `POST {on}` sets it and says the same.
+fn switch(
+    app: &App,
+    headers: &HeaderMap,
+    q: &std::collections::HashMap<String, String>,
+    name: &str,
+    on: fn(&App) -> bool,
+    to: Option<bool>,
+) -> Response {
+    if let Some(no) = refuse_desk(app, headers, q) {
+        return no;
+    }
+    match to.map_or(Ok(()), |to| set_switch(app, name, to)) {
+        Ok(()) => Json(json!({ "on": on(app) })).into_response(),
+        Err(e) => err(e.into()),
+    }
 }
 
 pub(crate) async fn brief_setting(
@@ -944,39 +997,33 @@ pub(crate) async fn brief_setting(
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if let Some(no) = refuse_desk(&app, &headers, &q) {
-        return no;
-    }
-    Json(json!({ "on": brief_on(&app) })).into_response()
-}
-
-#[derive(Deserialize)]
-pub(crate) struct BriefBody {
-    pub(crate) on: bool,
+    switch(&app, &headers, &q, "brief", brief_on, None)
 }
 
 pub(crate) async fn set_brief_setting(
     State(app): S,
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
-    Json(b): Json<BriefBody>,
+    Json(b): Json<SwitchBody>,
 ) -> Response {
-    if let Some(no) = refuse_desk(&app, &headers, &q) {
-        return no;
-    }
-    let flag = app.paths.config_dir.join("brief-off");
-    let done = if b.on {
-        match std::fs::remove_file(&flag) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        }
-    } else {
-        std::fs::create_dir_all(&app.paths.config_dir).and_then(|_| std::fs::write(&flag, b""))
-    };
-    match done {
-        Ok(()) => Json(json!({ "on": brief_on(&app) })).into_response(),
-        Err(e) => err(e.into()),
-    }
+    switch(&app, &headers, &q, "brief", brief_on, Some(b.on))
+}
+
+pub(crate) async fn asides_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    switch(&app, &headers, &q, "asides", asides_on, None)
+}
+
+pub(crate) async fn set_asides_setting(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<SwitchBody>,
+) -> Response {
+    switch(&app, &headers, &q, "asides", asides_on, Some(b.on))
 }
 
 pub(crate) async fn rename_desk(
@@ -1481,8 +1528,8 @@ pub(crate) struct ResolveBody {
 /// then the folder open for reading.
 ///
 /// Behind the desk's gate, as the folder dialog is: the answer says whether a
-/// path exists, and the click opens it -- a file in the reader, a folder in
-/// the file manager. Nothing is run.
+/// path exists, and the click opens it in the folder reader -- a file at its
+/// line, a folder on its folder page. Nothing is run.
 pub(crate) async fn resolve_path(
     State(app): S,
     headers: HeaderMap,
@@ -1544,28 +1591,11 @@ pub(crate) async fn resolve_path(
     if !b.open {
         return Json(json!({ "kind": kind, "path": shown, "line": found.line })).into_response();
     }
-    if found.dir {
-        if !platform::has_display() {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": "no desktop session to open a folder in" })),
-            )
-                .into_response();
-        }
-        return if platform::open_folder(&found.path) {
-            Json(json!({ "kind": kind, "path": shown })).into_response()
-        } else {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": "nothing on this machine opens folders" })),
-            )
-                .into_response()
-        };
-    }
-    // A file opens in the folder reader: under a folder already open for
-    // reading when it is in one, or else under the first of the bases it is
-    // in -- the panel's desk, the document's project -- or else its own
-    // folder. A folder opened here is a row under Folders, as any other.
+    // A file or a folder opens in the folder reader: under a folder already
+    // open for reading when it is in one, or else under the first of the
+    // bases it is in -- the panel's desk, the document's project -- or else
+    // a file's own folder, or the folder itself. A folder opened here is a
+    // row under Folders, as any other.
     let roots: Vec<(String, std::path::PathBuf)> = app
         .browse
         .list()
@@ -1580,7 +1610,13 @@ pub(crate) async fn resolve_path(
                 .rev()
                 .filter_map(|b| b.canonicalize().ok())
                 .find(|b| found.path.starts_with(b))
-                .or_else(|| found.path.parent().map(|p| p.to_path_buf()));
+                .or_else(|| {
+                    if found.dir {
+                        Some(found.path.clone())
+                    } else {
+                        found.path.parent().map(|p| p.to_path_buf())
+                    }
+                });
             let Some(root) = dir.and_then(|d| app.browse.open(&d).ok()) else {
                 return StatusCode::NOT_FOUND.into_response();
             };

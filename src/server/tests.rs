@@ -571,10 +571,35 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Reader,
         true,
     ),
+    // Where a friend's things land, and a friend's document kept on a desk
+    // and saved into its folder: the window's, as a desk is.
+    (
+        "POST",
+        "/api/peers/1/desk",
+        Some(r#"{"desk":0}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/docs/nope/keep",
+        Some(r#"{"desk":1}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/docs/nope/save", None, Gate::Desk, true),
     ("GET", "/api/brief", None, Gate::Desk, true),
     (
         "POST",
         "/api/brief",
+        Some(r#"{"on":true}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("GET", "/api/asides", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/asides",
         Some(r#"{"on":true}"#),
         Gate::Desk,
         true,
@@ -703,6 +728,14 @@ struct Leaves {
 
 /// The router against a store in a temp dir, kept alive by the `Dir`.
 fn gated_router(name: &str) -> (crate::store::tempdir::Dir, Router, Leaves) {
+    gated_router_with(name, |_| {})
+}
+
+/// The same, with the store set up first: desks, panes, whatever the test is about.
+fn gated_router_with(
+    name: &str,
+    prep: impl FnOnce(&Store),
+) -> (crate::store::tempdir::Dir, Router, Leaves) {
     let tmp = crate::store::tempdir::Dir::new(name);
     let paths = Paths {
         data_dir: tmp.path.join("data"),
@@ -715,6 +748,7 @@ fn gated_router(name: &str) -> (crate::store::tempdir::Dir, Router, Leaves) {
     let window = crate::config::load_or_create_window_secret(&paths).unwrap();
     assert_ne!(token, window, "two secrets, two jobs");
     let store = Store::open(&paths).unwrap();
+    prep(&store);
     let app = new_app(&paths, store, token.clone(), window.clone(), None, None);
     let cap = app.capabilities.mint().unwrap();
     let host = format!("127.0.0.1:{}", crate::config::port());
@@ -1406,4 +1440,427 @@ async fn an_oversize_send_is_refused_with_its_size_not_a_bare_413() {
     let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("larger than 32 MB"), "{text}");
+}
+
+/// An aside sent from a panel carries the desk and slot it came from, so a
+/// click on it goes there. A pane snyvi does not know -- closed, or made up --
+/// is no reason to refuse it: the token is the gate, the pane only the way back.
+#[tokio::test]
+async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() {
+    let pane = std::sync::Mutex::new(String::new());
+    let (_tmp, router, leaves) = gated_router_with("snyvi-aside-from", |store| {
+        let desk = store.create_desk("/tmp/ledger", Some("ledger")).unwrap();
+        for _ in 0..2 {
+            if let crate::desk::Opened::Pane(p) =
+                store.open_pane(desk.id, "/tmp/ledger", "").unwrap()
+            {
+                *pane.lock().unwrap() = p.id;
+            }
+        }
+    });
+    let pane = pane.into_inner().unwrap();
+    let send = |body: serde_json::Value| {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/notes")
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("authorization", &leaves.bearer)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    let said = |resp: axum::response::Response| async move {
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["note"].clone()
+    };
+
+    let note = said(
+        router
+            .clone()
+            .oneshot(send(
+                serde_json::json!({ "text": "Four evenings, and it held.", "pane": pane }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(note["from"]["name"], "ledger");
+    assert_eq!(note["from"]["slot"], 2, "the second pane opened");
+
+    for pane in ["0123456789abcdef0123456789abcdef", "../not-an-id"] {
+        let note = said(
+            router
+                .clone()
+                .oneshot(send(
+                    serde_json::json!({ "text": "From nowhere.", "pane": pane }),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(note["from"].is_null(), "{pane}: {note}");
+    }
+    let note = said(
+        router
+            .oneshot(send(serde_json::json!({ "text": "No pane at all." })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(note["from"].is_null());
+}
+
+/// A Ctrl-clicked folder opens in the folder reader, never the file manager:
+/// under the panel's desk when it is inside it, at its path there, or else as
+/// a row of its own under Folders. A folder that is not there is a 404.
+#[tokio::test]
+async fn a_ctrl_clicked_folder_opens_in_the_reader() {
+    let desk_dir = crate::store::tempdir::Dir::new("snyvi-resolve-desk");
+    std::fs::create_dir_all(desk_dir.path.join("src")).unwrap();
+    std::fs::create_dir_all(desk_dir.path.join("a/b")).unwrap();
+    let away = crate::store::tempdir::Dir::new("snyvi-resolve-away");
+    let root = desk_dir.path.to_string_lossy().into_owned();
+    let at = std::sync::Mutex::new((0, String::new()));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-resolve-dir", |store| {
+        let desk = store.create_desk(&root, Some("ledger")).unwrap();
+        if let crate::desk::Opened::Pane(p) = store.open_pane(desk.id, &root, "").unwrap() {
+            *at.lock().unwrap() = (desk.id, p.id);
+        }
+    });
+    let (desk, pane) = at.into_inner().unwrap();
+    let click = |word: &str| {
+        let body = serde_json::json!({ "word": word, "desk": desk, "pane": pane, "open": true });
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/resolve")
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header(CAPABILITY_HEADER, &leaves.cap)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        router.clone().oneshot(req)
+    };
+    async fn answer(resp: axum::response::Response) -> serde_json::Value {
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    let src = answer(click("src").await.unwrap()).await;
+    assert_eq!(src["kind"], "dir");
+    assert_eq!(src["rel"], "src", "{src}");
+    let deep = answer(click("a/b").await.unwrap()).await;
+    assert_eq!(deep["rel"], "a/b");
+    assert_eq!(deep["root"], src["root"], "the desk's folder, opened once");
+
+    let other = answer(click(&away.path.to_string_lossy()).await.unwrap()).await;
+    assert_eq!(other["kind"], "dir");
+    assert_eq!(other["rel"], "", "a folder outside the desk is its own row");
+    assert_ne!(other["root"], src["root"]);
+
+    let gone = click(&desk_dir.path.join("nope").to_string_lossy())
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+/// Asides turned off in About: an agent's aside is refused with words it can
+/// read back, nothing is kept, and turning them on takes the next one.
+#[tokio::test]
+async fn an_aside_is_refused_while_asides_are_off() {
+    let (tmp, router, leaves) = gated_router("snyvi-asides-off");
+    let send = || {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/notes")
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("authorization", &leaves.bearer)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"text":"Four evenings, and it held."}"#))
+            .unwrap()
+    };
+    let off = tmp.path.join("config").join("asides-off");
+    std::fs::write(&off, b"").unwrap();
+    let resp = router.clone().oneshot(send()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("asides are off in About"));
+    async fn kept(router: Router, host: &str) -> usize {
+        let req = axum::http::Request::builder()
+            .uri("/api/notes")
+            .header("host", host)
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["notes"]
+            .as_array()
+            .map_or(0, Vec::len)
+    }
+    assert_eq!(
+        kept(router.clone(), &leaves.host).await,
+        0,
+        "a refused aside is not kept"
+    );
+
+    std::fs::remove_file(&off).unwrap();
+    let resp = router.clone().oneshot(send()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(kept(router, &leaves.host).await, 1);
+}
+
+/// Home's Keep on…: a friend's waiting line goes on a desk in one click,
+/// with their name on it, and only from the window -- it writes a desk's list.
+#[tokio::test]
+async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
+    let root = crate::store::tempdir::Dir::new("snyvi-keep-line-desk");
+    let dir = root.path.to_string_lossy().into_owned();
+    let at = std::sync::Mutex::new((0, 0));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-keep-line", |store| {
+        let desk = store.create_desk(&dir, Some("Garden")).unwrap();
+        let p = store
+            .pin_peer(&crate::peer::Peer {
+                sign_key: "SIGN".into(),
+                box_key: "BOX".into(),
+                name: "Trapti".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let n = store.peer_note_arrived(p.id, "water the beans").unwrap();
+        *at.lock().unwrap() = (desk.id, n);
+    });
+    let (desk, line) = at.into_inner().unwrap();
+    let keep = |cap: bool| {
+        let mut req = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/peers/notes/{line}"))
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("content-type", "application/json");
+        if cap {
+            req = req.header(CAPABILITY_HEADER, &leaves.cap);
+        }
+        let body = serde_json::json!({ "what": "keep", "desk": desk }).to_string();
+        router.clone().oneshot(req.body(Body::from(body)).unwrap())
+    };
+    let read = |uri: String| {
+        let req = axum::http::Request::builder()
+            .uri(uri)
+            .header("host", &leaves.host)
+            .header(CAPABILITY_HEADER, &leaves.cap)
+            .body(Body::empty())
+            .unwrap();
+        router.clone().oneshot(req)
+    };
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    assert_eq!(
+        keep(false).await.unwrap().status(),
+        StatusCode::FORBIDDEN,
+        "a tab has no desks to keep it on"
+    );
+    let kept = keep(true).await.unwrap();
+    assert_eq!(kept.status(), StatusCode::OK);
+    let kept = json(kept).await;
+    assert_eq!(kept["name"], "Garden");
+    assert_eq!(kept["note"]["sent_by"], "Trapti");
+    let notes = json(read(format!("/api/desks/{desk}/notes")).await.unwrap()).await;
+    let ours = notes["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["text"] == "water the beans")
+        .cloned()
+        .unwrap();
+    assert_eq!(ours["sent_by"], "Trapti");
+    assert!(
+        ours.get("suggested_by").is_none(),
+        "the reader's, not a question"
+    );
+    let peers = json(read("/api/peers".into()).await.unwrap()).await;
+    assert_eq!(peers["notes"], serde_json::json!([]), "no longer waiting");
+    assert_eq!(
+        keep(true).await.unwrap().status(),
+        StatusCode::NOT_FOUND,
+        "kept once"
+    );
+}
+
+/// A friend's document: Save waits for a desk, Keep puts it on one, Save
+/// then writes `from-trapti/<name>` into the desk's folder and never over a
+/// file, and none of it is anyone's but the window's or a friend's document.
+#[tokio::test]
+async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
+    let garden = crate::store::tempdir::Dir::new("snyvi-keep-doc-desk");
+    let root = garden.path.to_string_lossy().into_owned();
+    let at = std::sync::Mutex::new((0, String::new(), String::new()));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-keep-doc", |store| {
+        let desk = store.create_desk(&root, Some("Garden")).unwrap();
+        let doc = |id: &str, origin: &str, path: &str| {
+            store
+                .insert(
+                    id,
+                    crate::store::NewDoc {
+                        project_root: "peer:KEY",
+                        project_name: "From Trapti",
+                        workflow_key: "sent",
+                        workflow_title: "Sent by Trapti",
+                        title: "Seed list",
+                        kind: crate::render::Kind::Markdown,
+                        lang: None,
+                        source_path: Some(path),
+                        branch: None,
+                        origin,
+                        sender: "Trapti",
+                        desk: None,
+                        source: b"# Seeds\n\nbeans",
+                        staged: None,
+                        search_body: "beans",
+                        html: "<p>beans</p>",
+                    },
+                )
+                .unwrap()
+                .id
+        };
+        let theirs = doc("abcdef0001", "peer", "seeds.md");
+        let mine = doc("abcdef0002", "cli", "mine.md");
+        *at.lock().unwrap() = (desk.id, theirs, mine);
+    });
+    let (desk, theirs, mine) = at.into_inner().unwrap();
+    let post = |uri: String, body: serde_json::Value, cap: bool| {
+        let mut req = axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("content-type", "application/json");
+        if cap {
+            req = req.header(CAPABILITY_HEADER, &leaves.cap);
+        }
+        router
+            .clone()
+            .oneshot(req.body(Body::from(body.to_string())).unwrap())
+    };
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+    let save = |id: &str| post(format!("/api/docs/{id}/save"), serde_json::json!({}), true);
+    let keep = |id: &str, cap: bool| {
+        post(
+            format!("/api/docs/{id}/keep"),
+            serde_json::json!({ "desk": desk }),
+            cap,
+        )
+    };
+
+    let early = save(&theirs).await.unwrap();
+    assert_eq!(early.status(), StatusCode::CONFLICT, "not on a desk yet");
+    assert_eq!(
+        keep(&theirs, false).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        keep(&mine, true).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "only a friend's document moves this way"
+    );
+    let kept = keep(&theirs, true).await.unwrap();
+    assert_eq!(kept.status(), StatusCode::OK);
+    let kept = json(kept).await;
+    assert_eq!(kept["desk"], "Garden");
+    assert_eq!(kept["doc"]["desk"]["id"], desk);
+    assert_eq!(kept["doc"]["sender"], "Trapti", "still from them");
+
+    let first = json(save(&theirs).await.unwrap()).await;
+    assert_eq!(first["rel"], "from-trapti/seeds.md", "{first}");
+    let second = json(save(&theirs).await.unwrap()).await;
+    assert_eq!(second["rel"], "from-trapti/seeds-2.md", "never over a file");
+    assert_eq!(
+        std::fs::read(garden.path.join("from-trapti/seeds.md")).unwrap(),
+        b"# Seeds\n\nbeans"
+    );
+    assert!(garden.path.join("from-trapti/seeds-2.md").exists());
+}
+
+#[test]
+fn a_saved_friends_document_gets_a_plain_name() {
+    use super::api_peer::{file_name, slug};
+    assert_eq!(slug("Trapti"), "trapti");
+    assert_eq!(slug("  Ana María / B "), "ana-maría-b");
+    assert_eq!(slug("../.."), "friend");
+    let mut d = crate::store::Doc {
+        id: "x".into(),
+        project_id: 1,
+        project: "p".into(),
+        workflow_id: 1,
+        workflow: "sent".into(),
+        workflow_title: "Sent".into(),
+        title: "Garden plan!".into(),
+        kind: crate::render::Kind::Markdown,
+        lang: None,
+        size: 1,
+        received_at: 0,
+        source_path: Some("../../etc/plan.md".into()),
+        branch: None,
+        pinned: false,
+        origin: "peer".into(),
+        content_hash: String::new(),
+        desk: None,
+        sender: "Trapti".into(),
+    };
+    assert_eq!(file_name(&d), "plan.md", "a name and no path");
+    d.source_path = None;
+    assert_eq!(file_name(&d), "garden-plan.md");
+    d.source_path = Some(".bashrc".into());
+    assert_eq!(file_name(&d), "garden-plan.md", "never a dotfile");
+}
+
+/// A page sent to a friend carries its own pictures: one beside it goes in
+/// as `data:`, one outside its project, one of a kind that is not a
+/// picture, a link out, and one past the room left all stay as written.
+#[test]
+fn a_pages_pictures_travel_inside_it() {
+    use super::api_peer::inline_pictures;
+    let tmp = crate::store::tempdir::Dir::new("snyvi-inline-pictures");
+    let proj = tmp.path.join("proj");
+    std::fs::create_dir_all(proj.join(".git")).unwrap();
+    std::fs::create_dir_all(proj.join("img")).unwrap();
+    std::fs::write(proj.join("img/shot.png"), b"PNGDATA").unwrap();
+    std::fs::write(proj.join("draw.svg"), b"<svg/>").unwrap();
+    std::fs::write(tmp.path.join("away.png"), b"AWAY").unwrap();
+    let page = proj.join("plan.md");
+    let md =
+        "![shot](img/shot.png) ![svg](draw.svg) ![away](../away.png) ![web](https://x.dev/a.png)";
+    let out = inline_pictures(md, &page, 1 << 20);
+    assert!(
+        out.starts_with(&format!(
+            "![shot]({})",
+            crate::render::data_uri("image/png", b"PNGDATA")
+        )),
+        "{out}"
+    );
+    assert!(out.contains("![svg](draw.svg)"));
+    assert!(
+        out.contains("![away](../away.png)"),
+        "not outside its project"
+    );
+    assert!(out.contains("![web](https://x.dev/a.png)"));
+    assert_eq!(
+        inline_pictures(md, &page, 4),
+        md,
+        "nothing past the room a frame has"
+    );
+    assert_eq!(
+        inline_pictures(md, std::path::Path::new("plan.md"), 1 << 20),
+        md,
+        "a name with no folder, as a friend's document has"
+    );
 }

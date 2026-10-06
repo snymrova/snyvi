@@ -64,6 +64,11 @@ pub const KIND_COLUMNS: [&str; 2] = [
     "ALTER TABLE desks ADD COLUMN boards TEXT NOT NULL DEFAULT ''",
 ];
 
+/// 1.19: the friend a line came from (`DeskNote::sent_by`). Version 7 of
+/// `store::MIGRATIONS`, on the same terms as `POS_COLUMN`.
+pub const SENT_BY_COLUMN: &str =
+    "ALTER TABLE desk_notes ADD COLUMN sent_by TEXT NOT NULL DEFAULT ''";
+
 /// 1.16: the studio is retired, and a studio desk is a terminal desk on the
 /// same folder (its root was always the folder), with its panels, notes,
 /// keys and documents. Version 4 of `store::MIGRATIONS`. Nothing on disk is
@@ -293,6 +298,12 @@ pub struct DeskNote {
     /// Keep and ✕, and on the list only once kept. The agent's name.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub suggested_by: String,
+    /// A friend's name, when the line came from one (`crate::peer`): it came
+    /// as a suggestion, and it stays theirs after the reader keeps it --
+    /// keeping clears `suggested_by`, not this. The row and the brief say
+    /// "from Trapti". Nothing goes back to them when it is ticked.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sent_by: String,
     /// Pictures on the line -- a screenshot of the thing it is about -- by
     /// file name in `note_images/` under the data dir (`NOTE_IMAGES`): the
     /// content's hash and its extension, so the same picture is one file.
@@ -1227,7 +1238,7 @@ pub fn clear(conn: &Connection) -> Result<()> {
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
         "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
-                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane FROM desk_notes
+                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane, sent_by FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1249,6 +1260,19 @@ pub fn add_note(
     text: &str,
     now: i64,
 ) -> Result<Option<DeskNote>> {
+    add_note_from(conn, desk_id, text, "", now)
+}
+
+/// A friend's line, put on a desk by the reader from Home (Keep on…): an
+/// ordinary line of theirs, which remembers who sent it (`sent_by`).
+pub fn add_note_from(
+    conn: &mut Connection,
+    desk_id: i64,
+    text: &str,
+    sent_by: &str,
+    now: i64,
+) -> Result<Option<DeskNote>> {
+    let sent_by: String = sent_by.trim().chars().take(60).collect();
     let text = clip(text);
     if text.is_empty() {
         return Ok(None);
@@ -1274,8 +1298,8 @@ pub fn add_note(
         return Ok(None);
     }
     tx.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at) VALUES(?1, ?2, ?3)",
-        params![desk_id, text, now],
+        "INSERT INTO desk_notes(desk_id, text, created_at, sent_by) VALUES(?1, ?2, ?3, ?4)",
+        params![desk_id, text, now, sent_by],
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
@@ -1283,6 +1307,7 @@ pub fn add_note(
         id,
         text,
         created_at: now,
+        sent_by,
         ..DeskNote::default()
     }))
 }
@@ -1484,6 +1509,22 @@ pub fn suggest_note(
     by: &str,
     now: i64,
 ) -> Result<Suggested> {
+    suggest_note_from(conn, desk_id, text, by, "", now)
+}
+
+/// A suggestion that came from a friend (`crate::peer`): `by` and `sent_by`
+/// are both their name, and `sent_by` stays on the line once it is kept.
+/// The same caps as an agent's: a friend fills a desk no faster than an
+/// agent may, and past them the line waits on Home instead.
+pub fn suggest_note_from(
+    conn: &mut Connection,
+    desk_id: i64,
+    text: &str,
+    by: &str,
+    sent_by: &str,
+    now: i64,
+) -> Result<Suggested> {
+    let sent_by: String = sent_by.trim().chars().take(60).collect();
     let text = clip(text);
     if text.is_empty() {
         return Ok(Suggested::Empty);
@@ -1516,8 +1557,8 @@ pub fn suggest_note(
         return Ok(Suggested::Full);
     }
     tx.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by) VALUES(?1, ?2, ?3, ?4)",
-        params![desk_id, text, now, by],
+        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by, sent_by) VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![desk_id, text, now, by, sent_by],
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
@@ -1526,6 +1567,7 @@ pub fn suggest_note(
         text,
         created_at: now,
         suggested_by: by,
+        sent_by,
         ..DeskNote::default()
     })))
 }
@@ -1680,6 +1722,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         stage_panel: String::new(),
         done_pane: r.get(16)?,
         done_at: r.get(2)?,
+        sent_by: r.get(17)?,
     })
 }
 

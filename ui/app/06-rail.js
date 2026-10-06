@@ -424,7 +424,7 @@
     if (b.dataset.act === "preview") togglePreview();
     if (b.dataset.act === "delete") deleteCurrent(!e.detail);
     if (b.dataset.act === "copybrowse") {
-      const full = state.browseRoot.path + (state.browsePath ? "/" + state.browsePath : "");
+      const at = state.browsePath || state.browseIn, full = state.browseRoot.path + (at ? "/" + at : "");
       copied(full, b);
     }
     if (b.dataset.act === "reveal") openFolder();
@@ -436,7 +436,7 @@
    *  path: the daemon resolves the directory itself, and the request carries
    *  no token because this page has none -- it is allowed through by being
    *  same-origin, and a page on another origin is refused. */
-  const here = () => state.view === "browse" ? { root: state.browseRoot.id, path: state.browsePath || "" } : { doc: state.doc.id };
+  const here = () => state.view === "browse" ? { root: state.browseRoot.id, path: state.browsePath || state.browseIn || "" } : { doc: state.doc.id };
   const openFolder = (body = here()) => act("reveal", body);
 
   /** Pin or unpin a document: the meta pane's button, `p`, a row's menu.

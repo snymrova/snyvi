@@ -531,8 +531,9 @@ it, and most prompts get nothing. It rides on your own message -- snyvi
 never starts a turn -- and the same switch in About turns it off with the
 brief.
 
-A desk can hold keys for its panels: an API key, a token. The *Keys*
-slot in the desk's head, beside *Left off*, opens a small sheet. Paste the
+A desk can hold keys for its panels: an API key, a token. The key icon
+in the desk's head, beside *Left off* (dim with none, the count beside it
+with some), opens a small sheet. Paste the
 value once, name the variable it goes in (`OPENROUTER_API_KEY`,
 `GH_TOKEN`), say whether it is for this desk or for every desk, and keep
 it. The value goes to your keychain -- Keychain on macOS, Credential
@@ -792,8 +793,11 @@ does, and only http and https links count.
 A path works the same way, in a panel and in what you are reading: hold
 **Ctrl** over `src/app.js:120`, `~/.claude/settings.json` or `../notes/`
 and it is underlined only if it is there. Ctrl-click opens a file in
-snyvi's reader, at the line when one follows it, and a folder in your file
-manager. A relative path is looked for where it was printed: in a panel,
+snyvi's reader, at the line when one follows it, and a folder on snyvi's
+folder page, under Folders: under the desk's own row when the folder is
+inside the desk, so `src/` opens as the desk's `src`, not as a new row.
+**▸** goes into a folder there, **▴ ..** back up, and **Open in file
+manager** beside it opens it in Files, Finder or Explorer. A relative path is looked for where it was printed: in a panel,
 the folder its program is in, then the desk's; in a document, the folder of
 the file it was sent from, then its desk's, then its project's; in the
 folder reader, the file's own folder. Nothing is ever run. This needs the
@@ -1068,13 +1072,32 @@ takes the desk out of Pick up, and keeps it on a Parked shelf under the
 cards with that step until you take it down. Nothing on a parked desk is
 closed.
 
-**Today** has the time, the date and this month, Monday first, with today
-ringed. Only the time changes as it runs, so nothing you are typing in is
-touched. Hide it and the date comes back beside the title.
+The date is beside the title.
+
+**Arrived** heads the right-hand column: what came, in one place. An
+agent's offer to send a document to a friend comes first, since it asks
+you something -- Send or Not now in its row, and Not now has an Undo.
+Then a friend's lines, with **Keep on…**, which puts one on a desk in a
+click with their name on it, and ✕. Then the newest documents you have
+not read; a click opens one, and it leaves the list. Five rows at most,
+and "Everything in the Inbox →" when more are waiting. Arrived cannot be
+hidden, so nothing that arrives is put out of sight.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown
-full again. **snyvi** has the update card.
+full again. When an update is ready, its card heads the column.
+
+**Friends** shows once you have paired with someone: a line each, with
+where their things land (**→ own row**, or a desk you pick: their
+documents go to its project and their lines become its suggestions),
+**Note…** for a line on their Home and **⋯** for Mute and Remove. A
+friend's document says *Keep on a desk…* in its head; once it is on one,
+*Save into the folder* writes it into that desk's folder under
+`from-<their name>/`, next to nothing it would overwrite. **Keys**
+is folded until you open it, and stays as you left it.
+
+The foot says which snyvi this is, with *Check for updates* and *Pair with
+a friend…*.
 
 Git is read only in a desk's own folder, never in your home directory,
 read-only and with a two-second limit, and nothing leaves the machine.
@@ -1182,6 +1205,14 @@ the way, what it would do next, what it is unsure of -- and until this
 existed the only way to say it was to make it a document, which put it
 in your library and your unread count as though it were one.
 
+Sometimes the sentence is about you rather than the work: that the
+migration held after four evenings on it, that it is past one and the
+tests are green and the rest keeps. An agent may say that, a few times
+in a long session at most, and only about something that happened here
+-- a note it ticked, a commit, a test, where the desk left off. It never
+guesses at how you feel, and an aside that gives no reason in the record
+is one it was told not to send.
+
 `send_aside` is for that sentence, and it is deliberately small. An
 aside is at most 280 characters; past that it is a document and
 `send_document` is the tool for it. Asides are kept in memory, the last
@@ -1195,7 +1226,10 @@ it. A new one lights up and snyvi's own mark beside it hops once; rest
 on the aside and it is read, and the mark settles. Only one aside lights
 up every ten minutes: an agent that leaves one per edit costs you a
 single glance, and the rest join the trail quietly. An aside may name a
-document it is about, and then clicking it opens that document.
+document it is about, and then clicking it opens that document. One an
+agent left from a desk's panel, about no document, says which in its
+byline -- "via claude-code on ledger [2]" -- and clicking it opens that
+desk with the panel focused, which is where you answer it, if you do.
 
 An aside can be closed: the ✕ in its corner, or Esc while it has the
 focus. Its card stays where it was as one line, "Aside closed", with an
@@ -1209,7 +1243,15 @@ aside is closed in every window, and the daemon only marks it closed,
 which is why the Undo is real.
 
 It is a channel from the agent to you and nothing comes back: an aside is
-not an instruction to anything.
+not an instruction to anything. A reply is a line you type in the panel,
+like any other.
+
+If you would rather no agent left you a line at all, About has an
+**Asides** row: Turn off, and the daemon refuses every aside, saying
+"asides are off in About" to the agent that sent it, which is told not to
+send another. The ✕ on each aside stays the way to say no to one; this is
+the way to say no to all of them. snyvi's own first lines, which point you
+at what is new, are not an agent's and still show. Turn on puts it back.
 
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.

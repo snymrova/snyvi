@@ -210,6 +210,11 @@ async function main() {
     mkdirSync(folder);
     writeFileSync(join(folder, "notes.md"), plan("browsed notes"));
     writeFileSync(join(folder, "code.rs"), Array.from({ length: 400 }, (_, i) => `fn line_${i + 1}() { /* ${i + 1} */ }`).join("\n") + "\n");
+    // A folder inside it, and a file that names one inside that, for #91's
+    // rows: a folder Ctrl-clicked, and a ▸ row, open on the folder page.
+    mkdirSync(join(folder, "sub", "inner"), { recursive: true });
+    writeFileSync(join(folder, "sub", "where.md"), "# Where\n\nThe deep one is in inner/ now.\n");
+    writeFileSync(join(folder, "sub", "inner", "deep.md"), "# Deep\n");
     const browsed = execFileSync(BIN, ["browse", folder, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
     if (!/\/b\//.test(browsed)) throw new Error(`snyvi browse printed no URL:\n${browsed}`);
     // One send through the MCP server, the way an agent's does it, so the row
@@ -251,6 +256,7 @@ async function main() {
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
+    await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
     await section("a window to hand a link to", () => windowRows(p, url, base, mcpSend));
@@ -1689,6 +1695,64 @@ async function revealRows(p, browsed, folder, tmp) {
   return rows;
 }
 
+/** #91: a folder Ctrl-clicked in what is being read opens on snyvi's folder
+ *  page, never the file manager; a ▸ row there opens the folder it names, ▴ ..
+ *  goes back up, and an address ending in `/` is that folder's listing. In a
+ *  tab of its own, with the capability Ctrl-click asks the daemon with. */
+async function folderRows(cdp, base, browsed) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const root = browsed.replace(/\/$/, ""), id = root.split("/").pop();
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
+  const ctrl = type => cdp.send("Input.dispatchKeyEvent", { type, key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17, modifiers: type === "keyUp" ? 0 : 2 }, sessionId);
+  const listed = `[...document.querySelectorAll("#doc .inbox .title")].map(t => t.textContent).join(" · ")`;
+  const at = path => `location.pathname === ${JSON.stringify(path)}`;
+  const said = () => q.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
+  try {
+    await q.goto(`${root}#cap=${cap}`);
+    await until(`/▸ sub/.test(${listed})`);
+    await q.clickOn(`#doc .inbox a[data-path="sub/"]`);
+    const into = await until(`${at(`/b/${id}/sub/`)} && /inner/.test(${listed})`);
+    const list = await q.ev(listed);
+    rows.push(["a ▸ folder on the folder page opens it", into && /▴ \.\./.test(list),
+      into ? `/b/…/sub/: ${list}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
+    await q.clickOn(`#doc .inbox a[data-path=""]`);
+    const up = await until(`${at(`/b/${id}`)} && /▸ sub/.test(${listed})`);
+    rows.push(["and ▴ .. goes back up", up, up ? "the folder's own listing again" : `at ${await q.ev("location.pathname")}`]);
+
+    await q.goto(`${root}/sub/inner/`);
+    const loaded = await until(`/deep\\.md/.test(${listed})`);
+    rows.push(["an address ending in / is that folder's listing", loaded, loaded ? await q.ev(listed) : `the page shows "${await q.ev(listed)}"`]);
+
+    // A path in a file being read, Ctrl-clicked: `inner/` is a folder beside it.
+    await q.goto(`${root}/sub/where.md`);
+    await until(`/inner\\//.test(document.querySelector("#doc .prose")?.textContent || "")`);
+    const word = await q.ev(`(() => { const p = [...document.querySelectorAll("#doc .prose p")].find(e => e.textContent.includes("inner/"));
+      if (!p) return null; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n, off = p.textContent.indexOf("inner/") + 2;
+      while ((n = w.nextNode()) && off >= n.length) off -= n.length; const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 1);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    if (word) {
+      await ctrl("rawKeyDown");
+      await sleep(300);
+      await mouse("mouseMoved", word.x, word.y, { modifiers: 2 });
+      const lined = await until(`!!document.querySelector(".path-ul i")`, 30);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, word.x, word.y, { button: "left", clickCount: 1, modifiers: 2 });
+      await ctrl("keyUp");
+      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\\.md/.test(${listed})`);
+      const toast = await said();
+      rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", lined && opened && !/file manager/.test(toast),
+        !lined ? "Ctrl never underlined inner/" : !opened ? `at ${await q.ev("location.pathname")}, and the page said "${toast}"` : /file manager/.test(toast) ? `it still says "${toast}"` : "inner/ listed in snyvi, with deep.md in it"]);
+    } else rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", false, "inner/ is not in the file as read"]);
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** 0.15: a link into a browsed folder lands where it points, the way a link
  *  into a document does. The browser's own fragment scroll is no use for
  *  either: it aims at blocks that are still content-visibility placeholders. */
@@ -2020,6 +2084,7 @@ async function deskRows(cdp, base, token) {
   const [da, db] = [a.desk ? a.desk.id : a.id, b.desk ? b.desk.id : b.id];
   const pane = (await post(`/api/desks/${da}/panes`)).pane.id;
   await post(`/api/panes/${pane}/start`, { cmd: `while :; do printf "\\033]0;work %s\\007" $RANDOM; sleep 0.1; done` });
+  let second = null;
 
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -2054,7 +2119,23 @@ async function deskRows(cdp, base, token) {
     const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
+
+    // An aside sent from a panel is a way back to it. From the other
+    // desk, a click on the card opens this one with that panel focused.
+    second = (await post(`/api/desks/${da}/panes`)).pane.id;
+    await p.clickOn(`a[data-desk="${db}"]`);
+    await until(`location.pathname === "/desk/${db}"`);
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: "Four evenings on that one, and it held.", sender: "bench-agent", pane: second }) });
+    const from = r.ok && (await r.json()).note.from;
+    const led = await until(`!!document.querySelector('#note .note-now[data-desk="${da}"][data-slot="2"]')`);
+    if (led) await p.clickOn("#note .note-now p");
+    const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
+    rows.push(["an aside from a panel goes back to that panel", !!there,
+      !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
+    await p.pointerAway();
   } finally {
+    if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
@@ -2245,6 +2326,12 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // The page is a grid, not the reading measure.
     const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
     rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+    // 1.19: the date in the head and no clock; Arrived heads the side column
+    // and has no ✕; with no friend there is no Friends widget, and Pair with
+    // a friend… is in the foot with the version and Check for updates.
+    const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /snyvi \\S+ · Check for updates · Pair with a friend…/.test(foot), footText: foot, keys: document.querySelector("details.hm-keys") ? "folded" : "none" }; })()`);
+    rows.push(["Home: the date in the head, Arrived first and not hideable, no Friends without a friend, Pair… in the foot", side.date && !side.clock && side.first === "arrived" && !side.hide && !side.friends && side.foot && side.keys === "folded",
+      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== "arrived" ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a ✕" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.keys !== "folded" ? "Keys is not folded" : "date, Arrived, Claude, Keys folded; Pair… in the foot"]);
 
     // The note bar: one field for a line on any desk, Pick up's to start with.
     const notesOn = async id => ((await get(`/api/desks/${id}/notes`)).notes || []).map(n => n.text);

@@ -345,6 +345,9 @@ fn peer_routes() -> Router<Arc<App>> {
         .route("/api/peers/notes/{id}", post(peer_note_settle))
         .route("/api/peers/offers/{id}", post(offer_answer))
         .route("/api/docs/{id}/send", post(doc_send))
+        .route("/api/peers/{id}/desk", post(peer_desk))
+        .route("/api/docs/{id}/keep", post(doc_keep))
+        .route("/api/docs/{id}/save", post(doc_save))
 }
 
 /// A panel's routes, `/api/panes/{id}/*`: the page's (close, restore,
@@ -496,6 +499,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
+        .route("/api/asides", get(asides_setting).post(set_asides_setting))
         // Friends (`api_peer`): the reader's actions from this page or with
         // the token, the reads open like the project list is.
         .merge(pane_routes())

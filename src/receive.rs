@@ -51,6 +51,9 @@ pub struct FromPeer {
     /// The sender's file name, if the document was a file there: only its
     /// extension is used, to tell a picture from a page.
     pub file: Option<String>,
+    /// The desk the reader gave this friend, and its folder: the document
+    /// lands in that desk's project and on its list, not on their own row.
+    pub desk: Option<(crate::desk::Origin, String)>,
 }
 
 pub struct Received {
@@ -209,6 +212,7 @@ fn classify(renderer: &Renderer, b: &Body, lang: Option<&str>) -> (Kind, Option<
 fn page(
     renderer: &Renderer,
     b: &Body,
+    text: &str,
     id: &str,
     kind: Kind,
     lang: Option<&str>,
@@ -217,7 +221,7 @@ fn page(
     // The viewer shows the title as the page heading, so a leading H1 that *is* the title
     // would appear twice. Drop it from the rendered body only; the stored source is untouched.
     let body_src = if kind == Kind::Markdown {
-        render::strip_leading_h1(&b.text, title)
+        render::strip_leading_h1(text, title)
     } else {
         None
     };
@@ -233,7 +237,7 @@ fn page(
         _ => renderer.render_with_base(
             kind,
             lang,
-            body_src.as_deref().unwrap_or(&b.text),
+            body_src.as_deref().unwrap_or(text),
             file_base.as_deref(),
         ),
     }
@@ -271,8 +275,11 @@ fn workflow(
 /// sender's cwd, else from the file's location. A friend's document goes to
 /// the friend's own project, whose root is no folder on this machine
 /// (`peer::Peer::project_root`), so the sidebar gains one row per friend and
-/// nothing else.
+/// nothing else -- or, when the reader gave them a desk, to that desk's.
 fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
+    if let Some((_, root)) = p.peer.as_ref().and_then(|fp| fp.desk.as_ref()) {
+        return desk_project(root);
+    }
     if let Some(fp) = &p.peer {
         return (
             format!("peer:{}", fp.sign_key),
@@ -291,21 +298,36 @@ fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
 }
 
-pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
-    let b = read(store, &p)?;
-    let origin = p.origin.as_deref().unwrap_or("cli");
-    // Attribution only. Which workflow a document joins is still the
-    // session's, as it always was; the pane says where it was sent from.
-    let from = p
-        .pane
-        .as_deref()
-        .filter(|id| crate::pane::valid_id(id))
+/// The project a desk's folder is, as `place` gives it: what a friend's
+/// document kept on that desk joins.
+pub fn desk_project(root: &str) -> (String, String, Option<String>) {
+    let proj = project::resolve(Path::new(root));
+    let branch = project::branch(&proj.root);
+    (proj.root.to_string_lossy().to_string(), proj.name, branch)
+}
+
+/// The desk and slot a sender's pane is on, when it names one snyvi knows. A
+/// pane it does not know is no reason to refuse what was sent.
+pub fn pane_origin(store: &Store, pane: Option<&str>) -> Option<crate::desk::Origin> {
+    pane.filter(|id| crate::pane::valid_id(id))
         .and_then(|id| store.pane(id).ok().flatten())
         .map(|placed| crate::desk::Origin {
             id: placed.desk_id,
             name: placed.desk_name,
             slot: placed.pane.slot,
-        });
+        })
+}
+
+pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
+    let b = read(store, &p)?;
+    let origin = p.origin.as_deref().unwrap_or("cli");
+    // Attribution only. Which workflow a document joins is still the
+    // session's, as it always was; the pane says where it was sent from.
+    let from = pane_origin(store, p.pane.as_deref()).or_else(|| {
+        p.peer
+            .as_ref()
+            .and_then(|fp| fp.desk.as_ref().map(|(o, _)| o.clone()))
+    });
 
     let (root, proj_name, branch) = place(&p, &b);
 
@@ -354,7 +376,21 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let id = coalesce_into
         .clone()
         .unwrap_or_else(|| crate::store::new_id(&hash));
-    let html = page(renderer, &b, &id, kind, lang.as_deref(), &title);
+    // A friend's pictures are in the document or stayed with them: one that
+    // names a file on their machine says so, rather than breaking.
+    let shown = match &p.peer {
+        Some(fp) if kind == Kind::Markdown => Some(render::stayed_with(&b.text, &fp.name)),
+        _ => None,
+    };
+    let html = page(
+        renderer,
+        &b,
+        shown.as_deref().unwrap_or(&b.text),
+        &id,
+        kind,
+        lang.as_deref(),
+        &title,
+    );
     let needs_full_highlight = kind == Kind::Code && b.text.len() > HIGHLIGHT_CAP;
 
     let new_doc = NewDoc {
@@ -666,6 +702,7 @@ mod tests {
             sign_key: "KEY".into(),
             bytes: b"# Garden\n\nbeans".to_vec(),
             file: Some("garden.md".into()),
+            desk: None,
         };
         let got = receive(
             &s,
@@ -689,6 +726,13 @@ mod tests {
             Some("peer:KEY")
         );
         assert!(s.html(&got.doc.id).unwrap().contains("beans"));
+        // The sidebar is told it is a friend's row, and given no root: the
+        // page offers nothing that would act on a folder.
+        let row = &s.projects().unwrap()[0];
+        assert!(row.friend);
+        assert_eq!(row.root, "");
+        let json = serde_json::to_value(row).unwrap();
+        assert_eq!(json["friend"], true);
         // The same bytes again: the same row. New bytes: a new version of it.
         let again = receive(
             &s,
@@ -731,6 +775,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pic.doc.kind, Kind::Image);
+    }
+
+    /// A friend the reader gave a desk: their document joins that desk's
+    /// project and its list, and still says who sent it.
+    #[test]
+    fn a_friends_document_lands_on_their_desk_when_they_have_one() {
+        let (s, r, _d) = setup();
+        let garden = Dir::new("snyvi-recv-garden");
+        std::fs::create_dir_all(garden.path.join(".git")).unwrap();
+        let at = crate::desk::Origin {
+            id: 3,
+            name: "Garden".into(),
+            slot: 0,
+        };
+        let got = receive(
+            &s,
+            &r,
+            Payload {
+                origin: Some("peer".into()),
+                sender: Some("Trapti".into()),
+                peer: Some(FromPeer {
+                    name: "Trapti".into(),
+                    sign_key: "KEY".into(),
+                    bytes: b"# Seeds\n\nbeans".to_vec(),
+                    file: Some("seeds.md".into()),
+                    desk: Some((at.clone(), garden.path.to_string_lossy().to_string())),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (root, _, _) = desk_project(&garden.path.to_string_lossy());
+        assert_eq!(
+            s.project_root(got.doc.project_id).as_deref(),
+            Some(root.as_str())
+        );
+        assert_eq!(got.doc.desk, Some(at));
+        assert_eq!(got.doc.origin, "peer");
+        assert_eq!(got.doc.sender, "Trapti");
+        assert!(!s.projects().unwrap()[0].friend, "the desk's own row");
     }
 
     #[test]

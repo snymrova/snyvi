@@ -29,6 +29,10 @@ pub struct Aside {
     pub project: Option<String>,
     /// A document the aside is about; clicking the aside opens it.
     pub about: Option<String>,
+    /// The desk and panel it was sent from, when it came from one: clicking
+    /// an aside that is about no document goes there, where a reply is typed.
+    /// Copied at arrival, like a document's, so it outlives the pane.
+    pub from: Option<crate::desk::Origin>,
     pub at: i64,
     /// Whether it arrived glowing. False when it came too soon after the last.
     pub lit: bool,
@@ -49,6 +53,10 @@ pub struct NewAside {
     pub sender: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// The pane it was sent from: `SNYVI_SESSION`. The daemon looks it up;
+    /// one it does not know is no reason to refuse the aside.
+    #[serde(default)]
+    pub pane: Option<String>,
 }
 
 #[derive(Default)]
@@ -62,7 +70,7 @@ struct Inner {
 pub struct Asides(Mutex<Inner>);
 
 impl Asides {
-    pub fn add(&self, n: NewAside, now: i64) -> Result<Aside> {
+    pub fn add(&self, n: NewAside, from: Option<crate::desk::Origin>, now: i64) -> Result<Aside> {
         let text = n.text.split_whitespace().collect::<Vec<_>>().join(" ");
         if text.is_empty() {
             bail!("an aside needs some text");
@@ -87,6 +95,7 @@ impl Asides {
             sender: n.sender.filter(|s| !s.trim().is_empty()),
             project,
             about: n.about.filter(|s| !s.trim().is_empty()),
+            from,
             at: now,
             lit,
             seen: false,
@@ -154,7 +163,9 @@ mod tests {
     fn keeps_the_last_few_newest_first() {
         let asides = Asides::default();
         for i in 0..7 {
-            asides.add(new(&format!("aside {i}")), 1000 + i).unwrap();
+            asides
+                .add(new(&format!("aside {i}")), None, 1000 + i)
+                .unwrap();
         }
         let l = asides.list();
         assert_eq!(l.len(), KEEP);
@@ -165,26 +176,48 @@ mod tests {
     #[test]
     fn lights_up_rarely() {
         let asides = Asides::default();
-        assert!(asides.add(new("a"), 0).unwrap().lit);
-        assert!(!asides.add(new("b"), 60).unwrap().lit);
-        assert!(asides.add(new("c"), QUIET_SECS).unwrap().lit);
+        assert!(asides.add(new("a"), None, 0).unwrap().lit);
+        assert!(!asides.add(new("b"), None, 60).unwrap().lit);
+        assert!(asides.add(new("c"), None, QUIET_SECS).unwrap().lit);
     }
 
     #[test]
     fn refuses_empty_and_long() {
         let asides = Asides::default();
-        assert!(asides.add(new("   "), 0).is_err());
-        assert!(asides.add(new(&"x".repeat(MAX_CHARS + 1)), 0).is_err());
+        assert!(asides.add(new("   "), None, 0).is_err());
+        assert!(asides
+            .add(new(&"x".repeat(MAX_CHARS + 1)), None, 0)
+            .is_err());
         assert_eq!(
-            asides.add(new("  two\n  lines "), 0).unwrap().text,
+            asides.add(new("  two\n  lines "), None, 0).unwrap().text,
             "two lines"
         );
     }
 
     #[test]
+    fn keeps_where_it_came_from() {
+        let asides = Asides::default();
+        let at = crate::desk::Origin {
+            id: 3,
+            name: "ledger".into(),
+            slot: 2,
+        };
+        let a = asides
+            .add(new("from a panel"), Some(at.clone()), 0)
+            .unwrap();
+        assert_eq!(a.from.as_ref(), Some(&at));
+        let json = serde_json::to_value(&asides.list()[0]).unwrap();
+        assert_eq!(json["from"]["slot"], 2);
+        assert_eq!(json["from"]["name"], "ledger");
+        let b = asides.add(new("from nowhere"), None, 60).unwrap();
+        assert!(b.from.is_none());
+        assert!(serde_json::to_value(&b).unwrap()["from"].is_null());
+    }
+
+    #[test]
     fn seeing_is_once() {
         let asides = Asides::default();
-        asides.add(new("a"), 0).unwrap();
+        asides.add(new("a"), None, 0).unwrap();
         assert!(asides.see());
         assert!(!asides.see());
         assert!(asides.list()[0].seen);
@@ -193,8 +226,8 @@ mod tests {
     #[test]
     fn closing_keeps_it_for_undo() {
         let asides = Asides::default();
-        let a = asides.add(new("a"), 0).unwrap();
-        let b = asides.add(new("b"), 60).unwrap();
+        let a = asides.add(new("a"), None, 0).unwrap();
+        let b = asides.add(new("b"), None, 60).unwrap();
         assert!(asides.dismiss(&[b.id]));
         assert!(!asides.dismiss(&[b.id]), "closing twice changes nothing");
         let l = asides.list();
@@ -203,7 +236,7 @@ mod tests {
         assert!(asides.restore(&[b.id]));
         assert!(!asides.list()[0].dismissed);
         assert!(asides.dismiss(&[a.id, b.id]));
-        let c = asides.add(new("c"), 120).unwrap();
+        let c = asides.add(new("c"), None, 120).unwrap();
         assert!(
             !asides.list()[0].dismissed,
             "a new aside after a close shows"

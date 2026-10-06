@@ -2,10 +2,12 @@
  *
  * Pairing (a code to say, or a friend's code to type, then four emoji both
  * sides compare), Send to… (a document to one of the friends), a line for a
- * friend's notes, and an agent's offer (Send, or Not now). Each is one box
+ * friend's notes, an agent's offer (Send, or Not now), and a friend's
+ * document kept on a desk and saved into its folder. Each is one box
  * over the page, built here and gone when it closes, so a reader who never
- * pairs never fetches a byte of this. Home's Friends section and the
- * document menu are where these are opened from (ui/home.js, ui/menu.js);
+ * pairs never fetches a byte of this. Home (Friends, Arrived, the foot's
+ * Pair with a friend…) and the document menu are where these are opened
+ * from (ui/home.js, ui/menu.js);
  * the daemon's side is src/server/api_peer.rs.
  *
  * Nothing here holds state but the open box. Everything else comes from
@@ -43,6 +45,10 @@ const CSS = `
 `;
 
 let box = null, opener = null, poll = 0, styled = false;
+/** The open box's own listeners: dropped when another box takes its place,
+ *  so a sheet opened twice does not answer one click twice. */
+let wired = null;
+const on = (type, fn) => box.addEventListener(type, fn, { signal: wired.signal });
 
 function ensure() {
   if (!styled) { styled = true; document.head.append(Object.assign(document.createElement("style"), { textContent: CSS })); }
@@ -61,6 +67,7 @@ function open(title, html) {
   const el = ensure();
   if (el.hidden) opener = document.activeElement;
   clearInterval(poll); poll = 0;
+  wired?.abort(); wired = new AbortController();
   el.innerHTML = `<div class="pr-box"><h2>${title}<button type="button" class="pr-x pr-link" data-pr="close" aria-label="Close">✕</button></h2>${html}</div>`;
   el.hidden = false;
   const first = el.querySelector("input, button.pr-go, button:not(.pr-x)");
@@ -126,7 +133,7 @@ async function start(ctx, url, body) {
   open("Pair with a friend",
     (made
       ? `<p>Say this to your friend, or send it. It works once, for ten minutes.</p><div class="pr-code" aria-label="Your code">${esc(r.code)}</div>` +
-        `<p class="pr-quiet">They type it under <b>Pair with a friend</b> on their Home, or open <span style="font-family:var(--mono)">snyvi://pair/${esc(r.code)}</span>.</p>`
+        `<p class="pr-quiet">They type it under <b>Pair with a friend…</b> at the foot of their Home, or open <span style="font-family:var(--mono)">snyvi://pair/${esc(r.code)}</span>.</p>`
       : `<p>Waiting for <span style="font-family:var(--mono)">${esc(r.code)}</span> to meet its other half…</p>`) +
     `<div class="pr-emoji" aria-live="polite"></div><div class="pr-said" aria-live="polite">Waiting for the other side…</div>` +
     `<div class="pr-foot"><button type="button" data-pr="close">Cancel</button></div>`);
@@ -171,9 +178,9 @@ export async function send(ctx, docId, title = "") {
     (list.length
       ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
         `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; they see it under <b>From ${esc(j.me.name)}</b>. The relay holds it seven days at most, unread or not.</p>`
-      : `<p>No friends yet. <b>Pair with a friend</b> on Home makes one.</p>`) +
+      : `<p>No friends yet. <b>Pair with a friend…</b> at the foot of Home makes one.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
-  box.addEventListener("click", async e => {
+  on("click", async e => {
     const b = e.target.closest("button[data-peer]");
     if (!b) return;
     for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = true;
@@ -203,11 +210,87 @@ export function note(ctx, peerId, name) {
     if (!t) return;
     box.querySelector("[data-pr=send]").disabled = true;
     say("Sending…");
-    try { await post(`/api/peers/${peerId}/note`, { text: t }); say(`Sent to ${name}.`); setTimeout(close, 900); }
+    // A relay that cannot be reached keeps the line in the outbox, as it
+    // keeps a document: it goes when it can, and the sheet says so.
+    try { const r = await post(`/api/peers/${peerId}/note`, { text: t }); say(r.sent ? `Sent to ${name}.` : `Queued for ${name}; it goes when the relay can be reached.`); setTimeout(close, r.sent ? 900 : 2400); }
     catch (e) { say(ctx.sayErr(e).why, true); box.querySelector("[data-pr=send]").disabled = false; }
   };
   box.querySelector("[data-pr=send]").addEventListener("click", go);
   box.querySelector("#pr-line").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+}
+
+/* ---------- a friend's document, kept ---------- */
+
+/** The window's capability, which a desk's routes ask for: kept by the page
+ *  in this tab's session (ui/app/07-nav.js). A tab has none. */
+const cap = () => { try { return sessionStorage.getItem("snyvi.cap") || ""; } catch { return ""; } };
+
+async function deskCall(url, body) {
+  const headers = { "content-type": "application/json", "x-snyvi-capability": cap() };
+  const r = await fetch(url, body === undefined ? { headers } : { method: "POST", headers, body: JSON.stringify(body) });
+  let j = null; try { j = r.status === 204 ? {} : await r.json(); } catch {}
+  if (!r.ok) throw new Error((j && j.error) || `snyvi answered ${r.status}`);
+  return j || {};
+}
+
+/** A button in a document's head: Send to…, Keep on a desk…, Save into the
+ *  folder (src/server/assets.rs `doc_html`). */
+export function head(ctx, b) {
+  const id = b.dataset.send, title = b.dataset.sendTitle || "";
+  if (b.dataset.act === "keep") return keepOn(ctx, [id], title);
+  if (b.dataset.act === "save") return save(ctx, id, b);
+  return send(ctx, id, title);
+}
+
+/** Keep a friend's documents on a desk: each, with every version of it,
+ *  moves into the desk's project and onto its list, and still says who sent
+ *  it. Nothing is written into the folder; Save does that. `ids` is one
+ *  document, or every one under a friend's row (Keep all on a desk…). */
+export async function keepOn(ctx, ids, title) {
+  const { esc } = ctx;
+  if (!cap()) { ctx.toast("Only the snyvi window can do that", { sub: "a desk is the window's" }); return; }
+  let desks;
+  try { desks = (await deskCall("/api/desks")).desks || []; }
+  catch (e) { ctx.toast("Could not read the desks", { sub: ctx.sayErr(e).why }); return; }
+  desks = [...desks.filter(d => !d.parked), ...desks.filter(d => d.parked)];
+  open(`Keep <span class="pr-title">${esc(title || "this document")}</span> on…`,
+    (desks.length
+      ? `<ul>${desks.map(d => `<li><span class="pr-nm">${esc(d.name)}</span><span class="pr-t">${d.parked ? "parked" : ""}</span><button type="button" class="pr-go" data-desk="${d.id}">Keep here</button></li>`).join("")}</ul>` +
+        `<p class="pr-quiet" style="margin-top:10px">${ids.length > 1 ? `All ${ids.length} move` : "It moves"} into the desk's documents, every version, and still ${ids.length > 1 ? "say" : "says"} who sent ${ids.length > 1 ? "them" : "it"}. Nothing is written into the desk's folder until you press <b>Save into the folder</b>.</p>`
+      : `<p>No desk yet. <b>+ New desk</b> in the sidebar makes one.</p>`) +
+    `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
+  on("click", async e => {
+    const b = e.target.closest("button[data-desk]");
+    if (!b) return;
+    for (const x of box.querySelectorAll("button[data-desk]")) x.disabled = true;
+    say("Keeping…");
+    let name = "", done = 0;
+    try {
+      for (const id of ids) { name = (await deskCall(`/api/docs/${encodeURIComponent(id)}/keep`, { desk: +b.dataset.desk })).desk; done++; }
+      say(`Kept on ${name}.${ids.length === 1 ? " Save into the folder is in its head now." : ""}`);
+      box.querySelector(".pr-foot").innerHTML = `<button type="button" class="pr-go" data-pr="close">Done</button>`;
+      box.querySelector(".pr-go").focus();
+    } catch (err) {
+      say(`${done ? `${done} kept; then ` : ""}${ctx.sayErr(err).why}`, true);
+      for (const x of box.querySelectorAll("button[data-desk]")) x.disabled = false;
+    }
+  });
+}
+
+/** Save into the folder: the stored bytes, written as `from-<friend>/<name>`
+ *  in the folder of the desk it is on, never over a file. Said in the head,
+ *  where the button was. */
+export async function save(ctx, id, b) {
+  if (!cap()) { ctx.toast("Only the snyvi window can do that", { sub: "it writes into a desk's folder" }); return; }
+  if (b) b.disabled = true;
+  try {
+    const r = await deskCall(`/api/docs/${encodeURIComponent(id)}/save`, {});
+    if (b && b.isConnected) { const s = Object.assign(document.createElement("span"), { textContent: `Saved as ${r.rel}` }); s.setAttribute("role", "status"); b.replaceWith(s); }
+    ctx.toast(`Saved into ${r.desk}'s folder`, { sub: r.rel });
+  } catch (e) {
+    if (b) b.disabled = false;
+    ctx.toast("Could not save it", { sub: ctx.sayErr(e).why });
+  }
 }
 
 /* ---------- an agent's offer ---------- */
@@ -219,7 +302,7 @@ export function note(ctx, peerId, name) {
  *  from a friend is a toast that opens Home, unless it came quietly. */
 export function event(ctx, j) {
   if (j.offer != null) offer(ctx, j);
-  else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: "waiting on Home, under Friends", kind: "news", go: ctx.home });
+  else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: j.desk ? `a suggestion on ${j.desk}` : "waiting on Home, under Arrived", kind: "news", go: ctx.home });
 }
 
 export function offer(ctx, o) {

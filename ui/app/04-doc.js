@@ -416,8 +416,8 @@
     if (w === "pick") act("pick", true);
     else if (w === "place") { const f = welcomePlaces[+b.dataset.i]; if (f) act("make", f); }
     else if (w === "connect") connectClaude(b);
-    // Send to… in a document's head: the sheet, for this document.
-    else if (w === "send") peerUse().then(m => m.send(peerCtx, b.dataset.send, b.dataset.sendTitle), () => toast("Could not open Send to…"));
+    // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
+    else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
   });
   /** Connect Claude Code, from the Agents page or a desk's panel: it asks,
    *  in place, then runs `init-claude` in the daemon. */

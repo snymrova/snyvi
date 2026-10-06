@@ -517,6 +517,7 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
         removed_at: 0,
         last_from: 0,
         last_to: 0,
+        desk_id: 0,
     };
     // The keys have to be keys, or nothing is pinned.
     let their_sign = peer.verifying_key()?;
@@ -525,6 +526,11 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
         bail!("that is this snyvi's own code");
     }
     let glyphs = emoji(me.sign.verifying_key().as_bytes(), their_sign.as_bytes());
+    // Sign in to this daemon's own mailbox now: the relay takes nothing for
+    // an address nobody has signed in as, and the new friend's first
+    // document may come before the link opens. The link does it too, so a
+    // failure here only costs that document a retry.
+    let _ = inbox(me);
     Ok((peer, glyphs))
 }
 
@@ -548,16 +554,30 @@ fn exchange(
     match resp.status().as_u16() {
         200 => return read_all(&mut resp),
         202 => {}
-        409 => bail!("someone else already used this code"),
-        410 => bail!("this code was already used"),
-        s => bail!("the relay answered {s} to the pairing"),
+        s => return Err(pair_refused(s)),
     }
+    // The wait is on the room's doorbell, which rings when the other side's
+    // message lands and costs the relay nothing while it does not; then the
+    // message is read at once. Where the bell will not open (an older relay,
+    // a proxy that drops WebSockets) the wait is a long poll instead.
+    let mut bell = true;
     loop {
         let left = until - crate::store::now();
         if left <= 0 {
             bail!("the code ran out before the other side typed it");
         }
-        let wait = left.min(25);
+        let wait = if bell {
+            match ring_wait(base, room, stage, side, left.min(25)) {
+                Bell::Rang | Bell::Quiet => 0,
+                Bell::Absent => {
+                    bell = false;
+                    left.min(25)
+                }
+            }
+        } else {
+            left.min(25)
+        };
+        let asked = std::time::Instant::now();
         let mut resp = agent
             .get(&format!("{url}?wait={wait}"))
             .header("x-snyvi-side", side)
@@ -565,10 +585,79 @@ fn exchange(
             .context("reaching the relay")?;
         match resp.status().as_u16() {
             200 => return read_all(&mut resp),
-            204 => continue,
-            410 => bail!("this code was already used"),
-            s => bail!("the relay answered {s} to the pairing"),
+            // A poll answered at once though it asked to wait (a relay that
+            // no longer holds polls): not straight back.
+            204 if wait > 0 && asked.elapsed() < Duration::from_secs(1) => {
+                std::thread::sleep(Duration::from_secs(1))
+            }
+            204 => {}
+            s => return Err(pair_refused(s)),
         }
+    }
+}
+
+/// A room's answer that ends the pairing, in the reader's words.
+fn pair_refused(status: u16) -> anyhow::Error {
+    match status {
+        409 => anyhow!("someone else already used this code"),
+        410 => anyhow!("this code was already used"),
+        429 => anyhow!("{BUSY}; try again in a minute"),
+        s => anyhow!("the relay answered {s} to the pairing"),
+    }
+}
+
+/// How a wait on the doorbell ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Bell {
+    /// The other side's message is in.
+    Rang,
+    /// Nothing in the time, or the bell closed: ask, then wait again.
+    Quiet,
+    /// The bell would not open.
+    Absent,
+}
+
+/// Wait up to `secs` on the room's doorbell for the other side's `stage`.
+/// Blocking, like the rest of the pairing: it borrows the daemon's runtime
+/// for the socket, from the `spawn_blocking` thread the pairing runs on.
+fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64) -> Bell {
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return Bell::Absent;
+    };
+    let url = format!("{}/room/{room}/ws?side={side}", ws_base(base));
+    rt.block_on(async move {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::Message;
+        let connect = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio_tungstenite::connect_async(url.as_str()),
+        );
+        let Ok(Ok((mut socket, _))) = connect.await else {
+            return Bell::Absent;
+        };
+        let ring = async {
+            while let Some(Ok(msg)) = socket.next().await {
+                if matches!(&msg, Message::Text(t) if rings_for(t.as_str()) == Some(stage)) {
+                    return Bell::Rang;
+                }
+            }
+            Bell::Quiet
+        };
+        let bell = tokio::time::timeout(Duration::from_secs(secs.max(1) as u64), ring)
+            .await
+            .unwrap_or(Bell::Quiet);
+        let _ = socket.close(None).await;
+        bell
+    })
+}
+
+/// The stage a doorbell's `{"ready":stage}` names.
+fn rings_for(text: &str) -> Option<&str> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    match v.get("ready")?.as_str()? {
+        "spake" => Some("spake"),
+        "hello" => Some("hello"),
+        _ => None,
     }
 }
 
@@ -590,21 +679,54 @@ pub struct Waiting {
     pub size: u64,
 }
 
-/// Leave a frame for `to` (an address). The relay's id makes a resend a
-/// replacement. `Ok(false)` is the relay saying the mailbox is full.
-pub fn deposit(to: &str, id: &str, frame: &[u8]) -> Result<bool> {
+/// What a deposit came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Deposit {
+    /// In the friend's mailbox.
+    Sent,
+    /// Not now, and nothing wrong: it stays in the outbox for the next try,
+    /// and the wait does not count against the tries a frame has.
+    Later(&'static str),
+}
+
+/// What the reader is told when the relay asks everyone to slow down.
+pub const BUSY: &str = "the relay is busy";
+
+/// Leave a frame for `to` (an address), signed by `me` -- the sender the
+/// frame names -- so that the relay lets nobody else replace it. The
+/// relay's id makes a resend a replacement.
+pub fn deposit(me: &Identity, to: &str, id: &str, frame: &[u8]) -> Result<Deposit> {
+    let path = format!("/to/{to}");
     let mut resp = http()
-        .post(&format!("{}/to/{to}", relay()))
+        .post(&format!("{}{path}", relay()))
         .header("x-snyvi-id", id)
+        .header("x-snyvi-from", &me.address())
+        .header("x-snyvi-auth", &me.relay_auth("POST", &path))
         .send(frame)
         .context("reaching the relay")?;
-    match resp.status().as_u16() {
-        200 | 201 => Ok(true),
-        429 => Ok(false),
-        s => bail!(
-            "the relay answered {s}: {}",
-            String::from_utf8_lossy(&read_all(&mut resp)?).trim()
-        ),
+    let status = resp.status().as_u16();
+    if status == 200 || status == 201 {
+        return Ok(Deposit::Sent);
+    }
+    let body = String::from_utf8_lossy(&read_all(&mut resp)?)
+        .trim()
+        .to_string();
+    match later(status, &body) {
+        Some(why) => Ok(Deposit::Later(why)),
+        None => bail!("the relay answered {status}: {body}"),
+    }
+}
+
+/// The answers to a deposit that mean "not now": the mailbox full, the
+/// relay asking to slow down, or a friend whose snyvi has not been online
+/// since its mailbox was cleared for being idle (a 404: the relay takes
+/// nothing for an address nobody has signed in as).
+fn later(status: u16, body: &str) -> Option<&'static str> {
+    match status {
+        429 if body.contains("busy") => Some(BUSY),
+        429 => Some("their mailbox is full"),
+        404 => Some("their snyvi has not been online for a while"),
+        _ => None,
     }
 }
 
@@ -666,14 +788,18 @@ pub fn relay_ws(address: &str) -> String {
 }
 
 fn ws_of(relay: &str, address: &str) -> String {
-    let base = if let Some(rest) = relay.strip_prefix("https://") {
+    format!("{}/inbox/{address}", ws_base(relay))
+}
+
+/// The relay's address with its scheme turned to the WebSocket one.
+fn ws_base(relay: &str) -> String {
+    if let Some(rest) = relay.strip_prefix("https://") {
         format!("wss://{rest}")
     } else if let Some(rest) = relay.strip_prefix("http://") {
         format!("ws://{rest}")
     } else {
         relay.to_string()
-    };
-    format!("{base}/inbox/{address}")
+    }
 }
 
 /// What the relay says down the link, as text: a frame that landed (or was
@@ -703,7 +829,7 @@ pub fn backoff(attempt: u32) -> Duration {
 // ---- the store -----------------------------------------------------------------
 
 /// A friend: keys pinned at pairing, a name the reader may change.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Peer {
     pub id: i64,
     /// The address: their Ed25519 public key, as the relay spells it.
@@ -718,6 +844,11 @@ pub struct Peer {
     pub removed_at: i64,
     pub last_from: i64,
     pub last_to: i64,
+    /// The desk their things land on: their documents in its project, their
+    /// lines as suggestions on its list. 0 is their own row, From Trapti,
+    /// and the lines on Home. A desk that is closed or parked when something
+    /// arrives counts as 0, so nothing lands out of sight.
+    pub desk_id: i64,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -815,8 +946,17 @@ CREATE TABLE IF NOT EXISTS peer_taken (
 );
 "#;
 
+/// 1.19: the desk a friend's things land on (0: their own row), and a line
+/// in the outbox. Version 7 of `store::MIGRATIONS`, not in `SCHEMA`: that
+/// step runs once and takes an error as one, so a table made new must not
+/// have them before it adds them.
+pub const COLUMNS_1_19: [&str; 2] = [
+    "ALTER TABLE peers ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN text TEXT NOT NULL DEFAULT ''",
+];
+
 const PEER_COLS: &str =
-    "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to";
+    "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to, desk_id";
 
 fn row_peer(r: &rusqlite::Row) -> rusqlite::Result<Peer> {
     Ok(Peer {
@@ -829,6 +969,7 @@ fn row_peer(r: &rusqlite::Row) -> rusqlite::Result<Peer> {
         removed_at: r.get(6)?,
         last_from: r.get(7)?,
         last_to: r.get(8)?,
+        desk_id: r.get(9)?,
     })
 }
 
@@ -917,6 +1058,15 @@ pub fn restore(conn: &Connection, id: i64) -> Result<bool> {
     )? > 0)
 }
 
+/// Where a friend's things land from now on: a desk, or 0 for their own
+/// row. What already arrived stays where it is.
+pub fn set_desk(conn: &Connection, id: i64, desk_id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE peers SET desk_id = ?2 WHERE id = ?1",
+        params![id, desk_id.max(0)],
+    )? > 0)
+}
+
 pub fn touch(conn: &Connection, id: i64, from: bool, now: i64) -> Result<()> {
     let col = if from { "last_from" } else { "last_to" };
     conn.execute(
@@ -938,14 +1088,47 @@ pub fn queue(conn: &Connection, peer: &Peer, doc_id: &str, now: i64) -> Result<S
     Ok(id)
 }
 
-/// What has not gone yet, oldest first: `(frame id, peer id, doc id, tries)`.
-pub fn unsent(conn: &Connection) -> Result<Vec<(String, i64, String, i64)>> {
+/// A line queued for a friend, as a document is: said once, so each is its
+/// own row under a fresh id, and it goes when the relay can be reached.
+pub fn queue_note(conn: &Connection, peer: &Peer, text: &str, now: i64) -> Result<String> {
+    let text: String = text.trim().chars().take(NOTE_CHARS).collect();
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|e| anyhow!("reading random bytes for a line's id: {e}"))?;
+    let id = blake3::hash(&nonce).to_hex().to_string();
+    conn.execute(
+        "INSERT INTO peer_outbox(id, peer_id, doc_id, text, queued_at) VALUES(?1, ?2, '', ?3, ?4)",
+        params![id, peer.id, text, now],
+    )?;
+    Ok(id)
+}
+
+/// A frame waiting in the outbox: a document (`doc_id`) or a line (`text`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unsent {
+    pub id: String,
+    pub peer_id: i64,
+    pub doc_id: String,
+    pub text: String,
+    pub tries: i64,
+}
+
+/// What has not gone yet, oldest first.
+pub fn unsent(conn: &Connection) -> Result<Vec<Unsent>> {
     let rows = conn
         .prepare(
-            "SELECT o.id, o.peer_id, o.doc_id, o.tries FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
+            "SELECT o.id, o.peer_id, o.doc_id, o.text, o.tries FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
              WHERE o.sent_at = 0 AND p.removed_at = 0 ORDER BY o.queued_at, o.id",
         )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .query_map([], |r| {
+            Ok(Unsent {
+                id: r.get(0)?,
+                peer_id: r.get(1)?,
+                doc_id: r.get(2)?,
+                text: r.get(3)?,
+                tries: r.get(4)?,
+            })
+        })?
         .collect::<std::result::Result<_, _>>()?;
     Ok(rows)
 }
@@ -961,6 +1144,17 @@ pub fn sent(conn: &Connection, id: &str, now: i64) -> Result<()> {
 pub fn failed(conn: &Connection, id: &str, why: &str) -> Result<()> {
     conn.execute(
         "UPDATE peer_outbox SET tries = tries + 1, error = ?2 WHERE id = ?1",
+        params![id, why.chars().take(200).collect::<String>()],
+    )?;
+    Ok(())
+}
+
+/// Not sent, and nothing wrong (`Deposit::Later`): the row says why it
+/// waits, and keeps its tries, so a friend away for a week does not leave
+/// it stranded at `TRIES_MAX`.
+pub fn waiting(conn: &Connection, id: &str, why: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE peer_outbox SET error = ?2 WHERE id = ?1",
         params![id, why.chars().take(200).collect::<String>()],
     )?;
     Ok(())
@@ -1072,6 +1266,16 @@ pub fn answer_offer(conn: &Connection, id: i64, sent: bool, now: i64) -> Result<
     Ok(conn.execute(
         "UPDATE peer_offers SET answered_at = ?2, sent = ?3 WHERE id = ?1 AND answered_at = 0",
         params![id, now, sent as i64],
+    )? > 0)
+}
+
+/// Not now, taken back: open again, when it was answered No and its pane
+/// has not since been swept (`drop_offers_of` answers No too, so the
+/// caller asks only within its Undo's few seconds).
+pub fn reopen_offer(conn: &Connection, id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE peer_offers SET answered_at = 0 WHERE id = ?1 AND answered_at != 0 AND sent = 0",
+        params![id],
     )? > 0)
 }
 
@@ -1187,6 +1391,7 @@ mod tests {
             removed_at: 0,
             last_from: 0,
             last_to: 0,
+            desk_id: 0,
         }
     }
 
@@ -1356,6 +1561,9 @@ mod tests {
         conn.execute_batch("CREATE TABLE docs (id TEXT PRIMARY KEY, title TEXT NOT NULL);")
             .unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        for c in COLUMNS_1_19 {
+            conn.execute_batch(c).unwrap();
+        }
         let (sunny, trapti) = two();
         let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
         assert_eq!(t.name, "Trapti");
@@ -1368,6 +1576,9 @@ mod tests {
             "a name is not nothing"
         );
         assert!(mute(&conn, t.id, true).unwrap());
+        assert!(set_desk(&conn, t.id, 4).unwrap());
+        assert_eq!(get(&conn, t.id).unwrap().unwrap().desk_id, 4);
+        assert!(set_desk(&conn, t.id, 0).unwrap());
         assert!(get(&conn, t.id).unwrap().unwrap().muted);
         assert!(remove(&conn, t.id, 200).unwrap());
         assert!(
@@ -1389,9 +1600,23 @@ mod tests {
         assert_eq!(queue(&conn, &t2, "doc1", 401).unwrap(), fid);
         assert_eq!(unsent(&conn).unwrap().len(), 1);
         failed(&conn, &fid, "offline").unwrap();
-        assert_eq!(unsent(&conn).unwrap()[0].3, 1);
+        assert_eq!(unsent(&conn).unwrap()[0].tries, 1);
+        // A full mailbox is a wait, not a failure: the tries stay where they were.
+        waiting(&conn, &fid, "their mailbox is full").unwrap();
+        waiting(&conn, &fid, "their mailbox is full").unwrap();
+        assert_eq!(unsent(&conn).unwrap()[0].tries, 1);
         sent(&conn, &fid, 402).unwrap();
         assert!(unsent(&conn).unwrap().is_empty());
+        // A line waits there too, each its own row: said twice is two lines.
+        let l1 = queue_note(&conn, &t2, "  water the beans  ", 410).unwrap();
+        let l2 = queue_note(&conn, &t2, "water the beans", 411).unwrap();
+        assert_ne!(l1, l2);
+        let waiting = unsent(&conn).unwrap();
+        assert_eq!(waiting.len(), 2);
+        assert_eq!(waiting[0].text, "water the beans");
+        assert_eq!(waiting[0].doc_id, "");
+        sent(&conn, &l1, 412).unwrap();
+        sent(&conn, &l2, 412).unwrap();
 
         // Notes wait, are taken, put away, brought back.
         let n = note_arrived(&conn, t2.id, "  water the beans  ", 500).unwrap();
@@ -1411,6 +1636,12 @@ mod tests {
         assert_eq!(open[0].to, "T");
         assert!(answer_offer(&conn, o, true, 601).unwrap());
         assert!(!answer_offer(&conn, o, true, 601).unwrap(), "answered once");
+        assert!(!reopen_offer(&conn, o).unwrap(), "a sent offer stays sent");
+        let no = offer(&conn, t2.id, "doc1", "pane-b", "Claude", 601).unwrap();
+        assert!(answer_offer(&conn, no, false, 601).unwrap());
+        assert!(reopen_offer(&conn, no).unwrap(), "Not now has an Undo");
+        assert_eq!(offers_open(&conn).unwrap().len(), 1);
+        assert!(answer_offer(&conn, no, false, 601).unwrap());
         offer(&conn, t2.id, "doc1", "pane-a", "Claude", 602).unwrap();
         assert_eq!(drop_offers_of(&conn, "pane-a", 603).unwrap(), 1);
         assert!(offers_open(&conn).unwrap().is_empty());
@@ -1454,6 +1685,49 @@ mod tests {
         );
         assert!(serde_json::from_str::<Pushed>("pong").is_err());
         assert_eq!(ack_message("ab"), r#"{"ack":"ab"}"#);
+    }
+
+    #[test]
+    fn a_deposit_that_cannot_go_now_waits_and_says_why() {
+        assert_eq!(
+            later(429, "the relay is busy; try again in a minute"),
+            Some(BUSY)
+        );
+        assert_eq!(
+            later(429, "the mailbox is full; try later"),
+            Some("their mailbox is full")
+        );
+        assert!(
+            later(404, "no such mailbox").is_some(),
+            "an idle friend's cleared mailbox"
+        );
+        assert_eq!(
+            later(401, "not the key's signature"),
+            None,
+            "a real failure"
+        );
+        assert_eq!(later(413, "a frame is at most 8 MB"), None);
+    }
+
+    #[test]
+    fn the_doorbell_and_the_pairing_speak_plainly() {
+        assert_eq!(ws_base("https://relay.snyvi.com"), "wss://relay.snyvi.com");
+        assert_eq!(ws_base("http://127.0.0.1:8799"), "ws://127.0.0.1:8799");
+        assert_eq!(rings_for(r#"{"ready":"spake"}"#), Some("spake"));
+        assert_eq!(rings_for(r#"{"ready":"hello"}"#), Some("hello"));
+        assert_eq!(rings_for(r#"{"ready":"other"}"#), None);
+        assert_eq!(rings_for("pong"), None);
+        assert_eq!(
+            pair_refused(429).to_string(),
+            "the relay is busy; try again in a minute"
+        );
+        assert_eq!(pair_refused(410).to_string(), "this code was already used");
+        // No runtime about, as in a plain test: the bell is not there, and
+        // the pairing falls back to asking.
+        assert_eq!(
+            ring_wait("http://127.0.0.1:9", &"a".repeat(64), "spake", "ab", 1),
+            Bell::Absent
+        );
     }
 
     #[test]

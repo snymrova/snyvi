@@ -318,6 +318,9 @@ pub(crate) fn shell(
         o.insert("online".into(), app.online());
         // The aside showing at the foot of the sidebar, and the trail under it.
         o.insert("notes".into(), json!(app.asides.list()));
+        // Whether there is a friend, so a menu offers Send to a friend… only
+        // then; the menu asks again as it opens (`ui/menu.js`).
+        o.insert("friends".into(), json!(has_friends(app)));
     }
     let page = app
         .ui
@@ -364,9 +367,16 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
     // A friend's document says who, and that the signature checked: the
     // only way a document gets `peer` as its origin is through a frame that
     // opened under a pinned key (`crate::peer::open`).
-    let mut sub = if doc.origin == "peer" && !doc.sender.is_empty() {
+    let theirs = doc.origin == "peer" && !doc.sender.is_empty();
+    let mut sub = if theirs {
+        // Kept on a desk, it says which; the workflow is theirs either way.
+        let on = doc
+            .desk
+            .as_ref()
+            .map(|d| format!(" · on {}", e(&d.name)))
+            .unwrap_or_default();
         format!(
-            "from {} · verified · {}",
+            "from {} · verified{on} · {}",
             e(&doc.sender),
             e(&doc.workflow_title)
         )
@@ -377,6 +387,21 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
         sub.push_str(&format!(" · <span class=\"branch\">{}</span>", e(b)));
     }
     sub.push_str(&format!(" · {}", fmt_time(doc.received_at)));
+    // A friend's document: Keep on a desk…, and once it is on one, Save into
+    // the folder. The page wires both (`ui/peer.js`), and the daemon asks
+    // for the window's capability, since both name a desk.
+    if theirs {
+        let (act, label) = if doc.desk.is_some() {
+            ("save", "Save into the folder")
+        } else {
+            ("keep", "Keep on a desk…")
+        };
+        sub.push_str(&format!(
+            " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"{act}\" data-send=\"{}\" data-send-title=\"{}\">{label}</button>",
+            e(&doc.id),
+            e(&doc.title)
+        ));
+    }
     // Send to…, only once there is a friend to send to: the page wires the
     // click (`ui/peer.js`). In the sub line, so the head is the same height
     // with it and without.
@@ -698,16 +723,16 @@ pub(crate) async fn browse_shell(app: Arc<App>, id: String, path: String) -> Res
         )
             .into_response();
     };
-    // Land on the README when no file was asked for.
+    // Land on the README when no file was asked for. A path ending in `/` is
+    // a folder inside the root, and the page lists it (ui/browse.js `show`).
     let path = if path.is_empty() {
         app.browse.landing(&id).unwrap_or_default()
     } else {
         path
     };
-    let title = if path.is_empty() {
-        root.name.clone()
-    } else {
-        path.clone()
+    let title = match path.trim_end_matches('/') {
+        "" => root.name.clone(),
+        p => p.to_string(),
     };
     let boot = json!({
         "view": "browse",

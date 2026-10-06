@@ -35,6 +35,7 @@ const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" st
  *  outline and not on a text baseline. */
 const HEAD = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  key: '<circle cx="7" cy="13" r="3.5"/><path d="M9.5 10.5L16 4M13.5 6.5l2 2M15.5 4.5l1.5 1.5"/>',
 };
 const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
 
@@ -63,8 +64,10 @@ function rail() {
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
   // The latest six, and always the one on the page: a document being read
   // is never the one the rail hides. The count names what is not shown.
-  const shown = docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading);
-  const rest = dl.length - shown.length, folds = docsAll && dl.length > DOCS_SHOWN;
+  // A search shows every title that has what was typed, and nothing folds.
+  const q = docsFind.trim().toLowerCase(), found = q ? dl.filter(x => x.title.toLowerCase().includes(q)) : null;
+  const shown = found || (docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading));
+  const rest = found ? 0 : dl.length - shown.length, folds = !found && docsAll && dl.length > DOCS_SHOWN;
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
   const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
@@ -107,7 +110,9 @@ function rail() {
     // not its title, which ticks. The row on the page gets its second line.
     // The rest, named rather than listed: one row at the end of the box that
     // opens them here, met where the scroll runs out rather than under it.
+    (dl.length > DOCS_FIND || docsFind ? `<input class="dk-find" type="search" spellcheck="false" autocomplete="off" placeholder="Find a document" aria-label="Find a document on this desk by its title" value="${esc(docsFind)}">` : "") +
     (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
+      (found && !found.length ? `<li><p class="dk-empty">No title has “${esc(docsFind.trim())}”</p></li>` : "") +
       (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
       : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
     // What the reader removed from this list, named, and there to open or put back.
@@ -120,7 +125,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); noteFocus(); docsScroll(docsTop); loadImgs(); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); docsScroll(docsTop); loadImgs(); }
   meta();
 }
 
@@ -155,10 +160,34 @@ function docsScroll(top) {
   else if (b.bottom > a.bottom) ul.scrollTop += b.bottom - a.bottom;
 }
 
-/** Leaving a desk leaves its removed list, and a row's Undo, with it. */
+/** Leaving a desk leaves its removed list, a row's Undo and a search with it. */
 function forgetDocs() {
   clearTimeout(docTimer);
   docOff = []; offShown = false; docGone = null; docSeen = null;
+  docsFind = ""; findCaret = 0; findOn = false;
+}
+
+/** The documents' search field, after a redraw made it again: what was
+ *  typed narrows the list as it is typed, and the focus and the caret go
+ *  back where they were. */
+function findFocus() {
+  const inp = ctx.tocEl.querySelector(".dk-find");
+  if (!inp) { findOn = false; return; }
+  inp.addEventListener("focus", () => { findOn = true; });
+  inp.addEventListener("blur", () => { if (!drawing) findOn = false; });
+  inp.addEventListener("input", () => { docsFind = inp.value; findCaret = inp.selectionStart; rail(); });
+  inp.addEventListener("keydown", e => {
+    // The desk gives every other key to the shell in the focused panel.
+    e.stopPropagation();
+    // Enter opens the first match; Escape empties the field, and leaves it
+    // when it is empty already.
+    if (e.key === "Enter") { e.preventDefault(); ctx.tocEl.querySelector(".dk-docs:not(.dk-offs) a[data-read]")?.click(); }
+    else if (e.key === "Escape") { e.preventDefault(); if (docsFind) { docsFind = ""; findCaret = 0; rail(); } else inp.blur(); }
+  });
+  if (!findOn) return;
+  inp.focus();
+  const at = Math.min(findCaret, inp.value.length);
+  inp.setSelectionRange(at, at);
 }
 
 /** Where each desk's repository lives on the web, by desk id: `{ url, at,
@@ -329,7 +358,7 @@ function noteRow(x, esc) {
   // is a question and these are its two answers.
   if (x.suggested_by) {
     return `<li class="dk-note dk-sug"><span class="dk-tick ghost" aria-hidden="true"></span>` +
-      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="suggested by ${esc(x.suggested_by)} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
+      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
   }
@@ -343,7 +372,7 @@ function noteRow(x, esc) {
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
     picMark(x, esc) +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
-    (x.done && x.done_by ? byLine(x, esc) : "") +
+    (x.done && x.done_by ? byLine(x, esc) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }

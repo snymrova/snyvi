@@ -103,12 +103,15 @@ const PROVIDERS = [
   ["Anthropic", "ANTHROPIC_API_KEY"], ["Hugging Face", "HF_TOKEN"], ["Replicate", "REPLICATE_API_TOKEN"], ["Stripe", "STRIPE_SECRET_KEY"],
 ];
 let keysOpen = null, keysGone = null;
+/** The key just kept, { desk, name }: its row, when the desk's next read
+ *  brings it, lights once, so Keep is seen to have done something. */
+let keyNew = null;
 
 function keysSlot(d) {
-  const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
-  if (!head) return;
-  let el = head.querySelector(".dk-keys");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); head.querySelector(".dk-tabs").before(el); }
+  const hd = ctx.docEl.querySelector(".dk-head");
+  if (!hd) return;
+  let el = hd.querySelector(".dk-keys");
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); hd.querySelector(".dk-tabs").before(el); }
   // The button is redrawn in place; the sheet beside it is left alone, with
   // whatever is typed in it.
   let b = el.querySelector(".dk-keys-b");
@@ -116,7 +119,11 @@ function keysSlot(d) {
   const ks = d.keys || [], n = ks.length, open = keysOpen === d.id;
   b.classList.toggle("none", !n);
   b.setAttribute("aria-expanded", String(open));
-  b.textContent = n ? `${n} key${n === 1 ? "" : "s"}` : "Keys";
+  // A key, always there, and how many beside it: a word that showed only
+  // under the cursor was a control nobody knew was there.
+  const html = head("key") + (n ? `<span class="n">${n}</span>` : "");
+  if (b.$html !== html) { b.innerHTML = html; b.$html = html; }
+  b.setAttribute("aria-label", n ? `${n} key${n === 1 ? "" : "s"}` : "Keys");
   b.dataset.tip = n ? ks.map(k => k.name).join(", ") : "Keys for this desk's panels";
   b.dataset.tipSub = n ? "in the environment of this desk's panels · click to see or add" : "an API key or a token, kept where only you can read it and put in the environment of every panel here";
   if (open) keysRows(d);
@@ -157,10 +164,14 @@ function keysRows(d) {
   if (!rows) return;
   const { esc } = ctx, ks = d.keys || [];
   const gone = k => keysGone && keysGone.desk === d.id && keysGone.name === k.name && keysGone.every === !k.desk_id;
-  rows.innerHTML = ks.length ? ks.map(k => gone(k)
+  const lit = k => keyNew && keyNew.desk === d.id && keyNew.name === k.name ? " new" : "";
+  // Drawn only when it changed: a row that lit up would light again at every
+  // redraw of the desk.
+  const html = ks.length ? ks.map(k => gone(k)
     ? `<div class="dk-key" role="status"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">Removed · its value is gone in a moment</span><button type="button" class="dk-undo" data-a="key-back">Undo</button></div>`
-    : `<div class="dk-key"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">${k.provider ? esc(k.provider) + " · " : ""}${k.desk_id ? "this desk" : "every desk"} · ${k.used_at ? "a panel started with it " + ctx.relShort(k.used_at) : "no panel has started with it yet"}</span><button type="button" class="icon dk-key-x" data-a="key-x" data-n="${esc(k.name)}" data-every="${k.desk_id ? "" : "1"}" data-tip="Take it off ${k.desk_id ? "this desk" : "every desk"}" aria-label="Remove ${esc(k.name)}">${ctx.glyph("x")}</button></div>`).join("")
+    : `<div class="dk-key${lit(k)}"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">${k.provider ? esc(k.provider) + " · " : ""}${k.desk_id ? "this desk" : "every desk"} · ${k.used_at ? "a panel started with it " + ctx.relShort(k.used_at) : "no panel has started with it yet"}</span><button type="button" class="icon dk-key-x" data-a="key-x" data-n="${esc(k.name)}" data-every="${k.desk_id ? "" : "1"}" data-tip="Take it off ${k.desk_id ? "this desk" : "every desk"}" aria-label="Remove ${esc(k.name)}">${ctx.glyph("x")}</button></div>`).join("")
     : `<p class="dk-keys-none">None yet. A key here goes into the environment of every panel on this desk, and Claude is told its name, never its value.</p>`;
+  if (rows.$html !== html) { rows.innerHTML = html; rows.$html = html; }
 }
 
 function keysOutside(e) { if (!e.target.closest(".dk-keys")) keysClose(); }
@@ -184,6 +195,10 @@ async function keyAdd(d, e) {
   try {
     const j = await ctx.api(`/api/desks/${d.id}/keys`, { name, value, every, provider: provider(name) });
     f.value.value = ""; f.name.value = "";
+    keyNew = { desk: d.id, name };
+    setTimeout(() => { if (keyNew && keyNew.name === name) keyNew = null; }, 1600);
+    const b = ctx.docEl.querySelector(".dk-keys-b");
+    if (b) { b.classList.remove("kept"); void b.offsetWidth; b.classList.add("kept"); b.addEventListener("animationend", () => b.classList.remove("kept"), { once: true }); }
     say.textContent = j.kept === "file"
       ? `${name} is kept in a file only you can read. Panels on this desk can use it now, as $(snyvi key ${name}).`
       : `${name} is kept in your keychain. Panels on this desk can use it now, as $(snyvi key ${name}).`;

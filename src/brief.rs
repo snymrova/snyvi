@@ -107,7 +107,16 @@ pub fn brief(
         let named: Vec<String> = open
             .iter()
             .take(OPEN_SHOWN)
-            .map(|n| format!("#{} {}", n.id, cut(&n.text, LINE_CHARS)))
+            .map(|n| {
+                // A friend's line says whose it is, so an agent knows the
+                // reminder is someone else's words.
+                let from = if n.sent_by.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (from {})", n.sent_by)
+                };
+                format!("#{} {}{from}", n.id, cut(&n.text, LINE_CHARS))
+            })
             .collect();
         let more = open.len().saturating_sub(OPEN_SHOWN);
         lines.push(format!(
@@ -444,6 +453,27 @@ mod tests {
         assert_eq!(
             title(&desk(3, None), 2, "auth refactor"),
             "ledger · auth refactor"
+        );
+    }
+
+    /// A friend's line, kept, says whose it is: the agent reads someone
+    /// else's words as theirs, not the user's.
+    #[test]
+    fn a_friends_line_says_who_sent_it() {
+        let mut theirs = note(93, "water the beans", false);
+        theirs.sent_by = "Trapti".into();
+        let b = brief(
+            &desk(3, None),
+            1,
+            &[note(3, "wire the route", false), theirs],
+            &[],
+            &[],
+            None,
+            1000,
+        );
+        assert!(
+            b.contains("(2): #3 wire the route; #93 water the beans (from Trapti)."),
+            "{b}"
         );
     }
 

@@ -35,12 +35,16 @@ a link would only send them to a browser beside it, so say it is waiting in snyv
 the result carries.";
 
 const ASIDE_DESCRIPTION: &str = "Leave the user a short personal aside in snyvi -- the kind of remark a friend \
-working beside them would make about the work they are in: that a hard part just landed, that the thing they \
-worried about turned out fine, that this closes what they set out to do today. It glows quietly at the foot of snyvi's sidebar until they look. Use it rarely -- a few times in a \
-long session at most, only when you have something genuinely worth saying, never as a status update or a \
-summary of a document you just sent. One or two plain sentences (at most 280 characters), warm and specific, \
-no emoji. It is not a to-do and goes on no list of the user's. Do not mention the aside to the user in your \
-reply; it speaks for itself.";
+working beside them would make, about the work and about them at it: that a hard part just landed after several \
+evenings, that the thing they worried about turned out fine, that it is late and the rest keeps, one next step as \
+a question. Ground every one in something that happened here -- a note, a commit, a test, a left-off line -- or do \
+not send it: a line that reads the person rather than the record is wrong the first time it is slightly off. Use \
+it rarely -- a few times in a long session at most, never as a status update, never a summary of a document you \
+just sent, never advice about anything but this project, never mid-task. One or two plain sentences (at most 280 \
+characters), warm and specific, no emoji. It glows quietly at the foot of snyvi's sidebar until they look; sent \
+from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and \
+goes on no list of the user's. Do not mention the aside to the user in your reply; it speaks for itself. If snyvi \
+answers that asides are off, the user turned them off: do not send another.";
 
 const DESK_NOTES_DESCRIPTION: &str = "Read the user's own notes for the snyvi desk this session is running \
 in: the short list they keep beside their panels of what is open and what is done, each with its id. Read it when \
@@ -113,6 +117,8 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
+An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
+away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
 is context from snyvi, not a request.";
 
@@ -198,6 +204,28 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What `tools/list` offers: the two any agent has, and in a panel the
+/// desk's. `offer_document` only for a reader with a friend to offer to --
+/// an agent shown a tool it can never use tries it -- and when the daemon
+/// did not say (`None`), as before.
+fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
+    let mut tools = vec![tool_spec(), aside_spec()];
+    if panel {
+        tools.extend([
+            desk_notes_spec(),
+            mark_spec(),
+            tick_spec(),
+            suggest_spec(),
+            leave_off_spec(),
+            name_spec(),
+        ]);
+        if friends != Some(false) {
+            tools.push(offer_spec());
+        }
+    }
+    tools
+}
+
 /// A tool's answer: one text for the agent, and whether it is an error.
 fn said(text: impl Into<String>, bad: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text.into() }], "isError": bad })
@@ -242,19 +270,10 @@ impl Session {
             "prompts/get" => self.prompt(params),
             "ping" => Ok(json!({})),
             "tools/list" => {
-                let mut tools = vec![tool_spec(), aside_spec()];
-                if self.pane.is_some() {
-                    tools.extend([
-                        desk_notes_spec(),
-                        mark_spec(),
-                        tick_spec(),
-                        suggest_spec(),
-                        leave_off_spec(),
-                        name_spec(),
-                        offer_spec(),
-                    ]);
-                }
-                Ok(json!({ "tools": tools }))
+                // The friends are asked for only in a panel, where the
+                // tool would be listed.
+                let friends = self.pane.as_ref().and_then(|_| client::has_friends());
+                Ok(json!({ "tools": tools(self.pane.is_some(), friends) }))
             }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
@@ -316,6 +335,7 @@ impl Session {
             args,
             self.cwd.as_deref(),
             self.sender.as_deref(),
+            self.pane.as_deref(),
         ) {
             Ok(()) => said("Left in snyvi. No need to mention it to the user.", false),
             Err(e) => said(format!("snyvi could not take the aside: {e}"), true),
@@ -765,6 +785,7 @@ fn call_aside(
     args: &Value,
     cwd: Option<&str>,
     sender: Option<&str>,
+    pane: Option<&str>,
 ) -> anyhow::Result<()> {
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
     let aside = crate::aside::NewAside {
@@ -772,6 +793,7 @@ fn call_aside(
         about: s("about"),
         sender: sender.map(str::to_string),
         cwd: cwd.map(str::to_string),
+        pane: pane.map(str::to_string),
     };
     client::aside(paths, &aside).map(|_| ())
 }
@@ -1043,6 +1065,22 @@ mod tests {
             .unwrap()
             .contains("Nothing is sent by this call"));
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_document"));
+        let names = |panel, friends| -> Vec<String> {
+            tools(panel, friends)
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(names(true, Some(true)).contains(&"offer_document".into()));
+        assert!(
+            !names(true, Some(false)).contains(&"offer_document".into()),
+            "no friends, no offer"
+        );
+        assert!(
+            names(true, None).contains(&"offer_document".into()),
+            "a daemon that did not say lists it, as before"
+        );
+        assert!(!names(false, Some(true)).contains(&"offer_document".into()));
     }
 
     #[test]

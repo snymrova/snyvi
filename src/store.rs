@@ -102,6 +102,28 @@ pub struct TreeProject {
     /// When its newest document arrived: what the Inbox's "more" row says the
     /// projects past the cut have been quiet since.
     pub latest: i64,
+    /// A friend's own row (`peer::Peer::project_root`). Its root is no
+    /// folder, so it is sent empty: what the page does with a root -- the
+    /// desk glyph, New desk here, Copy path, the file manager -- has nothing
+    /// to work on there, and the page offers none of it on an empty one.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub friend: bool,
+}
+
+/// A project's row from `projects`' columns: id, name, root, docs,
+/// workflows, latest.
+fn row_project(r: &rusqlite::Row) -> rusqlite::Result<TreeProject> {
+    let root: String = r.get(2)?;
+    let friend = root.starts_with("peer:");
+    Ok(TreeProject {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        root: if friend { String::new() } else { root },
+        docs: r.get(3)?,
+        workflows: r.get(4)?,
+        latest: r.get(5)?,
+        friend,
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -442,6 +464,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
              ELSE 0 END
          WHERE source_path IS NOT NULL",
     ),
+    // 1.19: where a friend's things land (`peers.desk_id`, 0 for their own
+    // row), a line waiting in the outbox as a document does (`text`, with
+    // no document), and who sent a desk's line when it came from a friend
+    // (`sent_by`, which keeping a suggestion does not clear).
+    (7, peer::COLUMNS_1_19[0]),
+    (7, peer::COLUMNS_1_19[1]),
+    (7, desk::SENT_BY_COLUMN),
 ];
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
@@ -1072,6 +1101,19 @@ impl Store {
         Ok(rows)
     }
 
+    /// The newest documents still unread, newest first: Home's Arrived,
+    /// which reads what came last, where the queue reads oldest first.
+    pub fn newest_unread(&self, limit: usize) -> Result<Vec<Doc>> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(&format!(
+                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
+            ))?
+            .query_map(params![limit as i64], row_to_doc)?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
     /// How many are on the queue: what the bar says, however many rows the
     /// page was sent.
     pub fn waiting(&self) -> Result<i64> {
@@ -1157,6 +1199,73 @@ impl Store {
     /// The key stays as it was, so the session that owns it still lands here.
     /// A project's derived name follows what it is named for -- a friend's
     /// project follows the friend -- unless the reader named it themselves.
+    /// Move a document, and every version of its file, into another project
+    /// and onto a desk's list: a friend's document kept on a desk. The
+    /// workflow goes with it by key, made in the new project if it is not
+    /// there; who sent it, when, and its bytes stay as they were. `None`
+    /// when there is no such document.
+    pub fn move_lineage(
+        &self,
+        id: &str,
+        root: &str,
+        name: &str,
+        desk: &Origin,
+    ) -> Result<Option<Doc>> {
+        let now = now();
+        {
+            let mut conn = self.conn.lock().unwrap();
+            let tx = conn.transaction()?;
+            let Some((from, path, wf_key, wf_title)): Option<(
+                i64,
+                Option<String>,
+                String,
+                String,
+            )> = tx
+                .query_row(
+                    "SELECT d.project_id, d.source_path, w.key, w.title FROM live_docs d
+                     JOIN workflows w ON w.id = d.workflow_id WHERE d.id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            tx.execute(
+                "INSERT INTO projects(root, name, created_at) VALUES(?1, ?2, ?3)
+                 ON CONFLICT(root) DO NOTHING",
+                params![root, name, now],
+            )?;
+            let to: i64 = tx.query_row(
+                "SELECT id FROM projects WHERE root = ?1",
+                params![root],
+                |r| r.get(0),
+            )?;
+            tx.execute(
+                "INSERT INTO workflows(project_id, key, title, created_at) VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id, key) DO NOTHING",
+                params![to, wf_key, wf_title, now],
+            )?;
+            let wf: i64 = tx.query_row(
+                "SELECT id FROM workflows WHERE project_id = ?1 AND key = ?2",
+                params![to, wf_key],
+                |r| r.get(0),
+            )?;
+            // The deleted versions too: an Undo of one brings it back where
+            // its lineage now is.
+            tx.execute(
+                "UPDATE docs SET project_id = ?2, workflow_id = ?3, desk_id = ?4, desk_name = ?5, desk_slot = ?6, desk_off = 0
+                 WHERE id = ?1 OR (?7 IS NOT NULL AND project_id = ?8 AND source_path = ?7)",
+                params![id, to, wf, desk.id, desk.name, desk.slot, path, from],
+            )?;
+            if let Some(sp) = &path {
+                rehead(&tx, to, sp)?;
+            }
+            tx.commit()?;
+        }
+        self.get(id)
+    }
+
     pub fn rename_project_by_root(&self, root: &str, name: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
@@ -1250,16 +1359,7 @@ impl Store {
                  FROM projects p JOIN head_docs d ON d.project_id = p.id
                  GROUP BY p.id ORDER BY MAX(d.received_at) DESC, p.id DESC",
             )?
-            .query_map([], |r| {
-                Ok(TreeProject {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    root: r.get(2)?,
-                    docs: r.get(3)?,
-                    workflows: r.get(4)?,
-                    latest: r.get(5)?,
-                })
-            })?
+            .query_map([], row_project)?
             .collect::<std::result::Result<_, _>>()?;
         Ok(rows)
     }
@@ -1274,16 +1374,7 @@ impl Store {
              FROM projects p JOIN head_docs d ON d.project_id = p.id
              WHERE p.id = ?1 GROUP BY p.id",
             params![project_id],
-            |r| {
-                Ok(TreeProject {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    root: r.get(2)?,
-                    docs: r.get(3)?,
-                    workflows: r.get(4)?,
-                    latest: r.get(5)?,
-                })
-            },
+            row_project,
         )
         .optional()
         .map_err(Into::into)
@@ -1636,6 +1727,11 @@ impl Store {
         peer::rename(&self.conn.lock().unwrap(), id, name)
     }
 
+    /// Where a friend's things land (`peer::set_desk`).
+    pub fn set_peer_desk(&self, id: i64, desk_id: i64) -> Result<bool> {
+        peer::set_desk(&self.conn.lock().unwrap(), id, desk_id)
+    }
+
     pub fn mute_peer(&self, id: i64, muted: bool) -> Result<bool> {
         peer::mute(&self.conn.lock().unwrap(), id, muted)
     }
@@ -1661,8 +1757,13 @@ impl Store {
     }
 
     /// What has not gone yet: (frame id, friend, document, tries).
-    pub fn peer_unsent(&self) -> Result<Vec<(String, i64, String, i64)>> {
+    pub fn peer_unsent(&self) -> Result<Vec<peer::Unsent>> {
         peer::unsent(&self.conn.lock().unwrap())
+    }
+
+    /// Queue a line for a friend (`peer::queue_note`): the frame's id.
+    pub fn peer_queue_note(&self, p: &peer::Peer, text: &str) -> Result<String> {
+        peer::queue_note(&self.conn.lock().unwrap(), p, text, now())
     }
 
     pub fn peer_sent(&self, id: &str) -> Result<()> {
@@ -1671,6 +1772,10 @@ impl Store {
 
     pub fn peer_failed(&self, id: &str, why: &str) -> Result<()> {
         peer::failed(&self.conn.lock().unwrap(), id, why)
+    }
+
+    pub fn peer_waiting(&self, id: &str, why: &str) -> Result<()> {
+        peer::waiting(&self.conn.lock().unwrap(), id, why)
     }
 
     /// A friend's lines waiting on Home (`peer::notes_waiting`).
@@ -1702,6 +1807,10 @@ impl Store {
 
     pub fn answer_peer_offer(&self, id: i64, sent: bool) -> Result<bool> {
         peer::answer_offer(&self.conn.lock().unwrap(), id, sent, now())
+    }
+
+    pub fn reopen_peer_offer(&self, id: i64) -> Result<bool> {
+        peer::reopen_offer(&self.conn.lock().unwrap(), id)
     }
 
     pub fn drop_peer_offers_of(&self, pane: &str) -> Result<usize> {
@@ -1863,6 +1972,33 @@ impl Store {
 
     pub fn suggest_desk_note(&self, desk_id: i64, text: &str, by: &str) -> Result<desk::Suggested> {
         desk::suggest_note(&mut self.conn.lock().unwrap(), desk_id, text, by, now())
+    }
+
+    /// A friend's line as a suggestion on their desk (`desk::suggest_note_from`).
+    pub fn suggest_desk_note_from(
+        &self,
+        desk_id: i64,
+        text: &str,
+        name: &str,
+    ) -> Result<desk::Suggested> {
+        desk::suggest_note_from(
+            &mut self.conn.lock().unwrap(),
+            desk_id,
+            text,
+            name,
+            name,
+            now(),
+        )
+    }
+
+    /// A friend's line kept on a desk from Home (`desk::add_note_from`).
+    pub fn add_desk_note_from(
+        &self,
+        desk_id: i64,
+        text: &str,
+        name: &str,
+    ) -> Result<Option<desk::DeskNote>> {
+        desk::add_note_from(&mut self.conn.lock().unwrap(), desk_id, text, name, now())
     }
 
     pub fn keep_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {

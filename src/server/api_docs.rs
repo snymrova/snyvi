@@ -607,7 +607,18 @@ pub(crate) async fn receive_aside(
         )
             .into_response();
     }
-    match app.asides.add(n, crate::store::now()) {
+    // Turned off in About: the door is closed, whoever knocks. The words are
+    // what the agent reads back, and its tool says not to try again.
+    if !asides_on(&app) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "asides are off in About" })),
+        )
+            .into_response();
+    }
+    // Where it came from, for the click; the token above is the only gate.
+    let from = crate::receive::pane_origin(&app.store, n.pane.as_deref());
+    match app.asides.add(n, from, crate::store::now()) {
         Ok(aside) => {
             emit(&app, "notes", json!({ "notes": app.asides.list() }));
             (
@@ -733,6 +744,13 @@ fn full_highlight(app: &App, doc: &Doc, lang: Option<&str>) -> bool {
             if !crate::render::has_pending_highlight(&current) {
                 return false;
             }
+            // A friend's, drawn as `receive` drew it: a picture that stayed
+            // on their machine says so.
+            let src = if doc.origin == "peer" {
+                crate::render::stayed_with(&src, &doc.sender)
+            } else {
+                src
+            };
             let body = crate::render::strip_leading_h1(&src, &doc.title);
             let base = doc.source_path.as_ref().map(|_| format!("/files/{id}/"));
             app.renderer
