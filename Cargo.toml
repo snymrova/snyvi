@@ -113,6 +113,13 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# The bundled SQLite, built for size: 0.89 MB of the static binary, which
+# 1.20.0 took to 18.02 MB against its 18 MB budget (src/bench.rs). The
+# library holds documents and their search index, not the render path, and
+# a send's round trip measured the same either way (177 and 176 ms per MB).
+[profile.release.package.libsqlite3-sys]
+opt-level = "s"
+
 # Two executables. `snyvi` is everything -- daemon, CLI, MCP server, hook -- and
 # never links a browser engine, so it stays static and depends on nothing.
 # `snyvi-app` is the native window and nothing else; `snyvi app` finds it and

@@ -506,7 +506,9 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// Ed25519, X25519, ChaCha20-Poly1305 and SPAKE2, 140 KB of the pairing,
 /// the link and the routes -- and the rest what they instantiate in tokio
 /// and core. Without the precomputed tables it is 43 KB less, not enough
-/// to matter; the feature is what the half megabyte buys.
+/// to matter; the feature is what the half megabyte buys. 18 held in
+/// 1.20.0, whose threads took the musl build from 17.65 to 18.02 MB (axum's
+/// handlers 110 KB of it), by building the bundled SQLite for size: 17.13.
 const BINARY_MB: f64 = 18.0;
 
 /// Returns whether any row was over budget.
