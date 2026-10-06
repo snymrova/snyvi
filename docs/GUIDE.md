@@ -485,7 +485,7 @@ the same rows.
 ### Claude Code
 
 `snyvi init-claude` (or `snyvi init claude`) runs `claude mcp add --scope user snyvi -- snyvi mcp`.
-That exposes two MCP tools, and five more inside a desk. `send_document` is
+That exposes two MCP tools, and more inside a desk. `send_document` is
 the one that matters: it takes a file path or inline content and returns a
 URL, and its description tells Claude what snyvi can show and when to pick
 each -- Markdown with Mermaid for a plan, one self-contained HTML file for a
@@ -494,8 +494,11 @@ one, and [Asides](#asides) below says what it is for. Offered only to a
 Claude running in a desk's panel: `read_desk_notes` reads that desk's
 notes, `tick_desk_note` ticks one done (with the commit, the document and a
 link to where the work can be seen), `suggest_desk_note` offers a line you
-can keep or not, `leave_off` says in a sentence where the work stands, and
-`name_panel` names the panel it runs in. The tool descriptions tell Claude
+can keep or not, `leave_off` says in a sentence where the work stands,
+`name_panel` names the panel it runs in, and six more file the work itself
+([Threads and Your turn](#threads-and-your-turn) below): `start_thread` and
+`move_thread`, `ask` and `hand_over`, `suggest_panel` and `suggest_desk`.
+The tool descriptions tell Claude
 when to use each; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
@@ -531,8 +534,9 @@ it, and most prompts get nothing. It rides on your own message -- snyvi
 never starts a turn -- and the same switch in About turns it off with the
 brief.
 
-A desk can hold keys for its panels: an API key, a token. The *Keys*
-slot in the desk's head, beside *Left off*, opens a small sheet. Paste the
+A desk can hold keys for its panels: an API key, a token. The key icon
+in the desk's head, beside *Left off* (dim with none, the count beside it
+with some), opens a small sheet. Paste the
 value once, name the variable it goes in (`OPENROUTER_API_KEY`,
 `GH_TOKEN`), say whether it is for this desk or for every desk, and keep
 it. The value goes to your keychain -- Keychain on macOS, Credential
@@ -792,8 +796,11 @@ does, and only http and https links count.
 A path works the same way, in a panel and in what you are reading: hold
 **Ctrl** over `src/app.js:120`, `~/.claude/settings.json` or `../notes/`
 and it is underlined only if it is there. Ctrl-click opens a file in
-snyvi's reader, at the line when one follows it, and a folder in your file
-manager. A relative path is looked for where it was printed: in a panel,
+snyvi's reader, at the line when one follows it, and a folder on snyvi's
+folder page, under Folders: under the desk's own row when the folder is
+inside the desk, so `src/` opens as the desk's `src`, not as a new row.
+**▸** goes into a folder there, **▴ ..** back up, and **Open in file
+manager** beside it opens it in Files, Finder or Explorer. A relative path is looked for where it was printed: in a panel,
 the folder its program is in, then the desk's; in a document, the folder of
 the file it was sent from, then its desk's, then its project's; in the
 folder reader, the file's own folder. Nothing is ever run. This needs the
@@ -986,6 +993,63 @@ code, diffs, tables, images, and previewed pages and PDFs.
 `w` overrides the cap for prose too. Combined with `\` and `t`, which
 hide the sidebar and the rail, it gives the document the whole window.
 
+## Threads and Your turn
+
+What wears a maker down is rarely the work; it is the bookkeeping around it.
+Which notes are one piece of work, which folder and branch it lives in, what
+was decided in a chat last Tuesday, and what is waiting on *you*. A Claude in
+a desk's panel files that for you, and the rail shows it at the top, above
+the panels, only when there is something to show.
+
+- **A thread** is one arc of work: a name, the notes it answers, the folder
+  it lives in, and a stage -- idea, planned, building, review, waiting,
+  shipped, or parked with the next step to pick it up by. Claude starts one
+  with `start_thread` when it takes the work on and moves it with
+  `move_thread`. The card shows the branch, the commits and the PR, and
+  *Decided*: the questions you answered on it. A note in a thread wears a
+  small chip with the thread's name. Right-click a card, or its ⋯, to move,
+  park, rename or remove it; ✕ leaves its Undo in the row, as everywhere.
+- **Your turn** is what only you can do: a decision (`ask`, with two to four
+  options and the one Claude recommends), or a hand-over (`hand_over`): try
+  it, merge it, add a key. Answer on the rail or on Home. Your answer goes
+  with your next message to the panel that asked; while that panel is idle,
+  **Send now** types it in and presses Enter for you. snyvi never starts a
+  turn by itself.
+- **Suggested** is a panel or a desk Claude thinks the work wants, with the
+  exact command it would run. **Open panel** opens it on this desk and runs
+  that command; **Open desk** makes a desk for the folder. Nothing opens
+  until you click, and three wait at most.
+
+Home lists **Your turn · across desks**, answerable in place, and
+**Threads** by stage: what is moving, what is parked and with what next
+step, and what shipped this week. The desk brief names a desk's threads and
+what is on you, and each prompt's changes carry your answers and the moves
+you made.
+
+### The snyvi mod in panels
+
+With Claude Code 2.1.287 or later, a panel's Claude also loads the *snyvi
+mod*: a small plugin that runs inside Claude Code, built into snyvi and
+written to snyvi's data folder. The daemon names it in
+`CLAUDE_CODE_PLUGIN_DIRS` for the panels it starts, so nothing is installed
+into `~/.claude`, a `claude` in a plain terminal has no mod, and it is
+always the version of the snyvi that started the panel. In a panel with it:
+
+- One dim line above the prompt says the panel's thread and what is on you:
+  `▸ Home + friends · building · claude/asides · 3 commits · your turn: try it`.
+- Claude's own questions (its multiple-choice dialog) appear under Your turn
+  too. Answer in the terminal or in snyvi; the first answer is the one
+  Claude gets, and the other side closes.
+- The branch, the commits and the PR are *seen* from what git and gh did in
+  the panel, and the checks on a PR are read once a minute until it merges.
+- `/note …` puts a line on the desk's notes while Claude works, with no turn
+  spent; `/turn`, `/park …` and `/thread` say or do the rest.
+
+It only talks to the local daemon, with the panel's own token, about the
+panel it runs in. It never starts a turn and never approves or blocks a
+tool. About has the switch, *Claude Code mod in panels*; a panel started
+before you flip it picks the change up at its next start.
+
 ## The rail
 
 Prose gets a table of contents. Code gets an outline of what it declares:
@@ -1068,13 +1132,32 @@ takes the desk out of Pick up, and keeps it on a Parked shelf under the
 cards with that step until you take it down. Nothing on a parked desk is
 closed.
 
-**Today** has the time, the date and this month, Monday first, with today
-ringed. Only the time changes as it runs, so nothing you are typing in is
-touched. Hide it and the date comes back beside the title.
+The date is beside the title.
+
+**Arrived** heads the right-hand column: what came, in one place. An
+agent's offer to send a document to a friend comes first, since it asks
+you something -- Send or Not now in its row, and Not now has an Undo.
+Then a friend's lines, with **Keep on…**, which puts one on a desk in a
+click with their name on it, and ✕. Then the newest documents you have
+not read; a click opens one, and it leaves the list. Five rows at most,
+and "Everything in the Inbox →" when more are waiting. Arrived cannot be
+hidden, so nothing that arrives is put out of sight.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown
-full again. **snyvi** has the update card.
+full again. When an update is ready, its card heads the column.
+
+**Friends** shows once you have paired with someone: a line each, with
+where their things land (**→ own row**, or a desk you pick: their
+documents go to its project and their lines become its suggestions),
+**Note…** for a line on their Home and **⋯** for Mute and Remove. A
+friend's document says *Keep on a desk…* in its head; once it is on one,
+*Save into the folder* writes it into that desk's folder under
+`from-<their name>/`, next to nothing it would overwrite. **Keys**
+is folded until you open it, and stays as you left it.
+
+The foot says which snyvi this is, with *Check for updates* and *Pair with
+a friend…*.
 
 Git is read only in a desk's own folder, never in your home directory,
 read-only and with a two-second limit, and nothing leaves the machine.
@@ -1182,6 +1265,14 @@ the way, what it would do next, what it is unsure of -- and until this
 existed the only way to say it was to make it a document, which put it
 in your library and your unread count as though it were one.
 
+Sometimes the sentence is about you rather than the work: that the
+migration held after four evenings on it, that it is past one and the
+tests are green and the rest keeps. An agent may say that, a few times
+in a long session at most, and only about something that happened here
+-- a note it ticked, a commit, a test, where the desk left off. It never
+guesses at how you feel, and an aside that gives no reason in the record
+is one it was told not to send.
+
 `send_aside` is for that sentence, and it is deliberately small. An
 aside is at most 280 characters; past that it is a document and
 `send_document` is the tool for it. Asides are kept in memory, the last
@@ -1195,7 +1286,10 @@ it. A new one lights up and snyvi's own mark beside it hops once; rest
 on the aside and it is read, and the mark settles. Only one aside lights
 up every ten minutes: an agent that leaves one per edit costs you a
 single glance, and the rest join the trail quietly. An aside may name a
-document it is about, and then clicking it opens that document.
+document it is about, and then clicking it opens that document. One an
+agent left from a desk's panel, about no document, says which in its
+byline -- "via claude-code on ledger [2]" -- and clicking it opens that
+desk with the panel focused, which is where you answer it, if you do.
 
 An aside can be closed: the ✕ in its corner, or Esc while it has the
 focus. Its card stays where it was as one line, "Aside closed", with an
@@ -1209,7 +1303,15 @@ aside is closed in every window, and the daemon only marks it closed,
 which is why the Undo is real.
 
 It is a channel from the agent to you and nothing comes back: an aside is
-not an instruction to anything.
+not an instruction to anything. A reply is a line you type in the panel,
+like any other.
+
+If you would rather no agent left you a line at all, About has an
+**Asides** row: Turn off, and the daemon refuses every aside, saying
+"asides are off in About" to the agent that sent it, which is told not to
+send another. The ✕ on each aside stays the way to say no to one; this is
+the way to say no to all of them. snyvi's own first lines, which point you
+at what is new, are not an agent's and still show. Turn on puts it back.
 
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.
@@ -1453,7 +1555,7 @@ not in it.
 
 | Case                                        | Result      | Budget |
 |---------------------------------------------|-------------|--------|
-| Binary size, `snyvi`                        | 16.6 MB     | 17 MB  |
+| Binary size, `snyvi`                        | 17.4 MB     | 18 MB  |
 | Daemon cold start, to first health          | 11 to 14 ms | 100 ms |
 | Daemon resident, three documents in, settled | 40 MB      | 60 MB  |
 | Daemon resident, after a 1 MB document and a 100k-line file, settled | 57 to 72 MB | 100 MB |

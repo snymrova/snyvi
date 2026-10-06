@@ -46,7 +46,7 @@ Seven imperatives. When two collide, the higher one wins.
    Undo window, **Removed · Show** still brings it back until prune. The
    only asks are closing a desk (it ends every panel at once) and Reset.
 5. **Instant, or it's a bug.** Every interaction takes under 100 ms, and
-   first paint is capped at 55 KB (`bench/bytes.mjs`). Motion is there to
+   first paint is capped at 56 KB (`bench/bytes.mjs`). Motion is there to
    explain, never to wait on.
 6. **Warm, and it only ever answers.** The personality lives in small
    moments the maker has earned. It never interrupts, never instructs,
@@ -189,6 +189,12 @@ or hearts (a waiting note is the lit nub); no hover lines; no peek. Under
 `prefers-reduced-motion` the creature keeps its faces and loses its
 movement (§7.3).
 
+Its sibling for agents is **Asides** in About, stored as `asides-off` in
+the settings folder: off, the daemon refuses every agent's aside with
+"asides are off in About", which the agent reads back and is told not to
+try again. snyvi's own first lines are not agents' and still show. The
+quiet switch quiets the creature; this one quiets the agents.
+
 ---
 
 ## 3. Voice and words
@@ -249,9 +255,12 @@ movement (§7.3).
 Reset is the one place that **deletes** ("This deletes 142 documents").
 Everything that can be undone **removes**. Both are true in 1.7.2.
 
-Agents read snyvi's words too: the MCP aside description doesn't invite "a
-gentle nudge after a long stretch", and it says "waiting in snyvi", not
-"queue".
+Agents read snyvi's words too, and it says "waiting in snyvi", not "queue".
+The MCP aside description lets an agent speak about the person at the work,
+not only the work -- four evenings on the migration, a late hour with the
+tests green -- on one rule: cite something that happened here, or say
+nothing. A line that reads the person rather than the record is wrong the
+first time it is slightly off.
 
 ### 3.4 Patterns
 
@@ -782,7 +791,7 @@ opacity and colour only.
  □ Motion tier         §7.2; transform/opacity only; reduced motion fades, never hides
  □ Keyboard            key or palette entry; focus returns; focus-visible ring
  □ Themes              looked at in Paper, Ink, Contrast (+ one accent other than Passion)
- □ Budget              bench/bytes.mjs ≤ 55 KB first paint; new code in a chunk
+ □ Budget              bench/bytes.mjs ≤ 56 KB first paint; new code in a chunk
  □ Bench rows          bench/ui.mjs row for the behaviour; screenshot row if visual
  □ Lint                bench/lint-ui.mjs: no count went up
 ```

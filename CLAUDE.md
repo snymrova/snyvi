@@ -15,6 +15,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the library API, the receive endpoint, asides, folders | `src/server/api_docs.rs` | — |
 | the page's side of a desk: Home, desks, panels, notes, keys | `src/server/api_desk.rs` | skip `refuse_desk` |
 | the agent's side: `/api/panes/{id}/*`, agents | `src/server/api_agent.rs` | reach the store before `agent_pane` |
+| a friend's snyvi: pairing, Send to…, offers, the link | `src/server/api_peer.rs`, `src/server/peer_link.rs` (the socket to the relay), `src/peer.rs` (keys, code, frame, relay client, tables), `relay/` (the Worker) | send on an agent's word; parse a frame before its key is pinned; wait at the relay with anything but the one socket |
 | the desk socket · SSE · browse mode · restart, update, reset | `src/server/{ws,events,api_browse,lifecycle}.rs` | — |
 | the route table test | `src/server/tests.rs` | lag the router: the count must match |
 | documents on disk + SQLite index + FTS | `src/store.rs` | know about HTTP or panes |
@@ -28,18 +29,19 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | self-update, restart | `src/update.rs`, `src/platform.rs`, `src/desktop.rs` | — |
 | the window | `src/bin/app.rs` | hold daemon logic |
 | first paint | `ui/index.html`, `ui/boot.js`, `ui/app/*.js` (joined into `app.js`), `ui/app.css`, `ui/themes.css` | grow past the budget (`bench/bytes.mjs`) |
-| lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, … | be imported by first paint |
+| lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
 | the strip, the join, the embed | `build.rs`, `src/strip.rs` (`source` joins `ui/app/*.js` and `ui/desk/*.js` in name order; `SNYVI_UI_DIR` serves the same join) | serve a part on its own |
 
 ## The three flows
 
 1. **Document**: hook / MCP / CLI → `POST /api/send` (token) → `receive::receive` → `render` → `store` → broadcast → SSE `/api/events` → `app.js` redraws.
 2. **Panel**: `app.js`/`desk.js` → `WS /api/desk` (capability) → `pane` PTY → `screen` frames → canvas paint. Keystrokes go PTY-ward only from the reader.
-3. **Agent in a panel**: `SNYVI_SESSION` in the pane env → MCP `read/tick/mark/suggest_desk_note`, `leave_off`, `name_panel` → `client.rs` → `/api/panes/{id}/*` (token) → `desk` → SSE.
+3. **Agent in a panel**: `SNYVI_SESSION` in the pane env → MCP `read/tick/mark/suggest_desk_note`, `leave_off`, `name_panel`, `offer_document` → `client.rs` → `/api/panes/{id}/*` (token) → `desk` → SSE.
+4. **A friend** (`docs/PEER.md`): Send to… → `api_peer` seals + signs → `relay.snyvi.com` mailbox → pushed down the other daemon's link (`peer_link`) → `peer::open` against the pinned key → `receive::receive` (origin `peer`, project "From <name>") → the same `doc` event.
 
 ## Invariants (do not move them)
 
-- Local only. Bind 127.0.0.1; every route checks `Host`/`Origin`; no accounts, no telemetry, nothing leaves the machine.
+- Local only. Bind 127.0.0.1; every route checks `Host`/`Origin`; no accounts, no telemetry. The one thing that leaves the machine is a frame the reader pressed Send on, sealed to a friend's pinned key (`docs/PEER.md`); the relay reads none of it.
 - **Capability ≠ token.** The capability is the window's (desk routes, reader actions). The token is the agent's (`send`, `aside`, `panes/{id}/*`). A token never mints a capability and never starts a command.
 - snyvi never makes input from content it received. Agents send, snyvi shows. No command runner.
 - Nothing is deleted. A ✕ removes from view and stays recoverable. Documents are immutable; a resend is a new version.

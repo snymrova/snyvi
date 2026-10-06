@@ -12,7 +12,9 @@
  * "Park it?" for one that has gone quiet. One project, one card: nothing is
  * listed twice. Does anything need me? -- one status line under the title,
  * which the rail and the sidebar answer too, so it is a line and not three
- * boxes. What day is it? -- Today: the time and the month. And the trail --
+ * boxes. What came? -- Arrived, at the head of the side column: an agent's
+ * offer, a friend's line, the newest documents not yet read, each with its
+ * actions in its row. The date is in the head. And the trail --
  * what was ticked, sent, left off and committed, day by day -- is This week,
  * folded at the foot, with the week as a document on a button: kept, and no
  * longer what the page leads with. No streaks, no red, no scores: a hobby is
@@ -29,9 +31,13 @@
  *
  * The side widgets can be hidden and shown again ("2 hidden · Show"): the list
  * is this viewer's, in localStorage, since it is a preference about a page
- * and not a thing in the library, and so is the desk kept in Pick up. Nothing
- * here moves when something arrives: the status line is one line whatever it
- * says, and a widget with nothing to say says so rather than going away.
+ * and not a thing in the library, and so is the desk kept in Pick up. Arrived
+ * cannot be hidden: what arrives is never put out of sight by a preference.
+ * Friends shows once there is a friend, Keys is folded like the week, and
+ * the version, Check for updates and Pair with a friend… are the foot's.
+ * Nothing here moves when something arrives: the status line is one line
+ * whatever it says, and a widget with nothing to say says so rather than
+ * going away.
  */
 
 const CSS = `
@@ -46,10 +52,8 @@ const CSS = `
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 /* Pick up, the desks and the week on the left, the side column beside them. */
 .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
-.hm-grid.no-side { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
 @container (max-width: 760px) {
   .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "side"; }
-  .hm-grid.no-side { grid-template-areas: "main"; }
 }
 .hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
 .hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
@@ -68,6 +72,14 @@ const CSS = `
 .hm-s { flex: none; color: var(--fg-3); font-size: var(--fs-small); }
 .hm-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-list { list-style: none; margin: 0; padding: 0; }
+.hm-turn { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.hm-turn .hm-pw { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hm-turn .hm-tq { color: var(--fg); }
+.hm-turn.said .hm-t b { font-weight: inherit; color: var(--fg); }
+.hm-tacts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 55%; }
+.hm-opt { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
+.hm-opt:hover { color: var(--fg); border-color: var(--accent); }
+.hm-opt.rec { border-color: var(--accent); color: var(--fg); }
 .hm-kn { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
 .hm-key .hm-t a { color: inherit; }
 .hm-link { padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); cursor: pointer; }
@@ -238,18 +250,35 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-bar.hot i { background: var(--warn); }
 .hm-k { font-size: var(--fs-small); color: var(--fg-2); }
 .hm-q .fact { display: block; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Today: the time, the date, and the month, Monday first. */
-.hm-time { margin: 0; font-size: 40px; font-weight: 600; line-height: 1.1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--fg); }
-.hm-date { margin: 4px 0 12px; font-size: var(--fs-small); color: var(--fg-2); }
-.hm-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px 0; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; text-align: center; }
-.hm-cal > * { height: 24px; line-height: 24px; color: var(--fg-2); }
-.hm-cal > b { font-weight: 500; color: var(--fg-3); }
-.hm-cal > .we { color: var(--fg-3); }
-.hm-cal > .today { justify-self: center; width: 24px; border-radius: 50%; background: var(--accent); color: var(--bg); font-weight: 600; }
+/* Arrived: what came, the questions first, every action in its row. */
+.hm-arr { list-style: none; margin: 0; padding: 0; }
+.hm-arr > li { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; min-width: 0; font-size: var(--fs-ui); }
+.hm-arr > li + li { border-top: 1px solid var(--rule); }
+.hm-ag { flex: none; width: 1em; line-height: 20px; text-align: center; color: var(--fg-3); }
+.hm-ag.ask { color: var(--accent); font-weight: 600; }
+.hm-ab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.hm-ab > .hm-t { line-height: 20px; color: var(--fg); text-decoration: none; }
+.hm-ab > a.hm-t:hover { text-decoration: underline; }
+.hm-acts { display: flex; align-items: center; gap: 10px; min-height: 18px; min-width: 0; }
+.hm-acts > .hm-s { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-keepl { position: absolute; right: 0; top: calc(100% - 4px); z-index: 2; display: flex; flex-direction: column; min-width: 180px; max-height: 260px; overflow-y: auto; padding: 4px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow); }
+.hm-arr-all { margin: 8px 0 0; font-size: var(--fs-small); }
+.hm-arr-all a { color: var(--fg-2); text-decoration: none; }
+.hm-arr-all a:hover { color: var(--fg); text-decoration: underline; }
+/* A friend, one line: their name, then Note… and ⋯ (Mute, Remove). */
+.hm-friend { position: relative; gap: 10px; }
+.hm-friend > .hm-kn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Keys, folded like the week. */
+.hm-keys > summary { list-style: none; cursor: pointer; }
+.hm-keys > summary::-webkit-details-marker { display: none; }
+.hm-keys > summary > .s-chev { margin-left: 2px; }
+.hm-keys { position: relative; }
+.hm-keys > .hm-hide { position: absolute; top: 0; right: 0; }
+.hm-keys:not([open]) > summary { margin-bottom: 0; }
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-meta a { color: inherit; text-decoration: none; }
 .hm-meta a:hover { color: var(--fg); text-decoration: underline; }
-.hm-foot { margin-top: 32px; font-size: var(--fs-small); color: var(--fg-3); }
+.hm-foot { margin-top: 32px; font-size: var(--fs-small); color: var(--fg-3); line-height: 1.6; }
 .hm-foot button { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); cursor: pointer; }
 .hm-foot button:hover { color: var(--fg); text-decoration: underline; }
 /* The Inbox's foot: what was removed, and the way back. */
@@ -262,11 +291,11 @@ a.hm-panels:hover { color: var(--fg); }
 /** The widgets that can be hidden, in the order they stand. Pick up cannot:
  *  it is what the page is for. */
 const WIDGETS = [
+  ["threads", "Threads"],
   ["desks", "Projects"],
-  ["today", "Today"],
-  ["keys", "Keys"],
   ["claude", "Claude"],
-  ["snyvi", "snyvi"],
+  ["friends", "Friends"],
+  ["keys", "Keys"],
 ];
 
 const DAY = 86400;
@@ -281,6 +310,15 @@ let c = null, last = null, soon = 0, reading = 0, sheet = null;
 let parking = 0, parkDraft = "", parkFailed = false, justParked = 0, parkedT = 0;
 /** What the week's button last said, in its own place, for a while. */
 let weekSaid = null;
+/** Friends (docs/PEER.md): the last /api/peers answer, drawn beside the
+ *  desks; the friend just removed, who keeps a row with an Undo for a
+ *  moment; the friend whose ⋯ is open (Mute, Remove); and the friend's line
+ *  whose Keep on… list is open. */
+let peers = null, justRemoved = 0, removedT = 0, friendMore = 0, keepOpen = 0, deskOpen = 0;
+/** What an Arrived row's button did, said in the row for SAID_MS with its
+ *  Undo, by row ("o12" an offer, "n5" a line): the item as it was, so the
+ *  row keeps its place after the daemon has stopped listing it. */
+const arrSaid = new Map();
 /** The note bar: the desk chosen on its chip (0 is Pick up's), what is typed
  *  in it and the pictures waiting on that line (both kept across the redraws
  *  an event brings), and what the last Enter did, said in the bar's own row. */
@@ -347,21 +385,15 @@ export async function show(ctx) {
   await refresh();
 }
 
-/** Today's time, kept by itself: only its own text changes, so nothing the
- *  reader is in -- a field, a focus -- is touched by it. A new day draws the
- *  page again, for the calendar and the "today" words. */
+/** A new day draws the page again, for the date in the head and the
+ *  "today" words; nothing else on Home keeps time by itself. */
 let ticker = 0, drawnDay = 0;
 function tick() {
   if (ticker) return;
   ticker = setInterval(() => {
-    if (!c || c.view() !== "home") return;
-    if (startOfDay(Date.now() / 1000) !== drawnDay && last) return draw(last);
-    const t = c.docEl.querySelector(".hm-time");
-    const now = hhmm();
-    if (t && t.textContent !== now) t.textContent = now;
-  }, 15000);
+    if (c && c.view() === "home" && !document.hidden && last && startOfDay(Date.now() / 1000) !== drawnDay) draw(last);
+  }, 60000);
 }
-const hhmm = () => new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
 /** Read Home again soon: many events in a burst are one read. */
 export function soonRefresh() {
@@ -373,11 +405,16 @@ async function refresh() {
   if (!c || c.view() !== "home") return;
   const turn = ++reading;
   let j;
+  const friends = fetch("/api/peers").then(r => r.ok ? r.json() : null, () => null);
   try { j = c.capability ? await c.deskApi("/api/home") : await (await fetch("/api/home")).json(); }
   catch { if (!last) c.docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1><p>snyvi did not answer. <button type="button" class="btn" data-hm="retry">Try again</button></p></div>`; return; }
+  peers = (await friends) || peers;
   if (turn !== reading || c.view() !== "home") return;
   last = j;
   draw(j);
+  // A friend's code in the address (snyvi://pair/<code>): the sheet, once.
+  const code = new URLSearchParams(location.search).get("pair");
+  if (code) { history.replaceState(history.state, "", "/"); c.peerCtx.peer().then(m => m.pair(c.peerCtx, code), () => {}); }
 }
 
 // ---------- time, in the reader's own days ----------
@@ -432,18 +469,22 @@ function draw(j) {
     `<section class="hm-w" data-w="${key}" data-part="home.${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
     `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="Show brings it back" aria-label="Hide ${esc(title)}">✕</button></div>${body}</section>`;
   drawnDay = startOfDay(Date.now() / 1000);
-  const side = [
-    w("today", "Today", today()),
-    w("keys", "Keys", keys(j), keysOf(j).length ? ` <span class="n">${keysOf(j).length}</span>` : ""),
-    w("claude", "Claude", claude(j)),
-    w("snyvi", "snyvi", `<div class="hm-upd"></div>` + `<p class="hm-quiet hm-uptodate">snyvi ${esc(j.version || "")} · <button type="button" class="uc-link" data-hm="check">Check for updates</button></p>`),
-  ].join("");
+  // Friends only once there is one, or one removed to bring back.
+  const anyFriend = !!(peers?.friends || []).length, fr = friendsOf();
+  // The update card heads the side column, and only while there is one.
+  const side = `<div class="hm-upd" hidden></div>` + arrived(j) + w("claude", "Claude", claude(j)) +
+    (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "") +
+    (hid.includes("keys") ? "" : keysW(j));
   const desks = j.desks ? w("desks", "Projects", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
-  const n = hid.length;
-  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1>${hid.includes("today") ? `<span class="hm-v">${new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</span>` : ""}</header>` +
+  const moving = (j.threads || []).filter(t => !["shipped", "parked"].includes(t.stage)).length;
+  const threads = j.threads?.length ? w("threads", "Threads", threadsList(j), moving ? ` <span class="n">${moving} moving</span>` : "") : "";
+  const n = hid.filter(k => k !== "friends" || anyFriend).length;
+  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
     status(j) +
-    `<div class="hm-grid${!side ? " no-side" : ""}"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div>${side ? `<div class="hm-side">${side}</div>` : ""}</div>` +
-    (n ? `<p class="hm-foot">${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button></p>` : "") + `</div>`;
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${onYou(j)}${pick(j)}${threads}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
+    `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
+    (n ? ` · ${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p></div>`;
   const a = document.activeElement;
   const key = b => b.dataset.hm + (b.dataset.k || "") + (b.dataset.n ? `:${b.dataset.n}` : "");
   const had = c.docEl.contains(a) && a.dataset.hm ? key(a) : null;
@@ -466,7 +507,7 @@ function draw(j) {
   // The hand put back in the bar came before its listeners did.
   if (document.activeElement?.dataset?.hm === "bar") asks(document.activeElement);
   const up = c.docEl.querySelector(".hm-upd");
-  if (up) c.card().then(m => { if (m.card(up, j.update, c.updCtx())) { const q = c.docEl.querySelector(".hm-uptodate"); if (q) q.hidden = true; } }, () => {});
+  if (up && j.update) c.card().then(m => m.card(up, j.update, c.updCtx()), () => {});
 }
 
 /** One line under the title, the same height whatever it says: what needs
@@ -479,11 +520,15 @@ function status(j) {
   if (j.desks) {
     const asking = [];
     for (const d of j.desks) for (const p of d.panes) if (p.blocked || p.agent === "needs_you") asking.push([d, p]);
+    const on = (j.turns || []).length;
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
       bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} ${p.agent === "needs_you" ? "is asking" : "rang"}${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
-    } else bits.push("Nothing needs you");
+    } else if (on) bits.push(`${on === 1 ? "One thing is" : `${on} things are`} on you`);
+    else bits.push("Nothing needs you");
+    const moving = (j.threads || []).filter(t => !["shipped", "parked"].includes(t.stage)).length;
+    if (moving) bits.push(`${plural(moving, "thread")} moving`);
   }
   bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} to read</a>` : bits.length ? "nothing to read" : "Nothing to read");
   if (j.desks) {
@@ -493,6 +538,64 @@ function status(j) {
   const w = windowLeft(j.quota?.five_hour);
   if (w) bits.push(`<span data-tip="Claude's five-hour window" data-tip-sub="${esc(w.text)}">5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
   return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
+}
+
+/* ---------- Your turn and Threads (#90) ----------
+ *
+ * What agents filed on the desks (src/thread.rs): what only the reader can
+ * do, across every desk, answered here; and the threads by stage. The answer
+ * reaches the panel that asked with the reader's next message there, or at
+ * once when the snyvi mod in that panel is holding the question. */
+
+/** Answers given here, kept in their row for SAID_MS: id -> { desk, text, answer, err }. */
+const answeredHere = new Map();
+const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"] };
+
+function onYou(j) {
+  const { esc } = c, turns = (j.turns || []).filter(w => !answeredHere.has(w.id));
+  if (!turns.length && !answeredHere.size) return "";
+  const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
+  const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
+  const row = w => {
+    const opts = w.kind === "decide" ? w.options : TURN_ANSWERS[w.kind] || ["Done"];
+    const more = w.kind === "decide" ? "Other…" : w.kind === "try" ? "Needs changes…" : "";
+    const n = slot(w.desk_id, w.pane);
+    return `<li class="hm-turn"><span class="hm-pw"><span class="hm-t hm-tq">${esc(w.text)}</span>` +
+      `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}</span></span>` +
+      `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
+      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}" data-tip="${esc(more)}" data-tip-sub="answer in your own words on the desk">${esc(more)}</a>` : "") + `</span></li>`;
+  };
+  const said = [...answeredHere].map(([, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
+    `<span class="hm-t">${a.err ? esc(a.err) : `You said <b>${esc(a.answer)}</b> · it goes with your next message on ${esc(name(a.desk))}`}</span></span></li>`).join("");
+  return `<section class="hm-w hm-you" data-part="home.turns" aria-label="Your turn"><div class="hm-wh"><h2>Your turn · across desks${turns.length ? ` <span class="n">${turns.length}</span>` : ""}</h2></div>` +
+    `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
+}
+
+/** The threads, by stage: what is moving, what is parked with its next step,
+ *  and what shipped this week. */
+function threadsList(j) {
+  const { esc } = c, ts = j.threads || [];
+  const name = id => j.desks?.find(d => d.id === id)?.name || "";
+  const row = t => `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${t.desk_id}" data-desk="${t.desk_id}">${esc(t.name)}</a>` +
+    `<span class="hm-t">${[name(t.desk_id), t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "", t.stage === "parked" && t.next ? `next: ${t.next}` : t.branch, t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : ""].filter(Boolean).map(esc).join(" · ")}</span></span>` +
+    `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.stage)}</span></li>`;
+  const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
+  return group("Moving", ts.filter(t => !["shipped", "parked"].includes(t.stage))) +
+    group("Parked", ts.filter(t => t.stage === "parked")) +
+    group("Shipped this week", ts.filter(t => t.stage === "shipped"));
+}
+
+async function answerTurn(id, desk, answer) {
+  const w = (last?.turns || []).find(x => x.id === id);
+  if (!w || !answer) return;
+  const rec = { desk, text: w.text, answer, err: "" };
+  answeredHere.set(id, rec);
+  draw(last);
+  try { await c.deskApi(`/api/desks/${desk}/turns/${id}/answer`, { answer }); }
+  catch { rec.err = "Could not answer it; try again on the desk"; }
+  setTimeout(() => { if (answeredHere.get(id) === rec) { answeredHere.delete(id); if (last && c.view() === "home") draw(last); } }, SAID_MS);
+  if (last && c.view() === "home") draw(last);
+  soonRefresh();
 }
 
 /** A branch, drawn as git's own mark: two commits and the line between. */
@@ -899,26 +1002,184 @@ function spark(pulse = []) {
     n.map((v, i) => v ? `<i${i === 7 ? ` class="now"` : ""} style="height:${2 + v * 2}px"></i>` : `<i class="z"></i>`).join("") + `</span>`;
 }
 
-/** The time, the day, and this month with today ringed, Monday first. */
-function today() {
-  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
-  // 1 Jan 2024 was a Monday: the week's letters in the reader's own language.
-  const heads = Array.from({ length: 7 }, (_, i) => `<b>${c.esc(new Date(2024, 0, 1 + i).toLocaleDateString(undefined, { weekday: "narrow" }))}</b>`);
-  const lead = (new Date(y, m, 1).getDay() + 6) % 7, days = new Date(y, m + 1, 0).getDate();
-  const cells = Array.from({ length: lead }, () => `<span></span>`);
-  for (let n = 1; n <= days; n++) {
-    const wd = (lead + n - 1) % 7;
-    cells.push(`<span class="${n === now.getDate() ? "today" : wd > 4 ? "we" : ""}"${n === now.getDate() ? ` aria-current="date"` : ""}>${n}</span>`);
-  }
-  return `<p class="hm-time">${hhmm()}</p>` +
-    `<p class="hm-date">${c.esc(now.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }))}</p>` +
-    `<div class="hm-cal" role="img" aria-label="${c.esc(now.toLocaleDateString(undefined, { month: "long", year: "numeric" }))}">${heads.join("")}${cells.join("")}</div>`;
-}
-
 /** Every key the desks hand their panels, one row per name: the provider,
  *  which desks have it (or every desk), and when a panel last started with
  *  it. Names only -- Home is never sent a value -- and nothing is added
  *  here: a key is a desk's, and goes in from that desk's head. */
+/* ---------- friends (docs/PEER.md) ---------- */
+
+const friendsOf = () => (peers?.friends || []).filter(f => !f.removed_at);
+
+/** The friends, one line each: the name (when paired, when last heard from,
+ *  in its tip), where their things land (→ a desk, or their own row; the
+ *  window's, where the desks are), Note…, and ⋯, which opens Mute and
+ *  Remove in the row. The
+ *  one just removed keeps its row with an Undo; the ones removed before are
+ *  a Restore away. Lines and offers are Arrived's. */
+function friends(j) {
+  const { esc } = c;
+  if (!peers) return `<p class="hm-quiet">Could not read the friends.</p>`;
+  const rows = peers.friends || [], live = rows.filter(f => !f.removed_at || f.id === justRemoved), gone = rows.filter(f => f.removed_at && f.id !== justRemoved);
+  let out = live.length ? `<ul class="hm-list">${live.map(f => f.id === justRemoved
+    ? `<li class="hm-pj"><span class="hm-pw"><span class="hm-t">${esc(f.name)}</span></span><span class="hm-s">Removed</span><button type="button" class="hm-link hm-undo" data-hm="frestore" data-k="${f.id}">Undo</button></li>`
+    : friendRow(f, j)).join("")}</ul>` : "";
+  if (gone.length) out += `<p class="hm-quiet">Removed: ${gone.map(f => `${esc(f.name)} <button type="button" class="hm-link" data-hm="frestore" data-k="${f.id}">Restore</button>`).join(" · ")}</p>`;
+  return out;
+}
+
+function friendRow(f, j) {
+  const { esc } = c, more = friendMore === f.id, ds = j?.desks || [];
+  const at = ds.find(d => d.id === f.desk_id);
+  const list = deskOpen === f.id ? `<div class="hm-keepl" role="menu" aria-label="Where ${esc(f.name)}'s things land">` +
+    [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
+  const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
+  const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
+  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${where}` +
+    (more
+      ? `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
+        `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" data-tip="Remove ${esc(f.name)}" data-tip-sub="keys kept; Restore brings them back">Remove</button>`
+      : `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>`) +
+    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Mute or remove"}">⋯</button>${list}</li>`;
+}
+
+/* ---------- Arrived ---------- */
+
+/** How many rows Arrived shows: the daemon sends as many documents. */
+const ARRIVED = 5;
+
+/** What came, in one place: an agent's offer first (it asks something), then
+ *  a friend's lines, then the newest documents not yet read. Every action is
+ *  in its row, and what it did stays there, with its Undo, for a moment. It
+ *  cannot be hidden: nothing that arrives is put out of sight. */
+function arrived(j) {
+  const { esc, plural } = c;
+  // A row that was answered keeps its place while its words stand.
+  const withSaid = (xs, p) => {
+    const ids = new Set(xs.map(x => x.id));
+    return [...xs, ...[...arrSaid].filter(([k]) => k[0] === p && !ids.has(+k.slice(1))).map(([, v]) => v.item)].sort((a, b) => a.id - b.id);
+  };
+  const offers = withSaid(peers?.offers || [], "o"), lines = withSaid(peers?.notes || [], "n"), docs = j.arrived || [];
+  const rows = [...offers.map(offerRow), ...lines.map(n => lineRow(n, j)), ...docs.map(docRow)].slice(0, ARRIVED);
+  const shownDocs = Math.max(0, Math.min(docs.length, ARRIVED - offers.length - lines.length));
+  const n = (peers?.offers || []).length + (peers?.notes || []).length + (j.waiting || 0);
+  const body = rows.length ? `<ul class="hm-arr">${rows.join("")}</ul>` +
+      ((j.waiting || 0) > shownDocs ? `<p class="hm-arr-all"><a href="/inbox" data-nav="inbox">${shownDocs ? "Everything in the Inbox" : `${plural(j.waiting, "document")} in the Inbox`} →</a></p>` : "")
+    : `<p class="hm-quiet">Nothing waiting. What agents and friends send lands here.</p>`;
+  return `<section class="hm-w hm-arrived" data-w="arrived" data-part="home.arrived" aria-label="Arrived"><div class="hm-wh"><h2>Arrived${n ? ` <span class="n">${n}</span>` : ""}</h2></div>${body}</section>`;
+}
+
+/** What a row's button did, in the row, with its Undo. */
+function saidRow(s) {
+  return `<span class="hm-s" role="status">${c.esc(s.say)}</span>` +
+    (s.undo ? `<button type="button" class="hm-link hm-undo" data-hm="${s.undo}" data-k="${s.item.id}">Undo</button>` : "");
+}
+
+function offerRow(o) {
+  const { esc } = c, s = arrSaid.get("o" + o.id);
+  return `<li data-part="home.arrived.offer"><span class="hm-ag ask" aria-hidden="true">?</span><span class="hm-ab">` +
+    `<span class="hm-t">${esc(o.by || "An agent")} offers <b>${esc(o.title || "a document")}</b> to ${esc(o.to)}</span><span class="hm-acts">` +
+    (s ? saidRow(s) : `<span class="hm-s">${age(o.offered_at)} ago</span><button type="button" class="hm-link" data-hm="aoffer" data-k="${o.id}">Send</button>` +
+      `<button type="button" class="hm-link" data-hm="anot" data-k="${o.id}">Not now</button>`) + `</span></span></li>`;
+}
+
+/** A friend's line: Keep on… puts it on a desk in one click, with their
+ *  name on it; ✕ puts it away. Keep on… is the window's, where the desks are. */
+function lineRow(n, j) {
+  const { esc } = c, s = arrSaid.get("n" + n.id), ds = j.desks || [];
+  const desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
+  const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
+    `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
+  return `<li data-part="home.arrived.line"><span class="hm-ag" aria-hidden="true">“</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
+    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${age(n.arrived_at)} ago</span>` +
+      (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on… ▾</button>` : "") +
+      `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
+    `</span></span>${list}</li>`;
+}
+
+function docRow(d) {
+  const { esc } = c;
+  const from = d.origin === "peer" && d.sender ? `from ${esc(d.sender)}` : `${esc(d.project)}${d.sender ? ` · ${esc(d.sender)}` : ""}`;
+  return `<li data-part="home.arrived.doc"><span class="hm-ag" aria-hidden="true">▣</span><span class="hm-ab"><a class="hm-t" href="/d/${esc(d.id)}" data-id="${esc(d.id)}">${esc(d.title)}</a>` +
+    `<span class="hm-acts"><span class="hm-s">${from} · ${age(d.received_at)} ago</span></span></span></li>`;
+}
+
+/** Say what a row's button did, in the row, for SAID_MS. */
+function sayRow(key, item, say, undo = "") {
+  clearTimeout(arrSaid.get(key)?.t);
+  const v = { item, say, undo, t: 0 };
+  v.t = setTimeout(() => { if (arrSaid.get(key) === v) { arrSaid.delete(key); if (c?.view() === "home" && last) draw(last); } }, SAID_MS);
+  arrSaid.set(key, v);
+  if (last) draw(last);
+}
+
+async function postJson(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
+  let j = null; try { j = r && r.status !== 204 ? await r.json() : {}; } catch { j = {}; }
+  if (!r?.ok) throw new Error(j?.error || (r ? `snyvi answered ${r.status}` : "snyvi did not answer"));
+  return j;
+}
+
+/** Arrived's buttons. True when the click was one of them. */
+async function arrivedClick(k, id, b) {
+  if (k === "aoffer" || k === "anot") {
+    const o = (peers?.offers || []).find(x => x.id === id);
+    if (!o) return true;
+    b.disabled = true;
+    try {
+      const r = await postJson(`/api/peers/offers/${id}`, { send: k === "aoffer" });
+      sayRow("o" + id, o, k === "anot" ? "Not sent" : r.sent ? `Sent to ${o.to}` : `Queued for ${o.to}; it goes when the relay can be reached`, k === "anot" ? "aundo" : "");
+    } catch (e) { b.disabled = false; c.peerCtx.toast("Could not answer it", { sub: c.peerCtx.sayErr(e).why }); }
+    soonRefresh();
+  } else if (k === "aundo") {
+    try { await postJson(`/api/peers/offers/${id}`, { undo: true }); } catch (e) { c.peerCtx.toast("Could not take it back", { sub: c.peerCtx.sayErr(e).why }); return true; }
+    clearTimeout(arrSaid.get("o" + id)?.t); arrSaid.delete("o" + id); soonRefresh();
+  } else if (k === "akeep") {
+    keepOpen = keepOpen === id ? 0 : id; draw(last);
+    c.docEl.querySelector(keepOpen ? ".hm-keepl button" : `[data-hm=akeep][data-k="${id}"]`)?.focus({ preventScroll: true });
+  } else if (k === "akeepto") keepLine(id, +b.dataset.n);
+  else if (k === "akundo") undoKeep(id);
+  else if (k === "fdrop" || k === "fundrop") {
+    const n = (peers?.notes || []).find(x => x.id === id) || arrSaid.get("n" + id)?.item;
+    b.disabled = true;
+    try { await postJson(`/api/peers/notes/${id}`, { what: k === "fdrop" ? "remove" : "restore" }); }
+    catch (e) { b.disabled = false; c.peerCtx.toast("Could not do that", { sub: c.peerCtx.sayErr(e).why }); return true; }
+    if (k === "fdrop" && n) sayRow("n" + id, n, "Removed", "fundrop");
+    else { clearTimeout(arrSaid.get("n" + id)?.t); arrSaid.delete("n" + id); }
+    soonRefresh();
+  } else return false;
+  return true;
+}
+
+/** Keep on… → a desk: the line is that desk's, from the friend, at once. */
+async function keepLine(id, desk) {
+  const n = (peers?.notes || []).find(x => x.id === id);
+  keepOpen = 0;
+  if (!n) { draw(last); return; }
+  let r;
+  try { r = await c.deskApi(`/api/peers/notes/${id}`, { what: "keep", desk }); }
+  catch (e) { sayRow("n" + id, n, e?.message || "Could not keep it"); return; }
+  sayRow("n" + id, { ...n, desk, note: r.note?.id }, `Kept on ${r.name}`, "akundo");
+  c.docEl.querySelector(`[data-hm=akundo][data-k="${id}"]`)?.focus({ preventScroll: true });
+  soonRefresh();
+}
+
+/** Its Undo: off the desk the ✕'s way, so nothing is deleted, and waiting again. */
+async function undoKeep(id) {
+  const s = arrSaid.get("n" + id);
+  if (!s?.item.note) return;
+  try {
+    await c.deskApi(`/api/desks/${s.item.desk}/notes/${s.item.note}/remove`, {});
+    await postJson(`/api/peers/notes/${id}`, { what: "restore" });
+  } catch (e) { c.peerCtx.toast("Could not take it back", { sub: c.peerCtx.sayErr(e).why }); return; }
+  clearTimeout(s.t); arrSaid.delete("n" + id); soonRefresh();
+}
+
+async function friendAct(k, id) {
+  const r = await fetch(`/api/peers/${id}/${k}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => null);
+  if (!r || !r.ok) { c.peerCtx.toast(`Could not ${k} the friend`, { sub: r ? `snyvi answered ${r.status}` : "snyvi did not answer" }); return false; }
+  return true;
+}
+
 function keysOf(j) {
   const by = new Map();
   for (const d of j.desks || []) for (const k of d.keys || []) {
@@ -929,6 +1190,17 @@ function keysOf(j) {
     by.set(k.name, r);
   }
   return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+const keysOpen = () => { try { return localStorage.getItem("snyvi.home.keys") === "1"; } catch { return false; } };
+const setKeysOpen = on => { try { localStorage.setItem("snyvi.home.keys", on ? "1" : "0"); } catch {} };
+/** Keys, folded like the week and kept as the reader left it: a setting
+ *  looked at now and then, not something the evening starts from. */
+function keysW(j) {
+  const { esc } = c, n = keysOf(j).length;
+  return `<details class="hm-w hm-keys" data-w="keys" data-part="home.keys"${keysOpen() ? " open" : ""}><summary class="hm-wh"><h2>Keys${n ? ` <span class="n">${n}</span>` : ""}</h2><span class="s-chev" aria-hidden="true"></span></summary>` +
+    // Its ✕ beside the head and not in it: a button inside a <summary> is
+    // a control inside a control.
+    `<button type="button" class="hm-hide" data-hm="hide" data-k="keys" data-tip="Hide ${esc("Keys")}" data-tip-sub="Show brings it back" aria-label="Hide Keys">✕</button>${keys(j)}</details>`;
 }
 function keys(j) {
   const { esc } = c;
@@ -981,16 +1253,20 @@ function wire() {
   if (!el || el.dataset.wired) return;
   el.dataset.wired = "1";
   el.addEventListener("click", async e => {
+    // A click anywhere else closes a Keep on… list.
+    if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
     const k = b.dataset.hm, id = +b.dataset.k || 0;
-    if (k === "hide") { setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
+    // The ✕ in a folded widget's head hides it; it does not fold it.
+    if (k === "hide") { e.preventDefault(); setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
     else if (k === "unhide") { setHidden([]); draw(last); }
     else if (k === "check") c.checkUpdates(b);
     else if (k === "newdesk") c.newDesk(b);
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
     else if (k === "week") sendWeek(b);
     else if (k === "tick") tickNote(id, +b.dataset.n);
+    else if (k === "answer") answerTurn(id, +b.dataset.d, b.dataset.v);
     // A card's +: its desk on the chip, and the hand in the bar, which is in
     // view wherever the page is; the bar lights for a moment to say where.
     else if (k === "addopen") { barTo = id; menu = null; draw(last); focusBar(); lit(); }
@@ -1016,6 +1292,7 @@ function wire() {
       if (justParked === id) { justParked = 0; clearTimeout(parkedT); }
       soonRefresh();
     }
+    else friendClick(k, id, b);
   });
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
@@ -1045,7 +1322,7 @@ function wire() {
   });
   el.addEventListener("focusin", e => { if (e.target.dataset?.hm === "bar") asks(e.target); });
   // The week stays as the reader left it, folded or open.
-  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); }, true);
+  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); else if (e.target.matches?.(".hm-keys")) setKeysOpen(e.target.open); }, true);
   // The hand leaving the bar closes its list; what is typed in it waits, as typed.
   el.addEventListener("focusout", e => {
     if (drawing || !e.target.closest?.(".hm-nb")) return;
@@ -1053,6 +1330,7 @@ function wire() {
     if (menu && !e.relatedTarget?.closest?.(".hm-nb")) { menu = null; drawMenu(); }
   });
   el.addEventListener("keydown", e => {
+    if (e.key === "Escape" && (keepOpen || deskOpen)) { e.preventDefault(); e.stopPropagation(); const back = keepOpen ? `[data-hm=akeep][data-k="${keepOpen}"]` : `[data-hm=fdesk][data-k="${deskOpen}"]`; keepOpen = deskOpen = 0; draw(last); c.docEl.querySelector(back)?.focus({ preventScroll: true }); return; }
     const f = e.target.dataset?.hm;
     if (f === "bar" || f === "find") {
       const xs = menu ? menuDesks(last) : [];
@@ -1077,6 +1355,43 @@ function wire() {
     if (e.key === "Enter") { e.preventDefault(); parkNow(+e.target.dataset.k); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); parking = 0; draw(last); }
   });
+}
+
+/** Friends and Arrived: the sheets are peer.js's; the rows' own actions are
+ *  here. Out of `wire` so that stays a screen (bench/size.mjs). */
+async function friendClick(k, id, b) {
+  if (await arrivedClick(k, id, b)) return;
+  if (k === "pair") c.peerCtx.peer().then(m => m.pair(c.peerCtx), () => c.peerCtx.toast("Could not open the pairing sheet"));
+  else if (k === "fnote") { const f = friendsOf().find(x => x.id === id); if (f) c.peerCtx.peer().then(m => m.note(c.peerCtx, id, f.name), () => {}); }
+  else if (k === "fmore") { friendMore = friendMore === id ? 0 : id; draw(last); c.docEl.querySelector(`[data-hm=fmore][data-k="${id}"]`)?.focus({ preventScroll: true }); }
+  else if (k === "fdesk") { deskOpen = deskOpen === id ? 0 : id; draw(last); c.docEl.querySelector(deskOpen ? `[data-hm=fdeskto][data-k="${id}"][aria-checked=true]` : `[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true }); }
+  else if (k === "fdeskto") {
+    deskOpen = 0;
+    try { await c.deskApi(`/api/peers/${id}/desk`, { desk: +b.dataset.n }); }
+    catch (e) { c.peerCtx.toast("Could not change that", { sub: c.peerCtx.sayErr(e).why }); draw(last); return; }
+    const f = friendsOf().find(x => x.id === id);
+    if (f) f.desk_id = +b.dataset.n;
+    draw(last); c.docEl.querySelector(`[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true });
+    soonRefresh();
+  }
+  else if (k === "fmute") {
+    const f = friendsOf().find(x => x.id === id);
+    const r = await fetch(`/api/peers/${id}/mute`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ muted: !f?.muted }) }).catch(() => null);
+    if (!r?.ok) c.peerCtx.toast("Could not change that"); else soonRefresh();
+  }
+  else if (k === "fremove") {
+    b.disabled = true;
+    if (!(await friendAct("remove", id))) return;
+    friendMore = 0; justRemoved = id; clearTimeout(removedT);
+    removedT = setTimeout(() => { justRemoved = 0; if (c?.view() === "home") draw(last); }, SAID_MS);
+    soonRefresh();
+  }
+  else if (k === "frestore") {
+    b.disabled = true;
+    if (!(await friendAct("restore", id))) return;
+    if (justRemoved === id) { justRemoved = 0; clearTimeout(removedT); }
+    soonRefresh();
+  }
 }
 
 /** Tick a line where it stands, or untick one just ticked. The circle fills

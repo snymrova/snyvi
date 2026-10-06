@@ -19,6 +19,8 @@
  *   node bench/ui.mjs            report
  *   node bench/ui.mjs --check    and exit non-zero if a row fails
  *   node bench/ui.mjs --only "a desk|folder"   only the sections whose name it matches
+ *   node bench/ui.mjs --before "a folder, opened in snyvi"   the sections up to that one
+ *   node bench/ui.mjs --from "a folder, opened in snyvi"     that one and the rest
  *
  * Counts and positions only, no clocks, so every row is enforced on every
  * machine. Chromium is driven the way browser.mjs drives it, over the
@@ -57,6 +59,9 @@ function flag(name) {
  *  is a function so `node --check` reads it, as bench/page.mjs explains. */
 function prelude() {
   const q = s => document.querySelector(s);
+  // What the page counts of itself: app.js adds one to `renders` per draw
+  // of the sidebar when this object is there, and nothing when it is not.
+  window.__perf = { renders: 0 };
   window.__ui = {
     vis(s) {
       const el = q(s);
@@ -207,6 +212,11 @@ async function main() {
     mkdirSync(folder);
     writeFileSync(join(folder, "notes.md"), plan("browsed notes"));
     writeFileSync(join(folder, "code.rs"), Array.from({ length: 400 }, (_, i) => `fn line_${i + 1}() { /* ${i + 1} */ }`).join("\n") + "\n");
+    // A folder inside it, and a file that names one inside that, for #91's
+    // rows: a folder Ctrl-clicked, and a ▸ row, open on the folder page.
+    mkdirSync(join(folder, "sub", "inner"), { recursive: true });
+    writeFileSync(join(folder, "sub", "where.md"), "# Where\n\nThe deep one is in inner/ now.\n");
+    writeFileSync(join(folder, "sub", "inner", "deep.md"), "# Deep\n");
     const browsed = execFileSync(BIN, ["browse", folder, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop();
     if (!/\/b\//.test(browsed)) throw new Error(`snyvi browse printed no URL:\n${browsed}`);
     // One send through the MCP server, the way an agent's does it, so the row
@@ -231,8 +241,22 @@ async function main() {
 
     const sections = [];
     // `--only <pattern>` runs the sections whose name it matches, for work on one.
+    // `--before <name>` and `--from <name>` cut the run in two at a section,
+    // which is how CI runs the halves side by side; each half starts on a
+    // daemon of its own, so neither may lean on what the other left.
     const only = flag("--only") && new RegExp(flag("--only"));
-    const section = async (name, rows) => { if (!only || only.test(name)) sections.push([name, await rows()]); };
+    const from = flag("--from"), before = flag("--before");
+    let inRange = !from;
+    const seen = new Set();
+    const section = async (name, rows) => {
+      seen.add(name);
+      if (name === from) inRange = true;
+      if (name === before) inRange = false;
+      if (!inRange || (only && !only.test(name))) return;
+      const t = Date.now();
+      const r = await rows();
+      sections.push([`${name}  (${((Date.now() - t) / 1000).toFixed(1)} s)`, r]);
+    };
     await section("the rail, 1280 px wide", () => railRows(p, url, md, send));
     await section("narrow windows", () => narrowRows(p, url));
     await section("the sidebar, folded to its rail", () => sideRailRows(p, url, arrive));
@@ -248,11 +272,13 @@ async function main() {
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
+    await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
     await section("a window to hand a link to", () => windowRows(p, url, base, mcpSend));
     await section("a link that opens in the window", () => linkRows(p, url, base, env, tmp, token, stub, mcpSend));
     await section("what moves, and for how long", () => motionRows(p, url, arrive));
+    await section("what a save, and a hover, cost", () => costRows(p, url, base, token, tmp, arrive));
     await section("desks that hold still", () => deskRows(cdp, base, token));
     await section("a desk for each project", () => projectDeskRows(cdp, base, token, tmp));
     await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
@@ -271,6 +297,8 @@ async function main() {
     // And after it, because it takes the daemon.
     await section("a daemon that stops, and the page that follows", () => stopRows(p, base, tmp, env, second));
 
+    // A cut named wrong would run nothing, or everything, and say ok.
+    for (const cut of [from, before]) if (cut && !seen.has(cut)) throw new Error(`no section is named "${cut}"`);
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
       console.log(title);
@@ -1685,6 +1713,64 @@ async function revealRows(p, browsed, folder, tmp) {
   return rows;
 }
 
+/** #91: a folder Ctrl-clicked in what is being read opens on snyvi's folder
+ *  page, never the file manager; a ▸ row there opens the folder it names, ▴ ..
+ *  goes back up, and an address ending in `/` is that folder's listing. In a
+ *  tab of its own, with the capability Ctrl-click asks the daemon with. */
+async function folderRows(cdp, base, browsed) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const root = browsed.replace(/\/$/, ""), id = root.split("/").pop();
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
+  const ctrl = type => cdp.send("Input.dispatchKeyEvent", { type, key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17, modifiers: type === "keyUp" ? 0 : 2 }, sessionId);
+  const listed = `[...document.querySelectorAll("#doc .inbox .title")].map(t => t.textContent).join(" · ")`;
+  const at = path => `location.pathname === ${JSON.stringify(path)}`;
+  const said = () => q.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
+  try {
+    await q.goto(`${root}#cap=${cap}`);
+    await until(`/▸ sub/.test(${listed})`);
+    await q.clickOn(`#doc .inbox a[data-path="sub/"]`);
+    const into = await until(`${at(`/b/${id}/sub/`)} && /inner/.test(${listed})`);
+    const list = await q.ev(listed);
+    rows.push(["a ▸ folder on the folder page opens it", into && /▴ \.\./.test(list),
+      into ? `/b/…/sub/: ${list}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
+    await q.clickOn(`#doc .inbox a[data-path=""]`);
+    const up = await until(`${at(`/b/${id}`)} && /▸ sub/.test(${listed})`);
+    rows.push(["and ▴ .. goes back up", up, up ? "the folder's own listing again" : `at ${await q.ev("location.pathname")}`]);
+
+    await q.goto(`${root}/sub/inner/`);
+    const loaded = await until(`/deep\\.md/.test(${listed})`);
+    rows.push(["an address ending in / is that folder's listing", loaded, loaded ? await q.ev(listed) : `the page shows "${await q.ev(listed)}"`]);
+
+    // A path in a file being read, Ctrl-clicked: `inner/` is a folder beside it.
+    await q.goto(`${root}/sub/where.md`);
+    await until(`/inner\\//.test(document.querySelector("#doc .prose")?.textContent || "")`);
+    const word = await q.ev(`(() => { const p = [...document.querySelectorAll("#doc .prose p")].find(e => e.textContent.includes("inner/"));
+      if (!p) return null; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n, off = p.textContent.indexOf("inner/") + 2;
+      while ((n = w.nextNode()) && off >= n.length) off -= n.length; const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 1);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    if (word) {
+      await ctrl("rawKeyDown");
+      await sleep(300);
+      await mouse("mouseMoved", word.x, word.y, { modifiers: 2 });
+      const lined = await until(`!!document.querySelector(".path-ul i")`, 30);
+      for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, word.x, word.y, { button: "left", clickCount: 1, modifiers: 2 });
+      await ctrl("keyUp");
+      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\\.md/.test(${listed})`);
+      const toast = await said();
+      rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", lined && opened && !/file manager/.test(toast),
+        !lined ? "Ctrl never underlined inner/" : !opened ? `at ${await q.ev("location.pathname")}, and the page said "${toast}"` : /file manager/.test(toast) ? `it still says "${toast}"` : "inner/ listed in snyvi, with deep.md in it"]);
+    } else rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", false, "inner/ is not in the file as read"]);
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** 0.15: a link into a browsed folder lands where it points, the way a link
  *  into a document does. The browser's own fragment scroll is no use for
  *  either: it aims at blocks that are still content-visibility placeholders. */
@@ -2016,6 +2102,7 @@ async function deskRows(cdp, base, token) {
   const [da, db] = [a.desk ? a.desk.id : a.id, b.desk ? b.desk.id : b.id];
   const pane = (await post(`/api/desks/${da}/panes`)).pane.id;
   await post(`/api/panes/${pane}/start`, { cmd: `while :; do printf "\\033]0;work %s\\007" $RANDOM; sleep 0.1; done` });
+  let second = null;
 
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -2050,7 +2137,23 @@ async function deskRows(cdp, base, token) {
     const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
+
+    // An aside sent from a panel is a way back to it. From the other
+    // desk, a click on the card opens this one with that panel focused.
+    second = (await post(`/api/desks/${da}/panes`)).pane.id;
+    await p.clickOn(`a[data-desk="${db}"]`);
+    await until(`location.pathname === "/desk/${db}"`);
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: "Four evenings on that one, and it held.", sender: "bench-agent", pane: second }) });
+    const from = r.ok && (await r.json()).note.from;
+    const led = await until(`!!document.querySelector('#note .note-now[data-desk="${da}"][data-slot="2"]')`);
+    if (led) await p.clickOn("#note .note-now p");
+    const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
+    rows.push(["an aside from a panel goes back to that panel", !!there,
+      !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
+    await p.pointerAway();
   } finally {
+    if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
@@ -2241,6 +2344,12 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // The page is a grid, not the reading measure.
     const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
     rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+    // 1.19: the date in the head and no clock; Arrived heads the side column
+    // and has no ✕; with no friend there is no Friends widget, and Pair with
+    // a friend… is in the foot with the version and Check for updates.
+    const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /snyvi \\S+ · Check for updates · Pair with a friend…/.test(foot), footText: foot, keys: document.querySelector("details.hm-keys") ? "folded" : "none" }; })()`);
+    rows.push(["Home: the date in the head, Arrived first and not hideable, no Friends without a friend, Pair… in the foot", side.date && !side.clock && side.first === "arrived" && !side.hide && !side.friends && side.foot && side.keys === "folded",
+      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== "arrived" ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a ✕" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.keys !== "folded" ? "Keys is not folded" : "date, Arrived, Claude, Keys folded; Pair… in the foot"]);
 
     // The note bar: one field for a line on any desk, Pick up's to start with.
     const notesOn = async id => ((await get(`/api/desks/${id}/notes`)).notes || []).map(n => n.text);
@@ -2911,9 +3020,12 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
     // The panes were started at 80x24 before the page fitted them: the size to
-    // come back to is the one they settle at.
+    // come back to is the one they settle at. A size, and not just "not
+    // 80x24": the screen is empty for a moment while the panel is redrawn,
+    // which once ended the wait before the fit, and ⌃0 then went back to
+    // the fit and not to the 80x24 read too soon.
     await until(`(${size}) !== ""`);
-    await until(`(${size}) !== "80x24"`, 30);
+    await until(`!["", "80x24"].includes(${size})`, 100);
     await sleep(300);
     const was = await q.ev(size);
     await walk(q, "a desk");
@@ -3087,6 +3199,123 @@ async function motionRows(p, url, arrive) {
   rows.push(["ghost Undo still there after 6 s with focus on it, both motion modes", held.reduce && held.full,
     held.reduce && held.full ? "the clock held while the focus rested on the Undo, with motion and without" : `gone after 6 s under focus with ${[!held.reduce && "reduced motion", !held.full && "full motion"].filter(Boolean).join(" and ")}`]);
   void second;
+  return rows;
+}
+
+/** 1.17: a save costs a render. An agent saving a file in the open project
+ *  reaches the page as one event, and the page draws the project the event
+ *  carries: nothing fetched, the sidebar drawn once, and the draw reading
+ *  the page's layout before it writes rather than after. And the pointer
+ *  crossing the sidebar fetches nothing until it rests on a row. The audit
+ *  of 1.15 counted the same save at two to four requests, two draws and two
+ *  to four forced layouts, and a document fetched for every row the pointer
+ *  crossed on its way to one. */
+async function costRows(p, url, base, token, tmp, arrive) {
+  const rows = [];
+  // A second file in the plan's project, saved the way a watched file is:
+  // once to exist, and again under the probe, so that save lands in place
+  // (`existing`) the way an agent's edits do.
+  const other = join(tmp, "other.md");
+  const save = async n => {
+    writeFileSync(other, `# Another file\n\nSaved ${n} times.\n`);
+    const r = await fetch(`${base}/api/docs`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ path: other, cwd: tmp, origin: "watch" }),
+    });
+    if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
+    return r.json();
+  };
+  await save(1);
+  await p.goto(url);
+  await p.pointerAway();
+  await sleep(600);
+  // Counted at the source: every GET under /api, every draw of the sidebar
+  // (the page counts its own, see prelude), and every read of layout that
+  // follows a write to the DOM before a frame has settled it -- which is
+  // what makes the browser lay the page out on the spot. The frame loop
+  // clears the mark the way the browser's own layout at the end of a frame
+  // does, so a read in a later frame is not charged.
+  await p.ev(`(() => {
+    const C = window.__cost = { api: [], forced: 0, dirty: false, renders: window.__perf.renders };
+    const real = window.fetch;
+    window.fetch = function (u, o) {
+      const at = new URL(u instanceof Request ? u.url : u, location.href).pathname;
+      if (at.startsWith("/api/") && ((o && o.method) || "GET").toUpperCase() === "GET") C.api.push(at);
+      return real.apply(this, arguments);
+    };
+    const read = () => { if (C.dirty) { C.forced++; C.dirty = false; } };
+    const write = (proto, name) => { const d = Object.getOwnPropertyDescriptor(proto, name); Object.defineProperty(proto, name, { ...d, set(v) { C.dirty = true; d.set.call(this, v); } }); };
+    write(Element.prototype, "innerHTML"); write(Element.prototype, "outerHTML"); write(Node.prototype, "textContent");
+    const prop = (proto, name) => { const d = Object.getOwnPropertyDescriptor(proto, name); Object.defineProperty(proto, name, { ...d, get() { read(); return d.get.call(this); } }); };
+    for (const n of ["clientWidth", "clientHeight", "scrollTop", "scrollHeight"]) prop(Element.prototype, n);
+    for (const n of ["offsetWidth", "offsetHeight", "offsetTop"]) prop(HTMLElement.prototype, n);
+    for (const n of ["getBoundingClientRect", "getClientRects"]) { const f = Element.prototype[n]; Element.prototype[n] = function () { read(); return f.apply(this, arguments); }; }
+    const gcs = window.getComputedStyle; window.getComputedStyle = function () { read(); return gcs.apply(this, arguments); };
+    const frame = () => requestAnimationFrame(() => setTimeout(() => { C.dirty = false; frame(); }, 0));
+    frame();
+    return 1;
+  })()`);
+  const saved = await save(2);
+  await sleep(1200);
+  // The requests the finding named: the tree, a project's rows, a document
+  // and its versions. Anything else under /api is printed, not charged.
+  const c = await p.ev(`({ api: window.__cost.api, forced: window.__cost.forced, renders: window.__perf.renders - window.__cost.renders })`);
+  const tree = c.api.filter(a => /^\/api\/(tree|projects\/|workflows\/|docs\/|queue)/.test(a));
+  dbg("save", { saved: saved.existing, c });
+  rows.push(["a save fetches nothing", saved.existing === true && tree.length === 0,
+    !saved.existing ? "the save made a new version instead of landing in place"
+      : tree.length ? `${tree.length} fetched: ${tree.join(", ")}` : `the event carried the project, and the page asked for nothing${c.api.length ? ` (${c.api.join(", ")} aside)` : ""}`]);
+  rows.push(["and draws the sidebar once", c.renders === 1, `${c.renders} draw${c.renders === 1 ? "" : "s"} for one event`]);
+  rows.push(["reading layout once, before it writes", c.forced <= 1, `${c.forced} layout${c.forced === 1 ? "" : "s"} forced by a read after a write`]);
+
+  // The pointer across the rows, one every 50 ms, which is what a hand on
+  // its way to a row does to the rows on the way. Over documents this page
+  // has never fetched -- arrivals, whose cache entry the page drops -- so a
+  // fetch would show. Then it rests on the last, and that one may come.
+  // How long the pointer sat on each row is read on the page's own clock:
+  // a busy runner can stretch a 50 ms step past the 150 ms rest, and a row
+  // the pointer truly rested on may be fetched. Only rows crossed under
+  // 140 ms are charged.
+  const fresh = [];
+  for (let i = 0; i < 8; i++) fresh.push((await arrive({ name: `sweep-${i}.md`, body: `# Swept ${i}\n\nA row the pointer crosses.\n` })).id);
+  for (let i = 0; i < 40 && !(await p.ev(`!!document.querySelector('#trees a[data-id="${fresh[fresh.length - 1]}"]')`)); i++) await sleep(100);
+  await sleep(400);
+  const swept = (await p.ev(`[...document.querySelectorAll("#trees a[data-id]")].map(a => a.dataset.id)`)).filter(id => fresh.includes(id));
+  const ids = [...new Set(swept)];
+  await p.ev(`(() => {
+    window.__cost.api.length = 0;
+    const S = window.__sweep = [];
+    document.addEventListener("mouseover", e => {
+      const id = e.target.closest?.("a[data-id]")?.dataset.id || null;
+      if (!S.length || S[S.length - 1][0] !== id) S.push([id, performance.now()]);
+    }, true);
+    return 1;
+  })()`);
+  for (const id of ids) {
+    const at = await p.ui("center", `a[data-id="${id}"]`);
+    await p.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, p.s);
+    await sleep(50);
+  }
+  await p.pointerAway();
+  await sleep(400);
+  const sweep = await p.ev(`window.__sweep.slice()`);
+  const dwell = new Map();
+  sweep.forEach(([id, t], i) => { if (id && sweep[i + 1]) dwell.set(id, Math.max(dwell.get(id) || 0, sweep[i + 1][1] - t)); });
+  const quick = ids.filter(id => dwell.has(id) && dwell.get(id) < 140);
+  const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/") && quick.includes(a.split("/")[3]));
+  const slow = ids.length - quick.length;
+  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && quick.length >= 4 && crossed.length === 0,
+    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep`
+      : quick.length < 4 ? `only ${quick.length} of ${ids.length} rows crossed under 140 ms, too slow a sweep to judge`
+      : crossed.length ? `${crossed.length} documents fetched for ${quick.length} rows crossed under 140 ms`
+      : `${quick.length} rows crossed under 140 ms, nothing fetched${slow ? ` (${slow} the runner held longer, not charged)` : ""}`]);
+  await p.ev(`window.__cost.api.length = 0`);
+  await p.hoverOn(`a[data-id="${ids[ids.length - 1]}"]`);
+  await sleep(400);
+  const rested = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/"));
+  rows.push(["resting on one fetches that one", rested.length === 1 && rested[0].endsWith(`/${ids[ids.length - 1]}`),
+    rested.length === 1 ? "the row the pointer rested on, and only that" : `${rested.length} fetched: ${rested.join(", ") || "nothing"}`]);
   return rows;
 }
 

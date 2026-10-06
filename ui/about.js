@@ -505,7 +505,11 @@ async function openAbout(d) {
   if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
   fact("Version", ver);
   fact("Updates", updateRow(a.update, d));
-  if (d.capability) fact("Desk brief", briefRow(d));
+  if (d.capability) {
+    fact("Desk brief", switchRow(d, "/api/brief", "on · a Claude starting in a panel is told about its desk", "off · Claude starts in a panel knowing nothing of its desk"));
+    fact("Asides", switchRow(d, "/api/asides", "on · an agent may leave a line at the foot of the sidebar", "off · an agent's aside is refused; snyvi's own first lines still show"));
+    fact("Claude Code mod in panels", switchRow(d, "/api/claude-mod", "on · a panel's Claude shows its thread above the prompt, puts its questions on Your turn, and takes /note", "off · panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
+  }
   fact("Binary", a.binary, "path");
   fact("Documents", a.data_dir, "path");
   fact("Settings", a.config_dir, "path");
@@ -542,23 +546,25 @@ function noReach(el, again) {
   el.classList.add("no-reach");
 }
 
-/** Whether a Claude starting in a desk's panel is handed the desk brief --
- *  where it is, the open notes, what was done, where the work was left --
- *  as context before its first reply. The window's to change; a tab has no
- *  desks, and no row. */
-function briefRow(d) {
+/** One of the daemon's switches, the window's to change; a tab has no
+ *  desks, and no row. The desk brief: whether a Claude starting in a desk's
+ *  panel is handed where it is, the open notes, what was done and where the
+ *  work was left, as context before its first reply. Asides: whether an
+ *  agent's line at the foot of the sidebar is taken at all -- the one
+ *  consent for every agent at once, beside each aside's own ✕. */
+function switchRow(d, path, onSay, offSay) {
   const box = document.createElement("div"); box.className = "upd-row";
   const say = document.createElement("span"); say.className = "upd-say";
   const b = document.createElement("button"); b.type = "button"; b.className = "text";
   const act = document.createElement("span"); act.className = "upd-act"; act.append(b);
   box.append(say, act);
   const draw = on => {
-    say.textContent = on ? "on · a Claude starting in a panel is told about its desk" : "off · Claude starts in a panel knowing nothing of its desk";
+    say.textContent = on ? onSay : offSay;
     b.textContent = on ? "Turn off" : "Turn on";
-    b.onclick = async () => { try { draw((await d.deskApi("/api/brief", { on: !on })).on); } catch (e) { say.textContent = `Could not change it · ${d.sayErr(e).why}`; } };
+    b.onclick = async () => { try { draw((await d.deskApi(path, { on: !on })).on); } catch (e) { say.textContent = `Could not change it · ${d.sayErr(e).why}`; } };
   };
   say.textContent = "…";
-  d.deskApi("/api/brief").then(j => draw(j.on), () => { say.textContent = "snyvi did not answer"; });
+  d.deskApi(path).then(j => draw(j.on), () => { say.textContent = "snyvi did not answer"; });
   return box;
 }
 

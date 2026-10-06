@@ -35,6 +35,7 @@ const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" st
  *  outline and not on a text baseline. */
 const HEAD = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  key: '<circle cx="7" cy="13" r="3.5"/><path d="M9.5 10.5L16 4M13.5 6.5l2 2M15.5 4.5l1.5 1.5"/>',
 };
 const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
 
@@ -63,8 +64,10 @@ function rail() {
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
   // The latest six, and always the one on the page: a document being read
   // is never the one the rail hides. The count names what is not shown.
-  const shown = docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading);
-  const rest = dl.length - shown.length, folds = docsAll && dl.length > DOCS_SHOWN;
+  // A search shows every title that has what was typed, and nothing folds.
+  const q = docsFind.trim().toLowerCase(), found = q ? dl.filter(x => x.title.toLowerCase().includes(q)) : null;
+  const shown = found || (docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading));
+  const rest = found ? 0 : dl.length - shown.length, folds = !found && docsAll && dl.length > DOCS_SHOWN;
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
   const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
@@ -90,7 +93,7 @@ function rail() {
   drawing = true;
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` +
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + filedSecs(d) +
     `<div data-part="rail.panels"><div class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
@@ -107,7 +110,9 @@ function rail() {
     // not its title, which ticks. The row on the page gets its second line.
     // The rest, named rather than listed: one row at the end of the box that
     // opens them here, met where the scroll runs out rather than under it.
+    (dl.length > DOCS_FIND || docsFind ? `<input class="dk-find" type="search" spellcheck="false" autocomplete="off" placeholder="Find a document" aria-label="Find a document on this desk by its title" value="${esc(docsFind)}">` : "") +
     (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
+      (found && !found.length ? `<li><p class="dk-empty">No title has “${esc(docsFind.trim())}”</p></li>` : "") +
       (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
       : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
     // What the reader removed from this list, named, and there to open or put back.
@@ -120,7 +125,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); noteFocus(); docsScroll(docsTop); loadImgs(); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); }
   meta();
 }
 
@@ -155,10 +160,34 @@ function docsScroll(top) {
   else if (b.bottom > a.bottom) ul.scrollTop += b.bottom - a.bottom;
 }
 
-/** Leaving a desk leaves its removed list, and a row's Undo, with it. */
+/** Leaving a desk leaves its removed list, a row's Undo and a search with it. */
 function forgetDocs() {
   clearTimeout(docTimer);
   docOff = []; offShown = false; docGone = null; docSeen = null;
+  docsFind = ""; findCaret = 0; findOn = false;
+}
+
+/** The documents' search field, after a redraw made it again: what was
+ *  typed narrows the list as it is typed, and the focus and the caret go
+ *  back where they were. */
+function findFocus() {
+  const inp = ctx.tocEl.querySelector(".dk-find");
+  if (!inp) { findOn = false; return; }
+  inp.addEventListener("focus", () => { findOn = true; });
+  inp.addEventListener("blur", () => { if (!drawing) findOn = false; });
+  inp.addEventListener("input", () => { docsFind = inp.value; findCaret = inp.selectionStart; rail(); });
+  inp.addEventListener("keydown", e => {
+    // The desk gives every other key to the shell in the focused panel.
+    e.stopPropagation();
+    // Enter opens the first match; Escape empties the field, and leaves it
+    // when it is empty already.
+    if (e.key === "Enter") { e.preventDefault(); ctx.tocEl.querySelector(".dk-docs:not(.dk-offs) a[data-read]")?.click(); }
+    else if (e.key === "Escape") { e.preventDefault(); if (docsFind) { docsFind = ""; findCaret = 0; rail(); } else inp.blur(); }
+  });
+  if (!findOn) return;
+  inp.focus();
+  const at = Math.min(findCaret, inp.value.length);
+  inp.setSelectionRange(at, at);
 }
 
 /** Where each desk's repository lives on the web, by desk id: `{ url, at,
@@ -300,8 +329,8 @@ function noteSec(d) {
     // then the live one, in the same room, so nothing under it moves as it
     // opens and shuts. On an empty list it is the whole of the list.
     (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
-      ? `<div class="dk-note new idle"><span class="dk-tick ghost" aria-hidden="true"></span><span class="dk-stage" aria-hidden="true"></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-note new"><span class="dk-tick ghost" aria-hidden="true"></span><span class="dk-stage" aria-hidden="true"></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
+      ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
+      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`) +
@@ -328,8 +357,8 @@ function noteRow(x, esc) {
   // Keep and ✕ sit where a line's tools do, always shown, since a suggestion
   // is a question and these are its two answers.
   if (x.suggested_by) {
-    return `<li class="dk-note dk-sug"><span class="dk-tick ghost" aria-hidden="true"></span>` +
-      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="suggested by ${esc(x.suggested_by)} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
+    return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
+      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
   }
@@ -337,13 +366,18 @@ function noteRow(x, esc) {
   // it opens a card over the list, as tall as the text, while the row keeps
   // its own two lines underneath: nothing below it moves either way.
   const editing = noteField && noteField.kind === "edit" && noteField.id === x.id;
+  // Two columns either side of the text, each two lines tall: the circle
+  // over the line's number on the left, and on the right the stage over the
+  // ✕. The number is the one the reader and the agents call the line by, so
+  // a click copies it, ready to paste into a panel.
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
-    `<button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
-    stageMark(x, esc) +
+    `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
+    `<button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button></span>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
-    picMark(x, esc) +
-    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
-    (x.done && x.done_by ? byLine(x, esc) : "") +
+    picMark(x, esc) + threadChip(x, esc) +
+    `<span class="dk-tail">${stageMark(x, esc)}` +
+    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
+    (x.done && x.done_by ? byLine(x, esc) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }
@@ -383,8 +417,9 @@ function stageOf(x) {
   return views.get(x.stage_pane)?.status?.agent ? "working" : x.stage_doc ? "planned" : "read";
 }
 
-/** The stage's mark, in a slot every line keeps before its text, so a line
- *  that is picked up does not step right. The plan's mark opens the plan. */
+/** The stage's mark, at the line's right end over its ✕, in a slot every
+ *  line keeps, so a line that is picked up does not rewrap. The plan's mark
+ *  opens the plan; working names the panel by its number, as its tab does. */
 function stageMark(x, esc) {
   const st = stageOf(x), by = esc(x.stage_by || "an agent");
   if (st === "planned" && x.stage_doc) {
@@ -396,7 +431,8 @@ function stageMark(x, esc) {
     const at = x.stage_panel ? ` in ${esc(x.stage_panel)}` : "";
     const busy = views.get(x.stage_pane)?.status?.agent === "working";
     const say = busy ? `${by} is working on it${at}` : `${by} has it${at}`;
-    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>`;
+    const slot = views.get(x.stage_pane)?.pane?.slot;
+    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}">${slot != null ? `<span class="c">${slot}</span>` : ""}</span>`;
   }
   if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
   return `<span class="dk-stage" aria-hidden="true"></span>`;
@@ -557,14 +593,15 @@ function pickImages(id) {
   inp.click();
 }
 
-/** Copy a tick's commit, and say so where it is: the hash reads "copied" for
- *  a moment, in its own place, rather than in a corner of the window. */
-function copySha(b) {
+/** Copy a tick's commit, or a line's number, and say so where it is: the
+ *  hash reads "copied" for a moment, in its own place, rather than in a
+ *  corner of the window. */
+function copySha(b, said = "copied") {
   if (!b) return;
   navigator.clipboard?.writeText(b.dataset.c);
   if (b.dataset.said != null) return;
   const was = b.textContent;
-  b.textContent = "copied"; b.dataset.said = "";
+  b.textContent = said; b.dataset.said = "";
   setTimeout(() => { if (b.isConnected) { b.textContent = was; delete b.dataset.said; } }, 1200);
 }
 
@@ -602,6 +639,7 @@ function waitingFirst(d) {
  *  desk's, and a field left open on this one must not reopen on that one. */
 function forgetNotes() {
   clearTimeout(backTimer);
+  forgetFiled();
   noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesKept.clear();
   clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
@@ -641,7 +679,7 @@ const stillOpen = x => !x.done && !x.gone && !x.suggested_by;
  *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --
  *  the list is read, and the rail redraws around it, as after a tick here. */
 export function notesChanged(id) {
-  if (ctx && id === deskId) getNotes(id, true);
+  if (ctx && id === deskId) { getNotes(id, true); getFiled(id, true); }
 }
 
 /** Put the open field back after a redraw, with what was typed into it and the

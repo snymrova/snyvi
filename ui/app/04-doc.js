@@ -62,13 +62,25 @@
     swapAnim = still.matches || byKey ? null : docEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: "ease-out" });
   }
 
+  /* The cache is bounded in bytes rather than in entries, the way mmd.js
+   * bounds its diagrams: forty entries was forty documents of any size, and a
+   * tab left open all day over long files is the tab this project promises
+   * stays small. Summed at each fetch rather than kept, since a dozen places
+   * drop an entry; the oldest go first, and never the one just fetched.
+ * Eight megabytes of rendered html. */
   async function fetchDoc(id) {
     if (state.cache.has(id)) return state.cache.get(id);
     const r = await fetch(`/api/docs/${id}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    if (state.cache.size > 40) state.cache.delete(state.cache.keys().next().value);
     state.cache.set(id, j);
+    let n = 0;
+    for (const v of state.cache.values()) n += v.html?.length || 0;
+    for (const [k, v] of state.cache) {
+      if (n <= 8 << 20 || k === id) break;
+      state.cache.delete(k);
+      n -= v.html?.length || 0;
+    }
     return j;
   }
 
@@ -280,6 +292,13 @@
   /* After the Undo has gone: "N removed · Show" at the foot of the Inbox,
    * drawn by home.js (`removedLine`), the chunk for the pages that list. */
   const homeUse = () => (homeLoading ||= import(`/assets/home.js${boot.v ? `?v=${boot.v}` : ""}`)).then(m => (homeMod = m));
+  /** A friend's snyvi (docs/PEER.md): pairing, Send to…, a line, an agent's
+   *  offer. All of it is peer.js, fetched on the first of those and never on
+   *  a read; first paint has no room to spare, so only the wiring is here.
+   *  No promise kept: the module map already holds a loaded one, and a
+   *  failed fetch is simply tried again on the next click. */
+  const peerUse = () => import(`/assets/peer.js${boot.v ? `?v=${boot.v}` : ""}`);
+  const peerCtx = { esc, rel, sayErr, toast, peer: peerUse, home: () => showHome(true) };
   const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------
@@ -382,7 +401,7 @@
     catch { homeLoading = null; if (state.view === "home") docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1>${noReach("home")}</div>`; return; }
     if (state.view !== "home") return;
     if (push) main.scrollTo({ top: 0, behavior: "instant" });
-    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates,
+    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
       next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), notes: () => state.notes });
     if (push) swapIn();
     afterRender();
@@ -398,6 +417,8 @@
     if (w === "pick") act("pick", true);
     else if (w === "place") { const f = welcomePlaces[+b.dataset.i]; if (f) act("make", f); }
     else if (w === "connect") connectClaude(b);
+    // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
+    else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
   });
   /** Connect Claude Code, from the Agents page or a desk's panel: it asks,
    *  in place, then runs `init-claude` in the daemon. */

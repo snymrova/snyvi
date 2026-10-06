@@ -76,6 +76,14 @@ pub fn resolve(target: &str) -> String {
     let base = crate::config::base_url();
     if let Some(rest) = target.strip_prefix(&format!("{SCHEME}:")) {
         let rest = rest.trim_start_matches('/');
+        // `snyvi://pair/<code>`: a friend's code, handed to Home's sheet.
+        if let Some(code) = rest.strip_prefix("pair/") {
+            let code: String = code
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            return format!("{base}/?pair={code}");
+        }
         return format!("{base}/{rest}");
     }
     if target.starts_with("http://") || target.starts_with("https://") {
@@ -242,6 +250,15 @@ mod tests {
         let base = crate::config::base_url();
         assert_eq!(resolve("snyvi://d/abc"), format!("{base}/d/abc"));
         assert_eq!(resolve("snyvi://"), format!("{base}/"));
+        assert_eq!(
+            resolve("snyvi://pair/ocean-ladder-fish-kpm"),
+            format!("{base}/?pair=ocean-ladder-fish-kpm")
+        );
+        assert_eq!(
+            resolve("snyvi://pair/a&b=c"),
+            format!("{base}/?pair=abc"),
+            "nothing but a code reaches the query"
+        );
         assert_eq!(resolve("abc"), format!("{base}/d/abc"));
         assert_eq!(
             resolve("http://127.0.0.1:7777/d/abc"),

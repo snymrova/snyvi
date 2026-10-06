@@ -9,6 +9,8 @@
    * reading a paragraph looks like -- and with several agents sending, the
    * document changed under them many times an hour. Now it is a row at the
    * top of the sidebar, a bar above the document, and `n`. */
+  /** One GET, as JSON, or null: what every ask of the daemon below wants. */
+  const getJson = async u => { try { return await (await fetch(u)).json(); } catch { return null; } };
   const QUEUE_ROWS = 6;    // in the sidebar; the inbox lists the rest
   const QUEUE_HELD = 24;   // what a page opens with and keeps; the count is the daemon's, whatever is held
   /** Whether a row is on the queue: held here, or marked by the daemon on a
@@ -26,13 +28,11 @@
     if (state.queue.length >= QUEUE_HELD || state.waiting <= state.queue.length) return;
     clearTimeout(holdTimer);
     holdTimer = setTimeout(async () => {
-      try {
-        const q = await (await fetch(`/api/queue?limit=${QUEUE_HELD}`)).json();
-        if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
-      } catch {}
+      const q = await getJson(`/api/queue?limit=${QUEUE_HELD}`);
+      if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
     }, 150);
   }
-  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}" data-tip="${esc(d.title)}" data-tip-sub="${esc(d.project)} · ${fmt(d.received_at)}" data-tip-overflow>${docIco()}<span class="title" data-tip-cut>${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
+  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}"${sizeOf(d)} data-tip="${esc(d.title)}" data-tip-sub="${esc(d.project)} · ${fmt(d.received_at)}" data-tip-overflow>${docIco()}<span class="title" data-tip-cut>${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
@@ -127,12 +127,18 @@
     const held = gone && gone.where === "proj" && gone.qDoc && !queueIds.has(gone.id);
     if (held) rows.splice(Math.min(gone.qAt, rows.length), 0, queueRow(gone.qDoc, gone.closing ? " held leaving" : " held"));
     const empty = (!n || !head) && !left.length && !ghost && !held;
-    const onRow = queueEl.contains(document.activeElement) && document.activeElement.dataset.id;
-    queueEl.innerHTML = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
+    const qh = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
       rows.join("") +
       (n > shown ? `<li class="t-more"><a href="/inbox" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
-    // A keyboard on a row stays on it, as it does in the tree.
-    if (onRow) queueEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
+    // The same rows as last time are left alone, as the tree's are: a draw
+    // that changes nothing here must not cost a layout. A row mid-motion
+    // carries its delay in the string, so it is drawn again until it is done.
+    if (qh !== drawnQueue) {
+      const onRow = queueEl.contains(document.activeElement) && document.activeElement.dataset.id;
+      queueEl.innerHTML = drawnQueue = qh;
+      // A keyboard on a row stays on it, as it does in the tree.
+      if (onRow) queueEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
+    }
     lastQueue = state.queue.slice(0, QUEUE_ROWS);
     // Marked read from the bar: the bar says so and holds the Undo, in the
     // same card at the same place, until the drain runs out (DESIGN §4.4).
@@ -364,7 +370,7 @@
    *  every document in the library on every page open — 13,000 rows and a
    *  718 ms task at 3000 documents — and what is behind a row is now two
    *  numbers until a reader asks for it. */
-  let drawnTree = null;
+  let drawnTree = null, drawnQueue = null, drawnInbox = null, recutDone = true;
   const treeTouched = new MutationObserver(() => { drawnTree = null; });
   treeTouched.observe(treeEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
   /** The daemon's projects, and the one whose last document was just removed:
@@ -409,21 +415,21 @@
     return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
   }
   function renderTree() {
+    // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
+    window.__perf && window.__perf.renders++;
     const projects = heldTree();
     const total = state.tree.reduce((n, p) => n + p.docs, 0);
-    // A link, so the keyboard reaches it: a div with a click handler is a row
-    // Tab walks straight past.
-    inboxRowEl.innerHTML = secHead("inbox", "Inbox") +
-      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
-    renderQueue();
-    renderBrowse();
-    renderDesks();
-    if (!projects.length) {
-      treeEl.innerHTML = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
-      return;
-    }
-    // Measured rather than assumed, because the gutter resizes the sidebar,
-    // and once per draw rather than once per row.
+    const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
+    const put = projects.length - drawn.length;
+    // A read of the page's layout that follows a write lays the sidebar out
+    // again on the spot, so a draw reads as little as it can after it writes:
+    // the title width before anything is written, the room the Inbox has
+    // once the sections above it stand (one layout, and none when they did
+    // not change), and the width the rows ended at not at all -- the
+    // observer below says. This used to read between its writes two to four
+    // times a draw, on every save of a file an agent was editing.
+    // The title width is measured rather than assumed, because the gutter
+    // resizes the sidebar, and once per draw rather than once per row.
     if (fitCtx && treeEl.clientWidth) {
       const cs = getComputedStyle(treeEl);
       const f = `550 ${cs.fontSize} ${cs.fontFamily}`;
@@ -432,6 +438,21 @@
         if (timeCtx) timeCtx.font = `10px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
       }
       titleRoom = roomIn(treeEl.clientWidth);
+    }
+    // A link, so the keyboard reaches it: a div with a click handler is a row
+    // Tab walks straight past. Written only when it changed, as every section is.
+    const inbox = secHead("inbox", "Inbox") +
+      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
+    if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
+    renderQueue();
+    renderBrowse();
+    renderDesks();
+    awayRowSeen = put > 0;
+    const cap = projects.length ? (capSeen = inboxCap(awayRowSeen)) : 0;
+    if (!projects.length) {
+      const h = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
+      if (h !== drawnTree) { treeEl.innerHTML = drawnTree = h; treeTouched.takeRecords(); }
+      return;
     }
     // What the page has open, before it is taken apart. `toggle` is queued
     // rather than dispatched where the click happens, so a reader can have a
@@ -448,8 +469,6 @@
     // No label: the projects hang under Inbox, which is what they are.
     let h = treeOff ? noReach("tree") : "";
     const waitingIn = new Set(state.queue.map(d => String(d.project_id)));
-    const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
-    const put = projects.length - drawn.length;
     const row = p => {
       // In its own place, at its own height, so nothing below it moves while
       // the offer stands and nothing moves again when it is taken.
@@ -467,8 +486,6 @@
     // have open, or whose row is offering an Undo, stays in view under it: a
     // row never goes away from under a reading. One project past the cap is
     // drawn rather than said, since "1 more" would take the same room.
-    awayRowSeen = put > 0;
-    const cap = capSeen = inboxCap(awayRowSeen);
     const upto = drawn.length > cap + 1 ? cap : drawn.length;
     const past = drawn.slice(upto);
     const hidden = past.filter(p => !projOpen(p) && awayJust !== String(p.id) && !(gone && gone.proj === p));
@@ -495,18 +512,31 @@
       drawnTree = h;
       treeTouched.takeRecords();
     }
-    // The scrollbar exists only once the rows do, and takes width from the
-    // column the titles were just cut to -- so a tree that overflows was cut
-    // against a width that stopped being true as it was drawn. Once more.
-    if (fitCtx && treeEl.clientWidth && !recut && roomIn(treeEl.clientWidth) !== titleRoom) {
-      recut = true;
-      try { renderTree(); } finally { recut = false; }
-      return;
-    }
+    // Any write above may have moved the column -- the rows, or a queue or a
+    // desk list that brought the scrollbar in -- so the recut is armed. It
+    // runs only if the width it was cut for is not the width there is.
+    if (!recut) recutDone = false;
     // A project the reader has open that this tab has never filled: the "…" is
     // on screen, so fetching it now is what turns it into rows.
     for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
   }
+
+  /* The scrollbar exists only once the rows do, and takes width from the
+   * column the titles were just cut to -- so a tree that overflows was cut
+   * against a width that stopped being true as it was drawn. Once more, when
+   * the browser says the column changed, and from what it says: asking the
+   * page for its width right after the write would lay it out on the spot.
+   * Once per draw of the rows, as before, so two widths that each cause the
+   * other cannot trade places all day. #tree has no padding, so the box the
+   * observer reports is the width the titles are cut to. */
+  try {
+    new ResizeObserver(es => {
+      const w = Math.round(es[es.length - 1].contentRect.width);
+      if (recutDone || !fitCtx || !w || roomIn(w) === titleRoom) return;
+      recutDone = recut = true;
+      try { renderTree(); markActive(); } finally { recut = false; }
+    }).observe(treeEl);
+  } catch {}
 
   /* The first draw can land before Inter has, and a fallback font measures
    * narrower -- titles are then cut to a width the real font overflows, and
@@ -538,10 +568,8 @@
     const q = new URLSearchParams();
     if (liftedCaps.has(pid)) { q.set("workflows", "0"); q.set("docs", "0"); }
     if (state.doc && String(state.doc.project_id) === pid) q.set("whole", state.doc.workflow_id);
-    try {
-      const wfs = await (await fetch(`/api/projects/${pid}/tree${q.size ? `?${q}` : ""}`)).json();
-      if (Array.isArray(wfs)) state.sub.set(pid, wfs);
-    } catch {}
+    const wfs = await getJson(`/api/projects/${pid}/tree${q.size ? `?${q}` : ""}`);
+    if (Array.isArray(wfs)) state.sub.set(pid, wfs);
     filling.delete(pid);
     // A session a reader had opened out in full, refetched capped: put it back.
     await Promise.all((state.sub.get(pid) || [])
@@ -554,8 +582,7 @@
   /** One session, whole, dropped into the subtree it belongs to. What "N older"
    *  asks for, and what puts a lifted cap back after a refetch. */
   async function fillWorkflow(wid, pid) {
-    let w;
-    try { w = await (await fetch(`/api/workflows/${wid}/tree`)).json(); } catch { return; }
+    const w = await getJson(`/api/workflows/${wid}/tree`);
     if (!w || !Array.isArray(w.docs)) return;
     const wfs = state.sub.get(String(pid));
     if (!wfs) return;
@@ -583,12 +610,42 @@
     markActive();
   }
 
+  /** A save in place carries the one project that moved: its row as
+   *  /api/tree has it, and its sessions as /api/projects/{id}/tree has them
+   *  under the default caps. Put in here, so a save fetches nothing (audit
+   *  finding 4: a file saved every few seconds pulled the tree and the
+   *  project back down every few seconds). Only for a save in place, which
+   *  adds and takes away no row: a session this tab holds whole and the
+   *  event capped keeps the rows past the cap as they were. False, and the
+   *  fetch it was, for a daemon that sends no rows or a cap the reader
+   *  lifted. An arrival still fetches: it moves rows between versions. */
+  function patchTree(j) {
+    const p = j.project, rows = j.rows;
+    if (!p || !Array.isArray(rows)) return false;
+    const pid = String(p.id), had = state.sub.get(pid);
+    if (had && liftedCaps.has(pid)) return false;
+    state.tree = state.tree.filter(x => String(x.id) !== pid).concat(p)
+      .sort((a, b) => (b.latest || 0) - (a.latest || 0) || b.id - a.id);
+    treeOff = false;
+    if (!had) return true;
+    const whole = w => liftedWorkflows.has(w.id) || state.doc?.workflow_id === w.id;
+    const next = rows.map(r => {
+      const w = had.find(x => x.id === r.id);
+      if (!w || !whole(w) || r.docs.length >= r.total) return r;
+      const ids = new Set(r.docs.map(d => d.id));
+      return { ...r, docs: r.docs.concat(w.docs.filter(d => !ids.has(d.id))) };
+    });
+    for (const w of had) if (whole(w) && !next.some(x => x.id === w.id)) next.unshift(w);
+    state.sub.set(pid, next);
+    return true;
+  }
+
   /** The library moved: refetch the project rows, and the subtrees this tab has
    *  already filled. Dropping them instead would collapse an expanded project
    *  to a "…" under the reader. `only` narrows it to one project, which is what
    *  an arrival needs — nothing else in the library moved.  */
   async function refreshTree(only) {
-    const r = await fetch("/api/tree").catch(() => null), j = r?.ok && await r.json().catch(() => null);
+    const j = await getJson("/api/tree");
     treeOff = !Array.isArray(j);
     if (!treeOff) state.tree = j;
     const pids = only != null ? [String(only)] : [...state.sub.keys()];
@@ -597,47 +654,13 @@
     markActive();
   }
 
-  const entryHtml = (rootId, e) => e.dir
-    ? `<li class="b-dir"><details data-root="${rootId}" data-path="${esc(e.path)}"><summary>${icon("folder", 14)}<span class="nm">${esc(e.name)}</span>${chev}${plusDesk()}</summary><ul class="b-tree" data-root="${rootId}" data-path="${esc(e.path)}"></ul></details></li>`
-    : `<li class="b-file"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${esc(e.path)}" data-tip="${esc(e.path)}" data-tip-mono>${docIco()}<span class="title">${esc(e.name)}</span><span class="k">${fmtSize(e.size)}</span></a></li>`;
-
-  /** Fetch one directory level the first time its folder is opened. */
-  async function fillTree(ul) {
-    if (!ul || ul.dataset.loaded) return;
-    ul.dataset.loaded = "1";
-    ul.innerHTML = skRows;
-    const rootId = ul.dataset.root, path = ul.dataset.path || "";
-    let entries;
-    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch {}
-    if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = noReach("dir", "li"); return; }
-    if (!entries.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
-    ul.innerHTML = entries.map(e => entryHtml(rootId, e)).join("");
-    markActive();
-  }
-
-  /** The folder changed on disk: re-list it, keeping the nodes that are still there
-   *  so expanded subfolders stay expanded and nothing flickers. */
-  async function reloadTree(ul) {
-    if (!ul || !ul.dataset.loaded) return;
-    const rootId = ul.dataset.root, path = ul.dataset.path || "";
-    let entries;
-    try { entries = await (await fetch(`/api/browse/${rootId}/tree?path=${encodeURIComponent(path)}`)).json(); } catch { return; }
-    if (!Array.isArray(entries) || !ul.isConnected) return;
-    const old = new Map([...ul.children].map(li => [li.querySelector("[data-path]")?.dataset.path, li]));
-    const tpl = document.createElement("template");
-    const nodes = entries.map(e => {
-      const li = old.get(e.path);
-      if (li && li.classList.contains(e.dir ? "b-dir" : "b-file")) {
-        const k = li.querySelector(".k"); if (k) k.textContent = fmtSize(e.size);
-        return li;
-      }
-      tpl.innerHTML = entryHtml(rootId, e);
-      return tpl.content.firstElementChild;
-    });
-    if (!nodes.length) { ul.innerHTML = `<li class="b-empty">No files here</li>`; return; }
-    ul.replaceChildren(...nodes);
-    markActive();
-  }
+  /* The sidebar's folder rows are browse.js's since 1.17: the fetch, the
+   * rows and the re-list on a change on disk went out of first paint with
+   * the page they open, paid when a folder is first unfolded. A filled tree
+   * implies the chunk, so a reload with none loaded has nothing to re-list. */
+  const treeCtx = () => ({ esc, icon, chev, plusDesk, docIco, fmtSize, skRows, noReach, markActive, getJson });
+  const fillTree = ul => { if (ul && !ul.dataset.loaded) browseUse().then(m => m.fill(treeCtx(), ul), () => { ul.innerHTML = noReach("dir", "li"); }); };
+  const reloadTree = ul => { if (browseMod) browseMod.reload(treeCtx(), ul); };
   treesEl.addEventListener("toggle", e => {
     const d = e.target;
     if (d.dataset && d.dataset.root && d.open) {

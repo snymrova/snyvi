@@ -16,7 +16,7 @@
  *  app.js emits, which are what let a long task spent compiling Mermaid be told
  *  apart from one spent drawing with it. */
 export function probe() {
-  window.__perf = { longtasks: [], paints: [], marks: [], measures: [] };
+  window.__perf = { longtasks: [], paints: [], marks: [], measures: [], renders: 0 };
   const watch = (type, keep) =>
     new PerformanceObserver(l => { for (const e of l.getEntries()) keep(e); })
       .observe({ type, buffered: true });

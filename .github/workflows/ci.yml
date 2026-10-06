@@ -1,6 +1,8 @@
 name: ci
 # A branch is tested through its pull request and main through its pushes.
-# Both on every push, as before, ran the whole matrix twice for one commit.
+# Both on every push, as before, ran the whole matrix twice for one commit;
+# and a merge that only lands a pull request's tested tree runs the one job
+# the pull request skipped (see the gate).
 # workflow_dispatch is the full matrix on demand, for a branch that wants
 # the Intel Mac before it merges: `gh workflow run ci.yml --ref <branch>`.
 on:
@@ -9,19 +11,70 @@ on:
   pull_request:
   workflow_dispatch:
 # A newer push to a pull request makes the run for the older one worthless.
-# Not on main, where every merge keeps its own full run.
+# Not on main, where every merge keeps its own run.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  build-test-bench:
+  gate:
+    # Main's pushes are merges. When one changes nothing its pull request's
+    # run did not already test -- the merge's tree is its second parent's,
+    # and that commit has a green run -- the whole matrix again proves only
+    # the runner's luck: 1.20.0's merge went red on a timing flake in the
+    # very tree that had just passed. Then the Intel Mac runs alone, since a
+    # pull request never gets it. Any other push, every pull request and
+    # every dispatch run in full. Nothing in release.yml waits on main's run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      full: ${{ steps.g.outputs.full }}
+      macs: ${{ steps.g.outputs.macs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The merge and both its parents, which is all the comparison needs.
+          fetch-depth: 2
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          arm='{"target":"aarch64-apple-darwin","runner":"macos-14"}'
+          intel='{"target":"x86_64-apple-darwin","runner":"macos-15-intel"}'
+          full=true macs="[$arm,$intel]"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            macs="[$arm]"
+          elif [ "$GITHUB_EVENT_NAME" = push ] && head=$(git rev-parse -q --verify HEAD^2) \
+            && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'HEAD^2^{tree}')" ]; then
+            # A pull request's run is filed under its head commit, not the
+            # merge ref it checks out, which is what makes this lookup work.
+            green=$(gh run list --workflow ci.yml --commit "$head" --status success --json databaseId -q length || echo 0)
+            if [ "${green:-0}" -gt 0 ]; then
+              full=false macs="[$intel]"
+              echo "this merge's tree is $head's, which passed: the Intel Mac runs, nothing else"
+            fi
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "macs=$macs" >> "$GITHUB_OUTPUT"
+
+  test:
+    # What was one Linux job is three stages, so the slowest bench no longer
+    # waits behind every other: this, beside the build, and then the benches
+    # in four shards on the binary the build hands over.
+    #
+    # Without fat LTO: `cargo test --release` links every test binary with
+    # the release profile, and nothing here measures them. The size budget
+    # is the build job's, on the binary that ships.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # Every bench copies the binary out of target/, where it would count as
-    # a per-user install and read GitHub for a newer version mid-run. The
-    # benches are offline; bench/update.mjs clears this for its own daemon.
     env:
       SNYVI_UPDATES: "off"
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -33,11 +86,21 @@ jobs:
       - name: Clippy
         run: cargo clippy --release -- -D warnings
       - name: Test
-        # With the release profile, unlike the other desktops: the perf
-        # budget below measures the binary's size, which is LTO's to decide,
-        # and a test step on other flags would share no dependency with the
-        # build and rebuild all of them, uncached, on every run.
         run: cargo test --release
+
+  build:
+    # The release profile, fat LTO and all: the perf budget measures this
+    # binary's size, and the packaging steps run here because they need it.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SNYVI_UPDATES: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --release
       - name: Package and install the .deb
@@ -119,7 +182,42 @@ jobs:
           test -x "$app/Contents/MacOS/snyvi-app"
           test -x "$app/Contents/MacOS/snyvi"
           python3 -c "import plistlib,sys; d=plistlib.load(open(sys.argv[1],'rb')); assert d['CFBundleExecutable']=='snyvi-app' and d['CFBundleShortVersionString']=='0.0.0-ci', d" "$app/Contents/Info.plist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snyvi-linux
+          path: target/release/snyvi
+          retention-days: 1
+
+  bench:
+    # Every bench copies the binary out of target/, where it would count as
+    # a per-user install and read GitHub for a newer version mid-run. The
+    # benches are offline; bench/update.mjs clears this for its own daemon.
+    #
+    # Four shards of about the same length, each on a runner of its own, so
+    # a red row in one no longer skips every step after it. bench/ui.mjs is
+    # cut in two at a section; each half starts a daemon of its own.
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [page-1, page-2, daemon, budgets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SNYVI_UPDATES: "off"
+      UI_CUT: a folder, opened in snyvi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: snyvi-linux
+          path: target/release
+      - run: chmod +x target/release/snyvi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Perf budget
+        if: matrix.shard == 'budgets'
         # Hosted runners are slower and noisier than a dev box; scale the budgets, but a
         # regression that triples a case still fails the build. Only the clocks scale:
         # the binary's size and the daemon's resident set are the same on any machine,
@@ -127,10 +225,8 @@ jobs:
         run: SNYVI_BENCH_FACTOR=3 ./target/release/snyvi bench --check
       # Node 22 for the global WebSocket the harness drives Chromium with; the
       # runner's own Node may be older, and nothing else here uses it.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - name: Browser budget
+        if: matrix.shard == 'budgets'
         # `snyvi bench` measures the daemon. This measures the half the reader
         # actually waits on, which is where the seconds were: a 220-node diagram
         # froze the tab for 3.1 s before the scheduler landed.
@@ -145,6 +241,7 @@ jobs:
         # whether drawing is cut into slices. See docs/DIAGRAMS.md.
         run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/browser.mjs --check
       - name: Opening a document
+        if: matrix.shard == 'budgets'
         # The gesture a reader makes most, which none of the benches above
         # measured: a click on a row, and a document on screen. The clocks
         # are printed and not enforced here, for the same reason as the row
@@ -155,19 +252,25 @@ jobs:
         # rebuilt before the reader sees the page. None of that depends on
         # the clock. See the top of bench/open.mjs.
         run: SNYVI_BENCH_SHARED=1 SNYVI_BENCH_FACTOR=3 node bench/open.mjs --check
-      - name: What the page does
+      - name: What the page does, to the cut
+        if: matrix.shard == 'page-1'
         # Not how fast, what: where the contents' marker is, what a wheel
         # moves, what Back does, what `t` opens at 1000 px, whether Tab
         # reaches every control. Counts and positions, so every row holds on
         # any machine. See the 0.11 and 0.12 notes in docs/ROADMAP.md.
-        run: node bench/ui.mjs --check
+        run: node bench/ui.mjs --check --before "$UI_CUT"
+      - name: What the page does, from the cut
+        if: matrix.shard == 'page-2'
+        run: node bench/ui.mjs --check --from "$UI_CUT"
       - name: A restart that costs nothing
+        if: matrix.shard == 'daemon'
         # A daemon of its own on a spare port: a panel with an agent mid-turn
         # holds `snyvi restart` back; the turn ending lets it go; the new
         # daemon says which panel comes back as a conversation, and the page
         # asks for exactly that. Never the daemon on 7777.
         run: node bench/restart.mjs
       - name: The daemon updates itself
+        if: matrix.shard == 'daemon'
         # A release of its own: a manifest signed with a key made for the
         # run, served from a port beside a daemon on another, a tarball of
         # the binary just built. The daemon checks, stages, verifies, applies
@@ -176,15 +279,36 @@ jobs:
         # through, rolls back a build that will not start, and goes back on
         # request. Never the daemon on 7777, never GitHub.
         run: node bench/update.mjs
+      - name: What a hook costs the turn
+        if: matrix.shard == 'daemon'
+        # A daemon of its own on a spare port, and Claude Code's events fed
+        # to `snyvi hook` under strace: one connection and no thread per
+        # prompt, no snyvi at all for another server's tool, and with no
+        # daemon a Markdown save returns inside 1.6 s and starts nothing.
+        # Counts, so they hold on any runner. See the top of bench/hook.mjs.
+        run: |
+          command -v strace >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq strace; }
+          node bench/hook.mjs --check
+      - name: What a save costs the search index
+        if: matrix.shard == 'daemon'
+        # Five hundred plans in and saved again through a daemon of its own,
+        # then the database read with the sqlite3 shell: every index row on
+        # its document's rowid, and the delete a save runs under 64 KB of
+        # pages. See the top of bench/store.mjs.
+        run: |
+          command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
+          node bench/store.mjs --check
       - name: What the page weighs
+        if: matrix.shard == 'budgets'
         # The four assets the page cannot start without, fetched from a
         # daemon this starts and gzipped as it serves them -- not read out of
         # ui/, which stopped being the same bytes when build.rs began taking
         # the comments out. Two things fail a push: first paint over the
-        # budget bench/bytes.mjs states (55 KB today), and an asset that does not
+        # budget bench/bytes.mjs states (56 KB today), and an asset that does not
         # parse as served, which is the strip's own safety net.
         run: node bench/bytes.mjs --check
       - name: The design system's debt only goes down
+        if: matrix.shard == 'budgets'
         # docs/DESIGN.md §9.3: raw colours, off-scale font sizes, raw
         # durations, unnamed z-indexes, titles, raw errors, banned words,
         # buttons nested in links -- each counted against
@@ -192,17 +316,20 @@ jobs:
         # a count goes up, and a change that pays debt lowers the file.
         run: node bench/lint-ui.mjs --check
       - name: Nothing over a size ceiling grew
+        if: matrix.shard == 'budgets'
         # CLAUDE.md: a file over 2,500 lines or a function over 120 may only
         # shrink, held against bench/size.baseline.json. A change that
         # splits a module lowers the file in the same commit.
         run: node bench/size.mjs --check
       - name: The README's pictures can still be taken
+        if: matrix.shard == 'budgets'
         # bench/media.mjs is the camera the README's pictures come from; a
         # release re-takes them. Taken here into a folder that is thrown
         # away, so a view it points at that has moved fails the push and
         # not the release.
         run: node bench/media.mjs --out /tmp/snyvi-media
       - name: The film's frames can still be taken
+        if: matrix.shard == 'budgets'
         # film/capture.mjs is the camera the demo is cut from, and it points
         # at views of its own -- the arrival bar, the diff, the palette. Taken
         # here into a folder that is thrown away, for the same reason as the
@@ -216,6 +343,7 @@ jobs:
         # pipeline does need it, and stays a release-day job.
         run: node film/capture.mjs --out /tmp/snyvi-film
       - name: Smoke test the daemon
+        if: matrix.shard == 'daemon'
         run: |
           set -e
           export SNYVI_DATA_DIR=/tmp/snyvi-ci SNYVI_CONFIG_DIR=/tmp/snyvi-ci-cfg SNYVI_PORT=7791
@@ -225,6 +353,7 @@ jobs:
           curl -sf http://127.0.0.1:7791/api/health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:7791/api/docs -H 'content-type: application/json' -d '{"content":"x"}')" = "401"
       - name: The first ten minutes
+        if: matrix.shard == 'daemon'
         # What a newcomer types, in a home that has never seen snyvi, against
         # a claude that keeps user-scope servers where the real one does:
         # init-claude twice, the binary moving onto PATH, status, --claude-md,
@@ -233,6 +362,7 @@ jobs:
         # bench/onboarding.sh and the 0.17 notes in docs/ROADMAP.md.
         run: HOMEDIR=/tmp/snyvi-first B=target/release/snyvi bash bench/onboarding.sh
       - name: Nothing opens a terminal any more
+        if: matrix.shard == 'daemon'
         # 1.16 took Open terminal here away: a desk is the terminal. The route
         # that started one is gone, not merely refused, and a foreign page is
         # still turned away at the Origin before it learns even that.
@@ -253,6 +383,7 @@ jobs:
           # green check that would have gone red for the wrong reason.
           ! ps -e -o comm= | grep -qxE 'gnome-terminal|konsole|xfce4-terminal|alacritty|kitty|foot|ptyxis|wezterm|x-terminal-emulator'
       - name: Smoke test watch
+        if: matrix.shard == 'daemon'
         # A save while `snyvi watch` runs must reach the daemon as the same document.
         run: |
           set -e
@@ -268,6 +399,31 @@ jobs:
           grep -q "watched.md → $url" /tmp/watch.err
           ./target/release/snyvi stop
 
+  relay:
+    # The relay two snyvis meet through (relay/): wrangler dev on a spare
+    # port, workerd local, every route driven as the daemon drives it. Never
+    # a deploy, which is `npm run deploy` by hand with the account's token.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+        env:
+          CI: "1"
+          WRANGLER_SEND_METRICS: "false"
+
   installer:
     # The one-liner, run for real, in three distributions: the per-user
     # install every Linux gets by default, an update over a running daemon,
@@ -278,8 +434,13 @@ jobs:
     #
     # The static build a release ships, since the containers are older than
     # the runner and a binary linked against its glibc would not start in
-    # them. Without fat LTO: what is tested here is the script, and a
-    # release-profile link is most of a build's time.
+    # them. With the release profile, fat LTO and all, and the release's own
+    # smoke test on it: 1.20.0's tag failed there on the static binary's
+    # size, 18.0 MB against 18, which the glibc build the bench job measures
+    # (17.3) never showed. This job is off the critical path, so the longer
+    # link costs no one a wait.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -294,9 +455,17 @@ jobs:
       - name: A static build
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
-          CARGO_PROFILE_RELEASE_LTO: "off"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: cargo build --release --target x86_64-unknown-linux-musl --bin snyvi
+      - name: The static binary keeps its budgets
+        # release.yml's smoke test, as it runs there.
+        env:
+          SNYVI_UPDATES: "off"
+        run: |
+          B=target/x86_64-unknown-linux-musl/release/snyvi
+          file $B
+          SNYVI_DATA_DIR=/tmp/s SNYVI_CONFIG_DIR=/tmp/c SNYVI_PORT=7802 $B send README.md
+          SNYVI_BENCH_FACTOR=3 $B bench --check
+          SNYVI_DATA_DIR=/tmp/s SNYVI_CONFIG_DIR=/tmp/c SNYVI_PORT=7802 $B stop
       - name: The downloads, named as a release names them
         run: |
           set -e
@@ -334,6 +503,8 @@ jobs:
     # libc6 (>= 2.34), which installs on Ubuntu 22.04 and later and on Debian
     # 12 and later; building on 24.04 would record 2.39 and silently exclude
     # both. On both architectures since 0.16, each on its own 22.04 host.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -584,6 +755,8 @@ jobs:
     # Every step here either finishes in seconds or is a build; the default
     # is six hours, which is what a daemon holding a pipe open costs before
     # anyone notices.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
     timeout-minutes: 35
     runs-on: windows-latest
     # Without fat LTO, for the reason given on the desktop job.
@@ -755,6 +928,7 @@ jobs:
     # The two things a Mac alone can do to the bundle -- the icon and the
     # ad-hoc signature -- are done and checked here; the layout is checked on
     # Linux above.
+    needs: gate
     strategy:
       # Both legs report: one architecture's failure is not the other's.
       fail-fast: false
@@ -762,9 +936,11 @@ jobs:
         # The Intel leg is the slowest runner here by twice, and it held
         # every pull request's check for its 17 minutes. It runs on main,
         # on workflow_dispatch, and in release.yml's dry run; a pull
-        # request gets Apple silicon alone. A matrix cannot drop an include
-        # entry by condition, hence the list as one expression.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"target":"aarch64-apple-darwin","runner":"macos-14"}]' || '[{"target":"aarch64-apple-darwin","runner":"macos-14"},{"target":"x86_64-apple-darwin","runner":"macos-15-intel"}]') }}
+        # request gets Apple silicon alone, and a merge the gate lets
+        # through on its pull request's run gets Intel alone. The gate
+        # writes the list, since a matrix cannot drop an include entry by
+        # condition.
+        include: ${{ fromJSON(needs.gate.outputs.macs) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     # Without fat LTO, for the reason given on the desktop job.

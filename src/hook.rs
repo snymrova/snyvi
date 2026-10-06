@@ -32,8 +32,16 @@ const STATUS_EVENTS: [&str; 4] = ["UserPromptSubmit", "Notification", "Stop", "S
 /// a prompt says `working` already, and a `Stop` says done; between them the
 /// one thing only a tool call can say is that a permission the reader was
 /// asked for has been answered, since the tool then runs. So the tools that
-/// ask: the shell, the file writes, the web, plans, and every MCP tool.
+/// ask: the shell, the file writes, the web, plans, and snyvi's own MCP
+/// tools. From 1.13 to 1.16 it was every MCP tool of every server, which
+/// made a Playwright or a Context7 call one more process each; the status
+/// line runs after every reply and says `working` for those already.
 pub const STATUS_TOOLS: &str =
+    "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|ExitPlanMode|mcp__snyvi__.*";
+
+/// The matcher 1.13 through 1.16 wrote, brought along to `STATUS_TOOLS` the
+/// way an older `*` is.
+const STATUS_TOOLS_1_13: &str =
     "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|ExitPlanMode|mcp__.*";
 
 /// What of an event this reads. Everything else -- above all a tool's output,
@@ -225,16 +233,30 @@ pub fn run(paths: &Paths) -> Result<()> {
             .get()
             .filter(|s| crate::desk::valid_session(s));
         let starting = name == "SessionStart";
-        if state.is_some() || (starting && session.is_some()) {
+        let said = state.is_some() || (starting && session.is_some());
+        // The two events that also ask the daemon something tell it the
+        // state in the same request; a daemon from before 1.17 answers
+        // without taking it, and one that did not answer at all -- slow,
+        // or the pane unknown to it -- may not have taken it either: both
+        // are told the way they know, after. Telling twice sets it twice.
+        let asks = starting || name == "UserPromptSubmit";
+        if said && !asks {
             client::agent_state(paths, pane, state, session);
         }
+        let tell_anyway = |heard: Option<&client::Said>| {
+            if said && heard.is_none_or(|h| !h.applied) {
+                client::agent_state(paths, pane, state, session);
+            }
+        };
         // The desk brief, on every start -- a new session, a resume, a
         // /clear, a compaction, a fork -- so what Claude knows about the desk
         // comes back each time its context does. Claude's first reply waits
         // for this: `client::brief` gives up after half a second, and then
         // nothing is printed and Claude starts as it would have.
         if starting {
-            if let Some(b) = client::brief(paths, pane) {
+            let b = client::brief(paths, pane, session);
+            tell_anyway(b.as_ref());
+            if let Some(b) = b {
                 if let Some(out) = session_start_output(&event, &b.context, &b.title, &b.desk) {
                     println!("{out}");
                 }
@@ -248,8 +270,9 @@ pub fn run(paths: &Paths) -> Result<()> {
         // printed. It rides on the reader's own message, so snyvi still
         // never starts a turn.
         if name == "UserPromptSubmit" {
-            if let Some(out) = client::changes(paths, pane)
-                .and_then(|c| prompt_output(&event, &c.context, &c.title, &c.desk))
+            let c = client::changes(paths, pane, state, session);
+            tell_anyway(c.as_ref());
+            if let Some(out) = c.and_then(|c| prompt_output(&event, &c.context, &c.title, &c.desk))
             {
                 println!("{out}");
             }
@@ -285,9 +308,18 @@ pub fn run(paths: &Paths) -> Result<()> {
         ..Default::default()
     };
     // Errors are deliberately ignored: the hook must not break Claude's turn.
-    let _ = client::send(paths, &payload);
+    // Never a daemon started for it, and a bounded wait, on `send_plan`'s
+    // terms: this runs inside the turn, and a `snyvi stop` the reader asked
+    // for stays stopped. The daemon that is up answers once the document is
+    // stored and finishes rendering after the hook has gone.
+    let _ = client::send_quick(paths, &payload, AUTO_SEND_WITHIN);
     Ok(())
 }
+
+/// How long a Markdown write's send waits for the daemon's answer. Claude's
+/// turn waits with it, so it is short; a daemon that needs longer keeps the
+/// document anyway, since the store comes before the answer.
+const AUTO_SEND_WITHIN: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// What a SessionStart hook prints: the brief as `additionalContext`, and the
 /// session named after its panel. Nothing when there is neither.
@@ -556,7 +588,12 @@ fn every_tool(entry: &Value) -> bool {
     matches!(
         entry.get("matcher").and_then(Value::as_str),
         None | Some("" | "*")
-    ) || entry.get("matcher").and_then(Value::as_str) == Some(STATUS_TOOLS)
+    ) || status_matcher(entry.get("matcher").and_then(Value::as_str))
+}
+
+/// A status matcher as this or an earlier snyvi wrote it.
+fn status_matcher(m: Option<&str>) -> bool {
+    m == Some(STATUS_TOOLS) || m == Some(STATUS_TOOLS_1_13)
 }
 
 /// Merge hooks into ~/.claude/settings.json, preserving everything else in it.
@@ -688,9 +725,10 @@ fn merge(
     let hooks = hooks.as_object_mut().context("hooks is not an object")?;
     let mut changed = false;
     let mut rewritten = false;
-    // Claude Code's status entry narrowed to `STATUS_TOOLS` in 1.13; an
-    // install from before runs on every tool and is brought along. Only
-    // where that is what is wanted: Codex's entry says `*` and means it.
+    // Claude Code's status entry narrowed to `STATUS_TOOLS` in 1.13, and
+    // again in 1.17; an install from before runs on every tool, or on every
+    // MCP tool, and is brought along. Only where that is what is wanted:
+    // Codex's entry says `*` and means it.
     let narrow = wanted.iter().any(|(e, v)| {
         *e == "PostToolUse" && v.get("matcher").and_then(Value::as_str) == Some(STATUS_TOOLS)
     });
@@ -711,10 +749,8 @@ fn merge(
                     rewritten = true;
                 }
             }
-            let every = matches!(
-                entry.get("matcher").and_then(Value::as_str),
-                None | Some("" | "*")
-            );
+            let m = entry.get("matcher").and_then(Value::as_str);
+            let every = matches!(m, None | Some("" | "*")) || m == Some(STATUS_TOOLS_1_13);
             if narrow && mine && event == "PostToolUse" && every {
                 entry["matcher"] = json!(STATUS_TOOLS);
                 changed = true;
@@ -1175,6 +1211,65 @@ mod tests {
         );
         assert_eq!(remove_from(&mut s), 6);
         assert_eq!(s, before);
+    }
+
+    /// An install from 1.13 through 1.16 ran the status entry on every MCP
+    /// tool; it is narrowed to snyvi's own, once, and not written twice.
+    #[test]
+    fn the_every_mcp_tool_matcher_is_narrowed() {
+        let mut s = json!({ "hooks": { "PostToolUse": [
+            { "matcher": STATUS_TOOLS_1_13, "hooks": [{ "type": "command", "command": "/opt/snyvi hook" }] } ] } });
+        let (changed, rewritten) = install_into(&mut s, "/opt/snyvi hook", false).unwrap();
+        assert!(changed && !rewritten);
+        let post = s["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 1, "{post:?}");
+        assert_eq!(post[0]["matcher"], STATUS_TOOLS);
+        assert_eq!(
+            install_into(&mut s, "/opt/snyvi hook", false).unwrap(),
+            (false, false)
+        );
+        // And the matcher names snyvi's tools, not every server's: Claude
+        // Code reads it as a regex over the whole tool name, alternatives
+        // split on `|`.
+        let alts: Vec<&str> = STATUS_TOOLS.split('|').collect();
+        assert!(alts.contains(&"mcp__snyvi__.*"));
+        assert!(!alts.contains(&"mcp__.*"));
+        assert!(!alts
+            .iter()
+            .any(|a| a.contains("Read") || *a == "*" || *a == ".*"));
+    }
+
+    /// Nothing a hook does may start a daemon or wait on one for long: it
+    /// runs inside Claude's turn, and after a `snyvi stop`. The client's
+    /// functions that start one are `send`, `aside`, `browse`, `restart`,
+    /// `update` and `ensure_daemon` itself; this module reaches none of
+    /// them, and this is where that is kept true.
+    #[test]
+    fn the_hook_never_reaches_a_function_that_starts_a_daemon() {
+        let src = include_str!("hook.rs");
+        let allowed = ["send_quick", "agent_state", "brief", "changes", "Said"];
+        for (i, line) in src.lines().enumerate() {
+            let mut rest = line;
+            while let Some(at) = rest.find("client::") {
+                let name: String = rest[at + "client::".len()..]
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                // The string in this test is the one `client::` with no name.
+                assert!(
+                    name.is_empty() || allowed.contains(&name.as_str()),
+                    "hook.rs:{}: client::{name} may start a daemon or wait on one",
+                    i + 1
+                );
+                rest = &rest[at + "client::".len()..];
+            }
+        }
+        // And no name is brought in by a `use` the walk above would not see.
+        let uses: Vec<&str> = src
+            .lines()
+            .filter(|l| l.starts_with("use crate::client"))
+            .collect();
+        assert_eq!(uses, ["use crate::client;"]);
     }
 
     #[test]

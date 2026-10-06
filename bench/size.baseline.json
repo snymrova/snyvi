@@ -3,13 +3,13 @@
     "src/update.rs": 2920
   },
   "functions": {
-    "src/bench.rs::process_rows": 141,
-    "src/pane.rs::start": 137,
-    "src/screen.rs::csi_dispatch": 215,
-    "src/server/mod.rs::run": 147,
+    "src/bench.rs::process_rows": 130,
+    "src/pane.rs::start": 124,
+    "src/screen.rs::csi_dispatch": 209,
+    "src/server/mod.rs::run": 128,
     "src/strip.rs::strip": 150,
-    "ui/app/08-desks.js::connect": 190,
-    "ui/desk/07-actions.js::act": 181,
+    "ui/app/08-desks.js::connect": 188,
+    "ui/desk/07-actions.js::act": 184,
     "ui/look.js::init": 241,
     "ui/note.js::init": 209
   }

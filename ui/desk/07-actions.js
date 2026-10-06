@@ -8,6 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
+    if (d && await filedAct(a, b, d)) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -115,6 +116,8 @@ async function act(b, byKey) {
     else if (a === "img-back") imgBack();
     else if (a === "pend-x") { pending = []; rail(); }
     else if (a === "note-sha" || a === "want-copy") copySha(b);
+    // A line's number has no room for "copied": its tick says so instead.
+    else if (a === "note-num") copySha(b, "✓");
     else if (a === "note-doc") ctx.read(b.dataset.d);
     else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
     else if (a === "note-keep") {
@@ -496,7 +499,7 @@ export function open(c) {
   document.addEventListener("keyup", pickKey);
   addEventListener("scroll", hidePick, true);
   addEventListener("resize", onResize);
-  clock = setInterval(() => { if (current()) rail(); }, 30000);
+  clock = setInterval(() => { if (current() && !document.hidden) rail(); }, 30000);
   if (d && docsAt !== d.id) docs();
   const v = views.get(focused);
   if (v) setTimeout(() => v.body.focus(), 0);
@@ -566,6 +569,8 @@ export function textSize(step) {
 export function actions(el) {
   const R = "rule", d = current();
   if (!d) return null;
+  const card = el.closest(".dk-thread");
+  if (card) return threadMenu(card);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
   if (pane) {
     const id = pane.matches(".dk-pane") ? pane.querySelector("[data-focus]")?.dataset.focus : pane.closest(".pn")?.dataset.id;
@@ -634,6 +639,7 @@ export function actions(el) {
       { label: "Edit", run: does("note-edit") },
       { label: x.done ? "Untick" : "Tick", run: does("note-tick") },
       { label: "Add a picture…", run: () => pickImages(x.id) },
+      { label: `Copy #${x.id}`, run: () => copySha(note.querySelector(".dk-num"), "✓") },
       ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
       ...(x.done && x.done_commit ? [{ label: "Copy commit", run: () => copySha(note.querySelector(".dk-sha")) }] : []), R,
       { label: "Remove from the list", danger: true, run: does("note-x") },

@@ -70,6 +70,8 @@ document.addEventListener("visibilitychange", () => {
   if (!ctx || deskId == null) return;
   pace();
   for (const v of views.values()) catchUp(v);
+  // The rail's clock skipped its turns while hidden: one draw catches up.
+  if (!document.hidden) rail();
 });
 
 function receive(f) {

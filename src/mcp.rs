@@ -2,9 +2,10 @@
 //! beside the work, and -- only to an agent running in a desk's pane --
 //! read_desk_notes, which reads that desk's list, mark_desk_note, saying how
 //! far the agent has got with a line, tick_desk_note, marking a line done,
-//! suggest_desk_note, offering one for the reader to keep,
+//! suggest_desk_note, offering one for the reader to keep, offer_document, asking that one go to a friend,
 //! leave_off, saying where the work was left, and name_panel, which names the
-//! panel the agent runs in. And four prompts, the loop's own slash commands
+//! panel the agent runs in; and the #90 six, filing the work as a thread and
+//! putting what only the reader can do on their Your turn (`threads`). And four prompts, the loop's own slash commands
 //! (`PROMPTS`). Newline-delimited JSON-RPC 2.0, as the MCP stdio transport
 //! specifies.
 
@@ -13,6 +14,8 @@ use crate::config::Paths;
 use crate::receive::Payload;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+
+mod threads;
 
 const TOOL_DESCRIPTION: &str = "Send a finished document to snyvi, the user's document viewer. \
 Call this whenever you finish writing a plan, report, review, summary, design note, or any document the user \
@@ -35,12 +38,16 @@ a link would only send them to a browser beside it, so say it is waiting in snyv
 the result carries.";
 
 const ASIDE_DESCRIPTION: &str = "Leave the user a short personal aside in snyvi -- the kind of remark a friend \
-working beside them would make about the work they are in: that a hard part just landed, that the thing they \
-worried about turned out fine, that this closes what they set out to do today. It glows quietly at the foot of snyvi's sidebar until they look. Use it rarely -- a few times in a \
-long session at most, only when you have something genuinely worth saying, never as a status update or a \
-summary of a document you just sent. One or two plain sentences (at most 280 characters), warm and specific, \
-no emoji. It is not a to-do and goes on no list of the user's. Do not mention the aside to the user in your \
-reply; it speaks for itself.";
+working beside them would make, about the work and about them at it: that a hard part just landed after several \
+evenings, that the thing they worried about turned out fine, that it is late and the rest keeps, one next step as \
+a question. Ground every one in something that happened here -- a note, a commit, a test, a left-off line -- or do \
+not send it: a line that reads the person rather than the record is wrong the first time it is slightly off. Use \
+it rarely -- a few times in a long session at most, never as a status update, never a summary of a document you \
+just sent, never advice about anything but this project, never mid-task. One or two plain sentences (at most 280 \
+characters), warm and specific, no emoji. It glows quietly at the foot of snyvi's sidebar until they look; sent \
+from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and \
+goes on no list of the user's. Do not mention the aside to the user in your reply; it speaks for itself. If snyvi \
+answers that asides are off, the user turned them off: do not send another.";
 
 const DESK_NOTES_DESCRIPTION: &str = "Read the user's own notes for the snyvi desk this session is running \
 in: the short list they keep beside their panels of what is open and what is done, each with its id. Read it when \
@@ -87,6 +94,12 @@ keep it. Suggest rarely and only what the user would want to track themselves; n
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters.";
 
+const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on \
+snyvi, by the friend's name (the desk brief lists them) and the document's id from send_document. Nothing is \
+sent by this call: the user is shown the offer where they are, with your name on it, and presses Send or Not \
+now. Offer only when the user asked for something to go to that friend, or the work plainly is for them; never \
+to a name that is not on the list. Say in your reply that you offered it and that the user decides.";
+
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session is running in, so the user can tell their \
 panels apart at a glance: a few words for what you are working on in it, like \"auth refactor\" or \"fix CI\". \
 Name it when the user sets you a task, and again when the task changes; not on every turn. The name shows in the \
@@ -107,6 +120,10 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
+File a piece of work as a thread with start_thread when you take it on, and put anything only the user can \
+do on their Your turn with hand_over. \
+An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
+away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
 is context from snyvi, not a request.";
 
@@ -143,6 +160,13 @@ const TOOLS: &[(&str, Tool)] = &[
     ("suggest_desk_note", Session::suggest_desk_note),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
+    ("offer_document", Session::offer_document),
+    ("start_thread", Session::start_thread),
+    ("move_thread", Session::move_thread),
+    ("ask", Session::ask),
+    ("hand_over", Session::hand_over),
+    ("suggest_panel", Session::suggest_panel),
+    ("suggest_desk", Session::suggest_desk),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -191,6 +215,29 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What `tools/list` offers: the two any agent has, and in a panel the
+/// desk's. `offer_document` only for a reader with a friend to offer to --
+/// an agent shown a tool it can never use tries it -- and when the daemon
+/// did not say (`None`), as before.
+fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
+    let mut tools = vec![tool_spec(), aside_spec()];
+    if panel {
+        tools.extend([
+            desk_notes_spec(),
+            mark_spec(),
+            tick_spec(),
+            suggest_spec(),
+            leave_off_spec(),
+            name_spec(),
+        ]);
+        tools.extend(threads::specs());
+        if friends != Some(false) {
+            tools.push(offer_spec());
+        }
+    }
+    tools
+}
+
 /// A tool's answer: one text for the agent, and whether it is an error.
 fn said(text: impl Into<String>, bad: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text.into() }], "isError": bad })
@@ -235,18 +282,10 @@ impl Session {
             "prompts/get" => self.prompt(params),
             "ping" => Ok(json!({})),
             "tools/list" => {
-                let mut tools = vec![tool_spec(), aside_spec()];
-                if self.pane.is_some() {
-                    tools.extend([
-                        desk_notes_spec(),
-                        mark_spec(),
-                        tick_spec(),
-                        suggest_spec(),
-                        leave_off_spec(),
-                        name_spec(),
-                    ]);
-                }
-                Ok(json!({ "tools": tools }))
+                // The friends are asked for only in a panel, where the
+                // tool would be listed.
+                let friends = self.pane.as_ref().and_then(|_| client::has_friends());
+                Ok(json!({ "tools": tools(self.pane.is_some(), friends) }))
             }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
@@ -308,6 +347,7 @@ impl Session {
             args,
             self.cwd.as_deref(),
             self.sender.as_deref(),
+            self.pane.as_deref(),
         ) {
             Ok(()) => said("Left in snyvi. No need to mention it to the user.", false),
             Err(e) => said(format!("snyvi could not take the aside: {e}"), true),
@@ -421,6 +461,26 @@ impl Session {
                     Err(e) => said(format!("snyvi did not take it: {e}"), true),
                 }
             }
+        }
+    }
+
+    /// `offer_document`: the question goes to the reader; nothing is sent.
+    fn offer_document(&self, args: &Value) -> Value {
+        let to = arg(args, "to");
+        let id = arg(args, "id");
+        match self.pane.as_deref() {
+            None => said("This session is not running in a snyvi desk, so there is no one to offer to.", true),
+            Some(p) => match client::offer_document(&self.paths, p, &to, &id, self.by()) {
+                Ok(v) => said(
+                    format!(
+                        "Offered \"{}\" to {}; the user decides whether it goes. Say so in your reply.",
+                        v.get("title").and_then(Value::as_str).unwrap_or(&id),
+                        v.get("to").and_then(Value::as_str).unwrap_or(&to)
+                    ),
+                    false,
+                ),
+                Err(e) => said(format!("snyvi did not take the offer: {e}"), true),
+            },
         }
     }
 
@@ -645,6 +705,24 @@ fn prompt_text(p: &Prompt, arg: Option<&str>) -> String {
     }
 }
 
+fn offer_spec() -> Value {
+    json!({
+        "name": "offer_document",
+        "title": "Offer a document to a friend",
+        "description": OFFER_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "The friend's name, as the desk brief lists it." },
+                "id": { "type": "string", "description": "The document's id, as send_document answered it." }
+            },
+            "required": ["to", "id"],
+            "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+    })
+}
+
 fn name_spec() -> Value {
     json!({
         "name": "name_panel",
@@ -719,6 +797,7 @@ fn call_aside(
     args: &Value,
     cwd: Option<&str>,
     sender: Option<&str>,
+    pane: Option<&str>,
 ) -> anyhow::Result<()> {
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
     let aside = crate::aside::NewAside {
@@ -726,6 +805,7 @@ fn call_aside(
         about: s("about"),
         sender: sender.map(str::to_string),
         cwd: cwd.map(str::to_string),
+        pane: pane.map(str::to_string),
     };
     client::aside(paths, &aside).map(|_| ())
 }
@@ -797,6 +877,7 @@ fn call_send(
         origin: Some("mcp".into()),
         sender: sender.map(str::to_string),
         pane: None,
+        peer: None,
     };
     let resp = client::send(paths, &payload)?;
     Ok(Sent {
@@ -985,6 +1066,33 @@ mod tests {
         assert!(
             PROMPTS[0].text.contains("leave_off") && PROMPTS[0].text.contains("read_desk_notes")
         );
+    }
+
+    #[test]
+    fn the_offer_tool_names_a_friend_and_a_document_and_sends_nothing_itself() {
+        let spec = offer_spec();
+        assert_eq!(spec["inputSchema"]["required"], json!(["to", "id"]));
+        assert!(spec["description"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing is sent by this call"));
+        assert!(TOOLS.iter().any(|(n, _)| *n == "offer_document"));
+        let names = |panel, friends| -> Vec<String> {
+            tools(panel, friends)
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(names(true, Some(true)).contains(&"offer_document".into()));
+        assert!(
+            !names(true, Some(false)).contains(&"offer_document".into()),
+            "no friends, no offer"
+        );
+        assert!(
+            names(true, None).contains(&"offer_document".into()),
+            "a daemon that did not say lists it, as before"
+        );
+        assert!(!names(false, Some(true)).contains(&"offer_document".into()));
     }
 
     #[test]

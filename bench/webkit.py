@@ -23,6 +23,8 @@ these rows are what says it still does.
     xvfb-run -a python3 bench/webkit.py --check    and exit non-zero on a fault
     xvfb-run -a python3 bench/webkit.py --desk     only what a working desk costs
     xvfb-run -a python3 bench/webkit.py --desk-hidden --desk-scroll --idle --daemon
+    xvfb-run -a python3 bench/webkit.py --git       a desk at its prompt runs no git
+    DISPLAY=:0 python3 bench/webkit.py --desk --display   the real display, recorded
 
 The desk row is a measurement rather than a check: four panels on a desk,
 each drawing bench/tui-load.mjs, and what the web process spends painting
@@ -44,6 +46,16 @@ here also says what the daemon spent over the same seconds. `--daemon` is the
 daemon on its own: with nothing at all happening, for a minute; with a desk at
 work and no window on it; and whether a redraw that reaches it in two writes
 inside a synchronized update goes on to the page as one frame.
+
+`--git` is a desk of four shells at their prompt in a repository, watched,
+for two minutes, and how many times the daemon ran `git status` for them:
+at most two dozen in the first minute, while each panel's folder is found,
+and none in the second. A prompt that prints nothing has nothing to ask.
+
+`--display` runs the desk row on the display in DISPLAY rather than under
+Xvfb -- the window's own engine and GPU -- and records what it reads without
+enforcing it: that machine's number is not snyvi's to promise (finding 25 of
+the 1.15.0 audit). Run without xvfb-run.
 
 Needs the distribution's Python with its GObject bindings, the WebKitGTK
 introspection data, xdotool for the one gesture the page cannot fake -- the
@@ -84,6 +96,8 @@ DESK_HIDDEN = "--desk-hidden" in args
 DESK_SCROLL = "--desk-scroll" in args
 IDLE = "--idle" in args
 DAEMON = "--daemon" in args
+GIT = "--git" in args
+DISPLAY = "--display" in args
 UI = os.path.abspath(args[args.index("--ui") + 1]) if "--ui" in args else None
 SECONDS = int(args[args.index("--seconds") + 1]) if "--seconds" in args else 10
 LOAD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tui-load.mjs")
@@ -95,6 +109,12 @@ QUIET = 2.0
 # happening at all, and with four panels at work that no page is watching.
 DAEMON_IDLE = 0.5
 DAEMON_UNWATCHED = 1.0
+# `git status` runs for four shells at their prompt in one folder, watched: a
+# handful while the daemon finds each panel's folder, and then the one recheck
+# a minute a watched folder gets for a tree changed from outside (GIT_QUIET in
+# src/pane.rs) -- two, for a window that straddles one.
+GIT_FIRST_MINUTE = 24
+GIT_QUIET_MINUTE = 2
 IDLE_SECONDS = 60
 # Coming back to a desk whose panels are full: each panel's snapshot drawn
 # within this many ms of its arriving, and none of them bigger than this many
@@ -514,9 +534,66 @@ def quiet(name, m, what=""):
             + (f"; running: {', '.join(m['anims'])}" if m["anims"] else ""))
 
 
+def git_runs(base):
+    """The daemon's count of `git status` runs, or None from a daemon that
+    keeps none -- which is a row that cannot pass, not a zero."""
+    with urllib.request.urlopen(base + "/api/health") as r:
+        n = json.loads(r.read()).get("git_runs")
+        return None if n is None else int(n)
+
+
+def git_rows(env, base):
+    """Four shells at their prompt on a desk in a repository, watched by a
+    page, and how many `git status` the daemon ran for them: a few while it
+    finds where each shell is, then none. A pane prints nothing at its
+    prompt, and a folder nobody printed in has not changed."""
+    token, cap, H = capability(env, base)
+    repo = tempfile.mkdtemp(prefix="snyvi-git-", dir=os.path.dirname(env["HOME"]))
+    git = ["git", "-c", "user.name=bench", "-c", "user.email=bench@snyvi", "-c", "commit.gpgsign=false"]
+    subprocess.run(git + ["init", "-q"], cwd=repo, check=True)
+    with open(f"{repo}/README.md", "w") as f:
+        f.write("# bench\n")
+    subprocess.run(git + ["add", "."], cwd=repo, check=True)
+    subprocess.run(git + ["commit", "-q", "-m", "one"], cwd=repo, check=True)
+    # The desk's folder arrives as a browse root, the way the page gives one.
+    root = post(base, "/api/browse", {"path": repo}, {"authorization": f"Bearer {token}"})["root"]["id"]
+    d = post(base, "/api/desks", {"name": "prompt", "root": root, "path": ""}, H)
+    desk, panes = (d.get("desk") or d)["id"], []
+    for _ in range(4):
+        panes.append(post(base, f"/api/desks/{desk}/panes", {}, H)["pane"]["id"])
+        post(base, f"/api/panes/{panes[-1]}/start", {"cmd": "sh"}, H)
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+    rows = []
+    try:
+        for _ in range(100):
+            if json.loads(v.js(DESK_SEEN))["panes"] == 4:
+                break
+            v.wait(100)
+        v.wait(2000)
+        n0 = git_runs(base)
+        v.wait(60_000)
+        n1 = git_runs(base)
+        v.wait(60_000)
+        n2 = git_runs(base)
+        if None in (n0, n1, n2):
+            rows.append(("4 shells at their prompt, git in a minute", False,
+                         "this daemon does not count its git runs (/api/health has no git_runs)"))
+            return rows
+        rows.append(("4 shells at their prompt, git in a minute", n1 - n0 <= GIT_FIRST_MINUTE,
+                     f"{n1 - n0} runs of git status, budget {GIT_FIRST_MINUTE}"))
+        rows.append(("and in the quiet minute after", n2 - n1 <= GIT_QUIET_MINUTE,
+                     f"{n2 - n1} runs of git status, budget {GIT_QUIET_MINUTE}"))
+    finally:
+        v.win.destroy()
+        stop(base, H, panes)
+        shutil.rmtree(repo, ignore_errors=True)
+    return rows
+
+
 def desk_row(env, base):
     """Four panels at work on one desk, and the web process's CPU while it
-    draws them."""
+    draws them. With `--display`, the same on the real display, as a record:
+    see the module comment."""
     _, cap, H = capability(env, base)
     node = shutil.which("node") or "node"
     desk, panes = make_desk(base, H, "paint", f"{node} {LOAD}")
@@ -535,6 +612,9 @@ def desk_row(env, base):
         v.js(DESK_WATCH)
         m = measure(v, pid, dpid)
         seen = json.loads(v.js(DESK_SEEN))
+        if DISPLAY:
+            return (f"a desk of 4 at work on {os.environ.get('DISPLAY', '?')}", None,
+                    f"recorded, not enforced: {cost(m)}; {seen['drawn']} live canvases, panes {seen['size']} px")
         return ("a desk of 4 at work", True, f"{cost(m)}; {seen['drawn']} live canvases, panes {seen['size']} px")
     finally:
         v.win.destroy()
@@ -938,9 +1018,11 @@ def main():
         url = next(w for w in out.split() if w.startswith("http"))
         base = url.split("/d/")[0] if "/d/" in url else "/".join(url.split("/")[:3])
         doc = url.rsplit("/d/", 1)[-1].split("#")[0].split("?")[0]
-        if DESK_ONLY or DESK_HIDDEN or DESK_SCROLL or IDLE or DAEMON:
+        if DESK_ONLY or DESK_HIDDEN or DESK_SCROLL or IDLE or DAEMON or GIT:
             if DAEMON:
                 rows += daemon_rows(env, base)
+            if GIT:
+                rows += git_rows(env, base)
             if IDLE:
                 rows += idle_rows(env, base)
             if DESK_ONLY:
@@ -1048,6 +1130,7 @@ def main():
         rows += desk_hidden_rows(env, base, doc)
         rows += desk_scroll_rows(env, base)
         rows += daemon_rows(env, base)
+        rows += git_rows(env, base)
     finally:
         subprocess.run([BIN, "stop"], env=env, capture_output=True)
         shutil.rmtree(tmp, ignore_errors=True)

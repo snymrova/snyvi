@@ -409,6 +409,7 @@ fn send(
         origin: Some("cli".into()),
         sender: None,
         pane: None,
+        peer: None,
     };
     let resp = client::send(paths, &payload)?;
     let url = resp
@@ -490,7 +491,11 @@ fn prune(paths: &config::Paths, days: u32, dry_run: bool) -> Result<()> {
     let panels = store.prune_panes(before, dry_run)?;
     for (id, what) in &panels {
         if !dry_run {
-            let _ = std::fs::remove_file(paths.data_dir.join("panes").join(format!("{id}.txt")));
+            // Its kept lines and its last screen (`.scr`, from 1.17).
+            for ext in ["txt", "scr"] {
+                let _ =
+                    std::fs::remove_file(paths.data_dir.join("panes").join(format!("{id}.{ext}")));
+            }
         }
         println!(
             "{} panel {id}  {what}",

@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
@@ -61,9 +62,25 @@ fn definition_kind(stack: &ScopeStack) -> Option<&'static str> {
     None
 }
 
-/// Highlight synchronously up to this many bytes; the rest is plain until a
-/// background pass replaces it.
+/// Highlight synchronously up to this many bytes per document; the rest is
+/// plain, marked `data-hl="pending"`, until a background pass replaces it.
+///
+/// Per document and not per block: a plan quoting two hundred Rust blocks is
+/// one document, and the reader waits for one render of it. Inside a Markdown
+/// document the budget is spent block by block; a code file is one block. The
+/// same number caps any single block as a second guard.
 pub const HIGHLIGHT_CAP: usize = 256 * 1024;
+
+/// Whether a render stopped highlighting before the end: `true` when any
+/// block was left plain for the background pass to finish. The mark is on
+/// the `<pre>`, so this is a substring test on the stored HTML and nothing
+/// has to be rendered twice to know.
+pub fn has_pending_highlight(html: &str) -> bool {
+    html.contains(PENDING)
+}
+
+/// The attribute a plain-for-now block carries, as written.
+const PENDING: &str = " data-hl=\"pending\"";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -245,7 +262,7 @@ impl Renderer {
         file_base: Option<&str>,
     ) -> String {
         match kind {
-            Kind::Markdown => self.markdown(source, file_base),
+            Kind::Markdown => self.markdown(source, file_base, HIGHLIGHT_CAP),
             Kind::Code => self.code(lang, source, HIGHLIGHT_CAP),
             Kind::Diff => diff(source),
             Kind::Text => plain(source),
@@ -260,7 +277,15 @@ impl Renderer {
         self.code(lang, source, usize::MAX)
     }
 
-    fn markdown(&self, source: &str, file_base: Option<&str>) -> String {
+    /// The same for a Markdown document whose code blocks ran past the budget.
+    pub fn render_markdown_uncapped(&self, source: &str, file_base: Option<&str>) -> String {
+        self.markdown(source, file_base, usize::MAX)
+    }
+
+    /// `budget` is the bytes of code this document may highlight before the
+    /// rest goes in plain: `HIGHLIGHT_CAP` at receive time, no limit for the
+    /// background pass.
+    fn markdown(&self, source: &str, file_base: Option<&str>, budget: usize) -> String {
         let mut options = Options::default();
         if let Some(base) = file_base {
             let base = base.to_string();
@@ -283,6 +308,8 @@ impl Renderer {
         let adapter = Highlighter {
             ss: &self.ss,
             classes: &self.classes,
+            left: AtomicUsize::new(budget),
+            held: Mutex::new(HeldTags::default()),
         };
         let mut plugins = Plugins::default();
         plugins.render.codefence_syntax_highlighter = Some(&adapter);
@@ -423,13 +450,19 @@ impl Renderer {
 
     fn code(&self, lang: Option<&str>, source: &str, cap: usize) -> String {
         let syntax = self.syntax_for(lang, source);
-        let mut out = String::with_capacity(source.len() * 3);
+        let mut body = String::with_capacity(source.len() * 3);
+        let (_, cut) = highlight_lines(&self.ss, &self.classes, syntax, source, cap, &mut body);
+        let mut out = String::with_capacity(body.len() + 64);
         out.push_str("<pre class=\"code\" data-lang=\"");
         out.push_str(&html_escape::encode_double_quoted_attribute(
             syntax.name.as_str(),
         ));
-        out.push_str("\"><code>");
-        highlight_lines(&self.ss, &self.classes, syntax, source, cap, &mut out);
+        out.push('"');
+        if cut {
+            out.push_str(PENDING);
+        }
+        out.push_str("><code>");
+        out.push_str(&body);
         out.push_str("</code></pre>");
         out
     }
@@ -493,19 +526,40 @@ impl ClassMap {
         }
     }
 
-    fn class_for(&self, stack: &ScopeStack) -> Option<&'static str> {
+    /// The class the innermost scope with one resolves to.
+    ///
+    /// `seen` remembers what each scope resolved to: a grammar puts a few
+    /// hundred distinct scopes on the stack over a whole document and the
+    /// same handful on nearly every token, so after the first lines this is
+    /// one lookup per stack entry rather than a scan of the table for each.
+    /// Owned by the render, so no lock is taken per token.
+    fn class_for(
+        &self,
+        stack: &ScopeStack,
+        seen: &mut HashMap<Scope, Option<&'static str>>,
+    ) -> Option<&'static str> {
         for scope in stack.as_slice().iter().rev() {
-            for (prefix, cls) in &self.table {
-                if prefix.is_prefix_of(*scope) {
-                    return Some(cls);
-                }
+            let cls = *seen.entry(*scope).or_insert_with(|| self.scan(*scope));
+            if cls.is_some() {
+                return cls;
             }
         }
         None
     }
+
+    fn scan(&self, scope: Scope) -> Option<&'static str> {
+        self.table
+            .iter()
+            .find(|(prefix, _)| prefix.is_prefix_of(scope))
+            .map(|(_, cls)| *cls)
+    }
 }
 
 /// Emit one `<span class="ln">` per line, highlighted up to the cap.
+///
+/// Returns the bytes highlighted and whether any line past them was written
+/// plain: the first is what a document's budget is charged, the second is
+/// what marks the block for the background pass.
 fn highlight_lines(
     ss: &SyntaxSet,
     classes: &ClassMap,
@@ -513,9 +567,10 @@ fn highlight_lines(
     source: &str,
     cap: usize,
     out: &mut String,
-) {
+) -> (usize, bool) {
     let mut state = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
+    let mut seen = HashMap::new();
     let mut consumed = 0usize;
     let mut lines = LinesWithEndings::from(source).peekable();
     while let Some(line) = lines.peek() {
@@ -533,14 +588,24 @@ fn highlight_lines(
                     let idx = (*idx).min(text.len());
                     if idx > last {
                         let seg = &text[last..idx];
-                        emit(out, seg, refine(classes.class_for(&stack), seg), &mut open);
+                        emit(
+                            out,
+                            seg,
+                            refine(classes.class_for(&stack, &mut seen), seg),
+                            &mut open,
+                        );
                         last = idx;
                     }
                     let _ = stack.apply(op);
                 }
                 if last < text.len() {
                     let seg = &text[last..];
-                    emit(out, seg, refine(classes.class_for(&stack), seg), &mut open);
+                    emit(
+                        out,
+                        seg,
+                        refine(classes.class_for(&stack, &mut seen), seg),
+                        &mut open,
+                    );
                 }
                 if open.is_some() {
                     out.push_str("</span>");
@@ -551,6 +616,14 @@ fn highlight_lines(
         out.push_str("</span>\n");
         lines.next();
     }
+    let cut = lines.peek().is_some();
+    plain_lines(lines, out);
+    (consumed, cut)
+}
+
+/// The same line spans with no highlighting at all: the tail past a cap, or
+/// a whole block past a document's budget.
+fn plain_lines<'a>(lines: impl Iterator<Item = &'a str>, out: &mut String) {
     for line in lines {
         out.push_str("<span class=\"ln\">");
         out.push_str(&html_escape::encode_text(
@@ -1140,7 +1213,7 @@ fn sanitize(html: &str) -> String {
         .add_tag_attributes("div", ["class"])
         .add_tag_attributes("p", ["class"])
         .add_tag_attributes("span", ["class"])
-        .add_tag_attributes("pre", ["class", "data-lang"])
+        .add_tag_attributes("pre", ["class", "data-lang", "data-hl"])
         .add_tag_attributes("code", ["class"])
         .add_tag_attributes("table", ["class"])
         .add_tag_attributes("td", ["align", "style"])
@@ -1152,13 +1225,175 @@ fn sanitize(html: &str) -> String {
         b.add_tag_attributes(h, ["id"]);
     }
     b.link_rel(Some("noopener noreferrer"));
+    // A picture carried inside a document -- a friend's, whose pictures
+    // travel in it (`crate::server::api_peer`) -- is a `data:` URL. The
+    // scheme passes the URL check for every attribute, and the filter then
+    // keeps it on an image's `src` alone, and only for the four kinds a
+    // picture is: no SVG, which can carry script, and no `data:` link.
+    b.add_url_schemes(["data"]);
+    b.attribute_filter(|element, attribute, value| {
+        let data = value
+            .trim_start()
+            .get(..5)
+            .is_some_and(|p| p.eq_ignore_ascii_case("data:"));
+        if !data || (element == "img" && attribute == "src" && data_image_ok(value)) {
+            Some(value.into())
+        } else {
+            None
+        }
+    });
     b.clean(html).to_string()
 }
 
+/// The `data:` URLs an image may have: base64 png, jpeg, gif or webp.
+fn data_image_ok(url: &str) -> bool {
+    let u = url.trim_start().to_ascii_lowercase();
+    ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        .iter()
+        .any(|m| u.starts_with(&format!("data:{m};base64,")))
+}
+
+/// Bytes as a `data:` URL, in the base64 a browser reads there (the
+/// standard alphabet, padded).
+pub fn data_uri(mime: &str, bytes: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4 + mime.len() + 13);
+    out.push_str("data:");
+    out.push_str(mime);
+    out.push_str(";base64,");
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |acc, b| (acc << 8) | *b as u32) << (8 * (3 - chunk.len()));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() {
+                A[((n >> (18 - 6 * i)) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
+/// The picture types that travel inside a friend's document, by extension.
+pub fn picture_mime(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// A URL that names a file beside the document: no scheme, not from the
+/// root, not a fragment. What `rewrite_image_url` resolves against the file.
+pub fn relative_url(url: &str) -> bool {
+    let u = url.trim();
+    !(u.is_empty()
+        || u.starts_with('/')
+        || u.starts_with('#')
+        || u.contains("://")
+        || u.starts_with("data:")
+        || u.starts_with("mailto:"))
+}
+
+/// Every Markdown picture, `![alt](url "title")`, outside fenced code: `f`
+/// is given its alt text and URL and says what the whole of it becomes, or
+/// `None` to leave it as written.
+pub fn map_md_images(text: &str, mut f: impl FnMut(&str, &str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut fence: Option<&str> = None;
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if let Some(open) = fence {
+            if t.starts_with(open) {
+                fence = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = Some(&t[..3]);
+            out.push_str(line);
+            continue;
+        }
+        map_line(line, &mut f, &mut out);
+    }
+    out
+}
+
+fn map_line(line: &str, f: &mut impl FnMut(&str, &str) -> Option<String>, out: &mut String) {
+    let mut rest = line;
+    while let Some(i) = rest.find("![") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let Some(close) = after.find("](") else {
+            out.push_str(&rest[i..]);
+            return;
+        };
+        let alt = &after[..close];
+        let tail = &after[close + 2..];
+        let end = tail.find(')');
+        if alt.contains(']') || end.is_none() {
+            out.push_str("![");
+            rest = after;
+            continue;
+        }
+        let end = end.unwrap();
+        let inner = tail[..end].trim();
+        let url = match inner.strip_prefix('<') {
+            Some(u) => u.split('>').next().unwrap_or(""),
+            None => inner.split_whitespace().next().unwrap_or(""),
+        };
+        match f(alt, url) {
+            Some(r) => out.push_str(&r),
+            None => out.push_str(&rest[i..i + 2 + close + 2 + end + 1]),
+        }
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+}
+
+/// A friend's Markdown as it is drawn here: a picture that did not travel
+/// with it -- a path on their machine, from a snyvi that sent no pictures,
+/// or one too large to carry -- says so where it stood, instead of being a
+/// broken image.
+pub fn stayed_with(text: &str, who: &str) -> String {
+    map_md_images(text, |_, url| {
+        relative_url(url).then(|| {
+            let name = url.rsplit('/').next().unwrap_or(url).replace('`', "");
+            format!("*(a picture that stayed with {who}: `{name}`)*")
+        })
+    })
+}
+
 /// comrak adapter: syntect with CSS classes, so code blocks share the page palette.
+///
+/// One per render, and it holds the document's highlight budget: `left` is
+/// how many bytes of code may still be highlighted before the rest goes in
+/// plain. A block that starts past it is written plain and marked
+/// `data-hl="pending"`, as is one the budget (or the per-block cap under it)
+/// cuts short; `spawn_full_highlight` renders such a document again with no
+/// budget and swaps the result in behind the reader.
+///
+/// comrak writes the `<pre>` and `<code>` tags before it hands over the code,
+/// and whether a block is pending is known only once the code is in hand, so
+/// the two tags are held back and written with the body.
 struct Highlighter<'a> {
     ss: &'a SyntaxSet,
     classes: &'a ClassMap,
+    left: AtomicUsize,
+    held: Mutex<HeldTags>,
+}
+
+/// What `write_pre_tag` and `write_code_tag` were asked for, until
+/// `write_highlighted` writes all three together.
+#[derive(Default)]
+struct HeldTags {
+    /// The `data-lang` the pre carries.
+    name: String,
+    mermaid: bool,
+    code_class: Option<String>,
 }
 
 impl SyntaxHighlighterAdapter for Highlighter<'_> {
@@ -1168,32 +1403,64 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
         lang: Option<&str>,
         code: &str,
     ) -> io::Result<()> {
-        if lang
-            .map(|l| l.eq_ignore_ascii_case("mermaid"))
-            .unwrap_or(false)
+        let held = std::mem::take(&mut *self.held.lock().unwrap());
+        let code_tag = match &held.code_class {
+            Some(c) => format!(
+                "<code class=\"{}\">",
+                html_escape::encode_double_quoted_attribute(c)
+            ),
+            None => "<code>".to_string(),
+        };
+        if held.mermaid
+            || lang
+                .map(|l| l.eq_ignore_ascii_case("mermaid"))
+                .unwrap_or(false)
         {
             // Diagram source stays verbatim; the client renders it after first paint.
+            output.write_all(b"<pre class=\"mermaid\" data-lang=\"Mermaid\">")?;
+            output.write_all(code_tag.as_bytes())?;
             return output.write_all(html_escape::encode_text(code).as_bytes());
         }
         let syntax = lang
             .filter(|l| !l.is_empty())
             .and_then(|l| self.ss.find_syntax_by_token(l))
             .unwrap_or_else(|| self.ss.find_syntax_plain_text());
-        let mut out = String::with_capacity(code.len() * 3);
-        highlight_lines(self.ss, self.classes, syntax, code, HIGHLIGHT_CAP, &mut out);
-        output.write_all(out.as_bytes())
+        let mut body = String::with_capacity(code.len() * 3);
+        // One render runs on one thread; the atomic is only so the adapter is
+        // Sync, which comrak asks of it.
+        let left = self.left.load(Ordering::Relaxed);
+        let pending = if left == 0 {
+            plain_lines(LinesWithEndings::from(code), &mut body);
+            true
+        } else {
+            let cap = left.min(HIGHLIGHT_CAP);
+            let (took, cut) = highlight_lines(self.ss, self.classes, syntax, code, cap, &mut body);
+            self.left
+                .store(left.saturating_sub(took), Ordering::Relaxed);
+            cut
+        };
+        write!(
+            output,
+            "<pre class=\"code\" data-lang=\"{}\"{}>",
+            html_escape::encode_double_quoted_attribute(&held.name),
+            if pending { PENDING } else { "" }
+        )?;
+        output.write_all(code_tag.as_bytes())?;
+        output.write_all(body.as_bytes())
     }
 
     fn write_pre_tag(
         &self,
-        output: &mut dyn Write,
+        _output: &mut dyn Write,
         attributes: HashMap<String, String>,
     ) -> io::Result<()> {
         let lang = attributes.get("lang").cloned().unwrap_or_default();
+        let mut held = self.held.lock().unwrap();
         if lang.eq_ignore_ascii_case("mermaid") {
-            return output.write_all(b"<pre class=\"mermaid\" data-lang=\"Mermaid\">");
+            held.mermaid = true;
+            return Ok(());
         }
-        let name = self
+        held.name = self
             .ss
             .find_syntax_by_token(&lang)
             .map(|s| s.name.clone())
@@ -1204,26 +1471,16 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
                     lang.clone()
                 }
             });
-        write!(
-            output,
-            "<pre class=\"code\" data-lang=\"{}\">",
-            html_escape::encode_double_quoted_attribute(&name)
-        )
+        Ok(())
     }
 
     fn write_code_tag(
         &self,
-        output: &mut dyn Write,
+        _output: &mut dyn Write,
         attributes: HashMap<String, String>,
     ) -> io::Result<()> {
-        match attributes.get("class") {
-            Some(c) => write!(
-                output,
-                "<code class=\"{}\">",
-                html_escape::encode_double_quoted_attribute(c)
-            ),
-            None => output.write_all(b"<code>"),
-        }
+        self.held.lock().unwrap().code_class = attributes.get("class").cloned();
+        Ok(())
     }
 }
 
@@ -1649,6 +1906,127 @@ mod tests {
         assert!(capped.matches("class=\"k\"").count() < full.matches("class=\"k\"").count());
         assert_eq!(capped.matches("<span class=\"ln\">").count(), 20_000);
         assert_eq!(full.matches("<span class=\"ln\">").count(), 20_000);
+        // The cut file says so on its <pre>, which is what sends it to the
+        // background pass; the full render has nothing left to finish.
+        assert!(has_pending_highlight(&capped));
+        assert!(
+            capped.starts_with("<pre class=\"code\" data-lang=\"Rust\" data-hl=\"pending\"><code>")
+        );
+        assert!(!has_pending_highlight(&full));
+        let small = r.render(Kind::Code, Some("rs"), "let a = 1;\n");
+        assert!(!has_pending_highlight(&small), "{small}");
+    }
+
+    /// A plan quoting two hundred Rust blocks: the budget is the document's,
+    /// so the first blocks are highlighted, the rest are plain and marked,
+    /// and the uncapped render finishes every one of them.
+    #[test]
+    fn markdown_highlight_budget_is_per_document() {
+        let r = r();
+        let block = |b: usize| {
+            let mut s = format!("## Block {b}\n\nProse.\n\n```rust\n");
+            for i in 0..26 {
+                s.push_str(&format!(
+                    "pub fn step_{b}_{i}(x: u32) -> Result<u32, Error> {{ Ok(x + {i}) }} // step\n"
+                ));
+            }
+            s.push_str("```\n\n");
+            s
+        };
+        let md: String = (0..200).map(block).collect();
+        let code_bytes: usize = (0..200)
+            .map(|b| block(b).len() - block(b).find("```rust\n").unwrap() - 8 - 4)
+            .sum();
+        assert!(
+            code_bytes > HIGHLIGHT_CAP,
+            "fixture is {code_bytes} B of code"
+        );
+
+        let capped = r.render(Kind::Markdown, None, &md);
+        let pending = capped.matches(PENDING).count();
+        let highlighted = capped
+            .matches("<pre class=\"code\" data-lang=\"Rust\"><code>")
+            .count();
+        assert_eq!(
+            pending + highlighted,
+            200,
+            "every block is one or the other"
+        );
+        assert!(has_pending_highlight(&capped));
+        // 256 KB of ~2 KB blocks: somewhere past a hundred are highlighted,
+        // and the first one certainly is.
+        assert!(
+            (100..200).contains(&highlighted),
+            "{highlighted} highlighted, {pending} pending"
+        );
+        assert!(
+            capped.find("data-hl=\"pending\"").unwrap()
+                > capped.find("<pre class=\"code\"").unwrap()
+        );
+        // A pending block is plain: its lines carry no token classes at all.
+        let tail = &capped[capped.rfind("<pre class=\"code\"").unwrap()..];
+        assert!(
+            tail.contains(PENDING) && !tail.contains("class=\"k\""),
+            "{}",
+            &tail[..200]
+        );
+
+        let full = r.render_markdown_uncapped(&md, None);
+        assert!(!has_pending_highlight(&full));
+        assert_eq!(
+            full.matches("<pre class=\"code\" data-lang=\"Rust\"><code>")
+                .count(),
+            200
+        );
+        assert!(full.matches("class=\"k\"").count() > capped.matches("class=\"k\"").count());
+        // What was highlighted under the budget is highlighted the same way.
+        let first = |h: &str| h[..h.find("</pre>").unwrap()].to_string();
+        assert_eq!(first(&capped), first(&full));
+    }
+
+    /// The everyday document, and the bench's 1 MB one: code well under the
+    /// budget, so nothing is pending and nothing changes.
+    #[test]
+    fn markdown_under_the_budget_is_whole() {
+        let r = r();
+        // The bench's shape: a code block every couple of kilobytes of prose,
+        // so a document far past the budget carries a few percent of code.
+        let prose = "A paragraph of ordinary prose with *emphasis*, `inline code` and a [link](https://example.com), which runs on for a few sentences. ".repeat(12);
+        let section = format!("## S\n\n{prose}\n\n```rust\nfn main() {{\n    let x = 42;\n    println!(\"{{x}}\");\n}}\n```\n\n");
+        let md: String =
+            std::iter::repeat_n(section.as_str(), 2 * HIGHLIGHT_CAP / section.len() + 1).collect();
+        assert!(md.len() > 2 * HIGHLIGHT_CAP);
+        let html = r.render(Kind::Markdown, None, &md);
+        assert!(!has_pending_highlight(&html));
+        assert_eq!(
+            html.matches("<pre class=\"code\" data-lang=\"Rust\"><code>")
+                .count(),
+            md.matches("```rust").count()
+        );
+        assert!(html.contains("class=\"k\""));
+        // And a Mermaid block takes nothing from the budget and keeps its tag.
+        let mixed = r.render(
+            Kind::Markdown,
+            None,
+            "```mermaid\ngraph TD; A-->B\n```\n\n```rust\nfn a() {}\n```\n",
+        );
+        assert!(mixed.contains("<pre class=\"mermaid\" data-lang=\"Mermaid\">"));
+        assert!(mixed.contains("<pre class=\"code\" data-lang=\"Rust\"><code>"));
+        assert!(!has_pending_highlight(&mixed));
+    }
+
+    /// A single block past the per-block cap is pending inside a document
+    /// with budget to spare: the second guard.
+    #[test]
+    fn one_huge_block_is_pending_too() {
+        let r = r();
+        let big: String = (0..20_000).map(|i| format!("let v{i} = {i};\n")).collect();
+        let md = format!("# T\n\n```rust\n{big}```\n\n```rust\nfn after() {{}}\n```\n");
+        let html = r.render(Kind::Markdown, None, &md);
+        assert!(has_pending_highlight(&html));
+        assert_eq!(html.matches(PENDING).count(), 1);
+        // The block after it still gets what budget is left.
+        assert!(html.contains("<pre class=\"code\" data-lang=\"Rust\"><code><span class=\"ln\"><span class=\"k\">fn</span>"));
     }
 
     #[test]
@@ -1857,5 +2235,71 @@ mod tests {
         }
         let u = unified("a", "x\ny\n", "b", "x\nz\n");
         assert!(u.contains("-y") && u.contains("+z"));
+    }
+
+    /// A picture inside a document keeps its `data:` URL through the
+    /// sanitizer -- the four picture types, on an image -- and nothing else
+    /// does: no SVG, no page, no `data:` link.
+    #[test]
+    fn a_carried_picture_survives_the_sanitizer_and_nothing_else_does() {
+        let png = "data:image/png;base64,iVBORw0KGgo=";
+        let out = sanitize(&format!(
+            "<p><img src=\"{png}\" alt=\"shot\"><img src=\"data:image/svg+xml;base64,PHN2Zz4=\"><img src=\"data:text/html;base64,PGI+\"><a href=\"data:image/png;base64,iVBO\">x</a></p>"
+        ));
+        assert!(out.contains(png), "{out}");
+        assert!(!out.contains("svg+xml"), "{out}");
+        assert!(!out.contains("text/html"), "{out}");
+        assert!(!out.contains("href=\"data:"), "{out}");
+        assert!(
+            sanitize("<a href=\"https://x.dev\">x</a>").contains("https://x.dev"),
+            "other links are as they were"
+        );
+    }
+
+    #[test]
+    fn data_uris_are_the_base64_a_browser_reads() {
+        assert_eq!(data_uri("image/png", b"Man"), "data:image/png;base64,TWFu");
+        assert_eq!(data_uri("image/png", b"Ma"), "data:image/png;base64,TWE=");
+        assert_eq!(data_uri("image/png", b"M"), "data:image/png;base64,TQ==");
+        assert_eq!(
+            data_uri("image/png", &[0xfb, 0xff]),
+            "data:image/png;base64,+/8="
+        );
+    }
+
+    /// The pictures of a Markdown page, found where Markdown has them and
+    /// not in its code; one that names a file on a friend's machine says it
+    /// stayed there.
+    #[test]
+    fn a_pages_pictures_are_found_and_a_missing_one_says_so() {
+        let md = "# Plan\n\n![shot](img/shot.png) and ![web](https://x.dev/a.png \"t\")\n\n```\n![in code](c.png)\n```\n![<sp>](<my shot.png>) ![](#x)\n";
+        let mut seen = vec![];
+        let same = map_md_images(md, |alt, url| {
+            seen.push((alt.to_string(), url.to_string()));
+            None
+        });
+        assert_eq!(same, md, "None leaves it as written");
+        assert_eq!(
+            seen,
+            [
+                ("shot", "img/shot.png"),
+                ("web", "https://x.dev/a.png"),
+                ("<sp>", "my shot.png"),
+                ("", "#x"),
+            ]
+            .map(|(a, u)| (a.to_string(), u.to_string()))
+        );
+        let shown = stayed_with(md, "Trapti");
+        assert!(
+            shown.contains("*(a picture that stayed with Trapti: `shot.png`)*"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("![web](https://x.dev/a.png \"t\")"),
+            "a link out is left"
+        );
+        assert!(shown.contains("![in code](c.png)"), "code is code");
+        assert!(shown.contains("![](#x)"));
+        assert!(relative_url("a/b.png") && !relative_url("data:image/png;base64,x"));
     }
 }

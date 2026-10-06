@@ -15,17 +15,24 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/api_docs.rs` | 815 | the library over HTTP, the receive endpoint, asides, terminal and reveal |
 | `src/server/api_desk.rs` | 1535 | Home, desks, panels, notes, keys, pastes, Ctrl-clicked paths; every route behind `refuse_desk` |
 | `src/server/api_agent.rs` | 638 | `/api/agents`, connect, and what an agent in a panel says (`/api/panes/{id}/*`, token + running pane) |
+| `src/server/api_peer.rs` | 820 | a friend's snyvi: pairing, the friends list, Send to…, a line, an agent's offer, what is done with a frame (`docs/PEER.md`) |
+| `src/server/peer_link.rs` | 260 | the link: one WebSocket to the relay for as long as there is a friend; frames pushed, acked, swept over HTTP when the socket will not open |
 | `src/server/api_browse.rs` | 378 | browse mode over HTTP, ranged file serving |
 | `src/server/events.rs` | 249 | SSE: the stream, the window/agent mark, `resync`, focus |
 | `src/server/ws.rs` | 291 | the desk socket |
 | `src/server/lifecycle.rs` | 912 | health, about, restart and the planned exit, the update watcher, relaunch, reset |
 | `src/server/tests.rs` | 830 | the route table every route must be in, and the rest of the server's tests |
 | `src/store.rs` | 2396 | documents on disk, SQLite index, FTS5, versions, projects, workflows, inbox |
-| `src/receive.rs` | 525 | the one entry every transport calls: locate, read, render, file |
+| `src/receive.rs` | 525 | the one entry every transport calls: locate, read, render, file; a friend's bytes come in here too |
+| `src/peer.rs` | 1460 | the daemon's identity, the word code, SPAKE2 pairing, the sealed frame, the relay client, the link's address, messages and backoff, the peers tables |
 | `src/render.rs` | 1760 | Markdown → HTML once, at receive time; outline; code; Mermaid left to the page |
 | `src/browse.rs` | 818 | a folder read from disk, nothing stored |
 | `src/watch.rs` | 357 | mtime change detection for browse and `snyvi watch` |
 | `src/aside.rs` | 217 | a line beside the work |
+| `src/thread.rs` | 1151 | threads, turns (Your turn) and suggested panels: the tables, the stages, who is told what (#90) |
+| `src/server/api_thread.rs` | 734 | threads over HTTP: the agent's and the mod's on `/api/panes/{id}/…`, the page's on `/api/desks/{id}/…`, the held question's long-poll |
+| `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
+| `src/mcp/threads.rs` | 247 | the six #90 MCP tools: start_thread, move_thread, ask, hand_over, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |
 | `src/git.rs` | 251 | branch, dirt, unpushed, recent commits for Home |
 | `src/resolve.rs` | 211 | a Ctrl-clicked word → a path |
@@ -50,7 +57,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/brief.rs` | 627 | the desk brief text |
 | `src/session.rs` | 128 | session id ↔ cwd/pane bookkeeping shared by hook and MCP |
 | `src/statusline.rs` | 394 | Claude Code status line |
-| `src/mcp.rs` | 910 | the stdio MCP server, eight tools |
+| `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |
 | `src/client.rs` | 1153 | CLI/MCP → daemon over HTTP with the token; starts the daemon if needed |
 | `src/setup.rs` | 901 | `init-claude`, undo, PATH |
@@ -75,7 +82,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/index.html`, `ui/boot.js`, `ui/app.css`, `ui/themes.css` | — | first paint | shell, theme before paint, styles |
 | `ui/app/01-shell.js` … `10-boot.js` | 119–871 each | first paint | `app.js`, as ten parts in one function scope: shell and helpers, tree, queue and what moved, documents and connect, notes and live refresh, the rail, navigation, desks, what snyvi says back, boot. `build.rs` joins them in name order |
 | `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
-| `ui/home.js` | 1221 | lazy | Home |
+| `ui/home.js` | 1330 | lazy | Home, with Friends |
+| `ui/peer.js` | 237 | lazy | pairing, Send to…, a line for a friend, an agent's offer |
 | `ui/about.js` | 1025 | lazy | About, updates that ask |
 | `ui/mmd.js` | 987 | lazy | Mermaid driver |
 | `ui/game.js` | 701 | lazy | the rocket |
@@ -92,3 +100,11 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 `restart.mjs`, `update.mjs` lifecycle on a spare port · `webkit.py --desk`
 paint cost under Xvfb (target < 15 %) · `open.mjs` the window's first request ·
 `media.mjs`, `film/` the README's camera.
+
+## The relay (`relay/`)
+
+One Cloudflare Worker, `relay/src/index.ts`, two Durable Object classes
+(`Room` for the minute of pairing, `Mailbox` per address, which holds each
+daemon's WebSocket through hibernation and pushes a frame as it lands),
+tested by `relay/test/relay.test.mjs` against `wrangler dev` in CI, the
+link included, deployed by hand. See `relay/README.md` and `docs/PEER.md`.

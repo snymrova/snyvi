@@ -63,6 +63,7 @@ fn strip_ui() {
         ("note.js", strip::Lang::Js),
         ("tip.js", strip::Lang::Js),
         ("home.js", strip::Lang::Js),
+        ("peer.js", strip::Lang::Js),
         ("toast.js", strip::Lang::Js),
         ("diff.js", strip::Lang::Js),
         ("browse.js", strip::Lang::Js),
@@ -105,8 +106,14 @@ fn build_line() {
         "cargo:rustc-env=SNYVI_TARGET={}",
         std::env::var("TARGET").unwrap_or_default()
     );
-    // A new commit moves HEAD or the branch it names; either is a rebuild.
-    if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
+    // A new commit moves HEAD or the branch it names; either is a rebuild --
+    // of a release, which is what the sha is stamped on for. A debug build
+    // is not told: a commit that touched no source rebuilt the whole crate
+    // in dev for the sake of nine characters in /api/health (1.15.0 audit,
+    // finding 21), so a debug binary wears the sha of whatever commit last
+    // changed the source it was built from.
+    let release = std::env::var("PROFILE").as_deref() == Ok("release");
+    if let (true, Ok(dir)) = (release, std::env::var("CARGO_MANIFEST_DIR")) {
         let head = std::path::Path::new(&dir).join(".git/HEAD");
         println!("cargo:rerun-if-changed={}", head.display());
         if let Some(r) = std::fs::read_to_string(&head)

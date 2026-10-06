@@ -43,6 +43,15 @@ fn version_of<'a>(path: &'a str, title: &'a str, src: &'a str, wf: &'a str) -> N
     }
 }
 
+/// What an old database lacks of 1.19's columns: a fixture that winds the
+/// schema version back takes them off too, so step 7 adds them as it would.
+const OLD_1_19: &str = "ALTER TABLE peers DROP COLUMN desk_id;
+     ALTER TABLE peer_outbox DROP COLUMN text;
+     ALTER TABLE desk_notes DROP COLUMN sent_by;";
+
+/// And of 1.20's: the thread a note is in, which step 8 adds.
+const OLD_1_20: &str = "ALTER TABLE desk_notes DROP COLUMN thread_id;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -467,6 +476,11 @@ fn a_file_sent_again_is_one_row_with_its_versions_behind_it() {
     assert_eq!(titles(s.inbox(10).unwrap()), vec!["Notes", "Script v3"]);
     let wfs = s.project_tree(first.project_id, 0, 0).unwrap();
     assert_eq!(titles(s.queue(10).unwrap()), vec!["Script v3", "Notes"]);
+    // Home's Arrived reads the same rows the other way: newest first.
+    assert_eq!(
+        titles(s.newest_unread(10).unwrap()),
+        vec!["Notes", "Script v3"]
+    );
     assert_eq!(
         wfs[0]
             .docs
@@ -760,9 +774,12 @@ fn an_older_database_keeps_its_desk_order_on_the_upgrade() {
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute_batch(desk::SCHEMA).unwrap();
         conn.execute_batch(
+            // Version 0: the schema as first made, with none of the
+            // columns version 1 adds, which is what a database that
+            // never counted its version holds.
             "INSERT INTO desks(id, name, root, created_at) VALUES(7, 'late', '/w', 0);
              INSERT INTO desks(id, name, root, created_at) VALUES(3, 'early', '/w', 0);
-             PRAGMA user_version = 1;",
+             PRAGMA user_version = 0;",
         )
         .unwrap();
     }
@@ -794,10 +811,14 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
         };
         (d.id, p.id)
     };
-    // What 1.15 wrote for it, at 1.15's schema version.
+    // What 1.15 wrote for it, at 1.15's schema version -- and without the
+    // column 1.17 added, so the steps from 3 run as they would there.
     let conn = rusqlite::Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
         "UPDATE desks SET kind = 'studio', boards = root, row = 0.62 WHERE id = {studio};
+         DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
+         {OLD_1_19}
+         {OLD_1_20}
          PRAGMA user_version = 3;"
     ))
     .unwrap();
@@ -828,4 +849,424 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
             crate::desk::Opened::Pane(_)
         ));
     }
+}
+
+/// How many virtual-machine steps a statement took, which is the count that
+/// says whether SQLite looked at one row or at all of them. A clock would say
+/// the same thing on a quiet machine and nothing on a busy one.
+fn vm_steps(conn: &Connection, sql: &str, id: &str) -> i32 {
+    let mut st = conn.prepare(sql).unwrap();
+    st.execute(params![id]).unwrap();
+    st.get_status(rusqlite::StatementStatus::VmStep)
+}
+
+fn fts_drift(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM docs_fts f JOIN docs d ON d.id = f.id WHERE f.rowid != d.rowid",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+fn is_head(conn: &Connection, id: &str) -> i64 {
+    conn.query_row("SELECT is_head FROM docs WHERE id = ?1", params![id], |r| {
+        r.get(0)
+    })
+    .unwrap()
+}
+
+/// A save takes the document's index row out by its rowid: the same few
+/// steps whether the library holds fifty documents or four hundred. The
+/// delete by `id` it replaces reads every row of the index -- the steps grow
+/// with the library -- which is what made every save of anything cost a
+/// pass over 18 MB.
+#[test]
+fn a_save_takes_its_index_row_out_by_rowid_not_by_a_scan() {
+    let (s, _d) = temp_store();
+    let mut ids = vec![];
+    for i in 0..400 {
+        let body = format!("document {i} with words of its own number{i}");
+        ids.push(
+            s.insert(&new_id(&format!("d{i}")), new_doc("Plan", &body, "w"))
+                .unwrap()
+                .id,
+        );
+        if i == 49 {
+            // Saved again, so the index rows have been through `replace` too.
+            s.replace(&ids[10], new_doc("Plan", "document 10 saved again", "w"))
+                .unwrap();
+        }
+    }
+    let conn = s.conn.lock().unwrap();
+    assert_eq!(
+        fts_drift(&conn),
+        0,
+        "every index row sits at its document's rowid"
+    );
+
+    let tx = conn.unchecked_transaction().unwrap();
+    let at_400 = vm_steps(&tx, FTS_DELETE, &ids[200]);
+    let by_id_at_400 = vm_steps(&tx, "DELETE FROM docs_fts WHERE id = ?1", &ids[201]);
+    tx.rollback().unwrap();
+    // The library at fifty: everything past it gone, the delete measured again.
+    conn.execute_batch(
+        "DELETE FROM docs_fts WHERE rowid IN (SELECT rowid FROM docs WHERE rowid > 50);
+         DELETE FROM docs WHERE rowid > 50;",
+    )
+    .unwrap();
+    let tx = conn.unchecked_transaction().unwrap();
+    let at_50 = vm_steps(&tx, FTS_DELETE, &ids[20]);
+    tx.rollback().unwrap();
+
+    assert!(
+        (at_400 - at_50).abs() < 8,
+        "by rowid, the cost does not follow the library: {at_50} steps at 50, {at_400} at 400"
+    );
+    assert!(at_400 < 120, "{at_400} steps is not one lookup");
+    assert!(
+        by_id_at_400 > 400,
+        "the delete by id is the scan this guards against: {by_id_at_400} steps at 400"
+    );
+}
+
+/// The same bytes saved again (the hook fires on a save that changed
+/// nothing in the file, or only the render changed) rewrite the HTML, since
+/// a renderer can change, and leave the search index alone: re-tokenising a
+/// body that is the same body is the one cost of a save that buys nothing.
+#[test]
+fn a_save_that_changed_nothing_leaves_the_index_alone() {
+    let (s, _d) = temp_store();
+    let a = s
+        .insert(&new_id("a"), new_doc("A", "the same draft alpha", "w"))
+        .unwrap();
+    let mut again = new_doc("A", "the same draft alpha", "w");
+    again.search_body = "omega";
+    again.html = "<p>rendered again</p>";
+    let r = s.replace(&a.id, again).unwrap();
+    assert_eq!(r.id, a.id);
+    assert_eq!(s.html(&a.id).unwrap(), "<p>rendered again</p>");
+    assert_eq!(
+        s.search("alpha", 5).unwrap().len(),
+        1,
+        "the index row it had"
+    );
+    assert!(
+        s.search("omega", 5).unwrap().is_empty(),
+        "and not a new one"
+    );
+    let conn = s.conn.lock().unwrap();
+    assert_eq!(fts_drift(&conn), 0);
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM docs_fts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
+}
+
+/// Which version of a file is the head is a column now, and every write that
+/// can move it keeps it: a version arriving, the file removed and put back,
+/// a save, and a prune that takes the newest.
+#[test]
+fn the_head_of_a_file_is_a_column_every_write_keeps() {
+    let (s, _d) = temp_store();
+    let v1 = s
+        .insert(&new_id("1"), version_of("/p/F.md", "F", "one", "w"))
+        .unwrap();
+    let v2 = s
+        .insert(&new_id("2"), version_of("/p/F.md", "F v2", "two", "w"))
+        .unwrap();
+    let loose = s
+        .insert(&new_id("n"), new_doc("Notes", "elsewhere", "w"))
+        .unwrap();
+    let heads = |want: &[(&str, i64)]| {
+        let conn = s.conn.lock().unwrap();
+        for (id, h) in want {
+            assert_eq!(is_head(&conn, id), *h, "is_head of {id}");
+        }
+    };
+    heads(&[(&v1.id, 0), (&v2.id, 1), (&loose.id, 1)]);
+    assert_eq!(s.projects().unwrap()[0].docs, 2);
+
+    // Removed, with its versions: neither is a head. Back: the newest is.
+    assert_eq!(s.delete_versions(&v2.id).unwrap(), 2);
+    heads(&[(&v1.id, 0), (&v2.id, 0)]);
+    assert_eq!(s.projects().unwrap()[0].docs, 1);
+    assert!(s.undelete(&v2.id).unwrap());
+    heads(&[(&v1.id, 0), (&v2.id, 1)]);
+
+    // A save of the head is still the head.
+    s.replace(&v2.id, version_of("/p/F.md", "F v2b", "two b", "w"))
+        .unwrap();
+    heads(&[(&v1.id, 0), (&v2.id, 1)]);
+
+    // The newest pruned for age hands the row to the one before it.
+    {
+        let conn = s.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE docs SET received_at = 1000 WHERE id = ?1",
+            params![v2.id],
+        )
+        .unwrap();
+    }
+    s.set_pinned(&v1.id, true).unwrap();
+    s.set_pinned(&loose.id, true).unwrap();
+    let gone = s.prune(now() - 1, false).unwrap();
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].0, v2.id);
+    heads(&[(&v1.id, 1), (&loose.id, 1)]);
+    assert_eq!(s.projects().unwrap()[0].docs, 2);
+    let hist = s.history(v1.project_id, "/p/F.md").unwrap();
+    assert_eq!(hist.len(), 1);
+    let conn = s.conn.lock().unwrap();
+    let (docs, fts): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM docs), (SELECT COUNT(*) FROM docs_fts)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((docs, fts), (2, 2), "the index row went with the document");
+    assert_eq!(fts_drift(&conn), 0);
+}
+
+/// A desk's list is read through its index: four columns in the WHERE, and
+/// without `docs_desk` the whole of `docs` for every draw of a desk.
+#[test]
+fn a_desks_list_is_read_through_its_index() {
+    let (s, _d) = temp_store();
+    let conn = s.conn.lock().unwrap();
+    for off in [false, true] {
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {}", desk_docs_sql(off)))
+            .unwrap()
+            .query_map(params![1i64, 10i64], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|l| l.contains("docs USING INDEX docs_desk")),
+            "off={off}: {plan:?}"
+        );
+    }
+}
+
+/// A 1.16 database comes forward on its first open: the index realigned to
+/// the documents' rowids with the doubled row dropped, the workflows that
+/// differed only by case folded (what used to run on every start, errors
+/// dropped), and the head of each file worked out once. Then search, the
+/// lists and a save work as on a new database.
+#[test]
+fn a_1_16_database_comes_forward_once() {
+    let dir = tempdir::Dir::new("snyvi-store-116");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let (v1, v2, loose, project) = {
+        let s = Store::open(&paths).unwrap();
+        let v1 = s
+            .insert(&new_id("1"), version_of("/p/F.md", "F", "one alpha", "w"))
+            .unwrap();
+        let v2 = s
+            .insert(
+                &new_id("2"),
+                version_of("/p/F.md", "F v2", "two bravo", "w"),
+            )
+            .unwrap();
+        let loose = s
+            .insert(&new_id("n"), new_doc("Notes", "elsewhere charlie", "w"))
+            .unwrap();
+        (v1.id, v2.id, loose.id, v1.project_id)
+    };
+    // What 1.16 had: no `is_head`, index rows wherever FTS5 put them (and
+    // one document indexed twice), a workflow that is another one spelled
+    // in capitals, at 1.16's schema version.
+    {
+        let conn = Connection::open(&paths.db_path).unwrap();
+        conn.execute_batch(&format!(
+            "DROP INDEX docs_head;
+             DROP VIEW head_docs;
+             ALTER TABLE docs DROP COLUMN is_head;
+             DELETE FROM docs_fts;
+             INSERT INTO docs_fts(id, title, body) SELECT id, title, 'stale ' || id FROM docs ORDER BY rowid DESC;
+             INSERT INTO docs_fts(id, title, body) VALUES('{loose}', 'Notes', 'elsewhere charlie newest');
+             INSERT INTO workflows(project_id, key, title, created_at) VALUES({project}, 'W', 'W', 0);
+             UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
+             {OLD_1_19}
+         {OLD_1_20}
+             PRAGMA user_version = 4;"
+        ))
+        .unwrap();
+        let drift = fts_drift(&conn);
+        assert!(drift > 0, "the fixture is drifted, {drift} rows");
+    }
+
+    let s = Store::open(&paths).unwrap();
+    let conn = s.conn.lock().unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, MIGRATIONS.last().unwrap().0);
+    assert_eq!(fts_drift(&conn), 0, "realigned");
+    let (docs, fts): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM docs), (SELECT COUNT(*) FROM docs_fts)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (docs, fts),
+        (3, 3),
+        "one index row a document, the newer kept"
+    );
+    let kept: String = conn
+        .query_row(
+            "SELECT body FROM docs_fts WHERE id = ?1",
+            params![loose],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, "elsewhere charlie newest");
+    assert_eq!(is_head(&conn, &v1), 0);
+    assert_eq!(is_head(&conn, &v2), 1);
+    assert_eq!(is_head(&conn, &loose), 1);
+    let keys: Vec<String> = conn
+        .prepare("SELECT key FROM workflows ORDER BY key")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(keys, ["w"], "folded into the one spelled in lower case");
+    drop(conn);
+    assert_eq!(s.projects().unwrap()[0].docs, 2);
+    assert_eq!(s.search("newest", 5).unwrap().len(), 1);
+    // And a save on the brought-forward database is the one-row delete.
+    s.replace(&v2, version_of("/p/F.md", "F v2", "two delta", "w"))
+        .unwrap();
+    assert_eq!(s.search("delta", 5).unwrap().len(), 1);
+    assert!(s.search("bravo", 5).unwrap().is_empty());
+    assert_eq!(fts_drift(&s.conn.lock().unwrap()), 0);
+}
+
+/// `is_head` says what the project row says: one row a document, counted
+/// by the column rather than by a subquery per row.
+#[test]
+fn the_project_row_a_doc_event_carries_is_the_trees_row() {
+    let (s, _d) = temp_store();
+    let a = s
+        .insert(&new_id("1"), version_of("/p/F.md", "F", "one", "w"))
+        .unwrap();
+    s.insert(&new_id("2"), version_of("/p/F.md", "F v2", "two", "w2"))
+        .unwrap();
+    let row = s.project_row(a.project_id).unwrap().unwrap();
+    let listed = s.projects().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (row.id, row.docs, row.workflows, row.latest),
+        (
+            listed[0].id,
+            listed[0].docs,
+            listed[0].workflows,
+            listed[0].latest
+        )
+    );
+    assert_eq!(
+        (row.docs, row.workflows),
+        (1, 1),
+        "the head's workflow only"
+    );
+    assert!(s.project_row(999).unwrap().is_none());
+}
+
+/// A tree row says how big its document is, so a hover can decide what to
+/// fetch ahead without asking; the same number from both queries that
+/// draw rows.
+#[test]
+fn a_tree_row_carries_its_documents_size() {
+    let (s, _d) = temp_store();
+    let a = s
+        .insert(&new_id("a"), new_doc("A", "twelve bytes", "w"))
+        .unwrap();
+    let wfs = s.project_tree(a.project_id, 10, 10).unwrap();
+    assert_eq!(wfs[0].docs[0].size, 12);
+    let whole = s.workflow_tree(wfs[0].id).unwrap().unwrap();
+    assert_eq!(whole.docs[0].size, 12);
+    let json = serde_json::to_value(&wfs[0].docs[0]).unwrap();
+    assert_eq!(json["size"], 12);
+}
+
+/// A background highlight writes its page only over the source it rendered:
+/// a save that landed meanwhile keeps its own page.
+#[test]
+fn a_late_highlight_does_not_write_over_a_newer_save() {
+    let (s, _d) = temp_store();
+    let a = s
+        .insert(&new_id("a"), new_doc("A", "first draft", "w"))
+        .unwrap();
+    let old_hash = a.content_hash.clone();
+    let mut newer = new_doc("A", "second draft", "w");
+    newer.html = "<p>the newer save</p>";
+    let b = s.replace(&a.id, newer).unwrap();
+    assert_ne!(b.content_hash, old_hash);
+    assert!(!s
+        .replace_html_if(&a.id, "<p>highlighted first draft</p>", &old_hash)
+        .unwrap());
+    assert_eq!(s.html(&a.id).unwrap(), "<p>the newer save</p>");
+    assert!(s
+        .replace_html_if(&a.id, "<p>highlighted second draft</p>", &b.content_hash)
+        .unwrap());
+    assert_eq!(s.html(&a.id).unwrap(), "<p>highlighted second draft</p>");
+}
+
+/// A friend's document kept on a desk: every version of it moves into the
+/// desk's project and onto its list, the newest still the one row, and the
+/// project it left has nothing of it.
+#[test]
+fn a_lineage_moves_whole_onto_a_desk() {
+    let (s, _d) = temp_store();
+    let one = s
+        .insert(&new_id("1"), version_of("seeds.md", "Seeds", "one", "sent"))
+        .unwrap();
+    let two = s
+        .insert(&new_id("2"), version_of("seeds.md", "Seeds", "two", "sent"))
+        .unwrap();
+    let other = s
+        .insert(&new_id("o"), new_doc("Other", "other.md", "sent"))
+        .unwrap();
+    let garden = Origin {
+        id: 3,
+        name: "Garden".into(),
+        slot: 0,
+    };
+    let moved = s
+        .move_lineage(&one.id, "/w/garden", "garden", &garden)
+        .unwrap()
+        .unwrap();
+    assert_eq!(moved.project, "garden");
+    assert_eq!(moved.desk, Some(garden.clone()));
+    assert_eq!(moved.workflow, "sent", "the workflow goes with it");
+    let newer = s.get(&two.id).unwrap().unwrap();
+    assert_eq!(newer.project_id, moved.project_id, "every version");
+    assert_eq!(
+        s.previous(&newer).unwrap().map(|p| p.id),
+        Some(one.id.clone())
+    );
+    assert_eq!(
+        s.get(&other.id).unwrap().unwrap().project_id,
+        one.project_id,
+        "another file stays"
+    );
+    let on_desk = s.desk_docs(3, 10, false).unwrap();
+    assert_eq!(on_desk.len(), 1, "one row on the desk's list");
+    assert_eq!(on_desk[0].id, two.id);
+    assert!(s
+        .move_lineage("nope", "/w/garden", "garden", &garden)
+        .unwrap()
+        .is_none());
 }

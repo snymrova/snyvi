@@ -71,6 +71,13 @@ struct Fixtures {
     md_2k: &'static str,
     md_100k: String,
     md_1m: String,
+    /// A plan an agent wrote with the code in it: 200 fenced Rust blocks of
+    /// some twenty-six lines each, 400 KB in all -- the shape of a design document
+    /// that quotes the implementation, and the one that showed every block
+    /// paying the full highlight because the cap was per block (1.15.0 audit,
+    /// finding 6). The budget is the 1 MB Markdown row's: the highlighter is
+    /// allowed 256 KB per document and the rest is finished in the background.
+    md_blocks: String,
     code_10k: String,
     code_100k: String,
 }
@@ -95,10 +102,27 @@ Another paragraph. Then more prose, because most documents are mostly prose, and
                 .map(|i| format!("fn f{i}(x: u32) -> u32 {{ x + {i} }} // line\n"))
                 .collect()
         };
+        let blocks = |n: usize| -> String {
+            (0..n)
+                .map(|b| {
+                    let mut s = format!(
+                        "## Block {b}\n\nWhat this block does, in a sentence or two of prose, so the document is a plan and not a listing.\n\n```rust\n"
+                    );
+                    for i in 0..26 {
+                        s.push_str(&format!(
+                            "pub fn step_{b}_{i}(x: u32) -> Result<u32, Error> {{ Ok(x + {i}) }} // step\n"
+                        ));
+                    }
+                    s.push_str("```\n\n");
+                    s
+                })
+                .collect()
+        };
         Fixtures {
             md_2k: section,
             md_100k: repeat(100 * 1024),
             md_1m: repeat(1024 * 1024),
+            md_blocks: blocks(200),
             code_10k: code(10_000),
             code_100k: code(100_000),
         }
@@ -134,6 +158,13 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
             400.0,
         ),
         (
+            "markdown 400 KB, 200 rust blocks (highlight budget 256 KB)",
+            render::Kind::Markdown,
+            None,
+            &f.md_blocks,
+            400.0,
+        ),
+        (
             "rust 10k lines (highlighted)",
             render::Kind::Code,
             Some("rs"),
@@ -150,7 +181,7 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
     ];
     println!("renderer init: {init_ms:.1} ms   (budget factor {factor})\n");
     println!(
-        "{:<48} {:>9} {:>9}   {:>9}   {:>9}",
+        "{:<60} {:>9} {:>9}   {:>9}   {:>9}",
         "case", "ms", "MB/s", "html KB", "budget"
     );
     let mut failed = false;
@@ -171,7 +202,7 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
         failed |= !ok;
         let mbs = src.len() as f64 / 1e6 / (best / 1000.0);
         println!(
-            "{name:<48} {best:>9.1} {mbs:>9.1}   {:>9}   {budget:>7.0}{}",
+            "{name:<60} {best:>9.1} {mbs:>9.1}   {:>9}   {budget:>7.0}{}",
             out_len / 1024,
             if ok { " ok" } else { " OVER" }
         );
@@ -459,6 +490,27 @@ fn files_under(dir: &Path) -> Vec<String> {
 
 // ---------- the daemon, as a process ----------
 
+/// The binary's budget, in MB. 15 until 1.7.0, when the daemon began
+/// updating itself: the manifest's signature, the checksums, reading a
+/// tarball and a zip, and the icons
+/// `install-desktop` writes came to about half a megabyte. 16 until 1.8.0:
+/// Home, the update card, the desk brief and suggested notes, and the
+/// design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
+/// 16.4 on Windows). 16.5 until 1.10.0: pictures on notes, note stages and
+/// the Home of desks and notes took the musl build to 16.6 MB. 17 held
+/// in 1.13.0: the desks' keys and the changes at each prompt came to
+/// 0.05 MB once Linux was left without a keychain client, which was 1.8 MB
+/// of D-Bus for encryption at rest (src/secrets.rs says why). 17 until
+/// 1.18.0: a friend's snyvi (docs/PEER.md) took Linux from 16.7 to 17.4
+/// MB, about half a megabyte of it the feature's own symbols -- 340 KB of
+/// Ed25519, X25519, ChaCha20-Poly1305 and SPAKE2, 140 KB of the pairing,
+/// the link and the routes -- and the rest what they instantiate in tokio
+/// and core. Without the precomputed tables it is 43 KB less, not enough
+/// to matter; the feature is what the half megabyte buys. 18 held in
+/// 1.20.0, whose threads took the musl build from 17.65 to 18.02 MB (axum's
+/// handlers 110 KB of it), by building the bundled SQLite for size: 17.13.
+const BINARY_MB: f64 = 18.0;
+
 /// Returns whether any row was over budget.
 ///
 /// Every timing is the best of three, like the render rows, and for the same
@@ -484,24 +536,13 @@ fn process_rows(f: &Fixtures, factor: f64, shared: bool) -> Result<bool> {
     let mut rows = Rows { failed: false };
 
     let size = std::fs::metadata(&exe)?.len() as f64 / MB;
-    // 15 MB until 1.7.0, when the daemon began updating itself: the manifest's
-    // signature, the checksums, reading a tarball and a zip, and the icons
-    // `install-desktop` writes came to about half a megabyte. 16 until 1.8.0:
-    // Home, the update card, the desk brief and suggested notes, and the
-    // design system's page came to another 0.45 MB (15.76 -> 16.21 on Linux,
-    // 16.4 on Windows). 16.5 until 1.10.0: pictures on notes, note stages and
-    // the Home of desks and notes took the musl build to 16.6 MB. 17 held
-    // in 1.13.0: the desks' keys and the changes at each prompt came to
-    // 0.05 MB once Linux was left without a keychain client, which was 1.8 MB
-    // of D-Bus for encryption at rest (src/secrets.rs says why).
-    //
     // What ships is built with fat LTO (release.yml). A CI job that turns it
     // off to save build time (the desktops, Windows, Intel Mac) measures a
     // binary nobody downloads -- 16.6 MB on Windows for 14.3 shipped -- so
     // there the row is printed and not enforced.
     let lto_off = std::env::var("CARGO_PROFILE_RELEASE_LTO")
         .is_ok_and(|v| matches!(v.as_str(), "off" | "false"));
-    rows.size("binary size, snyvi", size, 17.0, lto_off);
+    rows.size("binary size, snyvi", size, BINARY_MB, lto_off);
 
     // Three cold starts: the first also creates the database and the token,
     // and the two after it open what the first left, which is every start

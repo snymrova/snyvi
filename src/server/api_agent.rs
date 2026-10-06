@@ -134,11 +134,7 @@ pub(crate) async fn pane_agent(
     if !authorized(&app, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let state_ok = |s: &str| s.is_empty() || crate::pane::AGENT_STATES.contains(&s);
-    if !crate::pane::valid_id(&id)
-        || !b.state.as_deref().is_none_or(state_ok)
-        || !b.session.as_deref().is_none_or(crate::desk::valid_session)
-    {
+    if !crate::pane::valid_id(&id) || !agent_said_ok(b.state.as_deref(), b.session.as_deref()) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let mut live = match &b.state {
@@ -186,6 +182,49 @@ pub(crate) async fn pane_agent(
         }
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Whether what an event says about the agent is one of the words a pane
+/// takes, and a session id of the right shape.
+fn agent_said_ok(state: Option<&str>, session: Option<&str>) -> bool {
+    let state_ok = |s: &str| s.is_empty() || crate::pane::AGENT_STATES.contains(&s);
+    state.is_none_or(state_ok) && session.is_none_or(crate::desk::valid_session)
+}
+
+/// What the hook says about its agent with the brief or the changes it asks
+/// for: the same two fields `pane_agent` takes, on the same route's terms.
+/// One request per event instead of two -- the hook used to post the state
+/// first and ask second, on every prompt and every session start.
+#[derive(Deserialize, Default)]
+pub(crate) struct AgentQ {
+    #[serde(default)]
+    pub(crate) state: Option<String>,
+    #[serde(default)]
+    pub(crate) session: Option<String>,
+}
+
+/// Apply what the hook said alongside its question, for a pane `agent_pane`
+/// has already placed. Says what was applied, which goes back in the answer
+/// so a hook can tell this daemon from one that read the question alone.
+fn agent_said(app: &App, id: &str, q: &AgentQ) -> Result<serde_json::Value, Box<Response>> {
+    if !agent_said_ok(q.state.as_deref(), q.session.as_deref()) {
+        return Err(Box::new(StatusCode::BAD_REQUEST.into_response()));
+    }
+    match &q.state {
+        Some(state) => {
+            app.panes.set_agent(id, state);
+        }
+        None if q.session.is_some() => {
+            app.panes.agent_in(id);
+        }
+        None => {}
+    }
+    if let Some(session) = &q.session {
+        if let Ok(true) = app.store.set_pane_session(id, session) {
+            desks_moved(app);
+        }
+    }
+    Ok(json!(q.state.clone().unwrap_or_default()))
 }
 
 /// The notes of the desk a pane is on, for the agent running in that pane
@@ -422,13 +461,18 @@ pub(crate) async fn pane_brief(
     State(app): S,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(q): Query<AgentQ>,
 ) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,
     };
+    let state = match agent_said(&app, &id, &q) {
+        Ok(s) => s,
+        Err(no) => return *no,
+    };
     if !brief_on(&app) {
-        return Json(json!({ "context": "", "title": "" })).into_response();
+        return Json(json!({ "context": "", "title": "", "state": state })).into_response();
     }
     let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -457,11 +501,46 @@ pub(crate) async fn pane_brief(
     // The brief says everything as of now; the next prompt's changes start
     // here.
     app.panes.told(&id, now);
-    let context = crate::brief::brief(&desk, placed.pane.slot, &notes, &desk.keys, last, now);
+    let friends: Vec<String> = app
+        .store
+        .peers()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| p.removed_at == 0)
+        .map(|p| p.name)
+        .collect();
+    let (threads, waiting) = app
+        .store
+        .threads(|c, _| {
+            Ok((
+                crate::thread::for_desk(c, desk.id)?,
+                crate::thread::waiting(c)?,
+            ))
+        })
+        .unwrap_or_default();
+    let waiting: Vec<_> = waiting
+        .into_iter()
+        .filter(|w| w.desk_id == desk.id)
+        .collect();
+    let work = crate::brief::Work {
+        notes: &notes,
+        threads: &threads,
+        waiting: &waiting,
+    };
+    let context = crate::brief::brief_of(
+        &desk,
+        placed.pane.slot,
+        &work,
+        &desk.keys,
+        &friends,
+        last,
+        now,
+    );
     Json(json!({
         "context": context,
         "title": crate::brief::title(&desk, placed.pane.slot, &placed.pane.name),
         "desk": desk.name,
+        "state": state,
     }))
     .into_response()
 }
@@ -547,27 +626,64 @@ pub(crate) async fn pane_changes(
     State(app): S,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(q): Query<AgentQ>,
 ) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,
     };
-    if !brief_on(&app) {
-        return Json(json!({ "context": "" })).into_response();
-    }
+    let state = match agent_said(&app, &id, &q) {
+        Ok(s) => s,
+        Err(no) => return *no,
+    };
     let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // The reader's answers on Your turn reach the panel whatever else is
+    // said: they are the reader speaking, not context snyvi adds, so the
+    // brief's switch and a daemon that has just started do not hold them.
+    let live: Vec<String> = desk
+        .panes
+        .iter()
+        .filter(|p| app.panes.is_running(&p.id))
+        .map(|p| p.id.clone())
+        .collect();
+    let answers = app
+        .store
+        .threads(|c, now| crate::thread::take_untold(c, desk.id, &id, &live, now))
+        .unwrap_or_default();
+    if !brief_on(&app) {
+        let context = crate::brief::answers_only(&answers);
+        return Json(json!({ "context": context, "state": state })).into_response();
+    }
     // The session's title goes with every answer, so a panel named since the
     // session started gives the session its name at the next prompt.
     let title = crate::brief::title(&desk, placed.pane.slot, &placed.pane.name);
-    let quiet =
-        || Json(json!({ "context": "", "title": title, "desk": desk.name })).into_response();
+    let quiet = || {
+        Json(json!({ "context": "", "title": title, "desk": desk.name, "state": state }))
+            .into_response()
+    };
     let now = crate::store::now();
     let since = match app.panes.told(&id, now) {
         Some(since) if since > 0 => since,
-        _ => return quiet(),
+        _ if answers.is_empty() => return quiet(),
+        _ => {
+            let context = crate::brief::answers_only(&answers);
+            return Json(
+                json!({ "context": context, "title": title, "desk": desk.name, "state": state }),
+            )
+            .into_response();
+        }
     };
+    let (threads, opened) = app
+        .store
+        .threads(|c, now| {
+            Ok((
+                crate::thread::moved_since(c, desk.id, &id, since)?,
+                crate::thread::take_opened(c, desk.id, &id, now)?,
+            ))
+        })
+        .unwrap_or_default();
     let mut notes = app.store.desk_notes(desk.id).unwrap_or_default();
     settle_stages(&app, &mut notes);
     let removed = app
@@ -588,8 +704,13 @@ pub(crate) async fn pane_changes(
         left_off: desk.left_off.as_ref(),
         since,
         now,
+        panes: &desk.panes,
+        answers: &answers,
+        threads: &threads,
+        opened: &opened,
     });
-    Json(json!({ "context": context, "title": title, "desk": desk.name })).into_response()
+    Json(json!({ "context": context, "title": title, "desk": desk.name, "state": state }))
+        .into_response()
 }
 
 #[derive(Deserialize, Default)]

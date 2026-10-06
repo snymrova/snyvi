@@ -4,17 +4,22 @@
 //! the host gate), `assets` (what the browser loads), `api_docs` (the library),
 //! `api_desk` (the page's side of a desk), `api_agent` (the agent's side), `ws`
 //! (the desk socket), `events` (SSE), `api_browse` (folders read from disk),
-//! `lifecycle` (restart, update, reset). This file holds what they share: the
-//! `App`, the router, `run`, and the one way a document is told to every page.
+//! `lifecycle` (restart, update, reset), `api_peer` (a friend's snyvi) and
+//! `peer_link` (the socket that waits at the relay for a friend's frame).
+//! This file holds what they share: the `App`, the router, `run`, and the
+//! one way a document is told to every page.
 
 mod api_agent;
 mod api_browse;
 mod api_desk;
 mod api_docs;
+mod api_peer;
+mod api_thread;
 mod assets;
 mod auth;
 mod events;
 mod lifecycle;
+mod peer_link;
 #[cfg(test)]
 mod tests;
 mod ws;
@@ -23,11 +28,14 @@ use api_agent::*;
 use api_browse::*;
 use api_desk::*;
 use api_docs::*;
+use api_peer::*;
+use api_thread::*;
 use assets::*;
 use auth::*;
 use events::*;
 use lifecycle::*;
 pub use lifecycle::{relaunch, Leaving};
+use peer_link::*;
 use ws::*;
 
 use crate::browse::Browser;
@@ -168,6 +176,9 @@ pub struct App {
     /// The account's rate-limit windows, as the last status line in a panel
     /// said them: account-wide, so the latest is the one. Home's quota.
     pub quota: std::sync::Mutex<Option<serde_json::Value>>,
+    /// Friends: the daemon's own keys once read, the pairings under way, and
+    /// the link's wake-up. See `api_peer`, `peer_link` and `crate::peer`.
+    pub peers: api_peer::Peers,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -315,7 +326,30 @@ fn new_app(
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
         quota: Default::default(),
+        peers: Default::default(),
     })
+}
+
+/// A friend's snyvi, `/api/peers/*` and Send to… (`api_peer`, docs/PEER.md):
+/// pairing, the friends, their lines, an agent's offers. Their own function
+/// for the same reason as `pane_routes`; the route table counts these too.
+fn peer_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/peers", get(peers_list))
+        .route("/api/peers/pair", post(pair_start))
+        .route("/api/peers/join", post(pair_join))
+        .route("/api/peers/pair/{code}", get(pair_state))
+        .route("/api/peers/{id}/rename", post(peer_rename))
+        .route("/api/peers/{id}/mute", post(peer_mute))
+        .route("/api/peers/{id}/remove", post(peer_remove))
+        .route("/api/peers/{id}/restore", post(peer_restore))
+        .route("/api/peers/{id}/note", post(peer_note))
+        .route("/api/peers/notes/{id}", post(peer_note_settle))
+        .route("/api/peers/offers/{id}", post(offer_answer))
+        .route("/api/docs/{id}/send", post(doc_send))
+        .route("/api/peers/{id}/desk", post(peer_desk))
+        .route("/api/docs/{id}/keep", post(doc_keep))
+        .route("/api/docs/{id}/save", post(doc_save))
 }
 
 /// A panel's routes, `/api/panes/{id}/*`: the page's (close, restore,
@@ -339,9 +373,39 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/keys/{name}", get(pane_key))
         .route("/api/panes/{id}/leftoff", post(pane_left_off))
         .route("/api/panes/{id}/suggest", post(pane_suggest_note))
+        .route("/api/panes/{id}/offer", post(pane_offer))
         .route(
             "/api/panes/{id}/paste",
             post(paste_image).layer(axum::extract::DefaultBodyLimit::max(receive::MAX_BYTES)),
+        )
+}
+
+/// Threads, Your turn and suggested panels (`api_thread`): the agent's and
+/// the mod's on the panel, behind the token, and the page's on the desk.
+fn thread_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/panes/{id}/thread", post(pane_start_thread))
+        .route("/api/panes/{id}/thread/move", post(pane_move_thread))
+        .route("/api/panes/{id}/ask", post(pane_ask))
+        .route("/api/panes/{id}/handover", post(pane_hand_over))
+        .route("/api/panes/{id}/suggest-panel", post(pane_suggest_panel))
+        .route("/api/panes/{id}/suggest-desk", post(pane_suggest_desk))
+        .route("/api/panes/{id}/seen", post(pane_seen))
+        .route("/api/panes/{id}/band", get(pane_band))
+        .route(
+            "/api/panes/{id}/turns/{turn}",
+            get(pane_wait_turn).post(pane_answer_turn),
+        )
+        .route("/api/panes/{id}/note", post(pane_note))
+        .route("/api/claude-mod", get(mod_setting).post(set_mod_setting))
+        .route("/api/desks/{id}/threads", get(desk_threads))
+        .route("/api/desks/{id}/threads/{row}/move", post(desk_move_thread))
+        .route("/api/desks/{id}/threads/{row}/{act}", post(desk_thread_act))
+        .route("/api/desks/{id}/turns/{row}/answer", post(desk_answer_turn))
+        .route("/api/desks/{id}/turns/{row}/{act}", post(desk_turn_act))
+        .route(
+            "/api/desks/{id}/suggestions/{row}/{act}",
+            post(desk_suggestion_act),
         )
 }
 
@@ -351,6 +415,15 @@ fn pane_routes() -> Router<Arc<App>> {
 /// The test `every_route_answers_to_its_gate_and_to_this_host_only` sends a
 /// request to each of these; a route added here and not there fails it on
 /// the count, which is the point.
+/// The receive endpoint, taking up to what `receive` takes with room for
+/// the fields around the content: a send over axum's 2 MB default reaches
+/// it, and one over the cap is refused with its real size, not a bare 413.
+fn receive_route() -> axum::routing::MethodRouter<Arc<App>> {
+    post(receive_doc).layer(axum::extract::DefaultBodyLimit::max(
+        receive::MAX_BYTES + 64 * 1024,
+    ))
+}
+
 fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/", get(shell_home))
@@ -375,7 +448,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/workflows/{id}/tree", get(workflow_tree))
         .route("/api/inbox", get(inbox))
         .route("/api/search", get(search))
-        .route("/api/docs", post(receive_doc))
+        .route("/api/docs", receive_route())
         .route("/api/docs/{id}", get(doc_json))
         .route("/api/docs/{id}/pin", post(pin))
         .route("/api/docs/{id}/read", post(mark_read))
@@ -458,7 +531,12 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
+        .route("/api/asides", get(asides_setting).post(set_asides_setting))
+        // Friends (`api_peer`): the reader's actions from this page or with
+        // the token, the reads open like the project list is.
         .merge(pane_routes())
+        .merge(thread_routes())
+        .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
         .fallback(not_found)
@@ -565,6 +643,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
+    crate::claude_mod::start(&paths);
     let router = router(app);
 
     let addr = format!("127.0.0.1:{}", config::port());
@@ -592,6 +671,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // and the watcher would apply it again.
     spawn_restart_watcher(leaving.clone());
     spawn_update_checker(leaving.clone());
+    // The link to the relay, for as long as there is a friend: what they
+    // send arrives as it lands, page open or not.
+    spawn_peer_link(leaving.clone());
     // An install from an older snyvi gets the hooks that tell a panel what
     // Claude is doing, without the reader running `init-claude` again. Only
     // where our hook already is and names this binary, and only once this
@@ -636,13 +718,29 @@ pub(crate) fn emit(app: &App, name: &str, data: serde_json::Value) {
 
 /// The `doc` event every arrival ends in, shaped one way for the three
 /// routes a document comes in by.
-fn emit_doc(app: &App, received: &receive::Received) {
+///
+/// It carries the one project that moved, as the tree lists it (`project`)
+/// and as expanding it would (`rows`, the default caps), so a page patches
+/// that project and redraws once rather than fetching the whole tree and the
+/// project's rows back on every save of a file an agent is editing.
+///
+/// Built where the receive ran, off the executor: the project's row and its
+/// rows are store reads, and every save pays them. Left out when no page is
+/// open to patch its sidebar with them -- a page that misses them refetches.
+pub(crate) fn doc_event(app: &App, received: &receive::Received) -> serde_json::Value {
     let doc = &received.doc;
-    emit(
-        app,
-        "doc",
-        json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) }),
-    );
+    let mut ev = json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) });
+    if app.pages.load(Ordering::Relaxed) > 0 {
+        ev["project"] = json!(app.store.project_row(doc.project_id).ok().flatten());
+        ev["rows"] = json!(project_rows(
+            app,
+            doc.project_id,
+            TREE_WORKFLOWS,
+            TREE_DOCS,
+            None
+        ));
+    }
+    ev
 }
 
 /// A document in, the plain way: rendered and stored off the executor, then
@@ -656,12 +754,12 @@ async fn receive_and_emit(
 ) -> Result<receive::Received, Box<Response>> {
     let app2 = app.clone();
     match tokio::task::spawn_blocking(move || {
-        receive::receive(&app2.store, &app2.renderer, payload)
+        receive::receive(&app2.store, &app2.renderer, payload).map(|r| (doc_event(&app2, &r), r))
     })
     .await
     {
-        Ok(Ok(received)) => {
-            emit_doc(app, &received);
+        Ok(Ok((event, received))) => {
+            emit(app, "doc", event);
             Ok(received)
         }
         Ok(Err(e)) => Err(Box::new(

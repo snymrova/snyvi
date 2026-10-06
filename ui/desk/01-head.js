@@ -55,6 +55,12 @@ const noReach = w => `<p class="no-reach" role="alert">Could not reach snyvi<but
  *  notes under them stay in reach. */
 const DOCS_SHOWN = 6;
 let docsAll = false;
+/** Past this many, a field at the head of the list finds one by its title,
+ *  every match and not only six. What is typed, where the caret was and
+ *  whether the field had the focus are kept here, so the rail's redraws --
+ *  the clock, a new document -- put them all back. */
+const DOCS_FIND = 12;
+let docsFind = "", findCaret = 0, findOn = false;
 /** The ones the reader removed from this desk's list (the daemon's
  *  `removed`), whether "N removed · Show" is open, and the row just removed
  *  -- { at: desk id, x, i } -- which keeps its place, with its Undo, for

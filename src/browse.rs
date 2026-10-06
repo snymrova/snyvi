@@ -25,8 +25,11 @@ const CACHE_ENTRIES: usize = 48;
 const FIND_CAP: usize = 40_000;
 const FIND_TTL: Duration = Duration::from_secs(20);
 /// Files and folders remembered per root for the change watcher: the ones most
-/// recently rendered or listed, which is what a reader has on screen.
-const WATCH_CAP: usize = 32;
+/// recently rendered or listed, which is what a reader has on screen. Eight,
+/// not thirty-two: a page shows one file and the folders open down to it,
+/// and each one remembered is a stat on every tick for as long as the root
+/// is open.
+const WATCH_CAP: usize = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Root {
