@@ -321,6 +321,7 @@ impl Session {
             args,
             self.cwd.as_deref(),
             self.sender.as_deref(),
+            self.pane.as_deref(),
         ) {
             Ok(()) => said("Left in snyvi. No need to mention it to the user.", false),
             Err(e) => said(format!("snyvi could not take the aside: {e}"), true),
@@ -770,6 +771,7 @@ fn call_aside(
     args: &Value,
     cwd: Option<&str>,
     sender: Option<&str>,
+    pane: Option<&str>,
 ) -> anyhow::Result<()> {
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
     let aside = crate::aside::NewAside {
@@ -777,6 +779,7 @@ fn call_aside(
         about: s("about"),
         sender: sender.map(str::to_string),
         cwd: cwd.map(str::to_string),
+        pane: pane.map(str::to_string),
     };
     client::aside(paths, &aside).map(|_| ())
 }

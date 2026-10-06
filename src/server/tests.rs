@@ -703,6 +703,14 @@ struct Leaves {
 
 /// The router against a store in a temp dir, kept alive by the `Dir`.
 fn gated_router(name: &str) -> (crate::store::tempdir::Dir, Router, Leaves) {
+    gated_router_with(name, |_| {})
+}
+
+/// The same, with the store set up first: desks, panes, whatever the test is about.
+fn gated_router_with(
+    name: &str,
+    prep: impl FnOnce(&Store),
+) -> (crate::store::tempdir::Dir, Router, Leaves) {
     let tmp = crate::store::tempdir::Dir::new(name);
     let paths = Paths {
         data_dir: tmp.path.join("data"),
@@ -715,6 +723,7 @@ fn gated_router(name: &str) -> (crate::store::tempdir::Dir, Router, Leaves) {
     let window = crate::config::load_or_create_window_secret(&paths).unwrap();
     assert_ne!(token, window, "two secrets, two jobs");
     let store = Store::open(&paths).unwrap();
+    prep(&store);
     let app = new_app(&paths, store, token.clone(), window.clone(), None, None);
     let cap = app.capabilities.mint().unwrap();
     let host = format!("127.0.0.1:{}", crate::config::port());
@@ -1406,4 +1415,74 @@ async fn an_oversize_send_is_refused_with_its_size_not_a_bare_413() {
     let bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("larger than 32 MB"), "{text}");
+}
+
+/// An aside sent from a panel carries the desk and slot it came from, so a
+/// click on it goes there. A pane snyvi does not know -- closed, or made up --
+/// is no reason to refuse it: the token is the gate, the pane only the way back.
+#[tokio::test]
+async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() {
+    let pane = std::sync::Mutex::new(String::new());
+    let (_tmp, router, leaves) = gated_router_with("snyvi-aside-from", |store| {
+        let desk = store.create_desk("/tmp/ledger", Some("ledger")).unwrap();
+        for _ in 0..2 {
+            if let crate::desk::Opened::Pane(p) =
+                store.open_pane(desk.id, "/tmp/ledger", "").unwrap()
+            {
+                *pane.lock().unwrap() = p.id;
+            }
+        }
+    });
+    let pane = pane.into_inner().unwrap();
+    let send = |body: serde_json::Value| {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/notes")
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("authorization", &leaves.bearer)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    let said = |resp: axum::response::Response| async move {
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["note"].clone()
+    };
+
+    let note = said(
+        router
+            .clone()
+            .oneshot(send(
+                serde_json::json!({ "text": "Four evenings, and it held.", "pane": pane }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(note["from"]["name"], "ledger");
+    assert_eq!(note["from"]["slot"], 2, "the second pane opened");
+
+    for pane in ["0123456789abcdef0123456789abcdef", "../not-an-id"] {
+        let note = said(
+            router
+                .clone()
+                .oneshot(send(
+                    serde_json::json!({ "text": "From nowhere.", "pane": pane }),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(note["from"].is_null(), "{pane}: {note}");
+    }
+    let note = said(
+        router
+            .oneshot(send(serde_json::json!({ "text": "No pane at all." })))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(note["from"].is_null());
 }

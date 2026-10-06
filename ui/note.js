@@ -24,7 +24,7 @@ const CSS = `
   background: transparent; border: 1px solid transparent; transition: background .6s ease, border-color .6s ease, box-shadow .6s ease, padding .3s ease; }
 .note-now { overflow: hidden; isolation: isolate; }
 .note-now > p, .note-now > .note-by { position: relative; z-index: 1; }
-.note-now:is([data-about], [data-href]) { cursor: pointer; }
+.note-now:is([data-about], [data-href], [data-desk]) { cursor: pointer; }
 /* snyvi peeking from behind the note on hover, and for a moment when a new one arrives: large, tilted, faint, with a
    feeling. It rises from the corner rather than fading in on the spot. */
 .note-bg { position: absolute; right: -12px; bottom: -22px; width: 72px; height: 72px; z-index: 0; pointer-events: none;
@@ -119,7 +119,9 @@ const OWN = mod => ({
   "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
 });
 
-export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo, peek }) {
+/** `showDesk` comes only in the desktop window: a browser tab runs no desks,
+ *  so there an aside from a panel leads nowhere and says nothing about one. */
+export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo, peek }) {
   const own = OWN(keyHint("mod+k"));
   const sheet = document.createElement("style");
   sheet.id = "note-drawn";
@@ -161,10 +163,15 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
    *  page's (`mascotPeek`): the one head, at the size that keeps its shine
    *  and cheeks, so this chunk draws no face of its own. */
   const noteBg = id => `<span class="note-bg">${peek(String(id).startsWith("snyvi:") ? "glad" : "rest")}</span>`;
-  /** The byline says whose work it came through: "via claude-code on api". */
+  /** The byline says whose work it came through: "via claude-code on api",
+   *  or with the panel it was said in, "on api [2]", as a document's From does. */
   function noteBy(n) {
-    return [n.sender && `via ${esc(n.sender)}`, n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
+    return [n.sender && `via ${esc(n.sender)}`, n.from ? `on ${esc(n.from.name)} [${+n.from.slot}]` : n.project && `on ${esc(n.project)}`].filter(Boolean).join(" ");
   }
+  /** Where a click on an aside leads: the document it is about, the part of
+   *  /start one of snyvi's own lines points into, or the panel that said it,
+   *  where a reply is typed. */
+  const goTo = n => n.about ? ` data-about="${esc(n.about)}"` : n.href ? ` data-href="${esc(n.href)}"` : n.from && showDesk ? ` data-desk="${+n.from.id}" data-slot="${+n.from.slot}"` : "";
   let noteHtml = "";
   function renderNote() {
     // snyvi's own lines come in by name; their words are filled in here.
@@ -207,9 +214,9 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     noteShown = n.id;
     const by = noteBy(n);
     const html =
-      (trail.length ? `<ol class="note-trail">${trail.map(t => { const go = t.about ? ` data-about="${esc(t.about)}"` : t.href ? ` data-href="${esc(t.href)}"` : ""; return `<li>${go ? `<button type="button" class="note-go"${go}>` : ""}<span class="note-t">${esc(t.text)}</span><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span>${go ? "</button>" : ""}</li>`; }).join("")}` +
+      (trail.length ? `<ol class="note-trail">${trail.map(t => { const to = goTo(t); return `<li>${to ? `<button type="button" class="note-go"${to}>` : ""}<span class="note-t">${esc(t.text)}</span><span class="note-by"><b class="note-snyvi">snyvi</b> · ${relShort(t.at)}${by === noteBy(t) ? "" : " · " + noteBy(t)}</span>${to ? "</button>" : ""}</li>`; }).join("")}` +
         `<li class="note-all"><button type="button" data-note-all data-tip="Close every aside" data-tip-sub="Undo brings them back">Close all</button></li></ol>` : "") +
-      `<div class="note-now" tabindex="0" role="note"${n.about ? ` data-about="${esc(n.about)}" data-tip="Open its document"` : n.href ? ` data-href="${esc(n.href)}" data-tip="Read more"` : ""}>` +
+      `<div class="note-now" tabindex="0" role="note"${goTo(n)}${n.about ? ` data-tip="Open its document"` : n.href ? ` data-tip="Read more"` : n.from && showDesk ? ` data-tip="Go to its panel"` : ""}>` +
       noteBg(n.id) + `<button type="button" class="note-x" data-note-x data-tip="Close aside" data-key="esc" aria-label="Close this aside"><svg class="g-ico" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button><p>${esc(n.text)}</p><span class="note-by note-by-now"><span class="note-who"${by ? ` data-tip="${by}" data-tip-overflow data-tip-cut` : ""}><b class="note-snyvi">snyvi</b> · ${relShort(n.at)}${by ? " · " + by : ""}</span>${trail.length ? `<span class="note-more">+${trail.length}</span>` : ""}</span></div>`;
     // The daemon's word that the card was seen redraws nothing: only its
     // marks changed. When the words did change under a focused card, the
@@ -256,10 +263,15 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     if (e.target.closest("[data-note-x]")) { closeNotes(liveNotes().slice(0, 1).map(n => n.id), !e.detail); return; }
     if (e.target.closest("[data-note-all]")) { closeNotes(liveNotes().map(n => n.id), !e.detail); return; }
     seeNotes();
-    const a = e.target.closest("[data-about]"), h = e.target.closest("[data-href]");
-    if (a) showDoc(a.dataset.about, true);
-    else if (h) showStart(true, h.dataset.href.slice(h.dataset.href.indexOf("#")));
+    go(e.target.closest("[data-about], [data-href], [data-desk]"));
   });
+  function go(el) {
+    if (!el) return;
+    const d = el.dataset;
+    if (d.about) showDoc(d.about, true);
+    else if (d.href) showStart(true, d.href.slice(d.href.indexOf("#")));
+    else if (d.desk) showDesk(+d.desk, true, +d.slot || 0);
+  }
   noteEl.addEventListener("keydown", e => {
     // Esc closes the aside the hand is on, and goes no further: not back a
     // page, which is what it does with nothing over the page.
@@ -269,8 +281,8 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
       return;
     }
     if (e.target.closest("button")) return;
-    const a = e.target.closest(".note-now[data-about], .note-now[data-href]");
-    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); a.dataset.about ? showDoc(a.dataset.about, true) : showStart(true, a.dataset.href.slice(a.dataset.href.indexOf("#"))); }
+    const a = e.target.closest(".note-now:is([data-about], [data-href], [data-desk])");
+    if (a && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); go(a); }
   });
   /** Close asides: off the card at once, in every page once the daemon has
    *  it, and the card holds the way back for UNDO_MS. Nothing is deleted. */

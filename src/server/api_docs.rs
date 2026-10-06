@@ -607,7 +607,9 @@ pub(crate) async fn receive_aside(
         )
             .into_response();
     }
-    match app.asides.add(n, crate::store::now()) {
+    // Where it came from, for the click; the token above is the only gate.
+    let from = crate::receive::pane_origin(&app.store, n.pane.as_deref());
+    match app.asides.add(n, from, crate::store::now()) {
         Ok(aside) => {
             emit(&app, "notes", json!({ "notes": app.asides.list() }));
             (

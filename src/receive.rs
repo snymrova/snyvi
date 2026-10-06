@@ -291,21 +291,24 @@ fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
 }
 
-pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
-    let b = read(store, &p)?;
-    let origin = p.origin.as_deref().unwrap_or("cli");
-    // Attribution only. Which workflow a document joins is still the
-    // session's, as it always was; the pane says where it was sent from.
-    let from = p
-        .pane
-        .as_deref()
-        .filter(|id| crate::pane::valid_id(id))
+/// The desk and slot a sender's pane is on, when it names one snyvi knows. A
+/// pane it does not know is no reason to refuse what was sent.
+pub fn pane_origin(store: &Store, pane: Option<&str>) -> Option<crate::desk::Origin> {
+    pane.filter(|id| crate::pane::valid_id(id))
         .and_then(|id| store.pane(id).ok().flatten())
         .map(|placed| crate::desk::Origin {
             id: placed.desk_id,
             name: placed.desk_name,
             slot: placed.pane.slot,
-        });
+        })
+}
+
+pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
+    let b = read(store, &p)?;
+    let origin = p.origin.as_deref().unwrap_or("cli");
+    // Attribution only. Which workflow a document joins is still the
+    // session's, as it always was; the pane says where it was sent from.
+    let from = pane_origin(store, p.pane.as_deref());
 
     let (root, proj_name, branch) = place(&p, &b);
 

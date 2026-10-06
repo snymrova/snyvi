@@ -2020,6 +2020,7 @@ async function deskRows(cdp, base, token) {
   const [da, db] = [a.desk ? a.desk.id : a.id, b.desk ? b.desk.id : b.id];
   const pane = (await post(`/api/desks/${da}/panes`)).pane.id;
   await post(`/api/panes/${pane}/start`, { cmd: `while :; do printf "\\033]0;work %s\\007" $RANDOM; sleep 0.1; done` });
+  let second = null;
 
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -2054,7 +2055,23 @@ async function deskRows(cdp, base, token) {
     const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
+
+    // An aside sent from a panel is a way back to it. From the other
+    // desk, a click on the card opens this one with that panel focused.
+    second = (await post(`/api/desks/${da}/panes`)).pane.id;
+    await p.clickOn(`a[data-desk="${db}"]`);
+    await until(`location.pathname === "/desk/${db}"`);
+    const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: "Four evenings on that one, and it held.", sender: "bench-agent", pane: second }) });
+    const from = r.ok && (await r.json()).note.from;
+    const led = await until(`!!document.querySelector('#note .note-now[data-desk="${da}"][data-slot="2"]')`);
+    if (led) await p.clickOn("#note .note-now p");
+    const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
+    rows.push(["an aside from a panel goes back to that panel", !!there,
+      !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
+    await p.pointerAway();
   } finally {
+    if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});

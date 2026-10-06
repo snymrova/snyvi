@@ -1203,7 +1203,10 @@ it. A new one lights up and snyvi's own mark beside it hops once; rest
 on the aside and it is read, and the mark settles. Only one aside lights
 up every ten minutes: an agent that leaves one per edit costs you a
 single glance, and the rest join the trail quietly. An aside may name a
-document it is about, and then clicking it opens that document.
+document it is about, and then clicking it opens that document. One an
+agent left from a desk's panel, about no document, says which in its
+byline -- "via claude-code on ledger [2]" -- and clicking it opens that
+desk with the panel focused, which is where you answer it, if you do.
 
 An aside can be closed: the ✕ in its corner, or Esc while it has the
 focus. Its card stays where it was as one line, "Aside closed", with an
@@ -1217,7 +1220,8 @@ aside is closed in every window, and the daemon only marks it closed,
 which is why the Undo is real.
 
 It is a channel from the agent to you and nothing comes back: an aside is
-not an instruction to anything.
+not an instruction to anything. A reply is a line you type in the panel,
+like any other.
 
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.

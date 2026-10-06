@@ -67,7 +67,7 @@
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
     if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
-      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, toast, keyHint, closeSay, undoClock,
+      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk: capability && showDesk, toast, keyHint, closeSay, undoClock,
         holdUndo: offer, dropUndo: unoffer, peek: mascotPeek });
       noteMod.render();
     }, () => { noteLoading = null; });
