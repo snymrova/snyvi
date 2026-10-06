@@ -345,6 +345,9 @@ fn peer_routes() -> Router<Arc<App>> {
         .route("/api/peers/notes/{id}", post(peer_note_settle))
         .route("/api/peers/offers/{id}", post(offer_answer))
         .route("/api/docs/{id}/send", post(doc_send))
+        .route("/api/peers/{id}/desk", post(peer_desk))
+        .route("/api/docs/{id}/keep", post(doc_keep))
+        .route("/api/docs/{id}/save", post(doc_save))
 }
 
 /// A panel's routes, `/api/panes/{id}/*`: the page's (close, restore,

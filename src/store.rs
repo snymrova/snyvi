@@ -1199,6 +1199,68 @@ impl Store {
     /// The key stays as it was, so the session that owns it still lands here.
     /// A project's derived name follows what it is named for -- a friend's
     /// project follows the friend -- unless the reader named it themselves.
+    /// Move a document, and every version of its file, into another project
+    /// and onto a desk's list: a friend's document kept on a desk. The
+    /// workflow goes with it by key, made in the new project if it is not
+    /// there; who sent it, when, and its bytes stay as they were. `None`
+    /// when there is no such document.
+    pub fn move_lineage(
+        &self,
+        id: &str,
+        root: &str,
+        name: &str,
+        desk: &Origin,
+    ) -> Result<Option<Doc>> {
+        let now = now();
+        {
+            let mut conn = self.conn.lock().unwrap();
+            let tx = conn.transaction()?;
+            let Some((from, path, wf_key, wf_title)): Option<(i64, Option<String>, String, String)> = tx
+                .query_row(
+                    "SELECT d.project_id, d.source_path, w.key, w.title FROM live_docs d
+                     JOIN workflows w ON w.id = d.workflow_id WHERE d.id = ?1",
+                    params![id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            tx.execute(
+                "INSERT INTO projects(root, name, created_at) VALUES(?1, ?2, ?3)
+                 ON CONFLICT(root) DO NOTHING",
+                params![root, name, now],
+            )?;
+            let to: i64 = tx.query_row(
+                "SELECT id FROM projects WHERE root = ?1",
+                params![root],
+                |r| r.get(0),
+            )?;
+            tx.execute(
+                "INSERT INTO workflows(project_id, key, title, created_at) VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id, key) DO NOTHING",
+                params![to, wf_key, wf_title, now],
+            )?;
+            let wf: i64 = tx.query_row(
+                "SELECT id FROM workflows WHERE project_id = ?1 AND key = ?2",
+                params![to, wf_key],
+                |r| r.get(0),
+            )?;
+            // The deleted versions too: an Undo of one brings it back where
+            // its lineage now is.
+            tx.execute(
+                "UPDATE docs SET project_id = ?2, workflow_id = ?3, desk_id = ?4, desk_name = ?5, desk_slot = ?6, desk_off = 0
+                 WHERE id = ?1 OR (?7 IS NOT NULL AND project_id = ?8 AND source_path = ?7)",
+                params![id, to, wf, desk.id, desk.name, desk.slot, path, from],
+            )?;
+            if let Some(sp) = &path {
+                rehead(&tx, to, sp)?;
+            }
+            tx.commit()?;
+        }
+        self.get(id)
+    }
+
     pub fn rename_project_by_root(&self, root: &str, name: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
@@ -1658,6 +1720,11 @@ impl Store {
 
     pub fn rename_peer(&self, id: i64, name: &str) -> Result<bool> {
         peer::rename(&self.conn.lock().unwrap(), id, name)
+    }
+
+    /// Where a friend's things land (`peer::set_desk`).
+    pub fn set_peer_desk(&self, id: i64, desk_id: i64) -> Result<bool> {
+        peer::set_desk(&self.conn.lock().unwrap(), id, desk_id)
     }
 
     pub fn mute_peer(&self, id: i64, muted: bool) -> Result<bool> {

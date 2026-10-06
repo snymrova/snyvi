@@ -1087,7 +1087,12 @@ was read, and the fullest context window; a window past its reset is shown
 full again. When an update is ready, its card heads the column.
 
 **Friends** shows once you have paired with someone: a line each, with
-**Note…** for a line on their Home and **⋯** for Mute and Remove. **Keys**
+where their things land (**→ own row**, or a desk you pick: their
+documents go to its project and their lines become its suggestions),
+**Note…** for a line on their Home and **⋯** for Mute and Remove. A
+friend's document says *Keep on a desk…* in its head; once it is on one,
+*Save into the folder* writes it into that desk's folder under
+`from-<their name>/`, next to nothing it would overwrite. **Keys**
 is folded until you open it, and stays as you left it.
 
 The foot says which snyvi this is, with *Check for updates* and *Pair with

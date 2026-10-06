@@ -106,6 +106,40 @@ writes `#93 water the beans (from Trapti)`. Ticking it sends nothing back.
 Arrived cannot be hidden, so a line is never out of sight. Nothing received
 is typed into a desk or run; a frame is content.
 
+## Keeping what arrives
+
+```mermaid
+flowchart TD
+  D[a friend's document] --> Q{a desk for this friend?}
+  Q -- "yes, open and not parked" --> K[that desk's project and list, still from them]
+  Q -- no --> F[From Trapti in the sidebar]
+  F -- "Keep on a desk…" --> K
+  K -- "Save into the folder" --> S["desk folder / from-trapti / name, never over a file"]
+  L[a friend's line] --> Q2{a desk for this friend?}
+  Q2 -- "yes, and room for a suggestion" --> G[a suggestion on that desk, from Trapti]
+  Q2 -- no --> A[Home · Arrived]
+  A -- "Keep on…" --> N[a line on the desk picked, from Trapti]
+  G -- Keep --> N
+```
+
+A friend may be given a desk, on their line in Home's Friends (`→ Garden`;
+`peers.desk_id`, 0 for their own row). From then on their documents land
+in that desk's project and on its list, and their lines arrive as
+suggestions on it (three may wait, as an agent's; past that, Arrived). A
+desk that is closed or parked when something comes counts as none, so
+nothing lands out of sight. Changing it moves nothing already here.
+
+**Keep on a desk…**, in a friend's document's head and menu, moves it and
+every version of it into a desk's project (`POST /api/docs/{id}/keep`);
+**Keep all on a desk…** on their sidebar row does every one. Still *from
+Trapti · verified*, now *on Garden*. Nothing is written to disk.
+
+**Save into the folder** is the one step that writes a friend's bytes to
+disk (`POST /api/docs/{id}/save`): into the desk's folder as
+`from-trapti/<their file name>`, or the title as a name, and never over a
+file -- a second save is `-2`. From there the desk's agents and git see it.
+Both are the window's, behind the desk's capability.
+
 ## What an agent gets
 
 One tool, `offer_document(to, id)`, listed only to a reader with a friend

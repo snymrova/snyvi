@@ -258,7 +258,7 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-arr-all a { color: var(--fg-2); text-decoration: none; }
 .hm-arr-all a:hover { color: var(--fg); text-decoration: underline; }
 /* A friend, one line: their name, then Note… and ⋯ (Mute, Remove). */
-.hm-friend { gap: 10px; }
+.hm-friend { position: relative; gap: 10px; }
 .hm-friend > .hm-kn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Keys, folded like the week. */
 .hm-keys > summary { list-style: none; cursor: pointer; }
@@ -304,7 +304,7 @@ let weekSaid = null;
  *  desks; the friend just removed, who keeps a row with an Undo for a
  *  moment; the friend whose ⋯ is open (Mute, Remove); and the friend's line
  *  whose Keep on… list is open. */
-let peers = null, justRemoved = 0, removedT = 0, friendMore = 0, keepOpen = 0;
+let peers = null, justRemoved = 0, removedT = 0, friendMore = 0, keepOpen = 0, deskOpen = 0;
 /** What an Arrived row's button did, said in the row for SAID_MS with its
  *  Undo, by row ("o12" an offer, "n5" a line): the item as it was, so the
  *  row keeps its place after the daemon has stopped listing it. */
@@ -937,7 +937,9 @@ function spark(pulse = []) {
 const friendsOf = () => (peers?.friends || []).filter(f => !f.removed_at);
 
 /** The friends, one line each: the name (when paired, when last heard from,
- *  in its tip), Note…, and ⋯, which opens Mute and Remove in the row. The
+ *  in its tip), where their things land (→ a desk, or their own row; the
+ *  window's, where the desks are), Note…, and ⋯, which opens Mute and
+ *  Remove in the row. The
  *  one just removed keeps its row with an Undo; the ones removed before are
  *  a Restore away. Lines and offers are Arrived's. */
 function friends(j) {
@@ -951,15 +953,19 @@ function friends(j) {
   return out;
 }
 
-function friendRow(f) {
-  const { esc } = c, more = friendMore === f.id;
+function friendRow(f, j) {
+  const { esc } = c, more = friendMore === f.id, ds = j?.desks || [];
+  const at = ds.find(d => d.id === f.desk_id);
+  const list = deskOpen === f.id ? `<div class="hm-keepl" role="menu" aria-label="Where ${esc(f.name)}'s things land">` +
+    [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
+  const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
   const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
-  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>` +
+  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${where}` +
     (more
       ? `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
         `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" data-tip="Remove ${esc(f.name)}" data-tip-sub="keys kept; Restore brings them back">Remove</button>`
       : `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>`) +
-    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Mute or remove"}">⋯</button></li>`;
+    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Mute or remove"}">⋯</button>${list}</li>`;
 }
 
 /* ---------- Arrived ---------- */
@@ -1172,7 +1178,7 @@ function wire() {
   el.dataset.wired = "1";
   el.addEventListener("click", async e => {
     // A click anywhere else closes a Keep on… list.
-    if (keepOpen && !e.target.closest(".hm-keepl, [data-hm=akeep]")) { keepOpen = 0; draw(last); }
+    if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
     const k = b.dataset.hm, id = +b.dataset.k || 0;
@@ -1247,7 +1253,7 @@ function wire() {
     if (menu && !e.relatedTarget?.closest?.(".hm-nb")) { menu = null; drawMenu(); }
   });
   el.addEventListener("keydown", e => {
-    if (e.key === "Escape" && keepOpen) { e.preventDefault(); e.stopPropagation(); const id = keepOpen; keepOpen = 0; draw(last); c.docEl.querySelector(`[data-hm=akeep][data-k="${id}"]`)?.focus({ preventScroll: true }); return; }
+    if (e.key === "Escape" && (keepOpen || deskOpen)) { e.preventDefault(); e.stopPropagation(); const back = keepOpen ? `[data-hm=akeep][data-k="${keepOpen}"]` : `[data-hm=fdesk][data-k="${deskOpen}"]`; keepOpen = deskOpen = 0; draw(last); c.docEl.querySelector(back)?.focus({ preventScroll: true }); return; }
     const f = e.target.dataset?.hm;
     if (f === "bar" || f === "find") {
       const xs = menu ? menuDesks(last) : [];
@@ -1281,6 +1287,16 @@ async function friendClick(k, id, b) {
   if (k === "pair") c.peerCtx.peer().then(m => m.pair(c.peerCtx), () => c.peerCtx.toast("Could not open the pairing sheet"));
   else if (k === "fnote") { const f = friendsOf().find(x => x.id === id); if (f) c.peerCtx.peer().then(m => m.note(c.peerCtx, id, f.name), () => {}); }
   else if (k === "fmore") { friendMore = friendMore === id ? 0 : id; draw(last); c.docEl.querySelector(`[data-hm=fmore][data-k="${id}"]`)?.focus({ preventScroll: true }); }
+  else if (k === "fdesk") { deskOpen = deskOpen === id ? 0 : id; draw(last); c.docEl.querySelector(deskOpen ? `[data-hm=fdeskto][data-k="${id}"][aria-checked=true]` : `[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true }); }
+  else if (k === "fdeskto") {
+    deskOpen = 0;
+    try { await c.deskApi(`/api/peers/${id}/desk`, { desk: +b.dataset.n }); }
+    catch (e) { c.peerCtx.toast("Could not change that", { sub: e.message }); draw(last); return; }
+    const f = friendsOf().find(x => x.id === id);
+    if (f) f.desk_id = +b.dataset.n;
+    draw(last); c.docEl.querySelector(`[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true });
+    soonRefresh();
+  }
   else if (k === "fmute") {
     const f = friendsOf().find(x => x.id === id);
     const r = await fetch(`/api/peers/${id}/mute`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ muted: !f?.muted }) }).catch(() => null);

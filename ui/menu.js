@@ -269,6 +269,17 @@ async function dropDesk(ctx, id) {
  *  state; it is asked only when it is already loaded, which it is whenever
  *  one of them is on the page. */
 const RULE = "rule";
+/** Every document under a friend's own row, onto one desk: the row's ids,
+ *  every session and every document, then peer.js's sheet. */
+async function keepAll(ctx, pid, name) {
+  let ids = [];
+  try {
+    const r = await fetch(`/api/projects/${pid}/tree?workflows=0&docs=0`);
+    ids = (await r.json()).flatMap(w => w.docs.map(d => d.id));
+  } catch { ctx.toast("Could not read the documents"); return; }
+  if (!ids.length) return;
+  ctx.peerCtx.peer().then(m => m.keepOn(ctx.peerCtx, ids, `everything from ${name.replace(/^From /, "")}`), () => ctx.toast("Could not open that"));
+}
 /** Is there a friend to send to? The page was told when it was served
  *  (`boot.friends`), and each menu asks again for the next one: a reader
  *  who never pairs is never offered Send to a friend…. */
@@ -309,7 +320,8 @@ function entries(ctx, el, byKey = false) {
     // A friend's own row is no folder: nothing to make a desk on, to copy or
     // to show in the file manager (docs/PEER.md).
     if (p.friend) return { head: p.name, items: [
-      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
+      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
+      capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
       { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
     ] };
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
@@ -331,6 +343,10 @@ function entries(ctx, el, byKey = false) {
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
       { label: "Open", moves: 1, run: () => ctx.open(id) },
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) },
+      // A friend's document: onto a desk, then into that desk's folder.
+      theirs && capability && ctx.peerCtx && (d?.desk
+        ? { label: "Save into the folder", run: () => ctx.peerCtx.peer().then(m => m.save(ctx.peerCtx, id), () => ctx.toast("Could not save it")) }
+        : { label: "Keep on a desk…", run: () => ctx.peerCtx.peer().then(m => m.keepOn(ctx.peerCtx, [id], d ? d.title : ""), () => ctx.toast("Could not open that")) }),
       // To a friend's snyvi (docs/PEER.md): offered once there is a friend.
       ctx.peerCtx && friends && { label: "Send to a friend…", run: () => ctx.peerCtx.peer().then(m => m.send(ctx.peerCtx, id, d ? d.title : ""), () => ctx.toast("Could not open Send to…")) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),

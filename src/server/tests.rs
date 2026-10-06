@@ -571,6 +571,23 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Reader,
         true,
     ),
+    // Where a friend's things land, and a friend's document kept on a desk
+    // and saved into its folder: the window's, as a desk is.
+    (
+        "POST",
+        "/api/peers/1/desk",
+        Some(r#"{"desk":0}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/docs/nope/keep",
+        Some(r#"{"desk":1}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/docs/nope/save", None, Gate::Desk, true),
     ("GET", "/api/brief", None, Gate::Desk, true),
     (
         "POST",
@@ -1671,4 +1688,134 @@ async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
         StatusCode::NOT_FOUND,
         "kept once"
     );
+}
+
+/// A friend's document: Save waits for a desk, Keep puts it on one, Save
+/// then writes `from-trapti/<name>` into the desk's folder and never over a
+/// file, and none of it is anyone's but the window's or a friend's document.
+#[tokio::test]
+async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
+    let garden = crate::store::tempdir::Dir::new("snyvi-keep-doc-desk");
+    let root = garden.path.to_string_lossy().into_owned();
+    let at = std::sync::Mutex::new((0, String::new(), String::new()));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-keep-doc", |store| {
+        let desk = store.create_desk(&root, Some("Garden")).unwrap();
+        let doc = |id: &str, origin: &str, path: &str| {
+            store
+                .insert(
+                    id,
+                    crate::store::NewDoc {
+                        project_root: "peer:KEY",
+                        project_name: "From Trapti",
+                        workflow_key: "sent",
+                        workflow_title: "Sent by Trapti",
+                        title: "Seed list",
+                        kind: crate::render::Kind::Markdown,
+                        lang: None,
+                        source_path: Some(path),
+                        branch: None,
+                        origin,
+                        sender: "Trapti",
+                        desk: None,
+                        source: b"# Seeds\n\nbeans",
+                        staged: None,
+                        search_body: "beans",
+                        html: "<p>beans</p>",
+                    },
+                )
+                .unwrap()
+                .id
+        };
+        let theirs = doc("abcdef0001", "peer", "seeds.md");
+        let mine = doc("abcdef0002", "cli", "mine.md");
+        *at.lock().unwrap() = (desk.id, theirs, mine);
+    });
+    let (desk, theirs, mine) = at.into_inner().unwrap();
+    let post = |uri: String, body: serde_json::Value, cap: bool| {
+        let mut req = axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header("content-type", "application/json");
+        if cap {
+            req = req.header(CAPABILITY_HEADER, &leaves.cap);
+        }
+        router
+            .clone()
+            .oneshot(req.body(Body::from(body.to_string())).unwrap())
+    };
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+    let save = |id: &str| post(format!("/api/docs/{id}/save"), serde_json::json!({}), true);
+    let keep = |id: &str, cap: bool| {
+        post(
+            format!("/api/docs/{id}/keep"),
+            serde_json::json!({ "desk": desk }),
+            cap,
+        )
+    };
+
+    let early = save(&theirs).await.unwrap();
+    assert_eq!(early.status(), StatusCode::CONFLICT, "not on a desk yet");
+    assert_eq!(
+        keep(&theirs, false).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        keep(&mine, true).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "only a friend's document moves this way"
+    );
+    let kept = keep(&theirs, true).await.unwrap();
+    assert_eq!(kept.status(), StatusCode::OK);
+    let kept = json(kept).await;
+    assert_eq!(kept["desk"], "Garden");
+    assert_eq!(kept["doc"]["desk"]["id"], desk);
+    assert_eq!(kept["doc"]["sender"], "Trapti", "still from them");
+
+    let first = json(save(&theirs).await.unwrap()).await;
+    assert_eq!(first["rel"], "from-trapti/seeds.md", "{first}");
+    let second = json(save(&theirs).await.unwrap()).await;
+    assert_eq!(second["rel"], "from-trapti/seeds-2.md", "never over a file");
+    assert_eq!(
+        std::fs::read(garden.path.join("from-trapti/seeds.md")).unwrap(),
+        b"# Seeds\n\nbeans"
+    );
+    assert!(garden.path.join("from-trapti/seeds-2.md").exists());
+}
+
+#[test]
+fn a_saved_friends_document_gets_a_plain_name() {
+    use super::api_peer::{file_name, slug};
+    assert_eq!(slug("Trapti"), "trapti");
+    assert_eq!(slug("  Ana María / B "), "ana-maría-b");
+    assert_eq!(slug("../.."), "friend");
+    let mut d = crate::store::Doc {
+        id: "x".into(),
+        project_id: 1,
+        project: "p".into(),
+        workflow_id: 1,
+        workflow: "sent".into(),
+        workflow_title: "Sent".into(),
+        title: "Garden plan!".into(),
+        kind: crate::render::Kind::Markdown,
+        lang: None,
+        size: 1,
+        received_at: 0,
+        source_path: Some("../../etc/plan.md".into()),
+        branch: None,
+        pinned: false,
+        origin: "peer".into(),
+        content_hash: String::new(),
+        desk: None,
+        sender: "Trapti".into(),
+    };
+    assert_eq!(file_name(&d), "plan.md", "a name and no path");
+    d.source_path = None;
+    assert_eq!(file_name(&d), "garden-plan.md");
+    d.source_path = Some(".bashrc".into());
+    assert_eq!(file_name(&d), "garden-plan.md", "never a dotfile");
 }

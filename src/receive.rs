@@ -51,6 +51,9 @@ pub struct FromPeer {
     /// The sender's file name, if the document was a file there: only its
     /// extension is used, to tell a picture from a page.
     pub file: Option<String>,
+    /// The desk the reader gave this friend, and its folder: the document
+    /// lands in that desk's project and on its list, not on their own row.
+    pub desk: Option<(crate::desk::Origin, String)>,
 }
 
 pub struct Received {
@@ -271,8 +274,11 @@ fn workflow(
 /// sender's cwd, else from the file's location. A friend's document goes to
 /// the friend's own project, whose root is no folder on this machine
 /// (`peer::Peer::project_root`), so the sidebar gains one row per friend and
-/// nothing else.
+/// nothing else -- or, when the reader gave them a desk, to that desk's.
 fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
+    if let Some((_, root)) = p.peer.as_ref().and_then(|fp| fp.desk.as_ref()) {
+        return desk_project(root);
+    }
     if let Some(fp) = &p.peer {
         return (
             format!("peer:{}", fp.sign_key),
@@ -287,6 +293,14 @@ fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
         .or_else(|| b.path.as_deref().map(PathBuf::from))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
     let proj = project::resolve(&anchor);
+    let branch = project::branch(&proj.root);
+    (proj.root.to_string_lossy().to_string(), proj.name, branch)
+}
+
+/// The project a desk's folder is, as `place` gives it: what a friend's
+/// document kept on that desk joins.
+pub fn desk_project(root: &str) -> (String, String, Option<String>) {
+    let proj = project::resolve(Path::new(root));
     let branch = project::branch(&proj.root);
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
 }
@@ -308,7 +322,11 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let origin = p.origin.as_deref().unwrap_or("cli");
     // Attribution only. Which workflow a document joins is still the
     // session's, as it always was; the pane says where it was sent from.
-    let from = pane_origin(store, p.pane.as_deref());
+    let from = pane_origin(store, p.pane.as_deref()).or_else(|| {
+        p.peer
+            .as_ref()
+            .and_then(|fp| fp.desk.as_ref().map(|(o, _)| o.clone()))
+    });
 
     let (root, proj_name, branch) = place(&p, &b);
 
@@ -669,6 +687,7 @@ mod tests {
             sign_key: "KEY".into(),
             bytes: b"# Garden\n\nbeans".to_vec(),
             file: Some("garden.md".into()),
+            desk: None,
         };
         let got = receive(
             &s,
@@ -741,6 +760,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pic.doc.kind, Kind::Image);
+    }
+
+    /// A friend the reader gave a desk: their document joins that desk's
+    /// project and its list, and still says who sent it.
+    #[test]
+    fn a_friends_document_lands_on_their_desk_when_they_have_one() {
+        let (s, r, _d) = setup();
+        let garden = Dir::new("snyvi-recv-garden");
+        std::fs::create_dir_all(garden.path.join(".git")).unwrap();
+        let at = crate::desk::Origin {
+            id: 3,
+            name: "Garden".into(),
+            slot: 0,
+        };
+        let got = receive(
+            &s,
+            &r,
+            Payload {
+                origin: Some("peer".into()),
+                sender: Some("Trapti".into()),
+                peer: Some(FromPeer {
+                    name: "Trapti".into(),
+                    sign_key: "KEY".into(),
+                    bytes: b"# Seeds\n\nbeans".to_vec(),
+                    file: Some("seeds.md".into()),
+                    desk: Some((at.clone(), garden.path.to_string_lossy().to_string())),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (root, _, _) = desk_project(&garden.path.to_string_lossy());
+        assert_eq!(s.project_root(got.doc.project_id).as_deref(), Some(root.as_str()));
+        assert_eq!(got.doc.desk, Some(at));
+        assert_eq!(got.doc.origin, "peer");
+        assert_eq!(got.doc.sender, "Trapti");
+        assert!(!s.projects().unwrap()[0].friend, "the desk's own row");
     }
 
     #[test]

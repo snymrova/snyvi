@@ -517,6 +517,7 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
         removed_at: 0,
         last_from: 0,
         last_to: 0,
+        desk_id: 0,
     };
     // The keys have to be keys, or nothing is pinned.
     let their_sign = peer.verifying_key()?;
@@ -718,6 +719,11 @@ pub struct Peer {
     pub removed_at: i64,
     pub last_from: i64,
     pub last_to: i64,
+    /// The desk their things land on: their documents in its project, their
+    /// lines as suggestions on its list. 0 is their own row, From Trapti,
+    /// and the lines on Home. A desk that is closed or parked when something
+    /// arrives counts as 0, so nothing lands out of sight.
+    pub desk_id: i64,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -825,7 +831,7 @@ pub const COLUMNS_1_19: [&str; 2] = [
 ];
 
 const PEER_COLS: &str =
-    "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to";
+    "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to, desk_id";
 
 fn row_peer(r: &rusqlite::Row) -> rusqlite::Result<Peer> {
     Ok(Peer {
@@ -838,6 +844,7 @@ fn row_peer(r: &rusqlite::Row) -> rusqlite::Result<Peer> {
         removed_at: r.get(6)?,
         last_from: r.get(7)?,
         last_to: r.get(8)?,
+        desk_id: r.get(9)?,
     })
 }
 
@@ -923,6 +930,15 @@ pub fn restore(conn: &Connection, id: i64) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE peers SET removed_at = 0 WHERE id = ?1 AND removed_at != 0",
         params![id],
+    )? > 0)
+}
+
+/// Where a friend's things land from now on: a desk, or 0 for their own
+/// row. What already arrived stays where it is.
+pub fn set_desk(conn: &Connection, id: i64, desk_id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE peers SET desk_id = ?2 WHERE id = ?1",
+        params![id, desk_id.max(0)],
     )? > 0)
 }
 
@@ -1238,6 +1254,7 @@ mod tests {
             removed_at: 0,
             last_from: 0,
             last_to: 0,
+            desk_id: 0,
         }
     }
 
@@ -1422,6 +1439,9 @@ mod tests {
             "a name is not nothing"
         );
         assert!(mute(&conn, t.id, true).unwrap());
+        assert!(set_desk(&conn, t.id, 4).unwrap());
+        assert_eq!(get(&conn, t.id).unwrap().unwrap().desk_id, 4);
+        assert!(set_desk(&conn, t.id, 0).unwrap());
         assert!(get(&conn, t.id).unwrap().unwrap().muted);
         assert!(remove(&conn, t.id, 200).unwrap());
         assert!(

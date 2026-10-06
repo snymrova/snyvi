@@ -1207,3 +1207,44 @@ fn a_late_highlight_does_not_write_over_a_newer_save() {
         .unwrap());
     assert_eq!(s.html(&a.id).unwrap(), "<p>highlighted second draft</p>");
 }
+
+/// A friend's document kept on a desk: every version of it moves into the
+/// desk's project and onto its list, the newest still the one row, and the
+/// project it left has nothing of it.
+#[test]
+fn a_lineage_moves_whole_onto_a_desk() {
+    let (s, _d) = temp_store();
+    let one = s
+        .insert(&new_id("1"), version_of("seeds.md", "Seeds", "one", "sent"))
+        .unwrap();
+    let two = s
+        .insert(&new_id("2"), version_of("seeds.md", "Seeds", "two", "sent"))
+        .unwrap();
+    let other = s
+        .insert(&new_id("o"), new_doc("Other", "other.md", "sent"))
+        .unwrap();
+    let garden = Origin {
+        id: 3,
+        name: "Garden".into(),
+        slot: 0,
+    };
+    let moved = s
+        .move_lineage(&one.id, "/w/garden", "garden", &garden)
+        .unwrap()
+        .unwrap();
+    assert_eq!(moved.project, "garden");
+    assert_eq!(moved.desk, Some(garden.clone()));
+    assert_eq!(moved.workflow, "sent", "the workflow goes with it");
+    let newer = s.get(&two.id).unwrap().unwrap();
+    assert_eq!(newer.project_id, moved.project_id, "every version");
+    assert_eq!(s.previous(&newer).unwrap().map(|p| p.id), Some(one.id.clone()));
+    assert_eq!(
+        s.get(&other.id).unwrap().unwrap().project_id,
+        one.project_id,
+        "another file stays"
+    );
+    let on_desk = s.desk_docs(3, 10, false).unwrap();
+    assert_eq!(on_desk.len(), 1, "one row on the desk's list");
+    assert_eq!(on_desk[0].id, two.id);
+    assert!(s.move_lineage("nope", "/w/garden", "garden", &garden).unwrap().is_none());
+}

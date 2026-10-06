@@ -802,10 +802,28 @@ pub(crate) fn bring_in(app: &Arc<App>, me: &Identity) -> anyhow::Result<usize> {
     Ok(n)
 }
 
+/// The desk a friend's things land on now: theirs, while it is open and not
+/// parked. A closed or parked one sends them back to their own row and to
+/// Home, so nothing lands where the reader is not looking.
+pub(crate) fn friend_desk(app: &App, p: &Peer) -> Option<crate::desk::Desk> {
+    if p.desk_id == 0 {
+        return None;
+    }
+    app.store
+        .desk(p.desk_id)
+        .ok()
+        .flatten()
+        .filter(|d| d.parked.is_none())
+}
+
 /// One opened frame, kept: a document through `receive`, a line to the
-/// waiting list. A muted friend's arrives read, so nothing lights up.
+/// waiting list -- or, for a friend the reader gave a desk, the document
+/// into that desk's project and the line onto its list as a suggestion
+/// (Home's Arrived when the desk already has as many as it holds). A muted
+/// friend's arrives read, so nothing lights up.
 fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow::Result<()> {
     let _ = app.store.touch_peer(p.id, true);
+    let desk = friend_desk(app, p);
     match content {
         Content::Document {
             title, lang, file, ..
@@ -820,6 +838,7 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
                     sign_key: p.sign_key.clone(),
                     bytes: body,
                     file,
+                    desk: desk.as_ref().map(|d| (on_desk(d), d.root.clone())),
                 }),
                 ..Default::default()
             };
@@ -831,11 +850,27 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
             ev["from"] = json!(p.name);
             ev["quiet"] = json!(p.muted);
             emit(app, "doc", ev);
+            if desk.is_some() {
+                emit(app, "deskdocs", json!({}));
+            }
             if !p.muted && !received.existing {
                 eprintln!("snyvi: {} sent \"{}\"", p.name, received.doc.title);
             }
         }
         Content::Note { text, .. } => {
+            if let Some(d) = &desk {
+                if let Ok(crate::desk::Suggested::Note(_)) =
+                    app.store.suggest_desk_note_from(d.id, &text, &p.name)
+                {
+                    emit(app, "desknotes", json!({ "desk": d.id }));
+                    emit(
+                        app,
+                        "peernotes",
+                        json!({ "from": p.name, "quiet": p.muted, "desk": d.name }),
+                    );
+                    return Ok(());
+                }
+            }
             app.store.peer_note_arrived(p.id, &text)?;
             emit(
                 app,
@@ -845,6 +880,227 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
         }
     }
     Ok(())
+}
+
+/// A desk as a document's origin: the desk, no panel.
+fn on_desk(d: &crate::desk::Desk) -> crate::desk::Origin {
+    crate::desk::Origin {
+        id: d.id,
+        name: d.name.clone(),
+        slot: 0,
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct DeskBody {
+    #[serde(default)]
+    pub(crate) desk: i64,
+}
+
+/// `POST /api/peers/{id}/desk`: where this friend's things land from now
+/// on -- a desk, or 0 for their own row. Nothing already here moves. The
+/// window's: it names a desk.
+pub(crate) async fn peer_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<DeskBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if b.desk != 0 && !matches!(app.store.desk(b.desk), Ok(Some(_))) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "no such desk" })),
+        )
+            .into_response();
+    }
+    match app.store.set_peer_desk(id, b.desk) {
+        Ok(true) => {
+            peers_moved(&app);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A friend's document, and the desk it is to go on or is on: the checks
+/// `doc_keep` and `doc_save` share. The error is the response.
+fn theirs(app: &App, id: &str) -> Result<crate::store::Doc, Box<Response>> {
+    match app.store.get(id) {
+        Ok(Some(doc)) if doc.origin == "peer" => Ok(doc),
+        Ok(Some(_)) => Err(Box::new(
+            (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "only a friend's document is kept this way" })),
+            )
+                .into_response(),
+        )),
+        Ok(None) => Err(Box::new(StatusCode::NOT_FOUND.into_response())),
+        Err(e) => Err(Box::new(err(e))),
+    }
+}
+
+/// `POST /api/docs/{id}/keep`: a friend's document onto a desk -- it and
+/// every version of it into the desk's project and onto its list, still
+/// from them. Nothing is written to disk; Save into the folder does that.
+pub(crate) async fn doc_keep(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<DeskBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if let Err(no) = theirs(&app, &id) {
+        return *no;
+    }
+    let Ok(Some(d)) = app.store.desk(b.desk) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "no such desk" })),
+        )
+            .into_response();
+    };
+    let (root, name, _) = receive::desk_project(&d.root);
+    match app.store.move_lineage(&id, &root, &name, &on_desk(&d)) {
+        Ok(Some(doc)) => {
+            // The tree and the desks' lists read again (what `pinned` does),
+            // and a page with it open draws its head again (`rendered`).
+            emit(&app, "pinned", json!({ "id": id }));
+            emit(&app, "rendered", json!({ "id": id }));
+            Json(json!({ "doc": doc, "desk": d.name })).into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// `POST /api/docs/{id}/save`: a friend's document, kept on a desk, written
+/// into that desk's folder as `from-<friend>/<name>`, so the desk's agents
+/// and git can see it. The one step that writes a friend's bytes to disk,
+/// and it never writes over a file: a second save is `name-2`.
+pub(crate) async fn doc_save(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let doc = match theirs(&app, &id) {
+        Ok(d) => d,
+        Err(no) => return *no,
+    };
+    let Some(d) = doc
+        .desk
+        .as_ref()
+        .and_then(|o| app.store.desk(o.id).ok().flatten())
+    else {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "keep it on a desk first; it is saved into that desk's folder" })),
+        )
+            .into_response();
+    };
+    let src = app.store.src_path(&id);
+    let dir = std::path::Path::new(&d.root).join(format!("from-{}", slug(&doc.sender)));
+    let name = file_name(&doc);
+    match tokio::task::spawn_blocking(move || save_new(&src, &dir, &name)).await {
+        Ok(Ok(at)) => {
+            let rel = at
+                .strip_prefix(&d.root)
+                .map(|r| r.to_string_lossy().to_string())
+                .unwrap_or_else(|_| at.to_string_lossy().to_string());
+            Json(json!({ "path": at, "rel": rel, "desk": d.name })).into_response()
+        }
+        Ok(Err(e)) => err(e),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
+/// A friend's name as a folder: lowercase letters, digits and dashes.
+pub(crate) fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches('-').chars().take(40).collect::<String>();
+    if out.is_empty() {
+        "friend".to_string()
+    } else {
+        out
+    }
+}
+
+/// The name a saved document takes: the sender's file name, a name and no
+/// path, or the title as one with the extension its kind has.
+pub(crate) fn file_name(doc: &crate::store::Doc) -> String {
+    let sent = doc
+        .source_path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).file_name())
+        .map(|f| f.to_string_lossy().to_string())
+        .filter(|f| !f.starts_with('.') && !f.trim().is_empty());
+    sent.unwrap_or_else(|| {
+        let ext = match doc.kind {
+            crate::render::Kind::Markdown => "md",
+            _ => doc.lang.as_deref().filter(|l| l.len() <= 8).unwrap_or("txt"),
+        };
+        format!("{}.{ext}", slug(&doc.title))
+    })
+}
+
+/// Copy `src` into `dir` as `name`, or `stem-2.ext`, `stem-3.ext`… -- the
+/// first that is not there. `create_new` makes "not there" the file
+/// system's answer, not a check that a race could slip past.
+pub(crate) fn save_new(
+    src: &std::path::Path,
+    dir: &std::path::Path,
+    name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let bytes = std::fs::read(src)?;
+    std::fs::create_dir_all(dir)?;
+    let p = std::path::Path::new(name);
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "document".into());
+    let ext = p
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    for n in 1..1000 {
+        let at = dir.join(if n == 1 {
+            format!("{stem}{ext}")
+        } else {
+            format!("{stem}-{n}{ext}")
+        });
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&at)
+        {
+            Ok(mut f) => {
+                f.write_all(&bytes)?;
+                return Ok(at);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    anyhow::bail!("a thousand files by that name are already there")
 }
 
 /// An offer from a panel whose program ended is answered No: the agent that
