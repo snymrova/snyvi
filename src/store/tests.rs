@@ -52,6 +52,9 @@ const OLD_1_19: &str = "ALTER TABLE peers DROP COLUMN desk_id;
 /// And of 1.20's: the thread a note is in, which step 8 adds.
 const OLD_1_20: &str = "ALTER TABLE desk_notes DROP COLUMN thread_id;";
 
+/// And of 1.21's: a `run` turn's command, which step 9 adds.
+const OLD_1_21: &str = "ALTER TABLE turns DROP COLUMN cmd;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -819,6 +822,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_19}
          {OLD_1_20}
+         {OLD_1_21}
          PRAGMA user_version = 3;"
     ))
     .unwrap();
@@ -1098,6 +1102,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_19}
          {OLD_1_20}
+         {OLD_1_21}
              PRAGMA user_version = 4;"
         ))
         .unwrap();

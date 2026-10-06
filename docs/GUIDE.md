@@ -519,7 +519,11 @@ a panel -- a new session, a resume, a `/clear`, a compaction, a fork -- is
 handed the *desk brief* before its first reply: which desk and panel it is
 in, the open notes, what was done lately and in which commit, the last
 document, and where the work was left. It is small (1.5 KB at most), it
-is context and not a request, and About has a switch for it. The session is
+is context and not a request, and About has a switch for it. A resume or a
+fork also gets snyvi's current rules for panels ahead of the brief: Claude
+Code replays the rules a conversation began with, so a panel resumed after
+an update would otherwise have the new tools and not a word on when to use
+them. The session is
 named after its panel (`ledger · panel 2`) in `/resume`, unless you named it
 yourself. And a plan Claude asks you to approve lands in snyvi as it asks,
 rendered, with its diagrams drawn, while the approval waits in the panel;
@@ -1006,12 +1010,20 @@ the panels, only when there is something to show.
   shipped, or parked with the next step to pick it up by. Claude starts one
   with `start_thread` when it takes the work on and moves it with
   `move_thread`. The card shows the branch, the commits and the PR, and
-  *Decided*: the questions you answered on it. A note in a thread wears a
-  small chip with the thread's name. Right-click a card, or its ⋯, to move,
+  *Decided*: the questions you answered on it. A note's tip says which
+  thread it is in and who has it; the note itself keeps its row for its own
+  two lines, with only its small marks -- the stage, the pictures -- under
+  its number. Right-click a card, or its ⋯, to move,
   park, rename or remove it; ✕ leaves its Undo in the row, as everywhere.
 - **Your turn** is what only you can do: a decision (`ask`, with two to four
   options and the one Claude recommends), or a hand-over (`hand_over`): try
-  it, merge it, add a key. Answer on the rail or on Home. Your answer goes
+  it, merge it, add a key, or **run** a command Claude was blocked from
+  running. A run card shows the whole command; **Run in panel N** types it
+  into the panel that asked as a `!` command, so its output lands in that
+  conversation and Claude carries on (mid-turn, Claude Code holds it until
+  the turn ends). **New panel** runs it in a shell of its own, and **Copy**
+  copies it. A command with a newline or an escape in it is refused, so what
+  Run types is exactly what the card shows. Answer on the rail or on Home. Your answer goes
   with your next message to the panel that asked; while that panel is idle,
   **Send now** types it in and presses Enter for you. snyvi never starts a
   turn by itself.

@@ -8,6 +8,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
     conn.execute_batch(THREAD_COLUMN).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
+    conn.execute_batch(CMD_COLUMN).unwrap();
     conn
 }
 
@@ -250,6 +251,56 @@ fn turns_are_capped_and_join_the_panes_thread() {
     }
     assert_eq!(ask(&mut conn, d, &h, 9).unwrap(), Asked::Full);
     assert_eq!(waiting(&conn).unwrap().len() as i64, TURNS_PER_DESK);
+}
+
+/// A `run` turn carries its command exactly, one line typed on a click; one
+/// that could not be typed safely is refused, never cut, and the other kinds
+/// keep no command.
+#[test]
+fn a_run_turn_carries_one_line_it_can_type() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let run = |cmd: &str| Ask {
+        kind: "run".into(),
+        text: "Upload the reel and its cover".into(),
+        cmd: cmd.into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let cmd = r#"cd ~/Studio/reel && curl -s -F "file=@$f" https://tmpfiles.org/api/v1/upload"#;
+    let Asked::Turn(t) = ask(&mut conn, d, &run(&format!("  {cmd}\t ")), 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!((t.kind.as_str(), t.cmd.as_str()), ("run", cmd));
+    assert_eq!(turn(&conn, d, t.id).unwrap().unwrap().cmd, cmd);
+    for bad in [
+        "",
+        "   ",
+        "echo one\necho two",
+        "echo hi\rmore",
+        "echo \u{1b}[201~ typed as keys",
+        "echo \u{9b}",
+        &"x".repeat(CMD_BYTES + 1),
+    ] {
+        assert_eq!(
+            ask(&mut conn, d, &run(bad), 2).unwrap(),
+            Asked::BadCmd,
+            "{bad:?}"
+        );
+    }
+    assert!(matches!(
+        ask(&mut conn, d, &run(&"x".repeat(CMD_BYTES)), 3).unwrap(),
+        Asked::Turn(_)
+    ));
+    let merge = Ask {
+        kind: "merge".into(),
+        cmd: "rm -rf ~".into(),
+        ..run("")
+    };
+    let Asked::Turn(m) = ask(&mut conn, d, &merge, 4).unwrap() else {
+        panic!()
+    };
+    assert_eq!(m.cmd, "");
 }
 
 /// A suggested desk for a folder that has one points at it instead; three

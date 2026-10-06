@@ -156,6 +156,7 @@ pub(crate) struct AskBody {
     link: String,
     via: String,
     by: String,
+    cmd: String,
 }
 
 fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
@@ -165,7 +166,14 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
             (StatusCode::CREATED, Json(json!({ "turn": t }))).into_response()
         }
         Ok(Asked::Empty) => refused(StatusCode::BAD_REQUEST, "it needs one sentence"),
-        Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge or key"),
+        Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run"),
+        Ok(Asked::BadCmd) => refused(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "run needs cmd: one line, at most {} bytes, with no control characters",
+                thread::CMD_BYTES
+            ),
+        ),
         Ok(Asked::BadOptions) => refused(
             StatusCode::BAD_REQUEST,
             "a question takes two to four options; a hand-over takes none",
@@ -192,7 +200,7 @@ pub(crate) async fn pane_ask(
     pane_turn(app, headers, id, b, true).await
 }
 
-/// `hand_over`: try, merge or key.
+/// `hand_over`: try, merge, key or run.
 pub(crate) async fn pane_hand_over(
     State(app): S,
     headers: HeaderMap,
@@ -217,7 +225,7 @@ async fn pane_turn(
     // options, and a question is not a hand-over.
     let kind = if decide { "decide".to_string() } else { b.kind };
     if !decide && kind == "decide" {
-        return refused(StatusCode::BAD_REQUEST, "kind is try, merge or key");
+        return refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run");
     }
     let a = Ask {
         kind,
@@ -228,6 +236,7 @@ async fn pane_turn(
         via: b.via,
         by: b.by,
         pane: id,
+        cmd: b.cmd,
     };
     let desk = placed.desk_id;
     let r = app.store.threads(|c, now| thread::ask(c, desk, &a, now));

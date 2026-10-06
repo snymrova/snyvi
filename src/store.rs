@@ -474,6 +474,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, desk::SENT_BY_COLUMN),
     // 1.20: the thread a desk's line is in (`crate::thread`).
     (8, thread::THREAD_COLUMN),
+    // 1.21: the command a `run` turn hands the reader.
+    (9, thread::CMD_COLUMN),
 ];
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):

@@ -256,10 +256,11 @@ pub fn run(paths: &Paths) -> Result<()> {
         if starting {
             let b = client::brief(paths, pane, session);
             tell_anyway(b.as_ref());
-            if let Some(b) = b {
-                if let Some(out) = session_start_output(&event, &b.context, &b.title, &b.desk) {
-                    println!("{out}");
-                }
+            let (context, title, desk) =
+                b.map(|b| (b.context, b.title, b.desk)).unwrap_or_default();
+            let context = with_rules(&event, context);
+            if let Some(out) = session_start_output(&event, &context, &title, &desk) {
+                println!("{out}");
             }
             return Ok(());
         }
@@ -320,6 +321,29 @@ pub fn run(paths: &Paths) -> Result<()> {
 /// turn waits with it, so it is short; a daemon that needs longer keeps the
 /// document anyway, since the store comes before the answer.
 const AUTO_SEND_WITHIN: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// A resumed conversation carries snyvi's rules as they were when it began:
+/// Claude Code replays the server's instructions from the transcript and,
+/// for a server it already knows by name, does not send them again when they
+/// have changed. A panel resumed after an update had the new tools by name
+/// and not a word on when to use them (#95). A resume or a fork is handed the
+/// rules of this binary -- the one serving its `snyvi mcp` -- ahead of the
+/// brief; a new session, a /clear and a compaction have them already.
+fn with_rules(event: &Event, brief: String) -> String {
+    if !matches!(event.source.get(), Some("resume" | "fork")) {
+        return brief;
+    }
+    let rules = format!(
+        "snyvi's rules for this panel, as of {}; where the conversation carries older ones, these hold: {}",
+        env!("CARGO_PKG_VERSION"),
+        crate::mcp::instructions(true)
+    );
+    if brief.is_empty() {
+        rules
+    } else {
+        format!("{rules}\n\n{brief}")
+    }
+}
 
 /// What a SessionStart hook prints: the brief as `additionalContext`, and the
 /// session named after its panel. Nothing when there is neither.
@@ -1290,6 +1314,36 @@ mod tests {
 
     fn event(v: Value) -> Event {
         serde_json::from_slice(v.to_string().as_bytes()).unwrap()
+    }
+
+    /// A resume or a fork is handed this binary's rules ahead of the brief,
+    /// since Claude Code replays the ones the conversation began with; the
+    /// starts that have them fresh are handed the brief alone.
+    #[test]
+    fn a_resume_is_handed_the_rules_it_may_have_missed() {
+        let start =
+            |source: &str| event(json!({ "hook_event_name": "SessionStart", "source": source }));
+        for source in ["resume", "fork"] {
+            let c = with_rules(&start(source), "the brief".into());
+            assert!(
+                c.starts_with("snyvi's rules for this panel, as of "),
+                "{source}"
+            );
+            assert!(
+                c.contains("hand_over") && c.contains("start_thread"),
+                "{source}"
+            );
+            assert!(c.ends_with("\n\nthe brief"), "{source}");
+            // The daemon down: no brief, and the rules all the same.
+            assert!(with_rules(&start(source), String::new()).starts_with("snyvi's rules"));
+        }
+        for source in ["startup", "clear", "compact"] {
+            assert_eq!(
+                with_rules(&start(source), "the brief".into()),
+                "the brief",
+                "{source}"
+            );
+        }
     }
 
     /// The brief goes in on every start; the title only where Claude Code

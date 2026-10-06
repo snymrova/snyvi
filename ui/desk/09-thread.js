@@ -95,6 +95,7 @@ function turnRow(d, w, esc) {
   const n = slotOf(d, w.pane);
   const from = w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
   const other = thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change");
+  if (w.kind === "run") return runRow(d, w, n, from, esc);
   const buttons = w.kind === "decide"
     ? w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"` : ""}>${esc(o)}</button>`).join("") +
       `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`
@@ -106,6 +107,31 @@ function turnRow(d, w, esc) {
     `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link && !link ? ` · ${esc(w.link)}` : ""}</p>` +
     `<div class="tn-acts">${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     (other ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "") +
+    `</li>` + errLine(`w${w.id}`, esc);
+}
+
+/** Whether Run can type into a panel: running, with a Claude Code session
+ *  in it -- the agent whose `!` shell mode Run uses. Busy is fine: a `!`
+ *  command sent mid-turn waits in Claude Code's queue and runs when the turn
+ *  ends. */
+const runsHere = v => !!(v && v.status.running && v.status.agent_in && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || ""));
+
+/** A command handed over (#95): the whole of it, wrapped and never cut, and
+ *  Run, which types it into the panel that asked as Claude Code's `!` shell
+ *  mode, so its output lands in that conversation and the agent carries on.
+ *  New panel runs it in a shell of its own; Copy is for anywhere else. */
+function runRow(d, w, n, from, esc) {
+  const here = runsHere(views.get(w.pane));
+  const run = here
+    ? `<button type="button" class="tn-opt" data-a="tn-run" data-w="${w.id}" data-tip="Run it in panel ${n}" data-tip-sub="Typed into its prompt as a ! command, after anything typed there. Its output goes to the agent">Run in panel ${n}</button>`
+    : "";
+  return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
+    `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` +
+    `<p class="tn-by">run · ${esc(from)}${here ? "" : " · Run needs that panel's Claude"}</p>` +
+    `<div class="tn-acts">${run}` +
+    `<button type="button" class="tn-opt${here ? " quiet" : ""}" data-a="tn-newpanel" data-w="${w.id}" data-tip="Run it in a new panel" data-tip-sub="A shell of its own: the agent does not see the output">New panel</button>` +
+    `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(w.cmd)}">Copy</button>` +
+    `<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     `</li>` + errLine(`w${w.id}`, esc);
 }
 
@@ -137,11 +163,12 @@ function sugSec(f) {
   return `<div class="dk-sec dk-filed" data-part="rail.suggested"><div class="t-label dk-lab" data-tip="Suggested" data-tip-sub="Panels and desks an agent thinks the work wants. Nothing opens until you click">Suggested</div><ul class="dk-turn-list">${rows}</ul></div>`;
 }
 
-/** The chip on a note that is in a thread: the thread's name, small. */
-function threadChip(x, esc) {
+/** The thread a note is in, in words for the note's tip; nothing beside
+ *  the note, whose text has the row (#95). */
+function threadWords(x) {
   if (!x.thread || filedAt !== deskId) return "";
   const t = filed.threads.find(y => y.id === x.thread);
-  return t ? `<span class="dk-chip" data-tip="In the thread" data-tip-sub="${esc(t.name)} · ${esc(t.stage)}">${esc(t.name)}</span>` : "";
+  return t ? `in the thread ${t.name} (${t.stage})` : "";
 }
 
 /** This desk's threads, turns and suggestions, asked for once unless a
@@ -201,12 +228,13 @@ async function moveThread(d, t, body, again = { a: "th-move", t: String(t.id), s
     () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/move`, body))) await getFiled(d.id, true);
 }
 
-async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: text }) {
+async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: text }, send = true) {
   if (!text.trim()) return;
   const was = { ...w };
   w.answered_at = Date.now() / 1000; w.answer = text.trim();
-  // A dialog the mod holds is answered by this; nothing is left to send.
-  if (w.via !== "dialog") sendable.set(w.id, true);
+  // A dialog the mod holds is answered by this; nothing is left to send. Nor
+  // is a command Run typed: its output is the answer, already on its way.
+  if (w.via !== "dialog" && send) sendable.set(w.id, true);
   rail();
   if (await told(again, `w${w.id}`, "Could not answer", () => { Object.assign(w, was); sendable.delete(w.id); },
     () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer }))) await getFiled(d.id, true);
@@ -231,6 +259,40 @@ function sendNow(d, w) {
   rail();
 }
 
+/** Run: `! <cmd>` pasted into the panel that asked and Enter pressed apart,
+ *  as Send now does, on the reader's click and never otherwise. Pasted text
+ *  that starts with `!` puts Claude Code's prompt in shell mode; mid-turn it
+ *  queues and runs when the turn ends. The command was refused at the door if
+ *  it held a control character, so the paste cannot be closed early. */
+function runHere(d, w) {
+  const v = views.get(w.pane), n = slotOf(d, w.pane);
+  if (!runsHere(v)) {
+    clearTimeout(rowTimer);
+    rowSaid = { p: w.pane, text: `Panel ${n || "?"} has no Claude to run it in. New panel runs it in a shell of its own.` };
+    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
+    rail();
+    return;
+  }
+  input(v, bracket(v, `! ${w.cmd}`));
+  setTimeout(() => input(v, "\r"), 120);
+  answer(d, w, `Ran in panel ${n}`, { a: "tn-run", w: String(w.id) }, false);
+}
+
+/** New panel: the command in a shell panel of its own, on the route Open
+ *  panel takes, and the turn answered so the agent hears where it ran. */
+async function runNewPanel(d, w) {
+  const why = noNew(d);
+  if (why) return ctx.toast("New panel", why);
+  let p;
+  try { p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: w.cmd }); }
+  catch (e) { rowErr = { k: `w${w.id}`, why: "Could not open a panel", raw: e.message, again: { a: "tn-newpanel", w: String(w.id) } }; rail(); return; }
+  focused = p.pane.id;
+  await ctx.refresh();
+  const nv = views.get(p.pane.id);
+  if (nv) { await run(nv, w.cmd); nv.body.focus(); }
+  await answer(d, w, `Ran in a new panel, ${p.pane.slot ? `panel ${p.pane.slot}` : "its own"}; its output is there, not here`);
+}
+
 /** The section's clicks; true when one of them was this file's. */
 async function filedAct(a, b, d) {
   if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && a !== "fd-back") return false;
@@ -250,6 +312,9 @@ async function filedAct(a, b, d) {
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
   else if (a === "tn-send" && w) sendNow(d, w);
+  else if (a === "tn-run" && w) runHere(d, w);
+  else if (a === "tn-newpanel" && w) await runNewPanel(d, w);
+  else if (a === "tn-copy" && w) copySha(b, "Copied");
   else if (a === "tn-unsend" && w) { sendable.delete(w.id); rail(); }
   else if (a === "tn-x" && w) {
     filed.turns = filed.turns.filter(x => x !== w);
@@ -364,6 +429,7 @@ const THREAD_CSS = `
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }
 .tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
 .dk-turn.said { border-style: dashed; }
+/* A handed-over command is shown whole: what Run types is what is read. */
+.sg-cmd.tn-cmd { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: 9em; overflow-y: auto; }
 .sg-cmd { display: block; margin-top: 4px; padding: 2px 5px; border-radius: 3px; background: var(--bg); font-family: var(--mono); font-size: 11px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-chip { flex: none; max-width: 9em; margin-left: 4px; padding: 0 5px; border: 1px solid var(--rule-2); border-radius: 8px; font-size: 10px; line-height: 15px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; align-self: center; }
 `;
