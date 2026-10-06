@@ -2,8 +2,18 @@
 mod strip;
 
 fn main() {
+    // The window's one command of its own, declared so the ACL knows it: the
+    // page comes from the daemon's origin, which Tauri counts as remote, and
+    // a remote page reaches an app command only through a permission --
+    // `allow-allow-foreground`, granted with the frame's in src/bin/app.rs.
     #[cfg(feature = "desktop")]
-    tauri_build::build();
+    if let Err(e) = tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(&["allow_foreground"])),
+    ) {
+        println!("{e:#}");
+        std::process::exit(1);
+    }
 
     build_line();
     strip_ui();

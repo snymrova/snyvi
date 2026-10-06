@@ -94,7 +94,7 @@ pub fn modified(dir: &Path) -> Option<bool> {
         "--porcelain",
         "--untracked-files=no",
     ])
-    .current_dir(dir)
+    .current_dir(dunce::simplified(dir))
     .stderr(std::process::Stdio::null());
     // The daemon has no console on Windows, so a console program it runs is
     // given one of its own: a window flashed up on every tick, for every

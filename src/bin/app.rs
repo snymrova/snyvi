@@ -82,9 +82,10 @@ const WINDOW_MARK: &str = concat!("window=", env!("CARGO_PKG_VERSION"));
 /// page's: it drags the window by its own header row (Tauri's own handler
 /// answers a `data-tauri-drag-region` attribute with the first two commands)
 /// and draws the three buttons a title bar had (the next five: leaving full
-/// screen too, which the desktop will not maximise out of). The last is for
-/// `FRAME_CHECK` below.
-const PAGE_WINDOW_COMMANDS: [&str; 8] = [
+/// screen too, which the desktop will not maximise out of). The eighth is for
+/// `FRAME_CHECK` below, and the last is this window's own command,
+/// `allow_foreground`, declared to the ACL in build.rs.
+const PAGE_WINDOW_COMMANDS: [&str; 9] = [
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-minimize",
@@ -93,7 +94,28 @@ const PAGE_WINDOW_COMMANDS: [&str; 8] = [
     "core:window:allow-is-maximized",
     "core:window:allow-set-fullscreen",
     "core:window:allow-set-decorations",
+    "allow-allow-foreground",
 ];
+
+/// Let the folder dialog the daemon is about to show come to the front.
+///
+/// Windows gives the foreground only to a process the reader is working in,
+/// or one such a process lets have it. The dialog's is neither: the detached
+/// daemon starts it, so it opened behind this window and the reader saw a
+/// click do nothing. This window is in front -- the reader just clicked in it
+/// -- so the page asks it to pass that on, once, just before it asks the
+/// daemon. The page names no path and gets nothing back; the dialog is still
+/// the daemon's.
+#[tauri::command]
+fn allow_foreground() {
+    #[cfg(windows)]
+    // SAFETY: no pointers; it only changes which process may take the
+    // foreground next, and fails harmlessly when this one is not in front.
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
+        AllowSetForegroundWindow(ASFW_ANY);
+    }
+}
 
 /// Run in the page once it has loaded: a page with a drag region carries the
 /// frame itself, and the window draws none; a page without one gets the
@@ -167,6 +189,7 @@ fn main() {
             hide_on_close(app.handle(), &w, tray);
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![allow_foreground])
         .build(tauri::generate_context!());
     let app = match run {
         Ok(app) => app,

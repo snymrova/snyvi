@@ -6,6 +6,7 @@
     "src/bench.rs::process_rows": 130,
     "src/pane.rs::start": 124,
     "src/screen.rs::csi_dispatch": 209,
+    "src/server/mod.rs::router": 121,
     "src/server/mod.rs::run": 128,
     "src/strip.rs::strip": 150,
     "ui/app/08-desks.js::connect": 188,

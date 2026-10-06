@@ -323,10 +323,9 @@ async function run(v, cmd, quiet, again) {
   if (shell) return run(v, cmd, quiet, false);
 }
 
-const tilde = p => {
-  const home = ctx.desks && ctx.desks.home;
-  return home && (p === home || p.startsWith(home + "/")) ? "~" + p.slice(home.length) : p;
-};
+/** A folder under the home folder as `~` and the rest: app.js's, which
+ *  knows Windows' spellings of one folder. */
+const tilde = p => ctx.tilde(p);
 const what = v => v.pane.name || v.status.title || v.status.cmd || v.pane.cmd || "shell";
 /** How full the agent's context window is, as its status line last said:
  *  quiet under 70%, and the waiting amber from 85%, where Claude Code

@@ -534,10 +534,23 @@ fn wanted(path: &Path) -> bool {
 /// will split, so quoted only when it has to be -- on Windows the binary
 /// usually lives under a path with a space in it.
 pub fn command_line(program: &str) -> String {
+    let program = shell_path(program);
     if program.contains(' ') {
         format!("\"{program}\" hook")
     } else {
         format!("{program} hook")
+    }
+}
+
+/// Claude Code on Windows runs a hook's command through Git Bash, where a
+/// backslash escapes the character after it: `C:\Users\…\snyvi.exe hook`
+/// reaches bash as `C:Users…snyvi.exe`, no such file, and every hook fails.
+/// Forward slashes name the same file to bash, PowerShell and Windows itself.
+fn shell_path(program: &str) -> String {
+    if cfg!(windows) {
+        program.replace('\\', "/")
+    } else {
+        program.to_string()
     }
 }
 
@@ -823,7 +836,9 @@ pub fn top_up() -> Result<bool> {
         return Ok(false);
     }
     let auto = have.iter().any(|(e, _)| *e == "PostToolUse");
-    let command = command.clone();
+    // An install from before 1.15 wrote the path with backslashes, which
+    // Git Bash eats; the same program, spelled so it runs.
+    let command = command_line(command.trim_end_matches(" hook").trim_matches('"'));
     let (mut changed, _) = install_into(&mut settings, &command, auto)?;
     changed |= statusline_into(&mut settings, &command)?;
     if changed {
@@ -1135,6 +1150,26 @@ mod tests {
         std::fs::write(&other, b"").unwrap();
         assert!(!runs(&command_line(&other.to_string_lossy()), &me));
         assert!(!runs("/nowhere/snyvi hook", &me));
+    }
+
+    /// On Windows the hook names its binary with forward slashes, which Git
+    /// Bash -- what Claude Code runs a hook with -- does not eat, and which
+    /// still name this binary.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_hook_survives_git_bash() {
+        assert_eq!(
+            command_line(r"C:\Users\a\AppData\Local\Programs\snyvi\snyvi.exe"),
+            "C:/Users/a/AppData/Local/Programs/snyvi/snyvi.exe hook"
+        );
+        assert_eq!(
+            command_line(r"C:\Program Files\snyvi\snyvi.exe"),
+            "\"C:/Program Files/snyvi/snyvi.exe\" hook"
+        );
+        let me = std::env::current_exe().unwrap();
+        let line = command_line(&me.to_string_lossy());
+        assert!(!line.contains('\\'), "{line}");
+        assert!(runs(&line, &me));
     }
 
     /// Codex gets its six events and none of Claude Code's own, beside

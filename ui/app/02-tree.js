@@ -194,8 +194,26 @@
   /** The desk's live state on its project's row, in the Desks rows' colours:
    *  a panel running, or one waiting on the reader. Idle says nothing. */
   const deskState = d => { const m = mark3(d.panes); return m === "!" ? " blk" : m === "●" ? " on" : ""; };
-  /** One folder however it was spelled: a trailing slash is not another place. */
-  const sameRoot = (a, b) => !!a && !!b && a.replace(/(.)\/+$/, "$1") === b.replace(/(.)\/+$/, "$1");
+  /** A folder's key, for comparing and never for showing. On Windows the
+   *  daemon has spelled roots with `\\?\`, and a drive path is one place in
+   *  either slash and any case; elsewhere only a trailing slash is not
+   *  another place. */
+  const pathKey = p => !p ? p : /^(\\\\\?\\)?[A-Za-z]:[\\/]/.test(p)
+    ? p.replace(/^\\\\\?\\/, "").replace(/\//g, "\\").replace(/(.)\\+$/, "$1").toLowerCase()
+    : p.replace(/(.)\/+$/, "$1");
+  /** A folder as the reader spelled it, less the `\\?\` Windows' API put on it. */
+  const shown = p => p && p.replace(/^\\\\\?\\/, "");
+  /** A folder under the home folder, as `~` and the rest. */
+  const tilde = p => {
+    const home = state.desks && state.desks.home, h = pathKey(home), k = pathKey(p);
+    if (!h || !k) return shown(p);
+    if (k === h) return "~";
+    // pathKey changes no length but the prefix's and the trailing slashes',
+    // so the home folder's key is as long as its start in `shown(p)`.
+    return k.startsWith(h + (/^[a-z]:/.test(h) ? "\\" : "/")) ? "~" + shown(p).slice(h.length) : shown(p);
+  };
+  /** One folder however it was spelled. */
+  const sameRoot = (a, b) => !!a && !!b && pathKey(a) === pathKey(b);
   const projDeskBtn = p => {
     if (!capability || !p.root) return "";
     const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));

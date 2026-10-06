@@ -66,7 +66,6 @@ pub(crate) async fn browse_pick(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    static PICKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if PICKING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return (
             StatusCode::CONFLICT,
@@ -77,7 +76,8 @@ pub(crate) async fn browse_pick(
     // Cleared by dropping, not by the line after the await: a reader who closes
     // the window while the dialog is up drops this handler's future where it
     // waits, and a flag cleared below that line would stay true for the life of
-    // the daemon -- one abandoned dialog and the `+` never works again.
+    // the daemon -- one abandoned dialog and the `+` never works again. The
+    // same drop ends the dialog's process (`pick_folder`).
     struct Done;
     impl Drop for Done {
         fn drop(&mut self) {
@@ -85,9 +85,8 @@ pub(crate) async fn browse_pick(
         }
     }
     let _done = Done;
-    let picked = tokio::task::spawn_blocking(crate::platform::pick_folder).await;
-    match picked {
-        Ok(Ok(Some(dir))) => match app.browse.open(&dir) {
+    match crate::platform::pick_folder(&PICK_CANCEL).await {
+        Ok(Some(dir)) => match app.browse.open(&dir) {
             Ok(root) => {
                 let url = format!("{}/b/{}", config::base_url(), root.id);
                 emit(&app, "browse", json!({ "roots": app.browse.list() }));
@@ -103,13 +102,32 @@ pub(crate) async fn browse_pick(
             )
                 .into_response(),
         },
-        // Closed without a choice: nothing to say, and nothing opened.
-        Ok(Ok(None)) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Err(why)) => {
-            (StatusCode::NOT_IMPLEMENTED, Json(json!({ "error": why }))).into_response()
-        }
-        Err(e) => err(anyhow::anyhow!(e)),
+        // Closed without a choice, cancelled, or given up on: nothing to
+        // say, and nothing opened.
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(why) => (StatusCode::NOT_IMPLEMENTED, Json(json!({ "error": why }))).into_response(),
     }
+}
+
+/// One folder dialog at a time, across every page that asks.
+static PICKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Ends the folder dialog that is open, if one is. Wakes only a dialog
+/// already waiting: a cancel sent with none open is not kept for the next.
+static PICK_CANCEL: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// The "Cancel it" on the page's "a folder dialog is already open": a dialog
+/// that may be behind the window, or on a screen the reader cannot see,
+/// closed from the window that asked for it. Behind the same gate as asking.
+pub(crate) async fn browse_pick_cancel(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    PICK_CANCEL.notify_waiters();
+    StatusCode::NO_CONTENT.into_response()
 }
 
 pub(crate) async fn browse_list(State(app): S) -> Response {

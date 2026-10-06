@@ -479,7 +479,7 @@
       // A week with nothing from it steps the name back; something waiting
       // in it lights the icon, as a waiting row's does. Colour only.
       const quiet = p.latest && Date.now() / 1000 - p.latest > QUIET_S ? " quiet" : "", lit = waitingIn.has(String(p.id)) ? " new" : "";
-      return `<details class="t-proj${out ? " leaving" : ""}${quiet}" data-pid="${p.id}" ${open ? "open" : ""}><summary class="${lit.trim()}" data-tip="${esc(p.root)}" data-tip-mono>${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>` +
+      return `<details class="t-proj${out ? " leaving" : ""}${quiet}" data-pid="${p.id}" ${open ? "open" : ""}><summary class="${lit.trim()}" data-tip="${esc(shown(p.root))}" data-tip-mono>${icon("project")}<span class="nm">${esc(p.name)}</span>${chev}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>` +
         (open ? projectRows(p) : "") + `</ul></details>`;
     };
     // Past the cap, "more" holds what the reader is not using. A project they
@@ -734,11 +734,11 @@
       // Inside a <summary> too: a click on the + is not a click on the folder.
       e.preventDefault(); e.stopPropagation();
       // In a folder's row, a desk on that folder; in the Desks head, the
-      // question of where.
+      // question of where -- a menu even with no project known yet, since
+      // the home folder's shell is an answer too, and a dialog that opened
+      // straight from a click could open behind the window and be lost.
       const f = folderOf(nd);
-      // With no project known yet the only real answer is a folder: the
-      // dialog, at once, rather than a menu of one row.
-      if (f) act("make", f); else if (capability && !deskPlaces().length) act("pick", true); else askWhere(nd, e.detail === 0);
+      if (f) act("make", f); else askWhere(nd, e.detail === 0);
       return;
     }
     const pd = e.target.closest("[data-projdesk]");

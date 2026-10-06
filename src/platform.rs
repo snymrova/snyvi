@@ -106,6 +106,8 @@ pub fn open_url(url: &str) -> bool {
 /// or a `^` in a folder's name as its own. Elsewhere the link opener already
 /// does it -- `xdg-open` and `open` show a directory in the file manager.
 pub fn open_folder(dir: &std::path::Path) -> bool {
+    // Explorer does not open a `\\?\` path as the folder it names.
+    let dir = dunce::simplified(dir);
     #[cfg(target_os = "windows")]
     {
         return Command::new("explorer")
@@ -198,8 +200,15 @@ pub fn app_bundles(name: &str) -> Vec<std::path::PathBuf> {
 /// `Ok(None)` is the reader closing the dialog; `Err` is a desktop with no
 /// dialog to show. The dialog is the desktop's and not the page's, so the path
 /// comes from the reader's own hand in a trusted window -- nothing a page
-/// sends ever names a directory. Blocking: call it off the async runtime.
-pub fn pick_folder() -> Result<Option<std::path::PathBuf>, String> {
+/// sends ever names a directory.
+///
+/// The dialog lives as long as the asking does, and no longer: dropping this
+/// future -- the page reloaded, the window closed -- ends the dialog's process,
+/// as do `cancel` and [`PICK_TIMEOUT`]. A dialog nobody is waiting on stays
+/// on the screen with no window to come back to, and the next one piles on it.
+pub async fn pick_folder(
+    cancel: &tokio::sync::Notify,
+) -> Result<Option<std::path::PathBuf>, String> {
     let title = "Open a folder in snyvi";
     #[cfg(target_os = "macos")]
     let tries: Vec<Vec<String>> = vec![vec![
@@ -207,16 +216,17 @@ pub fn pick_folder() -> Result<Option<std::path::PathBuf>, String> {
         "-e".into(),
         format!("POSIX path of (choose folder with prompt \"{title}\")"),
     ]];
+    // Explorer's own folder dialog, owned by a topmost form so it opens in
+    // front of snyvi: src/pick_folder.ps1 says how. Encoded, because the
+    // script quotes C# and a command line would have to quote it again.
     #[cfg(target_os = "windows")]
     let tries: Vec<Vec<String>> = vec![vec![
         "powershell".into(),
         "-NoProfile".into(),
+        "-NonInteractive".into(),
         "-STA".into(),
-        "-Command".into(),
-        format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{}'; $d.ShowNewFolderButton = $false; if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}",
-            ps_quote(title)
-        ),
+        "-EncodedCommand".into(),
+        encoded_command(&PICK_FOLDER_PS1.replace("@TITLE@", &ps_quote(title))),
     ]];
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let tries: Vec<Vec<String>> = {
@@ -246,28 +256,96 @@ pub fn pick_folder() -> Result<Option<std::path::PathBuf>, String> {
             ],
         ]
     };
-    for args in tries {
-        let Some((program, rest)) = args.split_first() else {
-            continue;
-        };
-        let mut cmd = Command::new(program);
-        cmd.args(rest).stdin(Stdio::null()).stderr(Stdio::null());
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        // Not installed: the next one. Anything else is the dialog's answer.
-        let Ok(out) = cmd.output() else {
-            continue;
-        };
-        let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        // Every one of them answers a cancel with a non-zero exit and nothing
-        // on stdout, and a choice with the path on a line of its own.
-        return Ok((out.status.success() && !picked.is_empty()).then(|| picked.into()));
+    if let Some(answer) = ask_folder(tries, cancel, PICK_TIMEOUT, |_| {}).await {
+        return answer;
     }
     Err(if cfg!(target_os = "linux") {
         "no folder dialog is installed: zenity or kdialog would give one".into()
     } else {
         "the desktop's folder dialog could not be started".into()
     })
+}
+
+/// The Windows folder dialog's script, with `@TITLE@` for its title.
+#[cfg(target_os = "windows")]
+const PICK_FOLDER_PS1: &str = include_str!("pick_folder.ps1");
+
+/// A script as `powershell -EncodedCommand` takes it: UTF-16LE, in base64.
+/// Written out rather than taken as a dependency; it is a dozen lines.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn encoded_command(script: &str) -> String {
+    const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, &b)| n | u32::from(b) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() {
+                B64[(n >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
+/// How long a folder dialog may stay open before snyvi gives up on it. Long:
+/// it only clears away a dialog forgotten or never seen -- Cancel and closing
+/// the window end one at once -- and a short one would close the dialog on a
+/// reader still looking through a large drive.
+pub const PICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The first of `tries` that starts, and its answer: `None` when none of them
+/// could be started. `spawned` is told the dialog's process id, for the tests.
+async fn ask_folder(
+    tries: Vec<Vec<String>>,
+    cancel: &tokio::sync::Notify,
+    timeout: std::time::Duration,
+    spawned: impl FnOnce(u32),
+) -> Option<Result<Option<std::path::PathBuf>, String>> {
+    let mut spawned = Some(spawned);
+    for args in tries {
+        let Some((program, rest)) = args.split_first() else {
+            continue;
+        };
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(rest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            // The dialog is this process's: ending it closes the dialog,
+            // and there is no grandchild left behind.
+            .kill_on_drop(true);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        // Not installed: the next one. Anything else is the dialog's answer.
+        let Ok(child) = cmd.spawn() else {
+            continue;
+        };
+        if let (Some(f), Some(pid)) = (spawned.take(), child.id()) {
+            f(pid);
+        }
+        // Each of the other two drops the child, which kills it.
+        let out = tokio::select! {
+            r = child.wait_with_output() => r,
+            _ = tokio::time::sleep(timeout) => return Some(Ok(None)),
+            _ = cancel.notified() => return Some(Ok(None)),
+        };
+        let Ok(out) = out else {
+            return Some(Ok(None));
+        };
+        let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Every one of them answers a cancel with a non-zero exit and nothing
+        // on stdout, and a choice with the path on a line of its own.
+        return Some(Ok(
+            (out.status.success() && !picked.is_empty()).then(|| picked.into())
+        ));
+    }
+    None
 }
 
 /// Run a program that might be installed as a shell script rather than an
@@ -795,6 +873,205 @@ mod tests {
         assert_eq!(
             sound_for(Some(true), &mut last, t0 + Duration::from_millis(2000)),
             Sound::Asked
+        );
+    }
+}
+
+/// The folder dialog's lifetime, with a program that waits in its place: no
+/// test can click a real dialog, but every way of ending one ends a process.
+#[cfg(test)]
+mod pick_tests {
+    use super::ask_folder;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{Duration, Instant};
+    use tokio::sync::Notify;
+
+    /// A "dialog" that stays open for ten minutes and never answers.
+    fn stays_open() -> Vec<Vec<String>> {
+        let argv: &[&str] = if cfg!(windows) {
+            &["powershell", "-NoProfile", "-Command", "Start-Sleep 600"]
+        } else {
+            &["sleep", "600"]
+        };
+        vec![argv.iter().map(|s| s.to_string()).collect()]
+    }
+
+    /// A "dialog" the reader answered at once.
+    fn answers(path: &str) -> Vec<Vec<String>> {
+        let argv: Vec<String> = if cfg!(windows) {
+            vec!["cmd".into(), "/C".into(), format!("echo {path}")]
+        } else {
+            vec!["echo".into(), path.into()]
+        };
+        vec![argv]
+    }
+
+    fn alive(pid: u32) -> bool {
+        if cfg!(windows) {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .expect("tasklist runs");
+            String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+        } else {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .is_ok_and(|s| s.success())
+        }
+    }
+
+    /// Ending a process is not instant everywhere: a second to be gone.
+    /// Waited on the runtime, not the thread: tokio reaps a child it killed
+    /// on a later turn, and until then `kill -0` still finds the zombie.
+    async fn gone_soon(pid: u32) -> bool {
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            if !alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn a_dialog_nobody_waits_on_is_closed() {
+        let pid = AtomicU32::new(0);
+        let cancel = Notify::new();
+        let asking = ask_folder(stays_open(), &cancel, Duration::from_secs(600), |p| {
+            pid.store(p, Ordering::SeqCst)
+        });
+        // The page reloads while the dialog is up: the request, and with it
+        // this future, is dropped.
+        let _ = tokio::time::timeout(Duration::from_millis(1500), asking).await;
+        let pid = pid.load(Ordering::SeqCst);
+        assert_ne!(pid, 0, "the dialog started");
+        assert!(
+            gone_soon(pid).await,
+            "the dialog's process outlived the asking"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_closes_the_dialog() {
+        let pid = AtomicU32::new(0);
+        let cancel = Notify::new();
+        let asking = ask_folder(stays_open(), &cancel, Duration::from_secs(600), |p| {
+            pid.store(p, Ordering::SeqCst)
+        });
+        let started = Instant::now();
+        let (answer, ()) = tokio::join!(asking, async {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            cancel.notify_waiters();
+        });
+        assert!(matches!(answer, Some(Ok(None))), "a cancel is no choice");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "cancel ends it at once"
+        );
+        assert!(gone_soon(pid.load(Ordering::SeqCst)).await);
+    }
+
+    #[tokio::test]
+    async fn a_dialog_left_open_is_given_up_on() {
+        let pid = AtomicU32::new(0);
+        let cancel = Notify::new();
+        let answer = ask_folder(stays_open(), &cancel, Duration::from_millis(1500), |p| {
+            pid.store(p, Ordering::SeqCst)
+        })
+        .await;
+        assert!(matches!(answer, Some(Ok(None))));
+        assert!(gone_soon(pid.load(Ordering::SeqCst)).await);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_with_no_dialog_open_is_not_kept_for_the_next() {
+        let cancel = Notify::new();
+        cancel.notify_waiters();
+        let picked = if cfg!(windows) {
+            r"C:\picked"
+        } else {
+            "/picked"
+        };
+        let answer = ask_folder(answers(picked), &cancel, Duration::from_secs(60), |_| {}).await;
+        assert_eq!(
+            answer.unwrap().unwrap().as_deref(),
+            Some(std::path::Path::new(picked))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dialog_that_is_not_installed_is_the_next_ones_turn() {
+        let cancel = Notify::new();
+        let mut tries = vec![vec!["snyvi-no-such-dialog".to_string()]];
+        tries.extend(answers(if cfg!(windows) { r"C:\b" } else { "/b" }));
+        let answer = ask_folder(tries, &cancel, Duration::from_secs(60), |_| {}).await;
+        assert!(matches!(answer, Some(Ok(Some(_)))));
+        let none = ask_folder(
+            vec![vec!["snyvi-no-such-dialog".into()]],
+            &cancel,
+            Duration::from_secs(60),
+            |_| {},
+        )
+        .await;
+        assert!(none.is_none());
+    }
+}
+
+#[cfg(test)]
+mod encoded_tests {
+    use super::encoded_command;
+
+    #[test]
+    fn a_script_is_base64_of_its_utf16() {
+        assert_eq!(encoded_command(""), "");
+        assert_eq!(encoded_command("a"), "YQA=");
+        assert_eq!(encoded_command("Hi"), "SABpAA==");
+        assert_eq!(encoded_command("abc"), "YQBiAGMA");
+    }
+
+    /// What PowerShell runs is what was written, and what it prints comes
+    /// back as written -- a folder's name in Hindi or with an accent too.
+    #[cfg(windows)]
+    #[test]
+    fn powershell_runs_the_script_and_answers_in_utf8() {
+        let script = r"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; 'D:\प्रोजेक्ट\café'";
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+            .arg(encoded_command(script))
+            .output()
+            .expect("powershell runs");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            r"D:\प्रोजेक्ट\café"
+        );
+    }
+
+    /// The modern dialog is C# compiled as the script runs; a typo there
+    /// would only ever show as the old dialog. Compiled here, shown never.
+    #[cfg(windows)]
+    #[test]
+    fn the_folder_dialogs_csharp_compiles() {
+        let ps1 = super::PICK_FOLDER_PS1;
+        let from = ps1
+            .find("Add-Type -TypeDefinition @'")
+            .expect("the C# is there");
+        let to = ps1[from..].find("\n'@").expect("and ends") + from + 3;
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'; {}; [SnyviFolderDialog].Name",
+            &ps1[from..to]
+        );
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+            .arg(encoded_command(&script))
+            .output()
+            .expect("powershell runs");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "SnyviFolderDialog",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
         );
     }
 }

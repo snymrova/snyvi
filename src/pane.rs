@@ -1464,14 +1464,14 @@ impl Live {
         };
         let pair = pty.openpty(size).context("opening a terminal")?;
         let (mut cmd, born) = command(s.cmd, s.accent);
-        cmd.cwd(s.cwd);
+        // cmd.exe takes a stored `\\?\D:\…` for UNC and starts in C:\Windows:
+        // the process gets the plain spelling; what is stored stays as it is.
+        cmd.cwd(dunce::simplified(std::path::Path::new(s.cwd)));
         i.cwd = s.cwd.to_string();
         i.started = Instant::now();
         i.arrived = false;
         i.root = s.root.to_string();
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
-        cmd.env("TERM_PROGRAM", "snyvi");
+        fresh_env(&mut cmd, std::env::var_os("CLAUDECODE").is_some());
         cmd.env("SNYVI_SESSION", &self.id);
         cmd.env("SNYVI_DESK", s.desk);
         cmd.env("SNYVI_SLOT", s.slot.to_string());
@@ -1904,6 +1904,46 @@ fn apply(c: &mut CommandBuilder, d: &crate::prompt::Dress) {
     for (k, v) in &d.env {
         c.env(k, v);
     }
+}
+
+/// What Claude Code puts in the environment of a command it runs, to tell
+/// that command it runs inside a session. A daemon started from there -- by
+/// the first `snyvi send` a hook makes, or by hand from an agent's shell --
+/// carries them, and a panel is not inside that session: Claude in it would
+/// call itself a child, save no transcript, and talk to the wrong parent.
+const AGENT_ENV: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "AI_AGENT",
+];
+
+/// And what an agent's tool sets so that the command's output reads well in a
+/// transcript: no color, no prompt for a password. A panel is a terminal a
+/// reader looks at. Taken out only when the daemon itself was started inside
+/// a session; a reader's own `NO_COLOR`, set for every program, is kept.
+const AGENT_TOOL_ENV: &[&str] = &["NO_COLOR", "FORCE_COLOR", "GIT_TERMINAL_PROMPT"];
+
+/// A panel starts as a fresh terminal would, not as a command an agent ran.
+fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
+    for k in AGENT_ENV {
+        cmd.env_remove(k);
+    }
+    if inside {
+        for k in AGENT_TOOL_ENV {
+            cmd.env_remove(k);
+        }
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "snyvi");
 }
 
 fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {

@@ -480,6 +480,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/resolve", post(resolve_path))
         .route("/api/browse", get(browse_list).post(browse_open))
         .route("/api/browse/pick", post(browse_pick))
+        .route("/api/browse/pick/cancel", post(browse_pick_cancel))
         .route("/api/browse/{id}/close", post(browse_close))
         .route("/api/browse/{id}/reopen", post(browse_reopen))
         .route("/api/browse/{id}/tree", get(browse_tree))

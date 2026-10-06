@@ -4450,6 +4450,7 @@ dependencies = [
  "clap",
  "comrak",
  "dirs",
+ "dunce",
  "ed25519-dalek",
  "flate2",
  "futures-util",

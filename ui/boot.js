@@ -1,4 +1,7 @@
 /* Runs before first paint: apply the saved theme, accent, font and pane state so nothing flashes. */
+/* Windows, for the scrollbars app.css draws there. Outside the try below:
+   it reads no storage, and a page with storage blocked still runs on Windows. */
+if (/Windows/.test(navigator.userAgent)) document.documentElement.dataset.os = "win";
 try {
   /* After a reset, nothing saved is read: the page that reset dropped the
      keys, but was still running as it left and may have written one back. */
