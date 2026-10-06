@@ -19,6 +19,8 @@
  *   node bench/ui.mjs            report
  *   node bench/ui.mjs --check    and exit non-zero if a row fails
  *   node bench/ui.mjs --only "a desk|folder"   only the sections whose name it matches
+ *   node bench/ui.mjs --before "a folder, opened in snyvi"   the sections up to that one
+ *   node bench/ui.mjs --from "a folder, opened in snyvi"     that one and the rest
  *
  * Counts and positions only, no clocks, so every row is enforced on every
  * machine. Chromium is driven the way browser.mjs drives it, over the
@@ -239,8 +241,22 @@ async function main() {
 
     const sections = [];
     // `--only <pattern>` runs the sections whose name it matches, for work on one.
+    // `--before <name>` and `--from <name>` cut the run in two at a section,
+    // which is how CI runs the halves side by side; each half starts on a
+    // daemon of its own, so neither may lean on what the other left.
     const only = flag("--only") && new RegExp(flag("--only"));
-    const section = async (name, rows) => { if (!only || only.test(name)) sections.push([name, await rows()]); };
+    const from = flag("--from"), before = flag("--before");
+    let inRange = !from;
+    const seen = new Set();
+    const section = async (name, rows) => {
+      seen.add(name);
+      if (name === from) inRange = true;
+      if (name === before) inRange = false;
+      if (!inRange || (only && !only.test(name))) return;
+      const t = Date.now();
+      const r = await rows();
+      sections.push([`${name}  (${((Date.now() - t) / 1000).toFixed(1)} s)`, r]);
+    };
     await section("the rail, 1280 px wide", () => railRows(p, url, md, send));
     await section("narrow windows", () => narrowRows(p, url));
     await section("the sidebar, folded to its rail", () => sideRailRows(p, url, arrive));
@@ -281,6 +297,8 @@ async function main() {
     // And after it, because it takes the daemon.
     await section("a daemon that stops, and the page that follows", () => stopRows(p, base, tmp, env, second));
 
+    // A cut named wrong would run nothing, or everything, and say ok.
+    for (const cut of [from, before]) if (cut && !seen.has(cut)) throw new Error(`no section is named "${cut}"`);
     console.log("ui: what the page does\n");
     for (const [title, rows] of sections) {
       console.log(title);
@@ -3002,9 +3020,12 @@ async function controlRows(cdp, p, url, browsed, base, token) {
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
     // The panes were started at 80x24 before the page fitted them: the size to
-    // come back to is the one they settle at.
+    // come back to is the one they settle at. A size, and not just "not
+    // 80x24": the screen is empty for a moment while the panel is redrawn,
+    // which once ended the wait before the fit, and ⌃0 then went back to
+    // the fit and not to the 80x24 read too soon.
     await until(`(${size}) !== ""`);
-    await until(`(${size}) !== "80x24"`, 30);
+    await until(`!["", "80x24"].includes(${size})`, 100);
     await sleep(300);
     const was = await q.ev(size);
     await walk(q, "a desk");
