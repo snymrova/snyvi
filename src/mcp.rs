@@ -4,7 +4,8 @@
 //! far the agent has got with a line, tick_desk_note, marking a line done,
 //! suggest_desk_note, offering one for the reader to keep, offer_document, asking that one go to a friend,
 //! leave_off, saying where the work was left, and name_panel, which names the
-//! panel the agent runs in. And four prompts, the loop's own slash commands
+//! panel the agent runs in; and the #90 six, filing the work as a thread and
+//! putting what only the reader can do on their Your turn (`threads`). And four prompts, the loop's own slash commands
 //! (`PROMPTS`). Newline-delimited JSON-RPC 2.0, as the MCP stdio transport
 //! specifies.
 
@@ -13,6 +14,8 @@ use crate::config::Paths;
 use crate::receive::Payload;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+
+mod threads;
 
 const TOOL_DESCRIPTION: &str = "Send a finished document to snyvi, the user's document viewer. \
 Call this whenever you finish writing a plan, report, review, summary, design note, or any document the user \
@@ -117,6 +120,8 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
+File a piece of work as a thread with start_thread when you take it on, and put anything only the user can \
+do on their Your turn with hand_over. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -156,6 +161,12 @@ const TOOLS: &[(&str, Tool)] = &[
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
     ("offer_document", Session::offer_document),
+    ("start_thread", Session::start_thread),
+    ("move_thread", Session::move_thread),
+    ("ask", Session::ask),
+    ("hand_over", Session::hand_over),
+    ("suggest_panel", Session::suggest_panel),
+    ("suggest_desk", Session::suggest_desk),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -219,6 +230,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
             leave_off_spec(),
             name_spec(),
         ]);
+        tools.extend(threads::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
         }

@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS;
+  s.textContent = CSS + THREAD_CSS;
   document.head.append(s);
 }
 
@@ -359,8 +359,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* The card a line is rewritten in: over the row's text, the same left edge,
    laid over the lines below rather than pushing them. */
-.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 30px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
-.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 30px; right: 4px; }
+.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 28px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 28px; right: 4px; }
 .dk-note:hover > .nm { color: var(--fg); }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
@@ -368,7 +368,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* A line an agent ticked says which agent, and where the work went, on a
    line of its own under the text, lined up with it: the reader can untick
    it like any other. */
-.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 37px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
+.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 35px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
 .dk-by > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
 .dk-sha { padding: 0 3px; background: var(--rule); }
@@ -378,7 +378,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-by button:hover { color: var(--accent); }
 /* The circle. A button rather than a checkbox input so it draws the same on
    every platform, with the role and the state a checkbox would have carried. */
-.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; margin: 7px 0 0 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
+.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; margin-top: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
 .dk-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
@@ -389,10 +389,27 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The field's own circle: the row keeps its shape while it is being written,
    so the text does not step left and back again as the field opens and shuts. */
 .dk-tick.ghost { box-shadow: inset 0 0 0 1.5px var(--rule-2); }
+/* The line's two columns, each the height of its two lines of text. On the
+ * left the circle, and under it the line's number, the one the reader and
+ * the agents call it by: quiet until the row is under the pointer, and a
+ * click copies it. On the right the stage, and under it the ✕. Every row of
+ * the list is two lines tall, one line of text or two, so the numbers fall
+ * in one rhythm and a row taken off holds the same room as its Undo. */
+.dk-lead { flex: none; display: flex; flex-direction: column; align-items: center; width: 26px; margin-left: 3px; }
+.dk-num { margin-top: 5px; padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 15px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
+.dk-note:is(:hover, :focus-within) .dk-num, .dk-num[data-said] { opacity: 1; }
+.dk-num:hover { color: var(--accent); }
+.dk-num[data-said] { color: var(--ok); }
+.dk-notes .dk-list > .dk-note { min-height: 44px; }
+.dk-notes .dk-list > .dk-note.gone { align-items: center; }
+/* A thread's chip on the first line with the text, not centred on the row. */
+.dk-note > .dk-chip { align-self: flex-start; margin-top: 5px; }
 /* A note's ✕ keeps its room whether it shows or not: the text wraps, and
    room given only under the pointer rewrapped it -- the row changed height
-   under the hand that was reaching for it. */
-.dk-note .dk-tools { align-self: flex-start; margin-top: 3px; width: auto; padding-right: 3px; opacity: 0; transition: opacity var(--t); }
+   under the hand that was reaching for it. It sits under the stage, on the
+   second line, in the same column. */
+.dk-tail { flex: none; display: flex; flex-direction: column; align-items: center; width: 20px; margin-right: 3px; }
+.dk-note .dk-tools { margin: 0; width: auto; padding: 0; opacity: 0; transition: opacity var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-tools, .dk-note .dk-tools:has([data-armed]) { opacity: 1; }
 .dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
 .dk-note-in:focus { outline: none; }
@@ -422,20 +439,22 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
 .dk-act-room { width: 20px; }
 .dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: 11px; color: var(--fg-3); background: var(--bg-side); animation: dk-fade 140ms ease-out; }
-/* How far an agent has got: a slot every line keeps between its circle and
- * its text, 10 px, so a line that is picked up does not step right. Read is
- * a small ring, planned the plan's page (it opens it), working a dot that
- * breathes three times when the panel's agent takes it up -- each draw of the
- * rail is a new three, and nothing paints in between. Centred on the first line. */
-.dk-stage { position: relative; flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin: 8px -2px 0 -3px; padding: 0; color: var(--fg-3); }
+/* How far an agent has got: at the line's right end, over its ✕, in a slot
+ * every line keeps, so a line that is picked up does not rewrap. Read is a
+ * small ring, planned the plan's page (it opens it), working the panel's
+ * number in the accent -- the number its tab has -- which breathes three
+ * times when the panel's agent takes it up: each draw of the rail is a new
+ * three, and nothing paints in between. Centred on the first line. */
+.dk-stage { position: relative; flex: none; display: grid; place-items: center; width: 20px; height: 18px; margin-top: 4px; padding: 0; color: var(--fg-3); }
 .dk-stage.read::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); }
 .dk-stage.planned svg { width: 10px; height: 10px; }
 .dk-stage.planned:hover { color: var(--accent); }
 .dk-stage.planned::before { content: ""; position: absolute; inset: -4px; }
-.dk-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.dk-stage.working.busy::before { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out 3; }
+.dk-stage.working:not(:has(.c))::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.dk-stage.working .c { min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-family: var(--mono); font-size: var(--fs-micro); font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.dk-stage.working.busy::before, .dk-stage.working.busy .c { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out 3; }
 @keyframes dk-breathe { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .dk-stage.working::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .dk-stage.working::before, .dk-stage.working .c { animation: none; } }
 /* A line's pictures: one mark at the end of its text, with their count, that
  * opens them whole -- the row is the height of its text, pictures or not. A
  * fixed width, so the mark turning into the Undo of one just taken off, and

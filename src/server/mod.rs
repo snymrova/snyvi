@@ -14,6 +14,7 @@ mod api_browse;
 mod api_desk;
 mod api_docs;
 mod api_peer;
+mod api_thread;
 mod assets;
 mod auth;
 mod events;
@@ -28,6 +29,7 @@ use api_browse::*;
 use api_desk::*;
 use api_docs::*;
 use api_peer::*;
+use api_thread::*;
 use assets::*;
 use auth::*;
 use events::*;
@@ -378,6 +380,35 @@ fn pane_routes() -> Router<Arc<App>> {
         )
 }
 
+/// Threads, Your turn and suggested panels (`api_thread`): the agent's and
+/// the mod's on the panel, behind the token, and the page's on the desk.
+fn thread_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/panes/{id}/thread", post(pane_start_thread))
+        .route("/api/panes/{id}/thread/move", post(pane_move_thread))
+        .route("/api/panes/{id}/ask", post(pane_ask))
+        .route("/api/panes/{id}/handover", post(pane_hand_over))
+        .route("/api/panes/{id}/suggest-panel", post(pane_suggest_panel))
+        .route("/api/panes/{id}/suggest-desk", post(pane_suggest_desk))
+        .route("/api/panes/{id}/seen", post(pane_seen))
+        .route("/api/panes/{id}/band", get(pane_band))
+        .route(
+            "/api/panes/{id}/turns/{turn}",
+            get(pane_wait_turn).post(pane_answer_turn),
+        )
+        .route("/api/panes/{id}/note", post(pane_note))
+        .route("/api/claude-mod", get(mod_setting).post(set_mod_setting))
+        .route("/api/desks/{id}/threads", get(desk_threads))
+        .route("/api/desks/{id}/threads/{row}/move", post(desk_move_thread))
+        .route("/api/desks/{id}/threads/{row}/{act}", post(desk_thread_act))
+        .route("/api/desks/{id}/turns/{row}/answer", post(desk_answer_turn))
+        .route("/api/desks/{id}/turns/{row}/{act}", post(desk_turn_act))
+        .route(
+            "/api/desks/{id}/suggestions/{row}/{act}",
+            post(desk_suggestion_act),
+        )
+}
+
 /// Every route -- a panel's merged in from `pane_routes` -- and the one layer
 /// in front of them all.
 ///
@@ -503,6 +534,7 @@ fn router(app: Arc<App>) -> Router {
         // Friends (`api_peer`): the reader's actions from this page or with
         // the token, the reads open like the project list is.
         .merge(pane_routes())
+        .merge(thread_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
@@ -610,6 +642,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
+    crate::claude_mod::start(&paths);
     let router = router(app);
 
     let addr = format!("127.0.0.1:{}", config::port());

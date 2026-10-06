@@ -681,6 +681,109 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    (
+        "POST",
+        "/api/panes/nope/thread",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/thread/move",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    ("POST", "/api/panes/nope/ask", Some("{}"), Gate::Token, true),
+    (
+        "POST",
+        "/api/panes/nope/handover",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/suggest-panel",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/suggest-desk",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/seen",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    ("GET", "/api/panes/nope/band", None, Gate::Token, true),
+    ("GET", "/api/panes/nope/turns/1", None, Gate::Token, true),
+    (
+        "POST",
+        "/api/panes/nope/turns/1",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/note",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
+    ("GET", "/api/desks/1/threads", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/threads/1/move",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/threads/1/remove",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/turns/1/answer",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/turns/1/remove",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/suggestions/1/open",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    ("GET", "/api/claude-mod", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/claude-mod",
+        Some(r#"{"on":true}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/desks", None, Gate::Open, true),
     ("GET", "/desk/1", None, Gate::Open, true),
 ];
@@ -785,6 +888,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
         + routes_in("\nfn peer_routes(")
+        + routes_in("\nfn thread_routes(")
         + routes_in("\nfn receive_route(");
     assert_eq!(
         n,

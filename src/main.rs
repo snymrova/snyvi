@@ -4,6 +4,7 @@ mod bench;
 mod brief;
 mod browse;
 mod capability;
+mod claude_mod;
 mod cli;
 mod client;
 mod config;
@@ -34,6 +35,7 @@ mod store;
 /// (`server::assets`), and the scanner's tests are in `cargo test`.
 mod strip;
 mod text;
+mod thread;
 mod update;
 mod version;
 mod watch;

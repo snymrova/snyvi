@@ -72,6 +72,14 @@ const CSS = `
 .hm-s { flex: none; color: var(--fg-3); font-size: var(--fs-small); }
 .hm-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-list { list-style: none; margin: 0; padding: 0; }
+.hm-turn { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.hm-turn .hm-pw { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hm-turn .hm-tq { color: var(--fg); }
+.hm-turn.said .hm-t b { font-weight: inherit; color: var(--fg); }
+.hm-tacts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 55%; }
+.hm-opt { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
+.hm-opt:hover { color: var(--fg); border-color: var(--accent); }
+.hm-opt.rec { border-color: var(--accent); color: var(--fg); }
 .hm-kn { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
 .hm-key .hm-t a { color: inherit; }
 .hm-link { padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); cursor: pointer; }
@@ -283,6 +291,7 @@ a.hm-panels:hover { color: var(--fg); }
 /** The widgets that can be hidden, in the order they stand. Pick up cannot:
  *  it is what the page is for. */
 const WIDGETS = [
+  ["threads", "Threads"],
   ["desks", "Projects"],
   ["claude", "Claude"],
   ["friends", "Friends"],
@@ -467,10 +476,12 @@ function draw(j) {
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "") +
     (hid.includes("keys") ? "" : keysW(j));
   const desks = j.desks ? w("desks", "Projects", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
+  const moving = (j.threads || []).filter(t => !["shipped", "parked"].includes(t.stage)).length;
+  const threads = j.threads?.length ? w("threads", "Threads", threadsList(j), moving ? ` <span class="n">${moving} moving</span>` : "") : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
     status(j) +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${onYou(j)}${pick(j)}${threads}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p></div>`;
@@ -509,11 +520,15 @@ function status(j) {
   if (j.desks) {
     const asking = [];
     for (const d of j.desks) for (const p of d.panes) if (p.blocked || p.agent === "needs_you") asking.push([d, p]);
+    const on = (j.turns || []).length;
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
       bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} ${p.agent === "needs_you" ? "is asking" : "rang"}${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
-    } else bits.push("Nothing needs you");
+    } else if (on) bits.push(`${on === 1 ? "One thing is" : `${on} things are`} on you`);
+    else bits.push("Nothing needs you");
+    const moving = (j.threads || []).filter(t => !["shipped", "parked"].includes(t.stage)).length;
+    if (moving) bits.push(`${plural(moving, "thread")} moving`);
   }
   bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} to read</a>` : bits.length ? "nothing to read" : "Nothing to read");
   if (j.desks) {
@@ -523,6 +538,64 @@ function status(j) {
   const w = windowLeft(j.quota?.five_hour);
   if (w) bits.push(`<span data-tip="Claude's five-hour window" data-tip-sub="${esc(w.text)}">5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
   return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
+}
+
+/* ---------- Your turn and Threads (#90) ----------
+ *
+ * What agents filed on the desks (src/thread.rs): what only the reader can
+ * do, across every desk, answered here; and the threads by stage. The answer
+ * reaches the panel that asked with the reader's next message there, or at
+ * once when the snyvi mod in that panel is holding the question. */
+
+/** Answers given here, kept in their row for SAID_MS: id -> { desk, text, answer, err }. */
+const answeredHere = new Map();
+const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"] };
+
+function onYou(j) {
+  const { esc } = c, turns = (j.turns || []).filter(w => !answeredHere.has(w.id));
+  if (!turns.length && !answeredHere.size) return "";
+  const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
+  const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
+  const row = w => {
+    const opts = w.kind === "decide" ? w.options : TURN_ANSWERS[w.kind] || ["Done"];
+    const more = w.kind === "decide" ? "Other…" : w.kind === "try" ? "Needs changes…" : "";
+    const n = slot(w.desk_id, w.pane);
+    return `<li class="hm-turn"><span class="hm-pw"><span class="hm-t hm-tq">${esc(w.text)}</span>` +
+      `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}</span></span>` +
+      `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
+      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}" data-tip="${esc(more)}" data-tip-sub="answer in your own words on the desk">${esc(more)}</a>` : "") + `</span></li>`;
+  };
+  const said = [...answeredHere].map(([, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
+    `<span class="hm-t">${a.err ? esc(a.err) : `You said <b>${esc(a.answer)}</b> · it goes with your next message on ${esc(name(a.desk))}`}</span></span></li>`).join("");
+  return `<section class="hm-w hm-you" data-part="home.turns" aria-label="Your turn"><div class="hm-wh"><h2>Your turn · across desks${turns.length ? ` <span class="n">${turns.length}</span>` : ""}</h2></div>` +
+    `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
+}
+
+/** The threads, by stage: what is moving, what is parked with its next step,
+ *  and what shipped this week. */
+function threadsList(j) {
+  const { esc } = c, ts = j.threads || [];
+  const name = id => j.desks?.find(d => d.id === id)?.name || "";
+  const row = t => `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${t.desk_id}" data-desk="${t.desk_id}">${esc(t.name)}</a>` +
+    `<span class="hm-t">${[name(t.desk_id), t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "", t.stage === "parked" && t.next ? `next: ${t.next}` : t.branch, t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : ""].filter(Boolean).map(esc).join(" · ")}</span></span>` +
+    `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.stage)}</span></li>`;
+  const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
+  return group("Moving", ts.filter(t => !["shipped", "parked"].includes(t.stage))) +
+    group("Parked", ts.filter(t => t.stage === "parked")) +
+    group("Shipped this week", ts.filter(t => t.stage === "shipped"));
+}
+
+async function answerTurn(id, desk, answer) {
+  const w = (last?.turns || []).find(x => x.id === id);
+  if (!w || !answer) return;
+  const rec = { desk, text: w.text, answer, err: "" };
+  answeredHere.set(id, rec);
+  draw(last);
+  try { await c.deskApi(`/api/desks/${desk}/turns/${id}/answer`, { answer }); }
+  catch { rec.err = "Could not answer it; try again on the desk"; }
+  setTimeout(() => { if (answeredHere.get(id) === rec) { answeredHere.delete(id); if (last && c.view() === "home") draw(last); } }, SAID_MS);
+  if (last && c.view() === "home") draw(last);
+  soonRefresh();
 }
 
 /** A branch, drawn as git's own mark: two commits and the line between. */
@@ -1193,6 +1266,7 @@ function wire() {
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
     else if (k === "week") sendWeek(b);
     else if (k === "tick") tickNote(id, +b.dataset.n);
+    else if (k === "answer") answerTurn(id, +b.dataset.d, b.dataset.v);
     // A card's +: its desk on the chip, and the hand in the bar, which is in
     // view wherever the page is; the bar lights for a moment to say where.
     else if (k === "addopen") { barTo = id; menu = null; draw(last); focusBar(); lit(); }
