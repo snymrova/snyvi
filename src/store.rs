@@ -4,6 +4,7 @@
 use crate::config::Paths;
 use crate::desk::{self, Desk, Opened, Origin, Placed};
 use crate::peer;
+use crate::thread;
 use crate::render::Kind;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -471,6 +472,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, peer::COLUMNS_1_19[0]),
     (7, peer::COLUMNS_1_19[1]),
     (7, desk::SENT_BY_COLUMN),
+    // 1.20: the thread a desk's line is in (`crate::thread`).
+    (8, thread::THREAD_COLUMN),
 ];
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
@@ -553,6 +556,8 @@ impl Store {
         conn.execute_batch(desk::SCHEMA)?;
         // Friends, and what is on its way to or from one (`crate::peer`).
         conn.execute_batch(peer::SCHEMA)?;
+        // Threads, turns and suggested panels (`crate::thread`).
+        conn.execute_batch(thread::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
@@ -2003,6 +2008,13 @@ impl Store {
 
     pub fn keep_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {
         desk::keep_note(&self.conn.lock().unwrap(), desk_id, id)
+    }
+
+    /// Threads, turns and suggested panels (`crate::thread`), with the clock:
+    /// the SQL is that file's and the lock is this one's, as for the desk
+    /// calls, through one door rather than a wrapper for each of twenty.
+    pub fn threads<T>(&self, f: impl FnOnce(&mut Connection, i64) -> Result<T>) -> Result<T> {
+        f(&mut self.conn.lock().unwrap(), now())
     }
 
     /// The reader opened a desk (`desk::visit`).

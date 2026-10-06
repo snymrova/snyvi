@@ -1,0 +1,272 @@
+use super::*;
+
+fn db() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
+    conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
+    conn.execute_batch(THREAD_COLUMN).unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+    conn
+}
+
+fn desk(conn: &mut Connection) -> (i64, Vec<i64>) {
+    let d = crate::desk::create(conn, "/w", None, 0).unwrap().id;
+    let notes = ["one", "two", "three"]
+        .iter()
+        .map(|t| crate::desk::add_note(conn, d, t, 0).unwrap().unwrap().id)
+        .collect();
+    (d, notes)
+}
+
+fn start_as(conn: &mut Connection, d: i64, name: &str, pane: &str, notes: &[i64]) -> Started {
+    start(
+        conn,
+        d,
+        &Start {
+            name: name.into(),
+            notes: notes.to_vec(),
+            pane: pane.into(),
+            by: "claude-code".into(),
+            ..Start::default()
+        },
+        10,
+    )
+    .unwrap()
+}
+
+/// A thread groups notes, and the same name again is the same thread: an
+/// agent that starts "Home + friends" twice does not make two.
+#[test]
+fn a_thread_groups_notes_and_its_name_again_is_the_same_thread() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    let Started::New(t) = start_as(&mut conn, d, "Home + friends", "p1", &n[..2]) else {
+        panic!()
+    };
+    assert_eq!(t.stage, "planned");
+    assert_eq!(t.notes, n[..2]);
+    let Started::Again(again) = start_as(&mut conn, d, "home + FRIENDS", "p2", &n[2..]) else {
+        panic!()
+    };
+    assert_eq!(again.id, t.id);
+    assert_eq!(again.notes, n);
+    assert_eq!(again.pane, "p2");
+    // The note wears it.
+    let notes = crate::desk::notes(&conn, d).unwrap();
+    assert!(notes.iter().all(|x| x.thread == t.id));
+}
+
+/// A note is in one thread at most: putting it in a second takes it out of
+/// the first.
+#[test]
+fn a_note_moves_to_the_thread_it_was_last_put_in() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    let Started::New(a) = start_as(&mut conn, d, "A", "p1", &n) else {
+        panic!()
+    };
+    let Started::New(b) = start_as(&mut conn, d, "B", "p1", &n[..1]) else {
+        panic!()
+    };
+    assert_eq!(get(&conn, d, a.id).unwrap().unwrap().notes, n[1..]);
+    assert_eq!(get(&conn, d, b.id).unwrap().unwrap().notes, n[..1]);
+}
+
+/// `move_thread` with no id is the pane's thread; parked keeps a next step,
+/// and leaving parked drops it. Only shipped stamps a date.
+#[test]
+fn moving_the_panes_thread_parks_and_ships_it() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &[]);
+    let mv = |stage: &str, next: &str| Move {
+        stage: stage.into(),
+        next: next.into(),
+        pane: "p1".into(),
+        ..Move::default()
+    };
+    let Moved::Thread(t) = move_thread(&mut conn, d, None, &mv("parked", "rebase first"), 20).unwrap() else {
+        panic!()
+    };
+    assert_eq!((t.stage.as_str(), t.next.as_str()), ("parked", "rebase first"));
+    let Moved::Thread(t) = move_thread(&mut conn, d, None, &mv("building", ""), 30).unwrap() else {
+        panic!()
+    };
+    assert_eq!((t.stage.as_str(), t.next.as_str(), t.shipped_at), ("building", "", 0));
+    let Moved::Thread(t) = move_thread(&mut conn, d, None, &mv("shipped", ""), 40).unwrap() else {
+        panic!()
+    };
+    assert_eq!(t.shipped_at, 40);
+    // Another pane has no thread to move.
+    let other = Move {
+        stage: "review".into(),
+        pane: "p9".into(),
+        ..Move::default()
+    };
+    assert_eq!(move_thread(&mut conn, d, None, &other, 50).unwrap(), Moved::NoThread);
+    assert_eq!(
+        move_thread(&mut conn, d, None, &mv("done", ""), 50).unwrap(),
+        Moved::BadStage
+    );
+}
+
+/// What the mod sees lands on the pane's thread and is marked seen; a new
+/// branch starts the commit count again, and a merge is dated once.
+#[test]
+fn what_the_mod_saw_is_filed_on_the_panes_thread() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    assert!(seen(&mut conn, d, "p1", &Seen::default(), 1).unwrap().is_none());
+    start_as(&mut conn, d, "A", "p1", &[]);
+    let s = |branch: &str, commits: i64| Seen {
+        branch: branch.into(),
+        commits,
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &s("claude/a", 0), 2).unwrap();
+    seen(&mut conn, d, "p1", &s("", 1), 3).unwrap();
+    let t = seen(&mut conn, d, "p1", &s("claude/a", 2), 4).unwrap().unwrap();
+    assert_eq!((t.branch.as_str(), t.commits, t.seen), ("claude/a", 3, true));
+    let t = seen(&mut conn, d, "p1", &s("claude/b", 1), 5).unwrap().unwrap();
+    assert_eq!(t.commits, 1);
+    let m = Seen {
+        pr: "https://github.com/o/r/pull/57".into(),
+        merged: "7E1C0A2".into(),
+        ..Seen::default()
+    };
+    let t = seen(&mut conn, d, "p1", &m, 6).unwrap().unwrap();
+    assert_eq!((t.pr.as_str(), t.merged.as_str(), t.merged_at), ("57", "7e1c0a2", 6));
+    let t = seen(&mut conn, d, "p1", &m, 7).unwrap().unwrap();
+    assert_eq!(t.merged_at, 6);
+    // Nothing that is not a branch gets in.
+    let t = seen(&mut conn, d, "p1", &s("a b", 0), 8).unwrap().unwrap();
+    assert_eq!(t.branch, "claude/b");
+}
+
+/// A decide takes two to four options; the first answer stands, wherever it
+/// was given; an answer from snyvi is told once, to the pane that asked.
+#[test]
+fn a_question_is_answered_once_and_told_once() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = |options: &[&str]| Ask {
+        kind: "decide".into(),
+        text: "Search box after how many docs?".into(),
+        options: options.iter().map(|s| s.to_string()).collect(),
+        recommended: 1,
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    assert_eq!(ask(&mut conn, d, &q(&["10"]), 1).unwrap(), Asked::BadOptions);
+    let Asked::Turn(t) = ask(&mut conn, d, &q(&["After 5", "After 10"]), 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!(t.recommended, 1);
+    let a = answer(&conn, d, t.id, "After 10", "snyvi", 2).unwrap().unwrap();
+    assert_eq!(a.answered_in, "snyvi");
+    assert!(answer(&conn, d, t.id, "After 5", "panel", 3).unwrap().is_none());
+    let live = vec!["p1".to_string(), "p2".to_string()];
+    assert!(take_untold(&conn, d, "p2", &live, 4).unwrap().is_empty());
+    assert_eq!(take_untold(&conn, d, "p1", &live, 4).unwrap().len(), 1);
+    assert!(take_untold(&conn, d, "p1", &live, 5).unwrap().is_empty());
+}
+
+/// An answer to a panel that has gone goes to the next panel that asks, so a
+/// decision is not lost with its panel; the mod's dialog is never retold.
+#[test]
+fn an_answer_outlives_its_panel_and_a_dialog_is_not_retold() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let h = |via: &str| Ask {
+        kind: "try".into(),
+        text: "Try it on 7871".into(),
+        via: via.into(),
+        pane: "gone".into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(a) = ask(&mut conn, d, &h("ask"), 1).unwrap() else {
+        panic!()
+    };
+    let Asked::Turn(b) = ask(&mut conn, d, &h("dialog"), 1).unwrap() else {
+        panic!()
+    };
+    answer(&conn, d, a.id, "Looks good", "snyvi", 2).unwrap();
+    answer(&conn, d, b.id, "Looks good", "snyvi", 2).unwrap();
+    let told = take_untold(&conn, d, "p2", &["p2".into()], 3).unwrap();
+    assert_eq!(told.iter().map(|t| t.id).collect::<Vec<_>>(), [a.id]);
+}
+
+/// Six turns wait on a desk at most, and a turn joins the pane's thread.
+#[test]
+fn turns_are_capped_and_join_the_panes_thread() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let Started::New(th) = start_as(&mut conn, d, "A", "p1", &[]) else {
+        panic!()
+    };
+    let h = Ask {
+        kind: "merge".into(),
+        text: "Merge PR 57".into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    for i in 0..TURNS_PER_DESK {
+        let Asked::Turn(t) = ask(&mut conn, d, &h, i).unwrap() else {
+            panic!()
+        };
+        assert_eq!(t.thread_id, th.id);
+    }
+    assert_eq!(ask(&mut conn, d, &h, 9).unwrap(), Asked::Full);
+    assert_eq!(waiting(&conn).unwrap().len() as i64, TURNS_PER_DESK);
+}
+
+/// A suggested desk for a folder that has one points at it instead; three
+/// cards wait at most; ✕ has an Undo and Open does not; an opened panel is
+/// told to the pane that suggested it, once.
+#[test]
+fn suggestions_wait_settle_and_are_told_once() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let desk_card = Suggest {
+        kind: "desk".into(),
+        folder: "/w/".into(),
+        why: "its own project".into(),
+        ..Suggest::default()
+    };
+    assert_eq!(suggest(&mut conn, d, &desk_card, 1).unwrap(), Suggested::HasDesk(d));
+    let panel = Suggest {
+        kind: "panel".into(),
+        name: "test window".into(),
+        cmd: "snyvi serve --port 7871".into(),
+        why: "to try it".into(),
+        pane: "p1".into(),
+        ..Suggest::default()
+    };
+    let mut ids = vec![];
+    for _ in 0..SUGGESTIONS_PER_DESK {
+        let Suggested::Card(c) = suggest(&mut conn, d, &panel, 1).unwrap() else {
+            panic!()
+        };
+        ids.push(c.id);
+    }
+    assert_eq!(suggest(&mut conn, d, &panel, 1).unwrap(), Suggested::Full);
+    settle(&conn, d, ids[0], "dismissed", 2).unwrap().unwrap();
+    assert!(unsettle(&conn, d, ids[0]).unwrap());
+    settle(&conn, d, ids[1], "opened", 3).unwrap().unwrap();
+    assert!(!unsettle(&conn, d, ids[1]).unwrap());
+    assert!(settle(&conn, d, ids[1], "dismissed", 4).unwrap().is_none());
+    assert_eq!(take_opened(&conn, d, "p1", 5).unwrap().len(), 1);
+    assert!(take_opened(&conn, d, "p1", 6).unwrap().is_empty());
+}
+
+#[test]
+fn a_pr_is_a_number() {
+    assert_eq!(pr_number("#57").as_deref(), Some("57"));
+    assert_eq!(pr_number("https://github.com/o/r/pull/57/").as_deref(), Some("57"));
+    assert_eq!(pr_number("57; rm -rf"), None);
+    assert!(branch_ok("claude/threads"));
+    assert!(!branch_ok("a..b"));
+    assert!(!branch_ok("-x"));
+}

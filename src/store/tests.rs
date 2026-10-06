@@ -49,6 +49,9 @@ const OLD_1_19: &str = "ALTER TABLE peers DROP COLUMN desk_id;
      ALTER TABLE peer_outbox DROP COLUMN text;
      ALTER TABLE desk_notes DROP COLUMN sent_by;";
 
+/// And of 1.20's: the thread a note is in, which step 8 adds.
+const OLD_1_20: &str = "ALTER TABLE desk_notes DROP COLUMN thread_id;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -815,6 +818,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
         "UPDATE desks SET kind = 'studio', boards = root, row = 0.62 WHERE id = {studio};
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_19}
+         {OLD_1_20}
          PRAGMA user_version = 3;"
     ))
     .unwrap();
@@ -1093,6 +1097,7 @@ fn a_1_16_database_comes_forward_once() {
              INSERT INTO workflows(project_id, key, title, created_at) VALUES({project}, 'W', 'W', 0);
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_19}
+         {OLD_1_20}
              PRAGMA user_version = 4;"
         ))
         .unwrap();
