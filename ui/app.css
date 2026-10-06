@@ -1084,6 +1084,11 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 #queue-bar .qb-n { flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* The count changed under a bar that stayed: the new number settles in. */
 #queue-bar .qb-n.tick { animation: tick var(--dur-move) var(--ease-out); }
+/* ‹ › hug the count they step (#100). With one waiting they keep their room,
+   unseen, so a second arriving moves no word in the bar. */
+#queue-bar .qb-step { margin: 0 -7px; }
+#queue-bar .qb.one .qb-step { visibility: hidden; }
+#queue-bar .qb:not(.one) .qb-n { min-width: 4ch; text-align: center; }
 @keyframes tick { from { opacity: 0; transform: translateY(-4px); } }
 #queue-bar .qb-next { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
 #queue-bar .qb-next b { font-weight: 600; color: var(--fg); }
