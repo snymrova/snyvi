@@ -102,6 +102,28 @@ pub struct TreeProject {
     /// When its newest document arrived: what the Inbox's "more" row says the
     /// projects past the cut have been quiet since.
     pub latest: i64,
+    /// A friend's own row (`peer::Peer::project_root`). Its root is no
+    /// folder, so it is sent empty: what the page does with a root -- the
+    /// desk glyph, New desk here, Copy path, the file manager -- has nothing
+    /// to work on there, and the page offers none of it on an empty one.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub friend: bool,
+}
+
+/// A project's row from `projects`' columns: id, name, root, docs,
+/// workflows, latest.
+fn row_project(r: &rusqlite::Row) -> rusqlite::Result<TreeProject> {
+    let root: String = r.get(2)?;
+    let friend = root.starts_with("peer:");
+    Ok(TreeProject {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        root: if friend { String::new() } else { root },
+        docs: r.get(3)?,
+        workflows: r.get(4)?,
+        latest: r.get(5)?,
+        friend,
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -442,6 +464,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
              ELSE 0 END
          WHERE source_path IS NOT NULL",
     ),
+    // 1.19: where a friend's things land (`peers.desk_id`, 0 for their own
+    // row), a line waiting in the outbox as a document does (`text`, with
+    // no document), and who sent a desk's line when it came from a friend
+    // (`sent_by`, which keeping a suggestion does not clear).
+    (7, peer::COLUMNS_1_19[0]),
+    (7, peer::COLUMNS_1_19[1]),
+    (7, desk::SENT_BY_COLUMN),
 ];
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
@@ -1250,16 +1279,7 @@ impl Store {
                  FROM projects p JOIN head_docs d ON d.project_id = p.id
                  GROUP BY p.id ORDER BY MAX(d.received_at) DESC, p.id DESC",
             )?
-            .query_map([], |r| {
-                Ok(TreeProject {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    root: r.get(2)?,
-                    docs: r.get(3)?,
-                    workflows: r.get(4)?,
-                    latest: r.get(5)?,
-                })
-            })?
+            .query_map([], row_project)?
             .collect::<std::result::Result<_, _>>()?;
         Ok(rows)
     }
@@ -1274,16 +1294,7 @@ impl Store {
              FROM projects p JOIN head_docs d ON d.project_id = p.id
              WHERE p.id = ?1 GROUP BY p.id",
             params![project_id],
-            |r| {
-                Ok(TreeProject {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    root: r.get(2)?,
-                    docs: r.get(3)?,
-                    workflows: r.get(4)?,
-                    latest: r.get(5)?,
-                })
-            },
+            row_project,
         )
         .optional()
         .map_err(Into::into)
@@ -1661,8 +1672,13 @@ impl Store {
     }
 
     /// What has not gone yet: (frame id, friend, document, tries).
-    pub fn peer_unsent(&self) -> Result<Vec<(String, i64, String, i64)>> {
+    pub fn peer_unsent(&self) -> Result<Vec<peer::Unsent>> {
         peer::unsent(&self.conn.lock().unwrap())
+    }
+
+    /// Queue a line for a friend (`peer::queue_note`): the frame's id.
+    pub fn peer_queue_note(&self, p: &peer::Peer, text: &str) -> Result<String> {
+        peer::queue_note(&self.conn.lock().unwrap(), p, text, now())
     }
 
     pub fn peer_sent(&self, id: &str) -> Result<()> {
@@ -1863,6 +1879,16 @@ impl Store {
 
     pub fn suggest_desk_note(&self, desk_id: i64, text: &str, by: &str) -> Result<desk::Suggested> {
         desk::suggest_note(&mut self.conn.lock().unwrap(), desk_id, text, by, now())
+    }
+
+    /// A friend's line as a suggestion on their desk (`desk::suggest_note_from`).
+    pub fn suggest_desk_note_from(&self, desk_id: i64, text: &str, name: &str) -> Result<desk::Suggested> {
+        desk::suggest_note_from(&mut self.conn.lock().unwrap(), desk_id, text, name, name, now())
+    }
+
+    /// A friend's line kept on a desk from Home (`desk::add_note_from`).
+    pub fn add_desk_note_from(&self, desk_id: i64, text: &str, name: &str) -> Result<Option<desk::DeskNote>> {
+        desk::add_note_from(&mut self.conn.lock().unwrap(), desk_id, text, name, now())
     }
 
     pub fn keep_desk_note(&self, desk_id: i64, id: i64) -> Result<bool> {

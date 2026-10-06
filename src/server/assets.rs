@@ -318,6 +318,9 @@ pub(crate) fn shell(
         o.insert("online".into(), app.online());
         // The aside showing at the foot of the sidebar, and the trail under it.
         o.insert("notes".into(), json!(app.asides.list()));
+        // Whether there is a friend, so a menu offers Send to a friend… only
+        // then; the menu asks again as it opens (`ui/menu.js`).
+        o.insert("friends".into(), json!(has_friends(app)));
     }
     let page = app
         .ui

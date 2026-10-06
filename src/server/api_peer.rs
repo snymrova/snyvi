@@ -352,8 +352,9 @@ pub(crate) struct TextBody {
     pub(crate) text: String,
 }
 
-/// `POST /api/peers/{id}/note`: a line for a friend's notes, sealed and
-/// left at the relay now. Not queued: a line is said or it is not.
+/// `POST /api/peers/{id}/note`: a line for a friend's notes. Queued, as a
+/// document is, and tried now: a relay that is away gets it when it is back,
+/// and the sheet says so rather than failing.
 pub(crate) async fn peer_note(
     State(app): S,
     headers: HeaderMap,
@@ -381,41 +382,16 @@ pub(crate) async fn peer_note(
         )
             .into_response();
     }
+    let frame = match app.store.peer_queue_note(&p, &text) {
+        Ok(f) => f,
+        Err(e) => return err(e),
+    };
     let app2 = app.clone();
-    let r = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
-        let me = identity_blocking(&app2)?;
-        let content = Content::Note {
-            text: text.clone(),
-            name: my_name(&app2.paths),
-        };
-        let frame = peer::seal(&me, &p, &content, b"")?;
-        let mut nonce = [0u8; 16];
-        getrandom::fill(&mut nonce).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let id = blake3::hash(&nonce).to_hex().to_string();
-        let sent = peer::deposit(&p.sign_key, &id, &frame)?;
-        if sent {
-            let _ = app2.store.touch_peer(p.id, false);
-        }
-        Ok(sent)
-    })
-    .await;
-    match r {
-        Ok(Ok(true)) => {
-            peers_moved(&app);
-            Json(json!({ "sent": true })).into_response()
-        }
-        Ok(Ok(false)) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": "their mailbox is full; try later" })),
-        )
-            .into_response(),
-        Ok(Err(e)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": format!("{e:#}") })),
-        )
-            .into_response(),
-        Err(e) => err(anyhow::anyhow!(e)),
-    }
+    let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
+        .await
+        .unwrap_or(false);
+    peers_moved(&app);
+    Json(json!({ "sent": sent, "to": p.name })).into_response()
 }
 
 #[derive(Deserialize, Default)]
@@ -623,27 +599,28 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
     let name = my_name(&app.paths);
     let mut all = true;
     let mut moved = false;
-    for (frame_id, peer_id, doc_id, tries) in rows {
+    for row in rows {
+        let (frame_id, peer_id) = (row.id.as_str(), row.peer_id);
         if only.is_some_and(|o| o != frame_id) {
             continue;
         }
-        if tries >= TRIES_MAX {
+        if row.tries >= TRIES_MAX {
             all = false;
             continue;
         }
-        let went = match send_one(app, &me, &name, &frame_id, peer_id, &doc_id) {
+        let went = match send_one(app, &me, &name, &row) {
             Ok(true) => {
-                let _ = app.store.peer_sent(&frame_id);
+                let _ = app.store.peer_sent(frame_id);
                 let _ = app.store.touch_peer(peer_id, false);
                 moved = true;
                 true
             }
             Ok(false) => {
-                let _ = app.store.peer_failed(&frame_id, "their mailbox is full");
+                let _ = app.store.peer_failed(frame_id, "their mailbox is full");
                 false
             }
             Err(e) => {
-                let _ = app.store.peer_failed(&frame_id, &format!("{e:#}"));
+                let _ = app.store.peer_failed(frame_id, &format!("{e:#}"));
                 false
             }
         };
@@ -655,18 +632,21 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
     all
 }
 
-fn send_one(
-    app: &App,
-    me: &Identity,
-    name: &str,
-    frame_id: &str,
-    peer_id: i64,
-    doc_id: &str,
-) -> anyhow::Result<bool> {
+fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow::Result<bool> {
+    let (frame_id, doc_id) = (row.id.as_str(), row.doc_id.as_str());
     let p = app
         .store
-        .peer(peer_id)?
+        .peer(row.peer_id)?
         .ok_or_else(|| anyhow::anyhow!("no such friend"))?;
+    // A line: no document behind it, the words are the whole of it.
+    if doc_id.is_empty() {
+        let content = Content::Note {
+            text: row.text.clone(),
+            name: name.to_string(),
+        };
+        let frame = peer::seal(me, &p, &content, b"")?;
+        return peer::deposit(&p.sign_key, frame_id, &frame);
+    }
     let Some(doc) = app.store.get(doc_id)? else {
         // The document went while the frame waited: nothing to send, done.
         app.store.peer_sent(frame_id)?;

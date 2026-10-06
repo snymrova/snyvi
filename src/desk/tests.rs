@@ -5,6 +5,7 @@ fn db() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(POS_COLUMN).unwrap();
+    conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn
 }
 

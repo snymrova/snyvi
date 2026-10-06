@@ -692,6 +692,13 @@ mod tests {
             Some("peer:KEY")
         );
         assert!(s.html(&got.doc.id).unwrap().contains("beans"));
+        // The sidebar is told it is a friend's row, and given no root: the
+        // page offers nothing that would act on a folder.
+        let row = &s.projects().unwrap()[0];
+        assert!(row.friend);
+        assert_eq!(row.root, "");
+        let json = serde_json::to_value(row).unwrap();
+        assert_eq!(json["friend"], true);
         // The same bytes again: the same row. New bytes: a new version of it.
         let again = receive(
             &s,

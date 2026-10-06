@@ -203,7 +203,9 @@ export function note(ctx, peerId, name) {
     if (!t) return;
     box.querySelector("[data-pr=send]").disabled = true;
     say("Sending…");
-    try { await post(`/api/peers/${peerId}/note`, { text: t }); say(`Sent to ${name}.`); setTimeout(close, 900); }
+    // A relay that cannot be reached keeps the line in the outbox, as it
+    // keeps a document: it goes when it can, and the sheet says so.
+    try { const r = await post(`/api/peers/${peerId}/note`, { text: t }); say(r.sent ? `Sent to ${name}.` : `Queued for ${name}; it goes when the relay can be reached.`); setTimeout(close, r.sent ? 900 : 2400); }
     catch (e) { say(ctx.sayErr(e).why, true); box.querySelector("[data-pr=send]").disabled = false; }
   };
   box.querySelector("[data-pr=send]").addEventListener("click", go);

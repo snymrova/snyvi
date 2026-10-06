@@ -204,6 +204,28 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What `tools/list` offers: the two any agent has, and in a panel the
+/// desk's. `offer_document` only for a reader with a friend to offer to --
+/// an agent shown a tool it can never use tries it -- and when the daemon
+/// did not say (`None`), as before.
+fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
+    let mut tools = vec![tool_spec(), aside_spec()];
+    if panel {
+        tools.extend([
+            desk_notes_spec(),
+            mark_spec(),
+            tick_spec(),
+            suggest_spec(),
+            leave_off_spec(),
+            name_spec(),
+        ]);
+        if friends != Some(false) {
+            tools.push(offer_spec());
+        }
+    }
+    tools
+}
+
 /// A tool's answer: one text for the agent, and whether it is an error.
 fn said(text: impl Into<String>, bad: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text.into() }], "isError": bad })
@@ -248,19 +270,10 @@ impl Session {
             "prompts/get" => self.prompt(params),
             "ping" => Ok(json!({})),
             "tools/list" => {
-                let mut tools = vec![tool_spec(), aside_spec()];
-                if self.pane.is_some() {
-                    tools.extend([
-                        desk_notes_spec(),
-                        mark_spec(),
-                        tick_spec(),
-                        suggest_spec(),
-                        leave_off_spec(),
-                        name_spec(),
-                        offer_spec(),
-                    ]);
-                }
-                Ok(json!({ "tools": tools }))
+                // The friends are asked for only in a panel, where the
+                // tool would be listed.
+                let friends = self.pane.as_ref().and_then(|_| client::has_friends());
+                Ok(json!({ "tools": tools(self.pane.is_some(), friends) }))
             }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
@@ -1052,6 +1065,22 @@ mod tests {
             .unwrap()
             .contains("Nothing is sent by this call"));
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_document"));
+        let names = |panel, friends| -> Vec<String> {
+            tools(panel, friends)
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(names(true, Some(true)).contains(&"offer_document".into()));
+        assert!(
+            !names(true, Some(false)).contains(&"offer_document".into()),
+            "no friends, no offer"
+        );
+        assert!(
+            names(true, None).contains(&"offer_document".into()),
+            "a daemon that did not say lists it, as before"
+        );
+        assert!(!names(false, Some(true)).contains(&"offer_document".into()));
     }
 
     #[test]

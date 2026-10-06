@@ -1093,6 +1093,28 @@ pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Res
     }
 }
 
+/// Whether the reader has a friend on the list, for `tools/list`: `None`
+/// when the daemon did not answer in time, which lists `offer_document` as
+/// before rather than hiding it on a slow start.
+pub fn has_friends() -> Option<bool> {
+    let v: Value = agent()
+        .get(&format!("{}/api/peers", config::base_url()))
+        .config()
+        .timeout_global(Some(Duration::from_millis(400)))
+        .build()
+        .call()
+        .ok()?
+        .body_mut()
+        .read_json()
+        .ok()?;
+    Some(
+        v.get("friends")?
+            .as_array()?
+            .iter()
+            .any(|f| f.get("removed_at").is_none()),
+    )
+}
+
 /// Offer a document to a friend, from this pane: `offer_document`. The
 /// daemon writes the question for the reader and sends nothing.
 pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -> Result<Value> {

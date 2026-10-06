@@ -269,6 +269,12 @@ async function dropDesk(ctx, id) {
  *  state; it is asked only when it is already loaded, which it is whenever
  *  one of them is on the page. */
 const RULE = "rule";
+/** Is there a friend to send to? The page was told when it was served
+ *  (`boot.friends`), and each menu asks again for the next one: a reader
+ *  who never pairs is never offered Send to a friend…. */
+let friends = (() => { try { return !!JSON.parse(document.getElementById("boot").textContent).friends; } catch { return false; } })();
+const askFriends = () => fetch("/api/peers").then(r => r.ok ? r.json() : null).then(j => { if (j) friends = (j.friends || []).some(f => !f.removed_at); }, () => {});
+askFriends();
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
@@ -300,6 +306,12 @@ function entries(ctx, el, byKey = false) {
   if (el.matches(".t-proj > summary")) {
     const pid = +el.parentElement.dataset.pid, p = ctx.state.tree.find(x => x.id === pid);
     if (!p) return null;
+    // A friend's own row is no folder: nothing to make a desk on, to copy or
+    // to show in the file manager (docs/PEER.md).
+    if (p.friend) return { head: p.name, items: [
+      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
+      { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
+    ] };
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
@@ -310,15 +322,19 @@ function entries(ctx, el, byKey = false) {
     ] };
   }
   if (el.matches("a[data-id]")) {
-    const id = el.dataset.id, d = docById(ctx, id), path = d && d.source_path;
+    const id = el.dataset.id, d = docById(ctx, id);
+    // Under a friend's own row, the path is their file's name and no file
+    // here: no Copy path, no file manager.
+    const pid = +el.closest(".t-proj")?.dataset.pid, theirs = !!ctx.state.tree.find(x => x.id === pid)?.friend || d?.origin === "peer";
+    const path = !theirs && d && d.source_path;
+    askFriends();
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
       { label: "Open", moves: 1, run: () => ctx.open(id) },
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) },
-      // To a friend's snyvi (docs/PEER.md): the sheet lists the friends, or
-      // says where to make one.
-      ctx.peerCtx && { label: "Send to a friend…", run: () => ctx.peerCtx.peer().then(m => m.send(ctx.peerCtx, id, d ? d.title : ""), () => ctx.toast("Could not open Send to…")) }, RULE,
+      // To a friend's snyvi (docs/PEER.md): offered once there is a friend.
+      ctx.peerCtx && friends && { label: "Send to a friend…", run: () => ctx.peerCtx.peer().then(m => m.send(ctx.peerCtx, id, d ? d.title : ""), () => ctx.toast("Could not open Send to…")) }, RULE,
       path && copyIt(path, "Copy path"), copyIt(`${location.origin}/d/${id}`, "Copy link"),
-      files({ doc: id }), RULE,
+      !theirs && files({ doc: id }), RULE,
       { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }

@@ -92,7 +92,9 @@ A document goes through `receive::receive` like every document, with
 `origin = peer`, the sender's name on it, and a project of its own: root
 `peer:<address>`, named **From Trapti**. It is there within a second while
 snyvi runs, and already in the Inbox when the window opens after a night. The sidebar gains one project row
-per friend and nothing else; the head says *from Trapti · verified*. A
+per friend and nothing else, sent to the page as `friend` and with no root:
+it is no folder, so it has no desk glyph, no New desk here, no Copy path
+and no file manager, only Rename and Remove. The head says *from Trapti · verified*. A
 second send of the same file is a version of the same row. A muted
 friend's documents arrive read.
 
@@ -103,11 +105,23 @@ run; a frame is content.
 
 ## What an agent gets
 
-One tool, `offer_document(to, id)`. The desk brief names the friends. The
+One tool, `offer_document(to, id)`, listed only to a reader with a friend
+(`tools/list` asks the daemon, and lists it when the daemon does not say).
+The desk brief names the friends. The
 daemon writes an offer and the reader sees the question where they are,
 with the agent's name on it: Send, or Not now. An offer not answered when
 the panel's program ends is answered No. Nothing leaves on an agent's word;
 the friend's agent gets the same tool and nothing more.
+
+## What goes out
+
+A document or a line goes into the outbox (`peer_outbox`; a line is a row
+with `text` and no document) and is tried at once. A relay that cannot be
+reached keeps it there, and the link sends it when it is back: the sheet
+says *Queued for Trapti* rather than failing. A document is one row per
+recipient, so a resend replaces the first; a line is its own row each time.
+Send to a friend… is in a document's menu and head only once there is a
+friend.
 
 ## The relay
 

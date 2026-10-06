@@ -329,7 +329,7 @@ function noteRow(x, esc) {
   // is a question and these are its two answers.
   if (x.suggested_by) {
     return `<li class="dk-note dk-sug"><span class="dk-tick ghost" aria-hidden="true"></span>` +
-      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="suggested by ${esc(x.suggested_by)} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
+      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
   }
@@ -343,7 +343,7 @@ function noteRow(x, esc) {
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
     picMark(x, esc) +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span>` +
-    (x.done && x.done_by ? byLine(x, esc) : "") +
+    (x.done && x.done_by ? byLine(x, esc) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }

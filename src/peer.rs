@@ -815,6 +815,15 @@ CREATE TABLE IF NOT EXISTS peer_taken (
 );
 "#;
 
+/// 1.19: the desk a friend's things land on (0: their own row), and a line
+/// in the outbox. Version 7 of `store::MIGRATIONS`, not in `SCHEMA`: that
+/// step runs once and takes an error as one, so a table made new must not
+/// have them before it adds them.
+pub const COLUMNS_1_19: [&str; 2] = [
+    "ALTER TABLE peers ADD COLUMN desk_id INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN text TEXT NOT NULL DEFAULT ''",
+];
+
 const PEER_COLS: &str =
     "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to";
 
@@ -938,14 +947,46 @@ pub fn queue(conn: &Connection, peer: &Peer, doc_id: &str, now: i64) -> Result<S
     Ok(id)
 }
 
-/// What has not gone yet, oldest first: `(frame id, peer id, doc id, tries)`.
-pub fn unsent(conn: &Connection) -> Result<Vec<(String, i64, String, i64)>> {
+/// A line queued for a friend, as a document is: said once, so each is its
+/// own row under a fresh id, and it goes when the relay can be reached.
+pub fn queue_note(conn: &Connection, peer: &Peer, text: &str, now: i64) -> Result<String> {
+    let text: String = text.trim().chars().take(NOTE_CHARS).collect();
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|e| anyhow!("reading random bytes for a line's id: {e}"))?;
+    let id = blake3::hash(&nonce).to_hex().to_string();
+    conn.execute(
+        "INSERT INTO peer_outbox(id, peer_id, doc_id, text, queued_at) VALUES(?1, ?2, '', ?3, ?4)",
+        params![id, peer.id, text, now],
+    )?;
+    Ok(id)
+}
+
+/// A frame waiting in the outbox: a document (`doc_id`) or a line (`text`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unsent {
+    pub id: String,
+    pub peer_id: i64,
+    pub doc_id: String,
+    pub text: String,
+    pub tries: i64,
+}
+
+/// What has not gone yet, oldest first.
+pub fn unsent(conn: &Connection) -> Result<Vec<Unsent>> {
     let rows = conn
         .prepare(
-            "SELECT o.id, o.peer_id, o.doc_id, o.tries FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
+            "SELECT o.id, o.peer_id, o.doc_id, o.text, o.tries FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
              WHERE o.sent_at = 0 AND p.removed_at = 0 ORDER BY o.queued_at, o.id",
         )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .query_map([], |r| {
+            Ok(Unsent {
+                id: r.get(0)?,
+                peer_id: r.get(1)?,
+                doc_id: r.get(2)?,
+                text: r.get(3)?,
+                tries: r.get(4)?,
+            })
+        })?
         .collect::<std::result::Result<_, _>>()?;
     Ok(rows)
 }
@@ -1356,6 +1397,9 @@ mod tests {
         conn.execute_batch("CREATE TABLE docs (id TEXT PRIMARY KEY, title TEXT NOT NULL);")
             .unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        for c in COLUMNS_1_19 {
+            conn.execute_batch(c).unwrap();
+        }
         let (sunny, trapti) = two();
         let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
         assert_eq!(t.name, "Trapti");
@@ -1389,9 +1433,19 @@ mod tests {
         assert_eq!(queue(&conn, &t2, "doc1", 401).unwrap(), fid);
         assert_eq!(unsent(&conn).unwrap().len(), 1);
         failed(&conn, &fid, "offline").unwrap();
-        assert_eq!(unsent(&conn).unwrap()[0].3, 1);
+        assert_eq!(unsent(&conn).unwrap()[0].tries, 1);
         sent(&conn, &fid, 402).unwrap();
         assert!(unsent(&conn).unwrap().is_empty());
+        // A line waits there too, each its own row: said twice is two lines.
+        let l1 = queue_note(&conn, &t2, "  water the beans  ", 410).unwrap();
+        let l2 = queue_note(&conn, &t2, "water the beans", 411).unwrap();
+        assert_ne!(l1, l2);
+        let waiting = unsent(&conn).unwrap();
+        assert_eq!(waiting.len(), 2);
+        assert_eq!(waiting[0].text, "water the beans");
+        assert_eq!(waiting[0].doc_id, "");
+        sent(&conn, &l1, 412).unwrap();
+        sent(&conn, &l2, 412).unwrap();
 
         // Notes wait, are taken, put away, brought back.
         let n = note_arrived(&conn, t2.id, "  water the beans  ", 500).unwrap();
