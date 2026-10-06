@@ -366,16 +366,22 @@ function noteRow(x, esc) {
   // it opens a card over the list, as tall as the text, while the row keeps
   // its own two lines underneath: nothing below it moves either way.
   const editing = noteField && noteField.kind === "edit" && noteField.id === x.id;
-  // Two columns either side of the text, each two lines tall: the circle
-  // over the line's number on the left, and on the right the stage over the
-  // ✕. The number is the one the reader and the agents call the line by, so
-  // a click copies it, ready to paste into a panel.
+  // On the left the circle, under it the line's number -- the one the reader
+  // and the agents call the line by, so a click copies it, ready to paste
+  // into a panel -- and under that the line's small marks: its stage and its
+  // pictures. Everything right of that is the text's: the ✕ comes over its
+  // end under the pointer, and what the line is in -- its thread, the panel
+  // at it -- is said in its tip, not beside it (#95: a thread's chip there
+  // left the text a letter wide). The text is clamped in a span of its own:
+  // WebKit does not clamp a <button>, and the window is WebKit.
+  const marks = stageMark(x, esc) + picMark(x, esc);
+  const about = [stageWords(x), threadWords(x), x.done_by ? `ticked by ${x.done_by}` : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
-    `<button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button></span>` +
-    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${x.done_by ? `ticked by ${esc(x.done_by)} · ` : ""}click to rewrite" data-tip-overflow>${esc(x.text)}</button>` +
-    picMark(x, esc) + threadChip(x, esc) +
-    `<span class="dk-tail">${stageMark(x, esc)}` +
+    `<button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
+    `<span class="dk-marks">${marks}</span></span>` +
+    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
+    `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     (x.done && x.done_by ? byLine(x, esc) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
@@ -394,7 +400,7 @@ function noteRow(x, esc) {
 /** The pictures in a paste or a drop, of the four kinds the daemon keeps. */
 const images = dt => [...(dt?.files || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
 
-/** At the end of a line's text: that it has pictures, and how many, in one
+/** Under the line's number: that it has pictures, and how many, in one
  *  small mark that opens them whole. While one just taken off can still be
  *  put back, the mark is its Undo, in the same room. */
 function picMark(x, esc) {
@@ -417,9 +423,10 @@ function stageOf(x) {
   return views.get(x.stage_pane)?.status?.agent ? "working" : x.stage_doc ? "planned" : "read";
 }
 
-/** The stage's mark, at the line's right end over its ✕, in a slot every
- *  line keeps, so a line that is picked up does not rewrap. The plan's mark
- *  opens the plan; working names the panel by its number, as its tab does. */
+/** The stage's mark, first of the marks under the line's number, which sit
+ *  in a column of their own: a line that is picked up does not rewrap. The
+ *  plan's mark opens the plan; working names the panel by its number, as its
+ *  tab does. */
 function stageMark(x, esc) {
   const st = stageOf(x), by = esc(x.stage_by || "an agent");
   if (st === "planned" && x.stage_doc) {
@@ -431,11 +438,20 @@ function stageMark(x, esc) {
     const at = x.stage_panel ? ` in ${esc(x.stage_panel)}` : "";
     const busy = views.get(x.stage_pane)?.status?.agent === "working";
     const say = busy ? `${by} is working on it${at}` : `${by} has it${at}`;
-    const slot = views.get(x.stage_pane)?.pane?.slot;
-    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}">${slot != null ? `<span class="c">${slot}</span>` : ""}</span>`;
+    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>`;
   }
   if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
-  return `<span class="dk-stage" aria-hidden="true"></span>`;
+  return "";
+}
+
+/** The stage in words, for the line's tip: who has it and where. */
+function stageWords(x) {
+  const st = stageOf(x), by = x.stage_by || "an agent";
+  if (st === "working") {
+    const slot = views.get(x.stage_pane)?.pane?.slot;
+    return `${by} is on it${slot != null ? ` in panel ${slot}` : ""}`;
+  }
+  return st === "planned" ? `planned by ${by}` : st === "read" ? `read by ${by}` : "";
 }
 
 /** Fetch the pictures the rail shows and has not got yet. An <img> cannot

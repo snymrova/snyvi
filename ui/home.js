@@ -75,6 +75,8 @@ const CSS = `
 .hm-turn { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
 .hm-turn .hm-pw { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .hm-turn .hm-tq { color: var(--fg); }
+/* A handed-over command, whole: one line on Home, all of it in its tip. */
+.hm-turn .hm-cmd { font-family: var(--mono); font-size: 11px; color: var(--fg-2); }
 .hm-turn.said .hm-t b { font-weight: inherit; color: var(--fg); }
 .hm-tacts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 55%; }
 .hm-opt { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
@@ -557,13 +559,16 @@ function onYou(j) {
   const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
   const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
   const row = w => {
-    const opts = w.kind === "decide" ? w.options : TURN_ANSWERS[w.kind] || ["Done"];
-    const more = w.kind === "decide" ? "Other…" : w.kind === "try" ? "Needs changes…" : "";
+    // A command is run on its desk, where Run types it into the panel that
+    // asked: Home has no panel to type into.
+    const opts = w.kind === "decide" ? w.options : w.kind === "run" ? [] : TURN_ANSWERS[w.kind] || ["Done"];
+    const more = w.kind === "decide" ? "Other…" : w.kind === "try" ? "Needs changes…" : w.kind === "run" ? "Run on the desk" : "";
     const n = slot(w.desk_id, w.pane);
     return `<li class="hm-turn"><span class="hm-pw"><span class="hm-t hm-tq">${esc(w.text)}</span>` +
+      (w.kind === "run" ? `<code class="hm-t hm-cmd">${esc(w.cmd)}</code>` : "") +
       `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}</span></span>` +
       `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
-      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}" data-tip="${esc(more)}" data-tip-sub="answer in your own words on the desk">${esc(more)}</a>` : "") + `</span></li>`;
+      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""} data-tip="${esc(more)}" data-tip-sub="${w.kind === "run" ? `Run types it into ${n ? `panel ${n}` : "the panel that asked"}, on its desk` : "answer in your own words on the desk"}">${esc(more)}</a>` : "") + `</span></li>`;
   };
   const said = [...answeredHere].map(([, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
     `<span class="hm-t">${a.err ? esc(a.err) : `You said <b>${esc(a.answer)}</b> · it goes with your next message on ${esc(name(a.desk))}`}</span></span></li>`).join("");

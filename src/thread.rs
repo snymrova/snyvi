@@ -90,6 +90,10 @@ CREATE INDEX IF NOT EXISTS desk_suggestions_desk ON desk_suggestions(desk_id, se
 pub const THREAD_COLUMN: &str =
     "ALTER TABLE desk_notes ADD COLUMN thread_id INTEGER NOT NULL DEFAULT 0";
 
+/// 1.21: the command a `run` turn hands the reader, or empty. Version 9 of
+/// `store::MIGRATIONS`, never in `SCHEMA`.
+pub const CMD_COLUMN: &str = "ALTER TABLE turns ADD COLUMN cmd TEXT NOT NULL DEFAULT ''";
+
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
 /// `parked` carries the next step to pick it up by.
@@ -99,8 +103,13 @@ pub const STAGES: [&str; 7] = [
 
 /// What a turn asks of the reader. The kind picks the buttons: `decide` has
 /// the agent's options, `try` has Looks good and Needs changes, `merge` and
-/// `key` have Done.
-pub const KINDS: [&str; 4] = ["decide", "try", "merge", "key"];
+/// `key` have Done, and `run` has its command and Run, which types it into
+/// the panel that asked as Claude Code's `!` shell mode (#95).
+pub const KINDS: [&str; 5] = ["decide", "try", "merge", "key", "run"];
+
+/// The longest command a `run` turn carries, in bytes: one line, typed into
+/// a terminal on the reader's click.
+pub const CMD_BYTES: usize = 2048;
 
 /// Threads a desk holds that are not shipped or put away. A desk is a project;
 /// past a dozen arcs at once it is a backlog, and the notes are for that.
@@ -195,6 +204,9 @@ pub struct Turn {
     pub recommended: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub link: String,
+    /// A `run` turn's command, exactly as Run types it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub cmd: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub answer: String,
     /// `snyvi` or `panel`: where the answer was given.
@@ -698,7 +710,7 @@ pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> R
 
 const TURN_COLS: &str =
     "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
-     answer, answered_in, answered_at, told_at, created_at, removed_at";
+     answer, answered_in, answered_at, told_at, created_at, removed_at, cmd";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
     let options: String = r.get(8)?;
@@ -724,6 +736,7 @@ fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
         told_at: r.get(14)?,
         created_at: r.get(15)?,
         removed_at: r.get(16)?,
+        cmd: r.get(17)?,
     })
 }
 
@@ -781,6 +794,8 @@ pub struct Ask {
     pub via: String,
     pub by: String,
     pub pane: String,
+    /// `run` only: the command.
+    pub cmd: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -792,7 +807,21 @@ pub enum Asked {
     /// `decide` needs two to four options; the others take none.
     BadOptions,
     BadKind,
+    /// `run` needs one line of command, with no control characters: it is
+    /// typed into a terminal, where an escape could end the paste early and
+    /// type something else.
+    BadCmd,
     NoSuchDesk,
+}
+
+/// A `run` turn's command as it will be typed, or `None` when it cannot be:
+/// empty, longer than `CMD_BYTES`, or holding any control character -- a
+/// newline would submit half of it, and an escape could close the bracketed
+/// paste and type the rest as keys. Never cut short: half a command is a
+/// different command.
+fn command(cmd: &str) -> Option<&str> {
+    let c = cmd.trim();
+    (!c.is_empty() && c.len() <= CMD_BYTES && !c.chars().any(char::is_control)).then_some(c)
 }
 
 /// `ask` and `hand_over`, and the mod's mirror of Claude's own question. The
@@ -823,6 +852,14 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
     } else {
         -1
     };
+    let cmd = if a.kind == "run" {
+        match command(&a.cmd) {
+            Some(c) => c,
+            None => return Ok(Asked::BadCmd),
+        }
+    } else {
+        ""
+    };
     let link = line(&a.link, 400);
     let via = if a.via == "dialog" { "dialog" } else { "ask" };
     let by = line(&a.by, 60);
@@ -843,8 +880,8 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
         .map(|t| t.id)
         .unwrap_or(0);
     tx.execute(
-        "INSERT INTO turns(desk_id, thread_id, pane, by, kind, via, text, options, recommended, link, created_at)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO turns(desk_id, thread_id, pane, by, kind, via, text, options, recommended, link, created_at, cmd)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             desk_id,
             thread,
@@ -856,7 +893,8 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
             options.join("\n"),
             recommended,
             link,
-            now
+            now,
+            cmd
         ],
     )?;
     let id = tx.last_insert_rowid();

@@ -2850,6 +2850,43 @@ async function panelRows(cdp, base, token) {
     rows.push(["an agent's tick shows in the rail, with its name", byAgent && again.status === 409,
       !tk.ok ? `the tick answered ${tk.status}` : !byAgent ? "the rail never showed it" : again.status !== 409 ? `a second tick answered ${again.status}` : "done, \"bench-agent\" at its end, and a second tick refused"]);
 
+    // #95: a note's text has the row. Its thread and its stage are said in
+    // its tip, with only small marks under its number; a long line is two
+    // lines, and a row in a thread is as tall as a bare one.
+    const A = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const agent = (path, body) => fetch(`${base}/api/panes/${pa}/${path}`, { method: "POST", headers: A, body: JSON.stringify(body) });
+    const n3 = (await post(`/api/desks/${desk}/notes`, { text: "a long line to see that a note in a thread keeps the rail's width for its own words, and stops at two lines however long it is" })).note.id;
+    const threaded = await agent("thread", { name: "bench thread with a long name", notes: [n3], by: "bench-agent" });
+    await agent(`notes/${n3}/mark`, { stage: "read", by: "bench-agent" });
+    const row95 = n => `.dk-note:has([data-n="${n}"])`;
+    const inTip = await until(`(document.querySelector('${row95(n3)} .nm')?.dataset.tipSub || "").includes("bench thread with a long name")`, 40);
+    const lay = await q.ev(`(() => { const a = document.querySelector('${row95(n3)}'), b = document.querySelector('${row95(n1)}'); if (!a || !b) return null;
+      const t = a.querySelector(".nm-t"), lh = parseFloat(getComputedStyle(t).lineHeight);
+      return { h: a.getBoundingClientRect().height, bare: b.getBoundingClientRect().height, w: t.getBoundingClientRect().width, row: a.getBoundingClientRect().width,
+        lines: Math.round(t.getBoundingClientRect().height / lh), beside: a.querySelectorAll(":scope > :not(.dk-lead):not(.nm):not(.dk-tail)").length,
+        marks: a.querySelectorAll(".dk-marks > *").length, tip: a.querySelector(".nm").dataset.tipSub || "" }; })()`);
+    rows.push(["a note in a thread keeps the row for its text, two lines, as tall as a bare one",
+      threaded.ok && inTip && !!lay && lay.h === lay.bare && lay.w >= lay.row * 0.6 && lay.lines === 2 && lay.beside === 0 && lay.marks === 1 && lay.tip.includes("read by bench-agent"),
+      !threaded.ok ? `the thread answered ${threaded.status}` : !inTip || !lay ? "the tip never named the thread" :
+        `${lay.h} px tall against ${lay.bare}, text ${Math.round(lay.w)} of ${Math.round(lay.row)} px in ${lay.lines} lines, ${lay.beside} beside it, ${lay.marks} marks, tip "${lay.tip}"`]);
+
+    // #95: a command handed over is a card with the whole command; one that
+    // could close the paste early is refused at the door; Run types it into
+    // the panel that asked as a ! command, Enter apart, on the click alone.
+    const refusedCmd = await agent("handover", { kind: "run", text: "Run this", cmd: "echo \u001b[201~ typed as keys", by: "bench-agent" });
+    const handed = await agent("handover", { kind: "run", text: "Upload the bench file", cmd: "echo bench-run-ok", by: "bench-agent" });
+    await agent("agent", { session: "0b1c2d3e-4f50-4617-8899-aabbccddeeff" });
+    const card = await until(`document.querySelector('.dk-turn .tn-cmd')?.textContent === "echo bench-run-ok" && !!document.querySelector('[data-a="tn-run"]')`, 60);
+    await q.ev(`window.__typed = []; const send = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { try { const j = JSON.parse(d); if (j.t === "in") window.__typed.push(j.d); } catch {} return send.call(this, d); }; 1`);
+    if (card) await q.clickOn('[data-a="tn-run"]');
+    const typed = card && await until(`window.__typed.length >= 2`, 30) ? await q.ev("window.__typed") : [];
+    const ranGone = card && await until(`!document.querySelector('.dk-turn .tn-cmd')`, 30);
+    const pasted = (typed[0] || "").replace("\u001b[200~", "").replace("\u001b[201~", "");
+    rows.push(["a handed-over command: refused if it could escape, else Run types it as a ! command",
+      refusedCmd.status === 400 && handed.status === 201 && card && pasted === "! echo bench-run-ok" && typed[1] === "\r" && ranGone,
+      refusedCmd.status !== 400 ? `an escape in the command answered ${refusedCmd.status}` : handed.status !== 201 ? `the hand-over answered ${handed.status}` :
+        !card ? "no card with the command and Run" : !typed.length ? "Run typed nothing" : `typed ${JSON.stringify(typed)}${ranGone ? "" : ", and the card stayed"}`]);
+
     // A sidebar document's menu: Remove leaves the row's own Undo.
     const doc = await q.ev(`document.querySelector("#trees a[data-id]")?.dataset.id || ""`);
     if (doc) {

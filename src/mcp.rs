@@ -113,7 +113,8 @@ something in the work genuinely deserves a word, leave them a short personal asi
 
 /// And, added to that, what an agent running in a desk's panel is told: it is
 /// in the system prompt, so it survives a compaction, which is why the desk
-/// brief (`crate::brief`) does not repeat it.
+/// brief (`crate::brief`) does not repeat it -- except on a resume, which
+/// replays the rules the conversation began with (`hook::with_rules`).
 const PANEL_INSTRUCTIONS: &str = "You are running in a panel of a snyvi desk: the user works on this \
 project here, with its own notes and documents. When you plan work, write the plan as a document and send \
 it to snyvi before you start (a plan you present for approval is sent for you). Name the panel with \
@@ -121,7 +122,8 @@ name_panel when you take on a task. When the user sets you on a desk note, mark 
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
 File a piece of work as a thread with start_thread when you take it on, and put anything only the user can \
-do on their Your turn with hand_over. \
+do on their Your turn with hand_over: a command you are blocked from running goes there as run, never as \
+text for them to paste. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -620,7 +622,7 @@ fn leave_off_spec() -> Value {
     })
 }
 
-fn instructions(in_panel: bool) -> String {
+pub(crate) fn instructions(in_panel: bool) -> String {
     if in_panel {
         format!("{INSTRUCTIONS} {PANEL_INSTRUCTIONS}")
     } else {
@@ -1044,6 +1046,14 @@ mod tests {
         assert!(
             instructions(true).contains("leave_off") && instructions(true).contains("name_panel")
         );
+        // Claude Code cuts a server's instructions at 2,048 characters by
+        // default, and a rule past the cut is a rule never read.
+        assert!(
+            instructions(true).chars().count() <= 2048,
+            "{}",
+            instructions(true).len()
+        );
+        assert!(instructions(true).contains("as run, never as"));
     }
 
     /// Four prompts; the two that use a desk's tools only in a panel, and an

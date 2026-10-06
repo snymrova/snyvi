@@ -20,9 +20,10 @@ const ASK: &str = "Put a decision on the user's Your turn in snyvi: a question, 
 the one you recommend. It does not wait: the answer comes with the user's next message, and it is kept on \
 the thread as decided. Prefer your own question tool when the user is at this panel.";
 
-const HAND_OVER: &str = "Put something only the user can do on their Your turn in snyvi: try (try a change \
-and say looks good or needs changes), merge (merge a PR), or key (add a key). One sentence, and a link if \
-there is one. Their answer comes with their next message.";
+const HAND_OVER: &str = "Put what only the user can do on their Your turn in snyvi: try (try a change), merge (a PR), key (add a \
+key), or run (a command you were blocked from running: pass cmd, one line; their Run types it here as a \
+! command and its output comes back to you). Never ask them to paste a command. One sentence, and a link \
+if there is one.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \
@@ -69,8 +70,9 @@ pub(super) fn specs() -> Vec<Value> {
             "name": "hand_over", "title": "Hand something to the user", "description": HAND_OVER,
             "inputSchema": { "type": "object", "properties": {
                 "text": { "type": "string", "description": "One sentence: what to do." },
-                "kind": { "type": "string", "enum": ["try", "merge", "key"] },
-                "link": { "type": "string", "description": "A URL or a port, if there is one." }
+                "kind": { "type": "string", "enum": ["try", "merge", "key", "run"] },
+                "link": { "type": "string", "description": "A URL or a port, if there is one." },
+                "cmd": { "type": "string", "description": "run only: one command line, exactly as it should run." }
             }, "required": ["text", "kind"], "additionalProperties": false },
             "annotations": ann(false)
         }),
@@ -192,9 +194,11 @@ impl Session {
     pub(super) fn hand_over(&self, args: &Value) -> Value {
         let body = json!({
             "kind": arg(args, "kind"), "text": arg(args, "text"), "link": arg(args, "link"),
-            "by": self.by(),
+            "cmd": arg(args, "cmd"), "by": self.by(),
         });
+        let run = arg(args, "kind") == "run";
         match self.thread_call("handover", body) {
+            Ok(_) if run => said("Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it.", false),
             Ok(_) => said("Handed over. It is on the user's Your turn in snyvi; their answer comes with their next message. Say so in your reply.", false),
             Err(e) => e,
         }
