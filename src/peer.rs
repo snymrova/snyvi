@@ -356,11 +356,11 @@ pub struct Folder {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// `CONTENT_V` when sent; 0 from a snyvi before 1.22.
-    #[serde(default, skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing_if = "v_unset")]
     pub v: u32,
 }
 
-fn is_zero(n: &u32) -> bool {
+fn v_unset(n: &u32) -> bool {
     *n == 0
 }
 
@@ -1959,18 +1959,39 @@ mod tests {
         #[derive(Deserialize)]
         #[serde(rename_all = "lowercase", tag = "kind")]
         enum Was {
-            Document { title: String, file: Option<String>, name: String, id: String },
-            Note { text: String, name: String },
+            Document {
+                title: String,
+                file: Option<String>,
+                name: String,
+                id: String,
+            },
+            Note {
+                text: String,
+                name: String,
+            },
         }
         let json = serde_json::to_vec(&doc).unwrap();
         let was: Was = serde_json::from_slice(&json).unwrap();
-        assert!(matches!(was, Was::Document { ref title, ref file, .. } if title == "Plan" && file.as_deref() == Some("PLAN.md")));
-        let note = Content::Note { text: "hi".into(), name: "S".into(), at: Folder { repo: Some("r".into()), v: CONTENT_V, ..Default::default() } };
+        assert!(
+            matches!(was, Was::Document { ref title, ref file, .. } if title == "Plan" && file.as_deref() == Some("PLAN.md"))
+        );
+        let note = Content::Note {
+            text: "hi".into(),
+            name: "S".into(),
+            at: Folder {
+                repo: Some("r".into()),
+                v: CONTENT_V,
+                ..Default::default()
+            },
+        };
         let was: Was = serde_json::from_slice(&serde_json::to_vec(&note).unwrap()).unwrap();
         assert!(matches!(was, Was::Note { ref text, .. } if text == "hi"));
         // A kind from a snyvi newer than this one opens, as Other.
         let newer = br#"{"kind":"receipt","of":"d1","v":2}"#;
-        assert_eq!(serde_json::from_slice::<Content>(newer).unwrap(), Content::Other);
+        assert_eq!(
+            serde_json::from_slice::<Content>(newer).unwrap(),
+            Content::Other
+        );
     }
 
     #[test]
@@ -1979,7 +2000,15 @@ mod tests {
         assert_eq!(safe_path("docs\\PLAN.md").as_deref(), Some("docs/PLAN.md"));
         assert_eq!(safe_path("PLAN.md").as_deref(), Some("PLAN.md"));
         for bad in [
-            "", "/etc/passwd", "../x.md", "docs/../../x", "C:/x.md", "c:x.md", "a//b", "./a", "a/\u{1b}[2J",
+            "",
+            "/etc/passwd",
+            "../x.md",
+            "docs/../../x",
+            "C:/x.md",
+            "c:x.md",
+            "a//b",
+            "./a",
+            "a/\u{1b}[2J",
         ] {
             assert_eq!(safe_path(bad), None, "{bad:?}");
         }

@@ -882,17 +882,29 @@ mod tests {
             .unwrap()
         };
         let one = send(b"# Plan\n\none", "docs/PLAN.md");
-        assert_eq!(s.project_root(one.doc.project_id).as_deref(), Some(root.as_str()));
+        assert_eq!(
+            s.project_root(one.doc.project_id).as_deref(),
+            Some(root.as_str())
+        );
         assert_eq!(one.doc.source_path.as_deref(), Some("docs/PLAN.md"));
         assert_eq!(one.doc.kind, Kind::Markdown);
         let two = send(b"# Plan\n\ntwo", "docs/PLAN.md");
-        assert_eq!(two.supersedes.as_deref(), Some(one.doc.id.as_str()), "a version");
+        assert_eq!(
+            two.supersedes.as_deref(),
+            Some(one.doc.id.as_str()),
+            "a version"
+        );
         let other = send(b"# Plan\n\nelse", "web/PLAN.md");
-        assert_eq!(other.supersedes, None, "the same name elsewhere is its own row");
+        assert_eq!(
+            other.supersedes, None,
+            "the same name elsewhere is its own row"
+        );
         let scratch = send(b"# Plan\n\nscratch", "0123456789abcdef/PLAN.md");
         assert_eq!(scratch.supersedes, None);
         assert_eq!(
-            send(b"# Plan\n\nscratch 2", "0123456789abcdef/PLAN.md").supersedes.as_deref(),
+            send(b"# Plan\n\nscratch 2", "0123456789abcdef/PLAN.md")
+                .supersedes
+                .as_deref(),
             Some(scratch.doc.id.as_str()),
             "a file outside the repository is versioned by its key"
         );

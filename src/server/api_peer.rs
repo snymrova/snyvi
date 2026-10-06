@@ -950,7 +950,10 @@ pub(crate) fn read_held(app: &Arc<App>, me: &Identity) {
             Ok((Content::Other, _)) => {}
             Ok((content, body)) => {
                 if let Err(e) = arrived(app, &p, content, body) {
-                    eprintln!("snyvi: something held from {} could not be kept: {e:#}", p.name);
+                    eprintln!(
+                        "snyvi: something held from {} could not be kept: {e:#}",
+                        p.name
+                    );
                 }
                 let _ = app.store.peer_unhold(&id);
             }

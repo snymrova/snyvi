@@ -114,7 +114,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-strip .ds-open { margin-bottom: 6px; }
 /* The count under its mark, in a line of its own the width of the button,
    so a number arriving or leaving moves nothing. */
-.dk-strip .n { display: block; height: 12px; margin-top: -2px; font-size: 10px; line-height: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dk-strip .n { display: block; height: 12px; margin-top: -2px; font-size: 11px; line-height: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .dk-strip .ds-docs:not(.none) .n { color: var(--accent); }
 .dk-strip .ds-panels.blk { color: var(--warn); }
 .pn-full:hover, .pn-ren:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }

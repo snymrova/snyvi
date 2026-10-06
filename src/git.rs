@@ -215,8 +215,8 @@ pub fn print(root: &Path) -> Option<Print> {
     if dirs::home_dir().is_some_and(|h| same(&h, &top)) {
         return None;
     }
-    let shallow = run(root, &["rev-parse", "--is-shallow-repository"])
-        .is_some_and(|s| s.trim() == "true");
+    let shallow =
+        run(root, &["rev-parse", "--is-shallow-repository"]).is_some_and(|s| s.trim() == "true");
     let repo = if shallow {
         None
     } else {
@@ -490,8 +490,17 @@ mod tests {
             git(
                 at,
                 &[
-                    "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-                    "commit", "-q", "--allow-empty", "-m", m,
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    m,
                 ],
             )
         };
@@ -501,18 +510,38 @@ mod tests {
                 return; // no git here
             }
         }
-        assert_eq!(print(&a), None, "no commit yet, no remote: nothing to name it by");
-        assert!(commit(&a, "first") && commit(&a, "second") && commit(&other, "first"));
+        assert_eq!(
+            print(&a),
+            None,
+            "no commit yet, no remote: nothing to name it by"
+        );
+        // An empty commit with the same author, second and message is the same
+        // commit, so the other repository starts with another message.
+        assert!(commit(&a, "first") && commit(&a, "second") && commit(&other, "another first"));
         let pa = print(&a).expect("a repository with a commit");
         assert!(pa.repo.is_some() && pa.remote.is_none());
-        assert!(git(&dir.path, &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]));
+        assert!(git(
+            &dir.path,
+            &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]
+        ));
         assert!(git(&a, &["worktree", "add", "-q", w.to_str().unwrap()]));
         assert_eq!(print(&b).and_then(|p| p.repo), pa.repo, "a clone");
         assert_eq!(print(&w).and_then(|p| p.repo), pa.repo, "a worktree");
-        assert_eq!(print(&a.join("sub")).and_then(|p| p.repo), None, "not a folder that is there");
-        assert_ne!(print(&other).and_then(|p| p.repo), pa.repo, "another repository");
+        assert_eq!(
+            print(&a.join("sub")).and_then(|p| p.repo),
+            None,
+            "not a folder that is there"
+        );
+        assert_ne!(
+            print(&other).and_then(|p| p.repo),
+            pa.repo,
+            "another repository"
+        );
         // A remote names it too, whatever the case of its address.
-        assert!(git(&b, &["remote", "set-url", "origin", "git@GitHub.com:O/R.git"]));
+        assert!(git(
+            &b,
+            &["remote", "set-url", "origin", "git@GitHub.com:O/R.git"]
+        ));
         assert_eq!(
             print(&b).and_then(|p| p.remote),
             Some(remote_print("https://github.com/o/r"))

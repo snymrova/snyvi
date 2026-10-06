@@ -1957,8 +1957,15 @@ async fn a_friends_document_in_a_folder_goes_back_to_their_row() {
         // Who sent it, by key, as `arrived` sets it.
         store.set_peer_key("abcdef0001", "KEY").unwrap();
         let (r, n, _) = crate::receive::desk_project(&root);
-        let on = crate::desk::Origin { id: desk.id, name: desk.name.clone(), slot: 0 };
-        let kept = store.move_lineage("abcdef0001", &r, &n, &on).unwrap().unwrap();
+        let on = crate::desk::Origin {
+            id: desk.id,
+            name: desk.name.clone(),
+            slot: 0,
+        };
+        let kept = store
+            .move_lineage("abcdef0001", &r, &n, &on)
+            .unwrap()
+            .unwrap();
         assert!(kept.filed, "in the reader's folder now");
     });
     let unfile = |id: &str| {

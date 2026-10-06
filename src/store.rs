@@ -1340,7 +1340,8 @@ impl Store {
     /// What `crate::git::print` said of a folder, now; nothing, for one in no
     /// repository, so it is not asked again until the next round.
     pub fn set_print(&self, root: &str, print: Option<&crate::git::Print>) -> Result<()> {
-        let (repo, remote) = print.map_or((None, None), |p| (p.repo.as_deref(), p.remote.as_deref()));
+        let (repo, remote) =
+            print.map_or((None, None), |p| (p.repo.as_deref(), p.remote.as_deref()));
         self.conn.lock().unwrap().execute(
             "UPDATE projects SET repo = ?2, remote = ?3, printed_at = ?4 WHERE root = ?1",
             params![root, repo.unwrap_or(""), remote.unwrap_or(""), now()],

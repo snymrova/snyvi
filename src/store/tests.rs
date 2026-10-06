@@ -55,6 +55,13 @@ const OLD_1_20: &str = "ALTER TABLE desk_notes DROP COLUMN thread_id;";
 /// And of 1.21's: a `run` turn's command, which step 9 adds.
 const OLD_1_21: &str = "ALTER TABLE turns DROP COLUMN cmd;";
 
+/// And of 1.22's: a folder's fingerprint and a friend's document's key, which
+/// step 10 adds.
+const OLD_1_22: &str = "ALTER TABLE projects DROP COLUMN repo;
+     ALTER TABLE projects DROP COLUMN remote;
+     ALTER TABLE projects DROP COLUMN printed_at;
+     ALTER TABLE docs DROP COLUMN peer_key;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -823,6 +830,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
+         {OLD_1_22}
          PRAGMA user_version = 3;"
     ))
     .unwrap();
@@ -1103,6 +1111,7 @@ fn a_1_16_database_comes_forward_once() {
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
+         {OLD_1_22}
              PRAGMA user_version = 4;"
         ))
         .unwrap();
@@ -1301,7 +1310,10 @@ fn folders_are_found_by_their_fingerprint() {
         }),
     )
     .unwrap();
-    assert!(s.roots_to_print(now() - 10).unwrap().is_empty(), "both read just now");
+    assert!(
+        s.roots_to_print(now() - 10).unwrap().is_empty(),
+        "both read just now"
+    );
     assert_eq!(s.print_of("/p").unwrap().unwrap().0, print);
     assert_eq!(s.print_of("/nowhere").unwrap(), None);
     let by = |repo: Option<&str>, remote: Option<&str>| {
@@ -1315,10 +1327,22 @@ fn folders_are_found_by_their_fingerprint() {
         .map(|(r, _)| r)
         .collect::<Vec<_>>()
     };
-    assert_eq!(by(Some("r1"), None), vec!["/p", "/p-wt"], "a clone and its worktree");
-    assert_eq!(by(None, Some("m1")), vec!["/p"], "a shallow clone, by its remote");
+    assert_eq!(
+        by(Some("r1"), None),
+        vec!["/p", "/p-wt"],
+        "a clone and its worktree"
+    );
+    assert_eq!(
+        by(None, Some("m1")),
+        vec!["/p"],
+        "a shallow clone, by its remote"
+    );
     assert_eq!(by(Some("r2"), Some("m2")), Vec::<String>::new());
-    assert_eq!(by(None, None), Vec::<String>::new(), "a frame from before 1.22");
+    assert_eq!(
+        by(None, None),
+        Vec::<String>::new(),
+        "a frame from before 1.22"
+    );
     // Unread folders and a folder in no repository: an empty print matches nothing.
     s.set_print("/p-wt", None).unwrap();
     assert_eq!(by(Some(""), Some("")), Vec::<String>::new());
@@ -1346,7 +1370,10 @@ fn a_frame_from_a_newer_snyvi_is_held() {
         .unwrap();
     s.peer_hold("f1", p.id, b"sealed").unwrap();
     s.peer_hold("f1", p.id, b"sealed").unwrap();
-    assert_eq!(s.peer_held().unwrap(), vec![("f1".to_string(), p.id, b"sealed".to_vec())]);
+    assert_eq!(
+        s.peer_held().unwrap(),
+        vec![("f1".to_string(), p.id, b"sealed".to_vec())]
+    );
     assert_eq!(s.prune_peer_held().unwrap(), 0, "a month to wait");
     s.peer_unhold("f1").unwrap();
     assert!(s.peer_held().unwrap().is_empty());
