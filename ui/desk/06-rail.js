@@ -35,6 +35,7 @@ const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" st
  *  outline and not on a text baseline. */
 const HEAD = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  key: '<circle cx="7" cy="13" r="3.5"/><path d="M9.5 10.5L16 4M13.5 6.5l2 2M15.5 4.5l1.5 1.5"/>',
 };
 const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
 

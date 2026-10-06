@@ -41,13 +41,18 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-left-b.none { color: var(--fg-3); opacity: 0; }
 .dk-head:is(:hover, :focus-within) .dk-left-b.none { opacity: 1; }
 .dk-left-in { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-small); padding: 1px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
-/* Keys: the slot after Left off, there with nothing in it, dim and shown on
-   hover until the desk has one; its sheet hangs under it, over the panes. */
+/* Keys: the slot after Left off, a key always there, dim until the desk has
+   one and then with the count beside it; its sheet hangs under it, over the
+   panes. A key just kept lights its row and the button once, in the
+   background only, so nothing moves. */
 .dk-keys { position: relative; flex: none; display: flex; align-items: center; }
-.dk-keys-b { padding: 2px 6px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
+.dk-keys-b { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
 .dk-keys-b:hover, .dk-keys-b[aria-expanded="true"] { background: var(--rule); color: var(--fg); }
-.dk-keys-b.none { color: var(--fg-3); opacity: 0; }
-.dk-head:is(:hover, :focus-within) .dk-keys-b.none, .dk-keys-b.none[aria-expanded="true"] { opacity: 1; }
+.dk-keys-b .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.dk-keys-b.none { color: var(--fg-3); }
+@keyframes dk-kept { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
+.dk-keys-b.kept, .dk-key.new { animation: dk-kept 1.6s ease-out; }
+@media (prefers-reduced-motion: reduce) { .dk-keys-b.kept, .dk-key.new { animation: none; } }
 .dk-keys-sheet { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop); width: min(460px, calc(100vw - 32px)); padding: 8px 10px 10px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-small); color: var(--fg-2); text-align: left; white-space: normal; cursor: auto; }
 .dk-keys-h { color: var(--fg-3); padding: 0 2px 6px; border-bottom: 1px solid var(--rule); margin-bottom: 2px; }
 .dk-key { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--rule); }

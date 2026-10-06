@@ -531,8 +531,9 @@ it, and most prompts get nothing. It rides on your own message -- snyvi
 never starts a turn -- and the same switch in About turns it off with the
 brief.
 
-A desk can hold keys for its panels: an API key, a token. The *Keys*
-slot in the desk's head, beside *Left off*, opens a small sheet. Paste the
+A desk can hold keys for its panels: an API key, a token. The key icon
+in the desk's head, beside *Left off* (dim with none, the count beside it
+with some), opens a small sheet. Paste the
 value once, name the variable it goes in (`OPENROUTER_API_KEY`,
 `GH_TOKEN`), say whether it is for this desk or for every desk, and keep
 it. The value goes to your keychain -- Keychain on macOS, Credential
