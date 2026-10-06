@@ -1819,3 +1819,41 @@ fn a_saved_friends_document_gets_a_plain_name() {
     d.source_path = Some(".bashrc".into());
     assert_eq!(file_name(&d), "garden-plan.md", "never a dotfile");
 }
+
+/// A page sent to a friend carries its own pictures: one beside it goes in
+/// as `data:`, one outside its project, one of a kind that is not a
+/// picture, a link out, and one past the room left all stay as written.
+#[test]
+fn a_pages_pictures_travel_inside_it() {
+    use super::api_peer::inline_pictures;
+    let tmp = crate::store::tempdir::Dir::new("snyvi-inline-pictures");
+    let proj = tmp.path.join("proj");
+    std::fs::create_dir_all(proj.join(".git")).unwrap();
+    std::fs::create_dir_all(proj.join("img")).unwrap();
+    std::fs::write(proj.join("img/shot.png"), b"PNGDATA").unwrap();
+    std::fs::write(proj.join("draw.svg"), b"<svg/>").unwrap();
+    std::fs::write(tmp.path.join("away.png"), b"AWAY").unwrap();
+    let page = proj.join("plan.md");
+    let md = "![shot](img/shot.png) ![svg](draw.svg) ![away](../away.png) ![web](https://x.dev/a.png)";
+    let out = inline_pictures(md, &page, 1 << 20);
+    assert!(
+        out.starts_with(&format!(
+            "![shot]({})",
+            crate::render::data_uri("image/png", b"PNGDATA")
+        )),
+        "{out}"
+    );
+    assert!(out.contains("![svg](draw.svg)"));
+    assert!(out.contains("![away](../away.png)"), "not outside its project");
+    assert!(out.contains("![web](https://x.dev/a.png)"));
+    assert_eq!(
+        inline_pictures(md, &page, 4),
+        md,
+        "nothing past the room a frame has"
+    );
+    assert_eq!(
+        inline_pictures(md, std::path::Path::new("plan.md"), 1 << 20),
+        md,
+        "a name with no folder, as a friend's document has"
+    );
+}

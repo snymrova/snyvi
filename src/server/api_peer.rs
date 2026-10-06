@@ -713,11 +713,22 @@ fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow:
         app.store.peer_sent(frame_id)?;
         return Ok(true);
     };
-    let bytes = std::fs::read(app.store.src_path(doc_id))?;
+    let mut bytes = std::fs::read(app.store.src_path(doc_id))?;
     // Checked at the Send button too; this is the document that grew while
     // the frame waited for the relay.
     if bytes.len() > peer::SEND_MAX {
         anyhow::bail!("{TOO_LARGE}");
+    }
+    // A page's own pictures go inside it, so they arrive with it.
+    let room = peer::SEND_MAX.saturating_sub(bytes.len());
+    let with = match (doc.kind, doc.source_path.as_deref(), std::str::from_utf8(&bytes)) {
+        (crate::render::Kind::Markdown, Some(file), Ok(text)) => {
+            Some(inline_pictures(text, std::path::Path::new(file), room))
+        }
+        _ => None,
+    };
+    if let Some(with) = with {
+        bytes = with.into_bytes();
     }
     let content = Content::Document {
         title: doc.title.clone(),
@@ -732,6 +743,37 @@ fn send_one(app: &App, me: &Identity, name: &str, row: &peer::Unsent) -> anyhow:
     };
     let frame = peer::seal(me, &p, &content, &bytes)?;
     peer::deposit(&p.sign_key, frame_id, &frame)
+}
+
+/// A Markdown document's own pictures, put into it as `data:` URLs so they
+/// travel with it: png, jpeg, gif and webp, named relative to the file and
+/// inside its project (as `/files/` serves them), while the whole stays
+/// under what a frame carries -- `room` bytes more. The rest is left as
+/// written, and the friend's snyvi says those stayed here. A file that is
+/// not on this machine any more, or a friend's document passed on, has no
+/// folder to look in, and goes as it is.
+pub(crate) fn inline_pictures(text: &str, file: &std::path::Path, room: usize) -> String {
+    let Some(dir) = file.parent().filter(|d| d.is_absolute()) else {
+        return text.to_string();
+    };
+    let Ok(root) = crate::project::resolve(dir).root.canonicalize() else {
+        return text.to_string();
+    };
+    let mut left = room;
+    crate::render::map_md_images(text, |alt, url| {
+        if !crate::render::relative_url(url) {
+            return None;
+        }
+        let mime = crate::render::picture_mime(&crate::render::ext_of(url))?;
+        let at = dir.join(url).canonicalize().ok()?;
+        if !at.starts_with(&root) || std::fs::metadata(&at).ok()?.len() as usize > left {
+            return None;
+        }
+        let bytes = std::fs::read(&at).ok()?;
+        let md = format!("![{alt}]({})", crate::render::data_uri(mime, &bytes));
+        left = left.checked_sub(md.len())?;
+        Some(md)
+    })
 }
 
 /// One frame from the relay, with its bytes: kept, or dropped, and `true`

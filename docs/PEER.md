@@ -106,6 +106,17 @@ writes `#93 water the beans (from Trapti)`. Ticking it sends nothing back.
 Arrived cannot be hidden, so a line is never out of sight. Nothing received
 is typed into a desk or run; a frame is content.
 
+### Pictures
+
+A Markdown page's own pictures travel inside it. On the way out, each
+`![…](relative/path)` that is a png, jpeg, gif or webp beside the file and
+inside its project becomes a `data:image/…;base64` URL, while the whole
+stays under the 8 MB a frame carries. On the way in, the sanitizer keeps a
+`data:` URL only on an `<img>` and only for those four types: no SVG, no
+page, no `data:` link. A picture that did not travel -- too large, outside
+the project, or sent by a snyvi from before 1.19 -- reads *a picture that
+stayed with Trapti: shot.png* where it stood, rather than a broken image.
+
 ## Keeping what arrives
 
 ```mermaid

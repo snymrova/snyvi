@@ -212,6 +212,7 @@ fn classify(renderer: &Renderer, b: &Body, lang: Option<&str>) -> (Kind, Option<
 fn page(
     renderer: &Renderer,
     b: &Body,
+    text: &str,
     id: &str,
     kind: Kind,
     lang: Option<&str>,
@@ -220,7 +221,7 @@ fn page(
     // The viewer shows the title as the page heading, so a leading H1 that *is* the title
     // would appear twice. Drop it from the rendered body only; the stored source is untouched.
     let body_src = if kind == Kind::Markdown {
-        render::strip_leading_h1(&b.text, title)
+        render::strip_leading_h1(text, title)
     } else {
         None
     };
@@ -236,7 +237,7 @@ fn page(
         _ => renderer.render_with_base(
             kind,
             lang,
-            body_src.as_deref().unwrap_or(&b.text),
+            body_src.as_deref().unwrap_or(text),
             file_base.as_deref(),
         ),
     }
@@ -375,7 +376,21 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let id = coalesce_into
         .clone()
         .unwrap_or_else(|| crate::store::new_id(&hash));
-    let html = page(renderer, &b, &id, kind, lang.as_deref(), &title);
+    // A friend's pictures are in the document or stayed with them: one that
+    // names a file on their machine says so, rather than breaking.
+    let shown = match &p.peer {
+        Some(fp) if kind == Kind::Markdown => Some(render::stayed_with(&b.text, &fp.name)),
+        _ => None,
+    };
+    let html = page(
+        renderer,
+        &b,
+        shown.as_deref().unwrap_or(&b.text),
+        &id,
+        kind,
+        lang.as_deref(),
+        &title,
+    );
     let needs_full_highlight = kind == Kind::Code && b.text.len() > HIGHLIGHT_CAP;
 
     let new_doc = NewDoc {

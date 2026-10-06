@@ -1225,7 +1225,146 @@ fn sanitize(html: &str) -> String {
         b.add_tag_attributes(h, ["id"]);
     }
     b.link_rel(Some("noopener noreferrer"));
+    // A picture carried inside a document -- a friend's, whose pictures
+    // travel in it (`crate::server::api_peer`) -- is a `data:` URL. The
+    // scheme passes the URL check for every attribute, and the filter then
+    // keeps it on an image's `src` alone, and only for the four kinds a
+    // picture is: no SVG, which can carry script, and no `data:` link.
+    b.add_url_schemes(["data"]);
+    b.attribute_filter(|element, attribute, value| {
+        let data = value
+            .trim_start()
+            .get(..5)
+            .is_some_and(|p| p.eq_ignore_ascii_case("data:"));
+        if !data || (element == "img" && attribute == "src" && data_image_ok(value)) {
+            Some(value.into())
+        } else {
+            None
+        }
+    });
     b.clean(html).to_string()
+}
+
+/// The `data:` URLs an image may have: base64 png, jpeg, gif or webp.
+fn data_image_ok(url: &str) -> bool {
+    let u = url.trim_start().to_ascii_lowercase();
+    ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        .iter()
+        .any(|m| u.starts_with(&format!("data:{m};base64,")))
+}
+
+/// Bytes as a `data:` URL, in the base64 a browser reads there (the
+/// standard alphabet, padded).
+pub fn data_uri(mime: &str, bytes: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4 + mime.len() + 13);
+    out.push_str("data:");
+    out.push_str(mime);
+    out.push_str(";base64,");
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |acc, b| (acc << 8) | *b as u32) << (8 * (3 - chunk.len()));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() {
+                A[((n >> (18 - 6 * i)) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
+/// The picture types that travel inside a friend's document, by extension.
+pub fn picture_mime(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// A URL that names a file beside the document: no scheme, not from the
+/// root, not a fragment. What `rewrite_image_url` resolves against the file.
+pub fn relative_url(url: &str) -> bool {
+    let u = url.trim();
+    !(u.is_empty()
+        || u.starts_with('/')
+        || u.starts_with('#')
+        || u.contains("://")
+        || u.starts_with("data:")
+        || u.starts_with("mailto:"))
+}
+
+/// Every Markdown picture, `![alt](url "title")`, outside fenced code: `f`
+/// is given its alt text and URL and says what the whole of it becomes, or
+/// `None` to leave it as written.
+pub fn map_md_images(text: &str, mut f: impl FnMut(&str, &str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut fence: Option<&str> = None;
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if let Some(open) = fence {
+            if t.starts_with(open) {
+                fence = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = Some(&t[..3]);
+            out.push_str(line);
+            continue;
+        }
+        map_line(line, &mut f, &mut out);
+    }
+    out
+}
+
+fn map_line(line: &str, f: &mut impl FnMut(&str, &str) -> Option<String>, out: &mut String) {
+    let mut rest = line;
+    while let Some(i) = rest.find("![") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let Some(close) = after.find("](") else {
+            out.push_str(&rest[i..]);
+            return;
+        };
+        let alt = &after[..close];
+        let tail = &after[close + 2..];
+        let end = tail.find(')');
+        if alt.contains(']') || end.is_none() {
+            out.push_str("![");
+            rest = after;
+            continue;
+        }
+        let end = end.unwrap();
+        let inner = tail[..end].trim();
+        let url = match inner.strip_prefix('<') {
+            Some(u) => u.split('>').next().unwrap_or(""),
+            None => inner.split_whitespace().next().unwrap_or(""),
+        };
+        match f(alt, url) {
+            Some(r) => out.push_str(&r),
+            None => out.push_str(&rest[i..i + 2 + close + 2 + end + 1]),
+        }
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+}
+
+/// A friend's Markdown as it is drawn here: a picture that did not travel
+/// with it -- a path on their machine, from a snyvi that sent no pictures,
+/// or one too large to carry -- says so where it stood, instead of being a
+/// broken image.
+pub fn stayed_with(text: &str, who: &str) -> String {
+    map_md_images(text, |_, url| {
+        relative_url(url).then(|| {
+            let name = url.rsplit('/').next().unwrap_or(url).replace('`', "");
+            format!("*(a picture that stayed with {who}: `{name}`)*")
+        })
+    })
 }
 
 /// comrak adapter: syntect with CSS classes, so code blocks share the page palette.
@@ -2096,5 +2235,62 @@ mod tests {
         }
         let u = unified("a", "x\ny\n", "b", "x\nz\n");
         assert!(u.contains("-y") && u.contains("+z"));
+    }
+
+    /// A picture inside a document keeps its `data:` URL through the
+    /// sanitizer -- the four picture types, on an image -- and nothing else
+    /// does: no SVG, no page, no `data:` link.
+    #[test]
+    fn a_carried_picture_survives_the_sanitizer_and_nothing_else_does() {
+        let png = "data:image/png;base64,iVBORw0KGgo=";
+        let out = sanitize(&format!(
+            "<p><img src=\"{png}\" alt=\"shot\"><img src=\"data:image/svg+xml;base64,PHN2Zz4=\"><img src=\"data:text/html;base64,PGI+\"><a href=\"data:image/png;base64,iVBO\">x</a></p>"
+        ));
+        assert!(out.contains(png), "{out}");
+        assert!(!out.contains("svg+xml"), "{out}");
+        assert!(!out.contains("text/html"), "{out}");
+        assert!(!out.contains("href=\"data:"), "{out}");
+        assert!(
+            sanitize("<a href=\"https://x.dev\">x</a>").contains("https://x.dev"),
+            "other links are as they were"
+        );
+    }
+
+    #[test]
+    fn data_uris_are_the_base64_a_browser_reads() {
+        assert_eq!(data_uri("image/png", b"Man"), "data:image/png;base64,TWFu");
+        assert_eq!(data_uri("image/png", b"Ma"), "data:image/png;base64,TWE=");
+        assert_eq!(data_uri("image/png", b"M"), "data:image/png;base64,TQ==");
+        assert_eq!(data_uri("image/png", &[0xfb, 0xff]), "data:image/png;base64,+/8=");
+    }
+
+    /// The pictures of a Markdown page, found where Markdown has them and
+    /// not in its code; one that names a file on a friend's machine says it
+    /// stayed there.
+    #[test]
+    fn a_pages_pictures_are_found_and_a_missing_one_says_so() {
+        let md = "# Plan\n\n![shot](img/shot.png) and ![web](https://x.dev/a.png \"t\")\n\n```\n![in code](c.png)\n```\n![<sp>](<my shot.png>) ![](#x)\n";
+        let mut seen = vec![];
+        let same = map_md_images(md, |alt, url| {
+            seen.push((alt.to_string(), url.to_string()));
+            None
+        });
+        assert_eq!(same, md, "None leaves it as written");
+        assert_eq!(
+            seen,
+            [
+                ("shot", "img/shot.png"),
+                ("web", "https://x.dev/a.png"),
+                ("<sp>", "my shot.png"),
+                ("", "#x"),
+            ]
+            .map(|(a, u)| (a.to_string(), u.to_string()))
+        );
+        let shown = stayed_with(md, "Trapti");
+        assert!(shown.contains("*(a picture that stayed with Trapti: `shot.png`)*"), "{shown}");
+        assert!(shown.contains("![web](https://x.dev/a.png \"t\")"), "a link out is left");
+        assert!(shown.contains("![in code](c.png)"), "code is code");
+        assert!(shown.contains("![](#x)"));
+        assert!(relative_url("a/b.png") && !relative_url("data:image/png;base64,x"));
     }
 }

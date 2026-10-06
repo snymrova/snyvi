@@ -744,6 +744,13 @@ fn full_highlight(app: &App, doc: &Doc, lang: Option<&str>) -> bool {
             if !crate::render::has_pending_highlight(&current) {
                 return false;
             }
+            // A friend's, drawn as `receive` drew it: a picture that stayed
+            // on their machine says so.
+            let src = if doc.origin == "peer" {
+                crate::render::stayed_with(&src, &doc.sender)
+            } else {
+                src
+            };
             let body = crate::render::strip_leading_h1(&src, &doc.title);
             let base = doc.source_path.as_ref().map(|_| format!("/files/{id}/"));
             app.renderer
