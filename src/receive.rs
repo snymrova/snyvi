@@ -248,11 +248,12 @@ fn page(
             &render::ext_of(b.path.as_deref().unwrap_or_default()),
         ),
         Kind::Binary => render::placeholder(&render::describe_bytes(title, b.bytes.len() as u64)),
-        _ => renderer.render_with_base(
+        _ => renderer.render_with_files(
             kind,
             lang,
             body_src.as_deref().unwrap_or(text),
             file_base.as_deref(),
+            b.path.as_deref().and_then(|p| Path::new(p).parent()),
         ),
     }
 }

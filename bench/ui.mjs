@@ -2580,6 +2580,24 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     await sleep(500);
     const at = await p.ev(`(document.querySelector("#main") || document.querySelector("main")).scrollTop`);
     rows.push(["a document opens where it was left", at > 200, `${Math.round(at)} px down on reopening from the Inbox`]);
+
+    // 1.25: Home under events that change nothing. Twenty asides, each an
+    // event Home listens for and none of them on Home, spaced past the
+    // read's debounce: twenty reads of /api/home, no redraw of the page
+    // (the row under the pointer, the hand in the bar, left alone) and no
+    // read of /api/peers, which only a friends event asks for.
+    await p.goto(`${base}/#cap=${cap}`);
+    await until(`!!document.querySelector(".hm .hm-pick")`);
+    await sleep(600);
+    await p.ev(`(() => { const d = document.querySelector("#doc"); window.__hm = { draws: 0, peers: 0, home: 0 }; new MutationObserver(() => window.__hm.draws++).observe(d, { childList: true }); const f = window.fetch; window.fetch = (u, ...r) => { const s = String(u); if (/\\/api\\/peers(\\?|$)/.test(s)) window.__hm.peers++; if (/\\/api\\/home(\\?|$)/.test(s)) window.__hm.home++; return f(u, ...r); }; return 1; })()`);
+    for (let i = 0; i < 20; i++) {
+      await post("/api/notes", { text: `Quiet aside ${i + 1}.`, sender: "bench-agent" }, T);
+      await sleep(320);
+    }
+    await sleep(800);
+    const ev20 = await p.ev(`window.__hm`);
+    rows.push(["Home under 20 events that change nothing: no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && ev20.home >= 10,
+      `${ev20.draws} redraw${ev20.draws === 1 ? "" : "s"}, ${ev20.peers} read${ev20.peers === 1 ? "" : "s"} of /api/peers, ${ev20.home} of /api/home`]);
   } finally {
     if (other) await post(`/api/desks/${other}/delete`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});

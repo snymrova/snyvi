@@ -307,86 +307,23 @@
   /* The page the empty library is, and the page `?` reaches once it is not:
    * one row per agent, saying what its own config file has of snyvi, what
    * fixes it, the line for its instructions file, and when it last sent
-   * something. Every fact comes from /api/agents, read by the daemon from the
-   * agent's file; the page asks again every few seconds while it is on
-   * screen, so `snyvi init codex` in the terminal beside it turns the row
-   * without a reload. It is not a tour: it appears to exactly the person who
-   * needs it, and the first document to arrive replaces it. */
-  let agentsSeen = "", agentsTimer = 0;
-  /* The page itself is drawn by ui/about.js, with the app's other pages of
-   * its own: an empty library, or `?`, is when it is first fetched. */
-  let connectHtml = null, panelLoading = null;
+   * something. It is not a tour: it appears to exactly the person who
+   * needs it, and the first document to arrive replaces it. The page, the
+   * first ten minutes and Welcome are drawn by ui/about.js, and since 1.25
+   * their wiring lives there too (`pages`): what a reader with documents to
+   * read never opens, first paint never carries. Each of the three names
+   * below is what it was, returning once the chunk has done it. */
+  let panelLoading = null, pagesMod = null;
   const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
-  async function connectReady() {
-    if (connectHtml) return;
-    try { const m = await panelMod(); connectHtml = a => (agentsSeen = JSON.stringify(a ? a.rows : []), m.connect(a, { esc, rel, cap: !!capability })); }
-    catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); }
-  }
-  async function showConnect(push = true) {
-    if (push) leave();
-    offDesk();
-    state.view = "connect"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
-    document.title = "Agents · snyvi";
-    if (push) history.pushState({ connect: true }, "", "/connect");
-    let a = boot.agents; boot.agents = null;
-    if (!a) { try { a = await (await fetch("/api/agents")).json(); } catch { a = null; } }
-    await connectReady();
-    docEl.innerHTML = connectHtml(a);
-    if (push) swapIn();
-    main.scrollTo({ top: 0, behavior: "instant" });
-    afterRender();
-    watchAgents();
-  }
-  /** The first ten minutes: a page about.js draws, like the connect page.
-   *  `at` is a section to land on (`#desks`), as an aside's link names one. */
-  async function showStart(push = true, at = location.hash) {
-    if (push) leave();
-    offDesk();
-    state.view = "start"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
-    document.title = "How snyvi works · snyvi";
-    if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
-    let m;
-    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); return; }
-    // The first fetch of the chunk is a wait, and a click in it went elsewhere.
-    if (state.view !== "start") return;
-    docEl.innerHTML = m.start({ cap: !!capability });
-    m.startReady(boot.v);
-    if (push) swapIn();
-    const sec = at && document.getElementById(at.slice(1));
-    if (sec) sec.scrollIntoView({ block: "start" }); else main.scrollTo({ top: 0, behavior: "instant" });
-    afterRender();
-    if (push) toHead(sec);
-  }
-  /** A page the reader went to puts the focus on its heading (or the
-   *  section it was sent to), so the keyboard starts where the eye does. */
-  function toHead(sec) {
-    const h = (sec || docEl).querySelector("h1, h2");
-    if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
-  }
-  /** Welcome: what snyvi is, and which project first. Its own address to
-   *  come back to from Help; the empty library draws the same page at `/`. */
-  let welcomePlaces = [];
-  async function welcomePage() {
-    let m;
-    try { m = await panelMod(); } catch (e) { panelLoading = null; toast("Could not open that page", { sub: e }); return ""; }
-    welcomePlaces = capability ? deskPlaces() : [];
-    return m.welcome({ cap: !!capability, places: welcomePlaces, tilde, mascot: mascotHead("glad"), esc });
-  }
-  async function showWelcome(push = true) {
-    if (push) leave();
-    offDesk();
-    state.view = "welcome"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
-    document.title = "Welcome · snyvi";
-    if (push) history.pushState({ welcome: true }, "", "/welcome");
-    if (capability && !state.desks) await loadDesks();
-    const html = await welcomePage();
-    if (state.view !== "welcome") return;
-    docEl.innerHTML = html;
-    if (push) swapIn();
-    main.scrollTo({ top: 0, behavior: "instant" });
-    afterRender();
-    if (push) toHead();
-  }
+  const pagesCtx = () => ({ state, docEl, main, boot, capability, esc, rel, toast, sayErr, leave, offDesk, swapIn, afterRender, loadDesks, deskApi, mascotHead,
+    places: () => (capability ? deskPlaces() : []), tilde });
+  const pages = () => pagesMod ? Promise.resolve(pagesMod) : panelMod().then(m => (pagesMod ||= m.pages(pagesCtx())), e => { panelLoading = null; toast("Could not open that page", { sub: e }); throw e; });
+  const showConnect = (push = true) => pages().then(m => m.showConnect(push), () => {});
+  const showStart = (push = true, at = location.hash) => pages().then(m => m.showStart(push, at), () => {});
+  const showWelcome = (push = true) => pages().then(m => m.showWelcome(push), () => {});
+  const welcomePage = () => pages().then(m => m.welcomePage(), () => "");
+  const connectClaude = (b, done) => pages().then(m => m.connectClaude(b, done), () => {});
+  const refreshAgents = () => { if (pagesMod) pagesMod.refreshAgents(); };
   /** Home, at `/`: the page the mark opens. Drawn by home.js, a chunk, from
    *  one call; the Inbox is at `/inbox`. */
   let homeMod = null, homeLoading = null;
@@ -409,7 +346,7 @@
     afterRender();
   }
   /** Something Home shows moved: read it again, soon. */
-  const homeTick = () => { if (state.view === "home" && homeMod) homeMod.soonRefresh(); };
+  const homeTick = e => { if (state.view === "home" && homeMod) homeMod.soonRefresh(e.type); };
 
   // Welcome's question, and Connect wherever it is offered.
   docEl.addEventListener("click", async e => {
@@ -417,39 +354,11 @@
     if (!b || !docEl.contains(b)) return;
     const w = b.dataset.w;
     if (w === "pick") act("pick", true);
-    else if (w === "place") { const f = welcomePlaces[+b.dataset.i]; if (f) act("make", f); }
+    else if (w === "place") { const f = pagesMod && pagesMod.place(+b.dataset.i); if (f) act("make", f); }
     else if (w === "connect") connectClaude(b);
     // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
     else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
   });
-  /** Connect Claude Code, from the Agents page or a desk's panel: it asks,
-   *  in place, then runs `init-claude` in the daemon. */
-  async function connectClaude(b, done) {
-    const m = await panelMod();
-    // "Connected." wears a face once, on the Agents page; a desk's panel is
-    // the work and gets the words alone (docs/DESIGN.md §2.3).
-    m.connectAsk(b, { sayErr, api: (path, body) => deskApi(path, body), mascotHead: state.view === "desk" ? null : mascotHead, done: (a, ok) => {
-      if (a && state.view === "connect" && connectHtml) setTimeout(() => { if (state.view === "connect") docEl.innerHTML = connectHtml(a); }, 1600);
-      done && done(a, ok);
-    } });
-  }
-  /** Ask again while the page is on screen; redraw only when something changed. */
-  function watchAgents() {
-    clearInterval(agentsTimer);
-    agentsTimer = setInterval(refreshAgents, 2500);
-  }
-  async function refreshAgents() {
-    if (state.view !== "connect" || !docEl.querySelector(".connect") || document.hidden) return;
-    let a; try { a = await (await fetch("/api/agents")).json(); } catch { return; }
-    if (JSON.stringify(a.rows) === agentsSeen) return;
-    const open = [...docEl.querySelectorAll(".agent details[open]")].map(d => d.closest(".agent").dataset.agent);
-    // And the fold of the other agents: a row turning is no reason to shut it.
-    const more = !!docEl.querySelector(".agents-more[open]");
-    docEl.innerHTML = connectHtml(a);
-    for (const id of open) docEl.querySelector(`.agent[data-agent="${CSS.escape(id)}"] details`)?.setAttribute("open", "");
-    if (more) docEl.querySelector(".agents-more")?.setAttribute("open", "");
-  }
-
   /** The count beside the brand mark: how many agents hold a stream on the
    *  daemon now, by the name each gave. Zero is drawn too, dim -- "no agent
    *  is connected" is the answer a reader asks it for most. */

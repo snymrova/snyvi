@@ -382,42 +382,90 @@ export async function show(ctx) {
   c = ctx;
   style();
   order = null;
+  peersDirty = true;
   tick();
   if (last) draw(last);
   await refresh();
 }
 
 /** A new day draws the page again, for the date in the head and the
- *  "today" words; nothing else on Home keeps time by itself. */
+ *  "today" words. Between days, the minute's pass moves only the relative
+ *  times ("2 min ago" to "3 min ago") in place: a read that changed nothing
+ *  draws nothing (`refresh`), so the times no longer ride on the redraws. */
 let ticker = 0, drawnDay = 0;
 function tick() {
   if (ticker) return;
   ticker = setInterval(() => {
-    if (c && c.view() === "home" && !document.hidden && last && startOfDay(Date.now() / 1000) !== drawnDay) draw(last);
+    if (!c || c.view() !== "home" || document.hidden || !last) return;
+    if (startOfDay(Date.now() / 1000) !== drawnDay) { drawUnlessTyping(); return; }
+    for (const el of c.docEl.querySelectorAll(".hm-live")) {
+      const t = el.dataset.f === "age" ? `${age(+el.dataset.t)} ago` : ago(+el.dataset.t);
+      if (el.textContent !== t) el.textContent = t;
+    }
   }, 60000);
 }
 
-/** Read Home again soon: many events in a burst are one read. */
-export function soonRefresh() {
+/** The events that change the friends widget: only these fetch /api/peers
+ *  again. Everything else Home shows is in /api/home. */
+const PEER_EVENTS = new Set(["peers", "peernotes", "peeroffers", "pairing"]);
+/** What the last read gave, as text: a read that says the same draws
+ *  nothing, so a burst of events on a page that did not change leaves the
+ *  row under the pointer, and the hand in the bar, where they are. */
+let lastText = "", peersText = "", peersDirty = true;
+/** Home went dark (another tab, the window hidden) while events came: read
+ *  once when it is seen again, not once per event meanwhile. */
+let dirty = false;
+/** A read landed while a line was being typed in the bar: drawn when the
+ *  hand leaves it, never under it. */
+let held = false, composing = false;
+
+/** Read Home again soon: many events in a burst are one read. `why` is the
+ *  event's name; without one (a click on this page) the friends are read too. */
+export function soonRefresh(why) {
+  if (why === undefined || PEER_EVENTS.has(why)) peersDirty = true;
   clearTimeout(soon);
   soon = setTimeout(refresh, 250);
 }
 
 async function refresh() {
   if (!c || c.view() !== "home") return;
+  if (document.hidden) { dirty = true; return; }
   const turn = ++reading;
   let j;
-  const friends = fetch("/api/peers").then(r => r.ok ? r.json() : null, () => null);
+  const friends = peersDirty ? fetch("/api/peers").then(r => r.ok ? r.json() : null, () => null) : null;
   try { j = c.capability ? await c.deskApi("/api/home") : await (await fetch("/api/home")).json(); }
   catch { if (!last) c.docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1><p>snyvi did not answer. <button type="button" class="btn" data-hm="retry">Try again</button></p></div>`; return; }
-  peers = (await friends) || peers;
+  const fr = friends ? await friends : null;
   if (turn !== reading || c.view() !== "home") return;
+  let changed = !last;
+  if (fr) {
+    peersDirty = false;
+    const t = JSON.stringify(fr);
+    if (t !== peersText) { peersText = t; peers = fr; changed = true; }
+  }
+  const text = JSON.stringify(j);
+  if (text !== lastText) { lastText = text; changed = true; }
   last = j;
-  draw(j);
+  if (changed) drawUnlessTyping();
   // A friend's code in the address (snyvi://pair/<code>): the sheet, once.
   const code = new URLSearchParams(location.search).get("pair");
   if (code) { history.replaceState(history.state, "", "/"); c.peerCtx.peer().then(m => m.pair(c.peerCtx, code), () => {}); }
 }
+
+/** The bar has the hand and a line half typed, or a composition is open. */
+function typing() {
+  const a = document.activeElement;
+  return composing || (a?.dataset?.hm === "bar" && c.docEl.contains(a) && a.value !== "");
+}
+/** Draw what was read -- unless the reader is typing in the bar, in which
+ *  case it waits for the hand to leave (`focusout`, `compositionend`). */
+function drawUnlessTyping() {
+  if (typing()) { held = true; return; }
+  held = false;
+  draw(last);
+}
+function drawHeld() { if (held && last && c?.view() === "home") drawUnlessTyping(); }
+document.addEventListener("visibilitychange", () => { if (!document.hidden && dirty && c?.view() === "home") { dirty = false; refresh(); } });
 
 // ---------- time, in the reader's own days ----------
 
@@ -441,6 +489,9 @@ function age(t) {
   return `${Math.round(s / (7 * DAY))} wk`;
 }
 const ago = t => Date.now() / 1000 - t < 60 ? "just now" : `${age(t)} ago`;
+/** A relative time in the page's text, marked so the minute's pass can move
+ *  it in place (`tick`): `ago`'s words, or `age`'s with " ago" after them. */
+const live = (t, f = ago) => `<span class="hm-live" data-t="${t}"${f === age ? ' data-f="age"' : ""}>${f === age ? `${age(t)} ago` : ago(t)}</span>`;
 /** "touched 40 min ago", "touched yesterday 23:40", "touched 12 d ago". */
 function touched(t) {
   if (!t) return "not opened yet";
@@ -635,18 +686,18 @@ function pick(j) {
   if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Take one down in Projects when you are ready for it.</p>`);
   const l = d.left_off, x = d.last;
   const left = l
-    ? `<p class="hm-pk-left"><b>Left off</b>${esc(l.text)}<span class="fact">${l.by ? `${esc(l.by)} · ` : ""}${ago(l.at)}</span></p>`
+    ? `<p class="hm-pk-left"><b>Left off</b>${esc(l.text)}<span class="fact">${l.by ? `${esc(l.by)} · ` : ""}${live(l.at)}</span></p>`
     : x
       ? `<p class="hm-pk-left hm-derived" data-tip="No one said where this was left" data-tip-sub="so this is the last thing that happened on it"><b>Last</b>${x.kind === "tick"
           ? `✓ ${esc(x.text)}${x.commit ? ` <code>${esc(x.commit.slice(0, 7))}</code>` : ""}`
-          : `sent <a href="/d/${esc(x.id)}" data-id="${esc(x.id)}">${esc(x.text)}</a>`}<span class="fact">${ago(x.at)}</span></p>`
+          : `sent <a href="/d/${esc(x.id)}" data-id="${esc(x.id)}">${esc(x.text)}</a>`}<span class="fact">${live(x.at)}</span></p>`
       : `<p class="hm-pk-left hm-quiet"><b>Left off</b>not said yet. A Claude on this desk says it at the end of a stretch, or write it in the desk's head.</p>`;
   // A list with nothing left open is a milestone said in numbers
   // (docs/DESIGN.md §3.2); a desk with no list yet is not.
   const next = notesOf(d, 5);
   const g = d.git;
   const git = g ? `<span class="hm-git" data-tip="What git says in ${esc(d.root || "the desk's folder")}" data-tip-sub="${g.last ? `last commit ${ago(g.last.at)}: ${esc(g.last.subject)}` : "no commits yet"}">${BRANCH}<span class="fact">${esc(g.branch || "no branch")}</span>` +
-    `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${ago(g.last.at)}` : ""}</span></span>` + repoLink(g.remote) : "";
+    `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${live(g.last.at)}` : ""}</span></span>` + repoLink(g.remote) : "";
   const panels = d.panes.map(p =>
     `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
@@ -1106,7 +1157,7 @@ function offerRow(o) {
   const { esc } = c, s = arrSaid.get("o" + o.id);
   return `<li data-part="home.arrived.offer"><span class="hm-ag ask" aria-hidden="true">?</span><span class="hm-ab">` +
     `<span class="hm-t">${esc(o.by || "An agent")} offers <b>${esc(o.title || "a document")}</b> to ${esc(o.to)}</span><span class="hm-acts">` +
-    (s ? saidRow(s) : `<span class="hm-s">${age(o.offered_at)} ago</span><button type="button" class="hm-link" data-hm="aoffer" data-k="${o.id}">Send</button>` +
+    (s ? saidRow(s) : `<span class="hm-s">${live(o.offered_at, age)}</span><button type="button" class="hm-link" data-hm="aoffer" data-k="${o.id}">Send</button>` +
       `<button type="button" class="hm-link" data-hm="anot" data-k="${o.id}">Not now</button>`) + `</span></span></li>`;
 }
 
@@ -1118,7 +1169,7 @@ function lineRow(n, j) {
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
   return `<li data-part="home.arrived.line"><span class="hm-ag" aria-hidden="true">“</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
-    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${age(n.arrived_at)} ago</span>` +
+    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at, age)}</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
@@ -1128,7 +1179,7 @@ function docRow(d) {
   const { esc } = c;
   const from = d.origin === "peer" && d.sender ? `from ${esc(d.sender)}` : `${esc(d.project)}${d.sender ? ` · ${esc(d.sender)}` : ""}`;
   return `<li data-part="home.arrived.doc"><span class="hm-ag" aria-hidden="true">▣</span><span class="hm-ab"><a class="hm-t" href="/d/${esc(d.id)}" data-id="${esc(d.id)}">${esc(d.title)}</a>` +
-    `<span class="hm-acts"><span class="hm-s">${from} · ${age(d.received_at)} ago</span></span></span></li>`;
+    `<span class="hm-acts"><span class="hm-s">${from} · ${live(d.received_at, age)}</span></span></span></li>`;
 }
 
 /** Say what a row's button did, in the row, for SAID_MS. */
@@ -1349,6 +1400,9 @@ function wire() {
     addPics(images(e.dataTransfer));
   });
   el.addEventListener("focusin", e => { if (e.target.dataset?.hm === "bar") asks(e.target); });
+  // A read that came while a line was being composed is drawn once it is.
+  el.addEventListener("compositionstart", () => { composing = true; });
+  el.addEventListener("compositionend", () => { composing = false; setTimeout(drawHeld, 0); });
   // The week stays as the reader left it, folded or open.
   el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); else if (e.target.matches?.(".hm-keys")) setKeysOpen(e.target.open); }, true);
   // The hand leaving the bar closes its list; what is typed in it waits, as typed.
@@ -1356,6 +1410,9 @@ function wire() {
     if (drawing || !e.target.closest?.(".hm-nb")) return;
     if (e.target.dataset?.hm === "bar") e.target.placeholder = "Add a note";
     if (menu && !e.relatedTarget?.closest?.(".hm-nb")) { menu = null; drawMenu(); }
+    // What was read while the line was being typed, drawn now the hand is
+    // out of the bar -- after the focus has moved, so the draw sees where.
+    if (held) setTimeout(drawHeld, 0);
   });
   el.addEventListener("keydown", e => {
     if (e.key === "Escape" && (keepOpen || deskOpen)) { e.preventDefault(); e.stopPropagation(); const back = keepOpen ? `[data-hm=akeep][data-k="${keepOpen}"]` : `[data-hm=fdesk][data-k="${deskOpen}"]`; keepOpen = deskOpen = 0; draw(last); c.docEl.querySelector(back)?.focus({ preventScroll: true }); return; }

@@ -35,42 +35,24 @@
   const withOwn = list => list.concat(state.notes.filter(isOwn)).sort((a, b) => (b.at || 0) - (a.at || 0));
   /* Held, not dropped: a moment that comes while an agent's aside is unread,
    * or inside the ten quiet minutes, waits in `snyvi.own.held` and is said
-   * when the way is clear -- once, as ever. */
-  let ownTimer = 0;
-  const heldOwn = () => { try { return JSON.parse(store.get("snyvi.own.held") || "[]"); } catch { return []; } };
-  function snyviSays(key) {
-    if (!OWN.has(key) || store.get(`snyvi.seen.${key}`)) return;
-    const quiet = 600e3 - (Date.now() - (+store.get("snyvi.seen.at") || 0));
-    if (quiet > 0 || state.notes.some(n => !n.dismissed && !n.seen)) {
-      const held = heldOwn();
-      if (!held.includes(key)) store.set("snyvi.own.held", JSON.stringify(held.concat(key)));
-      clearTimeout(ownTimer);
-      ownTimer = setTimeout(sayHeld, Math.max(quiet, 30e3));
-      return;
-    }
-    store.set("snyvi.own.held", JSON.stringify(heldOwn().filter(k => k !== key)));
-    store.set(`snyvi.seen.${key}`, "1"); store.set("snyvi.seen.at", String(Date.now()));
-    state.notes = [{ id: `snyvi:${key}`, text: "", sender: "", at: Date.now() / 1000 }, ...state.notes.filter(n => !isOwn(n))];
-    renderNote();
-  }
-  /** The first held moment, if the way is clear now; the rest keep waiting. */
-  function sayHeld() {
-    const k = heldOwn().find(k => !store.get(`snyvi.seen.${k}`));
-    if (k) snyviSays(k); else store.set("snyvi.own.held", "[]");
-  }
+   * when the way is clear -- once, as ever. The saying is note.js's (`says`,
+   * `sayHeld`), fetched on the moment: a moment already said costs nothing. */
+  const ownCtx = () => ({ store, state, own: OWN, isOwn, render: renderNote });
+  const snyviSays = key => { if (OWN.has(key) && !store.get(`snyvi.seen.${key}`)) noteUse().then(m => m.says(key, ownCtx()), () => {}); };
   // A moment held when the last page closed is still owed.
-  if (heldOwn().length) ownTimer = setTimeout(sayHeld, 30e3);
+  if ((store.get("snyvi.own.held") || "[]") !== "[]") setTimeout(() => noteUse().then(m => m.sayHeld(ownCtx()), () => {}), 30e3);
   let noteMod = null, noteLoading = null;
+  const noteUse = () => (noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).catch(e => { noteLoading = null; throw e; }));
   function renderNote() {
     if (noteMod) return noteMod.render();
     const n = liveNotes()[0];
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
-    if (n) noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => {
-      noteMod = m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk: capability && showDesk, toast, keyHint, closeSay, undoClock,
+    if (n) noteUse().then(m => {
+      noteMod ||= m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk: capability && showDesk, toast, keyHint, closeSay, undoClock,
         holdUndo: offer, dropUndo: unoffer, peek: mascotPeek });
       noteMod.render();
-    }, () => { noteLoading = null; });
+    }, () => {});
   }
   renderNote();
 

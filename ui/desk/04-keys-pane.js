@@ -371,21 +371,27 @@ function header(v) {
   const c = $(".pn-cmd");
   // Its title as the rail writes it: Claude Code puts its spinner's frame at
   // the front (◑, ✳), and the state beside it already says it is working.
-  if (c) { c.textContent = short(v); v.pane.name && v.status.title ? (c.dataset.tip = v.status.title) : delete c.dataset.tip; }
+  // Each field is written only when it differs, as the slot is: the header
+  // is drawn on every status the socket brings, and a write that changes
+  // nothing still costs the browser a style and a layout.
+  const put = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
+  const tipOf = (el, tip) => { if (!el) return; if (tip) { if (el.dataset.tip !== tip) el.dataset.tip = tip; } else if (el.dataset.tip !== undefined) delete el.dataset.tip; };
+  if (c) { put(c, short(v)); tipOf(c, v.pane.name && v.status.title ? v.status.title : ""); }
   // The branch and whether the tree is modified: snyvi's own answer, not the
   // prompt's, so a pane whose shell it cannot dress says both too.
-  $(".pn-git").textContent = s.branch ? s.branch + (s.dirty ? "*" : "") : "";
+  put($(".pn-git"), s.branch ? s.branch + (s.dirty ? "*" : "") : "");
   // An agent that reports through its hooks (Claude Code) says what it is
   // doing; anything else is only running, ringing, or ended.
   // The context window, in the header only once it is filling (70%): its
   // place is kept for as long as an agent is in the pane, so the figure
   // coming in moves nothing beside it. The meta line has it always.
   const cp = ctxPct(s), cx = $(".pn-ctx");
-  cx.textContent = cp == null || cp < 70 ? "" : ctxFig(s);
-  cx.className = "pn-ctx " + (cp == null ? "" : "kept " + ctxCls(cp));
-  if (cp == null) delete cx.dataset.tip; else cx.dataset.tip = ctxTip(s);
+  put(cx, cp == null || cp < 70 ? "" : ctxFig(s));
+  const cls = "pn-ctx " + (cp == null ? "" : "kept " + ctxCls(cp));
+  if (cx.className !== cls) cx.className = cls;
+  tipOf(cx, cp == null ? "" : ctxTip(s));
   if (s.agent) heardFrom(v);
-  $(".pn-state").textContent = s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped";
+  put($(".pn-state"), s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped");
   // Said once, to a reader who cannot see the dot: a panel that needs the
   // reader, or has finished. Working and running are the quiet states.
   const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";
