@@ -94,6 +94,22 @@ pub const THREAD_COLUMN: &str =
 /// `store::MIGRATIONS`, never in `SCHEMA`.
 pub const CMD_COLUMN: &str = "ALTER TABLE turns ADD COLUMN cmd TEXT NOT NULL DEFAULT ''";
 
+/// 1.26: when a panel last took the thread up -- started it, or moved it
+/// from its own prompt. Which thread is "the panel's" (`of_pane`) goes by
+/// this, so a reader's click on the rail never takes a panel's thread from
+/// it. Version 13 of `store::MIGRATIONS`, never in `SCHEMA`.
+pub const TAKEN_COLUMN: &str = "ALTER TABLE threads ADD COLUMN taken_at INTEGER NOT NULL DEFAULT 0";
+/// Every thread there before 1.26 was last taken when it last moved.
+pub const TAKEN_FILL: &str = "UPDATE threads SET taken_at = moved_at WHERE taken_at = 0";
+
+/// How long a thread no panel is moving -- its panel took up another, or
+/// closed -- is listed after its last move. Kept after that, off the lists:
+/// a panel that starts it again by its name brings it back.
+pub const RESTING_SHOWN: i64 = 86400;
+/// A parked thread is listed longer: it was parked on purpose, with a next
+/// step to pick it up by.
+pub const PARKED_SHOWN: i64 = 7 * 86400;
+
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
 /// `parked` carries the next step to pick it up by.
@@ -111,9 +127,11 @@ pub const KINDS: [&str; 5] = ["decide", "try", "merge", "key", "run"];
 /// a terminal on the reader's click.
 pub const CMD_BYTES: usize = 2048;
 
-/// Threads a desk holds that are not shipped, put away, or left by a panel
-/// that closed. A desk is a project;
-/// past a dozen arcs at once it is a backlog, and the notes are for that.
+/// Threads a desk holds that no panel has moved on from: not shipped, put
+/// away, parked, or left by a panel that closed or took up another. A desk is
+/// a project; past a dozen arcs at once it is a backlog, and the notes are
+/// for that. With a panel holding one thread, it is the threads started from
+/// outside a panel that this keeps in bounds.
 pub const THREADS_PER_DESK: i64 = 12;
 
 /// Turns waiting on the reader per desk. Few, so a panel left alone cannot
@@ -177,6 +195,15 @@ pub struct Thread {
     pub shipped_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
     pub removed_at: i64,
+    /// When a panel last took it up (`TAKEN_COLUMN`).
+    #[serde(skip)]
+    pub taken_at: i64,
+    /// Why no panel is moving it, or empty while one is: `parked`, `panel
+    /// closed`, `moved on` (its panel took up a later thread), `no panel`.
+    /// Worked out when a list is read (`mark_rest`), never stored, so the
+    /// rail, Home, the brief and the cap read the one rule.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub rest: String,
     /// The notes in it, by id.
     pub notes: Vec<i64>,
 }
@@ -300,7 +327,7 @@ fn desk_open(conn: &Connection, desk_id: i64) -> Result<bool> {
 
 const THREAD_COLS: &str =
     "id, desk_id, name, stage, folder, branch, branch_seen, commits, pr, ci, merged, merged_at,
-     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by";
+     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by, taken_at";
 
 fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
     Ok(Thread {
@@ -324,6 +351,8 @@ fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         shipped_at: r.get(17)?,
         removed_at: r.get(18)?,
         moved_by: r.get(19)?,
+        taken_at: r.get(20)?,
+        rest: String::new(),
         notes: Vec::new(),
     })
 }
@@ -357,9 +386,47 @@ pub fn get(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<Thread>> {
     Ok(Some(t))
 }
 
-/// A desk's threads, the most recently moved first. Put-away ones are left
-/// out; shipped ones stay, and the page shows the last few.
-pub fn for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
+/// A panel holds one thread, the one it last took up (`of_pane`). Mark every
+/// other one with why it rests.
+fn mark_rest(conn: &Connection, threads: &mut [Thread]) -> Result<()> {
+    let mut open = conn.prepare_cached("SELECT 1 FROM panes WHERE id = ?1 AND desk_id = ?2")?;
+    let mut later = conn.prepare_cached(
+        "SELECT 1 FROM threads WHERE desk_id = ?1 AND pane = ?2 AND removed_at = 0
+         AND (taken_at > ?3 OR (taken_at = ?3 AND id > ?4)) LIMIT 1",
+    )?;
+    for t in threads.iter_mut() {
+        t.rest = if t.stage == "parked" {
+            "parked"
+        } else if t.pane.is_empty() {
+            "no panel"
+        } else if !open.exists(params![t.pane, t.desk_id])? {
+            "panel closed"
+        } else if later.exists(params![t.desk_id, t.pane, t.taken_at, t.id])? {
+            "moved on"
+        } else {
+            ""
+        }
+        .to_string();
+    }
+    Ok(())
+}
+
+/// Whether a list still names a thread: one a panel holds, or shipped, always
+/// (the page and Home keep their own windows for shipped); a resting one for
+/// `RESTING_SHOWN` after its last move, a parked one for `PARKED_SHOWN`.
+fn listed(t: &Thread, now: i64) -> bool {
+    match t.rest.as_str() {
+        "" => true,
+        _ if t.stage == "shipped" => true,
+        "parked" => now - t.moved_at < PARKED_SHOWN,
+        _ => now - t.moved_at < RESTING_SHOWN,
+    }
+}
+
+/// A desk's threads, the most recently moved first, each marked with why it
+/// rests. Put-away ones are left out, and resting ones once their time is
+/// up; shipped ones stay, and the page shows the last few.
+pub fn for_desk(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY moved_at DESC, id DESC LIMIT 40"
@@ -367,13 +434,15 @@ pub fn for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
     let mut v: Vec<Thread> = st
         .query_map(params![desk_id], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
+    mark_rest(conn, &mut v)?;
+    v.retain(|t| listed(t, now));
     fill_notes(conn, &mut v)?;
     Ok(v)
 }
 
-/// Every open desk's threads, for Home: what is moving, what is parked, and
-/// what shipped since `shipped_since`.
-pub fn across_desks(conn: &Connection, shipped_since: i64) -> Result<Vec<Thread>> {
+/// Every open desk's threads, for Home, marked and left out as `for_desk`
+/// does: what is moving, what rests, and what shipped since `shipped_since`.
+pub fn across_desks(conn: &Connection, shipped_since: i64, now: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {} FROM threads t JOIN desks d ON d.id = t.desk_id
          WHERE t.removed_at = 0 AND d.closed_at = 0 AND (t.stage != 'shipped' OR t.shipped_at >= ?1)
@@ -387,11 +456,14 @@ pub fn across_desks(conn: &Connection, shipped_since: i64) -> Result<Vec<Thread>
     let mut v: Vec<Thread> = st
         .query_map(params![shipped_since], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
+    mark_rest(conn, &mut v)?;
+    v.retain(|t| listed(t, now));
     fill_notes(conn, &mut v)?;
     Ok(v)
 }
 
-/// The thread a pane last started or moved: what `move_thread`, `hand_over`
+/// The thread a pane last took up -- started, or moved from its own prompt;
+/// never one the reader moved on the page: what `move_thread`, `hand_over`
 /// and the mod's `seen` act on. A shipped one still counts, so a merge seen
 /// after the move is filed where it belongs.
 pub fn of_pane(conn: &Connection, desk_id: i64, pane: &str) -> Result<Option<Thread>> {
@@ -401,7 +473,7 @@ pub fn of_pane(conn: &Connection, desk_id: i64, pane: &str) -> Result<Option<Thr
     let id: Option<i64> = conn
         .query_row(
             "SELECT id FROM threads WHERE desk_id = ?1 AND pane = ?2 AND removed_at = 0
-             ORDER BY moved_at DESC, id DESC LIMIT 1",
+             ORDER BY taken_at DESC, id DESC LIMIT 1",
             params![desk_id, pane],
             |r| r.get(0),
         )
@@ -481,7 +553,7 @@ pub fn start(conn: &mut Connection, desk_id: i64, s: &Start, now: i64) -> Result
             // The stage is kept unless one was asked for: starting a thread
             // that is already building does not send it back to planned.
             tx.execute(
-                "UPDATE threads SET pane = ?3, moved_by = ?3, moved_at = ?4,
+                "UPDATE threads SET pane = ?3, moved_by = ?3, moved_at = ?4, taken_at = ?4,
                    folder = CASE WHEN ?5 = '' THEN folder ELSE ?5 END,
                    stage = CASE WHEN ?6 = '' THEN stage ELSE ?6 END,
                    shipped_at = CASE WHEN ?6 = 'shipped' THEN ?4 ELSE shipped_at END
@@ -491,13 +563,16 @@ pub fn start(conn: &mut Connection, desk_id: i64, s: &Start, now: i64) -> Result
             (id, true)
         }
         None => {
-            // Open is moving and held by a panel still on the desk: a thread
-            // whose panel closed rests on the rail (#102), and a desk where
-            // panels came and went is not full of them.
+            // Open is moving: held by no panel, or the thread a panel on the
+            // desk last took up. One whose panel closed or moved on rests
+            // (#102), so a desk where panels came and went, or a panel that
+            // went from one piece of work to the next, is not full of them.
             let open: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM threads WHERE desk_id = ?1 AND removed_at = 0
+                "SELECT COUNT(*) FROM threads t WHERE desk_id = ?1 AND removed_at = 0
                  AND stage NOT IN ('shipped', 'parked')
-                 AND (pane = '' OR pane IN (SELECT id FROM panes WHERE desk_id = ?1))",
+                 AND (pane = '' OR (pane IN (SELECT id FROM panes WHERE desk_id = ?1)
+                   AND NOT EXISTS (SELECT 1 FROM threads l WHERE l.desk_id = ?1 AND l.pane = t.pane
+                     AND l.removed_at = 0 AND (l.taken_at > t.taken_at OR (l.taken_at = t.taken_at AND l.id > t.id)))))",
                 params![desk_id],
                 |r| r.get(0),
             )?;
@@ -505,8 +580,8 @@ pub fn start(conn: &mut Connection, desk_id: i64, s: &Start, now: i64) -> Result
                 return Ok(Started::Full);
             }
             tx.execute(
-                "INSERT INTO threads(desk_id, name, stage, folder, by, pane, moved_by, created_at, moved_at, shipped_at)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?7, CASE WHEN ?3 = 'shipped' THEN ?7 ELSE 0 END)",
+                "INSERT INTO threads(desk_id, name, stage, folder, by, pane, moved_by, created_at, moved_at, taken_at, shipped_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?7, ?7, CASE WHEN ?3 = 'shipped' THEN ?7 ELSE 0 END)",
                 params![desk_id, name, stage, folder, by, s.pane, now],
             )?;
             (tx.last_insert_rowid(), false)
@@ -593,6 +668,7 @@ pub fn move_thread(
            pr = CASE WHEN ?5 = '' THEN pr ELSE ?5 END,
            name = CASE WHEN ?6 = '' THEN name ELSE ?6 END,
            pane = CASE WHEN ?7 = '' THEN pane ELSE ?7 END,
+           taken_at = CASE WHEN ?7 = '' THEN taken_at ELSE ?8 END,
            moved_by = ?9,
            moved_at = ?8,
            shipped_at = CASE WHEN ?3 = 'shipped' AND stage != 'shipped' THEN ?8

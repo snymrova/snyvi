@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 
 const START: &str = "File a piece of work on this snyvi desk as a thread: a name, the desk notes it answers (ids \
 from read_desk_notes), and the folder it lives in. Call it when you take the work on. The same name again \
-updates that thread instead of making a second. It becomes this panel's thread.";
+updates that thread instead of making a second. It becomes this panel's thread, and the one before it \
+rests: move it to shipped first if it is done.";
 
 const MOVE: &str = "Move this panel's thread: a stage (idea, planned, building, review, waiting, shipped, \
 parked), and with parked the next step to pick it up by. Add a PR number or more note ids. Call it when the \

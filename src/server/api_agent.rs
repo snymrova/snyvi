@@ -511,9 +511,9 @@ pub(crate) async fn pane_brief(
         .collect();
     let (threads, waiting) = app
         .store
-        .threads(|c, _| {
+        .threads(|c, now| {
             Ok((
-                crate::thread::for_desk(c, desk.id)?,
+                crate::thread::for_desk(c, desk.id, now)?,
                 // This desk's own, dialog turns kept: the brief says what
                 // waits here, not the first thirty across every desk.
                 crate::thread::waiting_on(c, desk.id, true)?,

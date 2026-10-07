@@ -2973,6 +2973,25 @@ async function panelRows(cdp, base, token) {
       !threaded.ok ? `the thread answered ${threaded.status}` : !inTip || !lay ? "the tip never named the thread" :
         `${lay.h} px tall against ${lay.bare}, text ${Math.round(lay.w)} of ${Math.round(lay.row)} px in ${lay.lines} lines, ${lay.beside} beside it, ${lay.marks} marks, tip "${lay.tip}"`]);
 
+    // 1.26: a panel's thread is one line under its row, not a card of its
+    // own; a second thread the panel starts rests the first, and the line's
+    // menu is what a reader does -- Done, Park, Rename, Remove -- not stages.
+    const thLine = `.dk-pth:has(.th-sum[data-tip="bench thread with a long name"])`;
+    const thOnRow = threaded.ok && await until(`!!document.querySelector('${thLine}') && document.querySelector('${thLine}').previousElementSibling?.matches(".dk-pane")`, 40);
+    await agent("thread", { name: "bench second thread", by: "bench-agent" });
+    const thRested = await until(`!!document.querySelector('.dk-pth .th-sum[data-tip="bench second thread"]') && !document.querySelector('${thLine}')
+      && [...document.querySelectorAll('.th-rest .dk-thread.rest .th-name')].some(e => e.textContent === "bench thread with a long name")`, 40);
+    const thWhy = await q.ev(`[...document.querySelectorAll('.th-rest .dk-thread.rest')].find(e => e.querySelector(".th-name")?.textContent === "bench thread with a long name")?.querySelector(".th-why")?.textContent || ""`);
+    await rightOn('.dk-pth .th-sum[data-tip="bench second thread"]');
+    const thMenu = await q.ev(menu);
+    const thSaid = thMenu ? thMenu.items.join(" · ") : "";
+    if (thMenu) await pick("Done");
+    const thDone = !!thMenu && await until(`document.querySelector('.dk-pth:has(.th-sum[data-tip="bench second thread"]) .th-word')?.textContent === "✓ shipped"`, 40);
+    rows.push(["a panel's thread is a line under its row; the next one rests it; Done ships it",
+      thOnRow && thRested && thWhy.endsWith("moved on") && !!thMenu && !/Move to/.test(thSaid) && thSaid.startsWith("Done") && thDone,
+      !thOnRow ? "no line under the panel's row" : !thRested ? "the second thread did not take the line, or the first did not rest" : !thWhy.endsWith("moved on") ? `the first rests as "${thWhy}"` :
+        !thMenu ? "no menu on the line" : /Move to|^(?!Done)/.test(thSaid) ? `the menu: ${thSaid}` : !thDone ? "Done left it unshipped" : `rests "${thWhy}"; menu ${thSaid}; ✓ shipped`]);
+
     // #95: a command handed over is a card with the whole command; one that
     // could close the paste early is refused at the door; Run types it into
     // the panel that asked as a ! command, Enter apart, on the click alone.

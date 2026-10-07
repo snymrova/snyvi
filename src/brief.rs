@@ -248,13 +248,15 @@ fn thread_brief(t: &Thread) -> String {
 }
 
 /// The brief's two lines on what is filed: the threads moving on the desk,
-/// this panel's marked as its own, and what is on the reader.
+/// this panel's marked as its own, and the parked ones with their next step;
+/// not one a panel moved on from or left by closing (`thread::mark_rest`).
+/// Then what is on the reader.
 fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) -> Vec<String> {
     let mut lines = Vec::new();
     let me = pane_in(&desk.panes, slot);
     let moving: Vec<String> = threads
         .iter()
-        .filter(|t| t.stage != "shipped")
+        .filter(|t| t.stage != "shipped" && (t.rest.is_empty() || t.rest == "parked"))
         .take(THREADS_SHOWN)
         .map(|t| {
             let mine = if !me.is_empty() && t.pane == me {

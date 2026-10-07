@@ -523,6 +523,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (12, peer::COLUMNS_1_25[1]),
     (12, peer::COLUMNS_1_25[2]),
     (12, peer::COLUMNS_1_25[3]),
+    // 1.26: when a panel last took a thread up, so a click on the rail never
+    // takes a panel's thread from it (`thread::TAKEN_COLUMN`).
+    (13, thread::TAKEN_COLUMN),
+    (13, thread::TAKEN_FILL),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
