@@ -400,7 +400,7 @@ impl Browser {
                 "image",
                 None,
                 format!(
-                    "<p class=\"browse-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></p>",
+                    "<p class=\"browse-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\" decoding=\"async\"></p>",
                     fresh_url,
                     html_escape::encode_double_quoted_attribute(&name)
                 ),

@@ -127,12 +127,13 @@
   function placeOf() {
     const top = main.scrollTop, edge = main.getBoundingClientRect().top + 1;
     const blocks = docEl.querySelectorAll(".prose > *");
-    let i = -1, delta = 0;
-    for (let n = 0; n < blocks.length; n++) {
-      const r = blocks[n].getBoundingClientRect();
-      if (r.bottom > edge) { i = n; delta = r.top - edge + 1; break; }
-    }
-    return { top, i, delta };
+    // The first block whose foot is below the edge. Blocks stack down the
+    // page, so their feet only grow: halved each step, a 5,000-block file
+    // asks for 13 rectangles where it asked for every one above the fold.
+    let lo = 0, hi = blocks.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (blocks[m].getBoundingClientRect().bottom > edge) hi = m; else lo = m + 1; }
+    if (lo >= blocks.length) return { top, i: -1, delta: 0 };
+    return { top, i: lo, delta: blocks[lo].getBoundingClientRect().top - edge + 1 };
   }
 
   /** Put the reader back. Named instant throughout: the pane scrolls smoothly

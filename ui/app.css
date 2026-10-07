@@ -288,6 +288,18 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #chrome { position: sticky; top: 0; z-index: var(--z-sticky); box-sizing: border-box; height: var(--head-h); display: flex; align-items: start; gap: 8px; padding: 14px 10px 10px; background: var(--bg); box-shadow: 0 1px 0 transparent; transition: box-shadow var(--t); }
 #main.scrolled #chrome { box-shadow: 0 1px 0 var(--rule); }
 #chrome .icon { display: none; }
+/* Back and forward: always there, at the left of the head and of a desk's
+   own, and only dimmed at either end -- their coming would move the title. */
+.nv { flex: none; display: flex; align-items: center; gap: 2px; height: 28px; }
+.nv-b { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+.nv-b:hover { background: var(--rule-2); color: var(--fg); }
+.nv-b[aria-disabled="true"] { opacity: .35; cursor: default; }
+.nv-b[aria-disabled="true"]:hover { background: none; color: var(--fg-3); }
+/* A desk draws its own pair in its head; the list of desks, and a tab's
+   page that says desks are the window's, have none, and keep these. */
+:root[data-view="desk"]:has(.dk-head) #chrome .nv { display: none; }
+:root[data-view="desk"] #chrome .nv-b { pointer-events: auto; }
+.dk-head .nv { height: auto; margin-right: -4px; }
 #chrome .chrome-r { display: flex; gap: 8px; margin-left: auto; }
 /* Every document and file: its name as the bar's heading, at the left, and
    the ✕ that goes back to where it was opened from at the right -- the
@@ -891,6 +903,10 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .doc-title { font-size: var(--fs-h1); line-height: 1.15; letter-spacing: -.022em; font-weight: 650; margin: 0 0 10px; text-wrap: balance; font-family: var(--head, var(--sans)); }
 .doc-sub { color: var(--fg-3); font-size: var(--fs-ui); margin: 0; }
 .doc-sub .branch { font-family: var(--mono); font-size: var(--fs-small); }
+/* What a friend said back about a document you sent them, under its head. */
+.doc-replies { list-style: none; margin: 10px 0 0; padding: 6px 12px; border-left: 2px solid var(--accent); font-size: var(--fs-ui); color: var(--fg-2); }
+.doc-replies li + li { margin-top: 3px; }
+.doc-replies time { margin-left: 6px; color: var(--fg-3); font-size: var(--fs-small); }
 
 /* ---------- the shape of a document that is still coming ----------
    A click is answered in its own frame: the title the row already knew, and

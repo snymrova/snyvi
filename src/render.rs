@@ -800,7 +800,7 @@ pub fn preview_kind(ext: &str) -> Option<&'static str> {
 /// The `<img>` body for an image document, pointed at wherever its bytes are served.
 pub fn image_body(src_url: &str, alt: &str) -> String {
     format!(
-        "<p class=\"doc-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\"></p>",
+        "<p class=\"doc-image\"><img src=\"{}\" alt=\"{}\" loading=\"lazy\" decoding=\"async\"></p>",
         html_escape::encode_double_quoted_attribute(src_url),
         html_escape::encode_double_quoted_attribute(alt)
     )

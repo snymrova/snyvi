@@ -103,7 +103,9 @@ A line for the notes waits on Home, in **Arrived** -- *"water the beans"
 from Trapti* -- with **Keep on…**, which puts it on the desk the reader
 picks in one click, and ✕. The line on the desk keeps who sent it
 (`desk_notes.sent_by`): the rail says *from Trapti* under it and the brief
-writes `#93 water the beans (from Trapti)`. Ticking it sends nothing back.
+writes `#93 water the beans (from Trapti)`. Ticking it sends nothing back
+by itself: from 1.23 a ticked line from a friend shows **Tell Trapti ✓**,
+and one press sends it back done, with the tick's commit (`done`, below).
 Arrived cannot be hidden, so a line is never out of sight. Nothing received
 is typed into a desk or run; a frame is content.
 
@@ -152,6 +154,45 @@ disk (`POST /api/docs/{id}/save`): into the desk's folder as
 file -- a second save is `-2`. From there the desk's agents and git see it.
 Both are the window's, behind the desk's capability.
 
+## What comes back (1.23)
+
+```mermaid
+sequenceDiagram
+  participant S as Sunny
+  participant R as relay
+  participant T as Trapti
+  S->>R: document (v 2)
+  R->>T: document
+  T-->>S: receipt arrived
+  T-->>S: receipt read (only if she turned it on for Sunny)
+  T-->>S: reply, one line under the head of Sunny's copy
+  S->>T: a line
+  T-->>S: done, when she ticks it and presses Tell Sunny ✓
+```
+
+Three kinds answer a frame, each by the frame's id (the relay's id for it,
+which both sides know) or the sender's id for a document:
+
+| kind | carries | lands |
+|---|---|---|
+| `receipt` | `of` (frame id), `state`: arrived / read | the friend's row on Home: *sent → arrived → read* |
+| `reply` | `re` (the sender's document id), `text` ≤ 200 | under the head of the sender's document, every version |
+| `done` | `of` (a line's frame id), `text`, `commit?` | the line's row: *✓ done · abc1234*, and a toast |
+
+*Arrived* is sent for every document and line kept. *Read* is sent when a
+friend's document is opened, only for a friend the reader turned it on for
+(**Tell them when read**, under ⋯ in their row; off by default). A reply is
+one line, from **Reply to Trapti…** in the head of her document. A done
+goes only when the reader presses **Tell Trapti ✓**. An answer to anything
+that did not go to that friend is nothing.
+
+Every frame says `v`, the version of what its snyvi reads (2 from 1.23),
+and each friend's last `v` is kept (`peers.v`). The new kinds go only to a
+friend at 2: a receipt for an older one is dropped, a reply or a done waits
+in the outbox saying *their snyvi is older; this goes once they update*,
+and goes the moment a frame from them says 2. A 1.22 that is sent one
+anyway keeps it unread (`peer_held`) and reads it after its update.
+
 ## What an agent gets
 
 One tool, `offer_document(to, id)`, listed only to a reader with a friend
@@ -160,7 +201,9 @@ The desk brief names the friends. The
 daemon writes an offer and the reader sees the question where they are,
 with the agent's name on it: Send, or Not now. An offer not answered when
 the panel's program ends is answered No. Nothing leaves on an agent's word;
-the friend's agent gets the same tool and nothing more.
+the friend's agent gets the same tool and nothing more. From 1.23 its
+sibling `offer_line(to, text)` offers a line the same way: the reader sees
+the line, and Send puts it in the outbox as a line from the reader.
 
 ## What goes out
 

@@ -130,6 +130,18 @@ async function act(b, byKey) {
           () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
       }
     }
+    else if (a === "note-tell") {
+      const x = noteList.find(y => y.id === +b.dataset.n);
+      if (x) {
+        x.told = true;
+        rail();
+        let r = null;
+        if (await told(b.dataset, `n${x.id}`, `Could not tell ${x.sent_by}`, () => { x.told = false; },
+          async () => (r = await ctx.api(`/api/desks/${d.id}/notes/${x.id}/tell`, {})))) {
+          ctx.toast(r?.sent ? `Told ${x.sent_by}` : `Kept for ${x.sent_by}`, r?.sent ? x.text : r?.waits ? "their snyvi is older; it goes once they update" : "it goes when the relay can be reached");
+        }
+      }
+    }
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
     else if (a === "keys") keysSheet(d);
@@ -616,7 +628,7 @@ export function actions(el) {
     if (!x) return null;
     return { head: x.title, items: [
       { label: "Open", moves: 1, run: () => ctx.read(x.id) },
-      x.source_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.source_path); ctx.toast("Copied", x.source_path); } },
+      x.local_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.local_path); ctx.toast("Copied", x.local_path); } },
       { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } }, R,
       { label: "Remove from this list", run: () => act({ dataset: { a: "doc-x", d: x.id } }) },
     ] };

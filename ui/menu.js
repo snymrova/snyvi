@@ -307,6 +307,8 @@ askFriends();
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
+  // Back or forward, held or right-clicked: where this window has been.
+  if (el.matches(".nv-b")) return { head: "Where you've been", items: ctx.navList() };
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
     { label: "Check for updates", run: at => ctx.checkUpdates(at) },
@@ -356,7 +358,7 @@ function entries(ctx, el, byKey = false) {
     // Under a friend's own row, the path is their file's name and no file
     // here: no Copy path, no file manager.
     const pid = +el.closest(".t-proj")?.dataset.pid, theirs = !!ctx.state.tree.find(x => x.id === pid)?.friend || d?.origin === "peer";
-    const path = !theirs && d && d.source_path;
+    const path = d && (d.local_path || (!theirs && d.source_path));
     askFriends();
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
       { label: "Open", moves: 1, run: () => ctx.open(id) },

@@ -128,7 +128,7 @@ pub fn brief_of(
     // Who a document can be offered to. Names only; the reader presses Send.
     if !friends.is_empty() {
         lines.push(format!(
-            "The user's friends on snyvi, who can be offered a document with offer_document (the user decides whether it goes): {}.",
+            "The user's friends on snyvi, who can be offered a document with offer_document or a line with offer_line (the user decides whether it goes): {}.",
             friends.join(", ")
         ));
     }
@@ -724,6 +724,7 @@ mod tests {
             slot,
             project: "ledger".into(),
             source_path: None,
+            local_path: None,
         }
     }
 

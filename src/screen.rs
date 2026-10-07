@@ -126,7 +126,7 @@ impl Cell {
 type Row = Vec<Cell>;
 
 /// A line that has left the top of the screen, kept as runs rather than cells:
-/// a cell is sixteen bytes and most of a line is one attribute, so this is
+/// a cell is twenty bytes and most of a line is one attribute, so this is
 /// what makes 2 MB mean roughly 900 rows at 200 columns rather than 650.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
@@ -137,8 +137,17 @@ pub struct Line {
 }
 
 impl Line {
+    /// What it holds, as the scrollback's cap counts it: the line itself and
+    /// each run's text and slot. A run's slot is a `String` and an `Attr`,
+    /// forty bytes; it was counted as sixteen, so the cap let a pane keep
+    /// more than it said.
     fn bytes(&self) -> usize {
-        24 + self.runs.iter().map(|(t, _)| t.len() + 16).sum::<usize>()
+        std::mem::size_of::<Line>()
+            + self
+                .runs
+                .iter()
+                .map(|(t, _)| t.len() + std::mem::size_of::<(String, Attr)>())
+                .sum::<usize>()
     }
     /// The line's text, for the file a pane's last screen is kept in.
     pub fn text(&self) -> String {
@@ -1563,6 +1572,18 @@ pub fn push_json_str(out: &mut String, s: &str) {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    /// The sizes the comments on `Line` and `Line::bytes` say.
+    #[test]
+    fn a_cell_and_a_run_are_the_sizes_the_cap_counts() {
+        assert_eq!(std::mem::size_of::<Cell>(), 20);
+        assert_eq!(std::mem::size_of::<(String, Attr)>(), 40);
+        let l = Line {
+            runs: vec![("ab".into(), Attr::default())],
+            wrapped: false,
+        };
+        assert_eq!(l.bytes(), std::mem::size_of::<Line>() + 2 + 40);
+    }
 
     fn screen(cols: usize, rows: usize) -> (Screen, vte::Parser) {
         (Screen::new(cols, rows), vte::Parser::new())

@@ -1039,12 +1039,24 @@ function friendRow(f, j) {
     [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
   const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
   const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
-  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${outbox(f)}${where}` +
+  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${sentLine(f)}${outbox(f)}${where}` +
     (more
       ? `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
+        `<button type="button" class="hm-link" data-hm="freceipts" data-k="${f.id}" data-tip="${f.read_receipts ? `${esc(f.name)} is told when you open what they sent` : `${esc(f.name)} hears only that it arrived`}">${f.read_receipts ? "Stop telling reads" : "Tell them when read"}</button>` +
         `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" data-tip="Remove ${esc(f.name)}" data-tip-sub="keys kept; Restore brings them back">Remove</button>`
       : `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>`) +
     `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Mute or remove"}">⋯</button>${list}</li>`;
+}
+
+/** What became of the last thing that went to a friend, in their row: sent,
+ *  arrived, read (when they allow it), or a line of yours they ticked and
+ *  told you of. The rest of the last few are in its tip. */
+const sentWord = x => x.done_at ? `✓ done${x.done_commit ? ` · ${x.done_commit.slice(0, 7)}` : ""}` : x.read_at ? "read" : x.arrived_at ? "arrived" : "sent";
+function sentLine(f) {
+  const { esc } = c, mine = (peers?.sent || []).filter(x => x.peer_id === f.id);
+  if (!mine.length) return "";
+  const [last, ...rest] = mine;
+  return `<span class="hm-s" data-tip="${esc(last.what)} · ${esc(sentWord(last))}" data-tip-sub="${esc(rest.map(x => `${x.what}: ${sentWord(x)}`).join("; ") || `sent ${age(last.sent_at)} ago`)}">${esc(sentWord(last))}</span>`;
 }
 
 /** What has not gone to a friend yet, in their row: one that stopped trying
@@ -1394,6 +1406,11 @@ async function friendClick(k, id, b) {
     b.disabled = true;
     const r = await fetch(`/api/peers/outbox/${encodeURIComponent(b.dataset.f)}/retry`, { method: "POST" }).catch(() => null);
     if (!r?.ok) { b.disabled = false; c.peerCtx.toast("Could not try again"); } else soonRefresh();
+  }
+  else if (k === "freceipts") {
+    const f = friendsOf().find(x => x.id === id);
+    const r = await fetch(`/api/peers/${id}/receipts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ on: !f?.read_receipts }) }).catch(() => null);
+    if (!r?.ok) c.peerCtx.toast("Could not change that"); else soonRefresh();
   }
   else if (k === "fmute") {
     const f = friendsOf().find(x => x.id === id);

@@ -301,7 +301,7 @@ pub struct DeskNote {
     /// A friend's name, when the line came from one (`crate::peer`): it came
     /// as a suggestion, and it stays theirs after the reader keeps it --
     /// keeping clears `suggested_by`, not this. The row and the brief say
-    /// "from Trapti". Nothing goes back to them when it is ticked.
+    /// "from Trapti". Nothing goes back to them on a tick by itself: the reader presses Tell Trapti ✓ (`tellable`).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub sent_by: String,
     /// Pictures on the line -- a screenshot of the thing it is about -- by
@@ -342,6 +342,12 @@ pub struct DeskNote {
     /// row. A line is in one thread at most.
     #[serde(skip_serializing_if = "is_zero")]
     pub thread: i64,
+    /// A line a friend sent from 1.23 on, which a tick can be told back
+    /// to them for (`Tell Trapti ✓`), and whether it has been.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub tellable: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub told: bool,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -1242,7 +1248,8 @@ pub fn clear(conn: &Connection) -> Result<()> {
 pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
         "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
-                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane, sent_by, thread_id FROM desk_notes
+                stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane, sent_by, thread_id,
+                (sent_peer != 0 AND sent_frame != ''), told_at FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1728,6 +1735,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         done_at: r.get(2)?,
         sent_by: r.get(17)?,
         thread: r.get(18)?,
+        tellable: r.get::<_, i64>(19)? != 0,
+        told: r.get::<_, i64>(20)? != 0,
     })
 }
 

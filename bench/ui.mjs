@@ -268,6 +268,7 @@ async function main() {
     await section("nothing lost when snyvi says no", () => lossRows(p, base, token, arrive, browsed));
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
     await section("the ✕ over what is read", () => backRows(p, browsed));
+    await section("back and forward", () => navRows(p));
     await section("an aside, closed", () => asideRows(p, base, token));
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
@@ -1615,6 +1616,69 @@ async function backRows(p, browsed) {
   return rows;
 }
 
+/** 1.23: back and forward. ‹ › sit at the head's left on every view,
+ *  dimmed at either end and never hidden; ‹ goes back to the document read
+ *  before, where it was left, › comes forward again; a right-click lists
+ *  where the window has been, the one on screen marked; a mouse's back
+ *  button is one step. */
+async function navRows(p) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const where = () => p.ev("location.pathname");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const btns = () => p.ev(`[...document.querySelectorAll("#chrome .nv-b")].map(b => { const r = b.getBoundingClientRect(); return { off: b.getAttribute("aria-disabled") === "true", tip: b.dataset.tip, w: Math.round(r.width), x: Math.round(r.left) }; })`);
+
+  await p.goto(`${origin}/inbox`);
+  await p.pointerAway();
+  // The tips and the list are nav.js's, fetched once the page is idle.
+  await until(`!!document.querySelector("#chrome .nv-b").dataset.tipSub`);
+  // The Inbox entry highest in the tree, as the ✕'s rows pick it, so `j`
+  // has a document after it to go to.
+  await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
+  await until(`document.querySelectorAll("#tree a[data-id]").length >= 3`);
+  const pick = await p.ev(`[...document.querySelectorAll("#tree a[data-id]")].map(a => a.dataset.id).find(id => document.querySelector('.inbox a[data-id="' + id + '"]')) || ""`);
+  const inbox = await btns();
+  await p.clickOn(pick ? `.inbox a[data-id="${pick}"]` : ".inbox a[data-id]");
+  await until(`location.pathname.startsWith("/d/")`);
+  const a = await where();
+  await until(`document.title !== "snyvi"`);
+  const aTitle = await p.ev("document.title");
+  await p.ev(`document.querySelector("#main").scrollTop = 240`);
+  await sleep(400);
+  const aTop = await p.ev(`document.querySelector("#main").scrollTop`);
+  await p.press("j");
+  await until(`location.pathname !== ${JSON.stringify(a)}`);
+  const b = await where();
+  await sleep(300);
+  const onB = await btns();
+  rows.push(["‹ › are on every view, and only dimmed at the ends", inbox.length === 2 && onB.length === 2 && !onB[0].off && onB[1].off && inbox[0].x === onB[0].x && inbox[0].w === onB[0].w,
+    inbox.length !== 2 ? "the Inbox has no ‹ ›" : onB[0].off ? "‹ is dimmed with a document behind it" : !onB[1].off ? "› is lit with nothing ahead" : inbox[0].x !== onB[0].x ? `‹ moved from x=${inbox[0].x} to x=${onB[0].x}` : "‹ lit, › dimmed, in the same place as on the Inbox"]);
+  rows.push(["‹ names where it goes", onB[0].tip === `Back to ${aTitle}`, `"${onB[0].tip}"`]);
+
+  await p.clickOn('#chrome .nv-b[data-step="-1"]');
+  const backA = await until(`location.pathname === ${JSON.stringify(a)}`);
+  await sleep(400);
+  const top = await p.ev(`document.querySelector("#main").scrollTop`);
+  rows.push(["‹ goes back to the document before, where it was left", backA && Math.abs(top - aTop) <= 40,
+    !backA ? `landed on ${await where()}` : `scrolled to ${top}, left at ${aTop}`]);
+  const onA = await btns();
+  await p.clickOn('#chrome .nv-b[data-step="1"]');
+  const fwd = await until(`location.pathname === ${JSON.stringify(b)}`);
+  rows.push(["› comes forward again", !onA[1].off && fwd, onA[1].off ? "› is dimmed after a step back" : fwd ? "lit after the step back, and one step forward" : `landed on ${await where()}`]);
+
+  await p.rightClickOn('#chrome .nv-b[data-step="-1"]');
+  const listed = await until(`!document.querySelector("#ctx")?.hidden`, 20);
+  const list = listed ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent)`) : [];
+  rows.push(["a right-click lists where the window has been", listed && list.length >= 3 && /here$/.test(list[0]),
+    !listed ? "no list" : `${list.length} places: ${list.join(" · ")}`]);
+  await p.press("Escape");
+
+  await p.ev(`dispatchEvent(new MouseEvent("mouseup", { button: 3, bubbles: true }))`);
+  const side = await until(`location.pathname === ${JSON.stringify(a)}`);
+  rows.push(["a mouse's back button is one step", side, side ? "back on the document before" : `landed on ${await where()}`]);
+  return rows;
+}
+
 /** An aside can be closed: the ✕ on its card, or Esc on it, and the card
  *  stands as one line holding the Undo for 6 s, as a removed document's row
  *  does. The daemon only flags it, so Undo is real, and a closed one is
@@ -2549,6 +2613,9 @@ async function projectDeskRows(cdp, base, token, tmp) {
   try {
     await p.goto(`${base}/#cap=${cap}`);
     await until(`!!document.querySelector("#desk-nav .s-add")`);
+    // Every click the reader makes from here to the desk, counted by the
+    // page: the launch's newcomer gets a project's desk in three or fewer.
+    await p.ev(`window.__clicks = 0, document.addEventListener("click", () => window.__clicks++, true)`);
     await p.clickOn("#desk-nav .s-add");
     const asked = await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
     const menu = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`) : [];
@@ -2563,6 +2630,9 @@ async function projectDeskRows(cdp, base, token, tmp) {
       made = (await desks()).find(d => d.root === proj.root) || null;
       rows.push(["the project, chosen, is a desk on its folder", on && !!made && made.name === proj.name,
         !on ? "the page did not go to a desk" : !made ? "no desk on the project's folder" : made.name !== proj.name ? `the desk is named ${made.name}` : `desk ${made.name} on ${made.root}`]);
+      const clicks = await p.ev("window.__clicks"), panel = on && await until(`!!document.querySelector(".dk-pane")`);
+      rows.push(["a project's desk, with its first panel, in three clicks or fewer", !!panel && clicks <= 3,
+        !panel ? "the desk shows no panel" : `${clicks} click${clicks === 1 ? "" : "s"} from the + beside Desks to a desk with its first panel`]);
 
       const glyph = `.t-proj[data-pid="${proj.id}"] > summary > .b-new.has`;
       await p.clickOn(".t-inbox");
@@ -3396,7 +3466,7 @@ async function startRows(p, url, arrive, base) {
   await p.clickOn("#btn-start");
   const drawn = await until(`document.querySelectorAll(".start .start-sec").length === 6`);
   const ids = await p.ev(`[...document.querySelectorAll(".start .start-sec")].map(s => s.id).join(" ")`);
-  rows.push(["/start has its six sections", drawn && ids === "desks notes arrives waiting versions keys" && (await p.ev("location.pathname")) === "/start",
+  rows.push(["/start has its six sections", drawn && ids === "desks arrives waiting notes versions keys" && (await p.ev("location.pathname")) === "/start",
     drawn ? ids : "the page did not draw"]);
 
   // Each Show me: exactly one element lit, nothing else moved.

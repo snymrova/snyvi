@@ -3,7 +3,7 @@
 use super::{
     desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
     BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS,
-    LOOK_JS, MENU_JS, MMD_JS, NOTE_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
+    LOOK_JS, MENU_JS, MMD_JS, NAV_JS, NOTE_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
 };
 use super::{
     new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
@@ -596,6 +596,29 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     (
         "POST",
         "/api/peers/outbox/nope/retry",
+        None,
+        Gate::Reader,
+        true,
+    ),
+    // 1.23: a reply under a friend's document, whether a friend hears of a
+    // read, and Tell Trapti ✓ on a line she sent: the reader's.
+    (
+        "POST",
+        "/api/docs/nope/reply",
+        Some(r#"{"text":"thanks"}"#),
+        Gate::Reader,
+        true,
+    ),
+    (
+        "POST",
+        "/api/peers/1/receipts",
+        Some(r#"{"on":true}"#),
+        Gate::Reader,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/notes/1/tell",
         None,
         Gate::Reader,
         true,
@@ -1262,6 +1285,7 @@ fn every_id_the_script_uses_unguarded_is_in_the_page() {
         ("menu.js", MENU_JS),
         ("palette.js", PALETTE_JS),
         ("look.js", LOOK_JS),
+        ("nav.js", NAV_JS),
         ("note.js", NOTE_JS),
         ("tip.js", TIP_JS),
         ("home.js", HOME_JS),
@@ -1746,7 +1770,9 @@ async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
                 ..Default::default()
             })
             .unwrap();
-        let n = store.peer_note_arrived(p.id, "water the beans").unwrap();
+        let n = store
+            .peer_note_arrived(p.id, "water the beans", "")
+            .unwrap();
         *at.lock().unwrap() = (desk.id, n);
     });
     let (desk, line) = at.into_inner().unwrap();
@@ -1952,6 +1978,8 @@ async fn a_friends_document_in_a_folder_goes_back_to_their_row() {
                 last_from: 0,
                 last_to: 0,
                 desk_id: 0,
+                v: 0,
+                read_receipts: false,
             })
             .unwrap();
         // Who sent it, by key, as `arrived` sets it.
@@ -2019,6 +2047,7 @@ fn a_saved_friends_document_gets_a_plain_name() {
         desk: None,
         sender: "Trapti".into(),
         filed: false,
+        local_path: None,
     };
     assert_eq!(file_name(&d), "plan.md", "a name and no path");
     d.source_path = None;

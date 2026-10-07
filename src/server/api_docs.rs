@@ -84,9 +84,16 @@ pub(crate) async fn doc_json(State(app): S, Path(id): Path<String>) -> Response 
             // snapshotted, so unlike browse mode there are no sibling assets to load.
             // Sent as `content` with `lang: "html"`, it is a page all the same.
             let preview = render::preview_kind(&doc_ext(&doc));
+            // Replies and Reply… only where there is a friend to have them.
+            let friends = has_friends(&app);
+            let talk = if friends {
+                talk(&app, &doc)
+            } else {
+                Talk::default()
+            };
             Json(json!({
                 "doc": doc,
-                "html": doc_html(&doc, &body, has_friends(&app)),
+                "html": doc_html(&doc, &body, friends, &talk),
                 "previous": previous,
                 "history": history,
                 "preview": preview,
@@ -423,6 +430,9 @@ pub(crate) async fn mark_read(
                 "read",
                 json!({ "ids": [id], "waiting": waiting(&app) }),
             );
+            // A friend's: they hear of it, if the reader said they may.
+            let (app2, id2) = (app.clone(), id.clone());
+            tokio::task::spawn_blocking(move || super::api_peer::opened(&app2, &id2));
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => Json(json!({ "ok": true })).into_response(),
@@ -785,7 +795,7 @@ pub(crate) struct FolderBody {
 /// button would be missing from exactly the sends that come straight out of an
 /// agent.
 pub(crate) fn doc_folder(app: &App, doc: &Doc) -> Option<std::path::PathBuf> {
-    doc.source_path
+    doc.local_path
         .as_deref()
         .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
         .into_iter()

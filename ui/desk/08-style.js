@@ -254,6 +254,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .dk-lab .n i { font-style: normal; }
 .dk-lab .n b { font-weight: inherit; color: var(--accent); }
+.dk-lab .n b.blk { color: var(--warn); }
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; }
 /* The rail's parts, one under the other, the same distance apart. */
 .dk-rail > * + * { margin-top: 16px; }

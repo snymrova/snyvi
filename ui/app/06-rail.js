@@ -399,7 +399,7 @@
       previewButton() +
       `<button data-act="delete">Remove<kbd>Del</kbd></button>` +
       `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
-      (d.source_path ? `<button data-act="copypath" data-tip="${esc(d.source_path)}" data-tip-mono>Copy path</button>` : "") +
+      (d.local_path ? `<button data-act="copypath" data-tip="${esc(d.local_path)}" data-tip-mono>Copy path</button>` : "") +
       (state.folder ? `<button data-act="reveal" data-tip="${esc(state.folder)}" data-tip-mono>Open in file manager</button>` : "") +
       `</div>` + historyBox();
   }
@@ -418,7 +418,7 @@
     if (!b) return;
     if (b.dataset.act === "compare") showCompare();
     if (b.dataset.act === "back") { state.cache.delete(state.doc.id); showDoc(state.doc.id, false); }
-    if (b.dataset.act === "copypath") copied(state.doc.source_path, b);
+    if (b.dataset.act === "copypath") copied(state.doc.local_path, b);
     if (b.dataset.act === "pin") togglePin();
     if (b.dataset.act === "split") toggleSplit();
     if (b.dataset.act === "preview") togglePreview();

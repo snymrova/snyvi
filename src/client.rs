@@ -1145,6 +1145,21 @@ pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -
     }
 }
 
+/// Offer a line to a friend, from this pane: `offer_line`. As with a
+/// document, the reader decides whether it goes.
+pub fn offer_line(paths: &Paths, pane: &str, to: &str, text: &str, by: &str) -> Result<Value> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/offer"),
+        serde_json::json!({ "to": to, "text": text, "by": by }),
+    )?;
+    match resp.status().as_u16() {
+        201 => Ok(resp.body_mut().read_json()?),
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// The value of one of this panel's desk's keys, for `snyvi key NAME`: the
 /// panel is `SNYVI_SESSION`, which only a snyvi panel has, so the command
 /// works there and nowhere else.

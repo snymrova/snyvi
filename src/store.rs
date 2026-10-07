@@ -42,6 +42,39 @@ pub struct Doc {
     /// can go back to the friend's row (`Store::unfile`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub filed: bool,
+    /// The file this document is on this machine, which is what Copy path
+    /// copies (`local_path`). A friend's `source_path` is a place on *their*
+    /// machine, so it is never this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+/// Where a document is a file on this machine, if it is one: where Save
+/// wrote a friend's document (`docs.saved_path`); a friend's document filed
+/// into a folder both have, at its place in it, when that file is there;
+/// else the file it was sent from, unless a friend sent it -- their path
+/// names nothing here, and an agent handed it finds nothing (#99).
+fn local_path(
+    source: Option<&str>,
+    saved: Option<String>,
+    origin: &str,
+    filed: bool,
+    root: &str,
+) -> Option<String> {
+    if saved.is_some() {
+        return saved;
+    }
+    let source = source?;
+    if origin != "peer" {
+        return Some(source.to_string());
+    }
+    // Only a place that stays inside the folder: relative, no `..`, no
+    // drive (`peer::safe_path`), with this system's separators.
+    let rel = crate::peer::safe_path(source).filter(|_| filed)?;
+    let at = rel
+        .split('/')
+        .fold(std::path::PathBuf::from(root), |p, c| p.join(c));
+    at.is_file().then(|| at.to_string_lossy().to_string())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -73,8 +106,12 @@ pub struct DeskDoc {
     pub pinned: bool,
     pub slot: i64,
     pub project: String,
-    /// The file it was sent from, when it was one: the rail offers it to copy.
+    /// The file it was sent from, when it was one.
     pub source_path: Option<String>,
+    /// The file it is on this machine, which the rail offers to copy
+    /// (`local_path`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -224,7 +261,7 @@ const FTS_INSERT: &str =
 const FTS_DELETE: &str =
     "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
 
-const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%')";
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), d.saved_path, p.root";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 /// The same join over `head_docs`: what every list of documents reads, so one
@@ -487,14 +524,39 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (10, peer::COLUMNS_1_22[1]),
     (10, peer::COLUMNS_1_22[2]),
     (10, peer::COLUMNS_1_22[3]),
+    // 1.23: where Save wrote a friend's document, so Copy path copies a file
+    // that is there (`local_path`).
+    (11, SAVED_PATH_COLUMN),
+    // 1.23: pairing's second cut -- receipts, replies, a line told done,
+    // and a line an agent offers (`crate::peer::COLUMNS_1_23`).
+    (11, peer::COLUMNS_1_23[0]),
+    (11, peer::COLUMNS_1_23[1]),
+    (11, peer::COLUMNS_1_23[2]),
+    (11, peer::COLUMNS_1_23[3]),
+    (11, peer::COLUMNS_1_23[4]),
+    (11, peer::COLUMNS_1_23[5]),
+    (11, peer::COLUMNS_1_23[6]),
+    (11, peer::COLUMNS_1_23[7]),
+    (11, peer::COLUMNS_1_23[8]),
+    (11, peer::COLUMNS_1_23[9]),
+    (11, peer::COLUMNS_1_23[10]),
+    (11, peer::COLUMNS_1_23[11]),
+    (11, peer::COLUMNS_1_23[12]),
+    (11, peer::COLUMNS_1_23[13]),
+    (11, peer::COLUMNS_1_23[14]),
+    (11, peer::COLUMNS_1_23[15]),
 ];
+
+/// 1.23's column, named so the old-database tests can take it away again.
+pub const SAVED_PATH_COLUMN: &str = "ALTER TABLE docs ADD COLUMN saved_path TEXT";
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
 /// the one index a four-column `WHERE` on a desk's documents needs, and
 /// `?1` the desk, `?2` the limit.
 fn desk_docs_sql(off: bool) -> String {
     format!(
-        "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
+        "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path,
+                d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root
          FROM live_docs d JOIN projects p ON p.id = d.project_id
          WHERE d.desk_id = ?1 AND d.desk_off {}
            AND (d.source_path IS NULL
@@ -703,6 +765,7 @@ impl Store {
             desk: d.desk.cloned(),
             sender: d.sender.to_string(),
             filed: false,
+            local_path: local_path(d.source_path, None, d.origin, false, ""),
         })
     }
 
@@ -1314,6 +1377,16 @@ impl Store {
         self.move_lineage(id, &p.project_root(), &p.project_name(), &none)
     }
 
+    /// Where Save wrote a friend's document: the file Copy path copies from
+    /// then on (`local_path`). `unfile` leaves it, since the file stays.
+    pub fn set_saved_path(&self, id: &str, path: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE docs SET saved_path = ?2 WHERE id = ?1",
+            params![id, path],
+        )?;
+        Ok(())
+    }
+
     /// Who sent a friend's document, by key: what `unfile` moves it back
     /// under, set as it arrives.
     pub fn set_peer_key(&self, id: &str, key: &str) -> Result<()> {
@@ -1730,6 +1803,14 @@ impl Store {
         let rows = conn
             .prepare(&desk_docs_sql(off))?
             .query_map(params![desk_id, limit as i64], |r| {
+                let source_path: Option<String> = r.get(8)?;
+                let local_path = local_path(
+                    source_path.as_deref(),
+                    r.get(9)?,
+                    &r.get::<_, String>(10)?,
+                    r.get::<_, i64>(11)? != 0,
+                    &r.get::<_, String>(12)?,
+                );
                 Ok(DeskDoc {
                     id: r.get(0)?,
                     title: r.get(1)?,
@@ -1739,7 +1820,8 @@ impl Store {
                     pinned: r.get::<_, i64>(5)? != 0,
                     slot: r.get(6)?,
                     project: r.get(7)?,
-                    source_path: r.get(8)?,
+                    source_path,
+                    local_path,
                 })
             })?
             .collect::<std::result::Result<_, _>>()?;
@@ -1913,8 +1995,8 @@ impl Store {
         peer::notes_waiting(&self.conn.lock().unwrap())
     }
 
-    pub fn peer_note_arrived(&self, peer_id: i64, text: &str) -> Result<i64> {
-        peer::note_arrived(&self.conn.lock().unwrap(), peer_id, text, now())
+    pub fn peer_note_arrived(&self, peer_id: i64, text: &str, frame: &str) -> Result<i64> {
+        peer::note_arrived(&self.conn.lock().unwrap(), peer_id, text, frame, now())
     }
 
     /// `what`: taken, remove, restore (`peer::settle_note`).
@@ -1927,8 +2009,146 @@ impl Store {
         peer::offers_open(&self.conn.lock().unwrap())
     }
 
-    pub fn peer_offer(&self, peer_id: i64, doc_id: &str, pane: &str, by: &str) -> Result<i64> {
-        peer::offer(&self.conn.lock().unwrap(), peer_id, doc_id, pane, by, now())
+    pub fn peer_offer(
+        &self,
+        peer_id: i64,
+        doc_id: &str,
+        text: &str,
+        pane: &str,
+        by: &str,
+    ) -> Result<i64> {
+        peer::offer(
+            &self.conn.lock().unwrap(),
+            peer_id,
+            doc_id,
+            text,
+            pane,
+            by,
+            now(),
+        )
+    }
+
+    // ---- pairing's second cut: what comes back (`crate::peer`, 1.23) ----
+
+    pub fn peer_set_v(&self, id: i64, v: u32) -> Result<()> {
+        peer::set_v(&self.conn.lock().unwrap(), id, v)
+    }
+
+    pub fn peer_read_receipts(&self, id: i64, on: bool) -> Result<bool> {
+        peer::set_read_receipts(&self.conn.lock().unwrap(), id, on)
+    }
+
+    pub fn peer_queue_kind(
+        &self,
+        p: &peer::Peer,
+        kind: &str,
+        re: &str,
+        text: &str,
+        extra: &str,
+    ) -> Result<String> {
+        peer::queue_kind(&self.conn.lock().unwrap(), p, kind, re, text, extra, now())
+    }
+
+    pub fn peer_sent_recent(&self, limit: i64) -> Result<Vec<peer::Sent>> {
+        peer::sent_recent(&self.conn.lock().unwrap(), limit)
+    }
+
+    pub fn peer_receipt(&self, peer_id: i64, of: &str, state: &str) -> Result<bool> {
+        peer::receipt(&self.conn.lock().unwrap(), peer_id, of, state, now())
+    }
+
+    pub fn peer_done(&self, peer_id: i64, of: &str, commit: &str) -> Result<Option<String>> {
+        peer::done(&self.conn.lock().unwrap(), peer_id, of, commit, now())
+    }
+
+    pub fn peer_sent_doc(&self, peer_id: i64, doc_id: &str) -> Result<bool> {
+        peer::sent_doc(&self.conn.lock().unwrap(), peer_id, doc_id)
+    }
+
+    pub fn peer_add_reply(&self, peer_id: i64, doc_id: &str, text: &str) -> Result<Option<String>> {
+        peer::add_reply(&self.conn.lock().unwrap(), peer_id, doc_id, text, now())
+    }
+
+    /// The replies to a document, over every version of it.
+    pub fn peer_replies(&self, id: &str) -> Result<Vec<peer::Reply>> {
+        let ids: Vec<String> = match self.get(id)? {
+            Some(Doc {
+                project_id,
+                source_path: Some(sp),
+                ..
+            }) => self
+                .history(project_id, &sp)?
+                .into_iter()
+                .map(|d| d.id)
+                .collect(),
+            _ => vec![id.to_string()],
+        };
+        peer::replies(&self.conn.lock().unwrap(), &ids)
+    }
+
+    /// The frame a friend's document came in, and the sender's id for it:
+    /// what a read receipt and a reply answer.
+    pub fn set_peer_frame(&self, id: &str, frame: &str, sender_id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE docs SET peer_frame = ?2, peer_ref = ?3 WHERE id = ?1",
+            params![id, frame, sender_id],
+        )?;
+        Ok(())
+    }
+
+    /// A friend's document's sender key, frame and the sender's id for it,
+    /// when it is one: empty strings otherwise.
+    pub fn peer_frame(&self, id: &str) -> Result<(String, String, String)> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT peer_key, peer_frame, peer_ref FROM docs WHERE id = ?1 AND origin = 'peer'",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// A desk's line that came from a friend: which friend, and the frame,
+    /// so ticking it can be told back (`desk::tell_of`).
+    pub fn link_note_frame(&self, note_id: i64, peer_id: i64, frame: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE desk_notes SET sent_peer = ?2, sent_frame = ?3 WHERE id = ?1",
+            params![note_id, peer_id, frame],
+        )?;
+        Ok(())
+    }
+
+    /// What Tell X ✓ sends for a ticked line: the friend, the frame, the
+    /// line and its commit. `None` for a line no friend sent, one not done,
+    /// or one told already.
+    pub fn note_to_tell(
+        &self,
+        desk_id: i64,
+        id: i64,
+    ) -> Result<Option<(i64, String, String, String)>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT sent_peer, sent_frame, text, done_commit FROM desk_notes
+                 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at != 0
+                   AND sent_peer != 0 AND sent_frame != '' AND told_at = 0",
+                params![desk_id, id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn note_told(&self, desk_id: i64, id: i64) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().execute(
+            "UPDATE desk_notes SET told_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND told_at = 0",
+            params![desk_id, id, now()],
+        )? > 0)
     }
 
     pub fn peer_offer_get(&self, id: i64) -> Result<Option<peer::Offer>> {
@@ -2320,6 +2540,17 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
         },
         sender: r.get(19)?,
         filed: r.get::<_, i64>(20)? != 0,
+        local_path: None,
+    })
+    .and_then(|mut d| {
+        d.local_path = local_path(
+            d.source_path.as_deref(),
+            r.get(21)?,
+            &d.origin,
+            d.filed,
+            &r.get::<_, String>(22)?,
+        );
+        Ok(d)
     })
 }
 

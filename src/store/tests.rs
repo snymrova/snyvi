@@ -62,6 +62,26 @@ const OLD_1_22: &str = "ALTER TABLE projects DROP COLUMN repo;
      ALTER TABLE projects DROP COLUMN printed_at;
      ALTER TABLE docs DROP COLUMN peer_key;";
 
+/// And of 1.23's: where Save wrote a friend's document, and pairing's
+/// second cut (`peer::COLUMNS_1_23`), which step 11 adds.
+const OLD_1_23: &str = "ALTER TABLE docs DROP COLUMN saved_path;
+     ALTER TABLE docs DROP COLUMN peer_frame;
+     ALTER TABLE docs DROP COLUMN peer_ref;
+     ALTER TABLE peers DROP COLUMN v;
+     ALTER TABLE peers DROP COLUMN read_receipts;
+     ALTER TABLE peer_outbox DROP COLUMN kind;
+     ALTER TABLE peer_outbox DROP COLUMN re;
+     ALTER TABLE peer_outbox DROP COLUMN extra;
+     ALTER TABLE peer_outbox DROP COLUMN arrived_at;
+     ALTER TABLE peer_outbox DROP COLUMN read_at;
+     ALTER TABLE peer_outbox DROP COLUMN done_at;
+     ALTER TABLE peer_outbox DROP COLUMN done_commit;
+     ALTER TABLE peer_notes DROP COLUMN frame;
+     ALTER TABLE peer_offers DROP COLUMN text;
+     ALTER TABLE desk_notes DROP COLUMN sent_peer;
+     ALTER TABLE desk_notes DROP COLUMN sent_frame;
+     ALTER TABLE desk_notes DROP COLUMN told_at;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -831,6 +851,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          {OLD_1_20}
          {OLD_1_21}
          {OLD_1_22}
+         {OLD_1_23}
          PRAGMA user_version = 3;"
     ))
     .unwrap();
@@ -1112,6 +1133,7 @@ fn a_1_16_database_comes_forward_once() {
          {OLD_1_20}
          {OLD_1_21}
          {OLD_1_22}
+         {OLD_1_23}
              PRAGMA user_version = 4;"
         ))
         .unwrap();
@@ -1366,6 +1388,8 @@ fn a_frame_from_a_newer_snyvi_is_held() {
             last_from: 0,
             last_to: 0,
             desk_id: 0,
+            v: 0,
+            read_receipts: false,
         })
         .unwrap();
     s.peer_hold("f1", p.id, b"sealed").unwrap();
@@ -1377,4 +1401,96 @@ fn a_frame_from_a_newer_snyvi_is_held() {
     assert_eq!(s.prune_peer_held().unwrap(), 0, "a month to wait");
     s.peer_unhold("f1").unwrap();
     assert!(s.peer_held().unwrap().is_empty());
+}
+
+/// Copy path copies a file on this machine (#99): an own document's own
+/// path; a friend's, never their path, until Save writes it here -- and the
+/// saved file outlives the document going back to their row.
+#[test]
+fn copy_path_is_a_file_here() {
+    let (s, dir) = temp_store();
+    let mine = s
+        .insert(&new_id("m"), new_doc("Mine", "/p/plan.md", "w"))
+        .unwrap();
+    assert_eq!(mine.local_path.as_deref(), Some("/p/plan.md"));
+    assert_eq!(
+        s.get(&mine.id).unwrap().unwrap().local_path.as_deref(),
+        Some("/p/plan.md")
+    );
+
+    let mut d = new_doc("Theirs", "plan.md", "w");
+    d.origin = "peer";
+    d.sender = "Trapti";
+    let theirs = s.insert(&new_id("t"), d).unwrap();
+    assert_eq!(
+        theirs.local_path, None,
+        "the friend's path names nothing here"
+    );
+    assert_eq!(s.get(&theirs.id).unwrap().unwrap().local_path, None);
+
+    let at = dir.path.join("from-trapti").join("plan.md");
+    s.set_saved_path(&theirs.id, &at.to_string_lossy()).unwrap();
+    let got = s.get(&theirs.id).unwrap().unwrap();
+    assert_eq!(got.local_path.as_deref(), Some(&*at.to_string_lossy()));
+    // The desk's rail reads the same path.
+    let desk = s.create_desk("/p", Some("p")).unwrap();
+    s.conn
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE docs SET desk_id = ?1 WHERE id = ?2",
+            params![desk.id, theirs.id],
+        )
+        .unwrap();
+    let rail = s.desk_docs(desk.id, 10, false).unwrap();
+    let row = rail.iter().find(|x| x.id == theirs.id).unwrap();
+    assert_eq!(row.local_path.as_deref(), Some(&*at.to_string_lossy()));
+}
+
+/// A friend's document filed into a folder both have is the reader's file
+/// at its place there -- when that file is there, and not otherwise.
+#[test]
+fn a_filed_document_copies_its_place_in_the_folder() {
+    let root = tempdir::Dir::new("snyvi-filed");
+    std::fs::create_dir_all(root.path.join("docs")).unwrap();
+    std::fs::write(root.path.join("docs/plan.md"), "x").unwrap();
+    let src = root.path.join("docs/plan.md");
+    assert_eq!(
+        local_path(
+            Some("docs/plan.md"),
+            None,
+            "peer",
+            true,
+            &root.path.to_string_lossy()
+        ),
+        Some(src.to_string_lossy().to_string())
+    );
+    assert_eq!(
+        local_path(
+            Some("docs/gone.md"),
+            None,
+            "peer",
+            true,
+            &root.path.to_string_lossy()
+        ),
+        None
+    );
+    assert_eq!(
+        local_path(
+            Some("docs/plan.md"),
+            None,
+            "peer",
+            false,
+            &root.path.to_string_lossy()
+        ),
+        None,
+        "on the friend's own row it is their file"
+    );
+    for out in ["../plan.md", "/etc/passwd", "C:/x", "docs/../../plan.md"] {
+        assert_eq!(
+            local_path(Some(out), None, "peer", true, &root.path.to_string_lossy()),
+            None,
+            "{out} leaves the folder"
+        );
+    }
 }
