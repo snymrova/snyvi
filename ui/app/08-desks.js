@@ -454,10 +454,7 @@
         if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
         else state.cache.delete(d.id);
         if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
-        // The desk's rail has the row already: the saved document goes into
-        // it, and the list is not fetched again for a save.
-        if (desk && desk.docSaved && desk.docSaved(d)) return;
-        deskDocs();
+        if (!(desk && desk.docSaved && desk.docSaved(d))) deskDocs(); // the rail patches its own row on a save
         return;
       }
       // An arrival joins the queue and the page stays where it is. The one

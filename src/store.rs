@@ -1941,21 +1941,6 @@ impl Store {
         peer::unsent(&self.conn.lock().unwrap(), now)
     }
 
-    /// One frame, due or not (`peer::unsent_one`): the reader's Send.
-    pub fn peer_unsent_one(&self, id: &str) -> Result<Option<peer::Unsent>> {
-        peer::unsent_one(&self.conn.lock().unwrap(), id)
-    }
-
-    /// A friend's waiting frames made due now (`peer::due_now`).
-    pub fn peer_due_now(&self, peer_id: i64) -> Result<usize> {
-        peer::due_now(&self.conn.lock().unwrap(), peer_id)
-    }
-
-    /// Sent down the line and waiting for their ack (`peer::pending`).
-    pub fn peer_pending(&self, id: &str) -> Result<()> {
-        peer::pending(&self.conn.lock().unwrap(), id, now())
-    }
-
     /// Queue a line for a friend (`peer::queue_note`): the frame's id.
     pub fn peer_queue_note(&self, p: &peer::Peer, text: &str) -> Result<String> {
         peer::queue_note(&self.conn.lock().unwrap(), p, text, now())

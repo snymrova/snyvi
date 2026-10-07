@@ -34,6 +34,22 @@ pub(super) fn local_path(
 
 impl Store {
     /// Where Save wrote a friend's document: the file Copy path copies from
+    // 1.25: the outbox's due times (`peer::waiting`, `due_now`, `pending`).
+    /// One frame, due or not (`peer::unsent_one`): the reader's Send.
+    pub fn peer_unsent_one(&self, id: &str) -> Result<Option<peer::Unsent>> {
+        peer::unsent_one(&self.conn.lock().unwrap(), id)
+    }
+
+    /// A friend's waiting frames made due now (`peer::due_now`).
+    pub fn peer_due_now(&self, peer_id: i64) -> Result<usize> {
+        peer::due_now(&self.conn.lock().unwrap(), peer_id)
+    }
+
+    /// Sent down the line and waiting for their ack (`peer::pending`).
+    pub fn peer_pending(&self, id: &str) -> Result<()> {
+        peer::pending(&self.conn.lock().unwrap(), id, now())
+    }
+
     /// then on (`local_path`). `unfile` leaves it, since the file stays.
     pub fn set_saved_path(&self, id: &str, path: &str) -> Result<()> {
         self.conn.lock().unwrap().execute(
