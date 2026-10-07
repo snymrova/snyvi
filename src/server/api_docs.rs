@@ -763,8 +763,15 @@ fn full_highlight(app: &App, doc: &Doc, lang: Option<&str>) -> bool {
             };
             let body = crate::render::strip_leading_h1(&src, &doc.title);
             let base = doc.source_path.as_ref().map(|_| format!("/files/{id}/"));
-            app.renderer
-                .render_markdown_uncapped(body.as_deref().unwrap_or(&src), base.as_deref())
+            let dir = doc
+                .source_path
+                .as_deref()
+                .and_then(|p| std::path::Path::new(p).parent());
+            app.renderer.render_markdown_uncapped(
+                body.as_deref().unwrap_or(&src),
+                base.as_deref(),
+                dir,
+            )
         }
         _ => app.renderer.render_code_uncapped(lang, &src),
     };

@@ -1,32 +1,35 @@
-//! The link: one WebSocket from this daemon to its own mailbox at the relay,
-//! held open for as long as it has a friend. The relay pushes a frame down
-//! it the moment a friend's daemon leaves one, so a document is here within
-//! a second while snyvi runs, and is waiting in the Inbox when the window
-//! opens after a night; between frames the mailbox sleeps and the link costs
-//! nothing. The routes and what to do with a frame are in `api_peer`; the
-//! cryptography and the relay's protocol in `crate::peer`; this file only
-//! keeps the socket up.
+//! The links: the sockets this daemon holds at the relay for as long as it
+//! has a friend. One line per friend (`/line/{me}/{them}`): a frame goes
+//! down it as pieces and the relay passes them straight to the friend's
+//! socket when that is open, storing them only when it is not, so a
+//! document to someone who is there costs the relay a twentieth of a
+//! request and nothing written. The friend's ack comes back as "arrived".
+//! And, while any friend is on a snyvi too old for a line (`LINE_V`), one
+//! link to this daemon's own mailbox (`/inbox/{me}`), where such a friend
+//! leaves frames over HTTP and the relay pushes them down. The routes and
+//! what to do with a frame are in `api_peer`; the cryptography and the
+//! relay's protocol in `crate::peer`; this file only keeps the sockets up.
 //!
-//! One task, one state at a time:
+//! A supervisor task starts a task per friend and the mailbox one, and is
+//! the one place the outbox is flushed from on a wake and on the ten-minute
+//! tick (`flush_all`: one flush at a time, detached, so no socket waits on
+//! an upload). Each socket task:
 //!
-//!   no friends ─(a friend is pinned)─▶ connect ─(101)─▶ open
+//!   connect ─(101)─▶ open ─(closed, error, 60 s of silence)─▶ backoff
 //!   connect ─(refused, no network)─▶ backoff ─(1, 2, 4 … 300 s)─▶ connect
-//!   backoff, six times running ─▶ one HTTP sweep of the inbox, then on
-//!   open ─(closed, error, 60 s of silence)─▶ backoff
-//!   open or backoff ─(the last friend removed)─▶ no friends
+//!   open ─(up for a minute)─▶ the backoff starts over at the next close
+//!   open ─(closed 4429: the day's share of sockets spent)─▶ sleep until midnight
+//!   open or backoff ─(the friend removed, or no friend needs it)─▶ done
 //!
-//! While open: a `{frame}` message followed by its bytes, or fetched over
-//! HTTP when the relay said it was too big to push, goes through `take_in`
-//! and is acked down the socket; "ping" every 45 s keeps the line and is
-//! answered by the relay without waking the mailbox; a wake (a friend added,
-//! something to send) flushes the outbox; and every ten minutes the frames
-//! the relay once refused with "full" are tried again. Beside it, a round
-//! every ten minutes fingerprints the reader's folders (`spawn_prints`).
+//! Beside them, a round every ten minutes fingerprints the reader's folders
+//! (`spawn_prints`).
 
 use super::*;
-use crate::peer::{self, Identity, Waiting};
+use crate::peer::{self, Assembly, Chunk, Identity, LineSaid, Peer, Waiting};
 use anyhow::Context;
 use futures_util::{SinkExt, StreamExt};
+use std::collections::HashMap;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as WsMessage};
@@ -37,77 +40,88 @@ type Socket =
 /// The relay has this long to answer the upgrade.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Nothing heard -- no frame, no pong -- for this long, and the link is
-/// taken for dead and opened again. One ping past `PING_EVERY`.
+/// taken for dead and opened again. One ping past `PING_EVERY`. A link
+/// that stayed up this long counts as a good one: its backoff starts over.
 const SILENCE: Duration = Duration::from_secs(60);
-/// Between tries at frames the relay refused because a friend's mailbox
-/// was full.
+/// Between flushes of what waits in the outbox, and the housekeeping that
+/// goes with them.
 const RETRY_EVERY: Duration = Duration::from_secs(600);
-/// Tries at the socket before the inbox is swept over HTTP instead, in
-/// case a proxy on the way lets a request through and not an upgrade.
+/// Tries at the mailbox socket before the inbox is swept over HTTP instead,
+/// in case a proxy on the way lets a request through and not an upgrade.
 const FALLBACK_AFTER: u32 = 6;
-/// Without a friend, how often to look whether one was pinned (a pairing
-/// also wakes the task, so this is the belt).
+/// How often the supervisor looks whether a friend was added or needs a
+/// socket (a pairing also wakes it, so this is the belt).
 const LOOK_EVERY: Duration = Duration::from_secs(60);
+/// Frames waiting to go down one line, cut already: eight full ones at most.
+const LINE_QUEUE: usize = 8;
+/// While the relay asks for quiet, no reconnect comes sooner than this.
+const QUIET_BACKOFF: Duration = Duration::from_secs(60);
 
-/// How an open link ended.
+/// How an open socket ended.
 enum Left {
-    /// The last friend was removed: nothing to wait for.
-    NoFriends,
+    /// Nothing to wait for: the friend was removed, or no friend needs it.
+    Done,
     /// Closed, broken, or silent: open it again.
     Closed(String),
+    /// The relay closed it for the day: this address opened its share of
+    /// sockets. Back at the moment it named (seconds).
+    Budget(i64),
 }
 
 /// The task: beside the update checker, for the life of the daemon.
 pub(crate) fn spawn_peer_link(app: Arc<App>) {
     spawn_prints(app.clone());
-    tokio::spawn(async move {
-        // Failed tries since the last open link; 0 while it is open.
-        let mut attempt: u32 = 0;
-        loop {
-            let Some(me) = friend_identity(&app).await else {
-                attempt = 0;
-                tokio::select! {
-                    _ = tokio::time::sleep(LOOK_EVERY) => {},
-                    _ = app.peers.wake.notified() => {},
+    tokio::spawn(supervise(app));
+}
+
+/// Starts a socket task per live friend and the mailbox one while a friend
+/// needs it, and flushes the outbox on a wake and on the tick. A task that
+/// ended (its friend removed) is started again if the friend comes back.
+async fn supervise(app: Arc<App>) {
+    let mut lines: HashMap<i64, tokio::task::JoinHandle<()>> = HashMap::new();
+    let mut mailbox: Option<tokio::task::JoinHandle<()>> = None;
+    let mut wake = app.peers.wake.subscribe();
+    let mut tick = tokio::time::interval(RETRY_EVERY);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick.tick().await;
+    loop {
+        lines.retain(|_, h| !h.is_finished());
+        if mailbox.as_ref().is_some_and(|h| h.is_finished()) {
+            mailbox = None;
+        }
+        let friends = live_friends(&app);
+        if !friends.is_empty() {
+            if let Some(me) = friend_identity(&app).await {
+                for p in &friends {
+                    lines.entry(p.id).or_insert_with(|| {
+                        tokio::spawn(line_task(app.clone(), me.clone(), p.clone()))
+                    });
                 }
-                continue;
-            };
-            match connect(&me).await {
-                Ok(socket) => {
-                    if attempt > 0 {
-                        eprintln!("snyvi: the relay is back");
-                    }
-                    attempt = 0;
-                    match linked(&app, &me, socket).await {
-                        Ok(Left::NoFriends) => continue,
-                        Ok(Left::Closed(why)) => eprintln!("snyvi: the relay link closed: {why}"),
-                        Err(e) => eprintln!("snyvi: the relay link: {e:#}"),
-                    }
+                if mailbox.is_none() && friends.iter().any(|p| p.v < peer::LINE_V) {
+                    mailbox = Some(tokio::spawn(mailbox_task(app.clone(), me.clone())));
                 }
-                Err(e) => {
-                    if attempt == 0 {
-                        eprintln!("snyvi: the relay: {e:#}");
-                    }
-                }
-            }
-            attempt += 1;
-            if attempt >= FALLBACK_AFTER {
-                let app_b = app.clone();
-                let me_b = me.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    flush_outbox(&app_b, None);
-                    if let Err(e) = bring_in(&app_b, &me_b) {
-                        eprintln!("snyvi: the relay, over HTTP: {e:#}");
-                    }
-                })
-                .await;
-            }
-            tokio::select! {
-                _ = tokio::time::sleep(peer::backoff(attempt)) => {},
-                _ = app.peers.wake.notified() => {},
             }
         }
-    });
+        tokio::select! {
+            _ = tokio::time::sleep(LOOK_EVERY) => {},
+            _ = wake.changed() => {
+                if !friends.is_empty() {
+                    let app_b = app.clone();
+                    let _ = tokio::task::spawn_blocking(move || sweep_offers(&app_b)).await;
+                    flush_all(&app);
+                }
+            },
+            _ = tick.tick() => {
+                if !friends.is_empty() {
+                    let app_b = app.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let _ = app_b.store.prune_peer_taken();
+                    }).await;
+                    flush_all(&app);
+                }
+            },
+        }
+    }
 }
 
 /// How long after a start the reader's folders are first fingerprinted,
@@ -169,22 +183,69 @@ async fn friend_identity(app: &Arc<App>) -> Option<Identity> {
         .flatten()
 }
 
-fn has_friends(app: &App) -> bool {
+fn live_friends(app: &App) -> Vec<Peer> {
     app.store
         .peers()
-        .map(|ps| ps.iter().any(|p| p.removed_at == 0))
-        .unwrap_or(false)
+        .map(|ps| ps.into_iter().filter(|p| p.removed_at == 0).collect())
+        .unwrap_or_default()
 }
 
-/// The upgrade: signed as a read of this daemon's inbox, in the header.
-async fn connect(me: &Identity) -> anyhow::Result<Socket> {
-    let path = format!("/inbox/{}", me.address());
-    let mut req = peer::relay_ws(&me.address())
-        .into_client_request()
-        .context("the relay's address")?;
+fn has_friends(app: &App) -> bool {
+    !live_friends(app).is_empty()
+}
+
+/// Whether this friend is still one.
+fn friend(app: &App, id: i64) -> Option<Peer> {
+    app.store
+        .peer(id)
+        .ok()
+        .flatten()
+        .filter(|p| p.removed_at == 0)
+}
+
+/// Whether the mailbox link has a friend to wait for: one on a snyvi too
+/// old for a line.
+fn needs_mailbox(app: &App) -> bool {
+    live_friends(app).iter().any(|p| p.v < peer::LINE_V)
+}
+
+/// The wait before the `attempt`th try: the relay's backoff, and no less
+/// than a minute while it asks for quiet.
+fn wait_before(app: &App, attempt: u32) -> Duration {
+    let b = peer::backoff(attempt);
+    let quiet = app.peers.quiet_until.load(Relaxed);
+    if quiet > crate::store::now() {
+        b.max(QUIET_BACKOFF)
+    } else {
+        b
+    }
+}
+
+/// Whether the backoff starts over after a socket that ended: only one
+/// that was up for `SILENCE`. A relay that accepts and closes at once is
+/// backed off like one that refuses.
+pub(crate) fn attempt_after(up_for: Duration, attempt: u32) -> u32 {
+    if up_for >= SILENCE {
+        0
+    } else {
+        attempt
+    }
+}
+
+/// Asleep until the moment the relay named: a wake does not cut it short.
+async fn sleep_until_secs(until: i64) {
+    let now = crate::store::now();
+    if until > now {
+        tokio::time::sleep(Duration::from_secs((until - now) as u64)).await;
+    }
+}
+
+/// A signed upgrade at `path`.
+async fn connect(me: &Identity, url: String, path: &str) -> anyhow::Result<Socket> {
+    let mut req = url.into_client_request().context("the relay's address")?;
     req.headers_mut().insert(
         "x-snyvi-auth",
-        me.relay_auth("GET", &path)
+        me.relay_auth("GET", path)
             .parse()
             .context("the signature as a header")?,
     );
@@ -195,26 +256,281 @@ async fn connect(me: &Identity) -> anyhow::Result<Socket> {
     Ok(socket)
 }
 
-/// An open link, from the catch-up to whatever ends it.
-async fn linked(app: &Arc<App>, me: &Identity, mut socket: Socket) -> anyhow::Result<Left> {
-    // Housekeeping on every open, off the runtime: ids too old to recur,
-    // offers whose panel ended, and whatever is queued to go.
+/// Whether a close frame is the relay spending this address's day, and when
+/// it says to come back.
+fn budget_close(
+    frame: &Option<tokio_tungstenite::tungstenite::protocol::CloseFrame>,
+) -> Option<i64> {
+    let f = frame.as_ref()?;
+    (u16::from(f.code) == peer::CLOSE_BUDGET).then(|| peer::until_of(&f.reason))
+}
+
+/// What the relay said in a text message that is not a frame: quiet, which
+/// both kinds of socket hear.
+fn heard_quiet(app: &App, t: &str) {
+    if let Ok(LineSaid::Quiet { until }) = serde_json::from_str::<LineSaid>(t) {
+        app.peers.quiet_until.store(until / 1000, Relaxed);
+    }
+}
+
+// ---- a line --------------------------------------------------------------------
+
+/// One friend's line, for as long as they are a friend.
+async fn line_task(app: Arc<App>, me: Identity, p: Peer) {
+    let mut attempt: u32 = 0;
+    let mut wake = app.peers.wake.subscribe();
+    let path = format!("/line/{}/{}", me.address(), p.sign_key);
+    loop {
+        if friend(&app, p.id).is_none() {
+            return;
+        }
+        match connect(&me, peer::line_ws(&me.address(), &p.sign_key), &path).await {
+            Ok(socket) => {
+                if attempt > 0 {
+                    eprintln!("snyvi: the line to {} is back", p.name);
+                }
+                let opened = Instant::now();
+                match on_line(&app, &me, &p, socket, &mut wake).await {
+                    Ok(Left::Done) => return,
+                    Ok(Left::Closed(why)) => {
+                        eprintln!("snyvi: the line to {} closed: {why}", p.name)
+                    }
+                    Ok(Left::Budget(until)) => {
+                        eprintln!("snyvi: the relay has had this snyvi's share of sockets for today; the line to {} waits", p.name);
+                        sleep_until_secs(until).await;
+                        attempt = 0;
+                        continue;
+                    }
+                    Err(e) => eprintln!("snyvi: the line to {}: {e:#}", p.name),
+                }
+                attempt = attempt_after(opened.elapsed(), attempt);
+            }
+            Err(e) => {
+                if attempt == 0 {
+                    eprintln!("snyvi: the line to {}: {e:#}", p.name);
+                }
+            }
+        }
+        attempt += 1;
+        tokio::select! {
+            _ = tokio::time::sleep(wait_before(&app, attempt)) => {},
+            _ = wake.changed() => {},
+        }
+    }
+}
+
+/// An open line, from the first flush to whatever ends it.
+async fn on_line(
+    app: &Arc<App>,
+    me: &Identity,
+    p: &Peer,
+    mut socket: Socket,
+    wake: &mut tokio::sync::watch::Receiver<u64>,
+) -> anyhow::Result<Left> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Outbound>(LINE_QUEUE);
+    app.peers
+        .lines
+        .lock()
+        .unwrap()
+        .insert(p.id, LineHandle { tx: tx.clone() });
+    // Whatever waits for them is due now that there is a line to put it on.
     let app_b = app.clone();
-    let me_b = me.clone();
-    tokio::task::spawn_blocking(move || {
-        let _ = app_b.store.prune_peer_taken();
-        sweep_offers(&app_b);
-        read_held(&app_b, &me_b);
-        flush_outbox(&app_b, None);
-    })
-    .await?;
+    let pid = p.id;
+    let _ = tokio::task::spawn_blocking(move || app_b.store.peer_due_now(pid)).await;
+    flush_all(app);
 
     let mut ping = tokio::time::interval(peer::PING_EVERY);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping.tick().await;
-    let mut retry = tokio::time::interval(RETRY_EVERY);
-    retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    retry.tick().await;
+    let mut heard = Instant::now();
+    let mut assembly = Assembly::default();
+
+    let left = loop {
+        let silence = tokio::time::sleep_until(heard + SILENCE);
+        tokio::select! {
+            msg = socket.next() => {
+                let Some(msg) = msg else {
+                    break Ok(Left::Closed("the relay hung up".into()));
+                };
+                let msg = msg.context("reading the line")?;
+                heard = Instant::now();
+                match msg {
+                    WsMessage::Binary(b) => {
+                        let Some(c) = Chunk::parse(&b) else { continue };
+                        if let Some((id, bytes)) = assembly.take(&c) {
+                            let w = Waiting { id, sender: p.sign_key.clone(), size: bytes.len() as u64 };
+                            took(app, me, &mut socket, w, bytes, true).await?;
+                        }
+                    }
+                    WsMessage::Text(t) => {
+                        if t.as_str() == "pong" {
+                            continue;
+                        }
+                        let Ok(said) = serde_json::from_str::<LineSaid>(t.as_str()) else { continue };
+                        let app_b = app.clone();
+                        let p_b = p.clone();
+                        tokio::task::spawn_blocking(move || line_said(&app_b, &p_b, said)).await?;
+                    }
+                    WsMessage::Close(f) => {
+                        break Ok(match budget_close(&f) {
+                            Some(until) => Left::Budget(until),
+                            None => Left::Closed("closed by the relay".into()),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            out = rx.recv() => {
+                let Some(out) = out else { break Ok(Left::Closed("the line's queue closed".into())) };
+                for c in out.chunks {
+                    socket.send(WsMessage::Binary(c.into())).await.with_context(|| format!("sending {} down the line", out.id))?;
+                }
+            }
+            _ = ping.tick() => {
+                socket.send(WsMessage::Text("ping".into())).await.context("the ping")?;
+            }
+            _ = silence => {
+                let _ = socket.close(None).await;
+                break Ok(Left::Closed(format!("nothing heard in {} s", SILENCE.as_secs())));
+            }
+            _ = wake.changed() => {
+                if friend(app, p.id).is_none() {
+                    let _ = socket.close(None).await;
+                    break Ok(Left::Done);
+                }
+            }
+        }
+    };
+    // Only this task's handle goes: a newer task for the same friend may
+    // have put its own there already.
+    let mut lines = app.peers.lines.lock().unwrap();
+    if lines.get(&p.id).is_some_and(|h| h.tx.same_channel(&tx)) {
+        lines.remove(&p.id);
+    }
+    left
+}
+
+/// What the line said about a frame or the friend, kept in the store.
+/// Blocking.
+fn line_said(app: &Arc<App>, p: &Peer, said: LineSaid) {
+    let now = crate::store::now();
+    match said {
+        // In the relay's keeping for them: Sent, as a mailbox deposit is.
+        LineSaid::Held(id) => {
+            let _ = app.store.peer_sent(&id);
+            let _ = app.store.touch_peer(p.id, false);
+            peers_moved(app);
+        }
+        // They have it: Sent, and the arrived mark, in one word.
+        LineSaid::Arrived(id) => {
+            let _ = app.store.peer_sent(&id);
+            let _ = app.store.touch_peer(p.id, false);
+            let _ = app.store.peer_receipt(p.id, &id, "arrived");
+            peers_moved(app);
+        }
+        LineSaid::Resend(id) => {
+            let _ = app.store.peer_waiting(&id, "sending again", Some(now));
+            flush_all(app);
+        }
+        LineSaid::Full(id) => {
+            let _ = app.store.peer_waiting(&id, "their line is full", None);
+        }
+        LineSaid::Failed { id, why } => {
+            let _ = app.store.peer_failed(&id, &why);
+        }
+        // Their socket is on the line: they speak on one, and whatever
+        // waits for them goes now.
+        LineSaid::Friend { on: true } => {
+            if p.v < peer::LINE_V {
+                let _ = app.store.peer_set_v(p.id, peer::LINE_V);
+            }
+            let _ = app.store.peer_due_now(p.id);
+            flush_all(app);
+        }
+        LineSaid::Friend { on: false } => {}
+        LineSaid::Quiet { until } => app.peers.quiet_until.store(until / 1000, Relaxed),
+    }
+}
+
+// ---- the mailbox link ----------------------------------------------------------
+
+/// The link to this daemon's own mailbox, while a friend on an older snyvi
+/// needs it.
+async fn mailbox_task(app: Arc<App>, me: Identity) {
+    let mut attempt: u32 = 0;
+    let mut wake = app.peers.wake.subscribe();
+    let path = format!("/inbox/{}", me.address());
+    loop {
+        if !needs_mailbox(&app) {
+            return;
+        }
+        match connect(&me, peer::relay_ws(&me.address()), &path).await {
+            Ok(socket) => {
+                if attempt > 0 {
+                    eprintln!("snyvi: the relay is back");
+                }
+                let opened = Instant::now();
+                match linked(&app, &me, socket, &mut wake).await {
+                    Ok(Left::Done) => return,
+                    Ok(Left::Closed(why)) => eprintln!("snyvi: the relay link closed: {why}"),
+                    Ok(Left::Budget(until)) => {
+                        eprintln!("snyvi: the relay has had this snyvi's share of sockets for today; the mailbox link waits");
+                        sleep_until_secs(until).await;
+                        attempt = 0;
+                        continue;
+                    }
+                    Err(e) => eprintln!("snyvi: the relay link: {e:#}"),
+                }
+                attempt = attempt_after(opened.elapsed(), attempt);
+            }
+            Err(e) => {
+                if attempt == 0 {
+                    eprintln!("snyvi: the relay: {e:#}");
+                }
+            }
+        }
+        attempt += 1;
+        if attempt >= FALLBACK_AFTER {
+            flush_all(&app);
+            let app_b = app.clone();
+            let me_b = me.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Err(e) = bring_in(&app_b, &me_b) {
+                    eprintln!("snyvi: the relay, over HTTP: {e:#}");
+                }
+            })
+            .await;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(wait_before(&app, attempt)) => {},
+            _ = wake.changed() => {},
+        }
+    }
+}
+
+/// An open mailbox link, from the catch-up to whatever ends it.
+async fn linked(
+    app: &Arc<App>,
+    me: &Identity,
+    mut socket: Socket,
+    wake: &mut tokio::sync::watch::Receiver<u64>,
+) -> anyhow::Result<Left> {
+    // Housekeeping on the open, off the runtime: offers whose panel ended,
+    // once per start the frames held for a newer snyvi, and a flush.
+    let app_b = app.clone();
+    let me_b = me.clone();
+    tokio::task::spawn_blocking(move || {
+        sweep_offers(&app_b);
+        if !app_b.peers.held_read.swap(true, Relaxed) {
+            read_held(&app_b, &me_b);
+        }
+    })
+    .await?;
+    flush_all(app);
+
+    let mut ping = tokio::time::interval(peer::PING_EVERY);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping.tick().await;
     let mut heard = Instant::now();
     // A frame announced whose bytes are the next binary message.
     let mut pending: Option<Waiting> = None;
@@ -234,6 +550,7 @@ async fn linked(app: &Arc<App>, me: &Identity, mut socket: Socket) -> anyhow::Re
                             continue;
                         }
                         let Ok(peer::Pushed::Frame(w)) = serde_json::from_str::<peer::Pushed>(t.as_str()) else {
+                            heard_quiet(app, t.as_str());
                             continue;
                         };
                         if w.size as usize <= peer::INLINE_MAX {
@@ -244,16 +561,21 @@ async fn linked(app: &Arc<App>, me: &Identity, mut socket: Socket) -> anyhow::Re
                         let me_b = me.clone();
                         let id = w.id.clone();
                         match tokio::task::spawn_blocking(move || peer::fetch(&me_b, &id)).await? {
-                            Ok(bytes) => took(app, me, &mut socket, w, bytes).await?,
+                            Ok(bytes) => took(app, me, &mut socket, w, bytes, false).await?,
                             Err(e) => eprintln!("snyvi: a frame from the relay could not be fetched: {e:#}"),
                         }
                     }
                     WsMessage::Binary(b) => {
                         if let Some(w) = pending.take() {
-                            took(app, me, &mut socket, w, b.to_vec()).await?;
+                            took(app, me, &mut socket, w, b.to_vec(), false).await?;
                         }
                     }
-                    WsMessage::Close(_) => return Ok(Left::Closed("closed by the relay".into())),
+                    WsMessage::Close(f) => {
+                        return Ok(match budget_close(&f) {
+                            Some(until) => Left::Budget(until),
+                            None => Left::Closed("closed by the relay".into()),
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -264,28 +586,18 @@ async fn linked(app: &Arc<App>, me: &Identity, mut socket: Socket) -> anyhow::Re
                 let _ = socket.close(None).await;
                 return Ok(Left::Closed(format!("nothing heard in {} s", SILENCE.as_secs())));
             }
-            _ = app.peers.wake.notified() => {
-                if !has_friends(app) {
+            _ = wake.changed() => {
+                if !needs_mailbox(app) {
                     let _ = socket.close(None).await;
-                    return Ok(Left::NoFriends);
+                    return Ok(Left::Done);
                 }
-                let app_b = app.clone();
-                tokio::task::spawn_blocking(move || {
-                    sweep_offers(&app_b);
-                    flush_outbox(&app_b, None);
-                })
-                .await?;
-            }
-            _ = retry.tick() => {
-                let app_b = app.clone();
-                tokio::task::spawn_blocking(move || flush_outbox(&app_b, None)).await?;
             }
         }
     }
 }
 
 /// One frame with its bytes in hand: kept or dropped by `take_in`, then
-/// acked down the link either way. A store that will not answer is the one
+/// acked down the socket either way. A store that will not answer is the one
 /// thing that leaves the frame at the relay for the next catch-up.
 async fn took(
     app: &Arc<App>,
@@ -293,11 +605,12 @@ async fn took(
     socket: &mut Socket,
     w: Waiting,
     bytes: Vec<u8>,
+    via_line: bool,
 ) -> anyhow::Result<()> {
     let app_b = app.clone();
     let me_b = me.clone();
     let id = w.id.clone();
-    match tokio::task::spawn_blocking(move || take_in(&app_b, &me_b, &w, bytes)).await? {
+    match tokio::task::spawn_blocking(move || take_in(&app_b, &me_b, &w, bytes, via_line)).await? {
         Ok(_) => socket
             .send(WsMessage::Text(peer::ack_message(&id).into()))
             .await
@@ -305,4 +618,15 @@ async fn took(
         Err(e) => eprintln!("snyvi: a frame from the relay was left there: {e:#}"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_link_keeps_counting_and_a_long_one_starts_again() {
+        assert_eq!(attempt_after(Duration::from_secs(5), 4), 4);
+        assert_eq!(attempt_after(Duration::from_secs(120), 4), 0);
+    }
 }

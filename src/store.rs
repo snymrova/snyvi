@@ -517,6 +517,12 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (11, peer::COLUMNS_1_23[13]),
     (11, peer::COLUMNS_1_23[14]),
     (11, peer::COLUMNS_1_23[15]),
+    // 1.25: a waiting frame's due time and its run of "not now"s, and two
+    // indexes (`crate::peer::COLUMNS_1_25`).
+    (12, peer::COLUMNS_1_25[0]),
+    (12, peer::COLUMNS_1_25[1]),
+    (12, peer::COLUMNS_1_25[2]),
+    (12, peer::COLUMNS_1_25[3]),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -1930,9 +1936,9 @@ impl Store {
         peer::queue(&self.conn.lock().unwrap(), p, doc_id, now())
     }
 
-    /// What has not gone yet: (frame id, friend, document, tries).
-    pub fn peer_unsent(&self) -> Result<Vec<peer::Unsent>> {
-        peer::unsent(&self.conn.lock().unwrap())
+    /// What has not gone yet and is due at `now` (`peer::unsent`).
+    pub fn peer_unsent(&self, now: i64) -> Result<Vec<peer::Unsent>> {
+        peer::unsent(&self.conn.lock().unwrap(), now)
     }
 
     /// Queue a line for a friend (`peer::queue_note`): the frame's id.
@@ -1948,8 +1954,9 @@ impl Store {
         peer::failed(&self.conn.lock().unwrap(), id, why)
     }
 
-    pub fn peer_waiting(&self, id: &str, why: &str) -> Result<()> {
-        peer::waiting(&self.conn.lock().unwrap(), id, why)
+    /// Not now (`peer::waiting`): `until` when the relay named the moment.
+    pub fn peer_waiting(&self, id: &str, why: &str, until: Option<i64>) -> Result<()> {
+        peer::waiting(&self.conn.lock().unwrap(), id, why, now(), until)
     }
 
     /// A friend's lines waiting on Home (`peer::notes_waiting`).

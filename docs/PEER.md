@@ -217,7 +217,9 @@ friend.
 
 ## The relay
 
-`relay/src/index.ts`, one Worker, two Durable Object classes. Routes:
+`relay/src/index.ts`, one Worker, four Durable Object classes: a room for
+the minute of pairing, a mailbox per address, a line per friendship
+(1.25.0), and the one meter that estimates the day. Routes:
 
 | Route | Who | What |
 |---|---|---|
@@ -229,6 +231,7 @@ friend.
 | `GET /inbox/{address}` | the address's key | what is waiting (id, sender, size), at once |
 | `GET /inbox/{address}/{id}` | the address's key | the frame |
 | `DELETE /inbox/{address}/{id}` | the address's key | ack |
+| `GET /line/{me}/{them}` + `Upgrade: websocket` | `me`'s key | the line: frames as binary chunks both ways, the other side's ack as `{"arrived":id}`, `{"friend":{"on":…}}` as the other side comes and goes |
 
 Reads of a mailbox carry `x-snyvi-auth: <seconds>.<sig>`, an Ed25519
 signature over the method, path and time, good for ninety seconds; the
@@ -255,7 +258,70 @@ sender, the room -- and by IP only where nothing else is: the first
 sign-in of a mailbox and the first message of a room (once per install,
 once per pairing), unsigned deposits, and a backstop of 600 calls a minute.
 Many people can share an IP; what a limit refuses waits and goes again.
+Every 429 and 503 says in `retry-after` when to, and the daemon writes
+that into the frame's `next_at`.
 Workers Logs are off. `relay/README.md` has the deploy and the numbers.
+
+### The line
+
+Two daemons that both speak 1.25.0 (`v` 3) stop using each other's
+mailbox and meet on a line instead: one Durable Object named by their two
+addresses sorted, one socket from each side, signed on the upgrade by the
+side opening it. Everything is a message on it. A frame goes as binary
+chunks of up to 1 MiB, each with a 40-byte header (the frame's id, this
+chunk's index, the count), and the line forwards each chunk to the other
+side's socket as it comes when that side is there, writing nothing. The
+receiver's `{"ack":id}` becomes `{"arrived":id}` for the sender, so the
+ack is the arrived receipt and no second frame is sent for it. When the
+other side is away the chunks go into rows, the sender hears
+`{"held":id}` (its Sent, as a mailbox deposit was), and the frame is
+replayed in order at the other side's next connect; an ack that finds the
+sender away is kept as a pending word for the sender's next connect. A
+frame the line cannot complete, because the receiver left part way, is
+asked for again from the top with `{"resend":id}`; a line holding twenty
+frames or two full ones answers `{"full":id}` and the sender waits as for
+a full mailbox. A message on an open socket costs a twentieth of a request
+and never enters the Worker, so a document to a friend who is there is a
+tenth of a request where it was eight.
+
+```mermaid
+sequenceDiagram
+  participant S as Sunny's daemon
+  participant L as line (Sunny, Trapti)
+  participant T as Trapti's daemon
+  S->>L: socket, signed by Sunny
+  L-->>S: friend on false
+  S->>L: chunks of a frame (a twentieth of a request each)
+  L-->>S: held, stored in rows for Trapti
+  T->>L: socket, signed by Trapti
+  L-->>T: friend on true, then the stored chunks (free)
+  L-->>S: friend on true
+  T->>L: ack
+  L-->>S: arrived (free, or kept until Sunny is next here)
+  S->>L: chunks of the next frame
+  L-->>T: the same chunks, forwarded as they come, nothing written
+```
+
+A daemon keeps its mailbox link only while it has a friend whose snyvi is
+older than 1.25.0; a friend's socket arriving on the line is how it learns
+their `v` is 3 when no frame has said so yet. The mailbox and its HTTP
+routes stay for those friends, and retire two releases after the line.
+
+### What one daemon may spend
+
+Two things keep one daemon from spending the day's requests for everyone.
+Each address may open a socket to a given object -- a line, or its mailbox
+-- a hundred times in a UTC day; the hundred and first is accepted and
+closed at once with code 4429 and the reason `until:<ms>`, the next
+midnight, and the daemon sleeps to then. One daemon in a reconnect loop
+then costs the relay about two hundred requests a day instead of its
+whole budget. And a meter, one Durable Object ticked by one Worker
+request in fifty, estimates the day's count: past 70% every new socket is
+told `{"quiet":{"until":<ms>}}` and the daemons stop sending read
+receipts and hold their reconnects a minute apart; past 85% a mailbox
+deposit over 1 MB is a 503 with `retry-after` to midnight, while sockets
+and the messages on them go on. Without it the day ends for everyone at
+once.
 
 ## The threat model, in seven lines
 

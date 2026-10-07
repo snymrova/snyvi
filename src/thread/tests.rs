@@ -147,14 +147,14 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     };
     seen(&mut conn, d, "p1", &s("claude/a", 0), 2).unwrap();
     seen(&mut conn, d, "p1", &s("", 1), 3).unwrap();
-    let t = seen(&mut conn, d, "p1", &s("claude/a", 2), 4)
+    let (t, changed) = seen(&mut conn, d, "p1", &s("claude/a", 2), 4)
         .unwrap()
         .unwrap();
     assert_eq!(
-        (t.branch.as_str(), t.commits, t.seen),
-        ("claude/a", 3, true)
+        (t.branch.as_str(), t.commits, t.seen, changed),
+        ("claude/a", 3, true, true)
     );
-    let t = seen(&mut conn, d, "p1", &s("claude/b", 1), 5)
+    let (t, _) = seen(&mut conn, d, "p1", &s("claude/b", 1), 5)
         .unwrap()
         .unwrap();
     assert_eq!(t.commits, 1);
@@ -163,16 +163,63 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
         merged: "7E1C0A2".into(),
         ..Seen::default()
     };
-    let t = seen(&mut conn, d, "p1", &m, 6).unwrap().unwrap();
+    let (t, changed) = seen(&mut conn, d, "p1", &m, 6).unwrap().unwrap();
     assert_eq!(
-        (t.pr.as_str(), t.merged.as_str(), t.merged_at),
-        ("57", "7e1c0a2", 6)
+        (t.pr.as_str(), t.merged.as_str(), t.merged_at, changed),
+        ("57", "7e1c0a2", 6, true)
     );
-    let t = seen(&mut conn, d, "p1", &m, 7).unwrap().unwrap();
-    assert_eq!(t.merged_at, 6);
+    // The same sighting again changes nothing: the mod's CI watch says the
+    // same thing every minute, and only the first time is an event.
+    let (t, changed) = seen(&mut conn, d, "p1", &m, 7).unwrap().unwrap();
+    assert_eq!((t.merged_at, changed), (6, false));
+    let ci = Seen {
+        ci: "passing".into(),
+        ..Seen::default()
+    };
+    assert!(seen(&mut conn, d, "p1", &ci, 8).unwrap().unwrap().1);
+    assert!(!seen(&mut conn, d, "p1", &ci, 9).unwrap().unwrap().1);
     // Nothing that is not a branch gets in.
-    let t = seen(&mut conn, d, "p1", &s("a b", 0), 8).unwrap().unwrap();
-    assert_eq!(t.branch, "claude/b");
+    let (t, changed) = seen(&mut conn, d, "p1", &s("a b", 0), 10).unwrap().unwrap();
+    assert_eq!((t.branch.as_str(), changed), ("claude/b", false));
+}
+
+/// A desk's turns are its own: thirty-one waiting on another desk do not
+/// push this desk's one out of its band or its brief, and the band leaves
+/// out the mod's dialog turns while the brief keeps them.
+#[test]
+fn a_desks_waiting_turns_are_its_own() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let other = crate::desk::create(&conn, "/o", None, 0).unwrap().id;
+    let q = |text: &str, via: &str| Ask {
+        kind: "try".into(),
+        text: text.into(),
+        via: via.into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    // Straight into the table: `ask` caps a desk at `TURNS_PER_DESK`, and
+    // the point here is `waiting`'s thirty across desks.
+    for i in 0..31 {
+        conn.execute(
+            "INSERT INTO turns(desk_id, kind, text, created_at) VALUES (?1, 'try', ?2, 1)",
+            params![other, format!("other {i}")],
+        )
+        .unwrap();
+    }
+    ask(&mut conn, d, &q("mine", ""), 2).unwrap();
+    ask(&mut conn, d, &q("on screen", "dialog"), 3).unwrap();
+    let band = waiting_on(&conn, d, false).unwrap();
+    assert_eq!(
+        band.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
+        ["mine"]
+    );
+    let brief = waiting_on(&conn, d, true).unwrap();
+    assert_eq!(
+        brief.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
+        ["mine", "on screen"]
+    );
+    assert_eq!(waiting(&conn).unwrap().len(), 30, "Home's cap, as before");
 }
 
 /// A decide takes two to four options; the first answer stands, wherever it

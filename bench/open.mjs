@@ -697,26 +697,23 @@ function report({ opens, pics, held, churned, heap, cold, home, resident, thrott
       opens.plan.rowsBefore ? opens.plan.early.join("; ") : "the reader is waiting for the document, not for the tree"],
     ["daemon resident, MB", resident === null ? null : Math.round(resident), 100,
       "the other end, after everything above"],
+    // A page of pictures below the fold fetches none of them at the open:
+    // every one of the document's own is `loading="lazy"` with its size from
+    // the file's header (render.rs `players`), so the box is there and the
+    // bytes are not. Enforced from 1.25.0; measured since 1.17.0.
+    ["pictures fetched at the open", pics.fetched, 0,
+      pics.imgs === PICTURES && pics.below !== null && pics.below > 0
+        ? `${pics.imgs} pictures, the first ${pics.below} px below the fold`
+        : `fixture wrong: ${pics.imgs} of ${PICTURES} pictures in the page, first one ${pics.below} px past the fold`],
   ];
   for (const [name, value, budget, why] of rows) {
     const ok = value !== null && value <= budget;
     failed ||= !ok;
     console.log(`${name.padEnd(36)}${String(value === null ? "—" : value).padStart(8)}${String(Math.round(budget)).padStart(9)}${ok ? " ok  " : " OVER"} ${why}`);
   }
-  /* Measured and not yet enforced: a count that is known to be over until
-   * the change that fixes it lands. The pictures row is here so 1.17.0 has
-   * the before on record; 1.18.0 puts `loading="lazy"` on every rendered
-   * `<img>` and moves this row up into `rows`, where OVER fails the build. */
-  {
-    const ok = pics.fetched <= 0;
-    const fixture = pics.imgs === PICTURES && pics.below !== null && pics.below > 0;
-    console.log(`${"pictures fetched at the open".padEnd(36)}${String(pics.fetched).padStart(8)}${"(0)".padStart(9)}${ok ? " ok  " : " high"} ` +
-      (fixture ? `${pics.imgs} pictures, the first ${pics.below} px below the fold; enforced from 1.18.0`
-        : `fixture wrong: ${pics.imgs} of ${PICTURES} pictures in the page, first one ${pics.below} px past the fold`));
-    // The fixture itself is enforced: a count against a document whose
-    // pictures were on screen, or missing, would say nothing either way.
-    failed ||= !fixture;
-  }
+  // The pictures fixture itself is enforced: a count against a document
+  // whose pictures were on screen, or missing, would say nothing either way.
+  failed ||= !(pics.imgs === PICTURES && pics.below !== null && pics.below > 0);
 
   /* Rows that have to be able to fail the other way round, or they prove
    * nothing: the sidebar must be redrawn, just not before the paint, and the

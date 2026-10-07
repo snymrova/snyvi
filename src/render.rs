@@ -12,6 +12,11 @@ use std::sync::{Arc, Mutex};
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+mod pictures;
+#[cfg(test)]
+use pictures::picture_size;
+use pictures::sized;
+
 /// Source scanned for an outline, and the most entries returned.
 const OUTLINE_CAP: usize = 512 * 1024;
 const OUTLINE_ITEMS: usize = 1200;
@@ -261,8 +266,22 @@ impl Renderer {
         source: &str,
         file_base: Option<&str>,
     ) -> String {
+        self.render_with_files(kind, lang, source, file_base, None)
+    }
+
+    /// `render_with_base`, with the document's folder on disk beside the
+    /// prefix: what lets a picture in the page be given its size and loaded
+    /// lazily (`players`). Without the folder a picture stays eager.
+    pub fn render_with_files(
+        &self,
+        kind: Kind,
+        lang: Option<&str>,
+        source: &str,
+        file_base: Option<&str>,
+        file_dir: Option<&Path>,
+    ) -> String {
         match kind {
-            Kind::Markdown => self.markdown(source, file_base, HIGHLIGHT_CAP),
+            Kind::Markdown => self.markdown(source, file_base, file_dir, HIGHLIGHT_CAP),
             Kind::Code => self.code(lang, source, HIGHLIGHT_CAP),
             Kind::Diff => diff(source),
             Kind::Text => plain(source),
@@ -278,14 +297,25 @@ impl Renderer {
     }
 
     /// The same for a Markdown document whose code blocks ran past the budget.
-    pub fn render_markdown_uncapped(&self, source: &str, file_base: Option<&str>) -> String {
-        self.markdown(source, file_base, usize::MAX)
+    pub fn render_markdown_uncapped(
+        &self,
+        source: &str,
+        file_base: Option<&str>,
+        file_dir: Option<&Path>,
+    ) -> String {
+        self.markdown(source, file_base, file_dir, usize::MAX)
     }
 
     /// `budget` is the bytes of code this document may highlight before the
     /// rest goes in plain: `HIGHLIGHT_CAP` at receive time, no limit for the
     /// background pass.
-    fn markdown(&self, source: &str, file_base: Option<&str>, budget: usize) -> String {
+    fn markdown(
+        &self,
+        source: &str,
+        file_base: Option<&str>,
+        file_dir: Option<&Path>,
+        budget: usize,
+    ) -> String {
         let mut options = Options::default();
         if let Some(base) = file_base {
             let base = base.to_string();
@@ -343,7 +373,7 @@ impl Renderer {
         let out = if has_raw_html { sanitize(&raw) } else { raw };
         // After the sanitizer, which keeps `<img>` and would drop a player:
         // what turns into one here is only what survived it.
-        let out = players(out);
+        let out = players(out, file_base.zip(file_dir));
         if trace {
             eprintln!(
                 "  markdown: comrak+highlight {:.1} ms, sanitize {:.1} ms{} ({} KB -> {} KB)",
@@ -1493,7 +1523,15 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
 /// A video sits in a 16:9 box from the first paint, letterboxed, so the page
 /// does not move when the take's own size arrives; a song's controls are one
 /// fixed height. Inline styles, as `media_body`: app.css is first paint.
-fn players(html: String) -> String {
+///
+/// A picture under the document's own folder (`files`: the `/files/<id>/`
+/// prefix its paths carry, and the folder on disk) is given its size from
+/// the file's header and `loading="lazy"`: a page of screenshots fetches
+/// only the ones in view, and the box of each is there before it is, so
+/// nothing moves when one arrives. A picture whose size cannot be read --
+/// a remote one, an SVG, a file that is not what its name says -- stays as
+/// it was: eager, and never a shift.
+fn players(html: String, files: Option<(&str, &Path)>) -> String {
     const IMG: &str = "<img src=\"";
     if !html.contains(IMG) {
         return html;
@@ -1515,6 +1553,10 @@ fn players(html: String) -> String {
         let src = attr(tag, "src").unwrap_or_default();
         let path = src.split(['?', '#']).next().unwrap_or("");
         match media_kind(&ext_of(path)) {
+            None => match files.and_then(|(base, dir)| sized(tag, path, base, dir)) {
+                Some(t) => out.push_str(&t),
+                None => out.push_str(tag),
+            },
             Some(kind) => {
                 let title = attr(tag, "alt").filter(|a| !a.is_empty());
                 let title = title.map(|t| format!(" title=\"{t}\"")).unwrap_or_default();
@@ -1531,7 +1573,6 @@ fn players(html: String) -> String {
                     ));
                 }
             }
-            None => out.push_str(tag),
         }
         rest = &tail[close + 1..];
     }
@@ -1971,7 +2012,7 @@ mod tests {
             &tail[..200]
         );
 
-        let full = r.render_markdown_uncapped(&md, None);
+        let full = r.render_markdown_uncapped(&md, None, None);
         assert!(!has_pending_highlight(&full));
         assert_eq!(
             full.matches("<pre class=\"code\" data-lang=\"Rust\"><code>")
@@ -2097,6 +2138,106 @@ mod tests {
             md("<b>hi</b>\n\n![a](a.mp4)\n\n<video src=\"x.mp4\" onplay=\"alert(1)\"></video>");
         assert_eq!(raw.matches("<video").count(), 1, "{raw}");
         assert!(!raw.contains("onplay"), "{raw}");
+    }
+
+    /// A tiny PNG, JPEG, GIF and WebP: only the header each is read for.
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut v = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        v.extend_from_slice(&w.to_be_bytes());
+        v.extend_from_slice(&h.to_be_bytes());
+        v.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        v
+    }
+    fn jpeg(w: u32, h: u32) -> Vec<u8> {
+        // SOI, an APP1 segment of filler (EXIF's place), a DHT (which shares
+        // the SOF range and must be skipped), then SOF0.
+        let mut v = b"\xff\xd8\xff\xe1\x00\x08abcdef".to_vec();
+        v.extend_from_slice(b"\xff\xc4\x00\x04\0\0");
+        v.extend_from_slice(b"\xff\xc0\x00\x0b\x08");
+        v.extend_from_slice(&(h as u16).to_be_bytes());
+        v.extend_from_slice(&(w as u16).to_be_bytes());
+        v.extend_from_slice(&[3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
+        v
+    }
+    fn gif(w: u32, h: u32) -> Vec<u8> {
+        let mut v = b"GIF89a".to_vec();
+        v.extend_from_slice(&(w as u16).to_le_bytes());
+        v.extend_from_slice(&(h as u16).to_le_bytes());
+        v.extend_from_slice(&[0, 0, 0]);
+        v
+    }
+    fn webp_x(w: u32, h: u32) -> Vec<u8> {
+        let mut v = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0".to_vec();
+        v.extend_from_slice(&(w - 1).to_le_bytes()[..3]);
+        v.extend_from_slice(&(h - 1).to_le_bytes()[..3]);
+        v
+    }
+
+    #[test]
+    fn a_pictures_size_is_read_from_its_header() {
+        assert_eq!(picture_size(&png(1280, 720)), Some((1280, 720)));
+        assert_eq!(picture_size(&jpeg(640, 480)), Some((640, 480)));
+        assert_eq!(picture_size(&gif(12, 34)), Some((12, 34)));
+        assert_eq!(picture_size(&webp_x(1920, 1080)), Some((1920, 1080)));
+        // Lossy WebP: the frame tag, the start code, then 14 bits each.
+        let mut lossy = b"RIFF\0\0\0\0WEBPVP8 \0\0\0\0\0\0\0\x9d\x01\x2a".to_vec();
+        lossy.extend_from_slice(&[0x20, 0x03, 0x58, 0x02]);
+        assert_eq!(picture_size(&lossy), Some((800, 600)));
+        // Lossless: 14 + 14 bits minus one, packed little-endian.
+        let mut ll = b"RIFF\0\0\0\0WEBPVP8L\0\0\0\0\x2f".to_vec();
+        ll.extend_from_slice(&[0x1f, 0xc3, 0x3b, 0x00]);
+        assert_eq!(picture_size(&ll), Some((800, 240)));
+        // Short, odd, or not a picture: None, never a panic.
+        for bad in [
+            &b""[..],
+            b"\x89PNG",
+            b"\xff\xd8\xff",
+            b"GIF89a\x01",
+            b"RIFF\0\0\0\0WEBPVP8Y",
+            b"<svg/>",
+        ] {
+            assert_eq!(picture_size(bad), None, "{bad:?}");
+        }
+        assert_eq!(picture_size(&png(0, 10)), None);
+        let mut cut = jpeg(1, 1);
+        cut.truncate(12);
+        assert_eq!(picture_size(&cut), None);
+    }
+
+    #[test]
+    fn a_picture_in_the_documents_folder_is_lazy_with_its_size() {
+        let dir = std::env::temp_dir().join(format!("snyvi-lazy-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("img")).unwrap();
+        std::fs::write(dir.join("img/a.png"), png(300, 200)).unwrap();
+        std::fs::write(dir.join("b.jpg"), jpeg(64, 48)).unwrap();
+        std::fs::write(dir.join("c.svg"), b"<svg/>").unwrap();
+        std::fs::write(dir.join("d.png"), b"not a png").unwrap();
+        let r = Renderer::new();
+        let md = "![a](img/a.png)\n\n![b](./b.jpg)\n\n![c](c.svg)\n\n![d](d.png)\n\n![e](https://h/e.png)\n\n![f](../up.png)\n";
+        let html = r.render_with_files(Kind::Markdown, None, md, Some("/files/abc/"), Some(&dir));
+        assert!(
+            html.contains("<img src=\"/files/abc/img/a.png\" alt=\"a\" width=\"300\" height=\"200\" loading=\"lazy\" decoding=\"async\">"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<img src=\"/files/abc/b.jpg\" alt=\"b\" width=\"64\" height=\"48\" loading=\"lazy\""),
+            "{html}"
+        );
+        // An SVG, a file that is not a picture, a remote one, one outside
+        // the folder: as they were, eager.
+        for tag in [
+            "<img src=\"/files/abc/c.svg\" alt=\"c\" />",
+            "<img src=\"/files/abc/d.png\" alt=\"d\" />",
+            "<img src=\"https://h/e.png\" alt=\"e\" />",
+            "<img src=\"/files/abc/../up.png\" alt=\"f\" />",
+        ] {
+            assert!(html.contains(tag), "{tag}: {html}");
+        }
+        assert_eq!(html.matches("loading=\"lazy\"").count(), 2, "{html}");
+        // Without the folder, nothing is lazy: no size can be read.
+        let plain = r.render_with_base(Kind::Markdown, None, md, Some("/files/abc/"));
+        assert!(!plain.contains("loading="), "{plain}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

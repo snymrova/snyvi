@@ -160,7 +160,9 @@
     // where the dots change, rather than by drawing the tree again.
     for (const b of treeEl.querySelectorAll("[data-deskof]")) {
       const d = list.find(x => String(x.id) === b.dataset.deskof);
-      if (d) b.className = "b-new has" + deskState(d);
+      if (!d) continue;
+      const next = "b-new has" + deskState(d);
+      if (b.className !== next) b.className = next;
     }
     const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top + more && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
@@ -452,7 +454,7 @@
         if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
         else state.cache.delete(d.id);
         if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
-        deskDocs();
+        if (!(desk && desk.docSaved && desk.docSaved(d))) deskDocs(); // the rail patches its own row on a save
         return;
       }
       // An arrival joins the queue and the page stays where it is. The one

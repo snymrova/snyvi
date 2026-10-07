@@ -889,6 +889,18 @@ export async function docs() {
   if (current()) rail();
 }
 
+/** A document saved in place, from the page's `doc` event: its row in the
+ *  list takes the new title and time, and the rail is drawn once. True when
+ *  the row was here; false sends the caller to fetch, as for an arrival. */
+export function docSaved(d) {
+  if (!d || docsAt == null || docsAt !== deskId) return false;
+  const x = docList.find(y => y.id === d.id);
+  if (!x) return false;
+  Object.assign(x, d);
+  if (current()) rail();
+  return true;
+}
+
 /* ---------- points ----------
  *
  * Reading what an agent sent, the reader selects a passage and keeps it as a

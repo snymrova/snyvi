@@ -82,6 +82,15 @@ const OLD_1_23: &str = "ALTER TABLE docs DROP COLUMN saved_path;
      ALTER TABLE desk_notes DROP COLUMN sent_frame;
      ALTER TABLE desk_notes DROP COLUMN told_at;";
 
+/// And of 1.25's: a waiting frame's due time and its run of "not now"s, and
+/// the two indexes, which step 12 adds. This one goes before the others:
+/// SQLite will not drop a column an index reads, and 1.20's wind-back drops
+/// the one `desk_notes_thread` is on.
+const OLD_1_25: &str = "DROP INDEX IF EXISTS peer_outbox_unsent;
+     DROP INDEX IF EXISTS desk_notes_thread;
+     ALTER TABLE peer_outbox DROP COLUMN next_at;
+     ALTER TABLE peer_outbox DROP COLUMN later;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -847,7 +856,8 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
     conn.execute_batch(&format!(
         "UPDATE desks SET kind = 'studio', boards = root, row = 0.62 WHERE id = {studio};
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
-         {OLD_1_19}
+         {OLD_1_25}
+             {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
          {OLD_1_22}
@@ -1129,6 +1139,7 @@ fn a_1_16_database_comes_forward_once() {
              INSERT INTO docs_fts(id, title, body) VALUES('{loose}', 'Notes', 'elsewhere charlie newest');
              INSERT INTO workflows(project_id, key, title, created_at) VALUES({project}, 'W', 'W', 0);
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
+             {OLD_1_25}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
@@ -1493,5 +1504,44 @@ fn a_filed_document_copies_its_place_in_the_folder() {
             None,
             "{out} leaves the folder"
         );
+    }
+}
+
+/// Step 6 of the 1.25 plan, measured before built: how long a 5 MB save in
+/// place holds the store lock, and how much of that is the page write
+/// against the search re-index. Printed, not asserted: run with
+/// `--ignored --nocapture`.
+#[test]
+#[ignore]
+fn how_long_a_big_save_holds_the_lock() {
+    let (s, _d) = temp_store();
+    let big = "lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do ".repeat(80_000);
+    let html = format!("<p>{big}</p>");
+    let d = s
+        .insert(&new_id("big"), new_doc("Big", "/p/BIG.md", "w"))
+        .unwrap();
+    for round in 0..3 {
+        let body = format!("{big} round {round}");
+        let nd = NewDoc {
+            html: &html,
+            search_body: &body[..body.len().min(512 * 1024)],
+            ..version_of("/p/BIG.md", "Big", &body, "w")
+        };
+        let t = std::time::Instant::now();
+        s.replace(&d.id, nd).unwrap();
+        let whole = t.elapsed();
+        let t = std::time::Instant::now();
+        std::fs::write(_d.path.join("page.html"), &html).unwrap();
+        let write = t.elapsed();
+        let conn = s.conn.lock().unwrap();
+        let t = std::time::Instant::now();
+        conn.execute(FTS_DELETE, params![d.id]).unwrap();
+        conn.execute(
+            FTS_INSERT,
+            params![d.id, "Big", &body[..body.len().min(512 * 1024)]],
+        )
+        .unwrap();
+        let fts = t.elapsed();
+        eprintln!("round {round}: replace {whole:?}, of which the page write {write:?} and the search re-index {fts:?}");
     }
 }

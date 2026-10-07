@@ -347,8 +347,12 @@ pub(crate) async fn pane_seen(
         .store
         .threads(|c, now| thread::seen(c, desk, &id, &b, now))
     {
-        Ok(Some(t)) => {
-            threads_moved(&app, desk);
+        // Only a thread that moved is worth an event: the mod says what it
+        // saw on every run of gh, and most runs see the same thing.
+        Ok(Some((t, changed))) => {
+            if changed {
+                threads_moved(&app, desk);
+            }
             Json(json!({ "thread": t })).into_response()
         }
         Ok(None) => Json(json!({ "thread": null })).into_response(),
@@ -396,34 +400,100 @@ pub(crate) fn band_line(t: Option<&thread::Thread>, waiting: &[thread::Turn]) ->
     parts.join(" · ")
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct BandQ {
+    /// The tag of the band the mod has (`band_tag`): the answer is held until
+    /// the band differs, or `WAIT` passes. Without one, the band at once.
+    v: Option<String>,
+}
+
+/// The band: the pane's thread and what waits on the reader on its desk,
+/// with the line the mod draws from them. With `v`, a long-poll: the mod
+/// sends the tag of the band it has, and the answer waits until a change on
+/// this desk gives a different one, or 204 after `WAIT`. A mod that sends no
+/// `v` gets the band as before.
 pub(crate) async fn pane_band(
     State(app): S,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(q): Query<BandQ>,
 ) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,
     };
-    let desk = placed.desk_id;
-    let r = app.store.threads(|c, _| {
-        let t = thread::of_pane(c, desk, &id)?;
+    band_held(&app, placed.desk_id, &id, q.v.as_deref(), WAIT).await
+}
+
+/// The band's JSON and its tag.
+fn band_now(app: &App, desk: i64, pane: &str) -> anyhow::Result<(serde_json::Value, String)> {
+    let (t, waiting) = app.store.threads(|c, _| {
+        let t = thread::of_pane(c, desk, pane)?;
         // The mod's own dialog is on screen already; the band names the rest.
-        let waiting: Vec<thread::Turn> = thread::turns(c, desk, i64::MAX)?
-            .into_iter()
-            .filter(|w| w.answered_at == 0 && w.via != "dialog")
-            .collect();
+        let waiting = thread::waiting_on(c, desk, false)?;
         Ok((t, waiting))
+    })?;
+    let body = json!({
+        "line": band_line(t.as_ref(), &waiting),
+        "thread": t,
+        "waiting": waiting.len(),
+        "turns": waiting.iter().map(|w| json!({ "kind": w.kind, "text": w.text })).collect::<Vec<_>>(),
     });
-    match r {
-        Ok((t, waiting)) => Json(json!({
-            "line": band_line(t.as_ref(), &waiting),
-            "thread": t,
-            "waiting": waiting.len(),
-            "turns": waiting.iter().map(|w| json!({ "kind": w.kind, "text": w.text })).collect::<Vec<_>>(),
-        }))
-        .into_response(),
-        Err(e) => err(e),
+    let tag = band_tag(&body);
+    Ok((body, tag))
+}
+
+/// The desk a `desknotes` event is about; `None` for any other event.
+fn desknotes_on(event: &str) -> Option<i64> {
+    let data = event.strip_prefix("desknotes\n")?;
+    serde_json::from_str::<serde_json::Value>(data)
+        .ok()?
+        .get("desk")?
+        .as_i64()
+}
+
+/// A band's tag: a short hash of its JSON, what the mod sends back as `v`.
+pub(crate) fn band_tag(body: &serde_json::Value) -> String {
+    blake3::hash(body.to_string().as_bytes()).to_hex()[..8].to_string()
+}
+
+/// The band, held while it is the one the mod has. Subscribed before the
+/// first look, so a change between the look and the wait is not missed;
+/// only a `desknotes` for this desk is a reason to look again, since every
+/// other desk's turns and threads are not in this band.
+pub(crate) async fn band_held(
+    app: &App,
+    desk: i64,
+    pane: &str,
+    v: Option<&str>,
+    wait: Duration,
+) -> Response {
+    let mut rx = app.events.subscribe();
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let (mut body, tag) = match band_now(app, desk, pane) {
+            Ok(b) => b,
+            Err(e) => return err(e),
+        };
+        if v != Some(tag.as_str()) {
+            body["v"] = json!(tag);
+            return Json(body).into_response();
+        }
+        let woke = tokio::time::timeout_at(deadline, async {
+            loop {
+                match rx.recv().await {
+                    Ok(m) if desknotes_on(&m) == Some(desk) => break,
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => break,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .await;
+        if woke.is_err() {
+            return StatusCode::NO_CONTENT.into_response();
+        }
     }
 }
 

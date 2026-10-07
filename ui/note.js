@@ -342,3 +342,33 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
   setInterval(() => { if (!document.hidden && liveNotes().length && !noteGone && !noteEl.matches(":hover, :focus-within")) renderNote(); }, 60000);
   return { render: renderNote };
 }
+
+/* ---------- snyvi's own moments ----------
+ * Five lines at five first moments, each once (app.js `snyviSays` names
+ * them; OWN above has their words). A moment that comes while an agent's
+ * aside is unread, or inside the ten quiet minutes, is held in
+ * `snyvi.own.held` and said when the way is clear. `c` is the page's:
+ * store, state, own (the names), isOwn, render. */
+let ownTimer = 0;
+const heldOwn = store => { try { return JSON.parse(store.get("snyvi.own.held") || "[]"); } catch { return []; } };
+export function says(key, c) {
+  const { store, state } = c;
+  if (!c.own.has(key) || store.get(`snyvi.seen.${key}`)) return;
+  const quiet = 600e3 - (Date.now() - (+store.get("snyvi.seen.at") || 0));
+  if (quiet > 0 || state.notes.some(n => !n.dismissed && !n.seen)) {
+    const held = heldOwn(store);
+    if (!held.includes(key)) store.set("snyvi.own.held", JSON.stringify(held.concat(key)));
+    clearTimeout(ownTimer);
+    ownTimer = setTimeout(() => sayHeld(c), Math.max(quiet, 30e3));
+    return;
+  }
+  store.set("snyvi.own.held", JSON.stringify(heldOwn(store).filter(k => k !== key)));
+  store.set(`snyvi.seen.${key}`, "1"); store.set("snyvi.seen.at", String(Date.now()));
+  state.notes = [{ id: `snyvi:${key}`, text: "", sender: "", at: Date.now() / 1000 }, ...state.notes.filter(n => !c.isOwn(n))];
+  c.render();
+}
+/** The first held moment, if the way is clear now; the rest keep waiting. */
+export function sayHeld(c) {
+  const k = heldOwn(c.store).find(k => !c.store.get(`snyvi.seen.${k}`));
+  if (k) says(k, c); else c.store.set("snyvi.own.held", "[]");
+}
