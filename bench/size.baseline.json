@@ -10,7 +10,7 @@
     "src/server/mod.rs::run": 128,
     "src/strip.rs::strip": 150,
     "ui/app/08-desks.js::connect": 188,
-    "ui/desk/07-actions.js::act": 184,
+    "ui/desk/07-actions.js::act": 185,
     "ui/look.js::init": 241,
     "ui/note.js::init": 209
   }

@@ -14,6 +14,9 @@
 
 let d = null;                       // what the page handed over, kept for the listeners
 let marks = [], idx = -1, timer = null;
+/** The last search and whether it found anything: a query that only grows
+ *  one that found nothing finds nothing either, with no walk of the text. */
+let lastQ = "", lastNone = false, lastOn = null;
 
 /* An HTML <mark> inside an <svg> lays out at 0x0, so wrapping a diagram's label
  * in one does not highlight it -- it erases it, and counts a match the reader
@@ -56,13 +59,18 @@ function wire() {
 /** Take the marks back out of the text. Safe before anything was ever found. */
 export function clear() {
   if (!d) return;
-  for (const m of marks) { const p = m.parentNode; if (!p) continue; p.replaceChild(document.createTextNode(m.textContent), m); p.normalize(); }
+  // Each parent joined up once, not once for every mark in it: a paragraph
+  // with forty hits was walked forty times on every keystroke.
+  const ps = new Set();
+  for (const m of marks) { const p = m.parentNode; if (!p) continue; p.replaceChild(document.createTextNode(m.textContent), m); ps.add(p); }
+  for (const p of ps) p.normalize();
   marks = []; idx = -1; d.$("#find-count").textContent = "";
 }
 
 /** The document under the bar changed: lay the same search over the new text. */
 export function refresh() {
   if (!d) return;
+  lastQ = "";
   const input = d.$("#find-input");
   if (!d.$("#find").hidden && input.value) run(input.value); else clear();
 }
@@ -79,9 +87,10 @@ export function close() {
 
 function run(q) {
   clear();
-  if (!q) return;
+  if (!q) { lastQ = ""; return; }
   const { $, docEl } = d;
   const needle = q.toLowerCase();
+  if (lastNone && lastQ && lastOn === docEl.firstElementChild && needle.startsWith(lastQ)) { lastQ = needle; $("#find-count").textContent = "No matches"; return; }
   const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
   const texts = []; let n; while ((n = walker.nextNode())) texts.push(n);
   for (const t of texts) {
@@ -97,6 +106,7 @@ function run(q) {
     frag.appendChild(document.createTextNode(text.slice(last)));
     t.parentNode.replaceChild(frag, t);
   }
+  lastQ = needle; lastNone = !marks.length; lastOn = docEl.firstElementChild;
   if (marks.length) goto(0); else $("#find-count").textContent = "No matches";
 }
 

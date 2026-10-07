@@ -100,6 +100,13 @@ sent by this call: the user is shown the offer where they are, with your name on
 now. Offer only when the user asked for something to go to that friend, or the work plainly is for them; never \
 to a name that is not on the list. Say in your reply that you offered it and that the user decides.";
 
+const OFFER_LINE_DESCRIPTION: &str = "Offer one line to one of the user's friends on snyvi, by the friend's \
+name (the desk brief lists them): a request, a heads-up, a thing to check -- at most 200 characters; anything \
+longer is a document, and offer_document. Nothing is sent by this call: the user is shown the line where they \
+are, with your name on it, and presses Send or Not now. It lands on the friend's desk as a suggested note, and \
+when they tick it they can tell the user it is done. Offer only when the user asked for it, or the work plainly \
+needs that friend; never to a name that is not on the list. Say in your reply that you offered it.";
+
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session is running in, so the user can tell their \
 panels apart at a glance: a few words for what you are working on in it, like \"auth refactor\" or \"fix CI\". \
 Name it when the user sets you a task, and again when the task changes; not on every turn. The name shows in the \
@@ -163,6 +170,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
     ("offer_document", Session::offer_document),
+    ("offer_line", Session::offer_line),
     ("start_thread", Session::start_thread),
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
@@ -235,6 +243,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         tools.extend(threads::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
+            tools.push(offer_line_spec());
         }
     }
     tools
@@ -486,6 +495,25 @@ impl Session {
         }
     }
 
+    /// `offer_line`: as `offer_document`, a line instead of a document.
+    fn offer_line(&self, args: &Value) -> Value {
+        let to = arg(args, "to");
+        let text = arg(args, "text");
+        match self.pane.as_deref() {
+            None => said("This session is not running in a snyvi desk, so there is no one to offer to.", true),
+            Some(p) => match client::offer_line(&self.paths, p, &to, &text, self.by()) {
+                Ok(v) => said(
+                    format!(
+                        "Offered the line to {}; the user decides whether it goes. Say so in your reply.",
+                        v.get("to").and_then(Value::as_str).unwrap_or(&to)
+                    ),
+                    false,
+                ),
+                Err(e) => said(format!("snyvi did not take the offer: {e}"), true),
+            },
+        }
+    }
+
     fn name_panel(&self, args: &Value) -> Value {
         let to = arg(args, "name");
         match self.pane.as_deref() {
@@ -719,6 +747,24 @@ fn offer_spec() -> Value {
                 "id": { "type": "string", "description": "The document's id, as send_document answered it." }
             },
             "required": ["to", "id"],
+            "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+    })
+}
+
+fn offer_line_spec() -> Value {
+    json!({
+        "name": "offer_line",
+        "title": "Offer a line to a friend",
+        "description": OFFER_LINE_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "The friend's name, as the desk brief lists it." },
+                "text": { "type": "string", "description": "The line, at most 200 characters." }
+            },
+            "required": ["to", "text"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
@@ -1103,6 +1149,12 @@ mod tests {
             "a daemon that did not say lists it, as before"
         );
         assert!(!names(false, Some(true)).contains(&"offer_document".into()));
+        assert!(names(true, Some(true)).contains(&"offer_line".into()));
+        assert!(!names(true, Some(false)).contains(&"offer_line".into()));
+        assert!(offer_line_spec()["description"]
+            .as_str()
+            .unwrap()
+            .contains("Nothing is sent by this call"));
     }
 
     #[test]

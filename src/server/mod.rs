@@ -157,6 +157,9 @@ pub struct App {
     /// Woken when a pending restart should be looked at again: an agent
     /// changed state, a restart was asked for, a stream ended.
     pub restart_wake: tokio::sync::Notify,
+    /// Held while a `doc` event's count is taken and the event sent
+    /// (`emit_doc`), so the counts go out in the order they were taken.
+    doc_said: std::sync::Mutex<()>,
     /// Why `run` returned, set on the planned way out.
     leaving: std::sync::Mutex<Leaving>,
     /// The updater: what is out, what is staged, when it may go. None only
@@ -320,6 +323,7 @@ fn new_app(
         started_at: crate::store::now(),
         restart: std::sync::Mutex::new(None),
         restart_wake: tokio::sync::Notify::new(),
+        doc_said: std::sync::Mutex::new(()),
         leaving: std::sync::Mutex::new(Leaving::Stopped),
         update,
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
@@ -352,6 +356,9 @@ fn peer_routes() -> Router<Arc<App>> {
         .route("/api/docs/{id}/save", post(doc_save))
         .route("/api/docs/{id}/unfile", post(doc_unfile))
         .route("/api/peers/outbox/{id}/retry", post(outbox_retry))
+        .route("/api/docs/{id}/reply", post(doc_reply))
+        .route("/api/peers/{id}/receipts", post(peer_receipts))
+        .route("/api/desks/{desk}/notes/{note}/tell", post(note_tell))
 }
 
 /// A panel's routes, `/api/panes/{id}/*`: the page's (close, restore,
@@ -718,6 +725,18 @@ pub(crate) fn emit(app: &App, name: &str, data: serde_json::Value) {
     let _ = app.events.send(format!("{name}\n{data}"));
 }
 
+/// A `doc` event, with the count of what is waiting taken as it is sent.
+/// Twelve sends at once used to take their counts before building the
+/// project's rows and send after: an event counted at 11 could go out after
+/// the one counted at 12, and a page that believes the newest event read
+/// "1/11" with twelve waiting. Count and send under one lock, and the last
+/// event out carries the last count.
+pub(crate) fn emit_doc(app: &App, mut ev: serde_json::Value) {
+    let _held = app.doc_said.lock().unwrap_or_else(|e| e.into_inner());
+    ev["waiting"] = json!(waiting(app));
+    emit(app, "doc", ev);
+}
+
 /// The `doc` event every arrival ends in, shaped one way for the three
 /// routes a document comes in by.
 ///
@@ -761,7 +780,7 @@ async fn receive_and_emit(
     .await
     {
         Ok(Ok((event, received))) => {
-            emit(app, "doc", event);
+            emit_doc(app, event);
             Ok(received)
         }
         Ok(Err(e)) => Err(Box::new(

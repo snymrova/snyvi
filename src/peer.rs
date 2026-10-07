@@ -288,8 +288,14 @@ pub fn emoji(a: &[u8; 32], b: &[u8; 32]) -> String {
 // ---- the frame ------------------------------------------------------------------
 
 /// What the frames say, as a number: 1 from 1.22, when a frame began to say
-/// which repository it is about. A frame without one is older.
-pub const CONTENT_V: u32 = 1;
+/// which repository it is about; 2 from 1.23, which reads the kinds that
+/// close the loop -- a receipt, a reply, a line done. A frame without one is
+/// older. What a friend's last frame said is kept (`Peer::v`), and those
+/// kinds go only to a friend at `REPLIES_V` or past it.
+pub const CONTENT_V: u32 = 2;
+
+/// The first `v` that reads `Receipt`, `Reply` and `Done`.
+pub const REPLIES_V: u32 = 2;
 
 /// What travels inside a frame.
 ///
@@ -324,9 +330,49 @@ pub enum Content {
         #[serde(flatten)]
         at: Folder,
     },
+    /// What became of a frame this snyvi sent: `arrived` when it was kept,
+    /// `read` when it was opened -- that one only when the reader allows it
+    /// for this friend (`Peer::read_receipts`). `of` is the frame's id.
+    Receipt {
+        of: String,
+        state: String,
+        #[serde(default)]
+        v: u32,
+    },
+    /// One line back about a document the friend sent: `re` is the sender's
+    /// id for it (`Document::id`), so it lands under that document's head.
+    Reply {
+        re: String,
+        text: String,
+        name: String,
+        #[serde(default)]
+        v: u32,
+    },
+    /// A line the friend sent, ticked here and told back: `of` is the line's
+    /// frame id, `commit` what the tick said the work is in.
+    Done {
+        of: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+        name: String,
+        #[serde(default)]
+        v: u32,
+    },
     /// A kind a newer snyvi sends: opened, held, read after an update.
     #[serde(other)]
     Other,
+}
+
+impl Content {
+    /// The `v` the sending snyvi wrote, 0 when it wrote none.
+    pub fn v(&self) -> u32 {
+        match self {
+            Content::Document { at, .. } | Content::Note { at, .. } => at.v,
+            Content::Receipt { v, .. } | Content::Reply { v, .. } | Content::Done { v, .. } => *v,
+            Content::Other => 0,
+        }
+    }
 }
 
 /// Which folder a frame is about, in words both sides can check without
@@ -604,6 +650,8 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
         last_from: 0,
         last_to: 0,
         desk_id: 0,
+        v: 0,
+        read_receipts: false,
     };
     // The keys have to be keys, or nothing is pinned.
     let their_sign = peer.verifying_key()?;
@@ -935,6 +983,11 @@ pub struct Peer {
     /// and the lines on Home. A desk that is closed or parked when something
     /// arrives counts as 0, so nothing lands out of sight.
     pub desk_id: i64,
+    /// The `v` their last frame said (`CONTENT_V`): what their snyvi reads.
+    pub v: u32,
+    /// Whether they are told when the reader opens what they sent: off
+    /// until the reader turns it on for them.
+    pub read_receipts: bool,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -972,6 +1025,10 @@ pub struct PeerNote {
     pub from: String,
     pub text: String,
     pub arrived_at: i64,
+    /// The frame it came in, so a tick on the desk it is kept on can be
+    /// told back (`Content::Done`).
+    #[serde(skip)]
+    pub frame: String,
 }
 
 /// An agent's offer to send a document, waiting for the reader's Send.
@@ -985,6 +1042,9 @@ pub struct Offer {
     pub by: String,
     pub pane: String,
     pub offered_at: i64,
+    /// A line offered instead of a document (`offer_line`): what would go.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 pub const SCHEMA: &str = r#"
@@ -1036,6 +1096,14 @@ CREATE TABLE IF NOT EXISTS peer_held (
   bytes BLOB NOT NULL,
   held_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS peer_replies (
+  id INTEGER PRIMARY KEY,
+  peer_id INTEGER NOT NULL REFERENCES peers(id),
+  doc_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS peer_replies_doc ON peer_replies(doc_id, at);
 "#;
 
 /// 1.22: each folder's fingerprint (`crate::git::print`) and when it was
@@ -1062,7 +1130,37 @@ pub const COLUMNS_1_19: [&str; 2] = [
 ];
 
 const PEER_COLS: &str =
-    "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to, desk_id";
+    "id, sign_key, box_key, name, paired_at, muted, removed_at, last_from, last_to, desk_id, v, read_receipts";
+
+/// 1.23: what a friend's snyvi reads and whether they hear of a read; what
+/// a frame in the outbox is (`kind`: '' a document or a line, `receipt`,
+/// `reply`, `done`), what it is about (`re`) and what else it carries
+/// (`extra`, a done line's commit), and what came back about it; the frame
+/// a friend's line or document came in, so a tick or an open can answer it;
+/// the line an agent offers. Version 11 of `store::MIGRATIONS`.
+pub const COLUMNS_1_23: [&str; 16] = [
+    "ALTER TABLE peers ADD COLUMN v INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peers ADD COLUMN read_receipts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE peer_outbox ADD COLUMN re TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE peer_outbox ADD COLUMN extra TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE peer_outbox ADD COLUMN arrived_at INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN read_at INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN done_at INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN done_commit TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE peer_notes ADD COLUMN frame TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE peer_offers ADD COLUMN text TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE docs ADD COLUMN peer_frame TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE docs ADD COLUMN peer_ref TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE desk_notes ADD COLUMN sent_peer INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE desk_notes ADD COLUMN sent_frame TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE desk_notes ADD COLUMN told_at INTEGER NOT NULL DEFAULT 0",
+];
+
+/// A reply is one line, as a note is.
+pub const REPLY_CHARS: usize = NOTE_CHARS;
+/// How many replies a document's head shows, the newest.
+pub const REPLIES_SHOWN: usize = 20;
 
 fn row_peer(r: &rusqlite::Row) -> rusqlite::Result<Peer> {
     Ok(Peer {
@@ -1076,7 +1174,23 @@ fn row_peer(r: &rusqlite::Row) -> rusqlite::Result<Peer> {
         last_from: r.get(7)?,
         last_to: r.get(8)?,
         desk_id: r.get(9)?,
+        v: r.get(10)?,
+        read_receipts: r.get::<_, i64>(11)? != 0,
     })
+}
+
+/// What a friend's snyvi said it reads, from the frame just in.
+pub fn set_v(conn: &Connection, id: i64, v: u32) -> Result<()> {
+    conn.execute("UPDATE peers SET v = ?2 WHERE id = ?1", params![id, v])?;
+    Ok(())
+}
+
+/// Whether a friend hears when the reader opens what they sent.
+pub fn set_read_receipts(conn: &Connection, id: i64, on: bool) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE peers SET read_receipts = ?2 WHERE id = ?1",
+        params![id, on as i64],
+    )? > 0)
 }
 
 /// Every friend, removed ones last, by name.
@@ -1209,21 +1323,57 @@ pub fn queue_note(conn: &Connection, peer: &Peer, text: &str, now: i64) -> Resul
     Ok(id)
 }
 
-/// A frame waiting in the outbox: a document (`doc_id`) or a line (`text`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One of the kinds that answer a frame (`Content::Receipt`, `Reply`,
+/// `Done`), queued: `re` is what it answers, `extra` a done line's commit.
+/// A receipt's id is the frame and the state it says, so the same receipt
+/// twice is one row; a reply or a done is said once, and is its own.
+pub fn queue_kind(
+    conn: &Connection,
+    peer: &Peer,
+    kind: &str,
+    re: &str,
+    text: &str,
+    extra: &str,
+    now: i64,
+) -> Result<String> {
+    let id = if kind == "receipt" {
+        blake3::hash(format!("receipt {re} {text} {}", peer.sign_key).as_bytes())
+            .to_hex()
+            .to_string()
+    } else {
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce)
+            .map_err(|e| anyhow!("reading random bytes for a frame's id: {e}"))?;
+        blake3::hash(&nonce).to_hex().to_string()
+    };
+    let text: String = text.trim().chars().take(REPLY_CHARS).collect();
+    conn.execute(
+        "INSERT INTO peer_outbox(id, peer_id, doc_id, text, kind, re, extra, queued_at) VALUES(?1, ?2, '', ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(id) DO NOTHING",
+        params![id, peer.id, text, kind, re, extra, now],
+    )?;
+    Ok(id)
+}
+
+/// A frame waiting in the outbox: a document (`doc_id`), a line (`text`),
+/// or one that answers a frame (`kind`, with `re` and `extra`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Unsent {
     pub id: String,
     pub peer_id: i64,
     pub doc_id: String,
     pub text: String,
     pub tries: i64,
+    pub kind: String,
+    pub re: String,
+    pub extra: String,
 }
 
 /// What has not gone yet, oldest first.
 pub fn unsent(conn: &Connection) -> Result<Vec<Unsent>> {
     let rows = conn
         .prepare(
-            "SELECT o.id, o.peer_id, o.doc_id, o.text, o.tries FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
+            "SELECT o.id, o.peer_id, o.doc_id, o.text, o.tries, o.kind, o.re, o.extra FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
              WHERE o.sent_at = 0 AND p.removed_at = 0 ORDER BY o.queued_at, o.id",
         )?
         .query_map([], |r| {
@@ -1233,6 +1383,9 @@ pub fn unsent(conn: &Connection) -> Result<Vec<Unsent>> {
                 doc_id: r.get(2)?,
                 text: r.get(3)?,
                 tries: r.get(4)?,
+                kind: r.get(5)?,
+                re: r.get(6)?,
+                extra: r.get(7)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -1285,7 +1438,7 @@ pub fn outgoing(conn: &Connection) -> Result<Vec<Outgoing>> {
         .prepare(
             "SELECT o.id, o.peer_id, COALESCE(d.title, o.text), o.queued_at, o.tries, o.error
              FROM peer_outbox o JOIN peers p ON p.id = o.peer_id LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
-             WHERE o.sent_at = 0 AND p.removed_at = 0 ORDER BY o.queued_at, o.id",
+             WHERE o.sent_at = 0 AND p.removed_at = 0 AND o.kind != 'receipt' ORDER BY o.queued_at, o.id",
         )?
         .query_map([], |r| {
             Ok(Outgoing {
@@ -1299,6 +1452,176 @@ pub fn outgoing(conn: &Connection) -> Result<Vec<Outgoing>> {
         })?
         .collect::<std::result::Result<_, _>>()?;
     Ok(rows)
+}
+
+/// A document or a line that went, and what came back about it: the Sent
+/// list in a friend's row. Newest first.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct Sent {
+    pub id: String,
+    pub peer_id: i64,
+    /// The document's id, or empty for a line.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub doc_id: String,
+    /// The document's title, or the line.
+    pub what: String,
+    pub sent_at: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub arrived_at: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub read_at: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub done_at: i64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub done_commit: String,
+}
+
+/// The last `limit` that went to each friend.
+pub fn sent_recent(conn: &Connection, limit: i64) -> Result<Vec<Sent>> {
+    let rows = conn
+        .prepare(
+            "SELECT id, peer_id, doc_id, what, sent_at, arrived_at, read_at, done_at, done_commit FROM (
+               SELECT o.id, o.peer_id, o.doc_id, COALESCE(d.title, o.text) AS what, o.sent_at, o.arrived_at, o.read_at,
+                      o.done_at, o.done_commit,
+                      ROW_NUMBER() OVER (PARTITION BY o.peer_id ORDER BY o.sent_at DESC, o.id) AS n
+               FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
+               LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
+               WHERE o.sent_at != 0 AND o.kind = '' AND p.removed_at = 0)
+             WHERE n <= ?1 ORDER BY sent_at DESC, id",
+        )?
+        .query_map(params![limit], |r| {
+            Ok(Sent {
+                id: r.get(0)?,
+                peer_id: r.get(1)?,
+                doc_id: r.get(2)?,
+                what: r.get(3)?,
+                sent_at: r.get(4)?,
+                arrived_at: r.get(5)?,
+                read_at: r.get(6)?,
+                done_at: r.get(7)?,
+                done_commit: r.get(8)?,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
+/// A friend says a frame this snyvi sent arrived, or was read. Only a frame
+/// that went to that friend: a receipt for anything else is nothing.
+pub fn receipt(conn: &Connection, peer_id: i64, of: &str, state: &str, now: i64) -> Result<bool> {
+    let n = match state {
+        "arrived" => conn.execute(
+            "UPDATE peer_outbox SET arrived_at = ?3 WHERE id = ?1 AND peer_id = ?2 AND kind = '' AND arrived_at = 0",
+            params![of, peer_id, now],
+        )?,
+        "read" => conn.execute(
+            "UPDATE peer_outbox SET read_at = ?3, arrived_at = CASE WHEN arrived_at = 0 THEN ?3 ELSE arrived_at END
+             WHERE id = ?1 AND peer_id = ?2 AND kind = '' AND doc_id != '' AND read_at = 0",
+            params![of, peer_id, now],
+        )?,
+        _ => 0,
+    };
+    Ok(n > 0)
+}
+
+/// A friend ticked a line this snyvi sent them, and said so. The line's
+/// row, and its text, for the reader to be told.
+pub fn done(
+    conn: &Connection,
+    peer_id: i64,
+    of: &str,
+    commit: &str,
+    now: i64,
+) -> Result<Option<String>> {
+    // A hash as the tick said it, and nothing after it: never letters
+    // gathered from the words around one.
+    let commit: String = commit
+        .trim()
+        .chars()
+        .take_while(char::is_ascii_hexdigit)
+        .take(40)
+        .collect();
+    let n = conn.execute(
+        "UPDATE peer_outbox SET done_at = ?3, done_commit = ?4, arrived_at = CASE WHEN arrived_at = 0 THEN ?3 ELSE arrived_at END
+         WHERE id = ?1 AND peer_id = ?2 AND kind = '' AND doc_id = '' AND done_at = 0",
+        params![of, peer_id, now, commit],
+    )?;
+    if n == 0 {
+        return Ok(None);
+    }
+    Ok(conn
+        .query_row(
+            "SELECT text FROM peer_outbox WHERE id = ?1",
+            params![of],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Whether this snyvi sent `doc_id` to that friend: a reply to anything
+/// else is nothing.
+pub fn sent_doc(conn: &Connection, peer_id: i64, doc_id: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM peer_outbox WHERE peer_id = ?1 AND doc_id = ?2 AND kind = ''",
+            params![peer_id, doc_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// A friend's one-line reply to a document, kept under it.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct Reply {
+    pub from: String,
+    pub text: String,
+    pub at: i64,
+}
+
+pub fn add_reply(
+    conn: &Connection,
+    peer_id: i64,
+    doc_id: &str,
+    text: &str,
+    now: i64,
+) -> Result<Option<String>> {
+    let text: String = text.trim().chars().take(REPLY_CHARS).collect();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    conn.execute(
+        "INSERT INTO peer_replies(peer_id, doc_id, text, at) VALUES(?1, ?2, ?3, ?4)",
+        params![peer_id, doc_id, text, now],
+    )?;
+    Ok(Some(text))
+}
+
+/// The replies to any of `doc_ids` -- every version of a document is one
+/// conversation -- oldest first.
+pub fn replies(conn: &Connection, doc_ids: &[String]) -> Result<Vec<Reply>> {
+    let mut out = Vec::new();
+    let mut stmt = conn.prepare(
+        "SELECT p.name, r.text, r.at FROM peer_replies r JOIN peers p ON p.id = r.peer_id
+         WHERE r.doc_id = ?1 AND p.removed_at = 0",
+    )?;
+    for id in doc_ids {
+        let rows = stmt.query_map(params![id], |r| {
+            Ok(Reply {
+                from: r.get(0)?,
+                text: r.get(1)?,
+                at: r.get(2)?,
+            })
+        })?;
+        for row in rows {
+            out.push(row?);
+        }
+    }
+    out.sort_by_key(|r| r.at);
+    // The head shows the last of them: a conversation longer than this is
+    // a document's to hold.
+    let cut = out.len().saturating_sub(REPLIES_SHOWN);
+    Ok(out.split_off(cut))
 }
 
 /// Try a frame again from the start: Retry, on one that stopped.
@@ -1340,11 +1663,17 @@ pub fn prune_held(conn: &Connection, before: i64) -> Result<usize> {
 }
 
 /// A friend's line arrives.
-pub fn note_arrived(conn: &Connection, peer_id: i64, text: &str, now: i64) -> Result<i64> {
+pub fn note_arrived(
+    conn: &Connection,
+    peer_id: i64,
+    text: &str,
+    frame: &str,
+    now: i64,
+) -> Result<i64> {
     let text: String = text.trim().chars().take(NOTE_CHARS).collect();
     conn.execute(
-        "INSERT INTO peer_notes(peer_id, text, arrived_at) VALUES(?1, ?2, ?3)",
-        params![peer_id, text, now],
+        "INSERT INTO peer_notes(peer_id, text, frame, arrived_at) VALUES(?1, ?2, ?3, ?4)",
+        params![peer_id, text, frame, now],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -1353,7 +1682,7 @@ pub fn note_arrived(conn: &Connection, peer_id: i64, text: &str, now: i64) -> Re
 pub fn notes_waiting(conn: &Connection) -> Result<Vec<PeerNote>> {
     let rows = conn
         .prepare(
-            "SELECT n.id, n.peer_id, p.name, n.text, n.arrived_at FROM peer_notes n JOIN peers p ON p.id = n.peer_id
+            "SELECT n.id, n.peer_id, p.name, n.text, n.arrived_at, n.frame FROM peer_notes n JOIN peers p ON p.id = n.peer_id
              WHERE n.taken_at = 0 AND n.removed_at = 0 AND p.removed_at = 0 ORDER BY n.arrived_at, n.id",
         )?
         .query_map([], |r| {
@@ -1363,6 +1692,7 @@ pub fn notes_waiting(conn: &Connection) -> Result<Vec<PeerNote>> {
                 from: r.get(2)?,
                 text: r.get(3)?,
                 arrived_at: r.get(4)?,
+                frame: r.get(5)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -1395,15 +1725,17 @@ pub fn offer(
     conn: &Connection,
     peer_id: i64,
     doc_id: &str,
+    text: &str,
     pane: &str,
     by: &str,
     now: i64,
 ) -> Result<i64> {
     conn.execute(
-        "INSERT INTO peer_offers(peer_id, doc_id, pane, by, offered_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO peer_offers(peer_id, doc_id, text, pane, by, offered_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             peer_id,
             doc_id,
+            text.trim().chars().take(NOTE_CHARS).collect::<String>(),
             pane,
             by.chars().take(60).collect::<String>(),
             now
@@ -1415,7 +1747,7 @@ pub fn offer(
 pub fn offers_open(conn: &Connection) -> Result<Vec<Offer>> {
     let rows = conn
         .prepare(
-            "SELECT o.id, o.peer_id, p.name, o.doc_id, COALESCE(d.title, ''), o.by, o.pane, o.offered_at
+            "SELECT o.id, o.peer_id, p.name, o.doc_id, COALESCE(d.title, ''), o.by, o.pane, o.offered_at, o.text
              FROM peer_offers o JOIN peers p ON p.id = o.peer_id LEFT JOIN docs d ON d.id = o.doc_id
              WHERE o.answered_at = 0 AND p.removed_at = 0 ORDER BY o.offered_at, o.id",
         )?
@@ -1429,6 +1761,7 @@ pub fn offers_open(conn: &Connection) -> Result<Vec<Offer>> {
                 by: r.get(5)?,
                 pane: r.get(6)?,
                 offered_at: r.get(7)?,
+                text: r.get(8)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -1571,6 +1904,8 @@ mod tests {
             last_from: 0,
             last_to: 0,
             desk_id: 0,
+            v: 0,
+            read_receipts: false,
         }
     }
 
@@ -1745,6 +2080,12 @@ mod tests {
         for c in COLUMNS_1_19 {
             conn.execute_batch(c).unwrap();
         }
+        for c in COLUMNS_1_23
+            .iter()
+            .filter(|c| c.starts_with("ALTER TABLE peer"))
+        {
+            conn.execute_batch(c).unwrap();
+        }
         let (sunny, trapti) = two();
         let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
         assert_eq!(t.name, "Trapti");
@@ -1800,7 +2141,7 @@ mod tests {
         sent(&conn, &l2, 412).unwrap();
 
         // Notes wait, are taken, put away, brought back.
-        let n = note_arrived(&conn, t2.id, "  water the beans  ", 500).unwrap();
+        let n = note_arrived(&conn, t2.id, "  water the beans  ", "f1", 500).unwrap();
         assert_eq!(notes_waiting(&conn).unwrap()[0].text, "water the beans");
         assert!(settle_note(&conn, n, "taken", 501).unwrap());
         assert!(notes_waiting(&conn).unwrap().is_empty());
@@ -1811,19 +2152,19 @@ mod tests {
         // Offers: open until answered, dropped with their pane.
         conn.execute("INSERT INTO docs VALUES('doc1', 'Plan')", [])
             .unwrap();
-        let o = offer(&conn, t2.id, "doc1", "pane-a", "Claude", 600).unwrap();
+        let o = offer(&conn, t2.id, "doc1", "", "pane-a", "Claude", 600).unwrap();
         let open = offers_open(&conn).unwrap();
         assert_eq!(open[0].title, "Plan");
         assert_eq!(open[0].to, "T");
         assert!(answer_offer(&conn, o, true, 601).unwrap());
         assert!(!answer_offer(&conn, o, true, 601).unwrap(), "answered once");
         assert!(!reopen_offer(&conn, o).unwrap(), "a sent offer stays sent");
-        let no = offer(&conn, t2.id, "doc1", "pane-b", "Claude", 601).unwrap();
+        let no = offer(&conn, t2.id, "doc1", "", "pane-b", "Claude", 601).unwrap();
         assert!(answer_offer(&conn, no, false, 601).unwrap());
         assert!(reopen_offer(&conn, no).unwrap(), "Not now has an Undo");
         assert_eq!(offers_open(&conn).unwrap().len(), 1);
         assert!(answer_offer(&conn, no, false, 601).unwrap());
-        offer(&conn, t2.id, "doc1", "pane-a", "Claude", 602).unwrap();
+        offer(&conn, t2.id, "doc1", "", "pane-a", "Claude", 602).unwrap();
         assert_eq!(drop_offers_of(&conn, "pane-a", 603).unwrap(), 1);
         assert!(offers_open(&conn).unwrap().is_empty());
 
@@ -1987,11 +2328,147 @@ mod tests {
         let was: Was = serde_json::from_slice(&serde_json::to_vec(&note).unwrap()).unwrap();
         assert!(matches!(was, Was::Note { ref text, .. } if text == "hi"));
         // A kind from a snyvi newer than this one opens, as Other.
-        let newer = br#"{"kind":"receipt","of":"d1","v":2}"#;
+        let newer = br#"{"kind":"follow","of":"d1","v":3}"#;
         assert_eq!(
             serde_json::from_slice::<Content>(newer).unwrap(),
             Content::Other
         );
+    }
+
+    /// 1.23: the kinds that answer a frame travel as the others do, say the
+    /// `v` that reads them, and open as Other on a 1.22 that cannot.
+    #[test]
+    fn a_receipt_a_reply_and_a_done_travel_and_say_their_v() {
+        let (sunny, trapti) = two();
+        let kinds = [
+            Content::Receipt {
+                of: "f1".into(),
+                state: "arrived".into(),
+                v: CONTENT_V,
+            },
+            Content::Reply {
+                re: "d1".into(),
+                text: "looks good".into(),
+                name: "Trapti".into(),
+                v: CONTENT_V,
+            },
+            Content::Done {
+                of: "f2".into(),
+                text: "water the beans".into(),
+                commit: Some("abc1234".into()),
+                name: "Trapti".into(),
+                v: CONTENT_V,
+            },
+        ];
+        for k in kinds {
+            let frame = seal(&trapti, &as_peer(&sunny, "Sunny"), &k, b"").unwrap();
+            let (got, _) = open(&sunny, &as_peer(&trapti, "Trapti"), &frame).unwrap();
+            assert_eq!(got, k);
+            assert_eq!(got.v(), REPLIES_V);
+            // What 1.22 makes of it: a kind it does not know, kept for later.
+            #[derive(Deserialize, Debug)]
+            #[serde(rename_all = "lowercase", tag = "kind")]
+            enum Old {
+                Document {},
+                Note {},
+                #[serde(other)]
+                Other,
+            }
+            let old: Old = serde_json::from_slice(&serde_json::to_vec(&k).unwrap()).unwrap();
+            assert!(matches!(old, Old::Other), "{old:?}");
+        }
+        assert_eq!(
+            Content::Note {
+                text: "x".into(),
+                name: "S".into(),
+                at: Folder::default()
+            }
+            .v(),
+            0,
+            "a frame before 1.22 says none"
+        );
+    }
+
+    /// What comes back lands only on what went to that friend: a receipt for
+    /// another frame, or from another friend, is nothing; a read implies the
+    /// arrival; a done is for a line, and once.
+    #[test]
+    fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE docs (id TEXT PRIMARY KEY, title TEXT NOT NULL);")
+            .unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        for c in COLUMNS_1_19 {
+            conn.execute_batch(c).unwrap();
+        }
+        for c in COLUMNS_1_23
+            .iter()
+            .filter(|c| c.starts_with("ALTER TABLE peer"))
+        {
+            conn.execute_batch(c).unwrap();
+        }
+        conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
+            .unwrap();
+        let (sunny, trapti) = two();
+        let t = pin(&conn, &as_peer(&trapti, "Trapti"), 1).unwrap();
+        let s = pin(&conn, &as_peer(&sunny, "Sunny"), 1).unwrap();
+        let doc = queue(&conn, &t, "d1", 10).unwrap();
+        let line = queue_note(&conn, &t, "water the beans", 11).unwrap();
+        sent(&conn, &doc, 12).unwrap();
+        sent(&conn, &line, 13).unwrap();
+
+        assert!(!receipt(&conn, t.id, "nope", "arrived", 20).unwrap());
+        assert!(
+            !receipt(&conn, s.id, &doc, "arrived", 20).unwrap(),
+            "not theirs"
+        );
+        assert!(!receipt(&conn, t.id, &doc, "lost", 20).unwrap());
+        assert!(receipt(&conn, t.id, &doc, "read", 21).unwrap());
+        assert!(
+            !receipt(&conn, t.id, &doc, "arrived", 22).unwrap(),
+            "read says it already"
+        );
+        let got = sent_recent(&conn, 5).unwrap();
+        let d = got.iter().find(|x| x.id == doc).unwrap();
+        assert_eq!((d.what.as_str(), d.arrived_at, d.read_at), ("Plan", 21, 21));
+
+        assert_eq!(
+            done(&conn, t.id, &doc, "", 30).unwrap(),
+            None,
+            "a document is not a line"
+        );
+        assert_eq!(
+            done(&conn, t.id, &line, "abc1234 (fix the flaky row)", 31)
+                .unwrap()
+                .as_deref(),
+            Some("water the beans")
+        );
+        assert_eq!(done(&conn, t.id, &line, "", 32).unwrap(), None, "once");
+        let l = sent_recent(&conn, 5)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == line)
+            .unwrap();
+        assert_eq!((l.done_at, l.done_commit.as_str()), (31, "abc1234"));
+
+        // Answers queue as frames of their own, and a receipt twice is one.
+        let r1 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 40).unwrap();
+        let r2 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 41).unwrap();
+        assert_eq!(r1, r2);
+        let rp = queue_kind(&conn, &t, "reply", "d9", " ok ", "", 42).unwrap();
+        let un = unsent(&conn).unwrap();
+        assert_eq!(un.len(), 2);
+        let reply = un.iter().find(|u| u.id == rp).unwrap();
+        assert_eq!(
+            (reply.kind.as_str(), reply.re.as_str(), reply.text.as_str()),
+            ("reply", "d9", "ok")
+        );
+        assert!(
+            outgoing(&conn).unwrap().iter().all(|o| o.id != r1),
+            "a receipt is not the reader's to see waiting"
+        );
+        assert!(sent_doc(&conn, t.id, "d1").unwrap());
+        assert!(!sent_doc(&conn, s.id, "d1").unwrap());
     }
 
     #[test]

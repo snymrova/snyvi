@@ -60,6 +60,7 @@ fn strip_ui() {
         ("menu.js", strip::Lang::Js),
         ("palette.js", strip::Lang::Js),
         ("look.js", strip::Lang::Js),
+        ("nav.js", strip::Lang::Js),
         ("note.js", strip::Lang::Js),
         ("tip.js", strip::Lang::Js),
         ("home.js", strip::Lang::Js),

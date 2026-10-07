@@ -55,7 +55,7 @@ function rail() {
   if (!d) return;
   const { esc } = ctx, j = ctx.desks;
   const dot = v => v.status.blocked ? "!" : v.status.agent === "done" ? "✓" : v.status.running ? "●" : "○";
-  const vs = d.panes.map(p => views.get(p.id)).filter(Boolean);
+  const vs = d.panes.map(p => views.get(p.id)).filter(Boolean), blocked = vs.filter(v => v.status.blocked).length;
   const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} open on every desk`;
   const why = noNew(d);
   const dl0 = docsAt === d.id ? docList : [];
@@ -94,11 +94,14 @@ function rail() {
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + filedSecs(d) +
-    `<div data-part="rail.panels"><div class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="n">${d.panes.length}<i>/${j.per_desk}</i></span></div>` +
+    // The panels fold as the documents do. Folded, the head still says when
+    // one of them is waiting on the reader, since its row is out of sight;
+    // and a panel just closed opens it, so its Undo is never out of reach.
+    `<details class="dk-sec" data-sec="panels" data-part="rail.panels"${secFolded("panels") && !(closedRow && closedRow.desk === d.id) ? "" : " open"}><summary class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="s-chev" aria-hidden="true"></span><span class="n">${blocked ? `<b class="blk">${blocked} waiting</b> · ` : ""}${d.panes.length}<i>/${j.per_desk}</i></span></summary>` +
     `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></div>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></details>` +
     pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded. The row's
@@ -195,7 +198,7 @@ function docRow(x, gone, vs, esc) {
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
     `<span class="dk-tools">` +
-    (x.source_path ? `<button type="button" data-a="copy" data-path="${esc(x.source_path)}" data-tip="Copy path" data-tip-sub="${esc(x.source_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
+    (x.local_path ? `<button type="button" data-a="copy" data-path="${esc(x.local_path)}" data-tip="Copy path" data-tip-sub="${esc(x.local_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
     (on ? `<button type="button" data-a="desk" data-tip="Back to the panels" data-key="ctrl+\`" aria-label="Back to the panels">${ico("back")}</button>` : "") +
     `<button type="button" data-a="doc-x" data-d="${esc(x.id)}" data-tip="Remove from this list" data-tip-sub="the Inbox keeps it" aria-label="Remove ${esc(x.title)} from this desk's list">${ico("x")}</button>` +
     `</span></li>` + errLine(`d${x.id}`, esc);
@@ -439,7 +442,9 @@ function noteRow(x, esc) {
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
-    (x.done && x.done_by ? byLine(x, esc) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
+    // A friend's line, ticked: one press tells them (pairing's second cut),
+    // in the line "from Trapti" already takes, so nothing moves.
+    (x.done && x.done_by ? byLine(x, esc, tell(x, esc)) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span>${tell(x, esc)}</span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }
@@ -681,14 +686,22 @@ function copySha(b, said = "copied") {
  *  the commit (a click copies the whole hash, and says so in its own place)
  *  and the document it sent (a click opens it). A line of its own, so a long
  *  note keeps the rail's width and nothing beside it moves. */
-function byLine(x, esc) {
+/** A friend's line, ticked: one press tells them (pairing's second cut),
+ *  at the end of the line under it, so nothing moves. */
+function tell(x, esc) {
+  if (!x.done || !x.tellable) return "";
+  return x.told ? `<span>told ✓</span>`
+    : `<button type="button" data-a="note-tell" data-n="${x.id}" data-tip="Tell ${esc(x.sent_by)} it is done" data-tip-sub="${esc(x.done_commit ? `with ${x.done_commit.slice(0, 7)}` : "one line back to them")}">Tell ${esc(x.sent_by)} ✓</button>`;
+}
+
+function byLine(x, esc, more = "") {
   const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" data-tip="Copy commit" data-tip-sub="${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
   const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" data-tip="Open the document" data-tip-sub="What ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
   // Where the finished work can be seen -- a PR, a deploy -- by its host.
   let host = "";
   try { host = x.done_evidence ? new URL(x.done_evidence).host.replace(/^www\./, "") : ""; } catch { host = ""; }
   const ev = host ? `<button type="button" class="dk-ev" data-a="note-ev" data-u="${esc(x.done_evidence)}" data-tip="${esc(x.done_evidence)}" data-tip-sub="where the work can be seen">${esc(host)} ↗</button>` : "";
-  return `<span class="dk-by"><span data-tip="Ticked by" data-tip-sub="${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}${ev}</span>`;
+  return `<span class="dk-by"><span data-tip="Ticked by" data-tip-sub="${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}${ev}${more}</span>`;
 }
 
 /** A desk with nothing sent yet waits for its first document, and says how
@@ -923,7 +936,7 @@ function picked(e) {
   b.addEventListener("click", () => {
     const x = docList.find(y => String(y.id) === String(reading));
     const ps = points.get(v.id) || [];
-    ps.push({ text, from: x ? x.source_path || x.title : "" });
+    ps.push({ text, from: x ? x.local_path || x.title : "" });
     points.set(v.id, ps);
     getSelection().removeAllRanges();
     // Said where the click was, then gone: the rail has the point now.

@@ -7,6 +7,12 @@ fn db() -> Connection {
     conn.execute_batch(POS_COLUMN).unwrap();
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
+    for c in crate::peer::COLUMNS_1_23
+        .iter()
+        .filter(|c| c.starts_with("ALTER TABLE desk_notes"))
+    {
+        conn.execute_batch(c).unwrap();
+    }
     conn
 }
 

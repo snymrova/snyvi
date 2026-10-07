@@ -76,6 +76,45 @@
     if (!a || state.cache.has(a.dataset.id) || +a.dataset.size > 256 * 1024) return;
     dwell = setTimeout(() => { if (dwellOn === a) fetchDoc(a.dataset.id).catch(() => {}); }, 150);
   });
+  // ---------- back and forward ----------
+  /* Every place the page goes is a history entry already -- a document, a
+   * desk's panels, a folder -- and Alt+←/→ walk them; ‹ › in the head show
+   * it. History does not say whether there is a forward, so each entry
+   * carries its step `n`, and `navTop` is the highest step: a push cuts what
+   * was ahead, so a push is the top. Kept in sessionStorage, so a reload
+   * keeps it; a new window starts at 0. Only that, the buttons' ends and
+   * their clicks are here: what each step is called, the tips, the list on
+   * a right-click and a link to a heading are ui/nav.js, fetched when the
+   * page is idle. The ✕ and Esc are not this: they leave what is read. */
+  const stepAt = () => (history.state && history.state.n) || 0;
+  let navTop = 0, navMod = null;
+  try { if (history.state && history.state.n != null) navTop = +sessionStorage.getItem("snyvi.nav.top") || 0; } catch {}
+  const push0 = history.pushState.bind(history), rep0 = history.replaceState.bind(history);
+  history.pushState = (s, t, u) => { const n = stepAt() + 1; push0({ ...s, n }, t, u); navTop = n; navStep(); };
+  history.replaceState = (s, t, u) => rep0({ ...s, n: stepAt() }, t, u);
+  /** Both pairs -- the head's, and the desk's own -- dimmed at either end,
+   *  never hidden: nothing comes or goes, so nothing moves. */
+  function navStep() {
+    try { sessionStorage.setItem("snyvi.nav.top", navTop); } catch {}
+    const n = stepAt();
+    for (const b of document.querySelectorAll(".nv-b")) b.setAttribute("aria-disabled", String(b.dataset.step === "-1" ? n < 1 : n >= navTop));
+    navMod?.step();
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest(".nv-b");
+    if (b && b.getAttribute("aria-disabled") !== "true") b.dataset.step === "-1" ? history.back() : history.forward();
+  });
+  // The mouse's side buttons: the desktop window has no toolbar, so WebKit
+  // does nothing with them on its own.
+  addEventListener("mouseup", e => { if (e.button === 3 || e.button === 4) { e.preventDefault(); e.button === 3 ? history.back() : history.forward(); } });
+  // A link to a heading lands with no step, and its popstate comes before
+  // the hashchange that gives it one (ui/nav.js): only a stepped entry paints.
+  addEventListener("popstate", () => { if (history.state && history.state.n != null) navStep(); });
+  const useNav = () => import(`/assets/nav.js${boot.v ? `?v=${boot.v}` : ""}`)
+    .then(m => (navMod = m.init({ stepAt, rep0, top: () => navTop, setTop: n => { navTop = n; navStep(); }, menuFor: (el, x, y) => menuFor(el, x, y, false), relShort })));
+  (window.requestIdleCallback || setTimeout)(() => useNav().catch(() => {}), { timeout: 1500 });
+  navStep();
+
   window.addEventListener("popstate", () => {
     const d = location.pathname.match(/^\/d\/([a-z0-9]+)$/);
     // Back or forward to a hash on the document already on screen -- the `#`

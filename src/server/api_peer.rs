@@ -42,6 +42,8 @@ const PAIRINGS_MAX: usize = 5;
 const PAIRING_KEPT: i64 = 600;
 /// A frame that fails this many times is left in the outbox, not retried.
 const TRIES_MAX: i64 = 20;
+/// How many of what went to each friend their row lists.
+const SENT_SHOWN: i64 = 5;
 /// What the reader is told at the Send button, and what a queued frame's
 /// row says, when a document is over `peer::SEND_MAX`.
 const TOO_LARGE: &str = "too large to send to a friend (over 8 MB)";
@@ -117,11 +119,14 @@ pub(crate) async fn peers_list(State(app): S) -> Response {
             v
         })
         .collect();
+    // What went lately, and what came back about it: arrived, read, done.
+    let sent = app.store.peer_sent_recent(SENT_SHOWN).unwrap_or_default();
     Json(json!({
         "friends": friends,
         "notes": notes,
         "offers": offers,
         "outbox": outbox,
+        "sent": sent,
         "me": { "name": my_name(&app.paths) },
         "relay": peer::relay(),
     }))
@@ -470,6 +475,10 @@ fn keep_line(app: &Arc<App>, id: i64, desk: i64) -> Response {
     match app.store.add_desk_note_from(desk, &n.text, &n.from) {
         Ok(Some(note)) => {
             let _ = app.store.settle_peer_note(id, "taken");
+            // Theirs still: a tick on it can be told back.
+            if !n.frame.is_empty() {
+                let _ = app.store.link_note_frame(note.id, n.peer_id, &n.frame);
+            }
             emit(app, "desknotes", json!({ "desk": desk }));
             emit(app, "peernotes", json!({}));
             Json(json!({ "note": note, "desk": desk, "name": d.name })).into_response()
@@ -593,7 +602,11 @@ pub(crate) async fn offer_answer(
     let Ok(Some(p)) = app.store.peer(o.peer_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let frame = match app.store.peer_queue(&p, &o.doc_id) {
+    let frame = match if o.doc_id.is_empty() {
+        app.store.peer_queue_note(&p, &o.text)
+    } else {
+        app.store.peer_queue(&p, &o.doc_id)
+    } {
         Ok(f) => f,
         Err(e) => return err(e),
     };
@@ -611,6 +624,9 @@ pub(crate) struct OfferBody {
     pub(crate) to: String,
     #[serde(default)]
     pub(crate) doc: String,
+    /// `offer_line`: a line instead of a document.
+    #[serde(default)]
+    pub(crate) text: String,
     #[serde(default)]
     pub(crate) by: String,
 }
@@ -639,6 +655,25 @@ pub(crate) async fn pane_offer(
     let Ok(Some(p)) = app.store.peer_by_name(to) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": format!("the user has no friend called {to}; they pair from Home") }))).into_response();
     };
+    // A line: the words are the offer.
+    let line: String = b.text.trim().chars().take(peer::NOTE_CHARS).collect();
+    if b.doc.trim().is_empty() && !line.is_empty() {
+        return match app.store.peer_offer(p.id, "", &line, &id, &b.by) {
+            Ok(offer_id) => {
+                emit(
+                    &app,
+                    "peeroffers",
+                    json!({ "offer": offer_id, "to": p.name, "text": line, "by": b.by, "desk": placed.desk_name }),
+                );
+                (
+                    StatusCode::CREATED,
+                    Json(json!({ "to": p.name, "text": line })),
+                )
+                    .into_response()
+            }
+            Err(e) => err(e),
+        };
+    }
     let Ok(Some(doc)) = app.store.get(b.doc.trim()) else {
         return (
             StatusCode::NOT_FOUND,
@@ -646,7 +681,7 @@ pub(crate) async fn pane_offer(
         )
             .into_response();
     };
-    match app.store.peer_offer(p.id, &doc.id, &id, &b.by) {
+    match app.store.peer_offer(p.id, &doc.id, "", &id, &b.by) {
         Ok(offer_id) => {
             emit(
                 &app,
@@ -687,7 +722,9 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
         let went = match send_one(app, &me, &name, &row) {
             Ok(peer::Deposit::Sent) => {
                 let _ = app.store.peer_sent(frame_id);
-                let _ = app.store.touch_peer(peer_id, false);
+                if row.kind != "receipt" {
+                    let _ = app.store.touch_peer(peer_id, false);
+                }
                 moved = true;
                 true
             }
@@ -721,6 +758,43 @@ fn send_one(
         .store
         .peer(row.peer_id)?
         .ok_or_else(|| anyhow::anyhow!("no such friend"))?;
+    // What answers a frame: only to a snyvi that reads it. A receipt for an
+    // older one is not worth keeping and goes as if sent; a reply or a done
+    // waits for their update, and the row says so.
+    if !row.kind.is_empty() {
+        // A receipt an older snyvi cannot read, or a "read" the reader has
+        // since said this friend is not to hear: gone, as if sent.
+        let unread = row.kind == "receipt" && row.text == "read" && !p.read_receipts;
+        if row.kind == "receipt" && (p.v < peer::REPLIES_V || unread) {
+            return Ok(peer::Deposit::Sent);
+        }
+        if p.v < peer::REPLIES_V {
+            return Ok(peer::Deposit::Later(OLDER));
+        }
+        let content = match row.kind.as_str() {
+            "receipt" => Content::Receipt {
+                of: row.re.clone(),
+                state: row.text.clone(),
+                v: peer::CONTENT_V,
+            },
+            "reply" => Content::Reply {
+                re: row.re.clone(),
+                text: row.text.clone(),
+                name: name.to_string(),
+                v: peer::CONTENT_V,
+            },
+            "done" => Content::Done {
+                of: row.re.clone(),
+                text: row.text.clone(),
+                commit: Some(row.extra.clone()).filter(|c| !c.is_empty()),
+                name: name.to_string(),
+                v: peer::CONTENT_V,
+            },
+            other => anyhow::bail!("a frame of a kind this snyvi does not send: {other}"),
+        };
+        let frame = peer::seal(me, &p, &content, b"")?;
+        return peer::deposit(me, &p.sign_key, frame_id, &frame);
+    }
     // A line: no document behind it, the words are the whole of it.
     if doc_id.is_empty() {
         let content = Content::Note {
@@ -775,6 +849,10 @@ fn send_one(
     let frame = peer::seal(me, &p, &content, &bytes)?;
     peer::deposit(me, &p.sign_key, frame_id, &frame)
 }
+
+/// Why a reply or a done waits in the outbox: the friend's snyvi does not
+/// read it yet. It goes the first time a frame from them says it would.
+const OLDER: &str = "their snyvi is older; this goes once they update";
 
 /// How long a folder's fingerprint is taken as read: a day. Root commits do
 /// not change; a remote, rarely.
@@ -912,7 +990,7 @@ pub(crate) fn take_in(
             Ok(false)
         }
         Ok((content, body)) => {
-            if let Err(e) = arrived(app, &p, content, body) {
+            if let Err(e) = arrived(app, &p, content, body, &w.id) {
                 eprintln!("snyvi: a document from {} could not be kept: {e:#}", p.name);
                 return Ok(false);
             }
@@ -949,7 +1027,7 @@ pub(crate) fn read_held(app: &Arc<App>, me: &Identity) {
         match peer::open(me, &p, &bytes) {
             Ok((Content::Other, _)) => {}
             Ok((content, body)) => {
-                if let Err(e) = arrived(app, &p, content, body) {
+                if let Err(e) = arrived(app, &p, content, body, &id) {
                     eprintln!(
                         "snyvi: something held from {} could not be kept: {e:#}",
                         p.name
@@ -1008,15 +1086,81 @@ pub(crate) fn friend_desk(app: &App, p: &Peer) -> Option<crate::desk::Desk> {
 /// into that desk's project and the line onto its list as a suggestion
 /// (Home's Arrived when the desk already has as many as it holds). A muted
 /// friend's arrives read, so nothing lights up.
-fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow::Result<()> {
-    let _ = app.store.touch_peer(p.id, true);
+fn arrived(
+    app: &Arc<App>,
+    p: &Peer,
+    content: Content,
+    body: Vec<u8>,
+    frame: &str,
+) -> anyhow::Result<()> {
+    // "From them … ago" is what they sent, not what their snyvi said back.
+    if matches!(content, Content::Document { .. } | Content::Note { .. }) {
+        let _ = app.store.touch_peer(p.id, true);
+    }
+    // What their snyvi reads, from what it just wrote: a friend who updated
+    // is sent the new kinds from now on, and what waited for it goes.
+    let (v, was) = (content.v(), p.v);
+    let p = &Peer { v, ..p.clone() };
+    if v != was {
+        let _ = app.store.peer_set_v(p.id, v);
+        if v >= peer::REPLIES_V && was < peer::REPLIES_V {
+            app.peers.wake.notify_one();
+        }
+    }
     let desk = friend_desk(app, p);
+    // Kept, and said back: the sender's Sent list reads "arrived". Not for
+    // what itself answers a frame.
+    let answer = matches!(content, Content::Document { .. } | Content::Note { .. });
+    let said = |app: &Arc<App>| {
+        if answer && v >= peer::REPLIES_V {
+            let _ = app
+                .store
+                .peer_queue_kind(p, "receipt", frame, "arrived", "");
+            app.peers.wake.notify_one();
+        }
+    };
     match content {
+        Content::Receipt { of, state, .. } => {
+            if app.store.peer_receipt(p.id, &of, &state)? {
+                peers_moved(app);
+            }
+        }
+        Content::Reply { re, text, .. } => {
+            // Only to a document this snyvi sent them.
+            // Kept as stored -- one line -- and said once; the page under the
+            // reader's eyes is not redrawn for it: it is in the head the next
+            // time the document opens.
+            if app.store.peer_sent_doc(p.id, &re)? {
+                if let Some(text) = app.store.peer_add_reply(p.id, &re, &text)? {
+                    emit(
+                        app,
+                        "peerreply",
+                        json!({ "doc": re, "from": p.name, "reply": text, "quiet": p.muted }),
+                    );
+                }
+            }
+        }
+        Content::Done {
+            of, text, commit, ..
+        } => {
+            if let Some(line) = app
+                .store
+                .peer_done(p.id, &of, commit.as_deref().unwrap_or(""))?
+            {
+                peers_moved(app);
+                emit(
+                    app,
+                    "peerdone",
+                    json!({ "from": p.name, "done": if line.is_empty() { text.chars().take(peer::NOTE_CHARS).collect() } else { line }, "commit": commit, "quiet": p.muted }),
+                );
+            }
+        }
         Content::Document {
             title,
             lang,
             file,
             at,
+            id: sender_id,
             ..
         } => {
             // The reader's own folder for the repository it is about, when
@@ -1044,13 +1188,17 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
             };
             let received = receive::receive(&app.store, &app.renderer, payload)?;
             let _ = app.store.set_peer_key(&received.doc.id, &p.sign_key);
+            let _ = app
+                .store
+                .set_peer_frame(&received.doc.id, frame, &sender_id);
+            said(app);
             if p.muted {
                 let _ = app.store.mark_read(&received.doc.id);
             }
             let mut ev = doc_event(app, &received);
             ev["from"] = json!(p.name);
             ev["quiet"] = json!(p.muted);
-            emit(app, "doc", ev);
+            emit_doc(app, ev);
             if desk.is_some() {
                 emit(app, "deskdocs", json!({}));
             }
@@ -1062,9 +1210,11 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
         Content::Other => {}
         Content::Note { text, .. } => {
             if let Some(d) = &desk {
-                if let Ok(crate::desk::Suggested::Note(_)) =
+                if let Ok(crate::desk::Suggested::Note(n)) =
                     app.store.suggest_desk_note_from(d.id, &text, &p.name)
                 {
+                    let _ = app.store.link_note_frame(n.id, p.id, frame);
+                    said(app);
                     emit(app, "desknotes", json!({ "desk": d.id }));
                     emit(
                         app,
@@ -1074,7 +1224,8 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
                     return Ok(());
                 }
             }
-            app.store.peer_note_arrived(p.id, &text)?;
+            app.store.peer_note_arrived(p.id, &text, frame)?;
+            said(app);
             emit(
                 app,
                 "peernotes",
@@ -1290,6 +1441,15 @@ pub(crate) async fn doc_save(
                 // path inside a folder reads with /.
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| at.to_string_lossy().to_string());
+            // Remembered, so Copy path gives this file and not the friend's
+            // path, which names nothing here (#99).
+            if let Err(e) = app.store.set_saved_path(&id, &at.to_string_lossy()) {
+                eprintln!(
+                    "snyvi: {id} was saved to {} but that was not recorded: {e:#}",
+                    at.display()
+                );
+            }
+            emit(&app, "deskdocs", json!({}));
             Json(json!({ "path": at, "rel": rel, "desk": d.name })).into_response()
         }
         Ok(Err(e)) => err(e),
@@ -1347,6 +1507,155 @@ pub(crate) async fn outbox_retry(
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
+}
+
+/// `POST /api/docs/{id}/reply`: one line back to the friend who sent this
+/// document, under their copy's head. Queued and tried now, as a line is;
+/// a friend whose snyvi is older gets it once they update.
+pub(crate) async fn doc_reply(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<TextBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let text: String = b.text.trim().chars().take(peer::REPLY_CHARS).collect();
+    if text.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "a line of text" })),
+        )
+            .into_response();
+    }
+    let (key, _, re) = match app.store.peer_frame(&id) {
+        Ok(f) => f,
+        Err(e) => return err(e),
+    };
+    let friend = app
+        .store
+        .peer_by_key(&key)
+        .ok()
+        .flatten()
+        .filter(|p| p.removed_at == 0);
+    let (Some(p), false) = (friend, re.is_empty()) else {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "this one came before replies could be sent; a line from Home reaches them" })),
+        )
+            .into_response();
+    };
+    let frame = match app.store.peer_queue_kind(&p, "reply", &re, &text, "") {
+        Ok(f) => f,
+        Err(e) => return err(e),
+    };
+    let app2 = app.clone();
+    let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
+        .await
+        .unwrap_or(false);
+    peers_moved(&app);
+    Json(json!({ "sent": sent, "to": p.name, "waits": !sent && p.v < peer::REPLIES_V }))
+        .into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct OnBody {
+    #[serde(default)]
+    pub(crate) on: bool,
+}
+
+/// `POST /api/peers/{id}/receipts`: whether this friend is told when the
+/// reader opens what they sent. Off until turned on.
+pub(crate) async fn peer_receipts(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(b): Json<OnBody>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.peer_read_receipts(id, b.on) {
+        Ok(true) => {
+            peers_moved(&app);
+            Json(json!({ "on": b.on })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A friend's document was opened: told to them, when the reader allows it
+/// for that friend and their snyvi reads it. Blocking; nothing waits on it.
+pub(crate) fn opened(app: &App, id: &str) {
+    let Ok((key, frame, _)) = app.store.peer_frame(id) else {
+        return;
+    };
+    if frame.is_empty() {
+        return;
+    }
+    let Some(p) = app
+        .store
+        .peer_by_key(&key)
+        .ok()
+        .flatten()
+        .filter(|p| p.removed_at == 0 && p.read_receipts && p.v >= peer::REPLIES_V)
+    else {
+        return;
+    };
+    if app
+        .store
+        .peer_queue_kind(&p, "receipt", &frame, "read", "")
+        .is_ok()
+    {
+        app.peers.wake.notify_one();
+    }
+}
+
+/// `POST /api/desks/{desk}/notes/{note}/tell`: Tell Trapti ✓ on a line she
+/// sent, once it is ticked. One press, one frame; nothing goes on its own.
+pub(crate) async fn note_tell(
+    State(app): S,
+    headers: HeaderMap,
+    Path((desk, note)): Path<(i64, i64)>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let Ok(Some((peer_id, frame, text, commit))) = app.store.note_to_tell(desk, note) else {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "only a ticked line a friend sent, once" })),
+        )
+            .into_response();
+    };
+    let Ok(Some(p)) = app.store.peer(peer_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if p.removed_at != 0 {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "this friend was removed; Restore them first" })),
+        )
+            .into_response();
+    }
+    let queued = app
+        .store
+        .peer_queue_kind(&p, "done", &frame, &text, &commit)
+        .and_then(|f| app.store.note_told(desk, note).map(|_| f));
+    let frame = match queued {
+        Ok(f) => f,
+        Err(e) => return err(e),
+    };
+    emit(&app, "desknotes", json!({ "desk": desk }));
+    let app2 = app.clone();
+    let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
+        .await
+        .unwrap_or(false);
+    peers_moved(&app);
+    Json(json!({ "sent": sent, "to": p.name, "waits": !sent && p.v < peer::REPLIES_V }))
+        .into_response()
 }
 
 /// A friend's name as a folder: lowercase letters, digits and dashes.

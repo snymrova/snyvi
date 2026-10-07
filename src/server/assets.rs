@@ -64,6 +64,7 @@ pub(crate) const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pale
 /// The theme, accent and font steppers, fetched once the page is idle or the
 /// foot column is reached: nothing on screen needs them until a click there.
 pub(crate) const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
+pub(crate) const NAV_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/nav.js"));
 
 /// The aside card at the sidebar's foot, fetched when there is an aside to
 /// show: a reader no agent has spoken to never pays for it.
@@ -361,9 +362,38 @@ pub fn fmt_time(ts: i64) -> String {
     local.format(F).unwrap_or_default()
 }
 
+/// What a friend said back about a document, and who it can be answered
+/// to: the head's replies and its Reply… (pairing's second cut).
+#[derive(Default)]
+pub(crate) struct Talk {
+    pub(crate) replies: Vec<crate::peer::Reply>,
+    /// A friend's document from 1.23 on: their name, for Reply to Trapti….
+    pub(crate) reply_to: Option<String>,
+}
+
+/// The talk for `doc`, from the store.
+pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
+    let reply_to = (doc.origin == "peer")
+        .then(|| app.store.peer_frame(&doc.id).ok())
+        .flatten()
+        .filter(|(_, _, re)| !re.is_empty())
+        .and_then(|(key, _, _)| app.store.peer_by_key(&key).ok().flatten())
+        .filter(|p| p.removed_at == 0)
+        .map(|p| p.name);
+    let replies = if doc.origin == "peer" {
+        Vec::new()
+    } else {
+        app.store.peer_replies(&doc.id).unwrap_or_default()
+    };
+    Talk { replies, reply_to }
+}
+
 /// Server-side document markup, mirrored by `renderDoc` in app.js.
-pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
+pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> String {
     let e = html_escape::encode_text;
+    // What goes inside a quoted attribute: a friend names themselves and
+    // their documents, and a `"` there must stay a character.
+    let q = html_escape::encode_double_quoted_attribute;
     // A friend's document says who, and that the signature checked: the
     // only way a document gets `peer` as its origin is through a frame that
     // opened under a pinned key (`crate::peer::open`).
@@ -406,19 +436,29 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
         };
         sub.push_str(&format!(
             " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"{act}\" data-send=\"{}\" data-send-title=\"{}\">{label}</button>",
-            e(&doc.id),
-            e(&doc.title)
+            q(&doc.id),
+            q(&doc.title)
         ));
         // And the way back to the friend's own row, every version with it.
         if doc.filed {
             sub.push_str(&format!(
                 " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Back to From {}\" data-tip-sub=\"with every version; nothing on disk moves\">Move to From {}</button>",
-                e(&doc.id),
-                e(&doc.title),
-                e(&doc.sender),
+                q(&doc.id),
+                q(&doc.title),
+                q(&doc.sender),
                 e(&doc.sender)
             ));
         }
+    }
+    // One line back to them, in a box the page opens (`ui/peer.js`).
+    if let Some(to) = &talk.reply_to {
+        sub.push_str(&format!(
+            " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"reply\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\">Reply to {}…</button>",
+            q(&doc.id),
+            q(&doc.title),
+            q(to),
+            e(to)
+        ));
     }
     // Send to…, only once there is a friend to send to: the page wires the
     // click (`ui/peer.js`). In the sub line, so the head is the same height
@@ -426,14 +466,34 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
     if friends {
         sub.push_str(&format!(
             " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
-            e(&doc.id),
-            e(&doc.title)
+            q(&doc.id),
+            q(&doc.title)
         ));
     }
+    // What friends said back, under the head, oldest first: part of the
+    // page as it is drawn, so nothing arrives under the reader's eyes.
+    let replies: String = talk
+        .replies
+        .iter()
+        .map(|r| {
+            format!(
+                "<li><b>{}</b> {} <time>{}</time></li>",
+                e(&r.from),
+                e(&r.text),
+                fmt_time(r.at)
+            )
+        })
+        .collect();
+    let replies = if replies.is_empty() {
+        replies
+    } else {
+        format!("<ul class=\"doc-replies\">{replies}</ul>")
+    };
     format!(
-        "<header class=\"doc-head\"><h1 class=\"doc-title\">{}</h1><p class=\"doc-sub\">{}</p></header><article class=\"prose kind-{}\">{}</article>",
+        "<header class=\"doc-head\"><h1 class=\"doc-title\">{}</h1><p class=\"doc-sub\">{}</p>{}</header><article class=\"prose kind-{}\">{}</article>",
         e(&doc.title),
         sub,
+        replies,
         doc.kind.as_str(),
         render::chunk_code(body)
     )
@@ -526,7 +586,15 @@ pub(crate) async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response
     shell(
         &app,
         boot,
-        &doc_html(&doc, &body, has_friends(&app)),
+        &{
+            let friends = has_friends(&app);
+            let talk = if friends {
+                talk(&app, &doc)
+            } else {
+                Talk::default()
+            };
+            doc_html(&doc, &body, friends, &talk)
+        },
         &title,
     )
 }
@@ -587,6 +655,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("themes.css", THEMES_CSS, CSS),
     ("palette.js", PALETTE_JS, JS),
     ("look.js", LOOK_JS, JS),
+    ("nav.js", NAV_JS, JS),
     ("note.js", NOTE_JS, JS),
     ("tip.js", TIP_JS, JS),
     ("home.js", HOME_JS, JS),

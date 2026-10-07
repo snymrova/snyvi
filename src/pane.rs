@@ -562,7 +562,11 @@ impl Panes {
             return l.clone();
         }
         let old = self.read_text(id);
-        let (tx, _) = broadcast::channel(256);
+        // Frames waiting for a page that has fallen behind. Past this many it
+        // is sent the screen afresh (`ws.rs`, `Lagged`), which is one frame,
+        // rather than 256 old ones to replay -- each holding a whole changed
+        // screen's worth of cells.
+        let (tx, _) = broadcast::channel(64);
         let l = Arc::new(Live {
             id: id.to_string(),
             inner: Mutex::new(Inner {

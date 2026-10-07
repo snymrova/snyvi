@@ -42,6 +42,11 @@ pub struct Doc {
     /// can go back to the friend's row (`Store::unfile`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub filed: bool,
+    /// The file this document is on this machine, which is what Copy path
+    /// copies (`local_path`). A friend's `source_path` is a place on *their*
+    /// machine, so it is never this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -73,8 +78,12 @@ pub struct DeskDoc {
     pub pinned: bool,
     pub slot: i64,
     pub project: String,
-    /// The file it was sent from, when it was one: the rail offers it to copy.
+    /// The file it was sent from, when it was one.
     pub source_path: Option<String>,
+    /// The file it is on this machine, which the rail offers to copy
+    /// (`local_path`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -224,7 +233,7 @@ const FTS_INSERT: &str =
 const FTS_DELETE: &str =
     "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
 
-const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%')";
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), d.saved_path, p.root";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 /// The same join over `head_docs`: what every list of documents reads, so one
@@ -487,14 +496,39 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (10, peer::COLUMNS_1_22[1]),
     (10, peer::COLUMNS_1_22[2]),
     (10, peer::COLUMNS_1_22[3]),
+    // 1.23: where Save wrote a friend's document, so Copy path copies a file
+    // that is there (`local_path`).
+    (11, SAVED_PATH_COLUMN),
+    // 1.23: pairing's second cut -- receipts, replies, a line told done,
+    // and a line an agent offers (`crate::peer::COLUMNS_1_23`).
+    (11, peer::COLUMNS_1_23[0]),
+    (11, peer::COLUMNS_1_23[1]),
+    (11, peer::COLUMNS_1_23[2]),
+    (11, peer::COLUMNS_1_23[3]),
+    (11, peer::COLUMNS_1_23[4]),
+    (11, peer::COLUMNS_1_23[5]),
+    (11, peer::COLUMNS_1_23[6]),
+    (11, peer::COLUMNS_1_23[7]),
+    (11, peer::COLUMNS_1_23[8]),
+    (11, peer::COLUMNS_1_23[9]),
+    (11, peer::COLUMNS_1_23[10]),
+    (11, peer::COLUMNS_1_23[11]),
+    (11, peer::COLUMNS_1_23[12]),
+    (11, peer::COLUMNS_1_23[13]),
+    (11, peer::COLUMNS_1_23[14]),
+    (11, peer::COLUMNS_1_23[15]),
 ];
+
+/// 1.23's column, named so the old-database tests can take it away again.
+pub const SAVED_PATH_COLUMN: &str = "ALTER TABLE docs ADD COLUMN saved_path TEXT";
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
 /// the one index a four-column `WHERE` on a desk's documents needs, and
 /// `?1` the desk, `?2` the limit.
 fn desk_docs_sql(off: bool) -> String {
     format!(
-        "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path
+        "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path,
+                d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root
          FROM live_docs d JOIN projects p ON p.id = d.project_id
          WHERE d.desk_id = ?1 AND d.desk_off {}
            AND (d.source_path IS NULL
@@ -703,6 +737,7 @@ impl Store {
             desk: d.desk.cloned(),
             sender: d.sender.to_string(),
             filed: false,
+            local_path: local_path(d.source_path, None, d.origin, false, ""),
         })
     }
 
@@ -1730,6 +1765,14 @@ impl Store {
         let rows = conn
             .prepare(&desk_docs_sql(off))?
             .query_map(params![desk_id, limit as i64], |r| {
+                let source_path: Option<String> = r.get(8)?;
+                let local_path = local_path(
+                    source_path.as_deref(),
+                    r.get(9)?,
+                    &r.get::<_, String>(10)?,
+                    r.get::<_, i64>(11)? != 0,
+                    &r.get::<_, String>(12)?,
+                );
                 Ok(DeskDoc {
                     id: r.get(0)?,
                     title: r.get(1)?,
@@ -1739,7 +1782,8 @@ impl Store {
                     pinned: r.get::<_, i64>(5)? != 0,
                     slot: r.get(6)?,
                     project: r.get(7)?,
-                    source_path: r.get(8)?,
+                    source_path,
+                    local_path,
                 })
             })?
             .collect::<std::result::Result<_, _>>()?;
@@ -1913,8 +1957,8 @@ impl Store {
         peer::notes_waiting(&self.conn.lock().unwrap())
     }
 
-    pub fn peer_note_arrived(&self, peer_id: i64, text: &str) -> Result<i64> {
-        peer::note_arrived(&self.conn.lock().unwrap(), peer_id, text, now())
+    pub fn peer_note_arrived(&self, peer_id: i64, text: &str, frame: &str) -> Result<i64> {
+        peer::note_arrived(&self.conn.lock().unwrap(), peer_id, text, frame, now())
     }
 
     /// `what`: taken, remove, restore (`peer::settle_note`).
@@ -1927,8 +1971,23 @@ impl Store {
         peer::offers_open(&self.conn.lock().unwrap())
     }
 
-    pub fn peer_offer(&self, peer_id: i64, doc_id: &str, pane: &str, by: &str) -> Result<i64> {
-        peer::offer(&self.conn.lock().unwrap(), peer_id, doc_id, pane, by, now())
+    pub fn peer_offer(
+        &self,
+        peer_id: i64,
+        doc_id: &str,
+        text: &str,
+        pane: &str,
+        by: &str,
+    ) -> Result<i64> {
+        peer::offer(
+            &self.conn.lock().unwrap(),
+            peer_id,
+            doc_id,
+            text,
+            pane,
+            by,
+            now(),
+        )
     }
 
     pub fn peer_offer_get(&self, id: i64) -> Result<Option<peer::Offer>> {
@@ -2320,6 +2379,17 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
         },
         sender: r.get(19)?,
         filed: r.get::<_, i64>(20)? != 0,
+        local_path: None,
+    })
+    .and_then(|mut d| {
+        d.local_path = local_path(
+            d.source_path.as_deref(),
+            r.get(21)?,
+            &d.origin,
+            d.filed,
+            &r.get::<_, String>(22)?,
+        );
+        Ok(d)
     })
 }
 
@@ -2374,6 +2444,9 @@ pub fn new_id(hash: &str) -> String {
     let mixed = blake3::hash(format!("{hash}:{}:{}:{n}", now(), std::process::id()).as_bytes());
     mixed.to_hex()[..10].to_string()
 }
+
+mod talk;
+use talk::local_path;
 
 #[cfg(test)]
 mod tests;

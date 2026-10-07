@@ -312,7 +312,7 @@ function draw() {
     return;
   }
   document.title = `${d.name} · desk`;
-  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep"><b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div><div class="dk-live vh" aria-live="polite"></div></div>`;
@@ -325,6 +325,7 @@ function draw() {
   sync(d);
   dividers();
   rail();
+  ctx.nav?.();
 }
 
 /** Views for the desk's panes: the ones already here kept, scrollback and

@@ -240,7 +240,38 @@ export function head(ctx, b) {
   if (b.dataset.act === "keep") return keepOn(ctx, [id], title);
   if (b.dataset.act === "save") return save(ctx, id, b);
   if (b.dataset.act === "unfile") return unfile(ctx, id, b);
+  if (b.dataset.act === "reply") return reply(ctx, id, b.dataset.to || "them", title);
   return send(ctx, id, title);
+}
+
+/** One line back to the friend who sent a document: it shows under the
+ *  head of their copy. Anything longer is a document of its own. */
+function reply(ctx, id, to, title) {
+  const { esc } = ctx;
+  open(`Reply to ${esc(to)}`,
+    `<p>About <span class="pr-title">${esc(title || "their document")}</span>. One line; it shows under the head of their copy.</p>` +
+    `<div class="pr-row"><input id="pr-line" maxlength="200" placeholder="Looks good; one question about step 3" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
+    `<div class="pr-said" aria-live="polite"></div>`);
+  let busy = false;
+  const go = async () => {
+    const t = box.querySelector("#pr-line")?.value.trim();
+    if (!t || busy) return;
+    busy = true;
+    const here = box.querySelector(".pr-box");
+    box.querySelector("[data-pr=send]").disabled = true;
+    say("Sending…");
+    try {
+      const r = await post(`/api/docs/${encodeURIComponent(id)}/reply`, { text: t });
+      if (!here.isConnected) return;
+      say(r.sent ? `Sent to ${r.to}.` : r.waits ? `Kept for ${r.to}: their snyvi is older, and it goes once they update.` : `Queued for ${r.to}; it goes when the relay can be reached.`);
+      box.querySelector(".pr-row").remove();
+      box.querySelector(".pr-box").insertAdjacentHTML("beforeend", `<div class="pr-foot"><button type="button" class="pr-go" data-pr="close">Done</button></div>`);
+      box.querySelector(".pr-foot .pr-go").focus();
+    } catch (e) { if (here.isConnected) { say(ctx.sayErr(e).why, true); box.querySelector("[data-pr=send]").disabled = false; } }
+    finally { busy = false; }
+  };
+  on("click", e => { if (e.target.closest("[data-pr=send]")) go(); });
+  on("keydown", e => { if (e.key === "Enter" && e.target.id === "pr-line") { e.preventDefault(); go(); } });
 }
 
 /** Move to From <friend>: a friend's document that was filed into one of
@@ -303,6 +334,7 @@ export async function save(ctx, id, b) {
     const r = await deskCall(`/api/docs/${encodeURIComponent(id)}/save`, {});
     if (b && b.isConnected) { const s = Object.assign(document.createElement("span"), { textContent: `Saved as ${r.rel}` }); s.setAttribute("role", "status"); b.replaceWith(s); }
     ctx.toast(`Saved into ${r.desk}'s folder`, { sub: r.rel });
+    ctx.saved?.(id, r.path);
   } catch (e) {
     if (b) b.disabled = false;
     ctx.toast("Could not save it", { sub: ctx.sayErr(e).why });
@@ -318,6 +350,8 @@ export async function save(ctx, id, b) {
  *  from a friend is a toast that opens Home, unless it came quietly. */
 export function event(ctx, j) {
   if (j.offer != null) offer(ctx, j);
+  else if (j.done && !j.quiet) ctx.toast(`${j.from} ticked your line`, { sub: j.done + (j.commit ? ` · ${String(j.commit).slice(0, 7)}` : ""), kind: "news", go: ctx.home });
+  else if (j.reply && !j.quiet) ctx.toast(`${j.from} replied`, { sub: j.reply, kind: "news" });
   else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: j.desk ? `a suggestion on ${j.desk}` : "waiting on Home, under Arrived", kind: "news", go: ctx.home });
 }
 
@@ -325,7 +359,8 @@ export function offer(ctx, o) {
   const { esc } = ctx;
   const id = o.offer != null ? o.offer : o.id;
   if (id == null) return;
-  open(`Send <span class="pr-title">${esc(o.title || "a document")}</span> to ${esc(o.to || "a friend")}?`,
+  open(o.text ? `Send a line to ${esc(o.to || "a friend")}?` : `Send <span class="pr-title">${esc(o.title || "a document")}</span> to ${esc(o.to || "a friend")}?`,
+    (o.text ? `<p class="pr-title">“${esc(o.text)}”</p>` : "") +
     `<p>${esc(o.by || "An agent")}${o.desk ? ` on the desk <b>${esc(o.desk)}</b>` : ""} offers it. Nothing has gone: it goes only if you press Send.</p>` +
     `<div class="pr-said" aria-live="polite"></div>` +
     `<div class="pr-foot"><button type="button" data-pr="no">Not now</button><button type="button" class="pr-go" data-pr="yes">Send</button></div>`);
