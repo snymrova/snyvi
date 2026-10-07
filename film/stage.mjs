@@ -247,7 +247,8 @@ for (const name of FOLDERS) roots[name] = (await api("/api/browse", { path: dirs
 // The desks. These routes answer a page of the daemon's own that holds the
 // window's capability, so the camera mints one over the token the way a window
 // launch does, and presents the Origin a page would have sent.
-const cap = (await api("/api/capability")).capability;
+// The capability answers to the window secret now, not the token (1.17).
+const cap = (await api("/api/capability", {}, { "x-snyvi-window": readFileSync(join(tmp, "config", "window"), "utf8").trim() })).capability;
 const asPage = { "x-snyvi-capability": cap, origin: base };
 const desks = [];
 const panes = {};
