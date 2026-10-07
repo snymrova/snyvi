@@ -24,8 +24,53 @@ pub(crate) struct Peers {
     /// Pairings under way or lately finished, by code.
     pub pairings: std::sync::Mutex<HashMap<String, Pairing>>,
     /// Woken when there is something to send, or a friend was added or
-    /// removed: the link (`peer_link`) flushes the outbox, opens, or closes.
-    pub wake: tokio::sync::Notify,
+    /// removed: the links (`peer_link`) flush the outbox, open, or close.
+    pub wake: Wake,
+    /// One flush of the outbox at a time (`flush_all`): set while one runs,
+    /// and `again` when a call came meanwhile, so the flusher goes once more.
+    pub flushing: std::sync::atomic::AtomicBool,
+    pub again: std::sync::atomic::AtomicBool,
+    /// The frames held for a newer snyvi are read once per start, not on
+    /// every link (`read_held`).
+    pub held_read: std::sync::atomic::AtomicBool,
+    /// The open lines, by friend: where a frame to a friend at `LINE_V`
+    /// goes (`peer_link::line`).
+    pub lines: std::sync::Mutex<HashMap<i64, LineHandle>>,
+    /// Until when the relay asked for quiet (seconds), 0 for not at all:
+    /// read receipts wait, and the link reconnects no faster than a minute.
+    pub quiet_until: std::sync::atomic::AtomicI64,
+}
+
+/// The wake-up every socket task listens for: a counter each has its own
+/// view of, so one `notify_one` reaches all of them and one sent while a
+/// task was busy is seen when it next looks.
+pub(crate) struct Wake(tokio::sync::watch::Sender<u64>);
+
+impl Default for Wake {
+    fn default() -> Self {
+        Wake(tokio::sync::watch::channel(0).0)
+    }
+}
+
+impl Wake {
+    pub fn notify_one(&self) {
+        self.0.send_modify(|n| *n += 1);
+    }
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.subscribe()
+    }
+}
+
+/// A line's sending half: the frames the link task will put on its socket.
+#[derive(Clone)]
+pub(crate) struct LineHandle {
+    pub tx: tokio::sync::mpsc::Sender<Outbound>,
+}
+
+/// A frame for the line, cut into its pieces already.
+pub(crate) struct Outbound {
+    pub id: String,
+    pub chunks: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,7 +139,7 @@ fn set_my_name(paths: &Paths, name: &str) {
     let _ = std::fs::write(paths.config_dir.join("peer-name"), name);
 }
 
-fn peers_moved(app: &App) {
+pub(crate) fn peers_moved(app: &App) {
     emit(app, "peers", json!({}));
 }
 
@@ -113,7 +158,7 @@ pub(crate) async fn peers_list(State(app): S) -> Response {
         .unwrap_or_default()
         .into_iter()
         .map(|o| {
-            let stopped = o.tries >= TRIES_MAX;
+            let stopped = o.tries >= TRIES_MAX || o.later >= peer::LATER_MAX;
             let mut v = json!(o);
             v["stopped"] = json!(stopped);
             v
@@ -698,11 +743,47 @@ pub(crate) async fn pane_offer(
     }
 }
 
-/// Send what is queued: every unsent frame, or the one named. Blocking.
-/// `true` when the named one went, or when every one did.
+/// Send everything due, detached: the link on open, a wake, the retry
+/// tick and the HTTP fallback all come here, and one flush runs at a time.
+/// A call while one runs marks `again`, and the flusher goes once more
+/// before it stops, so nothing queued meanwhile waits for the next tick
+/// and two flushers never upload the same frame.
+pub(crate) fn flush_all(app: &Arc<App>) {
+    use std::sync::atomic::Ordering::SeqCst;
+    app.peers.again.store(true, SeqCst);
+    if app.peers.flushing.swap(true, SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tokio::task::spawn_blocking(move || {
+        while app.peers.again.swap(false, SeqCst) {
+            flush_outbox(&app, None);
+        }
+        app.peers.flushing.store(false, SeqCst);
+        // A call that landed between the last swap and the store: once more.
+        if app.peers.again.load(SeqCst) && !app.peers.flushing.swap(true, SeqCst) {
+            while app.peers.again.swap(false, SeqCst) {
+                flush_outbox(&app, None);
+            }
+            app.peers.flushing.store(false, SeqCst);
+        }
+    });
+}
+
+/// Send what is queued: every frame due now, or the one named (the reader's
+/// Send: that one row, due or not, at once). Blocking. `true` when the
+/// named one went, or when every one did.
 pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
-    let Ok(rows) = app.store.peer_unsent() else {
-        return false;
+    let now = crate::store::now();
+    let rows = match only {
+        Some(id) => app
+            .store
+            .peer_unsent_one(id)
+            .ok()
+            .flatten()
+            .into_iter()
+            .collect(),
+        None => app.store.peer_unsent(now).unwrap_or_default(),
     };
     let Ok(me) = identity_blocking(app) else {
         return false;
@@ -712,10 +793,7 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
     let mut moved = false;
     for row in rows {
         let (frame_id, peer_id) = (row.id.as_str(), row.peer_id);
-        if only.is_some_and(|o| o != frame_id) {
-            continue;
-        }
-        if row.tries >= TRIES_MAX {
+        if stopped(&row) {
             all = false;
             continue;
         }
@@ -728,10 +806,19 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
                 moved = true;
                 true
             }
-            // Waiting, not failing: the next retry tries again, and the
-            // tries are kept for what is really wrong.
-            Ok(peer::Deposit::Later(why)) => {
-                let _ = app.store.peer_waiting(frame_id, why);
+            // Down the line; Sent when the line says held or arrived, a
+            // moment on. For the reader pressing Send that is "sent": the
+            // line took it, which is what a mailbox deposit answered.
+            Ok(peer::Deposit::Pending) => {
+                let _ = app.store.peer_pending(frame_id);
+                only.is_some()
+            }
+            // Waiting, not failing: the next flush tries again once it is
+            // due, and the tries are kept for what is really wrong. A busy
+            // relay names its minute; the others are the friend's absence.
+            Ok(peer::Deposit::Later { why, until }) => {
+                let until = until.or((why == peer::BUSY).then(|| now + 60));
+                let _ = app.store.peer_waiting(frame_id, why, until);
                 false
             }
             Err(e) => {
@@ -745,6 +832,12 @@ pub(crate) fn flush_outbox(app: &App, only: Option<&str>) -> bool {
         peers_moved(app);
     }
     all
+}
+
+/// A frame that is not tried again until the reader says Retry: it failed
+/// `TRIES_MAX` times, or the friend was away for `LATER_MAX` tries running.
+fn stopped(row: &peer::Unsent) -> bool {
+    row.tries >= TRIES_MAX || row.later >= peer::LATER_MAX
 }
 
 fn send_one(
@@ -769,7 +862,22 @@ fn send_one(
             return Ok(peer::Deposit::Sent);
         }
         if p.v < peer::REPLIES_V {
-            return Ok(peer::Deposit::Later(OLDER));
+            return Ok(peer::Deposit::Later {
+                why: OLDER,
+                until: None,
+            });
+        }
+        // The relay asked for quiet: a read receipt is the one thing that
+        // can wait for tomorrow without anyone missing it.
+        let quiet = app
+            .peers
+            .quiet_until
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if row.kind == "receipt" && row.text == "read" && quiet > crate::store::now() {
+            return Ok(peer::Deposit::Later {
+                why: peer::NEARLY_OUT,
+                until: Some(quiet),
+            });
         }
         let content = match row.kind.as_str() {
             "receipt" => Content::Receipt {
@@ -793,7 +901,7 @@ fn send_one(
             other => anyhow::bail!("a frame of a kind this snyvi does not send: {other}"),
         };
         let frame = peer::seal(me, &p, &content, b"")?;
-        return peer::deposit(me, &p.sign_key, frame_id, &frame);
+        return leave(app, me, &p, frame_id, &frame);
     }
     // A line: no document behind it, the words are the whole of it.
     if doc_id.is_empty() {
@@ -806,7 +914,7 @@ fn send_one(
             },
         };
         let frame = peer::seal(me, &p, &content, b"")?;
-        return peer::deposit(me, &p.sign_key, frame_id, &frame);
+        return leave(app, me, &p, frame_id, &frame);
     }
     let Some(doc) = app.store.get(doc_id)? else {
         // The document went while the frame waited: nothing to send, done.
@@ -847,8 +955,46 @@ fn send_one(
         at: folder_of(app, &doc),
     };
     let frame = peer::seal(me, &p, &content, &bytes)?;
-    peer::deposit(me, &p.sign_key, frame_id, &frame)
+    leave(app, me, &p, frame_id, &frame)
 }
+
+/// A sealed frame on its way: down the line to a friend who speaks on one
+/// (`LINE_V`), as pieces the link task puts on the socket, or left in the
+/// mailbox of one who does not. A line that is not open now is "not now":
+/// its opening makes the friend's frames due again (`peer_due_now`).
+fn leave(
+    app: &App,
+    me: &Identity,
+    p: &Peer,
+    frame_id: &str,
+    frame: &[u8],
+) -> anyhow::Result<peer::Deposit> {
+    if p.v < peer::LINE_V {
+        return peer::deposit(me, &p.sign_key, frame_id, frame);
+    }
+    let line = app.peers.lines.lock().unwrap().get(&p.id).cloned();
+    let Some(line) = line else {
+        return Ok(peer::Deposit::Later {
+            why: LINE_DOWN,
+            until: None,
+        });
+    };
+    let out = Outbound {
+        id: frame_id.to_string(),
+        chunks: peer::chunks(frame_id, frame),
+    };
+    match line.tx.try_send(out) {
+        Ok(()) => Ok(peer::Deposit::Pending),
+        Err(_) => Ok(peer::Deposit::Later {
+            why: LINE_DOWN,
+            until: None,
+        }),
+    }
+}
+
+/// Why a frame to a friend on a line waits: this daemon's line to them is
+/// not open.
+const LINE_DOWN: &str = "the line to them is not open";
 
 /// Why a reply or a done waits in the outbox: the friend's snyvi does not
 /// read it yet. It goes the first time a frame from them says it would.
@@ -966,6 +1112,7 @@ pub(crate) fn take_in(
     me: &Identity,
     w: &Waiting,
     bytes: Vec<u8>,
+    via_line: bool,
 ) -> anyhow::Result<bool> {
     let friend = app
         .store
@@ -990,7 +1137,7 @@ pub(crate) fn take_in(
             Ok(false)
         }
         Ok((content, body)) => {
-            if let Err(e) = arrived(app, &p, content, body, &w.id) {
+            if let Err(e) = arrived(app, &p, content, body, &w.id, via_line) {
                 eprintln!("snyvi: a document from {} could not be kept: {e:#}", p.name);
                 return Ok(false);
             }
@@ -1027,7 +1174,7 @@ pub(crate) fn read_held(app: &Arc<App>, me: &Identity) {
         match peer::open(me, &p, &bytes) {
             Ok((Content::Other, _)) => {}
             Ok((content, body)) => {
-                if let Err(e) = arrived(app, &p, content, body, &id) {
+                if let Err(e) = arrived(app, &p, content, body, &id, false) {
                     eprintln!(
                         "snyvi: something held from {} could not be kept: {e:#}",
                         p.name
@@ -1058,7 +1205,7 @@ pub(crate) fn bring_in(app: &Arc<App>, me: &Identity) -> anyhow::Result<usize> {
             friend.is_some() && !app.store.peer_taken(&w.id)? && w.size as usize <= peer::FRAME_MAX;
         if fetch {
             let bytes = peer::fetch(me, &w.id)?;
-            if take_in(app, me, &w, bytes)? {
+            if take_in(app, me, &w, bytes, false)? {
                 n += 1;
             }
         }
@@ -1092,10 +1239,15 @@ fn arrived(
     content: Content,
     body: Vec<u8>,
     frame: &str,
+    via_line: bool,
 ) -> anyhow::Result<()> {
     // "From them … ago" is what they sent, not what their snyvi said back.
     if matches!(content, Content::Document { .. } | Content::Note { .. }) {
         let _ = app.store.touch_peer(p.id, true);
+    }
+    // They are there: whatever waits for them is due now.
+    if app.store.peer_due_now(p.id).unwrap_or(0) > 0 {
+        app.peers.wake.notify_one();
     }
     // What their snyvi reads, from what it just wrote: a friend who updated
     // is sent the new kinds from now on, and what waited for it goes.
@@ -1103,16 +1255,19 @@ fn arrived(
     let p = &Peer { v, ..p.clone() };
     if v != was {
         let _ = app.store.peer_set_v(p.id, v);
-        if v >= peer::REPLIES_V && was < peer::REPLIES_V {
+        // What waited for their update (`OLDER`) is due now.
+        let _ = app.store.peer_due_now(p.id);
+        if v > was {
             app.peers.wake.notify_one();
         }
     }
     let desk = friend_desk(app, p);
     // Kept, and said back: the sender's Sent list reads "arrived". Not for
-    // what itself answers a frame.
+    // what itself answers a frame, and not for a frame off the line: the
+    // ack the link sends for it is the receipt, carried by the line.
     let answer = matches!(content, Content::Document { .. } | Content::Note { .. });
     let said = |app: &Arc<App>| {
-        if answer && v >= peer::REPLIES_V {
+        if answer && v >= peer::REPLIES_V && !via_line {
             let _ = app
                 .store
                 .peer_queue_kind(p, "receipt", frame, "arrived", "");

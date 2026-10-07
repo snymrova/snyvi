@@ -292,10 +292,15 @@ pub fn emoji(a: &[u8; 32], b: &[u8; 32]) -> String {
 /// close the loop -- a receipt, a reply, a line done. A frame without one is
 /// older. What a friend's last frame said is kept (`Peer::v`), and those
 /// kinds go only to a friend at `REPLIES_V` or past it.
-pub const CONTENT_V: u32 = 2;
+pub const CONTENT_V: u32 = 3;
 
 /// The first `v` that reads `Receipt`, `Reply` and `Done`.
 pub const REPLIES_V: u32 = 2;
+
+/// The first `v` that speaks on a line (`line_ws`): a friend at it is sent
+/// everything down the line, and a frame from them comes the same way. An
+/// older friend keeps the mailbox and the HTTP deposit.
+pub const LINE_V: u32 = 3;
 
 /// What travels inside a frame.
 ///
@@ -571,12 +576,21 @@ pub enum PairState {
 
 /// The HTTP client the relay is spoken to with. Blocking, like `client.rs`'s:
 /// every call here runs under `spawn_blocking`.
+/// One agent for the process: a deposit after a deposit reuses the
+/// connection instead of a TLS handshake each. ureq lets an idle connection
+/// go after fifteen seconds, under what the relay allows, so a POST rarely
+/// meets one the relay closed; when it does, the try is retried.
 fn http() -> ureq::Agent {
-    ureq::config::Config::builder()
-        .timeout_global(Some(HTTP_TIMEOUT))
-        .http_status_as_error(false)
-        .build()
-        .new_agent()
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT
+        .get_or_init(|| {
+            ureq::config::Config::builder()
+                .timeout_global(Some(HTTP_TIMEOUT))
+                .http_status_as_error(false)
+                .build()
+                .new_agent()
+        })
+        .clone()
 }
 
 /// One side of a pairing, start to finish. Symmetric: whoever minted the code
@@ -819,8 +833,15 @@ pub enum Deposit {
     /// In the friend's mailbox.
     Sent,
     /// Not now, and nothing wrong: it stays in the outbox for the next try,
-    /// and the wait does not count against the tries a frame has.
-    Later(&'static str),
+    /// and the wait does not count against the tries a frame has. `until`
+    /// when the relay named the moment (Retry-After), else the friend is
+    /// away and the wait grows (`waiting`).
+    Later {
+        why: &'static str,
+        until: Option<i64>,
+    },
+    /// Down the line, waiting for the friend's ack (`pending`).
+    Pending,
 }
 
 /// What the reader is told when the relay asks everyone to slow down.
@@ -842,13 +863,28 @@ pub fn deposit(me: &Identity, to: &str, id: &str, frame: &[u8]) -> Result<Deposi
     if status == 200 || status == 201 {
         return Ok(Deposit::Sent);
     }
+    let until = retry_after(&resp);
     let body = String::from_utf8_lossy(&read_all(&mut resp)?)
         .trim()
         .to_string();
     match later(status, &body) {
-        Some(why) => Ok(Deposit::Later(why)),
+        Some(why) => Ok(Deposit::Later { why, until }),
         None => bail!("the relay answered {status}: {body}"),
     }
+}
+
+/// When the relay said to come back: its `Retry-After`, in seconds from
+/// now, as a moment. Honoured so the relay can say "an hour" and be obeyed.
+fn retry_after(resp: &ureq::http::Response<ureq::Body>) -> Option<i64> {
+    let secs: i64 = resp
+        .headers()
+        .get("retry-after")?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    (secs > 0).then(|| crate::store::now() + secs.min(7 * 86_400))
 }
 
 /// The answers to a deposit that mean "not now": the mailbox full, the
@@ -859,10 +895,15 @@ fn later(status: u16, body: &str) -> Option<&'static str> {
     match status {
         429 if body.contains("busy") => Some(BUSY),
         429 => Some("their mailbox is full"),
+        503 => Some(NEARLY_OUT),
         404 => Some("their snyvi has not been online for a while"),
         _ => None,
     }
 }
+
+/// What the reader is told when the relay is nearly out for the day and a
+/// big document waits for tomorrow.
+pub const NEARLY_OUT: &str = "the relay is nearly out for today; this goes tomorrow";
 
 /// What is waiting for me, at once. The sweep the link falls back on when
 /// the socket will not open; the socket itself says the same as it lands.
@@ -948,6 +989,166 @@ pub enum Pushed {
 /// What the daemon says back: the frame is in, forget it.
 pub fn ack_message(id: &str) -> String {
     serde_json::json!({ "ack": id }).to_string()
+}
+
+// ---- the line ------------------------------------------------------------------
+
+/// Where a line opens: one object at the relay per friendship, named by the
+/// two addresses, that passes a frame straight from one socket to the
+/// other and stores it only when the other side is away. Signed like a
+/// read of the inbox, over `GET` and this path.
+pub fn line_ws(me: &str, them: &str) -> String {
+    format!("{}/line/{me}/{them}", ws_base(&relay()))
+}
+
+/// A frame goes down the line in pieces of this many bytes: a WebSocket
+/// message is capped at 1 MiB on the way in, and each piece carries
+/// `CHUNK_HEADER` bytes of its own.
+pub const LINE_CHUNK: usize = (1 << 20) - 64;
+/// A piece's header: the frame's id as 32 raw bytes, then this piece's
+/// index and the count, each a little-endian u32.
+pub const CHUNK_HEADER: usize = 40;
+/// The most pieces a frame can be: `FRAME_MAX` over `LINE_CHUNK`, rounded up.
+pub const CHUNKS_MAX: u32 = 9;
+
+/// A frame cut for the line: the binary messages, in order.
+pub fn chunks(id: &str, frame: &[u8]) -> Vec<Vec<u8>> {
+    let raw = unhex32(id).unwrap_or([0; 32]);
+    let of = frame.len().div_ceil(LINE_CHUNK) as u32;
+    frame
+        .chunks(LINE_CHUNK)
+        .enumerate()
+        .map(|(n, data)| {
+            let mut m = Vec::with_capacity(CHUNK_HEADER + data.len());
+            m.extend_from_slice(&raw);
+            m.extend_from_slice(&(n as u32).to_le_bytes());
+            m.extend_from_slice(&of.to_le_bytes());
+            m.extend_from_slice(data);
+            m
+        })
+        .collect()
+}
+
+/// One piece, as it came down the line.
+pub struct Chunk<'a> {
+    pub id: [u8; 32],
+    pub n: u32,
+    pub of: u32,
+    pub data: &'a [u8],
+}
+
+impl<'a> Chunk<'a> {
+    /// The header read; `None` for anything that is not a piece.
+    pub fn parse(m: &'a [u8]) -> Option<Chunk<'a>> {
+        if m.len() < CHUNK_HEADER {
+            return None;
+        }
+        let n = u32::from_le_bytes(m[32..36].try_into().unwrap());
+        let of = u32::from_le_bytes(m[36..40].try_into().unwrap());
+        if of == 0 || n >= of || of > CHUNKS_MAX || m.len() - CHUNK_HEADER > LINE_CHUNK {
+            return None;
+        }
+        Some(Chunk {
+            id: m[..32].try_into().unwrap(),
+            n,
+            of,
+            data: &m[CHUNK_HEADER..],
+        })
+    }
+}
+
+/// Frames being put back together from their pieces, by id. At most
+/// `ASSEMBLING_MAX` at a time: a piece for a third frame drops the oldest,
+/// and its sender sends it again when no ack comes.
+#[derive(Default)]
+pub struct Assembly {
+    frames: Vec<Assembling>,
+}
+
+/// One frame's id, how many pieces it has, and the pieces in hand.
+type Assembling = ([u8; 32], u32, Vec<Option<Vec<u8>>>);
+
+const ASSEMBLING_MAX: usize = 2;
+
+impl Assembly {
+    /// A piece in; the whole frame out when it was the last one missing.
+    pub fn take(&mut self, c: &Chunk) -> Option<(String, Vec<u8>)> {
+        let at = match self.frames.iter().position(|(id, _, _)| *id == c.id) {
+            Some(i) if self.frames[i].1 == c.of => i,
+            Some(i) => {
+                self.frames.remove(i);
+                self.start(c)
+            }
+            None => self.start(c),
+        };
+        let parts = &mut self.frames[at].2;
+        parts[c.n as usize] = Some(c.data.to_vec());
+        if parts.iter().any(Option::is_none) {
+            return None;
+        }
+        let (id, _, parts) = self.frames.remove(at);
+        let mut whole =
+            Vec::with_capacity(parts.iter().map(|p| p.as_ref().map_or(0, Vec::len)).sum());
+        for p in parts.into_iter().flatten() {
+            whole.extend_from_slice(&p);
+        }
+        Some((hex(&id), whole))
+    }
+
+    fn start(&mut self, c: &Chunk) -> usize {
+        while self.frames.len() >= ASSEMBLING_MAX {
+            self.frames.remove(0);
+        }
+        self.frames.push((c.id, c.of, vec![None; c.of as usize]));
+        self.frames.len() - 1
+    }
+}
+
+/// What the line says, as text. Anything else is ignored.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LineSaid {
+    /// The friend is away; the line keeps the frame for them: Sent.
+    Held(String),
+    /// The friend acked the frame: Sent, and arrived.
+    Arrived(String),
+    /// The line lost part of it: from the start.
+    Resend(String),
+    /// The line holds as much as it may for them: later.
+    Full(String),
+    /// Not a frame: dropped there, failed here.
+    Failed { id: String, why: String },
+    /// The friend's socket opened or closed.
+    Friend { on: bool },
+    /// The relay is nearly out for the day: read receipts wait until then.
+    Quiet { until: i64 },
+}
+
+/// Close code the relay uses when an address has opened its daily share of
+/// sockets; the reason says when to come back, as `until:<ms>`.
+pub const CLOSE_BUDGET: u16 = 4429;
+
+/// The moment a `CLOSE_BUDGET` reason names, in seconds; midnight UTC when
+/// it names none.
+pub fn until_of(reason: &str) -> i64 {
+    let now = crate::store::now();
+    reason
+        .strip_prefix("until:")
+        .and_then(|ms| ms.trim().parse::<i64>().ok())
+        .map(|ms| ms / 1000)
+        .filter(|t| *t > now && *t < now + 2 * 86_400)
+        .unwrap_or(now - now % 86_400 + 86_400)
+}
+
+fn unhex32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 /// How long to wait before the `attempt`th try at the relay: 1, 2, 4 … up
@@ -1157,6 +1358,17 @@ pub const COLUMNS_1_23: [&str; 16] = [
     "ALTER TABLE desk_notes ADD COLUMN told_at INTEGER NOT NULL DEFAULT 0",
 ];
 
+/// 1.25: when a waiting frame is next due and how many times running the
+/// relay said "not now" (`waiting`, `unsent`), the index the outbox is read
+/// by, and the one a note's thread is looked up by (a column from version 8,
+/// so the index cannot be in `SCHEMA`).
+pub const COLUMNS_1_25: [&str; 4] = [
+    "ALTER TABLE peer_outbox ADD COLUMN next_at INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE peer_outbox ADD COLUMN later INTEGER NOT NULL DEFAULT 0",
+    "CREATE INDEX IF NOT EXISTS peer_outbox_unsent ON peer_outbox(queued_at) WHERE sent_at = 0",
+    "CREATE INDEX IF NOT EXISTS desk_notes_thread ON desk_notes(thread_id) WHERE thread_id != 0",
+];
+
 /// A reply is one line, as a note is.
 pub const REPLY_CHARS: usize = NOTE_CHARS;
 /// How many replies a document's head shows, the newest.
@@ -1302,9 +1514,11 @@ pub fn queue(conn: &Connection, peer: &Peer, doc_id: &str, now: i64) -> Result<S
     let id = frame_id(doc_id, &peer.sign_key);
     conn.execute(
         "INSERT INTO peer_outbox(id, peer_id, doc_id, queued_at) VALUES(?1, ?2, ?3, ?4)
-         ON CONFLICT(id) DO UPDATE SET queued_at = excluded.queued_at, sent_at = 0, tries = 0, error = ''",
+         ON CONFLICT(id) DO UPDATE SET queued_at = excluded.queued_at, sent_at = 0, tries = 0, later = 0, next_at = 0, error = ''",
         params![id, peer.id, doc_id, now],
     )?;
+    // The reader believes they are there: whatever else waits for them goes too.
+    due_now(conn, peer.id)?;
     Ok(id)
 }
 
@@ -1320,6 +1534,7 @@ pub fn queue_note(conn: &Connection, peer: &Peer, text: &str, now: i64) -> Resul
         "INSERT INTO peer_outbox(id, peer_id, doc_id, text, queued_at) VALUES(?1, ?2, '', ?3, ?4)",
         params![id, peer.id, text, now],
     )?;
+    due_now(conn, peer.id)?;
     Ok(id)
 }
 
@@ -1367,29 +1582,50 @@ pub struct Unsent {
     pub kind: String,
     pub re: String,
     pub extra: String,
+    /// How many times running the relay said "not now" (`waiting`).
+    pub later: i64,
 }
 
-/// What has not gone yet, oldest first.
-pub fn unsent(conn: &Connection) -> Result<Vec<Unsent>> {
-    let rows = conn
-        .prepare(
-            "SELECT o.id, o.peer_id, o.doc_id, o.text, o.tries, o.kind, o.re, o.extra FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
-             WHERE o.sent_at = 0 AND p.removed_at = 0 ORDER BY o.queued_at, o.id",
-        )?
-        .query_map([], |r| {
-            Ok(Unsent {
-                id: r.get(0)?,
-                peer_id: r.get(1)?,
-                doc_id: r.get(2)?,
-                text: r.get(3)?,
-                tries: r.get(4)?,
-                kind: r.get(5)?,
-                re: r.get(6)?,
-                extra: r.get(7)?,
-            })
-        })?
+/// What has not gone yet and is due at `now`, oldest first. A frame the
+/// relay said "not now" to waits until its `next_at` (`waiting`); a new one
+/// has none and goes first. Every flush -- the ten-minute tick, a wake, a
+/// link opening -- reads this, so a wake sends only what is due.
+pub fn unsent(conn: &Connection, now: i64) -> Result<Vec<Unsent>> {
+    let mut st = conn.prepare(&format!(
+        "{UNSENT_SQL} WHERE o.sent_at = 0 AND p.removed_at = 0 AND o.next_at <= ?1 ORDER BY o.queued_at, o.id"
+    ))?;
+    let rows = st
+        .query_map(params![now], row_unsent)?
         .collect::<std::result::Result<_, _>>()?;
     Ok(rows)
+}
+
+/// One frame by id, due or not: the reader pressing Send loads one row, not
+/// every unsent one.
+pub fn unsent_one(conn: &Connection, id: &str) -> Result<Option<Unsent>> {
+    let mut st = conn.prepare(&format!(
+        "{UNSENT_SQL} WHERE o.id = ?1 AND o.sent_at = 0 AND p.removed_at = 0"
+    ))?;
+    let row = st.query_row(params![id], row_unsent).optional()?;
+    Ok(row)
+}
+
+const UNSENT_SQL: &str =
+    "SELECT o.id, o.peer_id, o.doc_id, o.text, o.tries, o.kind, o.re, o.extra, o.later
+    FROM peer_outbox o JOIN peers p ON p.id = o.peer_id";
+
+fn row_unsent(r: &rusqlite::Row) -> rusqlite::Result<Unsent> {
+    Ok(Unsent {
+        id: r.get(0)?,
+        peer_id: r.get(1)?,
+        doc_id: r.get(2)?,
+        text: r.get(3)?,
+        tries: r.get(4)?,
+        kind: r.get(5)?,
+        re: r.get(6)?,
+        extra: r.get(7)?,
+        later: r.get(8)?,
+    })
 }
 
 pub fn sent(conn: &Connection, id: &str, now: i64) -> Result<()> {
@@ -1410,14 +1646,53 @@ pub fn failed(conn: &Connection, id: &str, why: &str) -> Result<()> {
 
 /// Not sent, and nothing wrong (`Deposit::Later`): the row says why it
 /// waits, and keeps its tries, so a friend away for a week does not leave
-/// it stranded at `TRIES_MAX`.
-pub fn waiting(conn: &Connection, id: &str, why: &str) -> Result<()> {
+/// it stranded at `TRIES_MAX`. When the relay named the moment (`until`:
+/// a Retry-After, or a busy relay's minute) the row waits exactly that
+/// long and the wait is the relay's, not the friend's, so `later` stays.
+/// Otherwise the friend is away: `later` counts the run of "not now"s and
+/// the wait doubles from ten minutes, 20, 40, 80, 160, 320, to six hours
+/// (`LATER_MAX` of them, thirty days at six hours, and the frame stops,
+/// with Retry). The power is capped, so no run of misses overflows.
+pub fn waiting(conn: &Connection, id: &str, why: &str, now: i64, until: Option<i64>) -> Result<()> {
+    let why: String = why.chars().take(200).collect();
+    match until {
+        Some(at) => conn.execute(
+            "UPDATE peer_outbox SET error = ?2, next_at = ?3 WHERE id = ?1",
+            params![id, why, at.max(now)],
+        )?,
+        None => conn.execute(
+            "UPDATE peer_outbox SET error = ?2, later = later + 1,
+                next_at = ?3 + min(600 * (1 << min(later, 6)), 21600) WHERE id = ?1",
+            params![id, why, now],
+        )?,
+    };
+    Ok(())
+}
+
+/// Sent down the line, waiting for the friend's ack: tried again in ten
+/// minutes if none comes, and a try is spent, so a line that never acks
+/// ends at `TRIES_MAX` like a relay that never answers.
+pub fn pending(conn: &Connection, id: &str, now: i64) -> Result<()> {
     conn.execute(
-        "UPDATE peer_outbox SET error = ?2 WHERE id = ?1",
-        params![id, why.chars().take(200).collect::<String>()],
+        "UPDATE peer_outbox SET tries = tries + 1, error = '', next_at = ?2 + 600 WHERE id = ?1",
+        params![id, now],
     )?;
     Ok(())
 }
+
+/// A friend is here -- something came from them, their snyvi updated, their
+/// line opened, the reader sent them something new -- so what waits for
+/// them is due now, and its run of "not now"s starts over.
+pub fn due_now(conn: &Connection, peer_id: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE peer_outbox SET next_at = 0, later = 0 WHERE peer_id = ?1 AND sent_at = 0 AND (next_at != 0 OR later != 0)",
+        params![peer_id],
+    )?)
+}
+
+/// "Not now" answers in a row after which a frame stops: thirty days at
+/// the six-hour wait.
+pub const LATER_MAX: i64 = 124;
 
 /// What waits in the outbox, for the friends list to show: each frame not
 /// gone, what it is, how often it failed and why. A frame at `stopped` tries
@@ -1431,12 +1706,15 @@ pub struct Outgoing {
     pub queued_at: i64,
     pub tries: i64,
     pub error: String,
+    /// The run of "not now" answers (`waiting`): the Friends card says
+    /// stopped at `LATER_MAX` of them.
+    pub later: i64,
 }
 
 pub fn outgoing(conn: &Connection) -> Result<Vec<Outgoing>> {
     let rows = conn
         .prepare(
-            "SELECT o.id, o.peer_id, COALESCE(d.title, o.text), o.queued_at, o.tries, o.error
+            "SELECT o.id, o.peer_id, COALESCE(d.title, o.text), o.queued_at, o.tries, o.error, o.later
              FROM peer_outbox o JOIN peers p ON p.id = o.peer_id LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
              WHERE o.sent_at = 0 AND p.removed_at = 0 AND o.kind != 'receipt' ORDER BY o.queued_at, o.id",
         )?
@@ -1448,6 +1726,7 @@ pub fn outgoing(conn: &Connection) -> Result<Vec<Outgoing>> {
                 queued_at: r.get(3)?,
                 tries: r.get(4)?,
                 error: r.get(5)?,
+                later: r.get(6)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -1627,7 +1906,7 @@ pub fn replies(conn: &Connection, doc_ids: &[String]) -> Result<Vec<Reply>> {
 /// Try a frame again from the start: Retry, on one that stopped.
 pub fn retry(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE peer_outbox SET tries = 0, error = '' WHERE id = ?1 AND sent_at = 0",
+        "UPDATE peer_outbox SET tries = 0, later = 0, next_at = 0, error = '' WHERE id = ?1 AND sent_at = 0",
         params![id],
     )? > 0)
 }
@@ -2086,6 +2365,9 @@ mod tests {
         {
             conn.execute_batch(c).unwrap();
         }
+        for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
+            conn.execute_batch(c).unwrap();
+        }
         let (sunny, trapti) = two();
         let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
         assert_eq!(t.name, "Trapti");
@@ -2120,20 +2402,20 @@ mod tests {
         // The outbox: one row per document and friend, queued again on a resend.
         let fid = queue(&conn, &t2, "doc1", 400).unwrap();
         assert_eq!(queue(&conn, &t2, "doc1", 401).unwrap(), fid);
-        assert_eq!(unsent(&conn).unwrap().len(), 1);
+        assert_eq!(unsent(&conn, i64::MAX).unwrap().len(), 1);
         failed(&conn, &fid, "offline").unwrap();
-        assert_eq!(unsent(&conn).unwrap()[0].tries, 1);
+        assert_eq!(unsent(&conn, i64::MAX).unwrap()[0].tries, 1);
         // A full mailbox is a wait, not a failure: the tries stay where they were.
-        waiting(&conn, &fid, "their mailbox is full").unwrap();
-        waiting(&conn, &fid, "their mailbox is full").unwrap();
-        assert_eq!(unsent(&conn).unwrap()[0].tries, 1);
+        waiting(&conn, &fid, "their mailbox is full", 0, None).unwrap();
+        waiting(&conn, &fid, "their mailbox is full", 0, None).unwrap();
+        assert_eq!(unsent(&conn, i64::MAX).unwrap()[0].tries, 1);
         sent(&conn, &fid, 402).unwrap();
-        assert!(unsent(&conn).unwrap().is_empty());
+        assert!(unsent(&conn, i64::MAX).unwrap().is_empty());
         // A line waits there too, each its own row: said twice is two lines.
         let l1 = queue_note(&conn, &t2, "  water the beans  ", 410).unwrap();
         let l2 = queue_note(&conn, &t2, "water the beans", 411).unwrap();
         assert_ne!(l1, l2);
-        let waiting = unsent(&conn).unwrap();
+        let waiting = unsent(&conn, i64::MAX).unwrap();
         assert_eq!(waiting.len(), 2);
         assert_eq!(waiting[0].text, "water the beans");
         assert_eq!(waiting[0].doc_id, "");
@@ -2299,6 +2581,7 @@ mod tests {
         // What 1.21 reads of a 1.22 frame: the same fields it knew, the rest ignored.
         #[derive(Deserialize)]
         #[serde(rename_all = "lowercase", tag = "kind")]
+        #[allow(dead_code)]
         enum Was {
             Document {
                 title: String,
@@ -2364,7 +2647,8 @@ mod tests {
             let frame = seal(&trapti, &as_peer(&sunny, "Sunny"), &k, b"").unwrap();
             let (got, _) = open(&sunny, &as_peer(&trapti, "Trapti"), &frame).unwrap();
             assert_eq!(got, k);
-            assert_eq!(got.v(), REPLIES_V);
+            assert_eq!(got.v(), CONTENT_V);
+            assert!(got.v() >= REPLIES_V);
             // What 1.22 makes of it: a kind it does not know, kept for later.
             #[derive(Deserialize, Debug)]
             #[serde(rename_all = "lowercase", tag = "kind")]
@@ -2405,6 +2689,9 @@ mod tests {
             .iter()
             .filter(|c| c.starts_with("ALTER TABLE peer"))
         {
+            conn.execute_batch(c).unwrap();
+        }
+        for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
             conn.execute_batch(c).unwrap();
         }
         conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
@@ -2456,7 +2743,7 @@ mod tests {
         let r2 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 41).unwrap();
         assert_eq!(r1, r2);
         let rp = queue_kind(&conn, &t, "reply", "d9", " ok ", "", 42).unwrap();
-        let un = unsent(&conn).unwrap();
+        let un = unsent(&conn, i64::MAX).unwrap();
         assert_eq!(un.len(), 2);
         let reply = un.iter().find(|u| u.id == rp).unwrap();
         assert_eq!(
@@ -2490,5 +2777,166 @@ mod tests {
             assert_eq!(safe_path(bad), None, "{bad:?}");
         }
         assert_eq!(safe_path(&"a/".repeat(201)), None);
+    }
+
+    /// The outbox for 1.25: a frame with `COLUMNS_1_25` on it.
+    fn outbox() -> (Connection, Peer) {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE docs (id TEXT PRIMARY KEY, title TEXT NOT NULL);")
+            .unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        for c in COLUMNS_1_19 {
+            conn.execute_batch(c).unwrap();
+        }
+        for c in COLUMNS_1_23
+            .iter()
+            .filter(|c| c.starts_with("ALTER TABLE peer"))
+        {
+            conn.execute_batch(c).unwrap();
+        }
+        for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
+            conn.execute_batch(c).unwrap();
+        }
+        conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
+            .unwrap();
+        let (_, trapti) = two();
+        let t = pin(&conn, &as_peer(&trapti, "Trapti"), 1).unwrap();
+        (conn, t)
+    }
+
+    fn due(conn: &Connection, now: i64) -> Vec<String> {
+        unsent(conn, now)
+            .unwrap()
+            .into_iter()
+            .map(|u| u.id)
+            .collect()
+    }
+
+    fn row(conn: &Connection, id: &str) -> (i64, i64, i64) {
+        conn.query_row(
+            "SELECT tries, later, next_at FROM peer_outbox WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    /// A frame the relay says "not now" to waits 10, 20, 40 … minutes and
+    /// then six hours, keeps its tries, is skipped until due, and is due
+    /// at once when the friend comes back, when Retry is pressed, or when
+    /// the reader sends them something new.
+    #[test]
+    fn a_waiting_frame_is_due_backs_off_and_comes_back() {
+        let (conn, t) = outbox();
+        let id = queue(&conn, &t, "d1", 10).unwrap();
+        assert_eq!(
+            due(&conn, 10),
+            std::slice::from_ref(&id),
+            "new: due at once"
+        );
+
+        waiting(&conn, &id, "away", 100, None).unwrap();
+        assert_eq!(row(&conn, &id), (0, 1, 700), "ten minutes, tries kept");
+        assert!(due(&conn, 699).is_empty(), "not due yet");
+        assert_eq!(due(&conn, 700), std::slice::from_ref(&id));
+        waiting(&conn, &id, "away", 700, None).unwrap();
+        assert_eq!(row(&conn, &id), (0, 2, 700 + 1200), "twenty");
+        for _ in 0..98 {
+            waiting(&conn, &id, "away", 0, None).unwrap();
+        }
+        assert_eq!(
+            row(&conn, &id),
+            (0, 100, 6 * 3600),
+            "capped at six hours, not 0"
+        );
+
+        // The relay named the moment: that long, and the run is untouched.
+        waiting(&conn, &id, BUSY, 5000, Some(5060)).unwrap();
+        assert_eq!(row(&conn, &id), (0, 100, 5060));
+        waiting(&conn, &id, BUSY, 5000, Some(10)).unwrap();
+        assert_eq!(row(&conn, &id).2, 5000, "never in the past");
+
+        assert_eq!(due_now(&conn, t.id).unwrap(), 1);
+        assert_eq!(row(&conn, &id), (0, 0, 0), "they are back: due, run over");
+        assert_eq!(due_now(&conn, t.id).unwrap(), 0, "nothing to do twice");
+
+        waiting(&conn, &id, "away", 100, None).unwrap();
+        let other = queue_note(&conn, &t, "hi", 200).unwrap();
+        assert_eq!(
+            row(&conn, &id),
+            (0, 0, 0),
+            "a new send to them makes the rest due"
+        );
+        assert_eq!(due(&conn, 200), [id.clone(), other.clone()]);
+
+        for _ in 0..LATER_MAX {
+            waiting(&conn, &id, "away", 0, None).unwrap();
+        }
+        assert_eq!(
+            row(&conn, &id).1,
+            LATER_MAX,
+            "stopped by count, not by clock"
+        );
+        assert!(retry(&conn, &id).unwrap());
+        assert_eq!(row(&conn, &id), (0, 0, 0), "Retry starts over");
+
+        pending(&conn, &id, 1000).unwrap();
+        assert_eq!(
+            row(&conn, &id),
+            (1, 0, 1600),
+            "down the line: a try spent, back in ten minutes"
+        );
+        assert_eq!(
+            unsent_one(&conn, &id).unwrap().map(|u| u.id),
+            Some(id.clone()),
+            "Send loads it due or not"
+        );
+        assert!(unsent_one(&conn, "nope").unwrap().is_none());
+        sent(&conn, &other, 300).unwrap();
+        assert!(unsent_one(&conn, &other).unwrap().is_none(), "gone is gone");
+    }
+
+    /// A frame cut for the line comes back whole from its pieces, in any
+    /// order, and a piece that is not one is refused.
+    #[test]
+    fn a_frame_goes_down_the_line_in_pieces_and_comes_back_whole() {
+        let id = "ab".repeat(32);
+        let frame: Vec<u8> = (0..LINE_CHUNK * 2 + 5).map(|i| (i % 251) as u8).collect();
+        let cut = chunks(&id, &frame);
+        assert_eq!(cut.len(), 3);
+        assert_eq!(cut[0].len(), CHUNK_HEADER + LINE_CHUNK);
+        assert_eq!(cut[2].len(), CHUNK_HEADER + 5);
+        let mut a = Assembly::default();
+        for m in [&cut[2], &cut[0]] {
+            assert!(a.take(&Chunk::parse(m).unwrap()).is_none());
+        }
+        let (got_id, got) = a.take(&Chunk::parse(&cut[1]).unwrap()).unwrap();
+        assert_eq!(got_id, id);
+        assert_eq!(got, frame);
+        assert_eq!(chunks(&id, b"x")[0].len(), CHUNK_HEADER + 1);
+        assert!(Chunk::parse(&cut[0][..39]).is_none(), "too short");
+        let mut bad = cut[0].clone();
+        bad[36..40].copy_from_slice(&0u32.to_le_bytes());
+        assert!(Chunk::parse(&bad).is_none(), "a count of none");
+        assert_eq!(
+            serde_json::from_str::<LineSaid>(r#"{"arrived":"x"}"#).unwrap(),
+            LineSaid::Arrived("x".into())
+        );
+        assert_eq!(
+            serde_json::from_str::<LineSaid>(r#"{"friend":{"on":true}}"#).unwrap(),
+            LineSaid::Friend { on: true }
+        );
+        assert_eq!(
+            serde_json::from_str::<LineSaid>(r#"{"quiet":{"until":5}}"#).unwrap(),
+            LineSaid::Quiet { until: 5 }
+        );
+        assert!(serde_json::from_str::<LineSaid>("pong").is_err());
+        let now = crate::store::now();
+        let until = until_of(&format!("until:{}", (now + 100) * 1000));
+        assert_eq!(until, now + 100);
+        assert!(
+            until_of("whatever") > now && until_of("whatever") <= now + 86_400,
+            "midnight when it names none"
+        );
     }
 }
