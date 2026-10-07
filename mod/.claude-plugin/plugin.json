@@ -1,6 +1,6 @@
 {
   "name": "snyvi",
-  "version": "1.23.0",
+  "version": "1.25.0",
   "description": "snyvi in a desk's panel: the thread above the prompt, Claude's questions on Your turn, what git and gh did, and /note with no turn spent.",
   "author": { "name": "snyvi" },
   "types": "./types/index.d.ts"
