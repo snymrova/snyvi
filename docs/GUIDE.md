@@ -1001,19 +1001,30 @@ hide the sidebar and the rail, it gives the document the whole window.
 What wears a maker down is rarely the work; it is the bookkeeping around it.
 Which notes are one piece of work, which folder and branch it lives in, what
 was decided in a chat last Tuesday, and what is waiting on *you*. A Claude in
-a desk's panel files that for you, and the rail shows it at the top, above
-the panels, only when there is something to show.
+a desk's panel files that for you, and the rail shows it only when there is
+something to show: a thread on its panel's row, Your turn and Suggested at
+the top.
 
 - **A thread** is one arc of work: a name, the notes it answers, the folder
   it lives in, and a stage -- idea, planned, building, review, waiting,
   shipped, or parked with the next step to pick it up by. Claude starts one
   with `start_thread` when it takes the work on and moves it with
-  `move_thread`. The card shows the branch, the commits and the PR, and
-  *Decided*: the questions you answered on it. A note's tip says which
-  thread it is in and who has it; the note itself keeps its row for its own
-  two lines, with only its small marks -- the stage, the pictures -- under
-  its number. Right-click a card, or its ⋯, to move,
-  park, rename or remove it; ✕ leaves its Undo in the row, as everywhere.
+  `move_thread`. A panel holds one thread, the one it last took up, shown as
+  one quiet line under the panel's row: its stage, then the PR, the checks
+  or the merge as they come. Its tip has the name, the folder, the branch
+  and its commits, and *Decided*: the questions you answered on it. A
+  shipped thread shows ✓ until its panel takes up another, or for 12 hours.
+  When a panel starts a new thread, or closes, the one it had **rests**:
+  folded under the panels as *Resting*, saying why -- *moved on*, *panel
+  closed*, *parked*. Nothing needs tidying: a resting thread leaves the rail
+  after a day, a parked one after a week, and both are kept; a panel that
+  starts one again by its name brings it back. Right-click a thread, or its
+  ⋯, for **Done** (work that shipped where the panel did not see it),
+  **Park…** with a next step, **Rename…** or **Remove**; the panel hears a
+  Done or a Park at its next prompt, and ✕ leaves its Undo in the row, as
+  everywhere. A note's tip says which thread it is in and who has it; the
+  note itself keeps its row for its own two lines, with only its small
+  marks -- the stage, the pictures -- under its number.
 - **Your turn** is what only you can do: a decision (`ask`, with two to four
   options and the one Claude recommends), or a hand-over (`hand_over`): try
   it, merge it, add a key, or **run** a command Claude was blocked from
@@ -1032,8 +1043,9 @@ the panels, only when there is something to show.
   until you click, and three wait at most.
 
 Home lists **Your turn · across desks**, answerable in place, and
-**Threads** by stage: what is moving, what is parked and with what next
-step, and what shipped this week. The desk brief names a desk's threads and
+**Threads**: what is moving, what rests (parked with its next step, or left
+by its panel), and what shipped this week. The desk brief names the threads
+panels are moving and the parked ones, and
 what is on you, and each prompt's changes carry your answers and the moves
 you made.
 

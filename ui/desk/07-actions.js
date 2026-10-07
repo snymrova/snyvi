@@ -584,7 +584,7 @@ export function textSize(step) {
 export function actions(el) {
   const R = "rule", d = current();
   if (!d) return null;
-  const card = el.closest(".dk-thread");
+  const card = el.closest(".dk-thread, .dk-pth");
   if (card) return threadMenu(card);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
   if (pane) {

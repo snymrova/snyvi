@@ -645,7 +645,7 @@ pub(crate) async fn desk_threads(
     }
     let r = app.store.threads(|c, now| {
         Ok((
-            thread::for_desk(c, id)?,
+            thread::for_desk(c, id, now)?,
             thread::turns(c, id, now - ANSWERED_SHOWN)?,
             thread::suggestions(c, id)?,
         ))

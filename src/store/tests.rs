@@ -91,6 +91,9 @@ const OLD_1_25: &str = "DROP INDEX IF EXISTS peer_outbox_unsent;
      ALTER TABLE peer_outbox DROP COLUMN next_at;
      ALTER TABLE peer_outbox DROP COLUMN later;";
 
+/// And of 1.26's: when a panel last took a thread up, which step 13 adds.
+const OLD_1_26: &str = "ALTER TABLE threads DROP COLUMN taken_at;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -857,6 +860,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
         "UPDATE desks SET kind = 'studio', boards = root, row = 0.62 WHERE id = {studio};
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
+         {OLD_1_26}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
@@ -1140,6 +1144,7 @@ fn a_1_16_database_comes_forward_once() {
              INSERT INTO workflows(project_id, key, title, created_at) VALUES({project}, 'W', 'W', 0);
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
+             {OLD_1_26}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}

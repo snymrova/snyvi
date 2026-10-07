@@ -9,6 +9,7 @@ fn db() -> Connection {
     conn.execute_batch(THREAD_COLUMN).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(CMD_COLUMN).unwrap();
+    conn.execute_batch(TAKEN_COLUMN).unwrap();
     for c in crate::peer::COLUMNS_1_23
         .iter()
         .filter(|c| c.starts_with("ALTER TABLE desk_notes"))
@@ -300,14 +301,23 @@ fn threads_are_capped_by_the_panels_still_open() {
             Started::New(_)
         ));
     }
-    for i in 0..THREADS_PER_DESK {
+    // Nor do the ones a panel moved on from: it holds one, its latest.
+    for i in 0..THREADS_PER_DESK + 2 {
         assert!(matches!(
             start_as(&mut conn, d, &format!("live {i}"), "live", &[]),
             Started::New(_)
         ));
     }
+    // Threads from outside a panel are what the cap keeps in bounds: with
+    // the live panel's one, one fewer of them fits.
+    for i in 0..THREADS_PER_DESK - 1 {
+        assert!(matches!(
+            start_as(&mut conn, d, &format!("loose {i}"), "", &[]),
+            Started::New(_)
+        ));
+    }
     assert!(matches!(
-        start_as(&mut conn, d, "one more", "live", &[]),
+        start_as(&mut conn, d, "one more", "", &[]),
         Started::Full
     ));
     // A resting thread picked up again by its name is the same thread, full or not.
@@ -444,4 +454,78 @@ fn a_pr_is_a_number() {
     assert!(branch_ok("claude/threads"));
     assert!(!branch_ok("a..b"));
     assert!(!branch_ok("-x"));
+}
+
+/// A panel holds one thread, the one it last took up; the rest rest, each
+/// saying why, and leave the lists when their time is up. A reader's click
+/// on an old one does not take the panel's thread from it.
+#[test]
+fn a_panel_holds_one_thread_and_the_rest_rest() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    conn.execute(
+        "INSERT INTO panes(id, desk_id, slot, cwd, created_at) VALUES ('p1', ?1, 1, '/w', 0)",
+        params![d],
+    )
+    .unwrap();
+    start_as(&mut conn, d, "A", "p1", &[]);
+    start_as(&mut conn, d, "B", "p1", &[]);
+    start_as(&mut conn, d, "C", "gone", &[]);
+    start_as(&mut conn, d, "D", "gone2", &[]);
+    let park = Move {
+        stage: "parked".into(),
+        next: "rebase first".into(),
+        pane: "gone".into(),
+        ..Move::default()
+    };
+    move_thread(&mut conn, d, None, &park, 10).unwrap();
+    let rest = |conn: &Connection, now: i64| -> Vec<(String, String, String)> {
+        let mut v: Vec<_> = for_desk(conn, d, now)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.name, t.stage, t.rest))
+            .collect();
+        v.sort();
+        v
+    };
+    let row = |n: &str, s: &str, r: &str| (n.to_string(), s.to_string(), r.to_string());
+    assert_eq!(
+        rest(&conn, 20),
+        [
+            row("A", "planned", "moved on"),
+            row("B", "planned", ""),
+            row("C", "parked", "parked"),
+            row("D", "planned", "panel closed"),
+        ]
+    );
+    // Done on the rail, for work that shipped somewhere the panel did not see.
+    let done = Move {
+        stage: "shipped".into(),
+        reader: true,
+        ..Move::default()
+    };
+    let a = for_desk(&conn, d, 20)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.name == "A")
+        .unwrap();
+    move_thread(&mut conn, d, Some(a.id), &done, 30).unwrap();
+    assert_eq!(of_pane(&conn, d, "p1").unwrap().unwrap().name, "B");
+    assert_eq!(rest(&conn, 40)[0], row("A", "shipped", "moved on"));
+    // A day on, the resting one has left the list; parked and shipped stay.
+    assert_eq!(
+        rest(&conn, 30 + RESTING_SHOWN),
+        [
+            row("A", "shipped", "moved on"),
+            row("B", "planned", ""),
+            row("C", "parked", "parked"),
+        ]
+    );
+    // A week on, the parked one has too. Kept: started again, it is back.
+    assert_eq!(rest(&conn, 10 + PARKED_SHOWN).len(), 2);
+    assert!(matches!(
+        start_as(&mut conn, d, "D", "p1", &[]),
+        Started::Again(_)
+    ));
+    assert_eq!(of_pane(&conn, d, "p1").unwrap().unwrap().name, "D");
 }

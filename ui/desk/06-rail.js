@@ -84,7 +84,7 @@ function rail() {
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
       (talked(v) ? `<button type="button" data-a="again" data-p="${v.id}" data-tip="Resume conversation" data-tip-sub="${run ? `Types ${esc(resumeWord(v))} into the shell, for you to run` : "The one this panel last had"}" aria-label="Resume the conversation in panel ${n}">${ico("again")}</button>` : "") +
       `<button type="button" data-a="close" data-p="${v.id}" data-tip="Close panel" data-tip-sub="Undo in the rail" data-key="ctrl+alt+w" aria-label="Close panel ${n}">${ico("x")}</button>` +
-      `</span></li>` +
+      `</span></li>` + threadLine(d, v.id, esc) +
       (rowSaid && rowSaid.p === v.id ? `<li><p class="dk-empty dk-said" role="status">${esc(rowSaid.text)}</p></li>` : "") + errLine(`p${v.id}`, esc);
   };
   // Replacing the rail takes the focus off whatever had it. A field open on
@@ -102,7 +102,7 @@ function rail() {
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></details>` +
-    pointSec(vs) +
+    restSec(d) + pointSec(vs) +
     // The documents fold, as a section in the sidebar does: the chevron
     // shows under the cursor, and stays while the list is folded. The row's
     // [n] says which panel sent it.
@@ -135,13 +135,12 @@ function rail() {
 
 /* The rail folded on a desk is a strip, 44 px, as the sidebar folds to its
  * rail (#101): each section's mark and the count that matters while it is
- * out of sight -- threads moving, panels (amber when one waits on the
- * reader), documents waiting, notes open. A mark opens the rail on its
- * section. Every slot is always drawn, a count of none is only dimmer, so
+ * out of sight -- panels (amber when one waits on the reader), documents
+ * waiting, notes open; a thread is on its panel's row. A mark opens the
+ * rail on its section. Every slot is always drawn, a count of none is only dimmer, so
  * nothing on the strip moves as counts come and go. */
 const STRIP = {
   rail: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M9.5 3v10"/>',
-  threads: '<path d="M2.5 4.5h4M8.5 4.5h5M2.5 8h7M11.5 8h2M2.5 11.5h2M6.5 11.5h7"/>',
   panels: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M8 3v10"/>',
   docs: ICO.doc,
   notes: '<circle cx="8" cy="8" r="5.5"/><path d="M5.8 8.2l1.5 1.5 3-3.2"/>',
@@ -163,11 +162,10 @@ function stripEl() {
 }
 
 function stripHtml(d, vs, waiting) {
-  const moving = threadsMoving(d), blocked = vs.some(v => v.status.blocked);
+  const blocked = vs.some(v => v.status.blocked);
   const left = notesAt === d.id ? noteList.filter(x => !x.done && !x.gone && !x.suggested_by).length : 0;
   const mark = (sec, label, n, sub, cls = "") => `<button type="button" class="ds-${sec}${n ? "" : " none"}${cls}" data-sec="${sec}" data-tip="${label}" data-tip-sub="${sub}" aria-label="${label}: ${sub}">${stripIco(sec)}<span class="n">${n || ""}</span></button>`;
   return `<button type="button" class="ds-open" data-sec="" data-tip="Show the rail" aria-label="Show the rail">${stripIco("rail")}</button>` +
-    mark("threads", "Threads", moving, moving ? `${moving} moving` : "none moving") +
     mark("panels", "Panels", d.panes.length, blocked ? "one is waiting on you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "") +
     mark("docs", "Documents", waiting, waiting ? `${waiting} waiting` : "none waiting") +
     mark("notes", "Notes", left, left ? `${left} open` : "none open");

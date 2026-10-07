@@ -529,7 +529,7 @@ function draw(j) {
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "") +
     (hid.includes("keys") ? "" : keysW(j));
   const desks = j.desks ? w("desks", "Projects", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
-  const moving = (j.threads || []).filter(t => !["shipped", "parked"].includes(t.stage)).length;
+  const moving = (j.threads || []).filter(isMoving).length;
   const threads = j.threads?.length ? w("threads", "Threads", threadsList(j), moving ? ` <span class="n">${moving} moving</span>` : "") : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
@@ -580,7 +580,7 @@ function status(j) {
       bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} ${p.agent === "needs_you" ? "is asking" : "rang"}${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
     } else if (on) bits.push(`${on === 1 ? "One thing is" : `${on} things are`} on you`);
     else bits.push("Nothing needs you");
-    const moving = (j.threads || []).filter(t => !["shipped", "parked"].includes(t.stage)).length;
+    const moving = (j.threads || []).filter(isMoving).length;
     if (moving) bits.push(`${plural(moving, "thread")} moving`);
   }
   bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} to read</a>` : bits.length ? "nothing to read" : "Nothing to read");
@@ -627,17 +627,22 @@ function onYou(j) {
     `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
 }
 
-/** The threads, by stage: what is moving, what is parked with its next step,
- *  and what shipped this week. */
+/** A thread a panel is moving: not shipped, and not resting -- parked, its
+ *  panel closed, or its panel took up another (src/thread.rs `mark_rest`). */
+const isMoving = t => t.stage !== "shipped" && !t.rest;
+
+/** The threads, by where they are: what is moving, what rests (parked with
+ *  its next step, or left by its panel), and what shipped this week. The
+ *  daemon lists a resting one for a day, a parked one for a week. */
 function threadsList(j) {
   const { esc } = c, ts = j.threads || [];
   const name = id => j.desks?.find(d => d.id === id)?.name || "";
   const row = t => `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${t.desk_id}" data-desk="${t.desk_id}">${esc(t.name)}</a>` +
     `<span class="hm-t">${[name(t.desk_id), t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "", t.stage === "parked" && t.next ? `next: ${t.next}` : t.branch, t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : ""].filter(Boolean).map(esc).join(" · ")}</span></span>` +
-    `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.stage)}</span></li>`;
+    `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.rest && t.stage !== "parked" ? `${t.stage} · ${t.rest}` : t.stage)}</span></li>`;
   const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
-  return group("Moving", ts.filter(t => !["shipped", "parked"].includes(t.stage))) +
-    group("Parked", ts.filter(t => t.stage === "parked")) +
+  return group("Moving", ts.filter(isMoving)) +
+    group("Resting", ts.filter(t => t.stage !== "shipped" && t.rest)) +
     group("Shipped this week", ts.filter(t => t.stage === "shipped"));
 }
 
