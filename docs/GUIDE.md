@@ -210,18 +210,17 @@ Opening the app with nothing running does what `snyvi app` does: starts
 the daemon, then the window. The window uses the WebKit that is part of
 macOS, so as on Windows there is nothing to install for it.
 
-The bundle is signed, but not by an identity Apple knows — that takes a
-developer account — so the first open is refused as being from an
-unidentified developer. Either take the quarantine off the download,
-which is what Gatekeeper is reading:
+The bundle is signed with Mrova's Developer ID and notarized by Apple
+(from 1.23.0), so the first open asks only whether to open something
+downloaded from the internet. A release before 1.23.0 was signed ad hoc,
+and Gatekeeper calls it an unidentified developer's: take the quarantine
+off it,
 
 ```
 xattr -dr com.apple.quarantine /Applications/snyvi.app
 ```
 
 or open it once from System Settings → Privacy & Security → Open Anyway.
-A tarball unpacked with `tar` from a terminal carries no quarantine at
-all.
 
 With Homebrew, `brew install --cask snymrova/snyvi/snyvi` does all of the
 above in one command: it puts `snyvi.app` in Applications, links `snyvi`

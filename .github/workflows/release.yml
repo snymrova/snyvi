@@ -15,6 +15,10 @@ on:
         description: "Build every download onto a draft, write and sign latest.json, and stop there: nothing is published"
         type: boolean
         default: false
+      macos_only:
+        description: "Only the two Mac downloads, signed, notarized and kept as this run's artifacts: no draft, nothing published. How the notarization is tried before a tag"
+        type: boolean
+        default: false
 
 # A daemon updates itself from what this workflow publishes, so the workflow
 # has to be trustworthy in a way a hand-run download never needed it to be.
@@ -73,6 +77,7 @@ jobs:
           echo "releasing $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: One draft, reused on a re-run
+        if: ${{ !inputs.macos_only }}
         # A draft has no tag yet on a workflow_dispatch; GitHub creates the
         # tag at the target when the draft is published, which is what the
         # old target_commitish did. `gh` finds a draft by its tag name, so
@@ -101,6 +106,7 @@ jobs:
 
   build:
     needs: create
+    if: ${{ !inputs.macos_only }}
     strategy:
       matrix:
         include:
@@ -197,6 +203,7 @@ jobs:
     # long as all of them added up. Now they upload to a draft, each its own
     # files, and the release takes as long as the slowest.
     needs: create
+    if: ${{ !inputs.macos_only }}
     strategy:
       matrix:
         include:
@@ -277,6 +284,7 @@ jobs:
     # operating system on Windows 10 and 11 rather than a package to depend on.
     # So the zip carries both, and installing the window is not a second step.
     needs: create
+    if: ${{ !inputs.macos_only }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -407,6 +415,21 @@ jobs:
           plutil -lint dist/$name/snyvi.app/Contents/Info.plist
           codesign --verify --deep --strict dist/$name/snyvi.app
           test -f dist/$name/snyvi.app/Contents/Resources/snyvi.icns
+      - name: Sign with the Developer ID, notarize, staple
+        # Gatekeeper's question about a download from Safari: an ad hoc
+        # bundle is from "an unidentified developer", this one is Mrova's
+        # and Apple has checked it. Without the secrets (a fork) it stays
+        # ad hoc and the step says so; see packaging/notarize.sh.
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: packaging/notarize.sh "dist/snyvi-$VERSION-${{ matrix.target }}/snyvi.app"
+      - name: The download
+        run: |
+          name=snyvi-$VERSION-${{ matrix.target }}
           tar -C dist -czf dist/$name.tar.gz $name
           (cd dist && shasum -a 256 $name.tar.gz > $name.tar.gz.sha256)
       - name: Open a window from the bundle
@@ -433,10 +456,19 @@ jobs:
           cp "dist/snyvi-$VERSION-${{ matrix.target }}.tar.gz" "dist/snyvi-macos-$arch.tar.gz"
           (cd dist && shasum -a 256 "snyvi-macos-$arch.tar.gz" > "snyvi-macos-$arch.tar.gz.sha256")
       - uses: actions/attest-build-provenance@v2
+        if: ${{ !inputs.macos_only }}
         with:
           subject-path: dist/*.tar.gz
       - name: Onto the draft
+        if: ${{ !inputs.macos_only }}
         run: gh release upload "v$VERSION" dist/*.tar.gz dist/*.sha256 --clobber
+      - name: Kept with the run, for a try on a Mac
+        if: ${{ inputs.macos_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyvi-macos-${{ matrix.target }}
+          path: dist/snyvi-macos-*.tar.gz
+          retention-days: 7
 
   publish:
     # The gate. Nothing below it runs, and nothing above it is visible, until
@@ -447,6 +479,7 @@ jobs:
     # signing key stops here, a draft, rather than publish a manifest that
     # every daemon would refuse.
     needs: [create, build, desktop, windows, macos]
+    if: ${{ !inputs.macos_only }}
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.create.outputs.version }}
