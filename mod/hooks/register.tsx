@@ -18,7 +18,7 @@ const band = atom({ plugin: 'snyvi', key: 'band' } as const, '')
 type Link = { url: string; token: string; pane: string }
 let link: Link | null = null
 /** The pane's thread, as the band last read it: what the CI timer watches. */
-let thread: { pr?: string; merged?: string; stage?: string } | null = null
+let thread: { pr?: string; ci?: string; merged?: string; stage?: string } | null = null
 let away = false
 
 async function connect($: EngineInterface): Promise<Link | null> {
@@ -65,12 +65,44 @@ async function call(
   }
 }
 
+/** The tag of the band the daemon last gave (`v`), sent back so the daemon
+ *  holds the next call until the band differs. */
+let tag = ''
+/** The round of the band's long-poll in flight, so a reload or a second
+ *  session.start never leaves two chains running. */
+let round: { cancel(): void } | null = null
+
+/** The band taken from an answer: the thread, the tag, and the line drawn
+ *  when it changed. */
+async function took($: EngineInterface, j: any) {
+  thread = j.thread
+  if (typeof j.v === 'string') tag = j.v
+  const line: string = j.line || ''
+  if (line !== (await read($, band))) await update($, band, () => line)
+}
+
 async function refresh($: EngineInterface) {
   const r = await call($, 'band')
   if (!r || r.status !== 200) return
-  thread = r.json.thread
-  const line: string = r.json.line || ''
-  if (line !== (await read($, band))) await update($, band, () => line)
+  await took($, r.json)
+}
+
+/** How long until the next round, from what this one came to: at once on a
+ *  band or a 204 (the daemon held the call), half a minute after anything
+ *  else, so a daemon that is away is asked twice a minute and not a
+ *  thousand times. */
+export function nextRoundIn(r: { status: number } | null): number {
+  return r && (r.status === 200 || r.status === 204) ? 0 : 30_000
+}
+
+/** One round of the band's long-poll: the tag of the band this panel has
+ *  goes up, and the daemon answers when the band differs, or 204 after 25 s.
+ *  Each round sets up the next through the clock, so a reload of the mod,
+ *  which cancels its pending waits, ends the chain with it. */
+async function bandRound($: EngineInterface) {
+  const r = await call($, `band?v=${tag}`)
+  if (r && r.status === 200) await took($, r.json)
+  round = $.clock.after(nextRoundIn(r), () => void bandRound($))
 }
 
 /** What a `git`/`gh` command did, read from the command and its output. */
@@ -100,8 +132,28 @@ export function ciOf(rollup: Array<{ conclusion?: string; status?: string; state
   return 'passing'
 }
 
+/** The PR whose checks the watch gave up on -- closed or merged -- so gh is
+ *  not asked about it every minute for the rest of the session. A new PR on
+ *  the thread is watched afresh. */
+let settledPr = ''
+
+/** What the watch should do with what gh said, given what the band last
+ *  showed: the sighting to file (only when the checks or the merge differ
+ *  from the thread), and whether to stop watching this PR. */
+export function prSighting(
+  j: { state?: string; statusCheckRollup?: any[]; mergeCommit?: { oid?: string } },
+  t: { ci?: string; merged?: string },
+): { seen: Record<string, unknown> | null; settled: boolean } {
+  const ci = ciOf(j.statusCheckRollup || [])
+  const merged = j.state === 'MERGED' && j.mergeCommit?.oid ? j.mergeCommit.oid : ''
+  const seen: Record<string, unknown> = {}
+  if (ci && ci !== (t.ci || '')) seen.ci = ci
+  if (merged && merged !== (t.merged || '')) seen.merged = merged
+  return { seen: Object.keys(seen).length ? seen : null, settled: j.state === 'MERGED' || j.state === 'CLOSED' }
+}
+
 async function watchPr($: EngineInterface) {
-  if (!thread || !thread.pr || thread.merged) return
+  if (!thread || !thread.pr || thread.merged || thread.pr === settledPr) return
   let out
   try {
     out = await $.process.run(['gh', 'pr', 'view', thread.pr, '--json', 'state,statusCheckRollup,mergeCommit'])
@@ -110,11 +162,12 @@ async function watchPr($: EngineInterface) {
   }
   if (out.exitCode !== 0) return
   try {
-    const j = JSON.parse(out.stdout)
-    const seen: Record<string, unknown> = { ci: ciOf(j.statusCheckRollup || []) }
-    if (j.state === 'MERGED' && j.mergeCommit?.oid) seen.merged = j.mergeCommit.oid
-    await call($, 'seen', seen)
-    await refresh($)
+    const { seen, settled } = prSighting(JSON.parse(out.stdout), thread)
+    if (settled) settledPr = thread.pr
+    if (seen) {
+      await call($, 'seen', seen)
+      await refresh($)
+    }
   } catch {}
 }
 
@@ -138,8 +191,8 @@ export const register: Register = on => {
       await $.command.register({ name: 'turn', description: 'What is waiting on you on this desk', immediate: true })
       await $.command.register({ name: 'park', description: 'Park this panel’s thread, with the next step', argumentHint: '[next step]', immediate: true })
       await $.command.register({ name: 'thread', description: 'This panel’s thread, in a few lines', immediate: true })
-      await refresh($)
-      $.clock.every(5_000, () => refresh($))
+      round?.cancel()
+      round = $.clock.after(0, () => void bandRound($))
       $.clock.every(60_000, () => watchPr($))
     }
     return next(e)

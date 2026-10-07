@@ -2097,3 +2097,113 @@ fn a_pages_pictures_travel_inside_it() {
         "a name with no folder, as a friend's document has"
     );
 }
+
+/// The mod's band is a long-poll: the band it has is held until this desk
+/// moves, another desk's move does not wake it, a change answers at once,
+/// and a wait of nothing is one 204. The wait is the handler's argument, so
+/// the test's is short (tokio's paused clock needs its `test-util` feature,
+/// which the crate does not carry).
+#[tokio::test]
+async fn a_band_is_held_until_its_own_desk_moves() {
+    use super::api_thread::{band_held, band_tag};
+    use std::time::Duration;
+    const WAIT: Duration = Duration::from_millis(600);
+    let tick = || tokio::time::sleep(Duration::from_millis(100));
+    let tmp = crate::store::tempdir::Dir::new("snyvi-band-held");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let token = crate::config::load_or_create_token(&paths).unwrap();
+    let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+    let store = Store::open(&paths).unwrap();
+    let desk = store.create_desk("/tmp/band", Some("band")).unwrap();
+    let other = store.create_desk("/tmp/other", Some("other")).unwrap();
+    let crate::desk::Opened::Pane(pane) = store.open_pane(desk.id, "/tmp/band", "").unwrap() else {
+        panic!("a pane")
+    };
+    let app = new_app(&paths, store, token, window, None, None);
+
+    // No tag: the band at once, with its tag.
+    let resp = band_held(&app, desk.id, &pane.id, None, WAIT).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+        .await
+        .unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let tag = j["v"].as_str().unwrap().to_string();
+    assert_eq!(tag.len(), 8);
+    assert_eq!(j["waiting"], 0);
+
+    // The same tag: held. Another desk's event is not a reason to look; this
+    // desk's is, and a band that is still the same is held on.
+    let held = {
+        let app = app.clone();
+        let (tag, pane) = (tag.clone(), pane.id.clone());
+        tokio::spawn(async move { band_held(&app, desk.id, &pane, Some(&tag), WAIT).await })
+    };
+    tick().await;
+    assert!(!held.is_finished());
+    super::emit(&app, "desknotes", serde_json::json!({ "desk": other.id }));
+    tick().await;
+    assert!(!held.is_finished(), "another desk's move");
+    super::emit(&app, "desknotes", serde_json::json!({ "desk": desk.id }));
+    tick().await;
+    assert!(
+        !held.is_finished(),
+        "this desk moved, but the band is the same"
+    );
+    // A turn on this desk changes the band, and the held call answers.
+    app.store
+        .threads(|c, now| {
+            crate::thread::ask(
+                c,
+                desk.id,
+                &crate::thread::Ask {
+                    kind: "try".into(),
+                    text: "the new build".into(),
+                    pane: pane.id.clone(),
+                    ..Default::default()
+                },
+                now,
+            )
+        })
+        .unwrap();
+    super::emit(&app, "desknotes", serde_json::json!({ "desk": desk.id }));
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(5), held)
+        .await
+        .expect("answered on the change")
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+        .await
+        .unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(j["waiting"], 1);
+    let tag2 = j["v"].as_str().unwrap().to_string();
+    assert_ne!(tag2, tag);
+    assert_eq!(
+        band_tag(&serde_json::json!({ "a": 1 })),
+        band_tag(&serde_json::json!({ "a": 1 })),
+        "a tag is a function of the body"
+    );
+
+    // A changed tag answers at once, whatever it was.
+    let resp = band_held(&app, desk.id, &pane.id, Some("stale000"), WAIT).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Nothing for the whole wait: one 204, at the wait's end and not before.
+    let held = {
+        let app = app.clone();
+        let (tag, pane) = (tag2.clone(), pane.id.clone());
+        tokio::spawn(async move { band_held(&app, desk.id, &pane, Some(&tag), WAIT).await })
+    };
+    tokio::time::sleep(WAIT / 2).await;
+    assert!(!held.is_finished());
+    tokio::time::sleep(WAIT).await;
+    assert!(held.is_finished());
+    assert_eq!(held.await.unwrap().status(), StatusCode::NO_CONTENT);
+}

@@ -630,17 +630,20 @@ pub struct Seen {
 
 /// File what the mod saw on the pane's thread. `None` when the pane has no
 /// thread, which is most panes most of the time: nothing is made up for it.
+/// The flag says whether the thread changed -- branch, commits, PR, checks,
+/// merge or stage -- so the same sighting twice moves nothing twice.
 pub fn seen(
     conn: &mut Connection,
     desk_id: i64,
     pane: &str,
     s: &Seen,
     now: i64,
-) -> Result<Option<Thread>> {
+) -> Result<Option<(Thread, bool)>> {
     let tx = conn.transaction()?;
-    let Some(t) = of_pane(&tx, desk_id, pane)? else {
+    let Some(was) = of_pane(&tx, desk_id, pane)? else {
         return Ok(None);
     };
+    let t = &was;
     let branch = if branch_ok(s.branch.trim()) {
         s.branch.trim().to_string()
     } else {
@@ -676,9 +679,18 @@ pub fn seen(
             now
         ],
     )?;
-    let t = get(&tx, desk_id, t.id)?;
+    let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
-    Ok(t)
+    let changed = (&t.branch, t.commits, &t.pr, &t.ci, &t.merged, &t.stage)
+        != (
+            &was.branch,
+            was.commits,
+            &was.pr,
+            &was.ci,
+            &was.merged,
+            &was.stage,
+        );
+    Ok(Some((t, changed)))
 }
 
 /// Put a thread away, or back. Its notes keep their link, so Undo brings the
@@ -766,6 +778,21 @@ pub fn turns(conn: &Connection, desk_id: i64, answered_since: i64) -> Result<Vec
     ))?;
     let v = st
         .query_map(params![desk_id, answered_since], row_to_turn)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(v)
+}
+
+/// What is waiting on the reader on one desk, oldest first: the band and the
+/// brief. With `dialog` false the mod's own dialog turns are left out, since
+/// they are on the panel's screen already; the brief keeps them.
+pub fn waiting_on(conn: &Connection, desk_id: i64, dialog: bool) -> Result<Vec<Turn>> {
+    let via = if dialog { "" } else { " AND via != 'dialog'" };
+    let mut st = conn.prepare(&format!(
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND answered_at = 0 AND removed_at = 0{via}
+         ORDER BY id LIMIT 60"
+    ))?;
+    let v = st
+        .query_map(params![desk_id], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
     Ok(v)
 }

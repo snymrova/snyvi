@@ -514,14 +514,12 @@ pub(crate) async fn pane_brief(
         .threads(|c, _| {
             Ok((
                 crate::thread::for_desk(c, desk.id)?,
-                crate::thread::waiting(c)?,
+                // This desk's own, dialog turns kept: the brief says what
+                // waits here, not the first thirty across every desk.
+                crate::thread::waiting_on(c, desk.id, true)?,
             ))
         })
         .unwrap_or_default();
-    let waiting: Vec<_> = waiting
-        .into_iter()
-        .filter(|w| w.desk_id == desk.id)
-        .collect();
     let work = crate::brief::Work {
         notes: &notes,
         threads: &threads,
