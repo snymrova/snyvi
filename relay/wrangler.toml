@@ -19,11 +19,24 @@ class_name = "Room"
 name = "MAILBOX"
 class_name = "Mailbox"
 
+# 1.25.0: a Line per friendship, and the one Meter that estimates the day.
+[[durable_objects.bindings]]
+name = "LINE"
+class_name = "Line"
+
+[[durable_objects.bindings]]
+name = "METER"
+class_name = "Meter"
+
 # SQLite-backed: the free plan's kind, and the one with a SQL API, which is
 # where an 8 MB frame goes in 1 MB rows.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room", "Mailbox"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Line", "Meter"]
 
 # Nothing beyond Cloudflare's own request counts. No Workers Logs, no traces:
 # a line per request would be a list of who talks to whom.
@@ -90,6 +103,14 @@ class_name = "Room"
 [[env.test.durable_objects.bindings]]
 name = "MAILBOX"
 class_name = "Mailbox"
+
+[[env.test.durable_objects.bindings]]
+name = "LINE"
+class_name = "Line"
+
+[[env.test.durable_objects.bindings]]
+name = "METER"
+class_name = "Meter"
 
 [[env.test.ratelimits]]
 name = "LIMIT_FLOOD"

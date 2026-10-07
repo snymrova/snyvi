@@ -618,3 +618,275 @@ test("a room's own limit: thirty calls a minute, then busy", async () => {
   assert.equal(codes.at(-1), 429, "the 31st call");
   assert.equal((await room(hex(32), "spake", a, "PUT", "another room is its own")).status, 202);
 });
+
+// --- the line (1.25.0) -------------------------------------------------------------
+
+const LINE_CHUNK = (1 << 20) - 64;
+
+/** A frame as chunks down the line: the 40-byte header (id, index, count), then up to LINE_CHUNK of data. */
+function chunks(id, bytes, size = LINE_CHUNK) {
+  const of = Math.max(1, Math.ceil(bytes.length / size));
+  const out = [];
+  for (let n = 0; n < of; n++) {
+    const data = bytes.subarray(n * size, (n + 1) * size);
+    const m = new Uint8Array(40 + data.length);
+    m.set(Buffer.from(id, "hex"), 0);
+    new DataView(m.buffer).setUint32(32, n, true);
+    new DataView(m.buffer).setUint32(36, of, true);
+    m.set(data, 40);
+    out.push(m);
+  }
+  return out;
+}
+
+/** A socket to the line between `me` and `them`, as the daemon holds one; `closed` is the close the relay sends. */
+async function line(me, them) {
+  const path = `/line/${me.key}/${them.key}`;
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}${path}?auth=${encodeURIComponent(await auth(me, "GET", path))}`);
+  ws.binaryType = "arraybuffer";
+  const queue = [], waiters = [];
+  ws.addEventListener("message", (e) => {
+    const m = typeof e.data === "string" ? JSON.parse(e.data) : new Uint8Array(e.data);
+    if (waiters.length) waiters.shift()(m);
+    else queue.push(m);
+  });
+  const closed = new Promise((res) => ws.addEventListener("close", (e) => res({ code: e.code, reason: e.reason }), { once: true }));
+  await new Promise((res, rej) => {
+    ws.addEventListener("open", res, { once: true });
+    ws.addEventListener("error", () => rej(new Error("the upgrade was refused")), { once: true });
+  });
+  const next = (ms = 5_000) =>
+    queue.length
+      ? Promise.resolve(queue.shift())
+      : new Promise((res, rej) => {
+          const t = setTimeout(() => rej(new Error(`no message in ${ms} ms`)), ms);
+          waiters.push((m) => {
+            clearTimeout(t);
+            res(m);
+          });
+        });
+  const send = (id, bytes, size) => {
+    for (const c of chunks(id, bytes, size)) ws.send(c);
+  };
+  return { ws, next, send, closed, ack: (id) => ws.send(JSON.stringify({ ack: id })), close: () => ws.close() };
+}
+
+async function peekLine(a, b) {
+  return (await fetch(`${BASE}/_test/line/${a.key}/${b.key}`)).json();
+}
+
+test("a line carries a frame straight through when both are there, and stores nothing", async () => {
+  const sunny = await identity(), trapti = await identity();
+  const s = await line(sunny, trapti);
+  assert.deepEqual(await s.next(), { friend: { on: false } });
+  const t = await line(trapti, sunny);
+  assert.deepEqual(await t.next(), { friend: { on: true } });
+  assert.deepEqual(await s.next(), { friend: { on: true } });
+  const id = hex(32), f = frame(sunny, "straight through");
+  s.send(id, f);
+  assert.deepEqual(await t.next(), chunks(id, f)[0]);
+  assert.deepEqual(await peekLine(sunny, trapti), { frames: [], chunks: 0, pending: 0 });
+  t.ack(id);
+  assert.deepEqual(await s.next(), { arrived: id });
+  assert.deepEqual(await peekLine(sunny, trapti), { frames: [], chunks: 0, pending: 0 });
+  s.close();
+  assert.deepEqual(await t.next(), { friend: { on: false } });
+  t.close();
+});
+
+test("a frame to a side that is away is stored, replayed on its connect, and the ack waits for the sender", async () => {
+  const sunny = await identity(), trapti = await identity();
+  let s = await line(sunny, trapti);
+  assert.deepEqual(await s.next(), { friend: { on: false } });
+  const id = hex(32), f = frame(sunny, randomFillSync(new Uint8Array(3000)));
+  s.send(id, f, 2000);
+  assert.deepEqual(await s.next(), { held: id });
+  let p = await peekLine(sunny, trapti);
+  assert.equal(p.frames.length, 1);
+  assert.equal(p.frames[0].from, sunny.key);
+  assert.equal(p.frames[0].size, f.length);
+  assert.equal(p.chunks, 2);
+  const t = await line(trapti, sunny);
+  assert.deepEqual(await t.next(), { friend: { on: true } });
+  const [c0, c1] = chunks(id, f, 2000);
+  assert.deepEqual(await t.next(), c0);
+  assert.deepEqual(await t.next(), c1);
+  assert.deepEqual(await s.next(), { friend: { on: true } });
+  s.close();
+  assert.deepEqual(await t.next(), { friend: { on: false } });
+  t.ack(id);
+  await until(async () => (await peekLine(sunny, trapti)).pending === 1);
+  p = await peekLine(sunny, trapti);
+  assert.deepEqual(p.frames, [], "the ack cleared it");
+  assert.equal(p.chunks, 0);
+  s = await line(sunny, trapti);
+  assert.deepEqual(await s.next(), { friend: { on: true } });
+  assert.deepEqual(await s.next(), { arrived: id }, "what waited to be said");
+  assert.deepEqual(await peekLine(sunny, trapti), { frames: [], chunks: 0, pending: 0 });
+  s.close();
+  t.close();
+});
+
+test("a frame lost part way comes again from the top", async () => {
+  const sunny = await identity(), trapti = await identity();
+  const s = await line(sunny, trapti);
+  await s.next();
+  const t = await line(trapti, sunny);
+  await t.next();
+  await s.next();
+  const id = hex(32), f = frame(sunny, randomFillSync(new Uint8Array(3000)));
+  const [c0, c1] = chunks(id, f, 2000);
+  s.ws.send(c0);
+  assert.deepEqual(await t.next(), c0, "the first chunk went through");
+  t.close();
+  assert.deepEqual(await s.next(), { friend: { on: false } });
+  s.ws.send(c1);
+  assert.deepEqual(await s.next(), { resend: id }, "the line cannot complete what it never had");
+  assert.equal((await peekLine(sunny, trapti)).chunks, 0);
+  s.send(id, f, 2000);
+  assert.deepEqual(await s.next(), { held: id });
+  s.close();
+});
+
+test("a line holds twenty frames, or two full ones, and then says so", async () => {
+  const sunny = await identity(), trapti = await identity();
+  const s = await line(sunny, trapti);
+  await s.next();
+  for (let i = 0; i < 20; i++) {
+    const id = hex(32);
+    s.send(id, frame(sunny, `frame ${i}`));
+    assert.deepEqual(await s.next(), { held: id });
+  }
+  const over = hex(32);
+  s.send(over, frame(sunny, "twenty-first"));
+  assert.deepEqual(await s.next(), { full: over });
+  assert.equal((await peekLine(sunny, trapti)).frames.length, 20);
+  s.close();
+
+  const a = await identity(), b = await identity();
+  const l = await line(a, b);
+  await l.next();
+  const FRAME_MAX = 8 * 1024 * 1024 + 4096;
+  for (let i = 0; i < 2; i++) {
+    const id = hex(32);
+    l.send(id, frame(a, randomFillSync(new Uint8Array(FRAME_MAX - 33))));
+    assert.deepEqual(await l.next(30_000), { held: id });
+  }
+  const third = hex(32);
+  l.send(third, frame(a, "no room"));
+  assert.deepEqual(await l.next(), { full: third });
+  l.close();
+});
+
+test("the first chunk names the side that signed the socket, or it is refused", async () => {
+  const sunny = await identity(), trapti = await identity(), stranger = await identity();
+  const s = await line(sunny, trapti);
+  await s.next();
+  const id = hex(32);
+  s.send(id, frame(stranger, "not mine"));
+  assert.deepEqual(await s.next(), { failed: { id, why: "not a snyvi frame" } });
+  assert.deepEqual(await peekLine(sunny, trapti), { frames: [], chunks: 0, pending: 0 });
+  s.close();
+});
+
+test("a hundred sockets a day to a line, then closed with 4429 until midnight", async () => {
+  const sunny = await identity(), trapti = await identity();
+  let last;
+  for (let i = 0; i < 100; i++) {
+    last = await line(sunny, trapti);
+    await last.next();
+  }
+  const refused = await line(sunny, trapti);
+  const c = await refused.closed;
+  assert.equal(c.code, 4429);
+  assert.match(c.reason, /^until:\d+$/);
+  const until = Number(c.reason.slice(6));
+  assert.ok(until > Date.now() && until - Date.now() <= 24 * 60 * 60 * 1000, "the next UTC midnight");
+  assert.equal(until % (24 * 60 * 60 * 1000), 0);
+  // The other side's budget is its own.
+  const t = await line(trapti, sunny);
+  assert.deepEqual(await t.next(), { friend: { on: true } });
+  t.close();
+  last.close();
+});
+
+test("a hundred links a day to a mailbox, the same", async () => {
+  const trapti = await mailbox();
+  let last;
+  for (let i = 0; i < 100; i++) last = await link(trapti);
+  const path = `/inbox/${trapti.key}`;
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}${path}?auth=${encodeURIComponent(await auth(trapti, "GET", path))}`);
+  const c = await new Promise((res) => ws.addEventListener("close", (e) => res({ code: e.code, reason: e.reason }), { once: true }));
+  assert.equal(c.code, 4429);
+  assert.match(c.reason, /^until:\d+$/);
+  last.close();
+});
+
+test("a refusal says when to come back", async () => {
+  const trapti = await mailbox(), sunny = await identity();
+  for (let i = 0; i < 5; i++) assert.equal((await deposit(trapti, frame(sunny, `slot ${i}`), hex(32), sunny)).status, 201);
+  const path = `/to/${trapti.key}`;
+  const r = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "x-snyvi-id": hex(32), "x-snyvi-from": sunny.key, "x-snyvi-auth": await auth(sunny, "POST", path) },
+    body: frame(sunny, "sixth"),
+  });
+  assert.equal(r.status, 429);
+  assert.equal(r.headers.get("retry-after"), "600");
+  const id = hex(32), a = hex(16);
+  assert.equal((await room(id, "spake", a, "PUT", "A")).status, 202);
+  for (let i = 0; i < 29; i++) await room(id, "spake", a, "GET", null, 0);
+  const b = await fetch(`${BASE}/room/${id}/spake?wait=0`, { headers: { "x-snyvi-side": a } });
+  assert.equal(b.status, 429);
+  assert.equal(b.headers.get("retry-after"), "60");
+});
+
+test("the meter: quiet past 70%, a big deposit waits for tomorrow past 85%, sockets go on", async () => {
+  const setMeter = async (n) => (await fetch(`${BASE}/_test/meter?n=${n}`)).json();
+  const sunny = await identity(), trapti = await mailbox();
+  const small = frame(sunny, "small");
+  const big = frame(sunny, randomFillSync(new Uint8Array((1 << 20) + 1)));
+  try {
+    assert.equal((await setMeter(70_000)).level, 1);
+    const s = await line(sunny, trapti);
+    assert.deepEqual(await s.next(), { friend: { on: false } });
+    const q = await s.next();
+    assert.ok(q.quiet && q.quiet.until % (24 * 60 * 60 * 1000) === 0, `quiet until midnight: ${JSON.stringify(q)}`);
+    s.close();
+    const l = await link(trapti);
+    assert.ok((await l.next()).quiet, "the mailbox link hears it too");
+    assert.equal((await deposit(trapti, small, hex(32), sunny)).status, 201);
+    assert.equal((await deposit(trapti, big, hex(32), sunny)).status, 201, "a big one still goes at 70%");
+    await l.next();
+    await l.next();
+    await l.next();
+    l.close();
+
+    assert.equal((await setMeter(85_000)).level, 2);
+    const path = `/to/${trapti.key}`;
+    const r = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "x-snyvi-id": hex(32), "x-snyvi-from": sunny.key, "x-snyvi-auth": await auth(sunny, "POST", path) },
+      body: big,
+    });
+    assert.equal(r.status, 503);
+    const after = Number(r.headers.get("retry-after"));
+    assert.ok(after > 0 && after <= 24 * 60 * 60, `retry-after to midnight: ${after}`);
+    assert.equal((await deposit(trapti, small, hex(32), sunny)).status, 201, "a small one goes");
+    const a = await line(sunny, trapti);
+    await a.next();
+    await a.next();
+    const b = await line(trapti, sunny);
+    await b.next();
+    await b.next();
+    await a.next();
+    const id = hex(32);
+    a.send(id, big);
+    const got = [await b.next(), await b.next()];
+    assert.deepEqual(got, chunks(id, big), "a big frame on a line still goes at 85%");
+    a.close();
+    b.close();
+  } finally {
+    assert.equal((await setMeter(0)).level, 0);
+  }
+});

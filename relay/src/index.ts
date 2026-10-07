@@ -27,6 +27,7 @@
  *   GET    /inbox/{key}             what is waiting, as JSON, at once                           (signed)
  *   GET    /inbox/{key}/{id}        the frame's bytes                                           (signed)
  *   DELETE /inbox/{key}/{id}        ack: the frame is gone                                      (signed)
+ *   GET    /line/{me}/{them}        Upgrade: websocket -- the line: frames as messages, both ways  (signed by me)
  *   GET    /health                  {"ok":true}
  *
  * Signed means the header x-snyvi-auth: <unix seconds>.<base64url sig>, an
@@ -59,6 +60,26 @@
  * "pong" by the runtime without waking anything. The JSON routes stay for
  * the catch-up a daemon does when the socket will not open, and for a
  * frame too big to push. A room's doorbell is the same kind of socket.
+ *
+ * The line (1.25.0) is where two friends' daemons meet once both can: a
+ * Durable Object per friendship, named by the two addresses sorted, with
+ * one socket from each side. A frame goes down it as binary chunks of up
+ * to 1 MiB (a 40-byte header: the id, this chunk's index, the count) and is
+ * forwarded to the other side's socket as it comes, written nowhere, when
+ * that side is there; stored in rows only when it is away, and replayed
+ * when it connects. The receiver's {"ack":id} is turned into {"arrived":id}
+ * for the sender, or kept for the sender's next connect. A message on an
+ * open socket is a twentieth of a request and never enters the Worker,
+ * which is why this carries about twice the people the mailbox did on the
+ * same plan. The mailbox stays for friends whose snyvi is older.
+ *
+ * Two things keep one daemon from spending everyone's day. Each address
+ * may open a socket to a given object a hundred times a day; the next is
+ * accepted and closed with 4429 and "until:<ms>", and the daemon sleeps to
+ * then. And a meter object, ticked by one request in fifty, estimates the
+ * day's count: past 70% every new socket is told {"quiet":...} and the
+ * daemons stop sending read receipts, past 85% a big HTTP deposit is a 503
+ * with retry-after until midnight while sockets and messages go on.
  */
 
 import { DurableObject } from "cloudflare:workers";
@@ -66,6 +87,8 @@ import { DurableObject } from "cloudflare:workers";
 export interface Env {
   ROOM: DurableObjectNamespace<Room>;
   MAILBOX: DurableObjectNamespace<Mailbox>;
+  LINE: DurableObjectNamespace<Line>;
+  METER: DurableObjectNamespace<Meter>;
   /** Everything, by IP: a backstop, far above an honest daemon's few calls a minute. */
   LIMIT_FLOOD: RateLimit;
   /** By IP: a mailbox's first sign-in, a room's first message. Once per install, once per pairing. */
@@ -127,6 +150,45 @@ const REQUIRE_SIGNED = false;
 const CLIENT = "x-snyvi-client";
 /** Set by the Worker on a deposit: the sender whose signature it checked, or empty. */
 const SIGNED_BY = "x-snyvi-signed-by";
+/** Set by the Worker on a line upgrade: which side of the line is connecting. */
+const SIDE = "x-snyvi-side";
+/** Set by the Worker on an upgrade when the meter says the day is past 70%: the socket is told to be quiet. */
+const QUIET = "x-snyvi-quiet";
+
+/** A chunk down the line: this much data after the header, so the message stays under the runtime's 1 MiB. */
+const LINE_CHUNK = (1 << 20) - 64;
+/** The header on a chunk: the frame's id (32 bytes), this chunk's index and the count (u32 LE each). */
+const CHUNK_HEADER = 40;
+/** The most chunks a frame can be: FRAME_MAX over LINE_CHUNK, rounded up. */
+const CHUNKS_MAX = 9;
+/** Frames stored on one line for a side that is away. */
+const LINE_FRAMES_MAX = 20;
+/** Bytes stored on one line: two full frames. */
+const LINE_BYTES_MAX = 2 * FRAME_MAX;
+/** Sockets one address may open to one object in a UTC day; the next is closed with BUDGET_CLOSE. */
+const UPGRADES_PER_DAY = 100;
+const BUDGET_CLOSE = 4429;
+/** One Worker request in this many ticks the meter. */
+const SAMPLE = 50;
+/** The meter's estimate of the day's Worker requests at which the daemons are told to be quiet, and at which a big deposit waits for tomorrow. */
+const QUIET_AT = 70_000;
+const ESSENTIALS_AT = 85_000;
+/** How long an isolate keeps the meter's last verdict. */
+const VERDICT_TTL_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The meter's last word, as this isolate heard it. */
+let verdict = { level: 0, until: 0, at: 0 };
+
+/** The next UTC midnight after `now`, in ms. */
+function midnight(now: number): number {
+  return (Math.floor(now / DAY_MS) + 1) * DAY_MS;
+}
+
+/** The UTC day `now` falls in, as a key. */
+function dayOf(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
 
 const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 const ROOM_RE = /^[0-9a-f]{64}$/;
@@ -150,6 +212,21 @@ export default {
     const client = clientKey(request);
 
     if (!(await under(env.LIMIT_FLOOD, client))) return busy();
+
+    // The meter: one request in SAMPLE (every one under test) is counted,
+    // and brings back the day's level; the rest read this isolate's copy.
+    const testing = env.RELAY_TEST === "1";
+    if (testing || Math.random() * SAMPLE < 1) {
+      try {
+        const r = await env.METER.get(env.METER.idFromName("meter")).fetch(`https://meter/tick?n=${testing ? 1 : SAMPLE}`);
+        const v = (await r.json()) as { level: number; until: number };
+        verdict = { level: v.level, until: v.until, at: Date.now() };
+      } catch {
+        // A meter that cannot answer leaves the level as it was.
+      }
+    }
+    const level = Date.now() - verdict.at < VERDICT_TTL_MS ? verdict.level : 0;
+    const quiet: Record<string, string> = level >= 1 ? { [QUIET]: "1" } : {};
 
     if (parts.length === 1 && parts[0] === "health" && method === "GET") {
       return json({ ok: true });
@@ -178,6 +255,8 @@ export default {
       if (over(request, FRAME_MAX)) return text(413, "a frame is at most 8 MB");
       // A frame with no length given counts as big: it may be.
       const big = !(Number(request.headers.get("content-length") ?? NaN) <= BIG);
+      // The day nearly spent: a big document goes tomorrow, everything on a socket goes on.
+      if (big && level >= 2) return tomorrow(Date.now());
       const from = request.headers.get("x-snyvi-from");
       let signedBy = "";
       if (from !== null || request.headers.has("x-snyvi-auth")) {
@@ -207,12 +286,31 @@ export default {
       const why = await verify(request, key, url.pathname, upgrade ? url.searchParams.get("auth") : null);
       if (why) return text(401, why);
       if (!(await under(env.LIMIT_INBOX, key))) return busy();
-      return env.MAILBOX.get(env.MAILBOX.idFromName(key)).fetch(forward(request, { [CLIENT]: client }));
+      return env.MAILBOX.get(env.MAILBOX.idFromName(key)).fetch(forward(request, { [CLIENT]: client, ...quiet }));
     }
 
-    // The tests' view inside a mailbox: /_test/{tables|legacy}/{key}.
-    if (env.RELAY_TEST === "1" && parts[0] === "_test" && parts.length === 3 && KEY_RE.test(parts[2])) {
-      return env.MAILBOX.get(env.MAILBOX.idFromName(parts[2])).fetch(request);
+    if (parts[0] === "line" && parts.length === 3) {
+      const [, me, them] = parts;
+      if (!KEY_RE.test(me) || !KEY_RE.test(them) || me === them) return text(404, "no such line");
+      if (method !== "GET" || !isUpgrade(request)) return text(405, "GET with Upgrade: websocket");
+      const why = await verify(request, me, url.pathname, url.searchParams.get("auth"));
+      if (why) return text(401, why);
+      if (!(await under(env.LIMIT_INBOX, me))) return busy();
+      return env.LINE.get(env.LINE.idFromName(lineName(me, them))).fetch(forward(request, { [CLIENT]: client, [SIDE]: me, ...quiet }));
+    }
+
+    // The tests' views: inside a mailbox (/_test/{tables|legacy}/{key}), a
+    // line (/_test/line/{a}/{b}), and the meter's count (/_test/meter?n=).
+    if (testing && parts[0] === "_test") {
+      if (parts.length === 3 && KEY_RE.test(parts[2])) {
+        return env.MAILBOX.get(env.MAILBOX.idFromName(parts[2])).fetch(request);
+      }
+      if (parts.length === 4 && parts[1] === "line" && KEY_RE.test(parts[2]) && KEY_RE.test(parts[3])) {
+        return env.LINE.get(env.LINE.idFromName(lineName(parts[2], parts[3]))).fetch(request);
+      }
+      if (parts.length === 2 && parts[1] === "meter") {
+        return env.METER.get(env.METER.idFromName("meter")).fetch(`https://meter/tick?set=${url.searchParams.get("n") ?? "0"}`);
+      }
     }
 
     return text(404, "snyvi relay");
@@ -247,6 +345,49 @@ function busy(): Response {
   const r = text(429, "the relay is busy; try again in a minute");
   r.headers.set("retry-after", "60");
   return r;
+}
+
+/** A mailbox or a line holding as much as it may: the sender tries again in ten minutes. */
+function full(what: string): Response {
+  const r = text(429, `the ${what} is full; try later`);
+  r.headers.set("retry-after", "600");
+  return r;
+}
+
+/** The day's count nearly spent: a big deposit waits for the next UTC day. */
+function tomorrow(now: number): Response {
+  const r = text(503, "the relay is nearly out for today; a big document goes tomorrow");
+  r.headers.set("retry-after", String(Math.max(1, Math.ceil((midnight(now) - now) / 1000))));
+  return r;
+}
+
+/** A line's name: the two addresses, sorted, so both sides find the same object. */
+function lineName(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/**
+ * One address's sockets to one object in a UTC day. Under the budget the
+ * count goes up and null comes back; at it, the midnight to sleep until.
+ * One small row per address, overwritten as the day turns.
+ */
+async function spend(storage: DurableObjectStorage, side: string, now: number): Promise<number | null> {
+  const key = `budget:${side}`;
+  const day = dayOf(now);
+  const row = (await storage.get<{ day: string; n: number }>(key)) ?? { day, n: 0 };
+  const n = row.day === day ? row.n : 0;
+  if (n >= UPGRADES_PER_DAY) return midnight(now);
+  await storage.put(key, { day, n: n + 1 });
+  return null;
+}
+
+/** The budget's refusal: accepted so the daemon hears the code, then closed. */
+function overBudget(until: number): Response {
+  const pair = new WebSocketPair();
+  const client = pair[0], server = pair[1];
+  server.accept();
+  server.close(BUDGET_CLOSE, `until:${until}`);
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 /** The request as a Durable Object gets it: the Worker's own headers set over whatever the client sent under those names. */
@@ -521,7 +662,9 @@ export class Mailbox extends DurableObject<Env> {
     // Everything else is the owner, signed: the Worker checked it.
     const refused = await this.signIn(request.headers.get(CLIENT) ?? "");
     if (refused) return refused;
-    if (parts.length === 2) return isUpgrade(request) ? this.link(parts[1]) : this.list();
+    if (parts.length === 2) {
+      return isUpgrade(request) ? this.link(parts[1], request.headers.get(QUIET) === "1") : this.list();
+    }
     if (request.method === "DELETE") return this.ack(parts[2]);
     return this.open(parts[2]);
   }
@@ -574,11 +717,11 @@ export class Mailbox extends DurableObject<Env> {
       ? (sql.exec("SELECT count(*) AS n, coalesce(sum(size), 0) AS bytes FROM frames").one() as { n: number; bytes: number })
       : { n: 0, bytes: 0 };
     if (!old) {
-      if (held.n >= FRAMES_WAITING_MAX) return text(429, "the mailbox is full; try later");
+      if (held.n >= FRAMES_WAITING_MAX) return full("mailbox");
       const mine = has ? (sql.exec("SELECT count(*) AS n FROM frames WHERE sender = ?", sender).one().n as number) : 0;
-      if (mine >= FRAMES_PER_SENDER) return text(429, "the mailbox is full; try later");
+      if (mine >= FRAMES_PER_SENDER) return full("mailbox");
     }
-    if (held.bytes - (old?.size ?? 0) + bytes.length > MAILBOX_BYTES_MAX) return text(429, "the mailbox is full; try later");
+    if (held.bytes - (old?.size ?? 0) + bytes.length > MAILBOX_BYTES_MAX) return full("mailbox");
 
     if (seen === undefined) await this.ctx.storage.put("seen", Date.now());
     this.ensure();
@@ -602,8 +745,11 @@ export class Mailbox extends DurableObject<Env> {
     return json({ id, size: bytes.length }, 201);
   }
 
-  /** The link: the older one closed, accept, then everything already waiting, in order. */
-  private link(key: string): Response {
+  /** The link: within the day's budget, the older one closed, accept, then everything already waiting, in order. */
+  private async link(key: string, quiet: boolean): Promise<Response> {
+    const now = Date.now();
+    const until = await spend(this.ctx.storage, key, now);
+    if (until !== null) return overBudget(until);
     for (const old of this.ctx.getWebSockets()) {
       try {
         old.close(1000, "replaced by a newer link");
@@ -613,6 +759,7 @@ export class Mailbox extends DurableObject<Env> {
     const client = pair[0], server = pair[1];
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ key });
+    if (quiet) send(server, { quiet: { until: midnight(now) } });
     for (const f of this.frames()) this.push(server, f);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -791,6 +938,361 @@ export class Mailbox extends DurableObject<Env> {
     }
     await this.ctx.storage.setAlarm(seen + IDLE_MS);
   }
+}
+
+/** A stored frame on a line: whose, how big, when, and in how many chunks. */
+interface Stored {
+  id: string;
+  sender: string;
+  size: number;
+  at: number;
+  of: number;
+}
+
+/**
+ * One friendship, one line. Named by the two addresses sorted; each side
+ * holds one socket to it, tagged by its address, and says which side it is
+ * in the header the Worker set after checking its signature. A frame is
+ * binary chunks (CHUNK_HEADER then data), forwarded to the other side's
+ * socket as each comes when that side is here -- nothing written, the
+ * receiver's ack the only thing the sender waits for -- and written to
+ * rows only when it is away, to be replayed in order at its next connect.
+ * An ack from the receiver deletes what was stored and becomes
+ * {"arrived":id} for the sender, now or at the sender's next connect.
+ *
+ * Like the mailbox, nothing lives in memory between events: the sockets
+ * are the runtime's, "ping" is answered without waking this, and the
+ * tables exist only while something waits. A line with nothing stored,
+ * no socket, and neither side seen for ninety days goes whole.
+ */
+export class Line extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  private get sql() {
+    return this.ctx.storage.sql;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+    if (parts[0] === "_test" && this.env.RELAY_TEST === "1") return this.test();
+    const [, a, b] = parts;
+    const side = request.headers.get(SIDE) ?? "";
+    const them = side === a ? b : a;
+    if (!isUpgrade(request) || (side !== a && side !== b)) return text(400, "the line is a socket");
+    return this.open(side, them, request.headers.get(QUIET) === "1");
+  }
+
+  /**
+   * A side connects: within its budget, its older socket closed, the
+   * socket accepted, then in this order whether the other side is here,
+   * the quiet word if the meter says so, what waited to be said to it,
+   * what waited to be sent to it, and the other side told it is here.
+   */
+  private async open(side: string, them: string, quiet: boolean): Promise<Response> {
+    const now = Date.now();
+    const until = await spend(this.ctx.storage, side, now);
+    if (until !== null) return overBudget(until);
+    for (const old of this.ctx.getWebSockets(side)) {
+      try {
+        old.close(1000, "replaced by a newer link");
+      } catch {}
+    }
+    const pair = new WebSocketPair();
+    const client = pair[0], server = pair[1];
+    this.ctx.acceptWebSocket(server, [side]);
+    server.serializeAttachment({ side, them });
+    const seen = await this.ctx.storage.get<number>(`seen:${side}`);
+    if (seen === undefined || now - seen > SEEN_REFRESH_MS) await this.ctx.storage.put(`seen:${side}`, now);
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(now + IDLE_MS);
+
+    send(server, { friend: { on: this.here(them) } });
+    if (quiet) send(server, { quiet: { until: midnight(now) } });
+    if (this.hasTables()) {
+      const sql = this.sql;
+      const pending = sql.exec("SELECT id, msg FROM pending WHERE to_side = ? ORDER BY id", side).toArray() as unknown as { id: number; msg: string }[];
+      for (const p of pending) {
+        try {
+          server.send(p.msg);
+        } catch {}
+      }
+      if (pending.length) sql.exec("DELETE FROM pending WHERE to_side = ?", side);
+      const frames = sql.exec("SELECT id, sender, size, at, \"of\" FROM frames WHERE sender = ? ORDER BY at, id", them).toArray() as unknown as Stored[];
+      for (const f of frames) this.replay(server, f);
+      this.dropIfEmpty();
+    }
+    for (const ws of this.ctx.getWebSockets(them)) send(ws, { friend: { on: true } });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  private here(side: string): boolean {
+    return this.ctx.getWebSockets(side).length > 0;
+  }
+
+  /** What a side says: a chunk of a frame, or an ack. */
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const { side, them } = ws.deserializeAttachment() as { side: string; them: string };
+    if (typeof message === "string") {
+      let ack: unknown;
+      try {
+        ack = (JSON.parse(message) as { ack?: unknown }).ack;
+      } catch {
+        return;
+      }
+      if (typeof ack === "string" && FRAME_ID_RE.test(ack)) this.acked(ack, them);
+      return;
+    }
+    const bytes = new Uint8Array(message);
+    if (bytes.length < CHUNK_HEADER) return;
+    const view = new DataView(message);
+    const n = view.getUint32(32, true), of = view.getUint32(36, true);
+    const data = bytes.subarray(CHUNK_HEADER);
+    if (n >= of || of > CHUNKS_MAX || data.length > LINE_CHUNK) return;
+    const id = hexOf(bytes.subarray(0, 32));
+    if (n === 0 && (data.length < 33 || data[0] !== FRAME_VERSION || b64encode(data.subarray(1, 33)) !== side)) {
+      send(ws, { failed: { id, why: "not a snyvi frame" } });
+      return;
+    }
+    const sql = this.sql;
+    const has = this.hasTables();
+    const stored = has ? (sql.exec("SELECT count(*) AS n FROM chunks WHERE id = ?", id).one().n as number) : 0;
+    const theirs = this.ctx.getWebSockets(them);
+    // The common case: the other side is here and nothing of this frame
+    // was stored, so the chunk goes straight down and nothing is written.
+    if (theirs.length > 0 && stored === 0) {
+      for (const t of theirs) {
+        try {
+          t.send(message);
+        } catch {}
+      }
+      return;
+    }
+    this.ensure();
+    const at = Date.now();
+    if (n === 0) {
+      const old = sql.exec("SELECT sender FROM frames WHERE id = ?", id).toArray()[0];
+      if (old && old.sender !== side) {
+        send(ws, { failed: { id, why: "not your frame" } });
+        return;
+      }
+      this.forget(id);
+      const held = sql.exec("SELECT count(*) AS n FROM frames").one().n as number;
+      const bytesHeld = sql.exec("SELECT coalesce(sum(length(data)), 0) AS b FROM chunks").one().b as number;
+      if (held >= LINE_FRAMES_MAX || bytesHeld >= LINE_BYTES_MAX) {
+        send(ws, { full: id });
+        this.dropIfEmpty();
+        return;
+      }
+    } else if (stored !== n) {
+      // The other side left part way, or this side started over: what is
+      // here cannot be completed, so the frame comes again from the top.
+      sql.exec("DELETE FROM chunks WHERE id = ?", id);
+      send(ws, { resend: id });
+      this.dropIfEmpty();
+      return;
+    }
+    sql.exec("INSERT INTO chunks (id, n, at, data) VALUES (?, ?, ?, ?)", id, n, at, data);
+    if (n < of - 1) return;
+    const size = sql.exec("SELECT coalesce(sum(length(data)), 0) AS b FROM chunks WHERE id = ?", id).one().b as number;
+    sql.exec("INSERT INTO frames (id, sender, size, at, \"of\") VALUES (?, ?, ?, ?, ?)", id, side, size, at, of);
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > at + FRAME_TTL_MS) await this.ctx.storage.setAlarm(at + FRAME_TTL_MS);
+    send(ws, { held: id });
+    // Here after all, part way through: what was stored goes down now.
+    const now = this.ctx.getWebSockets(them);
+    if (now.length > 0) {
+      const f = { id, sender: side, size, at, of };
+      for (const t of now) this.replay(t, f);
+    }
+  }
+
+  /** The receiver has it: what was stored goes, and the sender hears "arrived", now or next time. */
+  private acked(id: string, sender: string) {
+    this.forget(id);
+    const msg = JSON.stringify({ arrived: id });
+    const theirs = this.ctx.getWebSockets(sender);
+    if (theirs.length > 0) {
+      for (const t of theirs) {
+        try {
+          t.send(msg);
+        } catch {}
+      }
+    } else {
+      this.ensure();
+      this.sql.exec("INSERT INTO pending (to_side, at, msg) VALUES (?, ?, ?)", sender, Date.now(), msg);
+    }
+    this.dropIfEmpty();
+  }
+
+  /** A stored frame, down one socket as the chunks it came in. */
+  private replay(ws: WebSocket, f: Stored) {
+    const idRaw = rawOf(f.id);
+    const rows = this.sql.exec("SELECT n, data FROM chunks WHERE id = ? ORDER BY n", f.id).toArray();
+    for (const r of rows) {
+      const data = new Uint8Array(r.data as ArrayBuffer);
+      const out = new Uint8Array(CHUNK_HEADER + data.length);
+      out.set(idRaw, 0);
+      new DataView(out.buffer).setUint32(32, r.n as number, true);
+      new DataView(out.buffer).setUint32(36, f.of, true);
+      out.set(data, CHUNK_HEADER);
+      try {
+        ws.send(out);
+      } catch {
+        return;
+      }
+    }
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    try {
+      ws.close(code, reason);
+    } catch {}
+    this.left(ws);
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    try {
+      ws.close(1011, "error");
+    } catch {}
+    this.left(ws);
+  }
+
+  /** A side's last socket gone: the other side hears it. */
+  private left(ws: WebSocket) {
+    const att = ws.deserializeAttachment() as { side: string; them: string } | null;
+    if (!att) return;
+    if (this.ctx.getWebSockets(att.side).some((s) => s !== ws && s.readyState === WebSocket.READY_STATE_OPEN)) return;
+    for (const t of this.ctx.getWebSockets(att.them)) send(t, { friend: { on: false } });
+  }
+
+  private hasTables(): boolean {
+    return this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'frames'").toArray().length > 0;
+  }
+
+  /** The tables, made when the first thing has to wait. */
+  private ensure() {
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS frames (
+        id TEXT PRIMARY KEY, sender TEXT NOT NULL, size INTEGER NOT NULL, at INTEGER NOT NULL, "of" INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS chunks (
+        id TEXT NOT NULL, n INTEGER NOT NULL, at INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (id, n)
+      );
+      CREATE TABLE IF NOT EXISTS pending (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, to_side TEXT NOT NULL, at INTEGER NOT NULL, msg TEXT NOT NULL
+      );
+    `);
+  }
+
+  /** Nothing waiting, nothing stored: the tables go, and the line holds its two `seen`s and nothing more. */
+  private dropIfEmpty() {
+    if (!this.hasTables()) return;
+    const sql = this.sql;
+    const n =
+      (sql.exec("SELECT count(*) AS n FROM frames").one().n as number) +
+      (sql.exec("SELECT count(*) AS n FROM chunks").one().n as number) +
+      (sql.exec("SELECT count(*) AS n FROM pending").one().n as number);
+    if (n > 0) return;
+    this.ctx.storage.transactionSync(() => {
+      sql.exec("DROP TABLE pending");
+      sql.exec("DROP TABLE chunks");
+      sql.exec("DROP TABLE frames");
+    });
+  }
+
+  private forget(id: string) {
+    if (!this.hasTables()) return;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec("DELETE FROM chunks WHERE id = ?", id);
+      this.sql.exec("DELETE FROM frames WHERE id = ?", id);
+    });
+  }
+
+  /** Under `--env test` only: what the line holds. */
+  private test(): Response {
+    if (!this.hasTables()) return json({ frames: [], chunks: 0, pending: 0 });
+    const sql = this.sql;
+    return json({
+      frames: sql.exec("SELECT id, sender AS \"from\", size, at FROM frames ORDER BY at, id").toArray(),
+      chunks: sql.exec("SELECT count(*) AS n FROM chunks").one().n,
+      pending: sql.exec("SELECT count(*) AS n FROM pending").one().n,
+    });
+  }
+
+  /**
+   * The sweep: frames, orphan chunks and pending words past seven days go;
+   * while anything is left the next sweep is the oldest's. Then as the
+   * mailbox: a socket open means look again in ninety days, neither side
+   * seen for ninety days means the line goes whole.
+   */
+  async alarm(): Promise<void> {
+    const sql = this.sql;
+    const now = Date.now();
+    if (this.hasTables()) {
+      const cutoff = now - FRAME_TTL_MS;
+      this.ctx.storage.transactionSync(() => {
+        sql.exec("DELETE FROM chunks WHERE id IN (SELECT id FROM frames WHERE at <= ?)", cutoff);
+        sql.exec("DELETE FROM frames WHERE at <= ?", cutoff);
+        sql.exec("DELETE FROM chunks WHERE at <= ? AND id NOT IN (SELECT id FROM frames)", cutoff);
+        sql.exec("DELETE FROM pending WHERE at <= ?", cutoff);
+      });
+      const oldest = sql
+        .exec("SELECT min(at) AS at FROM (SELECT at FROM frames UNION ALL SELECT at FROM chunks UNION ALL SELECT at FROM pending)")
+        .one().at as number | null;
+      if (oldest !== null) {
+        await this.ctx.storage.setAlarm(oldest + FRAME_TTL_MS);
+        return;
+      }
+      this.dropIfEmpty();
+    }
+    if (this.ctx.getWebSockets().length > 0) {
+      await this.ctx.storage.setAlarm(now + IDLE_MS);
+      return;
+    }
+    const seen = [...(await this.ctx.storage.list<number>({ prefix: "seen:" })).values()];
+    const newest = seen.length ? Math.max(...seen) : 0;
+    if (newest === 0 || now - newest >= IDLE_MS) {
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    await this.ctx.storage.setAlarm(newest + IDLE_MS);
+  }
+}
+
+/**
+ * The day's count, estimated. One object, ticked by one Worker request in
+ * SAMPLE with that many added, and answering the level the daemons are to
+ * be at: 0, 1 (quiet: no read receipts), 2 (essentials: a big deposit
+ * waits for tomorrow). A new UTC day starts from nothing.
+ */
+export class Meter extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const now = Date.now();
+    const day = dayOf(now);
+    const kept = await this.ctx.storage.get<{ day: string; n: number }>("count");
+    let n = kept?.day === day ? kept.n : 0;
+    const set = url.searchParams.get("set");
+    n = set !== null ? Number(set) || 0 : n + (Number(url.searchParams.get("n")) || 0);
+    await this.ctx.storage.put("count", { day, n });
+    const level = n >= ESSENTIALS_AT ? 2 : n >= QUIET_AT ? 1 : 0;
+    return json({ n, level, until: midnight(now) });
+  }
+}
+
+/** A frame's id as the chunk header carries it: 32 raw bytes from 64 hex characters. */
+function rawOf(id: string): Uint8Array {
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) out[i] = parseInt(id.slice(2 * i, 2 * i + 2), 16);
+  return out;
+}
+
+function hexOf(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += b.toString(16).padStart(2, "0");
+  return s;
 }
 
 /** `?wait=` seconds on a room, 0 to 25; a GET with none waits the full 25. */
