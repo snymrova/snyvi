@@ -130,18 +130,7 @@ async function act(b, byKey) {
           () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
       }
     }
-    else if (a === "note-tell") {
-      const x = noteList.find(y => y.id === +b.dataset.n);
-      if (x) {
-        x.told = true;
-        rail();
-        let r = null;
-        if (await told(b.dataset, `n${x.id}`, `Could not tell ${x.sent_by}`, () => { x.told = false; },
-          async () => (r = await ctx.api(`/api/desks/${d.id}/notes/${x.id}/tell`, {})))) {
-          ctx.toast(r?.sent ? `Told ${x.sent_by}` : `Kept for ${x.sent_by}`, r?.sent ? x.text : r?.waits ? "their snyvi is older; it goes once they update" : "it goes when the relay can be reached");
-        }
-      }
-    }
+    else if (a === "note-tell") await tellNote(d, b);
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
     else if (a === "keys") keysSheet(d);
@@ -207,6 +196,20 @@ const VERB = { new: "open a new panel", stop: "stop the panel", start: "start th
  *  was changed (`back`) and says so in the row that asked (`k`), with a
  *  Retry that does the same thing again (`again`, the button's data).
  *  True when the daemon said yes. */
+/** Tell Trapti ✓ on a friend's ticked line: said in the row at once, put
+ *  back with the reason if the daemon says no. */
+async function tellNote(d, b) {
+  const x = noteList.find(y => y.id === +b.dataset.n);
+  if (!x) return;
+  x.told = true;
+  rail();
+  let r = null;
+  if (await told(b.dataset, `n${x.id}`, `Could not tell ${x.sent_by}`, () => { x.told = false; },
+    async () => (r = await ctx.api(`/api/desks/${d.id}/notes/${x.id}/tell`, {})))) {
+    ctx.toast(r?.sent ? `Told ${x.sent_by}` : `Kept for ${x.sent_by}`, r?.sent ? x.text : r?.waits ? "their snyvi is older; it goes once they update" : "it goes when the relay can be reached");
+  }
+}
+
 async function told(again, k, why, back, call) {
   try { await call(); return true; }
   catch (e) {

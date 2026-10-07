@@ -550,7 +550,7 @@ async fn receive_and_tell(app: Arc<App>, payload: Payload) -> Response {
     });
     match result {
         Ok(Ok((event, received))) => {
-            emit(&app, "doc", event);
+            emit_doc(&app, event);
             let doc = received.doc;
             let url = format!("{}/d/{}", config::base_url(), doc.id);
             if !received.existing {

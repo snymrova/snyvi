@@ -1198,7 +1198,7 @@ fn arrived(
             let mut ev = doc_event(app, &received);
             ev["from"] = json!(p.name);
             ev["quiet"] = json!(p.muted);
-            emit(app, "doc", ev);
+            emit_doc(app, ev);
             if desk.is_some() {
                 emit(app, "deskdocs", json!({}));
             }

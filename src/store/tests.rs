@@ -1454,7 +1454,8 @@ fn a_filed_document_copies_its_place_in_the_folder() {
     let root = tempdir::Dir::new("snyvi-filed");
     std::fs::create_dir_all(root.path.join("docs")).unwrap();
     std::fs::write(root.path.join("docs/plan.md"), "x").unwrap();
-    let src = root.path.join("docs/plan.md");
+    // With this system's separators, as the code joins it.
+    let src = root.path.join("docs").join("plan.md");
     assert_eq!(
         local_path(
             Some("docs/plan.md"),
