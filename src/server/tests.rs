@@ -590,6 +590,16 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/docs/nope/save", None, Gate::Desk, true),
+    // A friend's document back under their row, and a frame tried again:
+    // the reader's, from a tab as well as the window.
+    ("POST", "/api/docs/nope/unfile", None, Gate::Reader, true),
+    (
+        "POST",
+        "/api/peers/outbox/nope/retry",
+        None,
+        Gate::Reader,
+        true,
+    ),
     ("GET", "/api/brief", None, Gate::Desk, true),
     (
         "POST",
@@ -1896,6 +1906,93 @@ async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
     assert!(garden.path.join("from-trapti/seeds-2.md").exists());
 }
 
+/// A friend's document in one of the reader's folders says so, and Move to
+/// From Trapti takes it back to their row, off the desk; nobody else's
+/// document moves that way.
+#[tokio::test]
+async fn a_friends_document_in_a_folder_goes_back_to_their_row() {
+    let garden = crate::store::tempdir::Dir::new("snyvi-unfile-desk");
+    let root = garden.path.to_string_lossy().into_owned();
+    let (_tmp, router, leaves) = gated_router_with("snyvi-unfile", |store| {
+        let desk = store.create_desk(&root, Some("Garden")).unwrap();
+        for (id, origin) in [("abcdef0001", "peer"), ("abcdef0002", "cli")] {
+            store
+                .insert(
+                    id,
+                    crate::store::NewDoc {
+                        project_root: "peer:KEY",
+                        project_name: "From Trapti",
+                        workflow_key: "sent",
+                        workflow_title: "Sent by Trapti",
+                        title: "Seed list",
+                        kind: crate::render::Kind::Markdown,
+                        lang: None,
+                        source_path: Some("docs/seeds.md"),
+                        branch: None,
+                        origin,
+                        sender: "Trapti",
+                        desk: None,
+                        source: b"# Seeds",
+                        staged: None,
+                        search_body: "",
+                        html: "<p>Seeds</p>",
+                    },
+                )
+                .unwrap();
+        }
+        store
+            .pin_peer(&crate::peer::Peer {
+                id: 0,
+                sign_key: "KEY".into(),
+                box_key: "BOX".into(),
+                name: "Trapti".into(),
+                paired_at: 0,
+                muted: false,
+                removed_at: 0,
+                last_from: 0,
+                last_to: 0,
+                desk_id: 0,
+            })
+            .unwrap();
+        // Who sent it, by key, as `arrived` sets it.
+        store.set_peer_key("abcdef0001", "KEY").unwrap();
+        let (r, n, _) = crate::receive::desk_project(&root);
+        let on = crate::desk::Origin {
+            id: desk.id,
+            name: desk.name.clone(),
+            slot: 0,
+        };
+        let kept = store
+            .move_lineage("abcdef0001", &r, &n, &on)
+            .unwrap()
+            .unwrap();
+        assert!(kept.filed, "in the reader's folder now");
+    });
+    let unfile = |id: &str| {
+        router.clone().oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/docs/{id}/unfile"))
+                .header("host", &leaves.host)
+                .header("origin", &leaves.origin)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let back = unfile("abcdef0001").await.unwrap();
+    assert_eq!(back.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(back.into_body(), 65536).await.unwrap();
+    let back: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(back["doc"]["project"], "From Trapti", "{back}");
+    assert!(back["doc"]["desk"].is_null(), "{back}");
+    assert!(back["doc"].get("filed").is_none(), "{back}");
+    assert_eq!(
+        unfile("abcdef0002").await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "only a friend's document"
+    );
+}
+
 #[test]
 fn a_saved_friends_document_gets_a_plain_name() {
     use super::api_peer::{file_name, slug};
@@ -1921,6 +2018,7 @@ fn a_saved_friends_document_gets_a_plain_name() {
         content_hash: String::new(),
         desk: None,
         sender: "Trapti".into(),
+        filed: false,
     };
     assert_eq!(file_name(&d), "plan.md", "a name and no path");
     d.source_path = None;

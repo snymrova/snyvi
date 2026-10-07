@@ -51,9 +51,19 @@ pub struct FromPeer {
     /// The sender's file name, if the document was a file there: only its
     /// extension is used, to tell a picture from a page.
     pub file: Option<String>,
-    /// The desk the reader gave this friend, and its folder: the document
-    /// lands in that desk's project and on its list, not on their own row.
+    /// The desk it lands on, and that desk's folder: the one open on the
+    /// reader's folder it was filed into, or the one the reader gave this
+    /// friend. The document joins that desk's project and its list, not the
+    /// friend's own row.
     pub desk: Option<(crate::desk::Origin, String)>,
+    /// The reader's own folder for the repository the frame is about
+    /// (`api_peer::file_into`): the project it lands in, desk or no desk.
+    pub root: Option<String>,
+    /// What it is a version of, in that project: its path in the repository,
+    /// a key for a file outside one, or the name (`api_peer::lineage`).
+    /// Stored as the document's `source_path`, which is what versions are
+    /// told apart by; never read as a path on this machine.
+    pub lineage: Option<String>,
 }
 
 pub struct Received {
@@ -132,9 +142,13 @@ fn read(store: &Store, p: &Payload) -> Result<Body> {
                     String::from_utf8_lossy(&fp.bytes).into_owned()
                 },
                 bytes: fp.bytes.clone(),
-                // The name alone, as the path: it tells a picture from a page,
-                // and a second send of the same file lands as a version.
-                path: fp.file.clone().filter(|f| !f.trim().is_empty()),
+                // Where it is in the repository, or the name alone, as the
+                // path: a second send of the same file lands as a version.
+                path: fp
+                    .lineage
+                    .clone()
+                    .or_else(|| fp.file.clone())
+                    .filter(|f| !f.trim().is_empty()),
                 staged: None,
             }
         }
@@ -277,6 +291,9 @@ fn workflow(
 /// (`peer::Peer::project_root`), so the sidebar gains one row per friend and
 /// nothing else -- or, when the reader gave them a desk, to that desk's.
 fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
+    if let Some(root) = p.peer.as_ref().and_then(|fp| fp.root.as_ref()) {
+        return desk_project(root);
+    }
     if let Some((_, root)) = p.peer.as_ref().and_then(|fp| fp.desk.as_ref()) {
         return desk_project(root);
     }
@@ -703,6 +720,8 @@ mod tests {
             bytes: b"# Garden\n\nbeans".to_vec(),
             file: Some("garden.md".into()),
             desk: None,
+            root: None,
+            lineage: None,
         };
         let got = receive(
             &s,
@@ -801,6 +820,8 @@ mod tests {
                     bytes: b"# Seeds\n\nbeans".to_vec(),
                     file: Some("seeds.md".into()),
                     desk: Some((at.clone(), garden.path.to_string_lossy().to_string())),
+                    root: None,
+                    lineage: None,
                 }),
                 ..Default::default()
             },
@@ -815,6 +836,78 @@ mod tests {
         assert_eq!(got.doc.origin, "peer");
         assert_eq!(got.doc.sender, "Trapti");
         assert!(!s.projects().unwrap()[0].friend, "the desk's own row");
+    }
+
+    /// A friend's document about a repository the reader has: into the
+    /// reader's own folder for it, ahead of the friend's desk, versioned by
+    /// its place in the repository -- so two files of one name are two rows.
+    #[test]
+    fn a_friends_document_lands_in_the_folder_both_have() {
+        let (s, r, _d) = setup();
+        let mine = Dir::new("snyvi-recv-mine");
+        let theirs = Dir::new("snyvi-recv-theirs");
+        for d in [&mine, &theirs] {
+            std::fs::create_dir_all(d.path.join(".git")).unwrap();
+        }
+        let (root, _, _) = desk_project(&mine.path.to_string_lossy());
+        let send = |bytes: &[u8], lineage: &str| {
+            receive(
+                &s,
+                &r,
+                Payload {
+                    title: Some("Plan".into()),
+                    origin: Some("peer".into()),
+                    sender: Some("Trapti".into()),
+                    peer: Some(FromPeer {
+                        name: "Trapti".into(),
+                        sign_key: "KEY".into(),
+                        bytes: bytes.to_vec(),
+                        file: Some("PLAN.md".into()),
+                        // The desk the reader gave Trapti, elsewhere: the
+                        // folder both have wins.
+                        desk: Some((
+                            crate::desk::Origin {
+                                id: 9,
+                                name: "Theirs".into(),
+                                slot: 0,
+                            },
+                            theirs.path.to_string_lossy().to_string(),
+                        )),
+                        root: Some(root.clone()),
+                        lineage: Some(lineage.into()),
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let one = send(b"# Plan\n\none", "docs/PLAN.md");
+        assert_eq!(
+            s.project_root(one.doc.project_id).as_deref(),
+            Some(root.as_str())
+        );
+        assert_eq!(one.doc.source_path.as_deref(), Some("docs/PLAN.md"));
+        assert_eq!(one.doc.kind, Kind::Markdown);
+        let two = send(b"# Plan\n\ntwo", "docs/PLAN.md");
+        assert_eq!(
+            two.supersedes.as_deref(),
+            Some(one.doc.id.as_str()),
+            "a version"
+        );
+        let other = send(b"# Plan\n\nelse", "web/PLAN.md");
+        assert_eq!(
+            other.supersedes, None,
+            "the same name elsewhere is its own row"
+        );
+        let scratch = send(b"# Plan\n\nscratch", "0123456789abcdef/PLAN.md");
+        assert_eq!(scratch.supersedes, None);
+        assert_eq!(
+            send(b"# Plan\n\nscratch 2", "0123456789abcdef/PLAN.md")
+                .supersedes
+                .as_deref(),
+            Some(scratch.doc.id.as_str()),
+            "a file outside the repository is versioned by its key"
+        );
     }
 
     #[test]

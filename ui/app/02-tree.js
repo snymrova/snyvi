@@ -94,6 +94,8 @@
     // The desk's own (fill, unfill, plus, play, again) come with desk.js.
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
+    prev: '<path d="m15 6-6 6 6 6"/>',
+    next: '<path d="m9 6 6 6-6 6"/>',
   };
   /** An icon at any size with the same 1.5 px line on screen: the drawings
    *  are on a 24 grid, so the stroke is scaled to the size asked for. */

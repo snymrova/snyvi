@@ -37,6 +37,11 @@ pub struct Doc {
     /// `peer`), so the head can say "from Trapti". Empty otherwise.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub sender: String,
+    /// A friend's document that is in one of the reader's own folders --
+    /// filed there because both have the repository, or kept there -- and
+    /// can go back to the friend's row (`Store::unfile`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub filed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -219,7 +224,7 @@ const FTS_INSERT: &str =
 const FTS_DELETE: &str =
     "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
 
-const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender";
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%')";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 /// The same join over `head_docs`: what every list of documents reads, so one
@@ -476,6 +481,12 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (8, thread::THREAD_COLUMN),
     // 1.21: the command a `run` turn hands the reader.
     (9, thread::CMD_COLUMN),
+    // 1.22: a folder's fingerprint, and who sent a friend's document
+    // (`crate::peer::Folder`).
+    (10, peer::COLUMNS_1_22[0]),
+    (10, peer::COLUMNS_1_22[1]),
+    (10, peer::COLUMNS_1_22[2]),
+    (10, peer::COLUMNS_1_22[3]),
 ];
 
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
@@ -691,6 +702,7 @@ impl Store {
             content_hash: hash,
             desk: d.desk.cloned(),
             sender: d.sender.to_string(),
+            filed: false,
         })
     }
 
@@ -1273,6 +1285,117 @@ impl Store {
         self.get(id)
     }
 
+    /// A friend's document, back under the friend's own row and off any
+    /// desk, with every version of it: the Undo of it being filed into one
+    /// of the reader's folders, or kept there. `None` when there is no such
+    /// document, or it does not say who sent it.
+    pub fn unfile(&self, id: &str) -> Result<Option<Doc>> {
+        let key: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT peer_key FROM live_docs WHERE id = ?1 AND origin = 'peer' AND peer_key != ''",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(key) = key else {
+            return Ok(None);
+        };
+        let Some(p) = self.peer_by_key(&key)? else {
+            return Ok(None);
+        };
+        let none = Origin {
+            id: 0,
+            name: String::new(),
+            slot: 0,
+        };
+        self.move_lineage(id, &p.project_root(), &p.project_name(), &none)
+    }
+
+    /// Who sent a friend's document, by key: what `unfile` moves it back
+    /// under, set as it arrives.
+    pub fn set_peer_key(&self, id: &str, key: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE docs SET peer_key = ?2 WHERE id = ?1",
+            params![id, key],
+        )?;
+        Ok(())
+    }
+
+    /// The reader's folders whose fingerprint is older than `before`, or was
+    /// never read: what the sweep reads next. A friend's own row is no folder.
+    pub fn roots_to_print(&self, before: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(
+                "SELECT root FROM projects WHERE root NOT LIKE 'peer:%' AND printed_at < ?1 ORDER BY printed_at, id",
+            )?
+            .query_map(params![before], |r| r.get(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
+    /// What `crate::git::print` said of a folder, now; nothing, for one in no
+    /// repository, so it is not asked again until the next round.
+    pub fn set_print(&self, root: &str, print: Option<&crate::git::Print>) -> Result<()> {
+        let (repo, remote) =
+            print.map_or((None, None), |p| (p.repo.as_deref(), p.remote.as_deref()));
+        self.conn.lock().unwrap().execute(
+            "UPDATE projects SET repo = ?2, remote = ?3, printed_at = ?4 WHERE root = ?1",
+            params![root, repo.unwrap_or(""), remote.unwrap_or(""), now()],
+        )?;
+        Ok(())
+    }
+
+    /// A folder's fingerprint as last read, and when: `None` when it was
+    /// never read.
+    pub fn print_of(&self, root: &str) -> Result<Option<(crate::git::Print, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT repo, remote, printed_at FROM projects WHERE root = ?1 AND printed_at > 0",
+                params![root],
+                |r| {
+                    let some = |s: String| (!s.is_empty()).then_some(s);
+                    Ok((
+                        crate::git::Print {
+                            repo: some(r.get(0)?),
+                            remote: some(r.get(1)?),
+                        },
+                        r.get(2)?,
+                    ))
+                },
+            )
+            .optional()?)
+    }
+
+    /// The reader's folders a friend's frame could be about: those with its
+    /// repository's fingerprint, or its remote's, each with when a document
+    /// last arrived in it (the tie rule's last word, `api_peer::file_into`).
+    pub fn roots_by_print(&self, print: &crate::peer::Folder) -> Result<Vec<(String, i64)>> {
+        let (repo, remote) = (
+            print.repo.as_deref().unwrap_or(""),
+            print.remote.as_deref().unwrap_or(""),
+        );
+        if repo.is_empty() && remote.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .prepare(
+                "SELECT p.root, COALESCE((SELECT MAX(d.received_at) FROM live_docs d WHERE d.project_id = p.id), 0)
+                 FROM projects p
+                 WHERE p.root NOT LIKE 'peer:%'
+                   AND ((?1 != '' AND p.repo = ?1) OR (?2 != '' AND p.remote = ?2))
+                 ORDER BY p.id",
+            )?
+            .query_map(params![repo, remote], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(rows)
+    }
+
     pub fn rename_project_by_root(&self, root: &str, name: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
@@ -1840,6 +1963,33 @@ impl Store {
         peer::prune_taken(&self.conn.lock().unwrap(), now() - peer::TAKEN_KEPT)
     }
 
+    /// What waits in the outbox, per frame (`peer::outgoing`).
+    pub fn peer_outgoing(&self) -> Result<Vec<peer::Outgoing>> {
+        peer::outgoing(&self.conn.lock().unwrap())
+    }
+
+    pub fn peer_retry(&self, id: &str) -> Result<bool> {
+        peer::retry(&self.conn.lock().unwrap(), id)
+    }
+
+    /// Hold a frame of a kind this snyvi does not read (`peer::hold`).
+    pub fn peer_hold(&self, id: &str, peer_id: i64, bytes: &[u8]) -> Result<()> {
+        peer::hold(&self.conn.lock().unwrap(), id, peer_id, bytes, now())
+    }
+
+    pub fn peer_held(&self) -> Result<Vec<(String, i64, Vec<u8>)>> {
+        peer::held(&self.conn.lock().unwrap())
+    }
+
+    pub fn peer_unhold(&self, id: &str) -> Result<()> {
+        peer::unhold(&self.conn.lock().unwrap(), id)
+    }
+
+    /// Let go of held frames older than `peer::HELD_KEPT`.
+    pub fn prune_peer_held(&self) -> Result<usize> {
+        peer::prune_held(&self.conn.lock().unwrap(), now() - peer::HELD_KEPT)
+    }
+
     /// Where a pane's shell has moved to (`desk::set_cwd`).
     pub fn set_pane_cwd(&self, id: &str, cwd: &str) -> Result<bool> {
         desk::set_cwd(&self.conn.lock().unwrap(), id, cwd)
@@ -2169,6 +2319,7 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
             }),
         },
         sender: r.get(19)?,
+        filed: r.get::<_, i64>(20)? != 0,
     })
 }
 

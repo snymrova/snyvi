@@ -397,15 +397,44 @@ function entries(ctx, el, byKey = false) {
   // project, and one in the home folder is the exception, so it is last.
   if (el.matches("[data-newdesk]:not(.b-new), [data-a=make]")) {
     if (!capability) return null;
-    const places = ctx.places();
+    const places = recent(ctx), list = everyPlace ? places : places.slice(0, FEW);
+    everyPlace = false;
     return { head: "New desk in…", items: [
-      ...places.map(f => ({ label: f.name, moves: 1, run: () => make(ctx, f) })),
+      ...list.map(f => ({ label: f.name, hint: f.hint, moves: 1, run: () => make(ctx, f) })),
+      // The rest, in the same menu where it stands: More draws it again
+      // with all of them, and the first one it adds has the focus.
+      list.length < places.length && { label: `More folders… (${places.length - FEW})`, moves: 1, run: () => { everyPlace = true; reopen(ctx, FEW); } },
       places.length && RULE,
       { label: "Another folder…", run: () => pick(ctx, true) },
       { label: "A shell in your home folder", moves: 1, run: () => make(ctx, null) },
     ] };
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;
+}
+
+/** How many places New desk in… lists before More folders…: a menu that fits
+ *  under its button, and the projects of this week. */
+const FEW = 6;
+/** Set by More folders…, for the one menu it draws again. */
+let everyPlace = false;
+/** Where a new desk could go, the most recently active first -- a project by
+ *  its newest document, a folder by when it was opened -- and, on a name two
+ *  of them share, the folder each is in, so three `reel`s are three places. */
+function recent(ctx) {
+  const { tree, browse, desks } = ctx.state;
+  const when = f => f.project != null ? tree.find(p => p.id === f.project)?.latest || 0 : browse.find(r => r.id === f.root)?.opened_at || 0;
+  const out = ctx.places().map(f => ({ ...f, at: when(f) })).sort((a, b) => b.at - a.at);
+  // Paths as `/`-separated, without a trailing one, Windows' too.
+  const slash = p => (p || "").replace(/\\/g, "/").replace(/(.)\/+$/, "$1");
+  const home = slash(desks && desks.home), seen = {};
+  for (const f of out) seen[f.name] = (seen[f.name] || 0) + 1;
+  for (const f of out) if (seen[f.name] > 1) {
+    // The folder it is in, home-relative, its last two names at most.
+    const up = slash(f.abs).split("/").slice(0, -1).join("/");
+    const rel = home && up === home ? "~" : home && up.startsWith(home + "/") ? up.slice(home.length + 1) : up;
+    f.hint = rel.split("/").slice(-2).join("/");
+  }
+  return out;
 }
 
 /** The desks in the reader's order: `ids`, top first, drawn at once and then
@@ -508,8 +537,10 @@ export function open(ctx, el, x, y, byKey = false) {
   // key; for a pointer, the row that was right-clicked (or the nearest
   // thing in it that takes focus), so a keyboard picks up where it was.
   opener = byKey ? document.activeElement : el.closest("a[href], button, summary, [tabindex]") || el;
+  asked = { el, x, y, byKey, opener };
+  menu.style.maxHeight = "";
   menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? `<hr role="separator">`
-    : `<button type="button" role="menuitem" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.key ? `<kbd>${ctx.esc(e.key)}</kbd>` : ""}</button>`).join("");
+    : `<button type="button" role="menuitem" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.hint ? `<small>${ctx.esc(e.hint)}</small>` : ""}${e.key ? `<kbd>${ctx.esc(e.key)}</kbd>` : ""}</button>`).join("");
   menu.hidden = false;
   // Below the point when it fits, above it when it does not, and scrolled
   // when the window is shorter than the menu.
@@ -523,6 +554,21 @@ export function open(ctx, el, x, y, byKey = false) {
 /** The entries the menu on screen was drawn from, and the element that had
  *  the focus when a key opened it -- where Escape puts the focus back. */
 let shown = [], opener = null;
+/** What the menu on screen was opened for, and where: `reopen`'s to draw again. */
+let asked = null;
+
+/** The menu on screen drawn again for what it was opened on, longer, without
+ *  moving: its top stays where it was and what does not fit below scrolls
+ *  in it. The focus goes to entry `at`, the first one it gained. */
+function reopen(ctx, at) {
+  const was = asked, top = menu.style.top;
+  if (!was || !open(ctx, was.el, was.x, was.y, was.byKey)) return;
+  opener = was.opener; asked.opener = was.opener;
+  menu.style.top = top;
+  menu.style.maxHeight = `${innerHeight - 8 - parseFloat(top)}px`;
+  const b = menu.querySelector(`[data-i="${at}"]`);
+  if (b) { b.focus({ preventScroll: true }); b.scrollIntoView({ block: "nearest" }); }
+}
 
 const close = (back = false) => {
   if (!menu || menu.hidden) return;
@@ -552,6 +598,9 @@ const CSS = `
 #ctx .ctx-head { padding: 4px 10px 5px; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
 #ctx button { display: flex; align-items: baseline; gap: 16px; width: 100%; text-align: left; padding: 5px 10px; border-radius: var(--r-sm); color: var(--fg-2); }
 #ctx button > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Where a place is, when its name alone does not say: dim, and the first
+   to give way when the row is narrow. */
+#ctx button small { flex: 0 1 auto; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-small); color: var(--fg-3); }
 #ctx button kbd { flex: none; min-width: 0; color: var(--fg-3); background: none; border: 0; padding: 0; }
 #ctx button:hover { background: var(--rule); }
 #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }

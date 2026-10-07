@@ -1039,12 +1039,23 @@ function friendRow(f, j) {
     [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
   const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
   const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
-  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${where}` +
+  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${outbox(f)}${where}` +
     (more
       ? `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
         `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" data-tip="Remove ${esc(f.name)}" data-tip-sub="keys kept; Restore brings them back">Remove</button>`
       : `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>`) +
     `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Mute or remove"}">⋯</button>${list}</li>`;
+}
+
+/** What has not gone to a friend yet, in their row: one that stopped trying
+ *  says why, with Retry; the rest are a count, the oldest's reason in its
+ *  tip. Nothing when all went. */
+function outbox(f) {
+  const { esc } = c, mine = (peers?.outbox || []).filter(o => o.peer_id === f.id);
+  if (!mine.length) return "";
+  const stopped = mine.find(o => o.stopped);
+  if (stopped) return `<span class="hm-s" data-tip="${esc(stopped.what || "A frame")} did not go" data-tip-sub="${esc(stopped.error || "it stopped trying")}">${mine.filter(o => o.stopped).length} stopped</span><button type="button" class="hm-link" data-hm="fretry" data-k="${f.id}" data-f="${esc(stopped.id)}">Retry</button>`;
+  return `<span class="hm-s" data-tip="${esc(mine[0].what || "A frame")} is waiting to go" data-tip-sub="${esc(mine[0].error || "it goes when the relay can be reached")}">${mine.length} waiting to go</span>`;
 }
 
 /* ---------- Arrived ---------- */
@@ -1378,6 +1389,11 @@ async function friendClick(k, id, b) {
     if (f) f.desk_id = +b.dataset.n;
     draw(last); c.docEl.querySelector(`[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true });
     soonRefresh();
+  }
+  else if (k === "fretry") {
+    b.disabled = true;
+    const r = await fetch(`/api/peers/outbox/${encodeURIComponent(b.dataset.f)}/retry`, { method: "POST" }).catch(() => null);
+    if (!r?.ok) { b.disabled = false; c.peerCtx.toast("Could not try again"); } else soonRefresh();
   }
   else if (k === "fmute") {
     const f = friendsOf().find(x => x.id === id);

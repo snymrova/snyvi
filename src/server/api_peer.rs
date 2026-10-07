@@ -103,10 +103,25 @@ pub(crate) async fn peers_list(State(app): S) -> Response {
     let friends = app.store.peers().unwrap_or_default();
     let notes = app.store.peer_notes().unwrap_or_default();
     let offers = app.store.peer_offers().unwrap_or_default();
+    // What has not gone, each with whether it stopped trying: the friends
+    // list says it in the friend's row, with Retry.
+    let outbox: Vec<_> = app
+        .store
+        .peer_outgoing()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|o| {
+            let stopped = o.tries >= TRIES_MAX;
+            let mut v = json!(o);
+            v["stopped"] = json!(stopped);
+            v
+        })
+        .collect();
     Json(json!({
         "friends": friends,
         "notes": notes,
         "offers": offers,
+        "outbox": outbox,
         "me": { "name": my_name(&app.paths) },
         "relay": peer::relay(),
     }))
@@ -711,6 +726,10 @@ fn send_one(
         let content = Content::Note {
             text: row.text.clone(),
             name: name.to_string(),
+            at: peer::Folder {
+                v: peer::CONTENT_V,
+                ..Default::default()
+            },
         };
         let frame = peer::seal(me, &p, &content, b"")?;
         return peer::deposit(me, &p.sign_key, frame_id, &frame);
@@ -751,9 +770,78 @@ fn send_one(
             .map(|f| f.to_string_lossy().to_string()),
         name: name.to_string(),
         id: doc.id.clone(),
+        at: folder_of(app, &doc),
     };
     let frame = peer::seal(me, &p, &content, &bytes)?;
     peer::deposit(me, &p.sign_key, frame_id, &frame)
+}
+
+/// How long a folder's fingerprint is taken as read: a day. Root commits do
+/// not change; a remote, rarely.
+pub(crate) const PRINT_KEPT: i64 = 86_400;
+
+/// The folder a document is about, as its frame says it (`peer::Folder`):
+/// the repository its project is, the file's place in it -- or, for a file
+/// outside it, a key standing for the path -- and the branch. Blocking: a
+/// fingerprint not read yet is read here, through `git::print`. A document
+/// in no repository, or a friend's still in their own row, says nothing but
+/// the version.
+pub(crate) fn folder_of(app: &App, doc: &crate::store::Doc) -> peer::Folder {
+    let mut at = peer::Folder {
+        v: peer::CONTENT_V,
+        ..Default::default()
+    };
+    let Some(root) = app
+        .store
+        .project_root(doc.project_id)
+        .filter(|r| !r.starts_with("peer:"))
+    else {
+        return at;
+    };
+    let print = match app.store.print_of(&root) {
+        Ok(Some((p, when))) if crate::store::now() - when < PRINT_KEPT => Some(p),
+        _ => {
+            let p = crate::git::print(std::path::Path::new(&root));
+            let _ = app.store.set_print(&root, p.as_ref());
+            p
+        }
+    };
+    let Some(print) = print.filter(|p| p.repo.is_some() || p.remote.is_some()) else {
+        return at;
+    };
+    at.repo = print.repo;
+    at.remote = print.remote;
+    at.branch = doc
+        .branch
+        .clone()
+        .or_else(|| crate::project::head_of(std::path::Path::new(&root)));
+    (at.path, at.key) = place_in(&root, doc.source_path.as_deref());
+    at
+}
+
+/// A file's place in the folder `root`, as a frame carries it: the path
+/// inside, with `/`, or -- for a file elsewhere, a plan in a scratch folder
+/// -- a key that stands for its path, so its next version lands on the same
+/// row without the path leaving this machine. A path already relative is a
+/// friend's document filed here, and its place is that path.
+pub(crate) fn place_in(root: &str, source: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(sp) = source.filter(|s| !s.trim().is_empty()) else {
+        return (None, None);
+    };
+    let file = std::path::Path::new(sp);
+    if !file.is_absolute() {
+        return (peer::safe_path(sp), None);
+    }
+    match file.strip_prefix(root) {
+        Ok(rel) => (
+            peer::safe_path(&rel.to_string_lossy().replace('\\', "/")),
+            None,
+        ),
+        Err(_) => {
+            let h = blake3::hash(format!("snyvi key v1 {sp}").as_bytes());
+            (None, Some(h.to_hex()[..16].to_string()))
+        }
+    }
 }
 
 /// A Markdown document's own pictures, put into it as `data:` URLs so they
@@ -815,6 +903,14 @@ pub(crate) fn take_in(
         return Ok(false);
     }
     match peer::open(me, &p, &bytes) {
+        // A kind from a newer snyvi: held, sealed as it came, for when this
+        // one is new enough to read it (`read_held`).
+        Ok((Content::Other, _)) => {
+            app.store.peer_hold(&w.id, p.id, &bytes)?;
+            app.store.peer_take(&w.id)?;
+            eprintln!("snyvi: {} sent something this snyvi is too old to read; it is kept for after an update", p.name);
+            Ok(false)
+        }
         Ok((content, body)) => {
             if let Err(e) = arrived(app, &p, content, body) {
                 eprintln!("snyvi: a document from {} could not be kept: {e:#}", p.name);
@@ -826,6 +922,44 @@ pub(crate) fn take_in(
         Err(e) => {
             eprintln!("snyvi: a frame from {} was dropped: {e:#}", p.name);
             Ok(false)
+        }
+    }
+}
+
+/// The frames held for a newer snyvi (`take_in`), opened again: what this
+/// one now reads arrives as if it had just come, what it still cannot read
+/// waits, and a frame that no longer opens -- its friend removed, or the
+/// keys paired again -- goes. Blocking; the link calls it on every open.
+pub(crate) fn read_held(app: &Arc<App>, me: &Identity) {
+    let _ = app.store.prune_peer_held();
+    let Ok(held) = app.store.peer_held() else {
+        return;
+    };
+    for (id, peer_id, bytes) in held {
+        let friend = app
+            .store
+            .peer(peer_id)
+            .ok()
+            .flatten()
+            .filter(|p| p.removed_at == 0);
+        let Some(p) = friend else {
+            let _ = app.store.peer_unhold(&id);
+            continue;
+        };
+        match peer::open(me, &p, &bytes) {
+            Ok((Content::Other, _)) => {}
+            Ok((content, body)) => {
+                if let Err(e) = arrived(app, &p, content, body) {
+                    eprintln!(
+                        "snyvi: something held from {} could not be kept: {e:#}",
+                        p.name
+                    );
+                }
+                let _ = app.store.peer_unhold(&id);
+            }
+            Err(_) => {
+                let _ = app.store.peer_unhold(&id);
+            }
         }
     }
 }
@@ -879,8 +1013,19 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
     let desk = friend_desk(app, p);
     match content {
         Content::Document {
-            title, lang, file, ..
+            title,
+            lang,
+            file,
+            at,
+            ..
         } => {
+            // The reader's own folder for the repository it is about, when
+            // there is one; else their desk, else their row, as before 1.22.
+            let filed = file_into(app, &at);
+            let desk = match &filed {
+                Some((_, d)) => d.clone(),
+                None => desk,
+            };
             let payload = Payload {
                 title: Some(title),
                 lang,
@@ -890,12 +1035,15 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
                     name: p.name.clone(),
                     sign_key: p.sign_key.clone(),
                     bytes: body,
+                    lineage: lineage(&at, file.as_deref()),
                     file,
                     desk: desk.as_ref().map(|d| (on_desk(d), d.root.clone())),
+                    root: filed.as_ref().map(|(r, _)| r.clone()),
                 }),
                 ..Default::default()
             };
             let received = receive::receive(&app.store, &app.renderer, payload)?;
+            let _ = app.store.set_peer_key(&received.doc.id, &p.sign_key);
             if p.muted {
                 let _ = app.store.mark_read(&received.doc.id);
             }
@@ -910,6 +1058,8 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
                 eprintln!("snyvi: {} sent \"{}\"", p.name, received.doc.title);
             }
         }
+        // Held before it got here (`take_in`); nothing to keep.
+        Content::Other => {}
         Content::Note { text, .. } => {
             if let Some(d) = &desk {
                 if let Ok(crate::desk::Suggested::Note(_)) =
@@ -933,6 +1083,71 @@ fn arrived(app: &Arc<App>, p: &Peer, content: Content, body: Vec<u8>) -> anyhow:
         }
     }
     Ok(())
+}
+
+/// Where a friend's document about a repository goes: the reader's own
+/// folder for it, among the projects snyvi already knows -- never a folder
+/// looked for -- with the desk that folder is open on, if one is. Several
+/// folders of one repository (a clone and its worktrees) are ranked: one
+/// with an unparked desk first, then one on the branch the frame names, then
+/// the one a document last arrived in. `None` when the frame names no
+/// repository or the reader has none of it, or not yet: a folder whose
+/// fingerprint the sweep has not read is not a match.
+fn file_into(app: &App, at: &peer::Folder) -> Option<(String, Option<crate::desk::Desk>)> {
+    if !at.named() {
+        return None;
+    }
+    let roots = app.store.roots_by_print(at).ok()?;
+    if roots.is_empty() {
+        return None;
+    }
+    let desks: Vec<_> = app
+        .store
+        .desks()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| d.parked.is_none())
+        .collect();
+    roots
+        .into_iter()
+        .filter(|(root, _)| std::path::Path::new(root).is_dir())
+        .map(|(root, newest)| {
+            let desk = desks
+                .iter()
+                .filter(|d| receive::desk_project(&d.root).0 == root)
+                .max_by_key(|d| d.visited_at)
+                .cloned();
+            let branch = at.branch.is_some()
+                && crate::project::head_of(std::path::Path::new(&root)) == at.branch;
+            ((desk.is_some(), branch, newest), root, desk)
+        })
+        .max_by_key(|x| x.0)
+        .map(|(_, root, desk)| (root, desk))
+}
+
+/// The row a friend's document is a version of, by its place in the
+/// repository both have; a file from outside it by its key, with the name
+/// after it so it still reads as the file; else the name alone, as every
+/// frame before 1.22 has it.
+fn lineage(at: &peer::Folder, file: Option<&str>) -> Option<String> {
+    let name = file
+        .and_then(|f| std::path::Path::new(f).file_name())
+        .map(|f| f.to_string_lossy().to_string())
+        .filter(|f| !f.trim().is_empty());
+    if at.named() {
+        if let Some(path) = at.path.as_deref().and_then(peer::safe_path) {
+            return Some(path);
+        }
+    }
+    let key = at
+        .key
+        .as_deref()
+        .filter(|k| k.len() <= 64 && k.chars().all(|c| c.is_ascii_alphanumeric()));
+    match (key, name) {
+        (Some(k), Some(n)) => Some(format!("{k}/{n}")),
+        (Some(k), None) => Some(k.to_string()),
+        (None, n) => n,
+    }
 }
 
 /// A desk as a document's origin: the desk, no panel.
@@ -1079,6 +1294,58 @@ pub(crate) async fn doc_save(
         }
         Ok(Err(e)) => err(e),
         Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
+/// `POST /api/docs/{id}/unfile`: a friend's document, and every version of
+/// it, back under their own row and off any desk -- the Undo of it being
+/// filed into the reader's folder for a repository both have, or kept on a
+/// desk. Nothing on disk moves: a Save stays where it was written.
+pub(crate) async fn doc_unfile(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    if let Err(no) = theirs(&app, &id) {
+        return *no;
+    }
+    match app.store.unfile(&id) {
+        Ok(Some(doc)) => {
+            emit(&app, "pinned", json!({ "id": id }));
+            emit(&app, "rendered", json!({ "id": id }));
+            emit(&app, "deskdocs", json!({}));
+            Json(json!({ "doc": doc })).into_response()
+        }
+        Ok(None) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "it does not say which friend sent it" })),
+        )
+            .into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// `POST /api/peers/outbox/{id}/retry`: a frame that stopped trying, tried
+/// again from the start, now.
+pub(crate) async fn outbox_retry(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    match app.store.peer_retry(&id) {
+        Ok(true) => {
+            app.peers.wake.notify_one();
+            peers_moved(&app);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
     }
 }
 

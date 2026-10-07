@@ -93,6 +93,21 @@
   let qbWas = 0, qbSettle = 0, waitedWas = 0;   // the bar's count last drawn, the face's way back to rest, and the count last seen
   // The bar's ✕ hides it, read nothing, until the next arrival.
   let arrivals = 0, qbShut = -1;
+  let qbAt = null;   // the waiting document the bar shows, by id; null is the oldest
+  /** ‹ or › on the bar: the one before or after, round the ends. */
+  function qbStep(by) {
+    const q = state.queue, n = q.length;
+    if (n < 2) return;
+    const i = Math.max(0, q.findIndex(d => d.id === qbAt));
+    qbAt = q[(i + by + n) % n].id;
+    renderQueue();
+  }
+  // ← → on one of the bar's buttons step it as ‹ › do; the page's keys are not told.
+  queueBar.addEventListener("keydown", e => {
+    if (!/^Arrow(Left|Right)$/.test(e.key) || e.altKey || e.ctrlKey || e.metaKey || !queueBar.querySelector(".qb:not(.ghost)")) return;
+    e.preventDefault(); e.stopPropagation();
+    qbStep(e.key === "ArrowLeft" ? -1 : 1);
+  });
   /** The quiet switch (docs/DESIGN.md §2.5): faces at rest, nothing moving. */
   const quiet = () => root.dataset.mascot === "quiet";
   /** The switch itself, from ⌘K and the mark's menu; boot.js puts it back. */
@@ -154,7 +169,13 @@
     // The bar rises when it appears and stays put after: a count that changes
     // ticks in place. It used to be rebuilt on every render, which re-ran the
     // rise for one more arrival, and twelve arrivals rose twelve times.
-    const count = `${n} waiting`, next = `<b>${esc(head.title)}</b> · ${esc(head.project)}`;
+    // ‹ › step through what this page holds (#100), by id: an arrival or a
+    // read elsewhere leaves the one shown where it is, and if it goes, the
+    // bar is back on the oldest.
+    let at = qbAt ? state.queue.findIndex(d => d.id === qbAt) : 0;
+    if (at < 0) { at = 0; qbAt = null; }
+    const cur = state.queue[at], one = state.queue.length < 2;
+    const count = one ? `${n} waiting` : `${at + 1}/${n}`, next = `<b>${esc(cur.title)}</b> · ${esc(cur.project)}`;
     // The bar, not the Marked-read ghost that stood in its place: a ghost
     // found here was taken for the bar, lost its words to the next title and
     // threw on its missing count -- inside the Undo, before it could ask.
@@ -163,8 +184,10 @@
     // face at the front of it: the same head that answers a click, at the
     // top of the page. It arrives wide-eyed and settles into a smile.
     if (!qb) {
-      queueBar.innerHTML = `<div class="qb"><span class="qb-who"></span><span class="qb-n">${count}</span><span class="qb-next">${next}</span>` +
-        `<button type="button" data-q="next" data-tip="Open the next one waiting" data-tip-sub="letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
+      queueBar.innerHTML = `<div class="qb${one ? " one" : ""}"><span class="qb-who"></span>` +
+        `<button type="button" class="icon qb-step" data-q="prev" data-tip="Previous" aria-label="Previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
+        `<button type="button" class="icon qb-step" data-q="step" data-tip="Next" aria-label="Next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
+        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the oldest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
         `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay waiting in the sidebar" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
@@ -172,8 +195,11 @@
       return;
     }
     const num = qb.querySelector(".qb-n"), nx = qb.querySelector(".qb-next");
+    qb.classList.toggle("one", one);
     if (nx.innerHTML !== next) nx.innerHTML = next;
-    if (num.textContent !== count) {
+    // A step changes the figure and is not news: it is written, not ticked.
+    if (num.textContent !== count && n === qbWas) num.textContent = count;
+    else if (num.textContent !== count) {
       num.textContent = count;
       // Restarted by replacing the node: a class taken off and put back in
       // one task runs nothing, and reading layout in between costs a reflow.
@@ -287,7 +313,8 @@
     const b = e.target.closest("[data-q]");
     if (!b) return;
     e.preventDefault();
-    if (b.dataset.q === "next") openNext();
+    if (b.dataset.q === "next") { const id = qbAt; qbAt = null; id ? showDoc(id, true) : openNext(); }
+    else if (b.dataset.q === "prev" || b.dataset.q === "step") qbStep(b.dataset.q === "prev" ? -1 : 1);
     else if (b.dataset.q === "clear") clearQueue();
     else if (b.dataset.q === "undo") qbGhost?.undo();
     else if (b.dataset.q === "shut") { qbShut = arrivals; renderQueue(); }

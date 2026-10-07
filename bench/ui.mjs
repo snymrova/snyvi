@@ -1051,7 +1051,7 @@ async function queueRows(p, url, arrive) {
   rows.push(["alt → is Forward", fwd.title === first.title, fwd.title === first.title ? "forward to the arrival" : `landed on "${fwd.title}"`]);
 
   await Promise.all(Array.from({ length: 12 }, arrive));
-  const twelve = await until(`/^12 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  const twelve = await until(`/^1\\/12/.test(document.querySelector("#queue-bar").textContent)`);
   await sleep(300);
   const many = await read();
   // Twelve sent at once land in whatever order the daemon took them; the
@@ -1059,12 +1059,27 @@ async function queueRows(p, url, arrive) {
   const served = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.title))`);
   const inOrder = many.side.join("|") === served.slice(0, 6).join("|");
   rows.push(["twelve at once", twelve && many.side.length === 6 && /6 more/.test(many.more || "") && inOrder,
-    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 12 waiting; six rows and \"6 more\" in the sidebar, in arrival order"]);
+    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 1/12; six rows and \"6 more\" in the sidebar, in arrival order"]);
 
   await p.reload();
   const kept = await read();
-  rows.push(["still waiting after a reload", /^12 waiting/.test(kept.bar || "") && kept.side.length === 6,
+  rows.push(["still waiting after a reload", /^1\/12/.test(kept.bar || "") && kept.side.length === 6,
     `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", ${kept.side.length} rows in the sidebar`]);
+
+  // ‹ › step the bar through what waits, round the ends, and open nothing (#100).
+  await p.clickOn("#queue-bar [data-q=step]");
+  await sleep(200);
+  const stepped = await read();
+  await p.clickOn("#queue-bar [data-q=prev]");
+  await p.clickOn("#queue-bar [data-q=prev]");
+  await sleep(200);
+  const round = await read();
+  await p.clickOn("#queue-bar [data-q=step]");
+  await sleep(200);
+  const home = await read();
+  const shows = (r, i) => (r.bar || "").startsWith(`${i + 1}/12${served[i]}`);
+  rows.push(["› and ‹ step the bar, round the ends", shows(stepped, 1) && shows(round, 11) && shows(home, 0) && home.side.length === 6,
+    `the bar read "${(stepped.bar || "").slice(0, 16)}", "${(round.bar || "").slice(0, 16)}", "${(home.bar || "").slice(0, 16)}", ${home.side.length} rows still waiting`]);
 
   await p.press("i");
   await sleep(600);
@@ -3168,7 +3183,7 @@ async function motionRows(p, url, arrive) {
   // resumes it, and the animation's own clock restarts from zero.
   await sleep(300);
   const second = await arrive();
-  await until(`/^2 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  await until(`/^1\\/2/.test(document.querySelector("#queue-bar").textContent)`);
   const resumed = await p.ev(`(() => { const li = document.querySelector('#queue li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
   rows.push(["once, whatever the tree does under it", resumed >= 250 && resumed < 700, resumed < 0 ? "the wash is gone or was never there" : `the wash is ${resumed} ms in, on a row rebuilt by the next arrival`]);
   const bar = await p.ev(`(() => { const qb = document.querySelector("#queue-bar .qb"); const n = qb && qb.querySelector(".qb-n");
@@ -3206,7 +3221,7 @@ async function motionRows(p, url, arrive) {
   // Under reduced motion there is no motion: not slower, none.
   await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] }, p.s);
   await arrive();
-  await until(`/^2 waiting/.test(document.querySelector("#queue-bar").textContent)`);
+  await until(`/^1\\/2/.test(document.querySelector("#queue-bar").textContent)`);
   const quiet = await anims();
   await p.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "" }] }, p.s);
   rows.push(["reduced motion means none", quiet.length === 0, quiet.length ? `${quiet.length} still running: ${[...new Set(quiet.map(a => a.name))].join(", ")}` : "no animation on the page at all"]);

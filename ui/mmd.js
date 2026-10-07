@@ -340,7 +340,9 @@ function mmdTheme() {
       lineColor: fg3,
       clusterBorder: rule,
       nodeBorder: rule2, primaryBorderColor: rule2, actorBorder: rule2,
-      noteBkgColor: accentBg, activationBkgColor: accentBg,
+      // Named, or Mermaid darkens it from the note's fill: dark on the
+      // dark palette's dark wash of the accent.
+      noteBkgColor: accentBg, activationBkgColor: accentBg, noteTextColor: fg,
       noteBorderColor: accent, activationBorderColor: accent,
       /* A gantt draws its own everything: bars, section bands, a grid, and
        * text placed inside a bar or beside it depending on how much room
@@ -491,10 +493,42 @@ function mmdPaint(fig, svg, t0) {
   const frame = fig.querySelector(".mmd-frame");
   frame.innerHTML = svg.split(MMD_ID).join(mmdRenderId(fig));
   fig.dataset.state = "done";
+  mmdInk(frame);
   mmdViewport(fig);
   // Named, so the browser budget can find it. A cache hit measures what it
   // actually costs, which is the assignment above.
   performance.measure("snyvi:diagram", { start: t0, end: performance.now() });
+}
+
+/** A box the diagram's author filled themselves -- `classDef ok
+ *  fill:#e8f5e9`, `style A fill:...` -- keeps the theme's ink unless it says
+ *  otherwise, and a pastel written for a white page is unreadable under a dark
+ *  theme's light ink: measured 1.2:1, the labels there and invisible. Where a
+ *  label reads at under 3:1 on its own box it gets the dark or the light ink,
+ *  whichever reads better; a `color:` that already reads is left alone. Only
+ *  shapes with a fill of their own are looked at, which Mermaid writes inline,
+ *  so a diagram with none costs a query or two. */
+function mmdInk(frame) {
+  const rgb = s => { const m = /rgba?\(([^)]+)\)/.exec(s); if (!m) return null; const [r, g, b, a = 1] = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return a < 0.5 ? null : [r, g, b]; };
+  const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  for (const shape of frame.querySelectorAll('.node > [style*="fill"], .cluster > [style*="fill"]')) {
+    const box = rgb(getComputedStyle(shape).fill);
+    const labels = box && shape.parentElement.querySelectorAll(".nodeLabel, .cluster-label span, text");
+    if (!labels || !labels.length) continue;
+    const ink = rgb(getComputedStyle(labels[0]).color);
+    if (ink && ratio(ink, box) >= 3) continue;
+    const to = ratio([20, 20, 20], box) >= ratio([245, 245, 245], box) ? "#141414" : "#f5f5f5";
+    for (const l of labels) for (const el of [l, ...l.querySelectorAll("*")]) { el.style.setProperty("color", to, "important"); el.style.setProperty("fill", to, "important"); }
+  }
+  // A sequence's `rect rgb(...)` band sits behind messages in the theme's
+  // ink, which are no children of it to recolour: a band that ink cannot be
+  // read on is kept as a tint of its own colour instead.
+  const msg = frame.querySelector(".messageText"), ink = msg && rgb(getComputedStyle(msg).fill);
+  if (ink) for (const band of frame.querySelectorAll("rect.rect[fill]")) {
+    const box = rgb(getComputedStyle(band).fill);
+    if (box && ratio(ink, box) < 3) band.style.fillOpacity = ".14";
+  }
 }
 
 // ---------- a diagram in a viewport: pan, zoom, fullscreen ----------

@@ -369,14 +369,22 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
     // opened under a pinned key (`crate::peer::open`).
     let theirs = doc.origin == "peer" && !doc.sender.is_empty();
     let mut sub = if theirs {
-        // Kept on a desk, it says which; the workflow is theirs either way.
+        // In one of the reader's folders -- filed there because both have
+        // the repository, or kept there -- it says which; on a desk, which
+        // desk. The workflow is theirs either way.
+        let filed = if doc.filed {
+            format!(" · in {}", e(&doc.project))
+        } else {
+            String::new()
+        };
         let on = doc
             .desk
             .as_ref()
+            .filter(|d| !doc.filed || d.name != doc.project)
             .map(|d| format!(" · on {}", e(&d.name)))
             .unwrap_or_default();
         format!(
-            "from {} · verified{on} · {}",
+            "from {} · verified{filed}{on} · {}",
             e(&doc.sender),
             e(&doc.workflow_title)
         )
@@ -401,6 +409,16 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool) -> String {
             e(&doc.id),
             e(&doc.title)
         ));
+        // And the way back to the friend's own row, every version with it.
+        if doc.filed {
+            sub.push_str(&format!(
+                " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Back to From {}\" data-tip-sub=\"with every version; nothing on disk moves\">Move to From {}</button>",
+                e(&doc.id),
+                e(&doc.title),
+                e(&doc.sender),
+                e(&doc.sender)
+            ));
+        }
     }
     // Send to…, only once there is a friend to send to: the page wires the
     // click (`ui/peer.js`). In the sub line, so the head is the same height

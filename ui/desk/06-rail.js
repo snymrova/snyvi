@@ -126,7 +126,63 @@ function rail() {
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
   if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); }
+  drawIn(stripEl(), stripHtml(d, vs, waiting));
   meta();
+}
+
+/* The rail folded on a desk is a strip, 44 px, as the sidebar folds to its
+ * rail (#101): each section's mark and the count that matters while it is
+ * out of sight -- threads moving, panels (amber when one waits on the
+ * reader), documents waiting, notes open. A mark opens the rail on its
+ * section. Every slot is always drawn, a count of none is only dimmer, so
+ * nothing on the strip moves as counts come and go. */
+const STRIP = {
+  rail: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M9.5 3v10"/>',
+  threads: '<path d="M2.5 4.5h4M8.5 4.5h5M2.5 8h7M11.5 8h2M2.5 11.5h2M6.5 11.5h7"/>',
+  panels: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M8 3v10"/>',
+  docs: ICO.doc,
+  notes: '<circle cx="8" cy="8" r="5.5"/><path d="M5.8 8.2l1.5 1.5 3-3.2"/>',
+};
+const stripIco = k => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STRIP[k]}</svg>`;
+
+/** The strip's element, made once in the rail and kept: the page hides it
+ *  everywhere but a desk with its rail folded. */
+function stripEl() {
+  let s = ctx.rail.querySelector(".dk-strip");
+  if (!s) {
+    s = document.createElement("nav");
+    s.className = "dk-strip";
+    s.setAttribute("aria-label", "The desk's rail, folded");
+    s.addEventListener("click", stripClick);
+    ctx.rail.prepend(s);
+  }
+  return s;
+}
+
+function stripHtml(d, vs, waiting) {
+  const moving = threadsMoving(d), blocked = vs.some(v => v.status.blocked);
+  const left = notesAt === d.id ? noteList.filter(x => !x.done && !x.gone && !x.suggested_by).length : 0;
+  const mark = (sec, label, n, sub, cls = "") => `<button type="button" class="ds-${sec}${n ? "" : " none"}${cls}" data-sec="${sec}" data-tip="${label}" data-tip-sub="${sub}" aria-label="${label}: ${sub}">${stripIco(sec)}<span class="n">${n || ""}</span></button>`;
+  return `<button type="button" class="ds-open" data-sec="" data-tip="Show the rail" aria-label="Show the rail">${stripIco("rail")}</button>` +
+    mark("threads", "Threads", moving, moving ? `${moving} moving` : "none moving") +
+    mark("panels", "Panels", d.panes.length, blocked ? "one is waiting on you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "") +
+    mark("docs", "Documents", waiting, waiting ? `${waiting} waiting` : "none waiting") +
+    mark("notes", "Notes", left, left ? `${left} open` : "none open");
+}
+
+/** A mark on the strip: the rail back, on the route its own button takes,
+ *  and the section it names open and in view. */
+function stripClick(e) {
+  const b = e.target.closest("button[data-sec]");
+  if (!b || !ctx) return;
+  if (document.documentElement.dataset.rail === "0") document.getElementById("btn-rail")?.click();
+  const sec = b.dataset.sec;
+  if (!sec) return;
+  const el = ctx.tocEl.querySelector(`.dk-sec[data-sec="${sec}"], [data-part="rail.${sec}"]`);
+  if (!el) return;
+  // Opened here, the section's own toggle remembers it, as a click on its head does.
+  if (el.tagName === "DETAILS") el.open = true;
+  requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }));
 }
 
 /** A document's row in the rail, or the row it leaves behind when it is
