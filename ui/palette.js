@@ -131,6 +131,7 @@ const COMMANDS = [
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
   { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
   { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
+  { cmd: "sidebars", t: "Arrange sidebars", s: "Which sections each side has, in what order, and the widgets" },
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
@@ -214,7 +215,7 @@ function pick(it) {
   if (it.cmd) {
     const c = it.cmd;
     c === "home" ? d.showHome(true) : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
-      : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
+      : c === "sidebars" ? d.showSidebars(true) : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
     return;
   }
   const { state } = d;

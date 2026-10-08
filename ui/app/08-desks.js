@@ -38,7 +38,7 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView,
+    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView, showSidebars,
     navList: () => navMod ? navMod.list() : [],
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
@@ -312,7 +312,7 @@
    * document, for its Copy. Anywhere else in the window, WebKit's Back,
    * Forward and Reload are not snyvi's, and do not show. */
   const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
-    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .dk-thread, .nv-b";
+    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .dk-thread, .nv-b, #side .sec-head, #rail .sec-head";
   const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
   document.addEventListener("contextmenu", e => {
     if (e.target.closest("input, textarea, [contenteditable]")) return;

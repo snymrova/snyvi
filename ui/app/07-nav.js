@@ -54,6 +54,7 @@
     if (u.pathname === "/") { e.preventDefault(); showHome(true); return; }
     if (u.pathname === "/inbox") { e.preventDefault(); showInbox(true); return; }
     if (u.pathname === "/connect") { e.preventDefault(); showConnect(true); return; }
+    if (u.pathname === "/sidebars") { e.preventDefault(); showSidebars(true); return; }
     e.preventDefault();
     toast("Not a page in snyvi", { sub: href, action: {
       label: "Open anyway",
@@ -126,6 +127,7 @@
     const b = location.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), false, true);
     if (location.pathname === "/connect") return showConnect(false);
+    if (location.pathname === "/sidebars") return showSidebars(false);
     if (location.pathname === "/start") return showStart(false);
     if (location.pathname === "/welcome") return showWelcome(false);
     const k = location.pathname.match(/^\/desk\/(\d+)$/);

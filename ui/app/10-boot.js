@@ -17,6 +17,7 @@
   }
   else if (state.view === "browse" && state.browseRoot) { showBrowse(state.browseRoot.id, state.browsePath, false); history.replaceState({ browse: state.browseRoot.id, path: state.browsePath }, "", location.pathname + location.hash); }
   else if (state.view === "connect") { showConnect(false); history.replaceState({ connect: true }, "", "/connect"); }
+  else if (state.view === "sidebars") { history.replaceState({ sidebars: true }, "", "/sidebars"); showSidebars(false); }
   else if (state.view === "start") { history.replaceState({ start: true }, "", "/start" + location.hash); showStart(false); }
   else if (state.view === "welcome") { history.replaceState({ welcome: true }, "", "/welcome"); showWelcome(false); }
   else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }

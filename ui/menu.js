@@ -309,6 +309,10 @@ function entries(ctx, el, byKey = false) {
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
   // Back or forward, held or right-clicked: where this window has been.
   if (el.matches(".nv-b")) return { head: "Where you've been", items: ctx.navList() };
+  // A section's head, on either side: where they are arranged.
+  if (el.matches(".sec-head")) return { head: el.querySelector(".sec-nm")?.textContent || "Sidebars", items: [
+    { label: "Arrange sidebars…", moves: 1, run: () => ctx.showSidebars(true) },
+  ] };
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
     { label: "Check for updates", run: at => ctx.checkUpdates(at) },

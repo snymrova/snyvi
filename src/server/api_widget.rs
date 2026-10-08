@@ -36,6 +36,47 @@ pub(crate) async fn desk_widgets(
     }
 }
 
+/// Everything /sidebars arranges: the layout, every widget file with what
+/// it asks and whether it is allowed as it is now, and every pushed widget
+/// with its desk. A read, open as the project list is.
+pub(crate) async fn list_widgets(State(app): S) -> Response {
+    let found = widget::files::scan(&app.paths.config_dir);
+    let desks = app.store.desks().unwrap_or_default();
+    let r = app.store.widgets(|c, _| {
+        let layout = widget::layout(c)?;
+        let mut files = Vec::new();
+        for f in &found {
+            let p = widget::prefs(c, &f.name)?;
+            let hash = widget::files::hash(&f.folder);
+            files.push(match &f.spec {
+                Ok(s) => json!({
+                    "name": f.name, "title": s.title, "scope": s.scope, "command": s.run.command,
+                    "every": s.run.every, "folder": f.folder, "lines": s.lines,
+                    "allowed": !p.trusted_hash.is_empty() && hash.as_deref().ok() == Some(p.trusted_hash.as_str()),
+                    "changed": !p.trusted_hash.is_empty() && hash.as_deref().ok() != Some(p.trusted_hash.as_str()),
+                    "error": hash.err(), "rerun_edits": p.rerun_edits, "hidden": p.hidden,
+                    "fields": s.settings, "settings": s.settings_with(&p.settings),
+                }),
+                Err(why) => json!({ "name": f.name, "folder": f.folder, "error": why, "hidden": p.hidden }),
+            });
+        }
+        let mut pushed = Vec::new();
+        for d in std::iter::once(0).chain(desks.iter().map(|d| d.id)) {
+            for s in widget::seats(c, d)? {
+                if s.source == "push" {
+                    let desk = desks.iter().find(|x| x.id == d).map(|x| x.name.clone());
+                    pushed.push(json!({ "name": s.name, "desk_id": d, "desk": desk, "writer": s.writer, "updated_at": s.updated_at, "hidden": s.hidden }));
+                }
+            }
+        }
+        Ok(json!({ "layout": layout, "files": files, "pushed": pushed }))
+    });
+    match r {
+        Ok(j) => Json(j).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// Keep the reader's layout. Anything a page sends is normalized first, so
 /// an id from a newer page is dropped and a missing one is put back, and
 /// what is answered -- and sent to every page -- is what was kept.
@@ -231,10 +272,19 @@ pub(crate) fn pane_widgets_ended(app: &Arc<App>, pane: &str, slot: Option<i64>) 
 
 // --- the reader's say over a widget file -------------------------------------
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(default)]
 pub(crate) struct AllowBody {
+    /// Allow the folder as it is now. False with `rerun_edits` changes the
+    /// switch alone.
+    allow: bool,
     rerun_edits: Option<bool>,
+}
+
+impl Default for AllowBody {
+    fn default() -> AllowBody {
+        AllowBody { allow: true, rerun_edits: None }
+    }
 }
 
 /// Allow a widget file's folder as it is now, and with it, whether the
@@ -259,11 +309,15 @@ pub(crate) async fn allow_widget(
     if let Err(why) = widget::files::read(&folder, &name) {
         return refused(StatusCode::NOT_FOUND, why);
     }
-    let hash = match widget::files::hash(&folder) {
-        Ok(h) => h,
-        Err(why) => return refused(StatusCode::BAD_REQUEST, why),
+    let hash = if b.allow {
+        match widget::files::hash(&folder) {
+            Ok(h) => Some(h),
+            Err(why) => return refused(StatusCode::BAD_REQUEST, why),
+        }
+    } else {
+        None
     };
-    match app.store.widgets(|c, now| widget::set_prefs(c, &name, None, None, Some(&hash), b.rerun_edits, now)) {
+    match app.store.widgets(|c, now| widget::set_prefs(c, &name, None, None, hash.as_deref(), b.rerun_edits, now)) {
         Ok(p) => Json(json!({ "ok": true, "prefs": p })).into_response(),
         Err(e) => err(e),
     }
