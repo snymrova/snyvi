@@ -95,9 +95,10 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         }
         // Allowed, and unchanged since.
         let stamp = files::stamp(&f.folder).unwrap_or_default();
-        let h = match r.hashes.get(&f.name) {
-            Some((s, h)) if *s == stamp => h.clone(),
-            _ => {
+        let cached = r.hashes.get(&f.name).filter(|(s, _)| *s == stamp).map(|(_, h)| h.clone());
+        let h = match cached {
+            Some(h) => h,
+            None => {
                 let h = files::hash(&f.folder);
                 r.hashes.insert(f.name.clone(), (stamp, h.clone()));
                 h
