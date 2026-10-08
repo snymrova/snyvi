@@ -324,6 +324,25 @@
   const welcomePage = () => pages().then(m => m.welcomePage(), () => "");
   const connectClaude = (b, done) => pages().then(m => m.connectClaude(b, done), () => {});
   const refreshAgents = () => { if (pagesMod) pagesMod.refreshAgents(); };
+  /** /sidebars: the two sidebars arranged, and the widgets (ui/sidebars.js,
+   *  a chunk: arranging happens once in a while). */
+  let sidebarsLoading = null;
+  async function showSidebars(push = true) {
+    if (push) leave();
+    offDesk();
+    state.view = "sidebars"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    document.title = "Sidebars · snyvi";
+    if (push) history.pushState({ sidebars: true }, "", "/sidebars");
+    let m;
+    try { m = await (sidebarsLoading ||= import(`/assets/sidebars.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    catch (e) { sidebarsLoading = null; toast("Could not open that page", { sub: e }); return; }
+    if (state.view !== "sidebars") return;
+    await m.show({ docEl, esc, toast, deskApi, secHead, setLayout, view: () => state.view });
+    if (push) swapIn();
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+    if (push) docEl.querySelector("h1")?.focus({ preventScroll: true });
+  }
   /** Home, at `/`: the page the mark opens. Drawn by home.js, a chunk, from
    *  one call; the Inbox is at `/inbox`. */
   let homeMod = null, homeLoading = null;

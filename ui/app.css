@@ -110,6 +110,7 @@
      chrome steps; prose has its own size per reading face. */
   --fs-micro: 11px; --fs-small: 12px; --fs-ui: 13px; --fs-body-s: 14px;
   --fs-h3: 20px; --fs-h2: 26px; --fs-h1: 34px; --fs-read: 17px;
+  --row-h: 28px; --sub-row-h: 24px;   /* a Row and a Sub-row (docs/DESIGN.md §8.4); a section's head is a Row */
   --fw-row: 450;   /* the one named exception: sidebar rows, the most-read chrome */
   /* Space: a 4-point scale, with 10 and 20 kept as steps. */
   --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 10px; --sp-6: 12px;
@@ -587,16 +588,73 @@ html[data-link="off"] .live { visibility: hidden; }
 
 #trees { overflow-y: auto; padding: 0 8px 8px; font-size: var(--fs-ui); flex: 1; min-height: 0; }
 #tree ul { list-style: none; margin: 0; padding: 0; }
-/* Sections, as a Mac sidebar draws them. A head is a quiet label that folds
-   what is under it -- the same for Inbox, Desks and Folders -- with its
-   chevron shown on hover, or while folded, and its + on the right. Whatever
-   opens a page is a row under it, and every row is one shape: 28px tall, a
-   16px icon at the section label's edge, the name at 32px, and -- on a row
-   that folds -- the heads' chevron right after the name. */
-.s-head { display: flex; align-items: center; height: 26px; margin-top: 18px; padding-right: 2px; }
-#inbox-row .s-head { margin-top: 4px; }
-/* A folded section is only its head, so the next head sits close under it. */
-#trees.fold-inbox #desk-nav .s-head, #trees.fold-desks #browse-nav .s-head { margin-top: 2px; }
+/* Sections (docs/DESIGN.md §8.4), one component for both sidebars: the
+   sidebar's Inbox, Desks and Folders, and a desk's rail. The head is a Row's
+   height: a quiet label that folds what is under it, its chevron 4 px after
+   the name, shown on hover, on focus, or while folded; then at the right the
+   count, and the actions, which show on hover or focus -- and always on an
+   empty section, whose + is the way in. 16 px above a head after an open
+   section, 2 after a folded one, so a folded section is only its head; the
+   first sits 4 px under its column's header, the same on both sides, so the
+   two columns' first heads are on one line. Whatever opens a page is a row
+   under it, and every row is one shape: 28px tall, a 16px icon at the
+   section label's edge, the name at 32px, and -- on a row that folds -- the
+   heads' chevron right after the name. */
+.sec-head { display: flex; align-items: center; gap: var(--sp-2); height: var(--row-h); margin-top: var(--sp-7); padding-right: 2px; }
+.sec-fold { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: var(--sp-2); padding: 0 8px; font: inherit; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: var(--r-sm); text-align: left; transition: color var(--t); }
+button.sec-fold { cursor: pointer; }
+button.sec-fold:hover { color: var(--fg-2); }
+.sec-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-fold > .s-chev { margin-left: 0; }
+.sec-head:hover .s-chev, .sec-fold:focus-visible .s-chev, .sec-fold[aria-expanded="false"] .s-chev { opacity: 1; }
+.sec-fold[aria-expanded="false"] .s-chev { transform: rotate(-45deg); }
+/* The count: a figure, not a pill. In the accent while something waits, in
+   --warn while something is blocked; kept while folded, so a folded head
+   still says it. One the open section says itself below says it only folded. */
+.sec-n { flex: none; padding: 0 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sec-n.accent { color: var(--accent); }
+.sec-n.warn { color: var(--warn); }
+.sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { display: none; }
+.sec-acts { flex: none; display: flex; align-items: center; gap: var(--sp-1); opacity: 0; transition: opacity var(--t); }
+.sec-head:is(:hover, :focus-within, .empty) > .sec-acts { opacity: 1; }
+.sec-acts > button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
+.sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
+/* The left's sections are in the reader's order (app.js `placeLeft`), so
+   which comes first, and which follows a folded one, is a class on the
+   section's first node; the widgets slot's first widget takes it. */
+#trees > .sec-first > .sec-head, #trees > .sec-first > .sec:first-child > .sec-head { margin-top: var(--sp-2); }
+#trees > .sec-after-fold > .sec-head, #trees > .sec-after-fold > .sec:first-child > .sec-head { margin-top: var(--sp-1); }
+#widgets-nav > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
+/* A section the reader hid on /sidebars, and its rail icon. */
+.lay-off { display: none !important; }
+/* A desk's rail: each section holds its head, which stays while the
+   section scrolls under it, and a folded one is only its head. */
+.dk-rail > .sec { display: flow-root; }
+.dk-rail > .sec:first-child > .sec-head { margin-top: var(--sp-2); }
+.dk-rail > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
+.dk-rail > .sec > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
+.sec.folded > .sec-body { display: none; }
+.sec-n.ok { color: var(--ok); }
+.sec-n.bad { color: var(--danger); }
+/* A widget's seat (docs/WIDGETS.md): who wrote it and when, a failed run's
+   line, and the body in a fixed room -- `--lines` of 20 px -- so a new body
+   never moves what is under it. A longer one is cut, and opens where it is
+   on a click (that is the reader moving the page, not the widget). Past its
+   time the whole seat steps back. */
+.wg-by { margin: 0; padding: 0 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-ask { display: flex; align-items: center; gap: 8px; margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
+.wg-allow { flex: none; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); color: var(--accent); font-size: var(--fs-micro); font-weight: 600; }
+.wg-allow:hover:not(:disabled) { background: var(--accent-bg); }
+.wg-err { margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
+.wg-body { height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
+.wg-body.open { height: auto; }
+.wg-body > :first-child { margin-top: 0; }
+.wg-body :is(p, ul, ol, pre, h1, h2, h3, h4, blockquote) { margin: 0; font-size: inherit; line-height: inherit; }
+.wg-body :is(ul, ol) { padding-left: 16px; }
+.wg-body code { font-family: var(--mono); font-size: var(--fs-micro); }
+.wg-body pre { white-space: pre-wrap; }
+.wg-body strong { color: var(--fg); font-weight: 600; }
+.wg.stale > :is(.sec-body, .sec-head .sec-n) { opacity: .55; }
 /* The heads stay while their section scrolls under them. Desks and Folders
    hold their own rows, so each head sticks inside its section and is pushed
    off by the next; each section is opaque and above the one before, so it
@@ -610,20 +668,12 @@ html[data-link="off"] .live { visibility: hidden; }
    leaves #trees, so nothing outside it is covered. Not on the rail, where
    #pop has to stand over the page. */
 :root:not([data-side="0"]) #trees { isolation: isolate; }
-#trees > :is(#inbox-row, #desk-nav, #browse-nav) { display: flow-root; background: var(--bg-side); }
+#trees > :is(#inbox-row, #desk-nav, #browse-nav, #widgets-nav) { display: flow-root; background: var(--bg-side); }
 #trees > #inbox-row { position: sticky; top: 0; z-index: 1; }
-#trees > :is(#desk-nav, #browse-nav) { position: relative; z-index: 2; }
-#trees > :is(#desk-nav, #browse-nav) > .s-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
-.s-link { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 4px; padding: 0 8px; font: inherit; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: var(--r-sm); cursor: pointer; text-align: left; transition: color var(--t); }
-.s-link:hover { color: var(--fg-2); }
-.s-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#trees > :is(#desk-nav, #browse-nav, #widgets-nav) { position: relative; z-index: 2; }
+#widgets-nav > .sec { display: flow-root; }
+:is(#trees > :is(#desk-nav, #browse-nav), #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
-.s-head:hover .s-chev, .s-link:focus-visible .s-chev, .s-link[aria-expanded="false"] .s-chev { opacity: 1; }
-.s-link[aria-expanded="false"] .s-chev { transform: rotate(-45deg); }
-.s-add { flex: none; display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-3); font-size: 16px; font-weight: 400; line-height: 1; border-radius: var(--r-sm); opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
-.s-head:is(:hover, :focus-within) .s-add, #browse-nav:has(.b-empty) .s-add { opacity: 1; }
-.s-add:hover { background: var(--rule); color: var(--fg); }
-.s-blk { flex: none; margin-right: 4px; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; }
 :root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: var(--fs-small); color: var(--fg-3); }
@@ -654,7 +704,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    indented at once. */
 .t-wf { margin: 2px 0 6px 24px; }
 .t-wf > .wf-name { font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-doc a { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
+.t-doc a { display: flex; align-items: baseline; gap: 6px; min-height: var(--sub-row-h); box-sizing: border-box; padding: 3px 8px; font-size: var(--fs-small); line-height: 18px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 /* No mark in front of a row: its icon is the mark. A read row's glyph is
@@ -695,7 +745,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    the clock's ticks, so under reduced motion it is still and still says
    what is left. `--t` starts the row's fade where the last draw left it, so
    a redraw never plays it again. */
-.t-ghost { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-radius: var(--r-sm); color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
+.t-ghost { display: flex; align-items: baseline; gap: 6px; min-height: var(--sub-row-h); box-sizing: border-box; padding: 3px 8px; font-size: var(--fs-small); line-height: 18px; border-radius: var(--r-sm); color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
 .t-gone:not(.leaving) > .t-ghost { animation: ghost-in var(--dur-quick) ease-out both; animation-delay: var(--t, 0ms); }
 @keyframes ghost-in { from { color: var(--fg-2); } }
 .t-ghost > .r-ico { align-self: center; opacity: .4; }
@@ -1213,6 +1263,13 @@ pre.code .inv { color: var(--del-fg); }
 /* Entries that have scrolled out fade at the edges rather than being cut mid-line.
    The padding is the fade's height, so an unscrolled list has nothing in it. */
 #toc { mask-image: linear-gradient(transparent, #000 14px, #000 calc(100% - 14px), transparent); }
+/* A desk's rail is sections, as the sidebar is, and starts where the
+   sidebar's do: under a header the brand row's height, its first head 4 px
+   down (.dk-rail above), so the first heads on either side are on one line.
+   Its heads stay at the top as their sections scroll, so nothing fades
+   there; the foot still does. */
+#rail:has(.dk-rail) { padding-top: var(--head-h); }
+#toc:has(> .dk-rail) { padding-top: 0; mask-image: linear-gradient(#000, #000 calc(100% - 14px), transparent); }
 #toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
 #toc li a { display: block; padding: 3px 10px; color: var(--fg-3); border-left: 1px solid transparent; margin-left: -1px; line-height: 1.4; transition: color var(--t), border-color var(--t); overflow-wrap: anywhere; }
 /* Two lines of a heading, then ellipsis: better than cutting every entry mid-word. */

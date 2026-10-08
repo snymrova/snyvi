@@ -15,6 +15,7 @@ mod api_desk;
 mod api_docs;
 mod api_peer;
 mod api_thread;
+mod api_widget;
 mod assets;
 mod auth;
 mod events;
@@ -22,6 +23,7 @@ mod lifecycle;
 mod peer_link;
 #[cfg(test)]
 mod tests;
+mod widget_run;
 mod ws;
 
 use api_agent::*;
@@ -30,6 +32,7 @@ use api_desk::*;
 use api_docs::*;
 use api_peer::*;
 use api_thread::*;
+use api_widget::*;
 use assets::*;
 use auth::*;
 use events::*;
@@ -389,6 +392,19 @@ fn pane_routes() -> Router<Arc<App>> {
         )
 }
 
+/// The sidebars' layout and their widgets (`api_widget`).
+fn widget_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/layout", post(set_layout))
+        .route("/api/desks/{id}/widgets", get(desk_widgets))
+        .route("/api/panes/{id}/widget", post(pane_set_widget))
+        .route("/api/widgets", get(list_widgets).post(set_widget))
+        .route("/sidebars", get(shell_sidebars))
+        .route("/api/widgets/{name}/allow", post(allow_widget))
+        .route("/api/widgets/{name}/prefs", post(widget_prefs))
+        .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
+}
+
 /// Threads, Your turn and suggested panels (`api_thread`): the agent's and
 /// the mod's on the panel, behind the token, and the page's on the desk.
 fn thread_routes() -> Router<Arc<App>> {
@@ -541,10 +557,9 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/asides", get(asides_setting).post(set_asides_setting))
-        // Friends (`api_peer`): the reader's actions from this page or with
-        // the token, the reads open like the project list is.
         .merge(pane_routes())
         .merge(thread_routes())
+        .merge(widget_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
@@ -553,6 +568,16 @@ fn router(app: Arc<App>) -> Router {
         // from another host, and the table test in `tests` holds that.
         .layer(axum::middleware::from_fn(host_gate))
         .with_state(app)
+}
+
+/// Where a shell moves to is where it starts next (`pane::follow_folders`).
+fn follow_cwd(app: &Arc<App>) {
+    let weak = Arc::downgrade(app);
+    app.panes.on_cwd(Box::new(move |id, cwd| {
+        if let Some(app) = weak.upgrade() {
+            let _ = app.store.set_pane_cwd(id, cwd);
+        }
+    }));
 }
 
 /// Every panel of a desk shares one socket, and its frames are already paced
@@ -639,19 +664,15 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // which panes come back as a conversation.
     app.panes.mark_resume(resume);
     app.panes.mark_offer(offer);
-    // Where a shell moves to is where it starts next (`pane::follow_folders`).
-    let weak = Arc::downgrade(&app);
-    app.panes.on_cwd(Box::new(move |id, cwd| {
-        if let Some(app) = weak.upgrade() {
-            let _ = app.store.set_pane_cwd(id, cwd);
-        }
-    }));
+    follow_cwd(&app);
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
     let leaving = app.clone();
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
+    // Widget files' commands, while their widgets are in view.
+    widget_run::spawn(app.clone());
     crate::claude_mod::start(&paths);
     let router = router(app);
 

@@ -93,7 +93,7 @@ async function act(b, byKey) {
     // list, the thing that has to feel instant is the tick.
     else if (a === "note-new") {
       // From the head of a folded list: the list opens, and stays open.
-      if (secFolded("notes")) { try { localStorage.setItem(FOLD("notes"), "0"); } catch {} }
+      ctx.fold("notes", false);
       noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; rail();
     }
     else if (a === "note-edit") {
@@ -364,6 +364,14 @@ function focusPane(id) {
 }
 
 function click(e) {
+  // A section's head, folded or opened where it is: no draw.
+  const fd = e.target.closest("[data-fold]");
+  if (fd) { ctx.fold(fd.dataset.fold); return; }
+  const wa = e.target.closest("[data-wallow]");
+  if (wa) { ctx.allowWidget(wa); return; }
+  // A widget's body past its room opens where it is, and closes again.
+  const wb = !e.target.closest("a") && e.target.closest(".wg-body");
+  if (wb) { wb.classList.toggle("open"); return; }
   const m = e.target.closest("[data-desk-menu]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const f = e.target.closest("[data-focus]");
@@ -454,7 +462,6 @@ function detach() {
   if (!ctx) return;
   ctx.docEl.removeEventListener("click", click);
   ctx.tocEl.removeEventListener("click", click);
-  ctx.tocEl.removeEventListener("toggle", folded, true);
   ctx.tocEl.removeEventListener("dragover", dragOver);
   ctx.tocEl.removeEventListener("dragleave", dragLeave);
   ctx.tocEl.removeEventListener("drop", dropped);
@@ -489,7 +496,7 @@ export function open(c) {
   if (first) measure();
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
-    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); hidePoints();
+    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose();
   }
   deskId = c.id; reading = null;
@@ -501,7 +508,6 @@ export function open(c) {
   draw();
   ctx.docEl.addEventListener("click", click);
   ctx.tocEl.addEventListener("click", click);
-  ctx.tocEl.addEventListener("toggle", folded, true);
   ctx.tocEl.addEventListener("dragover", dragOver);
   ctx.tocEl.addEventListener("dragleave", dragLeave);
   ctx.tocEl.addEventListener("drop", dropped);

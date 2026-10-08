@@ -148,6 +148,18 @@ snyvi init-claude --auto   # Claude Code
 snyvi init codex           # also cursor, claude-desktop, gemini, windsurf, vscode, zed
 ```
 
+## Your sidebars
+
+Arrange both sidebars on `/sidebars`: drag, switch off, reset. Give a desk
+a small status box an agent keeps up to date, or one a script fills, or one
+snyvi runs for you on a timer, like the branch you're on and how far ahead
+it is. [Write a widget](docs/WIDGETS.md).
+
+```
+snyvi widget set backups --tone ok "Nightly backup **done**"
+snyvi widget new git && snyvi widget check git
+```
+
 ## How it works
 
 ```mermaid

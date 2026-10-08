@@ -86,6 +86,9 @@ pub(crate) const TOAST_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/toast.
 /// A comparison and a split diff, fetched the first time either is asked for.
 pub(crate) const DIFF_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/diff.js"));
 
+/// /sidebars: arranging the sidebars and the widgets, fetched when it opens.
+pub(crate) const SIDEBARS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/sidebars.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -322,6 +325,10 @@ pub(crate) fn shell(
         // Whether there is a friend, so a menu offers Send to a friend… only
         // then; the menu asks again as it opens (`ui/menu.js`).
         o.insert("friends".into(), json!(has_friends(app)));
+        // The sidebars' order, so the first paint draws them in it.
+        o.insert("layout".into(), layout_json(app));
+        // And the global widgets in it, drawn: no widget waits on a request.
+        o.insert("widgets".into(), global_seats_json(app));
     }
     let page = app
         .ui
@@ -558,6 +565,13 @@ pub(crate) async fn shell_start(State(app): S) -> Response {
     shell(&app, boot, "", "How snyvi works · snyvi")
 }
 
+/// Arranging the sidebars and the widgets, drawn by `ui/sidebars.js`.
+pub(crate) async fn shell_sidebars(State(app): S) -> Response {
+    let tree = app.store.projects().unwrap_or_default();
+    let boot = json!({ "view": "sidebars", "tree": tree, "sub": {}, "browse": app.browse.list(), "version": VERSION });
+    shell(&app, boot, "", "Sidebars · snyvi")
+}
+
 /// Welcome: what snyvi is, and one question -- which project first. The page
 /// an empty window opens on, drawn by `ui/about.js`; reopened from Help.
 pub(crate) async fn shell_welcome(State(app): S) -> Response {
@@ -664,6 +678,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("diff.js", DIFF_JS, JS),
     ("browse.js", BROWSE_JS, JS),
     ("paths.js", PATHS_JS, JS),
+    ("sidebars.js", SIDEBARS_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

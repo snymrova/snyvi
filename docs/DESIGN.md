@@ -772,6 +772,54 @@ there at rest and on hover alike. Hidden is opacity 0 in the slot, never
 `width: 0`, `display: none` or a negative margin; hover and focus change
 opacity and colour only.
 
+### 8.4 Sections and rows
+
+Both sidebars are made of **sections**, and there is one: `secHead()` in
+`ui/app/02-tree.js` draws every head on both sides, the sidebar's Inbox,
+Desks and Folders and a desk's rail alike (desk.js has it as
+`ctx.secHead`). A section is the frame a widget sits in too, so whatever
+is added later folds and spaces itself the same way for nothing.
+
+```
+ ┌ .sec  data-sec="panels" ─────────────────────────────┐
+ │ .sec-head  28 px (--row-h), sticky                    │
+ │  ⟨label⟩ ›             ⟨count⟩  ⟨+⟩ ⟨⋯⟩              │
+ │  .sec-fold  chevron     .sec-n   .sec-acts, 22 px,    │
+ │  inset 16 · 4 px after  fs-micro  on hover / focus,   │
+ │                         tabular   always if .empty    │
+ ├───────────────────────────────────────────────────────┤
+ │ .sec-body   Rows or Sub-rows                          │
+ └───────────────────────────────────────────────────────┘
+   to the next head:  16 after an open section (--sp-7) · 2 after a folded one (--sp-1)
+```
+
+- **Head:** a Row's height, `--fs-micro` 600 `--fg-3`, sentence case, the
+  label 16 px in from the column's edge on both sides, sticky while its
+  section scrolls.
+- **Chevron:** 4 px after the label, shown on hover, on focus and while
+  folded. A section that never folds (`fixed`: Your turn, Suggested) has
+  no chevron, and its head is not a button.
+- **Tail**, right-aligned, in this order: the **count**, a figure, never a
+  pill: `--fg-3`, `--accent` while something waits, `--warn` while
+  something is blocked (`!2`); then the **actions**, icon buttons, shown
+  on hover or `:focus-within`, and always on an empty section, whose + is
+  the way in. A count the open section says itself below (the Inbox's
+  Waiting) is `fold-only`.
+- **Spacing:** 16 px above a head after an open section, 2 px after a
+  folded one, so three folded heads are 88 px on either side. The first
+  head sits 4 px under its column's header, a `--head-h` high on both
+  sides, so the first heads line up across the window.
+- **Fold:** a button with `aria-expanded`, one set (`snyvi.fold`, per
+  reader), keyed by section: `inbox`, `desks`, `folders`, `panels`,
+  `rest`, `points`, `docs`, `notes`. A folded head keeps its count, so
+  nothing waiting goes unseen. Folding draws nothing: it is a class.
+- **Row:** 28 px (`--row-h`), `--fs-ui`, `--fw-row`, gap 8, `--r-sm`;
+  hover `--rule`; the current one `--accent-bg` and a 2 px inset bar in the
+  accent, its text ink and its icon in the accent. Projects, desks,
+  folders and panels.
+- **Sub-row:** 24 px (`--sub-row-h`), `--fs-small`, gap 6. Documents,
+  under a project or in the rail, and notes.
+
 ---
 
 ## 9. The workflow
@@ -834,6 +882,9 @@ same commit.
 | banned strings: Let go, Take off, Put away, Clear done, `Undo for \d`, `\(Esc\)`, two spaces before a key, `⌘` outside `keyHint` | per the words audit |
 | `<button>` inside `<a>` / `<summary>` | 5 templates |
 | toast titles: `^(Could not\|[A-Z])`, no `!`, no Title Case in labels | set on first run |
+| section heads not drawn by `secHead` (§8.4) | 12 → 0 in 1.27 |
+| raw px `border-radius` (the `--r-*` scale) | 51 → 20 in 1.27 |
+| raw px font sizes in the sidebars' files (a `--fs` token) | 1 → 0 in 1.27 |
 
 **Allow-list:** `white-space` (a colour-word grep hits it 60+ times); the
 `#fff` behind previewed HTML; the `#000` in a `mask-image`; the xterm

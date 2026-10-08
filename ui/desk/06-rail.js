@@ -39,15 +39,58 @@ const HEAD = {
 };
 const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
 
-/** Whether the reader folded one of the rail's sections, remembered as the
- *  sidebar remembers its own folds -- and per section, so folding the list
- *  away does not take the documents with it. `docs` keeps the key it had. */
-const FOLD = sec => `snyvi.dk.fold-${sec}`;
-const secFolded = sec => { try { return localStorage.getItem(FOLD(sec)) === "1"; } catch { return false; } };
-function folded(e) {
-  const d = e.target;
-  if (!d.classList || !d.classList.contains("dk-sec") || !d.dataset.sec) return;
-  try { localStorage.setItem(FOLD(d.dataset.sec), d.open ? "0" : "1"); } catch {}
+/** Whether the reader folded one of the rail's sections: the sidebar's own
+ *  set (app.js `toggleFold`), one key a section, so the two sides fold the
+ *  same way and are remembered the same way. `open` draws it open anyway. */
+const secFolded = (key, open) => ctx.secFolded(key, open);
+
+/* ---------- the desk's widgets ----------
+ * Seats in the rail, as the left has for the global ones (app.js
+ * `seatFrame`): the rail draws each one's frame, and its body, count and
+ * tone are patched into it, after a draw and on the `widget` event -- so an
+ * agent writing "deploy 3/5" every second never redraws the rail, takes an
+ * open field's focus or moves the documents' scroll. Asked for once a desk. */
+let wAt = null, wList = [], wGet = null;
+async function getWidgets(id) {
+  if (id == null || wGet === id) return;
+  wGet = id;
+  let j = null;
+  try { j = await ctx.api(`/api/desks/${id}/widgets`); } catch {}
+  wGet = null;
+  if (id !== deskId) return;
+  wAt = id; wList = (j && j.widgets) || [];
+  if (current()) rail();
+}
+const forgetWidgets = () => { wAt = null; wList = []; };
+function widgetSec(d) {
+  if (wAt !== d.id) { getWidgets(d.id); return ""; }
+  return wList.filter(w => !w.hidden).map(ctx.seatFrame).join("");
+}
+function fillSeats(d) {
+  if (wAt !== d.id) return;
+  for (const w of wList) { const el = document.getElementById(`wg-${d.id}-${w.name}`); if (el) ctx.patchSeat(el, w); }
+}
+/** A widget changed (the `widget` event): patched where it stands, or the
+ *  rail drawn again when one came, went or was switched off. */
+export function widgetSaid(j) {
+  if (!ctx || !j || wAt !== j.desk_id || j.desk_id !== deskId) return;
+  const i = wList.findIndex(w => w.name === j.name);
+  if (j.cleared) { if (i >= 0) { wList.splice(i, 1); rail(); } return; }
+  const was = i >= 0 ? wList[i] : null;
+  if (was) wList[i] = j; else wList.push(j);
+  const el = document.getElementById(`wg-${j.desk_id}-${j.name}`);
+  if (was && was.hidden === j.hidden && el) ctx.patchSeat(el, j); else rail();
+}
+/** The reader arranged the sidebars: the rail in its new order. */
+export function arranged() { if (ctx && current()) rail(); }
+
+/** A section of the rail (docs/DESIGN.md §8.4): the head both sidebars
+ *  draw, then what it holds. Folded is a class on the box, which the
+ *  head's own click sets without a draw (app.js `toggleFold`). `o` is the
+ *  head's (ctx.secHead), with `cls` for the box. */
+function sec(key, part, name, o, body) {
+  return `<section class="sec dk-sec${o.cls ? ` ${o.cls}` : ""}${!o.fixed && secFolded(key, o.open) ? " folded" : ""}" data-sec="${key}" data-part="${part}">` +
+    ctx.secHead(key, name, o) + `<div class="sec-body">${body}</div></section>`;
 }
 
 function rail() {
@@ -93,20 +136,28 @@ function rail() {
   drawing = true;
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + filedSecs(d) +
+  // The sections, each drawn by its own hand, then put in the reader's
+  // order (/sidebars), after Your turn, which is always first.
+  const secs = {
     // The panels fold as the documents do. Folded, the head still says when
     // one of them is waiting on the reader, since its row is out of sight;
     // and a panel just closed opens it, so its Undo is never out of reach.
-    `<details class="dk-sec" data-sec="panels" data-part="rail.panels"${secFolded("panels") && !(closedRow && closedRow.desk === d.id) ? "" : " open"}><summary class="t-label dk-lab" data-tip="Panels" data-tip-sub="${esc(here)} · ${esc(total)}">Panels<span class="s-chev" aria-hidden="true"></span><span class="n">${blocked ? `<b class="blk">${blocked} waiting</b> · ` : ""}${d.panes.length}<i>/${j.per_desk}</i></span></summary>` +
-    `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
+    panels: () => sec("panels", "rail.panels", "Panels", {
+      open: closedRow && closedRow.desk === d.id, tip: "Panels", sub: `${here} · ${total}`,
+      count: `${blocked ? `!${blocked} · ` : ""}${d.panes.length}/${j.per_desk}`, tone: blocked ? "warn" : "",
+      countTip: blocked ? `${ctx.plural(blocked, "panel")} waiting on you` : "",
+    }, `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div></details>` +
-    restSec(d) + pointSec(vs) +
-    // The documents fold, as a section in the sidebar does: the chevron
-    // shows under the cursor, and stays while the list is folded. The row's
-    // [n] says which panel sent it.
-    `<details class="dk-sec" data-sec="docs" data-part="rail.docs"${secFolded("docs") ? "" : " open"}><summary class="t-label dk-lab" data-tip="Documents" data-tip-sub="What the panels on this desk have sent, newest first">Documents<span class="s-chev" aria-hidden="true"></span>${live.length ? `<span class="n">${live.length}${waiting ? ` · <b>${waiting} waiting</b>` : ""}</span>` : ""}</summary>` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>`),
+    rest: () => restSec(d),
+    points: () => pointSec(vs),
+    // The documents. The count is how many, in the accent while some wait
+    // to be read; the row's [n] says which panel sent it.
+    docs: () => sec("docs", "rail.docs", "Documents", {
+      tip: "Documents", sub: "What the panels on this desk have sent, newest first",
+      count: live.length || "", tone: waiting ? "accent" : "", countTip: waiting ? `${waiting} waiting to be read` : "",
+    }, 
     // A document's row: the one on the page is marked, the way a pane's row
     // is while the desk is the page. One line of title, then who sent it and
     // when: the panel by the name it was started with, which holds still, and
@@ -121,14 +172,19 @@ function rail() {
     // What the reader removed from this list, named, and there to open or put back.
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
       (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
-        `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "") +
-    `</details>` + noteSec(d) + `</div>`);
+        `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "")),
+    notes: () => noteSec(d),
+    widgets: () => widgetSec(d),
+  };
+  const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
+  const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + filedSecs(d) + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   meta();
 }
@@ -181,8 +237,8 @@ function stripClick(e) {
   if (!sec) return;
   const el = ctx.tocEl.querySelector(`.dk-sec[data-sec="${sec}"], [data-part="rail.${sec}"]`);
   if (!el) return;
-  // Opened here, the section's own toggle remembers it, as a click on its head does.
-  if (el.tagName === "DETAILS") el.open = true;
+  // Opened here, and remembered, as a click on its head is.
+  if (el.classList.contains("folded")) ctx.fold(sec, false);
   requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }));
 }
 
@@ -365,21 +421,20 @@ function noteSec(d) {
   const hid = mine.length - seen.length, folds = notesAll && mine.length > NOTES_SHOWN;
   const rows = seen.map(x => noteRow(x, esc)).join("") +
     (hid || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="notes-more" aria-expanded="${folds}">${folds ? "Show fewer" : `${hid} more`}</button></li>` : "");
-  // The section's two actions sit in its head, beside the count, where they
+  // The section's two actions sit in its head, after the count, where they
   // are in view however long the list is: a new note, and removing the done
   // half. Removing answers where it was asked, as a ✕ does: the head holds
-  // the Undo until it runs out. Beside the summary and not in it -- a button
-  // in a <summary> is a button in a button -- and laid over its right end,
-  // which keeps the room for them whether they show or not.
+  // the Undo, in the count's place, until it runs out.
   const undo = cleared && cleared.at === d.id;
   const acts = undo
     ? `<span class="dk-cleared" role="status">${cleared.xs.length} removed<button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span>`
-    : (done ? `<button type="button" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(done, "done note")} · Undo brings them back" aria-label="Remove done notes">${ico("done")}</button>` : `<span class="dk-act-room" aria-hidden="true"></span>`) +
+    : (done ? `<button type="button" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(done, "done note")} · Undo brings them back" aria-label="Remove done notes">${ico("done")}</button>` : "") +
       `<button type="button" data-a="note-new" data-tip="New note" aria-label="New note">${ico("plus")}</button>`;
-  return `<div class="dk-notes-part${undo ? " undo" : ""}" data-part="rail.notes">` +
-    `<details class="dk-sec dk-notes" data-sec="notes"${secFolded("notes") ? "" : " open"}>` +
-    `<summary class="t-label dk-lab" data-part="rail.notes.head" data-tip="Notes" data-tip-sub="A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.">Notes<span class="s-chev" aria-hidden="true"></span>${left ? `<span class="n">${left} open</span>` : ""}</summary>` +
-    errLine("clear", esc, "p") +
+  return sec("notes", "rail.notes", "Notes", {
+    cls: `dk-notes${undo ? " undo" : ""}`, part: "rail.notes.head", empty: !mine.length || undo,
+    tip: "Notes", sub: "A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.",
+    count: undo ? "" : left || "", countTip: left ? `${left} open` : "", acts,
+  }, errLine("clear", esc, "p") +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
     // The bar for a new line, always at the end of the list, where the line
     // will land: a quiet field until it is clicked, or the head's + is, and
@@ -390,8 +445,7 @@ function noteSec(d) {
       : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
-        (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`) +
-    `</details><span class="dk-sec-acts">${acts}</span></div>`;
+        (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));
 }
 
 /** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
@@ -969,8 +1023,11 @@ function pointSec(vs) {
   const { esc } = ctx;
   const has = vs.filter(v => (points.get(v.id) || []).length || (pointSaid && pointSaid.p === v.id));
   if (!has.length) return "";
-  return `<div class="dk-points" data-part="rail.points"><div class="t-label dk-lab" data-tip="Points" data-tip-sub="Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.">Points</div>` +
-    has.map(v => {
+  const n = has.reduce((k, v) => k + (points.get(v.id) || []).filter(x => !x.gone).length, 0);
+  return sec("points", "rail.points", "Points", {
+    cls: "dk-points", count: n || "",
+    tip: "Points", sub: "Passages you kept from the documents, for the panel that sent each. Nothing is sent: they go into the panel's input, and you press Enter there.",
+  }, has.map(v => {
       const ps = points.get(v.id) || [], live = ps.filter(x => !x.gone).length;
       return `<ul class="dk-list">` + ps.map((x, i) => x.gone
         ? `<li class="dk-note gone" role="status"><span class="nm">${esc(x.text)}</span><button type="button" class="dk-undo" data-a="point-back" data-p="${v.id}" data-n="${i}">Undo</button></li>`
@@ -978,7 +1035,7 @@ function pointSec(vs) {
           `<span class="dk-tools"><button type="button" data-a="point-x" data-p="${v.id}" data-n="${i}" data-tip="Let this point go" aria-label="Let this point go">${ico("x")}</button></span></li>`).join("") + `</ul>` +
         (live ? `<button type="button" class="dk-new dk-put" data-a="put" data-p="${v.id}" data-tip="Put into the panel" data-tip-sub="Typed into panel ${v.pane.slot}'s input, quoted. Nothing is sent until you press Enter there.">Put ${live === 1 ? "it" : ctx.plural(live, "point")} in panel ${v.pane.slot}</button>` : "") +
         (pointSaid && pointSaid.p === v.id ? `<p class="dk-empty dk-said" role="status">${esc(pointSaid.text)}</p>` : "");
-    }).join("") + `</div>`;
+    }).join(""));
 }
 
 /** A word under a panel's points, in their place, for a few seconds. */

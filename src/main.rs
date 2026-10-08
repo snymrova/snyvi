@@ -39,6 +39,7 @@ mod thread;
 mod update;
 mod version;
 mod watch;
+mod widget;
 
 /// "1 panel", "3 panels": a count in words, never "panel(s)"
 /// (docs/DESIGN.md §3.1). Regular plurals only, which is every word it is

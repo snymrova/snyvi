@@ -38,7 +38,7 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView,
+    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView, showSidebars,
     navList: () => navMod ? navMod.list() : [],
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
@@ -128,7 +128,10 @@
     if (state.desks) desksSeen = list.length;
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" data-tip="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk data-tip="New desk" aria-label="New desk">+</button>` : ""));
+    const head = secHead("desks", "Desks", {
+      count: blocked ? `!${blocked}` : "", tone: "warn", countTip: blocked ? `${plural(blocked, "panel")} waiting on you` : "",
+      acts: capability ? `<button type="button" data-newdesk data-tip="New desk" aria-label="New desk">${glyph("plus", 14)}</button>` : "",
+    });
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
         : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
     // One desk is one project; the second is when snyvi starts to earn its
@@ -195,7 +198,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -309,7 +312,7 @@
    * document, for its Copy. Anywhere else in the window, WebKit's Back,
    * Forward and Reload are not snyvi's, and do not show. */
   const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
-    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .dk-thread, .nv-b";
+    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .dk-thread, .nv-b, #side .sec-head, #rail .sec-head";
   const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
   document.addEventListener("contextmenu", e => {
     if (e.target.closest("input, textarea, [contenteditable]")) return;
@@ -423,15 +426,9 @@
     es.addEventListener("resync", () => catchUp());
 
     // An agent arrived or left: its process opened or ended a stream.
-    es.addEventListener("agents", ev => {
-      const j = parse(ev); if (!j) return;
-      setOnline(j.online);
-    });
+    es.addEventListener("agents", ev => { const j = parse(ev); if (j) setOnline(j.online); });
     // The updater's word: first on every stream, then whenever it changes.
-    es.addEventListener("update", ev => {
-      const j = parse(ev); if (!j) return;
-      setUpd(j);
-    });
+    es.addEventListener("update", ev => { const j = parse(ev); if (j) setUpd(j); });
     // An agent left a note, or a reader looked at one somewhere.
     es.addEventListener("notes", ev => {
       const j = parse(ev); if (!j) return;
@@ -513,10 +510,7 @@
       deskDocs();
     });
     // A large code file finished highlighting in the background: swap the body in place.
-    es.addEventListener("rendered", ev => {
-      const j = parse(ev); if (!j) return;
-      refreshDoc(j.id);
-    });
+    es.addEventListener("rendered", ev => { const j = parse(ev); if (j) refreshDoc(j.id); });
     // Something in a browsed folder changed on disk: the open file, or a listed folder.
     es.addEventListener("changed", ev => {
       const j = parse(ev); if (!j) return;
@@ -563,6 +557,10 @@
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
+    // A widget changed: a global one here, a desk's in its rail.
+    es.addEventListener("widget", ev => { const j = parse(ev); if (!j) return; if (j.desk_id === 0) widgetSaid(j); else desk?.widgetSaid?.(j); });
+    // The reader arranged the sidebars, here or in another window.
+    es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // An agent ticked a line on a desk's list.
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

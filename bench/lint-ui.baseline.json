@@ -7,11 +7,11 @@
     }
   },
   "font-size": {
-    "total": 20,
+    "total": 16,
     "files": {
       "about.js": 4,
-      "app.css": 3,
-      "desk/08-style.js": 12,
+      "app.css": 2,
+      "desk/08-style.js": 9,
       "palette.js": 1
     }
   },
@@ -66,6 +66,25 @@
     "files": {
       "app/02-tree.js": 1
     }
+  },
+  "sec-head": {
+    "total": 0,
+    "files": {}
+  },
+  "radius": {
+    "total": 20,
+    "files": {
+      "about.js": 1,
+      "app.css": 6,
+      "desk/08-style.js": 9,
+      "home.js": 2,
+      "menu.js": 1,
+      "palette.js": 1
+    }
+  },
+  "side-font": {
+    "total": 0,
+    "files": {}
   },
   "toast-title": {
     "total": 0,

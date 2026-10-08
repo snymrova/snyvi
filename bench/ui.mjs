@@ -743,7 +743,7 @@ async function sideRailRows(p, url, arrive) {
   const rows = [];
   await p.goto(url);
   await p.pointerAway();
-  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "pop"];
+  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "widgets-nav", "pop"];
   // The fold eases over 160 ms; the widths below are read where it lands.
   const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
   await p.press("\\");
@@ -2212,7 +2212,7 @@ async function deskRows(cdp, base, token) {
     // count say so; the row under the pointer is still that row.
     await p.ev(`window.__still.side = 0; window.__rowA = document.querySelector('a[data-desk="${da}"]'); 1`);
     await post(`/api/panes/${pane}/agent`, { state: "needs_you" }, { "content-type": "application/json", authorization: `Bearer ${token}` });
-    const rang = await until(`!!document.querySelector('a[data-desk="${da}"] .dot.blk') && !!document.querySelector("#desk-nav .s-blk")`);
+    const rang = await until(`!!document.querySelector('a[data-desk="${da}"] .dot.blk') && !!document.querySelector("#desk-nav .sec-n.warn")`);
     const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
@@ -2630,11 +2630,11 @@ async function projectDeskRows(cdp, base, token, tmp) {
   let made = null;
   try {
     await p.goto(`${base}/#cap=${cap}`);
-    await until(`!!document.querySelector("#desk-nav .s-add")`);
+    await until(`!!document.querySelector("#desk-nav .sec-acts [data-newdesk]")`);
     // Every click the reader makes from here to the desk, counted by the
     // page: the launch's newcomer gets a project's desk in three or fewer.
     await p.ev(`window.__clicks = 0, document.addEventListener("click", () => window.__clicks++, true)`);
-    await p.clickOn("#desk-nav .s-add");
+    await p.clickOn("#desk-nav .sec-acts [data-newdesk]");
     const asked = await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
     const menu = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim())`) : [];
     const none = (await desks()).length === before, at = proj ? menu.indexOf(proj.name) : -1;

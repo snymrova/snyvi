@@ -1216,6 +1216,35 @@ fn mark_links(html: &str) -> String {
     out
 }
 
+/// A widget's body (`crate::widget`), drawn strictly: text, emphasis, code,
+/// links and lists, and nothing that can take more room than the seat keeps
+/// or run in the page. Raw HTML is dropped, not escaped (comrak's safe mode
+/// writes a comment in its place, taken out here); a picture is its alt
+/// text; there are no tables, footnotes or diagrams. Links leave snyvi as a
+/// document's do (`mark_links`). Small enough to run on every push.
+pub fn widget_md(source: &str) -> String {
+    let mut options = Options::default();
+    options.extension.strikethrough = true;
+    options.extension.autolink = true;
+    let arena = Arena::new();
+    let root = parse_document(&arena, source, &options);
+    let pictures: Vec<_> = root
+        .descendants()
+        .filter(|n| matches!(n.data.borrow().value, NodeValue::Image(_)))
+        .collect();
+    for pic in pictures {
+        let alt: Vec<_> = pic.children().collect();
+        for a in alt {
+            pic.insert_before(a);
+        }
+        pic.detach();
+    }
+    let mut out = Vec::with_capacity(source.len() * 2);
+    let _ = comrak::format_html(root, &options, &mut out);
+    let html = String::from_utf8(out).unwrap_or_default();
+    mark_links(&html.replace("<!-- raw HTML omitted -->", ""))
+}
+
 fn sanitize(html: &str) -> String {
     let mut b = ammonia::Builder::default();
     b.add_tags(["input"])
@@ -1686,6 +1715,23 @@ pub fn unified(a_name: &str, a: &str, b_name: &str, b: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn widget_md_is_strict() {
+        let h =
+            widget_md("**main** · 2 ahead <script>alert(1)</script>\n\n<div onclick=x>hi</div>");
+        assert!(h.contains("<strong>main</strong>"));
+        assert!(
+            !h.contains("<script") && !h.contains("<div") && !h.contains("raw HTML"),
+            "{h}"
+        );
+        let h = widget_md("![the build](https://x.test/a.png) and [CI](https://ci.test/1)");
+        assert!(!h.contains("<img"), "{h}");
+        assert!(h.contains("the build"));
+        assert!(h.contains("target=\"_blank\""), "{h}");
+        let h = widget_md("[x](javascript:alert(1)) | a | b |\n|---|---|\n| 1 | 2 |");
+        assert!(!h.contains("javascript:") && !h.contains("<table"), "{h}");
+    }
     use super::*;
 
     fn r() -> Renderer {

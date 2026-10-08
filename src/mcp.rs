@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 mod threads;
+mod widgets;
 
 const TOOL_DESCRIPTION: &str = "Send a finished document to snyvi, the user's document viewer. \
 Call this whenever you finish writing a plan, report, review, summary, design note, or any document the user \
@@ -177,6 +178,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("hand_over", Session::hand_over),
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
+    ("set_widget", Session::set_widget),
+    ("propose_widget", Session::propose_widget),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -241,6 +244,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
             name_spec(),
         ]);
         tools.extend(threads::specs());
+        tools.extend(widgets::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
             tools.push(offer_line_spec());

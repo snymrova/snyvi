@@ -309,6 +309,10 @@ function entries(ctx, el, byKey = false) {
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
   // Back or forward, held or right-clicked: where this window has been.
   if (el.matches(".nv-b")) return { head: "Where you've been", items: ctx.navList() };
+  // A section's head, on either side: where they are arranged.
+  if (el.matches(".sec-head")) return { head: el.querySelector(".sec-nm")?.textContent || "Sidebars", items: [
+    { label: "Arrange sidebars…", moves: 1, run: () => ctx.showSidebars(true) },
+  ] };
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
     { label: "Check for updates", run: at => ctx.checkUpdates(at) },
@@ -590,7 +594,7 @@ const CSS = `
   padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
   animation: sheet-l var(--dur-quick) var(--ease-out); }
 #pop > #note { margin: 6px 0 0; }
-#pop > :first-child .s-head { margin-top: 4px; }
+#pop > :first-child .sec-head { margin-top: 4px; }
 @media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
 #ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
 @keyframes ctx-in { from { opacity: 0; transform: scale(.97); } }
@@ -676,8 +680,9 @@ function install(ctx) {
  * it is fetched on the first press of a rail icon, and a reader whose
  * sidebar is never folded never pays for it. */
 const $ = s => document.querySelector(s), root = document.documentElement;
-const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
-const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], note: ["#note"] };
+/** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
+const home = () => ($("#trees").dataset.order || "#inbox-row #queue #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
 export function pop(ctx, sec, btn) {
   sheet();
@@ -708,7 +713,7 @@ export function unpop(back = true) {
   // whatever else is still at home: the end is not its place.
   for (const id of POPS[sec]) {
     if (id === "#note") { $("#side").insertBefore($(id), $(".side-foot")); continue; }
-    const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
+    const order = home(), after = order.slice(order.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
     treesEl.insertBefore($(id), after || popEl);
   }
   const b = popBtn; popBtn = null;

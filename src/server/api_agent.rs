@@ -511,7 +511,7 @@ pub(crate) async fn pane_brief(
         .collect();
     let (threads, waiting) = app
         .store
-        .threads(|c, now| {
+        .clocked(|c, now| {
             Ok((
                 crate::thread::for_desk(c, desk.id, now)?,
                 // This desk's own, dialog turns kept: the brief says what
@@ -648,7 +648,7 @@ pub(crate) async fn pane_changes(
         .collect();
     let answers = app
         .store
-        .threads(|c, now| crate::thread::take_untold(c, desk.id, &id, &live, now))
+        .clocked(|c, now| crate::thread::take_untold(c, desk.id, &id, &live, now))
         .unwrap_or_default();
     if !brief_on(&app) {
         let context = crate::brief::answers_only(&answers);
@@ -675,7 +675,7 @@ pub(crate) async fn pane_changes(
     };
     let (threads, opened) = app
         .store
-        .threads(|c, now| {
+        .clocked(|c, now| {
             Ok((
                 crate::thread::moved_since(c, desk.id, &id, since)?,
                 crate::thread::take_opened(c, desk.id, &id, now)?,
