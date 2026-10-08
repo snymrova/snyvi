@@ -258,7 +258,8 @@ const ABOUT = `
   <button class="icon help-close" id="about-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   <h2 class="dlg-title" id="about-title">snyvi</h2>
   <p id="about-say">A fast, beautiful viewer for the documents your agents produce.</p>
-  <dl id="about-facts"></dl>
+  <section id="about-upd" class="ab-upd" aria-label="Updates"></section>
+  <div id="about-facts"></div>
 </div>
 `;
 const RESET = `
@@ -443,11 +444,32 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .hk .keys i { font-style: normal; font-size: var(--fs-micro); padding: 0 1px; }
 .hk .keys code { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); background: var(--rule); padding: 0 5px; border-radius: var(--r-xs); line-height: 18px; }
 .help-col .help-note { margin: 8px 0 0; font-size: var(--fs-small); line-height: 1.4; color: var(--fg-3); }
-/* The updates row in About: the sentence, the controls after it, and the
-   lines a told-only install runs under both. */
-.upd-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
-.upd-act { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
-.upd-act button.text { padding: 0; font-size: var(--fs-ui); }
+/* Updates in About, a card over the facts: a dot for where it stands (the
+   latest, something to do, something wrong), the sentence, the controls
+   under it, and the lines a told-only install runs under those. */
+.ab-upd { margin: 0 0 6px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); }
+.ab-upd:empty { display: none; }
+.upd-row { display: flex; flex-direction: column; gap: 10px; }
+.upd-row .upd-say { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-body-s); font-weight: 500; color: var(--fg); }
+.upd-row .upd-say::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); }
+.upd-row[data-st="ok"] .upd-say::before { background: var(--ok); }
+.upd-row[data-st="ready"] .upd-say::before { background: var(--accent); }
+.upd-row[data-st="bad"] .upd-say::before { background: var(--warn); }
+.upd-row[data-st="busy"] .upd-say::before { display: none; }
+.upd-act { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.upd-act:empty { display: none; }
+.upd-act .btn { padding: 4px 12px; border-radius: var(--r-sm); }
+.upd-notes { margin-left: auto; font-size: var(--fs-small); }
+/* A switch, beside the sentence it turns on and off, or with its own words. */
+.ab-tog { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-ui); color: var(--fg-2); cursor: pointer; }
+.ab-sw { flex: none; position: relative; width: 26px; height: 16px; border-radius: var(--r-pill); background: var(--rule-2); transition: background var(--t); }
+.ab-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raise); box-shadow: var(--shadow); transition: transform var(--t); }
+.ab-tog[aria-checked="true"] .ab-sw { background: var(--accent); }
+.ab-tog[aria-checked="true"] .ab-sw::after { transform: translateX(10px); }
+.ab-tog:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-xs); }
+.ab-swrow { display: flex; align-items: flex-start; gap: 16px; }
+.ab-swrow .upd-say { flex: 1; min-width: 0; color: var(--fg-2); }
+.ab-swrow .ab-tog { margin-top: 2px; }
 .upd-how { flex-basis: 100%; margin: 4px 0 0; padding: 6px 10px; font-family: var(--mono); font-size: var(--fs-small); line-height: 1.5; background: var(--code-bg); border-radius: var(--r-sm); white-space: pre-wrap; }
 @media (max-width: 600px) {
   .help-body { grid-template-columns: 1fr; }
@@ -486,33 +508,41 @@ async function openAbout(d) {
   const { $, openDialog, closeDialog, help, aboutDlg } = d;
   const aboutFacts = $("#about-facts");
   closeDialog(help);
-  aboutFacts.replaceChildren();
+  aboutFacts.replaceChildren(); $("#about-upd").replaceChildren();
   openDialog(aboutDlg, aboutDlg.firstElementChild);
   let a;
   try { a = await (await fetch("/api/about")).json(); } catch { noReach($("#about-say"), () => openAbout(d)); return; }
   $("#about-say").classList.remove("no-reach");
   $("#about-say").textContent = `${a.description}.`;
+  // Updates first, on a card of its own: the one row here that asks for
+  // something, and it was row two of fourteen, worded like the License
+  // (#103). Then the facts, in small groups.
+  $("#about-upd").append(updateRow(a.update, d));
+  let dl = null;
+  const group = title => {
+    const h = document.createElement("h3"); h.className = "ab-h"; h.textContent = title;
+    dl = document.createElement("dl");
+    aboutFacts.append(h, dl);
+  };
   const fact = (k, v, cls) => {
     if (v == null || v === "") return;
     const dt = document.createElement("dt"); dt.textContent = k;
     const dd = document.createElement("dd"); if (cls) dd.className = cls;
     if (v instanceof Node) dd.append(v); else dd.textContent = v;
-    aboutFacts.append(dt, dd);
+    dl.append(dt, dd);
   };
+  if (d.capability) {
+    group("In panels");
+    fact("Desk brief", switchRow(d, "/api/brief", "Desk brief", "A Claude starting in a panel is told about its desk", "Claude starts in a panel knowing nothing of its desk"));
+    fact("Asides", switchRow(d, "/api/asides", "Asides", "An agent may leave a line at the foot of the sidebar", "An agent's aside is refused; snyvi's own first lines still show"));
+    fact("Claude Code mod", switchRow(d, "/api/claude-mod", "Claude Code mod in panels", "A panel's Claude shows its thread above the prompt, puts its questions on Your turn, and takes /note", "Panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
+  }
+  group("This snyvi");
   const ver = document.createDocumentFragment();
   ver.append(a.version);
   const build = [a.commit, a.target].filter(Boolean).join(", ");
   if (build) { const m = document.createElement("span"); m.className = "muted"; m.textContent = ` (${build})`; ver.append(m); }
   fact("Version", ver);
-  fact("Updates", updateRow(a.update, d));
-  if (d.capability) {
-    fact("Desk brief", switchRow(d, "/api/brief", "on · a Claude starting in a panel is told about its desk", "off · Claude starts in a panel knowing nothing of its desk"));
-    fact("Asides", switchRow(d, "/api/asides", "on · an agent may leave a line at the foot of the sidebar", "off · an agent's aside is refused; snyvi's own first lines still show"));
-    fact("Claude Code mod in panels", switchRow(d, "/api/claude-mod", "on · a panel's Claude shows its thread above the prompt, puts its questions on Your turn, and takes /note", "off · panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
-  }
-  fact("Binary", a.binary, "path");
-  fact("Documents", a.data_dir, "path");
-  fact("Settings", a.config_dir, "path");
   fact("Theme", themeFact());
   fact("Agents", a.agents, "pre");
   fact("License", a.license);
@@ -521,12 +551,16 @@ async function openAbout(d) {
     link.textContent = a.repository.replace(/^https?:\/\//, "");
     fact("Source", link);
   }
+  group("Where things are");
+  fact("Binary", a.binary, "path");
+  fact("Documents", a.data_dir, "path");
+  fact("Settings", a.config_dir, "path");
 }
 
 /** The updates row: `1.7.1 is ready · applies tomorrow, when the desks
  *  are quiet`, with `Check now` beside it, and what a press finds -- the
  *  latest, a version ready with the restart control in the row, a restart
- *  waiting for quiet with Now and Cancel, or the lines a told-only install
+ *  waiting for quiet with Restart now and Cancel, or the lines a told-only install
  *  runs. The daemon is the updater; this only says what it says
  *  (`/api/about` and `/api/update/*`). A tab holds no capability, so it
  *  reads the row and presses nothing. */
@@ -552,20 +586,29 @@ function noReach(el, again) {
  *  work was left, as context before its first reply. Asides: whether an
  *  agent's line at the foot of the sidebar is taken at all -- the one
  *  consent for every agent at once, beside each aside's own ✕. */
-function switchRow(d, path, onSay, offSay) {
-  const box = document.createElement("div"); box.className = "upd-row";
+function switchRow(d, path, name, onSay, offSay) {
+  const box = document.createElement("div"); box.className = "ab-swrow";
   const say = document.createElement("span"); say.className = "upd-say";
-  const b = document.createElement("button"); b.type = "button"; b.className = "text";
-  const act = document.createElement("span"); act.className = "upd-act"; act.append(b);
-  box.append(say, act);
+  const b = swBtn(name);
+  box.append(say, b);
   const draw = on => {
     say.textContent = on ? onSay : offSay;
-    b.textContent = on ? "Turn off" : "Turn on";
+    b.setAttribute("aria-checked", String(!!on));
     b.onclick = async () => { try { draw((await d.deskApi(path, { on: !on })).on); } catch (e) { say.textContent = `Could not change it · ${d.sayErr(e).why}`; } };
   };
   say.textContent = "…";
   d.deskApi(path).then(j => draw(j.on), () => { say.textContent = "snyvi did not answer"; });
   return box;
+}
+
+/** A switch: the track and its knob, its state in aria-checked. `label`,
+ *  when given, is drawn beside it; otherwise it is only its name. */
+function swBtn(name, label) {
+  const b = document.createElement("button"); b.type = "button"; b.className = "ab-tog";
+  b.setAttribute("role", "switch"); b.setAttribute("aria-checked", "false");
+  b.innerHTML = '<i class="ab-sw" aria-hidden="true"></i>';
+  if (label) b.append(label); else b.setAttribute("aria-label", name);
+  return b;
 }
 
 function updateRow(u, d) {
@@ -576,12 +619,12 @@ function updateRow(u, d) {
   const how = document.createElement("pre"); how.className = "upd-how"; how.hidden = true;
   box.append(say, act, how);
   const when = ts => { const s = ts - Date.now() / 1000; return s <= 0 ? "at the next quiet moment" : s < 3600 ? `in ${Math.max(1, Math.round(s / 60))} min` : s < 20 * 3600 ? `in ${Math.round(s / 3600)} h` : "tomorrow"; };
-  const button = (label, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "text"; b.textContent = label; b.addEventListener("click", fn); return b; };
+  const button = (label, fn, kind = "secondary") => { const b = document.createElement("button"); b.type = "button"; b.className = `btn btn-${kind}`; b.textContent = label; b.addEventListener("click", fn); return b; };
   const msg = e => d.sayErr(e).why;
   // `note` is what a press here just met -- a restart the daemon refused --
   // and is said before anything the block says.
   const draw = (u, busy, note) => {
-    act.replaceChildren(); how.hidden = true;
+    act.replaceChildren(); how.hidden = true; delete box.dataset.st;
     if (!u || u.channel === "unknown") { say.textContent = "snyvi cannot tell which file it runs from here, so it does not update itself."; return; }
     if (u.channel === "dev") { say.textContent = "A development build: it does not check."; return; }
     const r = u.restart, n = r && r.waiting_on ? r.waiting_on.length : 0;
@@ -602,19 +645,22 @@ function updateRow(u, d) {
     else if (u.checked) parts.push(`You're on the latest · checked ${rel(u.checked)}`);
     else parts.push("Not checked yet");
     if (!busy && !r && u.ready) parts.push(u.auto && !u.slot_open ? `applies ${when(u.slot)}, when the desks are quiet` : "applies at the next quiet moment");
-    if (!busy && !u.auto) parts.push(u.env_off ? "automatic updates off in snyvi's environment" : "automatic updates off");
+    // Off is said by the switch, where there is one to say it.
+    if (!busy && !u.auto && (u.env_off || !capability)) parts.push(u.env_off ? "automatic updates off in snyvi's environment" : "automatic updates off");
     say.textContent = parts.join(" · ");
+    // The dot before the line: the latest, something to do, or something wrong.
+    box.dataset.st = busy || u.restarting ? "busy" : failed || u.error ? "bad" : r || u.ready || u.available ? "ready" : u.checked ? "ok" : "";
     if (busy || u.restarting) say.insertAdjacentHTML("afterbegin", DOTS);
     // The updater's own words, for whoever needs them, in the line's tip.
     if (u.error) { say.dataset.tip = "What it said"; say.dataset.tipSub = u.error; } else delete say.dataset.tip;
     if (busy || u.restarting) return;
     if (u.available && !u.ready && u.how && u.how.length) { how.textContent = u.how.join("\n"); how.hidden = false; }
-    const notes = () => { if (u.notes) { const a = document.createElement("a"); a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "release notes"; act.append(a); } };
+    const notes = () => { if (u.notes) { const a = document.createElement("a"); a.className = "upd-notes"; a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Release notes ↗"; act.append(a); } };
     if (!capability) { notes(); return; }
     if (r) {
-      act.append(button("Now", async () => {
+      act.append(button("Restart now", async () => {
         try { await deskApi("/api/restart", { when: "now" }); draw({ ...u, restarting: true }, false); } catch (e) { draw(u, false, `Could not restart · ${msg(e)}`); }
-      }), button("Cancel", async () => {
+      }, "primary"), button("Cancel", async () => {
         try {
           const res = await fetch("/api/restart", { method: "DELETE", headers: { "x-snyvi-capability": capability } });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -627,15 +673,20 @@ function updateRow(u, d) {
       say.textContent = "Restarting when the panels are quiet…"; act.replaceChildren();
       try { const j = await deskApi("/api/restart", { when: "idle", apply: true }); draw({ ...u, restart: { apply: true, waiting_on: j.waiting_on || [] } }, false); }
       catch (e) { draw(u, false, `Could not restart · ${msg(e)}`); }
-    }));
+    }, "primary"));
     act.append(button("Check now", async () => {
       draw(u, true);
       try { const j = await deskApi("/api/update/check", {}); draw(j.update, false); }
       catch (e) { draw({ ...u, error: msg(e) }, false); }
     }));
-    if (!u.env_off) act.append(button(u.auto ? "Turn off" : "Turn on", async () => {
-      try { const j = await deskApi("/api/update/auto", { on: !u.auto }); draw(j.update, false); } catch {}
-    }));
+    if (!u.env_off) {
+      const sw = swBtn("Automatic updates", "Automatic updates");
+      sw.setAttribute("aria-checked", String(!!u.auto));
+      sw.addEventListener("click", async () => {
+        try { const j = await deskApi("/api/update/auto", { on: !u.auto }); draw(j.update, false); } catch {}
+      });
+      act.append(sw);
+    }
     notes();
   };
   draw(u, false);
@@ -1005,7 +1056,8 @@ html[data-upd="waiting"] .brand-mark::after { animation: upd-breathe 1.6s ease-i
 #restart-strip[hidden] { display: none; }
 .about-box { width: min(560px, 92vw); }
 .about-box p { margin: 0 0 14px; font-size: var(--fs-body-s); color: var(--fg-2); }
-.about-box dl { grid-template-columns: max-content 1fr; gap: 7px 20px; }
+.about-box dl { grid-template-columns: 9.5em 1fr; gap: 7px 20px; }
+.about-box .ab-h { margin: 18px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--rule); font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); }
 .about-box dt { font-family: inherit; font-size: var(--fs-ui); color: var(--fg-3); }
 .about-box dd { min-width: 0; overflow-wrap: anywhere; }
 .about-box dd.path { font-family: var(--mono); font-size: var(--fs-small); }
