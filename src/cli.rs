@@ -230,6 +230,17 @@ enum WidgetCmd {
         #[arg(long)]
         global: bool,
     },
+    /// Write a starter widget file in snyvi's widgets folder: a widget.json and a script that prints its body. It does not run until you Allow it in the window.
+    New {
+        name: String,
+        /// On the left, everywhere, run in its own folder (the default is a desk's, run in the desk's folder).
+        #[arg(long)]
+        global: bool,
+    },
+    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses.
+    Check {
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -672,9 +683,11 @@ fn restart_self(exe: &std::path::Path) -> Result<()> {
 }
 
 /// `snyvi widget …`: one widget set or cleared, the daemon's word printed
-/// back when it refuses.
+/// back when it refuses; a starter written; one run checked.
 fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     let (name, body, desk, global) = match cmd {
+        WidgetCmd::New { name, global } => return widget_new(paths, &name, global),
+        WidgetCmd::Check { name } => return widget_check(paths, &name),
         WidgetCmd::Set { name, text, desk, global, tone, count, lines, stale_after } => {
             let text = match text.as_deref() {
                 None | Some("-") => {
@@ -697,5 +710,98 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
         eprintln!("snyvi: there was no widget called {name} there");
     }
+    Ok(())
+}
+
+/// `snyvi widget new`: a starter folder, never over one that is there.
+fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
+    use crate::widget::files;
+    if !crate::widget::name_ok(name) {
+        anyhow::bail!("a widget's name is lowercase letters, digits and dashes, at most 32");
+    }
+    let dir = files::dir(&paths.config_dir).join(name);
+    if dir.exists() {
+        anyhow::bail!("{} is there already", dir.display());
+    }
+    let (json, script, body) = files::starter(name, if global { files::Scope::Global } else { files::Scope::Desk });
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("widget.json"), json)?;
+    std::fs::write(dir.join(script), body)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir.join(script), std::fs::Permissions::from_mode(0o755))?;
+    }
+    println!("{}", dir.display());
+    println!("Edit {script}, try it with `snyvi widget check {name}`, then Allow it in the window: it waits in its seat, and on /sidebars.");
+    Ok(())
+}
+
+/// `snyvi widget check`: one run, in this terminal, of what snyvi would
+/// run, with what it would be given; then the body it would draw, or why
+/// it would not. Run here and now, in this shell's environment -- so a
+/// command that works here and not in snyvi is a PATH to look at.
+fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
+    use crate::widget::{self, files};
+    let folder = files::dir(&paths.config_dir).join(name);
+    let spec = files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
+    let hash = files::hash(&folder).map_err(|why| anyhow::anyhow!(why))?;
+    let cwd = match spec.scope {
+        files::Scope::Global => folder.clone(),
+        files::Scope::Desk => std::env::current_dir()?,
+    };
+    let stdin = serde_json::json!({
+        "desk": if spec.scope == files::Scope::Desk { serde_json::json!({ "id": 0, "name": "check", "folder": cwd }) } else { serde_json::Value::Null },
+        "settings": spec.settings_with("{}"),
+        "snyvi": crate::version::VERSION,
+    });
+    eprintln!("{} · {} · every {} s · in {}", spec.title, spec.run.command, spec.run.every, cwd.display());
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(&spec.run.command);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(&spec.run.command);
+        c
+    };
+    let mut child = cmd
+        .current_dir(&cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .context("starting it")?;
+    if let Some(mut i) = child.stdin.take() {
+        use std::io::Write;
+        let _ = i.write_all(stdin.to_string().as_bytes());
+    }
+    let started = std::time::Instant::now();
+    let out = child.wait_with_output()?;
+    let took = started.elapsed();
+    if !out.status.success() {
+        anyhow::bail!("it exited {}: snyvi would show that over the last good body", out.status.code().unwrap_or(-1));
+    }
+    if took.as_secs() >= spec.run.timeout {
+        eprintln!("snyvi: it took {:.1} s, past its timeout of {} s: snyvi would stop it", took.as_secs_f64(), spec.run.timeout);
+    }
+    if out.stdout.len() > 4096 {
+        anyhow::bail!("it printed {} bytes: snyvi reads 4 KB at most", out.stdout.len());
+    }
+    match widget::Body::parse(&String::from_utf8_lossy(&out.stdout)) {
+        Err(why) => anyhow::bail!("snyvi would refuse what it printed: {why}"),
+        Ok(widget::Sent::Clear) => println!("(nothing: the seat would be empty)"),
+        Ok(widget::Sent::Body(b)) => {
+            println!("tone {} · count {} · {} lines", b.tone.as_str(), if b.count.is_empty() { "none" } else { &b.count }, b.lines);
+            println!("{}", crate::render::widget_md(&b.md));
+        }
+    }
+    // Read only: the daemon owns the database, and opening it as the store
+    // does would tidy what the daemon is in the middle of.
+    let allowed = rusqlite::Connection::open_with_flags(&paths.db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .ok()
+        .and_then(|c| widget::prefs(&c, name).ok())
+        .is_some_and(|p| p.trusted_hash == hash);
+    eprintln!("{}", if allowed { "Allowed as it is: snyvi runs it while it is in view." } else { "Not allowed as it is: Allow it in the window, in its seat or on /sidebars." });
     Ok(())
 }
