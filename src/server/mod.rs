@@ -15,6 +15,7 @@ mod api_desk;
 mod api_docs;
 mod api_peer;
 mod api_thread;
+mod api_widget;
 mod assets;
 mod auth;
 mod events;
@@ -30,6 +31,7 @@ use api_desk::*;
 use api_docs::*;
 use api_peer::*;
 use api_thread::*;
+use api_widget::*;
 use assets::*;
 use auth::*;
 use events::*;
@@ -391,6 +393,11 @@ fn pane_routes() -> Router<Arc<App>> {
 
 /// Threads, Your turn and suggested panels (`api_thread`): the agent's and
 /// the mod's on the panel, behind the token, and the page's on the desk.
+/// The sidebars' layout and their widgets (`api_widget`).
+fn widget_routes() -> Router<Arc<App>> {
+    Router::new().route("/api/layout", post(set_layout))
+}
+
 fn thread_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/api/panes/{id}/thread", post(pane_start_thread))
@@ -545,6 +552,7 @@ fn router(app: Arc<App>) -> Router {
         // the token, the reads open like the project list is.
         .merge(pane_routes())
         .merge(thread_routes())
+        .merge(widget_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))

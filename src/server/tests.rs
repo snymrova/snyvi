@@ -289,6 +289,7 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     ("POST", "/api/docs/nope/read", None, Gate::Reader, true),
     ("GET", "/api/queue", None, Gate::Open, true),
+    ("POST", "/api/layout", Some("{}"), Gate::Reader, true),
     ("POST", "/api/queue/clear", None, Gate::Reader, true),
     (
         "POST",
@@ -924,6 +925,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         + routes_in("\nfn pane_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn thread_routes(")
+        + routes_in("\nfn widget_routes(")
         + routes_in("\nfn receive_route(");
     assert_eq!(
         n,
@@ -2206,4 +2208,40 @@ async fn a_band_is_held_until_its_own_desk_moves() {
     tokio::time::sleep(WAIT).await;
     assert!(held.is_finished());
     assert_eq!(held.await.unwrap().status(), StatusCode::NO_CONTENT);
+}
+
+/// The reader's layout is kept as normalized -- Your turn first, an id from
+/// nowhere dropped, a missing section back in its place -- answered as kept,
+/// and on the next page's first paint.
+#[tokio::test]
+async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
+    let (_tmp, router, leaves) = gated_router("snyvi-layout");
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/layout")
+        .header("host", &leaves.host)
+        .header("origin", &leaves.origin)
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"left":["folders","inbox","nope"],"right":["notes","turn"],"hidden":["folders","turn"]}"#,
+        ))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+    let kept: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(kept["left"][0], "folders");
+    assert_eq!(kept["left"].as_array().unwrap().len(), 4);
+    assert_eq!(kept["right"][0], "turn");
+    assert_eq!(kept["hidden"], serde_json::json!(["folders"]));
+
+    let req = axum::http::Request::builder()
+        .uri("/inbox")
+        .header("host", &leaves.host)
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    let page = axum::body::to_bytes(resp.into_body(), 4 << 20).await.unwrap();
+    let page = String::from_utf8_lossy(&page);
+    assert!(page.contains(r#""layout":{"left":["folders","#), "the first paint has the layout");
 }

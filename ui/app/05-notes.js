@@ -239,13 +239,21 @@
   // this page picks and a count, so another tab cannot take its word and a
   // late one is not the last. Leaving always says not; a stream that comes
   // back says again (the daemon may be a new process: `sayFocus(true)`).
-  let inFront = null, focusSeq = 0;
+  // With it, whether the page can be seen at all and the desk it shows --
+  // a document read over a desk shows the desk's rail -- which is what
+  // decides whether a widget runs (src/widget/run.rs).
+  let saidFocus = null, focusSeq = 0;
   const pageMark = Math.random().toString(36).slice(2);
   function sayFocus(again, leaving) {
-    const now = !leaving && document.hasFocus() && !document.hidden;
-    if (now !== inFront || again) fetch("/api/focus", { method: "POST", keepalive: true, body: JSON.stringify({ focused: inFront = now, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
+    const focused = !leaving && document.hasFocus() && !document.hidden, visible = !leaving && !document.hidden;
+    const desk = state.view === "desk" ? state.deskId : state.deskBehind;
+    const word = `${focused}|${visible}|${desk ?? ""}`;
+    if (word === saidFocus && !again) return;
+    saidFocus = word;
+    fetch("/api/focus", { method: "POST", keepalive: true, body: JSON.stringify({ focused, visible, desk: desk ?? null, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
   }
   const beacon = () => sayFocus();
+  onPlace = beacon;
   addEventListener("focus", beacon); addEventListener("blur", beacon); document.addEventListener("visibilitychange", beacon);
   addEventListener("pagehide", () => sayFocus(1, 1));
   beacon();

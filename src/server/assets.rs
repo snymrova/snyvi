@@ -322,6 +322,8 @@ pub(crate) fn shell(
         // Whether there is a friend, so a menu offers Send to a friend… only
         // then; the menu asks again as it opens (`ui/menu.js`).
         o.insert("friends".into(), json!(has_friends(app)));
+        // The sidebars' order, so the first paint draws them in it.
+        o.insert("layout".into(), layout_json(app));
     }
     let page = app
         .ui

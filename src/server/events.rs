@@ -13,8 +13,18 @@ use std::collections::HashMap;
 /// between: a window in front all afternoon is one request, where it was one
 /// every three seconds (finding 13). By page, so two tabs cannot take each
 /// other's word, and numbered, so a word that arrives late is not the last.
-static FOCUSED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, (u64, bool)>>> =
+static FOCUSED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Said>>> =
     std::sync::LazyLock::new(Default::default);
+
+/// A page's last word: its number, in front or not, seen at all or not, and
+/// the desk it shows (its own, or the one a document is read over).
+#[derive(Clone, Copy)]
+struct Said {
+    seq: u64,
+    focused: bool,
+    visible: bool,
+    desk: Option<i64>,
+}
 /// More pages than anyone keeps open: past it the oldest words are dropped.
 const FOCUS_PAGES: usize = 64;
 
@@ -24,6 +34,10 @@ const FOCUS_PAGES: usize = 64;
 #[derive(Deserialize, Default)]
 pub(crate) struct FocusBody {
     focused: Option<bool>,
+    /// Not hidden: in front or not, the page can be seen. A page from
+    /// before 1.27 does not say, and counts as seen while in front.
+    visible: Option<bool>,
+    desk: Option<i64>,
     page: Option<String>,
     seq: Option<u64>,
 }
@@ -38,16 +52,17 @@ pub(crate) async fn focus(State(app): S, headers: HeaderMap, body: Bytes) -> Res
     if let Some(page) = b.page.filter(|p| !p.is_empty() && p.len() <= 64) {
         let seq = b.seq.unwrap_or(0);
         let mut m = FOCUSED.lock().unwrap();
-        if m.get(&page).is_none_or(|(last, _)| seq >= *last) {
+        if m.get(&page).is_none_or(|was| seq >= was.seq) {
             if m.len() >= FOCUS_PAGES && !m.contains_key(&page) {
-                // Unfocused words first: they say nothing a missing one does not.
-                if let Some(k) = m.iter().find(|(_, v)| !v.1).map(|(k, _)| k.clone()) {
+                // Unseen words first: they say nothing a missing one does not.
+                if let Some(k) = m.iter().find(|(_, v)| !v.visible).map(|(k, _)| k.clone()) {
                     m.remove(&k);
                 } else {
                     m.clear();
                 }
             }
-            m.insert(page, (seq, focused));
+            let visible = b.visible.unwrap_or(focused);
+            m.insert(page, Said { seq, focused, visible, desk: b.desk.filter(|_| visible) });
         }
     }
     if focused {
@@ -68,7 +83,32 @@ pub(crate) fn focused(app: &App) -> bool {
         m.clear();
         return false;
     }
-    m.values().any(|(_, f)| *f)
+    m.values().any(|v| v.focused)
+}
+
+/// Whether a widget is in view: a global one (`None`) while any page can be
+/// seen, a desk's while a page that can be seen shows that desk. What a
+/// widget file's command runs on (`crate::widget::run`): nothing runs for a
+/// sidebar nobody can see.
+pub(crate) fn in_view(app: &App, desk: Option<i64>) -> bool {
+    let mut m = FOCUSED.lock().unwrap();
+    if app.pages.load(Ordering::Relaxed) == 0 {
+        m.clear();
+        return false;
+    }
+    m.values().any(|v| v.visible && (desk.is_none() || v.desk == desk))
+}
+
+/// The desks some page in view shows, for the runner's round.
+pub(crate) fn desks_in_view(app: &App) -> Vec<i64> {
+    if app.pages.load(Ordering::Relaxed) == 0 {
+        return Vec::new();
+    }
+    let m = FOCUSED.lock().unwrap();
+    let mut out: Vec<i64> = m.values().filter(|v| v.visible).filter_map(|v| v.desk).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// How long since a page was in front, for the updater's doors: none while

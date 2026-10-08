@@ -169,7 +169,12 @@
   }
 
   /** Highlight whatever is on screen, without rebuilding either tree. */
+  /** Told whenever the page may have moved (`markActive`): the focus beacon
+   *  (05-notes.js) says which desk the page shows, for the widgets that run
+   *  only while one is in view. A hook, so this part need not know it. */
+  let onPlace = () => {};
   function markActive() {
+    onPlace();
     for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
     const on = state.view === "inbox" ? inboxRowEl.querySelector(".t-inbox")
       : state.view === "desk" && state.deskId != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskId}"]`)
