@@ -71,6 +71,14 @@ function rules(text) {
 
 const count = (text, re) => (text.match(re) || []).length;
 
+/* A script's module: the parts of app.js and desk.js share one, every other
+ * script is its own. A module that names its stylesheet `CSS` hides the
+ * browser's, and a bare CSS.escape in it throws (1.27.0's /sidebars saved
+ * nothing for this); `window.CSS.escape` is the way past it. */
+const scope = file => file.startsWith("app/") ? "app" : file.startsWith("desk/") ? "desk" : file;
+const SHADOWS_CSS = new Set(FILES.filter(f => f.endsWith(".js") &&
+  /^\s*(?:const|let|var)\s+CSS\b/m.test(uncomment(readFileSync(join(UI, f), "utf8"), false))).map(scope));
+
 /* The allow-list (DESIGN §9.3), as patterns a hit's own line is tested
  * against. `white-space` is never a colour; the #fff behind a previewed
  * HTML page is the page's, not ours; the #000 in a mask is an alpha channel;
@@ -187,6 +195,13 @@ const CHECKS = {
     run(text, file) {
       if (!SIDES.has(file)) return 0;
       return count(text, /font(?:-size)?\s*:\s*[^;"`}]*?\b\d+(?:\.\d+)?px/g);
+    },
+  },
+  "css-global": {
+    what: "CSS.escape where a const CSS hides the browser's",
+    run(text, file) {
+      if (!file.endsWith(".js") || !SHADOWS_CSS.has(scope(file))) return 0;
+      return count(text, /(?<![\w.$])CSS\.(?:escape|supports)\b/g);
     },
   },
   "toast-title": {

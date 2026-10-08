@@ -380,7 +380,7 @@ function fillHelp(d) {
   help.dispatchEvent(new Event("snyvi:help"));
 }
 
-const CSS = `
+const STYLE = `
 /* The connect page: one row per agent, the state as a dot and a word, and
  * everything to paste in a block with its own Copy. It sits in the document
  * pane at the document's measure, so it reads as a page and not as chrome. */
@@ -479,7 +479,7 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 {
   const st = document.createElement("style");
   st.id = "about-css";
-  st.textContent = CSS;
+  st.textContent = STYLE;
   document.head.append(st);
 }
 

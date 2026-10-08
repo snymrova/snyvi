@@ -269,6 +269,7 @@ async function main() {
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
     await section("the ✕ over what is read", () => backRows(p, browsed));
     await section("back and forward", () => navRows(p));
+    await section("the sidebars, arranged", () => sidebarsRows(p));
     await section("an aside, closed", () => asideRows(p, base, token));
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
@@ -1683,6 +1684,60 @@ async function navRows(p) {
  *  stands as one line holding the Undo for 6 s, as a removed document's row
  *  does. The daemon only flags it, so Undo is real, and a closed one is
  *  closed in every page. The next aside takes the card once the offer ends. */
+/** /sidebars: a move saves, the left sidebar follows, and the page read
+ *  again says the same. 1.27.0 moved the row and saved nothing: the page's
+ *  stylesheet was named CSS, which hid the browser's CSS.escape, and the
+ *  redraw threw before the POST. Reset at the end, for the sections after. */
+async function sidebarsRows(p) {
+  const rows = [];
+  const origin = await p.ev("location.origin");
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const kept = async () => (await (await fetch(`${origin}/api/widgets`)).json()).layout;
+  const listed = () => p.ev(`[...document.querySelectorAll('.sb-list[data-side="left"] .sb-row')].map(r => r.dataset.sb.split(":")[1]).join(" ")`);
+  const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #browse-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "browse-nav": "folders" })[n.id]).join(" ")`);
+  const errs = [];
+  await p.goto(`${origin}/sidebars`);
+  await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
+  await p.ev(`window.__sbErr = []; window.addEventListener("error", e => window.__sbErr.push(e.message)); 1`);
+  const before = await listed();
+  await p.ev(`document.querySelector('.sb-row[data-sb="left:inbox"]').focus(), 1`);
+  await p.press("ArrowDown", { alt: true });
+  await sleep(500);
+  const k1 = await kept();
+  errs.push(...await p.ev("window.__sbErr"));
+  rows.push(["Alt+↓ on /sidebars moves Inbox down, and the daemon keeps it", k1.left.join(" ") === "desks inbox folders widgets",
+    `listed "${before}" → "${await listed()}", the daemon kept "${k1.left.join(" ")}"${errs.length ? `; threw: ${errs[0]}` : ""}`]);
+  const focus = await p.ev(`document.activeElement?.dataset?.sb || document.activeElement?.tagName`);
+  rows.push(["the focus stays on the row that moved", focus === "left:inbox", `on ${focus}`]);
+  rows.push(["the left sidebar follows at once", (await onLeft()) === "desks inbox folders", `"${await onLeft()}"`]);
+
+  // A drag, as the page receives one: Folders dropped on Desks.
+  await p.ev(`(() => {
+    const dt = new DataTransfer(), at = s => document.querySelector('.sb-row[data-sb="left:' + s + '"]');
+    at("folders").focus();   // the press that starts a drag focuses the row
+    at("folders").dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+    at("desks").dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    at("desks").dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    at("folders")?.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
+    return 1;
+  })()`);
+  await sleep(500);
+  const k2 = await kept();
+  rows.push(["a drag saves too", k2.left.join(" ") === "folders desks inbox widgets", `the daemon kept "${k2.left.join(" ")}"`]);
+
+  await p.goto(`${origin}/sidebars`);
+  await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
+  rows.push(["/sidebars read again shows the order it was left in", (await listed()) === "folders desks inbox widgets", `"${await listed()}"`]);
+
+  const under = await p.ev(`(() => { const b = document.querySelector("[data-reset]"); b.scrollIntoView({ block: "nearest" }); const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return t === b ? "" : (t?.id || t?.className || t?.tagName || "nothing"); })()`);
+  await p.clickOn("[data-reset]");
+  await sleep(500);
+  const k3 = await kept();
+  rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks folders widgets" && (await onLeft()) === "inbox desks folders",
+    `the daemon kept "${k3.left.join(" ")}", the left reads "${await onLeft()}"${under ? `; over the button: ${under}` : ""}`]);
+  return rows;
+}
+
 async function asideRows(p, base, token) {
   const rows = [];
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };

@@ -12,8 +12,11 @@
  * same switch (snyvi never deletes). Drawn with the sidebars' own Section
  * and Rows (docs/DESIGN.md §8.4), so the page follows the system it sets. */
 
-const CSS = `
-.sb { max-width: 880px; margin: 0 auto; padding: 8px 48px 64px; }
+const STYLE = `
+/* 40 px on top: the waiting bar lays over a page's first 40 px, and here the
+   first row is Reset, which a click on the bar would miss. Always there, so
+   the bar coming and going moves nothing. */
+.sb { max-width: 880px; margin: 0 auto; padding: 40px 48px 64px; }
 .sb-top { display: flex; align-items: center; gap: 12px; margin: 8px 0 20px; }
 .sb-top h1 { flex: 1; margin: 0; font-size: var(--fs-h2, 20px); }
 .sb-top p { margin: 0; }
@@ -83,7 +86,7 @@ const hideId = (side, id) => id === "widgets" ? `${side}:widgets` : id;
 
 export async function show(ctx) {
   c = ctx;
-  if (!styled) { const s = document.createElement("style"); s.textContent = CSS; document.head.append(s); styled = true; }
+  if (!styled) { const s = document.createElement("style"); s.textContent = STYLE; document.head.append(s); styled = true; }
   try { data = await (await fetch("/api/widgets")).json(); }
   catch { c.docEl.innerHTML = `<div class="sb"><p class="sb-say">Could not read the sidebars.</p></div>`; return; }
   if (c.view() !== "sidebars") return;
