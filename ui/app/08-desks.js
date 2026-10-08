@@ -567,7 +567,7 @@
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
     // The reader arranged the sidebars, here or in another window.
-    es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.layout?.(j); });
+    es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // An agent ticked a line on a desk's list.
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

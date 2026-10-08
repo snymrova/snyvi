@@ -494,7 +494,7 @@ export function open(c) {
   if (first) measure();
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
-    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); hidePoints();
+    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose();
   }
   deskId = c.id; reading = null;

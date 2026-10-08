@@ -395,7 +395,9 @@ fn pane_routes() -> Router<Arc<App>> {
 /// the mod's on the panel, behind the token, and the page's on the desk.
 /// The sidebars' layout and their widgets (`api_widget`).
 fn widget_routes() -> Router<Arc<App>> {
-    Router::new().route("/api/layout", post(set_layout))
+    Router::new()
+        .route("/api/layout", post(set_layout))
+        .route("/api/desks/{id}/widgets", get(desk_widgets))
 }
 
 fn thread_routes() -> Router<Arc<App>> {

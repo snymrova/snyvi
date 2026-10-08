@@ -20,6 +20,22 @@ pub(crate) fn global_seats_json(app: &App) -> serde_json::Value {
     serde_json::to_value(s).unwrap_or_default()
 }
 
+/// A desk's widgets, for its rail.
+pub(crate) async fn desk_widgets(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.widgets(|c, _| widget::seats(c, id)) {
+        Ok(s) => Json(json!({ "widgets": s })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// Keep the reader's layout. Anything a page sends is normalized first, so
 /// an id from a newer page is dropped and a missing one is put back, and
 /// what is answered -- and sent to every page -- is what was kept.
