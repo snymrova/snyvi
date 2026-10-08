@@ -6,6 +6,7 @@ use crate::desk::{self, Desk, Opened, Origin, Placed};
 use crate::peer;
 use crate::render::Kind;
 use crate::thread;
+use crate::widget;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -615,6 +616,8 @@ impl Store {
         conn.execute_batch(peer::SCHEMA)?;
         // Threads, turns and suggested panels (`crate::thread`).
         conn.execute_batch(thread::SCHEMA)?;
+        // The sidebars' layout and their widgets (`crate::widget`).
+        conn.execute_batch(widget::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
@@ -2236,6 +2239,12 @@ impl Store {
     /// the SQL is that file's and the lock is this one's, as for the desk
     /// calls, through one door rather than a wrapper for each of twenty.
     pub fn threads<T>(&self, f: impl FnOnce(&mut Connection, i64) -> Result<T>) -> Result<T> {
+        f(&mut self.conn.lock().unwrap(), now())
+    }
+
+    /// The layout and the widgets (`crate::widget`), with the clock: the SQL
+    /// is that file's and the lock is this one's, as for the threads.
+    pub fn widgets<T>(&self, f: impl FnOnce(&mut Connection, i64) -> Result<T>) -> Result<T> {
         f(&mut self.conn.lock().unwrap(), now())
     }
 
