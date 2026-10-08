@@ -1,6 +1,8 @@
 /* ui/app/10-boot.js: a part of app.js. build.rs joins ui/app/*.js in name order inside
  * one function scope (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
   // ---------- boot ----------
+  // The sidebar's sections in the reader's order, before anything measures them.
+  drawWidgets();
   if (state.view === "doc" && state.doc) {
     // Opened from a link -- an agent's, or the notification's -- so it is read.
     markRead(state.doc.id);

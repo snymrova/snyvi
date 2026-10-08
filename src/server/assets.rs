@@ -324,6 +324,8 @@ pub(crate) fn shell(
         o.insert("friends".into(), json!(has_friends(app)));
         // The sidebars' order, so the first paint draws them in it.
         o.insert("layout".into(), layout_json(app));
+        // And the global widgets in it, drawn: no widget waits on a request.
+        o.insert("widgets".into(), global_seats_json(app));
     }
     let page = app
         .ui

@@ -87,6 +87,7 @@
     save("snyvi.fold", folded);
     for (const b of document.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", !fold);
     for (const s of document.querySelectorAll(`.sec[data-sec="${key}"]`)) s.classList.toggle("folded", fold);
+    gapsLeft();
     if (!LEFT_SECS.includes(key)) return;
     applyFolds();
     // A folded Desks leaves the Inbox room for more projects; the reader's
@@ -109,6 +110,7 @@
     checks: '<path d="m2.5 12.5 4.5 4.5L16 8M11.5 16l1 1L21.5 8"/>',
     // The desk's own (fill, unfill, plus, play, again) come with desk.js.
     plus: '<path d="M12 5v14M5 12h14"/>',
+    widgets: '<rect x="3.5" y="3.5" width="17" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.8"/>',
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
     prev: '<path d="m15 6-6 6 6 6"/>',
@@ -148,6 +150,101 @@
   }
   /** Whether a section is drawn folded: the reader's fold, unless `open`. */
   const secFolded = (key, open) => !open && folded.has(key);
+
+  // ---------- the layout ----------
+  /* Which sections each side has, in what order, and which are hidden
+   * (src/widget.rs `Layout`): the reader's, arranged on /sidebars, one for
+   * every page, and moved in place when it changes (the `layout` event).
+   * The left's sections are these nodes -- the Inbox is three -- and its
+   * rail icons; a hidden one is out of the page, and every renderer still
+   * writes to it by id, so showing it again draws nothing. */
+  const widgetsEl = $("#widgets-nav");
+  let layout = boot.layout || { left: ["inbox", "desks", "folders", "widgets"], right: [], hidden: [] };
+  const LEFT_NODES = { inbox: [inboxRowEl, queueEl, treeEl], desks: [$("#desk-nav")], folders: [browseEl], widgets: [widgetsEl] };
+  const LEFT_ICONS = { inbox: ['[data-pop="inbox"]', '[data-pop="tree"]'], desks: ['[data-pop="desks"]'], folders: ['[data-pop="browse"]'], widgets: ['[data-pop="widgets"]'] };
+  /** The global widgets the reader has not switched off, in their order. */
+  const globalSeats = () => (state.widgets || []).filter(w => !w.hidden);
+  const offLeft = id => layout.hidden.includes(id) || (id === "widgets" && (layout.hidden.includes("left:widgets") || !globalSeats().length));
+  function placeLeft() {
+    const pop = $("#pop"), nav = $("#rail-nav"), live = $("#rail-live");
+    for (const id of layout.left) {
+      // One in the rail's popover is put back by menu.js, in this order.
+      for (const n of LEFT_NODES[id] || []) { if (n.parentElement === treesEl) treesEl.insertBefore(n, pop); n.classList.toggle("lay-off", offLeft(id)); }
+      for (const sel of LEFT_ICONS[id] || []) { const b = nav.querySelector(sel); if (b) { nav.insertBefore(b, live); b.classList.toggle("lay-off", offLeft(id)); } }
+    }
+    treesEl.dataset.order = layout.left.flatMap(id => (LEFT_NODES[id] || []).map(n => `#${n.id}`)).join(" ");
+    gapsLeft();
+  }
+  /** The room above each of the left's heads (app.css): 4 px for the first,
+   *  2 after a folded section, 16 after an open one. The Inbox is three
+   *  nodes and the widgets one per widget, so it is said with a class on
+   *  each section's first node rather than with a sibling selector. */
+  function gapsLeft() {
+    const shown = layout.left.filter(id => !offLeft(id));
+    const foldedAt = id => id === "widgets" ? !!widgetsEl.lastElementChild?.classList.contains("folded") : folded.has(id);
+    shown.forEach((id, i) => {
+      const n = LEFT_NODES[id][0];
+      n.classList.toggle("sec-first", i === 0);
+      n.classList.toggle("sec-after-fold", i > 0 && foldedAt(shown[i - 1]));
+    });
+  }
+  /** A new layout, from /sidebars here or in another window. */
+  function setLayout(l) {
+    if (!l || !Array.isArray(l.left)) return;
+    layout = l;
+    placeLeft();
+    // The Inbox's room is what the sections under it leave.
+    if (capSeen != null) { renderTree(); markActive(); }
+  }
+
+  // ---------- widgets ----------
+  /** A widget's title, from its name: `deploy-status` is "Deploy status". */
+  const wTitle = n => (n.charAt(0).toUpperCase() + n.slice(1)).replace(/-/g, " ");
+  /** Whether a body is past the time it said it is good for. */
+  const wStale = w => w.stale_after > 0 && Date.now() / 1000 - w.updated_at > w.stale_after;
+  const W_TONE = { ok: "ok", warn: "warn", bad: "bad" };
+  /** A widget's seat (docs/WIDGETS.md), on either side -- desk.js has it as
+   *  ctx.seatFrame: a section like any other, so it folds and spaces itself
+   *  as they do, and under its head who wrote it and when. Its body keeps a
+   *  fixed room, `lines` × 20 px, so a new one never moves what is under
+   *  it; a longer one opens where it is when clicked. A failed run says so
+   *  over the last good body, which stays. Past its time it dims. The body
+   *  is the daemon's, drawn strictly (src/render.rs `widget_md`).
+   *  The frame is drawn with what never changes -- the name, the fold -- and
+   *  the rest is patched into it (`patchSeat`), so an update to a body is
+   *  never a redraw of the side it is on. */
+  function seatFrame(w) {
+    const key = `w:${w.name}`;
+    return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}">` +
+      secHead(key, wTitle(w.name), { tip: wTitle(w.name), sub: w.source === "file" ? "A widget file, run while it is in view" : "Set by an agent or a script" }) +
+      `<div class="sec-body"></div></section>`;
+  }
+  /** What a seat's body holds, apart, so an update patches it in place. */
+  const seatInner = w => `<p class="wg-by">${esc(w.writer || w.source)} · <span class="wg-age" data-t="${w.updated_at}">${relShort(w.updated_at)}</span></p>` +
+    (w.error ? `<p class="wg-err" role="status">${esc(w.error)}</p>` : "") +
+    `<div class="wg-body" style="--lines:${w.lines}">${w.html}</div>`;
+  /** The global widgets, drawn whole: on the first paint, and when one
+   *  comes or goes. A body that changed is patched (`patchSeat`). */
+  function drawWidgets() {
+    const seats = globalSeats(), h = seats.map(seatFrame).join("");
+    if (widgetsEl.$html !== h) widgetsEl.innerHTML = widgetsEl.$html = h;
+    for (const w of seats) { const el = document.getElementById(`wg-0-${w.name}`); if (el) patchSeat(el, w); }
+    placeLeft();
+  }
+  /** One seat's body, its count and its tone, changed where it stands: the
+   *  sidebar is not redrawn, so nothing takes the focus or the scroll. */
+  function patchSeat(el, w) {
+    const body = el.querySelector(":scope > .sec-body");
+    if (!body) return false;
+    body.innerHTML = seatInner(w);
+    el.classList.toggle("stale", wStale(w));
+    const head = el.querySelector(":scope > .sec-head"), n = head.querySelector(".sec-n"), tone = W_TONE[w.tone] || "";
+    if (w.count) {
+      const c = n || head.insertBefore(document.createElement("span"), head.querySelector(".sec-acts"));
+      c.className = `sec-n${tone ? ` ${tone}` : ""}`; c.textContent = w.count;
+    } else n?.remove();
+    return true;
+  }
 
   /** The browse section keeps its own DOM across navigations so expanded folders stay open.
    *  Its body always ends in a quiet "open a folder" row, so reading a folder is

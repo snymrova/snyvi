@@ -367,6 +367,9 @@ function click(e) {
   // A section's head, folded or opened where it is: no draw.
   const fd = e.target.closest("[data-fold]");
   if (fd) { ctx.fold(fd.dataset.fold); return; }
+  // A widget's body past its room opens where it is, and closes again.
+  const wb = !e.target.closest("a") && e.target.closest(".wg-body");
+  if (wb) { wb.classList.toggle("open"); return; }
   const m = e.target.closest("[data-desk-menu]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const f = e.target.closest("[data-focus]");

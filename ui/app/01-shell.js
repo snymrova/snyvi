@@ -24,6 +24,7 @@
     split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),
     comparing: null,            // {a, b} while a comparison is shown
     browse: boot.browse || [],  // folders opened with `snyvi browse`
+    widgets: boot.widgets || [],   // the global widgets' seats (src/widget.rs `Seat`), oldest first
     browseRoot: boot.browseRoot || null,
     browsePath: boot.browsePath || "",
     preview: null,              // "html" | "pdf" when the open file can be shown as a page

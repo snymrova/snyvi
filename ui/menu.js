@@ -676,8 +676,9 @@ function install(ctx) {
  * it is fetched on the first press of a rail icon, and a reader whose
  * sidebar is never folded never pays for it. */
 const $ = s => document.querySelector(s), root = document.documentElement;
-const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], note: ["#note"] };
-const HOME = ["#inbox-row", "#queue", "#tree", "#desk-nav", "#browse-nav"];   // #trees' order, as index.html has it
+const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], note: ["#note"] };
+/** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
+const home = () => ($("#trees").dataset.order || "#inbox-row #queue #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
 export function pop(ctx, sec, btn) {
   sheet();
@@ -708,7 +709,7 @@ export function unpop(back = true) {
   // whatever else is still at home: the end is not its place.
   for (const id of POPS[sec]) {
     if (id === "#note") { $("#side").insertBefore($(id), $(".side-foot")); continue; }
-    const after = HOME.slice(HOME.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
+    const order = home(), after = order.slice(order.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
     treesEl.insertBefore($(id), after || popEl);
   }
   const b = popBtn; popBtn = null;

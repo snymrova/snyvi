@@ -424,7 +424,12 @@
     if (!room || root.dataset.side === "0" || folded.has("inbox")) return Infinity;
     const now = Date.now() / 1000;
     const used = Math.min(USED_MAX, Math.max(USED_MIN, state.tree.filter(p => p.latest && now - p.latest <= QUIET_S).length));
-    const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect(), fh = browseEl.querySelector(".sec-head");
+    // What must stay on screen under the projects: every section after the
+    // Inbox, down to the head of the last one shown -- in the reader's order,
+    // and none that is hidden, so hiding Folders gives the Inbox its room.
+    const after = layout.left.slice(layout.left.indexOf("inbox") + 1).filter(id => !offLeft(id));
+    const fh = after.map(id => LEFT_NODES[id][0].querySelector(".sec-head")).filter(Boolean).pop();
+    const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect();
     const above = at.top - port.top + treesEl.scrollTop;
     const below = fh ? fh.getBoundingClientRect().bottom - at.bottom : 0;
     // 8: #trees' own padding at the foot; the "more" row; the removed row.
@@ -762,6 +767,9 @@
     }
     const fold = e.target.closest("[data-fold]");
     if (fold) { e.preventDefault(); toggleFold(fold.dataset.fold); return; }
+    // A widget's body past its room opens where it is, and closes again.
+    const wb = !e.target.closest("a") && e.target.closest(".wg-body");
+    if (wb) { wb.classList.toggle("open"); return; }
     if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); act("pick"); return; }
     const nd = e.target.closest("[data-newdesk]");
     if (nd) {

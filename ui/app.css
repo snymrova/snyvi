@@ -619,8 +619,14 @@ button.sec-fold:hover { color: var(--fg-2); }
 .sec-head:is(:hover, :focus-within, .empty) > .sec-acts { opacity: 1; }
 .sec-acts > button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
-#inbox-row .sec-head { margin-top: var(--sp-2); }
-#trees.fold-inbox #desk-nav .sec-head, #trees.fold-desks #browse-nav .sec-head { margin-top: var(--sp-1); }
+/* The left's sections are in the reader's order (app.js `placeLeft`), so
+   which comes first, and which follows a folded one, is a class on the
+   section's first node; the widgets slot's first widget takes it. */
+#trees > .sec-first > .sec-head, #trees > .sec-first > .sec:first-child > .sec-head { margin-top: var(--sp-2); }
+#trees > .sec-after-fold > .sec-head, #trees > .sec-after-fold > .sec:first-child > .sec-head { margin-top: var(--sp-1); }
+#widgets-nav > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
+/* A section the reader hid on /sidebars, and its rail icon. */
+.lay-off { display: none !important; }
 /* A desk's rail: each section holds its head, which stays while the
    section scrolls under it, and a folded one is only its head. */
 .dk-rail > .sec { display: flow-root; }
@@ -628,6 +634,24 @@ button.sec-fold:hover { color: var(--fg-2); }
 .dk-rail > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
 .dk-rail > .sec > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .sec.folded > .sec-body { display: none; }
+.sec-n.ok { color: var(--ok); }
+.sec-n.bad { color: var(--danger); }
+/* A widget's seat (docs/WIDGETS.md): who wrote it and when, a failed run's
+   line, and the body in a fixed room -- `--lines` of 20 px -- so a new body
+   never moves what is under it. A longer one is cut, and opens where it is
+   on a click (that is the reader moving the page, not the widget). Past its
+   time the whole seat steps back. */
+.wg-by { margin: 0; padding: 0 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wg-err { margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
+.wg-body { height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
+.wg-body.open { height: auto; }
+.wg-body > :first-child { margin-top: 0; }
+.wg-body :is(p, ul, ol, pre, h1, h2, h3, h4, blockquote) { margin: 0; font-size: inherit; line-height: inherit; }
+.wg-body :is(ul, ol) { padding-left: 16px; }
+.wg-body code { font-family: var(--mono); font-size: var(--fs-micro); }
+.wg-body pre { white-space: pre-wrap; }
+.wg-body strong { color: var(--fg); font-weight: 600; }
+.wg.stale > :is(.sec-body, .sec-head .sec-n) { opacity: .55; }
 /* The heads stay while their section scrolls under them. Desks and Folders
    hold their own rows, so each head sticks inside its section and is pushed
    off by the next; each section is opaque and above the one before, so it
@@ -641,10 +665,11 @@ button.sec-fold:hover { color: var(--fg-2); }
    leaves #trees, so nothing outside it is covered. Not on the rail, where
    #pop has to stand over the page. */
 :root:not([data-side="0"]) #trees { isolation: isolate; }
-#trees > :is(#inbox-row, #desk-nav, #browse-nav) { display: flow-root; background: var(--bg-side); }
+#trees > :is(#inbox-row, #desk-nav, #browse-nav, #widgets-nav) { display: flow-root; background: var(--bg-side); }
 #trees > #inbox-row { position: sticky; top: 0; z-index: 1; }
-#trees > :is(#desk-nav, #browse-nav) { position: relative; z-index: 2; }
-#trees > :is(#desk-nav, #browse-nav) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
+#trees > :is(#desk-nav, #browse-nav, #widgets-nav) { position: relative; z-index: 2; }
+#widgets-nav > .sec { display: flow-root; }
+:is(#trees > :is(#desk-nav, #browse-nav), #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
 :root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }

@@ -14,6 +14,12 @@ pub(crate) fn layout_json(app: &App) -> serde_json::Value {
     serde_json::to_value(l).unwrap_or_default()
 }
 
+/// The global widgets' seats, for every page's first paint.
+pub(crate) fn global_seats_json(app: &App) -> serde_json::Value {
+    let s = app.store.widgets(|c, _| widget::seats(c, 0)).unwrap_or_default();
+    serde_json::to_value(s).unwrap_or_default()
+}
+
 /// Keep the reader's layout. Anything a page sends is normalized first, so
 /// an id from a newer page is dropped and a missing one is put back, and
 /// what is answered -- and sent to every page -- is what was kept.
