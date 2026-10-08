@@ -220,8 +220,13 @@
       `<div class="sec-body"></div></section>`;
   }
   /** What a seat's body holds, apart, so an update patches it in place. */
+  /** A widget file that waits on the reader: never run (`allow:`), or
+   *  changed since it was allowed (`changed:`) -- src/server/widget_run.rs.
+   *  Its seat asks, with the button that answers; only the window can. */
+  const wAsks = w => /^(allow|changed): /.test(w.error || "");
   const seatInner = w => `<p class="wg-by">${esc(w.writer || w.source)} · <span class="wg-age" data-t="${w.updated_at}">${relShort(w.updated_at)}</span></p>` +
-    (w.error ? `<p class="wg-err" role="status">${esc(w.error)}</p>` : "") +
+    (wAsks(w) ? `<p class="wg-ask" role="status">${esc(w.error.replace(/^\w+: /, ""))}<button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
+      : w.error ? `<p class="wg-err" role="status">${esc(w.error)}</p>` : "") +
     `<div class="wg-body" style="--lines:${w.lines}">${w.html}</div>`;
   /** The global widgets, drawn whole: on the first paint, and when one
    *  comes or goes. A body that changed is patched (`patchSeat`). */
@@ -230,6 +235,13 @@
     if (widgetsEl.$html !== h) widgetsEl.innerHTML = widgetsEl.$html = h;
     for (const w of seats) { const el = document.getElementById(`wg-0-${w.name}`); if (el) patchSeat(el, w); }
     placeLeft();
+  }
+  /** Allow a widget file to run, from its seat: the window's capability,
+   *  which a tab has not. Its next run, a moment later, fills the seat. */
+  async function allowWidget(b) {
+    b.disabled = true;
+    try { await deskApi(`/api/widgets/${b.dataset.wallow}/allow`, {}); b.textContent = "Allowed"; }
+    catch { b.disabled = false; toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
   }
   /** A global widget changed (the `widget` event): patched where it stands,
    *  or the slot drawn again when one came, went or was switched off. */

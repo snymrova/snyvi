@@ -1172,7 +1172,13 @@ pub enum Suggested {
 }
 
 pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Result<Suggested> {
-    let kind = if s.kind == "desk" { "desk" } else { "panel" };
+    // A widget is a proposed widget file (`crate::server::api_widget`):
+    // its name, its command to show, and where its folder waits.
+    let kind = match s.kind.as_str() {
+        "desk" => "desk",
+        "widget" => "widget",
+        _ => "panel",
+    };
     let name = line(&s.name, NAME_CHARS);
     // A command is one line, as the panel will run it: a newline in it would
     // run a second command the card did not show.
@@ -1183,6 +1189,7 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     if why.is_empty()
         || (kind == "panel" && cmd.is_empty())
         || (kind == "desk" && folder.is_empty())
+        || (kind == "widget" && (name.is_empty() || folder.is_empty()))
     {
         return Ok(Suggested::Empty);
     }

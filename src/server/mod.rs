@@ -399,6 +399,9 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/widgets", get(desk_widgets))
         .route("/api/panes/{id}/widget", post(pane_set_widget))
         .route("/api/widgets", post(set_widget))
+        .route("/api/widgets/{name}/allow", post(allow_widget))
+        .route("/api/widgets/{name}/prefs", post(widget_prefs))
+        .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
 }
 
 /// Threads, Your turn and suggested panels (`api_thread`): the agent's and

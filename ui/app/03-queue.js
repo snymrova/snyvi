@@ -767,6 +767,8 @@
     }
     const fold = e.target.closest("[data-fold]");
     if (fold) { e.preventDefault(); toggleFold(fold.dataset.fold); return; }
+    const wa = e.target.closest("[data-wallow]");
+    if (wa) { allowWidget(wa); return; }
     // A widget's body past its room opens where it is, and closes again.
     const wb = !e.target.closest("a") && e.target.closest(".wg-body");
     if (wb) { wb.classList.toggle("open"); return; }

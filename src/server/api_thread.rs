@@ -722,6 +722,11 @@ fn open_suggestion(app: &App, id: i64, row: i64) -> Response {
         Err(e) => return err(e),
     };
     let mut made = serde_json::Value::Null;
+    if card.kind == "widget" {
+        if let Err(why) = install_proposed(app, &card.name, &card.folder) {
+            return refused(StatusCode::CONFLICT, why);
+        }
+    }
     if card.kind == "desk" {
         let dir = std::path::PathBuf::from(&card.folder);
         if !dir.is_absolute() || !dir.is_dir() {

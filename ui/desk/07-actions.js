@@ -367,6 +367,8 @@ function click(e) {
   // A section's head, folded or opened where it is: no draw.
   const fd = e.target.closest("[data-fold]");
   if (fd) { ctx.fold(fd.dataset.fold); return; }
+  const wa = e.target.closest("[data-wallow]");
+  if (wa) { ctx.allowWidget(wa); return; }
   // A widget's body past its room opens where it is, and closes again.
   const wb = !e.target.closest("a") && e.target.closest(".wg-body");
   if (wb) { wb.classList.toggle("open"); return; }

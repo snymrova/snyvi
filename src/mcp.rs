@@ -179,6 +179,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
     ("set_widget", Session::set_widget),
+    ("propose_widget", Session::propose_widget),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {

@@ -205,10 +205,14 @@ function sugSec(f) {
   const { esc } = ctx;
   const gone = filedGone && filedGone.k === "s" ? filedGone : null;
   if (!f.suggestions.length && !gone) return "";
-  const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${s.kind === "desk" ? `A desk for <span class="mono">${esc(tilde(s.folder))}</span>` : `${esc(s.name || "A panel")}`}</p>` +
-    (s.kind === "panel" ? `<code class="sg-cmd" data-tip="Runs exactly this" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` : "") +
+  // A widget is a widget file an agent wrote (propose_widget): Add puts it
+  // with the rest and allows it as it is; it runs its command on a timer
+  // while it is in view, so the command is on the card.
+  const what = s => s.kind === "desk" ? `A desk for <span class="mono">${esc(tilde(s.folder))}</span>` : s.kind === "widget" ? `A widget: ${esc(s.name)}` : esc(s.name || "A panel");
+  const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${what(s)}</p>` +
+    (s.kind !== "desk" ? `<code class="sg-cmd" data-tip="${s.kind === "widget" ? "Runs this on a timer while the widget is in view" : "Runs exactly this"}" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` : "") +
     `<p class="tn-by">${esc(s.why)}${s.by ? ` · ${esc(s.by)}` : ""}</p>` +
-    `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${s.kind === "desk" ? "Open desk" : "Open panel"}</button>` +
+    `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : "Open panel"}</button>` +
     `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
     (gone ? goneRow("s", gone.id, gone.text, esc) : "");
   return sec("suggested", "rail.suggested", "Suggested", {
@@ -401,8 +405,10 @@ async function openSuggested(d, s) {
   }
   let j;
   try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/open`, {}); }
-  catch (e) { rowErr = { k: `s${s.id}`, why: "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
+  catch (e) { rowErr = { k: `s${s.id}`, why: s.kind === "widget" ? "Could not add it" : "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
   filed.suggestions = filed.suggestions.filter(x => x !== s);
+  // Added: it runs at the runner's next look, and its seat comes with it.
+  if (s.kind === "widget") { rail(); return; }
   if (s.kind === "desk") {
     if (j.desk && j.desk.id) { await ctx.refresh(); ctx.go(j.desk.id); }
     return;

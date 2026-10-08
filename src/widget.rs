@@ -501,6 +501,13 @@ pub fn clear(conn: &Connection, desk_id: i64, name: &str, source: Source) -> Res
     Ok(n > 0)
 }
 
+/// The desks with a seat for `name` (0 for the global one).
+pub fn desks_of(conn: &Connection, name: &str) -> Result<Vec<i64>> {
+    let mut st = conn.prepare("SELECT desk_id FROM widget_bodies WHERE name = ?1")?;
+    let rows = st.query_map([name], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Every seat a pane's agent pushed, for when the pane ends: they dim and
 /// say so, and stay until cleared or replaced.
 pub fn of_pane(conn: &Connection, pane: &str) -> Result<Vec<(i64, String)>> {

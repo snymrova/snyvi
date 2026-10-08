@@ -228,3 +228,222 @@ pub(crate) fn pane_widgets_ended(app: &Arc<App>, pane: &str, slot: Option<i64>) 
         announce(app, desk, &name);
     }
 }
+
+// --- the reader's say over a widget file -------------------------------------
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct AllowBody {
+    rerun_edits: Option<bool>,
+}
+
+/// Allow a widget file's folder as it is now, and with it, whether the
+/// reader's own edits rerun without asking. Only from the window: neither
+/// the token an agent holds nor a page's `Origin` is enough to let a
+/// command run on a timer.
+pub(crate) async fn allow_widget(
+    State(app): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    body: Bytes,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !widget::name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let b: AllowBody = serde_json::from_slice(&body).unwrap_or_default();
+    let folder = widget::files::dir(&app.paths.config_dir).join(&name);
+    if let Err(why) = widget::files::read(&folder, &name) {
+        return refused(StatusCode::NOT_FOUND, why);
+    }
+    let hash = match widget::files::hash(&folder) {
+        Ok(h) => h,
+        Err(why) => return refused(StatusCode::BAD_REQUEST, why),
+    };
+    match app.store.widgets(|c, now| widget::set_prefs(c, &name, None, None, Some(&hash), b.rerun_edits, now)) {
+        Ok(p) => Json(json!({ "ok": true, "prefs": p })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct PrefsBody {
+    hidden: Option<bool>,
+    settings: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Switch a widget off or on, or change its settings: the reader's, from
+/// /sidebars. Its seats say so to every page.
+pub(crate) async fn widget_prefs(
+    State(app): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    body: Bytes,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    if !widget::name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Ok(b) = serde_json::from_slice::<PrefsBody>(&body) else {
+        return refused(StatusCode::BAD_REQUEST, "not a widget's settings");
+    };
+    let settings = b.settings.map(|m| serde_json::Value::Object(m).to_string());
+    let r = app.store.widgets(|c, now| {
+        let p = widget::set_prefs(c, &name, b.hidden, settings.as_deref(), None, None, now)?;
+        Ok((p, widget::desks_of(c, &name)?))
+    });
+    match r {
+        Ok((p, desks)) => {
+            for d in desks {
+                announce(&app, d, &name);
+            }
+            Json(json!({ "ok": true, "prefs": p })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+// --- an agent proposing one ----------------------------------------------------
+
+/// What `propose_widget` sends: a widget file, whole.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct ProposeBody {
+    name: String,
+    title: String,
+    scope: String,
+    command: String,
+    every: u64,
+    timeout: u64,
+    lines: u8,
+    script_name: String,
+    script: String,
+    why: String,
+    by: String,
+}
+
+/// The longest script a proposal may carry.
+const SCRIPT_MAX: usize = 16 * 1024;
+
+/// Where proposals wait until the reader adds them or not: under the
+/// widgets folder, in a name no widget can have, so the runner never sees
+/// them.
+fn proposed_dir(app: &App) -> std::path::PathBuf {
+    widget::files::dir(&app.paths.config_dir).join(".proposed")
+}
+
+/// An agent proposes a widget: the folder is written where proposals wait,
+/// and the reader gets a card on Your turn -- Add, or Not now. Nothing runs
+/// and nothing is in the widgets folder until Add.
+pub(crate) async fn pane_propose_widget(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let Ok(b) = serde_json::from_slice::<ProposeBody>(&body) else {
+        return refused(StatusCode::BAD_REQUEST, "not a widget");
+    };
+    if !widget::name_ok(&b.name) {
+        return refused(StatusCode::BAD_REQUEST, "a widget's name is lowercase letters, digits and dashes, at most 32");
+    }
+    if widget::files::dir(&app.paths.config_dir).join(&b.name).exists() {
+        return refused(StatusCode::CONFLICT, format!("a widget called {} is already there", b.name));
+    }
+    let command = b.command.trim();
+    if command.is_empty() || command.contains('\n') {
+        return refused(StatusCode::BAD_REQUEST, "the command is one line");
+    }
+    let script_ok = b.script_name.is_empty()
+        || (!b.script_name.contains(['/', '\\']) && !b.script_name.starts_with('.') && b.script_name != "widget.json");
+    if !script_ok || b.script.len() > SCRIPT_MAX {
+        return refused(StatusCode::BAD_REQUEST, "the script is one file of at most 16 KB, named without a folder");
+    }
+    let spec = json!({
+        "name": b.name,
+        "title": b.title.trim(),
+        "scope": if b.scope == "global" { "global" } else { "desk" },
+        "run": { "command": command, "every": if b.every == 0 { widget::files::EVERY_DEFAULT } else { b.every }, "timeout": if b.timeout == 0 { widget::files::TIMEOUT_DEFAULT } else { b.timeout } },
+        "lines": if b.lines == 0 { widget::LINES_DEFAULT } else { b.lines },
+    });
+    let stage = proposed_dir(&app).join(format!("{}-{}", crate::store::now(), b.name));
+    let wrote = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(&stage)?;
+        std::fs::write(stage.join("widget.json"), serde_json::to_string_pretty(&spec).unwrap_or_default() + "\n")?;
+        if !b.script_name.is_empty() {
+            let p = stage.join(&b.script_name);
+            std::fs::write(&p, &b.script)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))?;
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = wrote {
+        return refused(StatusCode::INTERNAL_SERVER_ERROR, format!("could not write it: {e}"));
+    }
+    if let Err(why) = widget::files::read(&stage, &b.name) {
+        let _ = std::fs::remove_dir_all(&stage);
+        return refused(StatusCode::BAD_REQUEST, why);
+    }
+    let s = crate::thread::Suggest {
+        kind: "widget".into(),
+        name: b.name.clone(),
+        cmd: command.to_string(),
+        folder: stage.to_string_lossy().to_string(),
+        why: b.why,
+        by: b.by,
+        pane: id,
+    };
+    let desk = placed.desk_id;
+    match app.store.threads(|c, now| crate::thread::suggest(c, desk, &s, now)) {
+        Ok(crate::thread::Suggested::Card(card)) => {
+            threads_moved(&app, desk);
+            (StatusCode::CREATED, Json(json!({ "suggestion": card }))).into_response()
+        }
+        Ok(crate::thread::Suggested::Full) => {
+            let _ = std::fs::remove_dir_all(&stage);
+            refused(StatusCode::CONFLICT, "three suggestions are waiting on this desk already")
+        }
+        Ok(_) => {
+            let _ = std::fs::remove_dir_all(&stage);
+            refused(StatusCode::BAD_REQUEST, "say why, in a sentence")
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&stage);
+            err(e)
+        }
+    }
+}
+
+/// The reader added a proposed widget: its folder moves in with the rest,
+/// and is allowed as it is. Refused if a widget took the name meanwhile.
+pub(crate) fn install_proposed(app: &App, name: &str, staged: &str) -> Result<(), String> {
+    let stage = std::path::PathBuf::from(staged);
+    if !stage.starts_with(proposed_dir(app)) || !stage.is_dir() {
+        return Err("the proposal is not there any more".into());
+    }
+    let to = widget::files::dir(&app.paths.config_dir).join(name);
+    if to.exists() {
+        return Err(format!("a widget called {name} is already there"));
+    }
+    widget::files::read(&stage, name)?;
+    std::fs::rename(&stage, &to).map_err(|e| format!("could not move it in: {e}"))?;
+    let hash = widget::files::hash(&to)?;
+    app.store
+        .widgets(|c, now| widget::set_prefs(c, name, None, None, Some(&hash), None, now))
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}

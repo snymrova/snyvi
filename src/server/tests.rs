@@ -786,6 +786,15 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/widgets", Some("{}"), Gate::Token, true),
+    ("POST", "/api/widgets/nope/allow", Some("{}"), Gate::Desk, true),
+    ("POST", "/api/widgets/nope/prefs", Some("{}"), Gate::Reader, true),
+    (
+        "POST",
+        "/api/panes/nope/propose-widget",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     (
         "POST",
         "/api/desks/1/threads/1/move",
