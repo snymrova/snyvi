@@ -23,6 +23,7 @@ mod lifecycle;
 mod peer_link;
 #[cfg(test)]
 mod tests;
+mod widget_run;
 mod ws;
 
 use api_agent::*;
@@ -664,6 +665,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let told = app.shutdown.clone();
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
+    // Widget files' commands, while their widgets are in view.
+    widget_run::spawn(app.clone());
     crate::claude_mod::start(&paths);
     let router = router(app);
 

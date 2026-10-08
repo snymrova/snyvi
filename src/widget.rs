@@ -26,8 +26,17 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+pub mod files;
 #[cfg(test)]
 mod tests;
+
+/// A widget's title from its name, when it has none of its own:
+/// `deploy-status` is "Deploy status".
+pub fn title_of(name: &str) -> String {
+    let t = name.replace('-', " ");
+    let mut c = t.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS ui_layout (
