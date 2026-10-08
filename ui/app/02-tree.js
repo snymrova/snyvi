@@ -231,6 +231,15 @@
     for (const w of seats) { const el = document.getElementById(`wg-0-${w.name}`); if (el) patchSeat(el, w); }
     placeLeft();
   }
+  /** A global widget changed (the `widget` event): patched where it stands,
+   *  or the slot drawn again when one came, went or was switched off. */
+  function widgetSaid(j) {
+    const i = state.widgets.findIndex(w => w.name === j.name), was = i >= 0 ? state.widgets[i] : null;
+    if (j.cleared) { if (was) { state.widgets.splice(i, 1); drawWidgets(); } return; }
+    if (was) state.widgets[i] = j; else state.widgets.push(j);
+    const el = document.getElementById(`wg-0-${j.name}`);
+    if (was && was.hidden === j.hidden && el) patchSeat(el, j); else drawWidgets();
+  }
   /** One seat's body, its count and its tone, changed where it stands: the
    *  sidebar is not redrawn, so nothing takes the focus or the scroll. */
   function patchSeat(el, w) {

@@ -391,15 +391,17 @@ fn pane_routes() -> Router<Arc<App>> {
         )
 }
 
-/// Threads, Your turn and suggested panels (`api_thread`): the agent's and
-/// the mod's on the panel, behind the token, and the page's on the desk.
 /// The sidebars' layout and their widgets (`api_widget`).
 fn widget_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/api/layout", post(set_layout))
         .route("/api/desks/{id}/widgets", get(desk_widgets))
+        .route("/api/panes/{id}/widget", post(pane_set_widget))
+        .route("/api/widgets", post(set_widget))
 }
 
+/// Threads, Your turn and suggested panels (`api_thread`): the agent's and
+/// the mod's on the panel, behind the token, and the page's on the desk.
 fn thread_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/api/panes/{id}/thread", post(pane_start_thread))

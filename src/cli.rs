@@ -177,6 +177,11 @@ enum Cmd {
         /// The key's name, as the desk's Keys list shows it.
         name: String,
     },
+    /// A widget in snyvi's sidebars, for a script, a git hook or cron: `snyvi widget set backups --tone ok "done 03:00"`.
+    Widget {
+        #[command(subcommand)]
+        cmd: WidgetCmd,
+    },
     /// Show daemon status.
     Status,
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
@@ -187,6 +192,43 @@ enum Cmd {
         /// Exit non-zero if any case exceeds its budget (SNYVI_BENCH_FACTOR scales budgets for slow CI runners).
         #[arg(long)]
         check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WidgetCmd {
+    /// Set a widget's body: Markdown, or the contract's JSON (docs/WIDGETS.md). Reads stdin when the text is - or left out. Inside a snyvi panel it is that desk's; otherwise global, on the left.
+    Set {
+        /// Lowercase letters, digits and dashes, at most 32.
+        name: String,
+        /// The body. Empty clears the widget.
+        text: Option<String>,
+        /// On this desk, by its id, from anywhere.
+        #[arg(long, conflicts_with = "global")]
+        desk: Option<i64>,
+        /// On the left, everywhere, even inside a panel.
+        #[arg(long)]
+        global: bool,
+        /// The count's colour: ok, warn, bad or none.
+        #[arg(long)]
+        tone: Option<String>,
+        /// A figure beside the name, kept while the widget is folded: 3, !2, 3/5.
+        #[arg(long)]
+        count: Option<String>,
+        /// The body's room, in lines of 20 px: 1 to 6 (3).
+        #[arg(long)]
+        lines: Option<i64>,
+        /// Seconds before it dims as old (1800); 0 is never.
+        #[arg(long)]
+        stale_after: Option<i64>,
+    },
+    /// Clear a widget.
+    Clear {
+        name: String,
+        #[arg(long, conflicts_with = "global")]
+        desk: Option<i64>,
+        #[arg(long)]
+        global: bool,
     },
 }
 
@@ -315,6 +357,7 @@ pub(crate) fn run() -> Result<()> {
             out.flush()?;
             Ok(())
         }
+        Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),
@@ -626,4 +669,33 @@ fn restart_self(exe: &std::path::Path) -> Result<()> {
         platform::spawn_daemon(exe)?;
         Ok(())
     }
+}
+
+/// `snyvi widget …`: one widget set or cleared, the daemon's word printed
+/// back when it refuses.
+fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
+    let (name, body, desk, global) = match cmd {
+        WidgetCmd::Set { name, text, desk, global, tone, count, lines, stale_after } => {
+            let text = match text.as_deref() {
+                None | Some("-") => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)?;
+                    s
+                }
+                Some(t) => t.to_string(),
+            };
+            let body = if tone.is_none() && count.is_none() && lines.is_none() && stale_after.is_none() {
+                serde_json::Value::String(text)
+            } else {
+                serde_json::json!({ "body": text, "tone": tone, "count": count, "lines": lines, "stale_after": stale_after })
+            };
+            (name, body, desk, global)
+        }
+        WidgetCmd::Clear { name, desk, global } => (name, serde_json::Value::String(String::new()), desk, global),
+    };
+    let v = client::widget(paths, &name, body, desk, global)?;
+    if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
+        eprintln!("snyvi: there was no widget called {name} there");
+    }
+    Ok(())
 }

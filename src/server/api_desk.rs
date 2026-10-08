@@ -1260,11 +1260,14 @@ pub(crate) async fn close_pane(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    // Which panel it was, for what its agent left in a widget.
+    let slot = app.store.pane(&id).ok().flatten().map(|p| p.pane.slot);
     match app.store.close_pane(&id) {
         // Stopped and kept: the row waits in `panes_closed` and the text on
         // disk, for Undo, until `prune`.
         Ok(true) => {
             app.panes.forget(&id);
+            pane_widgets_ended(&app, &id, slot);
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }

@@ -566,6 +566,8 @@
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
+    // A widget changed: a global one here, a desk's in its rail.
+    es.addEventListener("widget", ev => { const j = parse(ev); if (!j) return; if (j.desk_id === 0) widgetSaid(j); else desk?.widgetSaid?.(j); });
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // An agent ticked a line on a desk's list.
