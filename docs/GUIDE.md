@@ -313,9 +313,10 @@ snyvi update --back     the version the last update replaced (kept as .prev)
 snyvi update off | on   the automatic path; `snyvi update` still works when off
 ```
 
-About has the same: `1.6.3 is ready · applies tomorrow, when the desks
-are quiet`, or `You're on the latest · checked 40 min ago`, with
-`Check now`, `Restart to update` when one is ready, and the on/off switch.
+About has the same, on a card at its top: `1.6.3 is ready · applies
+tomorrow, when the desks are quiet`, or `You're on the latest · checked 40
+min ago`, after a dot for where it stands, with `Check now`, `Restart to
+update` when one is ready, and the *Automatic updates* switch.
 A download that failed says so there, and the next check tries it again.
 `snyvi update check` only says; `Check now` and `snyvi update` also let
 what they find past the daily slot. A release marked as a hotfix (`hotfix_below` in the
@@ -1010,21 +1011,23 @@ the top.
   shipped, or parked with the next step to pick it up by. Claude starts one
   with `start_thread` when it takes the work on and moves it with
   `move_thread`. A panel holds one thread, the one it last took up, shown as
-  one quiet line under the panel's row: its stage, then the PR, the checks
-  or the merge as they come. Its tip has the name, the folder, the branch
-  and its commits, and *Decided*: the questions you answered on it. A
+  a small chip on the panel's row with its stage. Its tip has the name, the
+  PR, the checks or the merge as they come, the folder, the branch and its
+  commits, and *Decided*: the questions you answered on it. A
   shipped thread shows ✓ until its panel takes up another, or for 12 hours.
   When a panel starts a new thread, or closes, the one it had **rests**:
   folded under the panels as *Resting*, saying why -- *moved on*, *panel
   closed*, *parked*. Nothing needs tidying: a resting thread leaves the rail
   after a day, a parked one after a week, and both are kept; a panel that
-  starts one again by its name brings it back. Right-click a thread, or its
-  ⋯, for **Done** (work that shipped where the panel did not see it),
+  starts one again by its name brings it back. Right-click a thread -- its
+  chip, a resting one's row or ⋯, or the panel's row, where the same four
+  are named as the thread's -- for **Done** (work that shipped where the panel did not see it),
   **Park…** with a next step, **Rename…** or **Remove**; the panel hears a
   Done or a Park at its next prompt, and ✕ leaves its Undo in the row, as
   everywhere. A note's tip says which thread it is in and who has it; the
-  note itself keeps its row for its own two lines, with only its small
-  marks -- the stage, the pictures -- under its number.
+  note itself keeps its row for its own two lines, and under them one quiet
+  line: its number, then its small marks -- the stage in a word, the
+  pictures.
 - **Your turn** is what only you can do: a decision (`ask`, with two to four
   options and the one Claude recommends), or a hand-over (`hand_over`): try
   it, merge it, add a key, or **run** a command Claude was blocked from
@@ -1070,7 +1073,7 @@ always the version of the snyvi that started the panel. In a panel with it:
 
 It only talks to the local daemon, with the panel's own token, about the
 panel it runs in. It never starts a turn and never approves or blocks a
-tool. About has the switch, *Claude Code mod in panels*; a panel started
+tool. About has the switch, *Claude Code mod*, under *In panels*; a panel started
 before you flip it picks the change up at its next start.
 
 ## The rail
@@ -1330,11 +1333,11 @@ not an instruction to anything. A reply is a line you type in the panel,
 like any other.
 
 If you would rather no agent left you a line at all, About has an
-**Asides** row: Turn off, and the daemon refuses every aside, saying
+**Asides** switch: turn it off, and the daemon refuses every aside, saying
 "asides are off in About" to the agent that sent it, which is told not to
 send another. The ✕ on each aside stays the way to say no to one; this is
 the way to say no to all of them. snyvi's own first lines, which point you
-at what is new, are not an agent's and still show. Turn on puts it back.
+at what is new, are not an agent's and still show. Turning it on puts it back.
 
 An aside is not a desk's notes. Those are your own list, kept with the
 desk and written only by you; an agent's asides never land on it.

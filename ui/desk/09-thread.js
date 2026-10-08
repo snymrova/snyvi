@@ -32,7 +32,7 @@ function filedNow(d) {
 }
 
 /** Your turn and Suggested, above the panels. A thread is on its panel's row
- *  (`threadLine`), and one no panel is moving under the panels (`restSec`). */
+ *  (`threadChip`), and one no panel is moving under the panels (`restSec`). */
 function filedSecs(d) {
   const f = filedNow(d);
   return turnSec(d, f) + sugSec(f);
@@ -77,25 +77,36 @@ const moreBtn = (t, esc) => `<button type="button" class="th-more" data-a="th-me
 const thInput = t => thField && thField.id === t.id && (thField.kind === "park" || thField.kind === "rename")
   ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "park" ? "The next step, to pick it up by" : "The thread's name"}" aria-label="${thField.kind === "park" ? "The next step" : "A new name"}" spellcheck="false">` : "";
 
-/** A panel's thread, one quiet line under the panel's row: its stage, and
- *  the PR, the checks or the merge as they come, and its notes. The name
- *  and the rest are in its tip; the panel's own name says what it is. A
- *  thread shipped shows ✓ until its panel takes up another, or for
- *  `SHIPPED_SHOWN`; then it is gone from the desk, kept, and on Home. */
+/** A panel's thread, on the panel's own row: its stage, as a small chip
+ *  beside the name, and the rest -- the thread's name, the PR, the checks
+ *  or the merge, its notes, where it lives -- in the chip's tip. A line of
+ *  its own under the row (1.26) said one bare word, "building", and made
+ *  every panel with a thread two rows (#105). Its menu is the chip's
+ *  right-click and the panel's own. A thread shipped shows ✓ until its
+ *  panel takes up another, or for `SHIPPED_SHOWN`; then it is gone from the
+ *  desk, kept, and on Home. */
+function threadChip(d, pane, esc) {
+  const t = paneThread(d, pane);
+  if (!t) return "";
+  const shipped = t.stage === "shipped";
+  const facts = [
+    t.pr ? `PR ${t.pr}` : "",
+    t.merged ? `merged ${t.merged.slice(0, 7)}` : t.ci ? `CI ${t.ci}` : "",
+    t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "",
+  ].filter(Boolean);
+  return `<span class="dk-pth${shipped ? " shipped" : ""}" data-t="${t.id}" data-tip="${esc(t.name)}" data-tip-sub="${esc([...facts, threadSub(t)].join(" · "))}">` +
+    `<span class="th-word">${shipped ? "✓ shipped" : esc(t.stage)}</span></span>`;
+}
+
+/** Under a panel's row, only for a moment: a thread just removed, with its
+ *  Undo, or the field its Park… or Rename… opened. */
 function threadLine(d, pane, esc) {
   const gone = filedGone && filedGone.k === "t" && filedGone.pane === pane ? filedGone : null;
   if (gone) return goneRow("t", gone.id, gone.text, esc);
   const t = paneThread(d, pane);
   if (!t) return "";
-  const shipped = t.stage === "shipped";
-  const facts = [
-    t.pr ? `PR ${esc(t.pr)}` : "",
-    t.merged ? `merged <span class="mono">${esc(t.merged.slice(0, 7))}</span>` : t.ci ? `CI ${esc(t.ci)}` : "",
-    t.notes.length ? esc(t.notes.map(n => `#${n}`).join(" ")) : "",
-  ].filter(Boolean).join(" · ");
-  return `<li class="dk-pth${shipped ? " shipped" : ""}" data-t="${t.id}">` +
-    `<span class="th-sum" data-tip="${esc(t.name)}" data-tip-sub="${esc(threadSub(t))}"><span class="th-word">${shipped ? "✓ shipped" : esc(t.stage)}</span>${facts ? ` · ${facts}` : ""}</span>` +
-    moreBtn(t, esc) + thInput(t) + `</li>` + errLine(`t${t.id}`, esc);
+  const field = thInput(t);
+  return (field ? `<li class="th-edit" data-t="${t.id}">${field}</li>` : "") + errLine(`t${t.id}`, esc);
 }
 
 /** Under the panels, folded to one line: the threads no panel is moving --
@@ -279,6 +290,17 @@ function threadMenu(card) {
   ] };
 }
 
+/** The panel's own menu carries its thread's entries, named as the
+ *  thread's, since a panel's "Done" or "Rename…" would say the panel: the
+ *  chip has no ⋯ of its own, and the keyboard reaches the row, not the chip. */
+function threadItems(v) {
+  const d = current(), t = d && paneThread(d, v.id);
+  const m = t && threadMenu({ dataset: { t: String(t.id) } });
+  if (!m) return [];
+  const say = { "Done": "Thread done", "Park…": "Park thread…", "Rename…": "Rename thread…", "Remove": "Remove thread" };
+  return ["rule", ...m.items.filter(Boolean).map(x => x === "rule" ? x : { ...x, label: say[x.label] || x.label }), "rule"];
+}
+
 async function moveThread(d, t, body, again = { a: "th-move", t: String(t.id), stage: body.stage || "" }) {
   const was = { ...t };
   Object.assign(t, body.stage ? { stage: body.stage } : {}, body.name ? { name: body.name } : {}, body.next != null ? { next: body.next } : {});
@@ -359,7 +381,7 @@ async function filedAct(a, b, d) {
   const w = filed.turns.find(x => x.id === +b.dataset.w);
   const s = filed.suggestions.find(x => x.id === +b.dataset.s);
   if (a === "th-menu") {
-    const card = b.closest(".dk-thread, .dk-pth"), r = b.getBoundingClientRect();
+    const card = b.closest(".dk-thread"), r = b.getBoundingClientRect();
     if (card) ctx.menu?.(card, r.left, r.bottom + 4, false);
   } else if (a === "th-move" && t) { if (b.dataset.stage) await moveThread(d, t, { stage: b.dataset.stage }); }
   else if (a === "th-x" && t) {
@@ -466,15 +488,14 @@ const THREAD_CSS = `
 .th-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .th-more { flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; font: inherit; line-height: 1; }
 .th-more:hover { background: var(--rule-2); color: var(--fg); }
-/* A panel's thread: one line under its row, lined up with the panel's name,
-   its ⋯ there under the cursor as a row's tools are. */
-.dk-pth { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; margin: -3px 0 2px; padding: 0 3px 0 51px; font-size: var(--fs-micro); color: var(--fg-3); min-width: 0; }
-.dk-pth .th-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-pth .th-word { color: var(--fg-2); }
-.dk-pth.shipped .th-word { color: var(--ok); }
-.dk-pth .th-more { width: 18px; height: 16px; opacity: 0; transition: opacity var(--t); }
-.dk-pth:is(:hover, :focus-within) .th-more { opacity: 1; }
-.dk-pth .th-in { flex-basis: 100%; margin: 4px 0 2px; }
+/* A panel's thread: its stage, a chip on the panel's row between the name
+   and the context, in the rail's quiet ink; the name gives way before it does. */
+.dk-pth { flex: none; margin-left: auto; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 500; line-height: 16px; color: var(--fg-2); }
+.dk-pth.shipped { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.dk-pane.on .dk-pth { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--fg); }
+.dk-focus .dk-pth + .ctx { margin-left: 0; padding-left: 0; }
+.th-edit { padding: 0 3px 2px 51px; }
+.th-edit .th-in { margin: 0; }
 .th-in { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
 .tn-q, .sg-what { margin: 0; color: var(--fg); }
 .tn-by { margin: 2px 0 0; font-size: var(--fs-micro); color: var(--fg-3); }

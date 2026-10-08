@@ -406,30 +406,28 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The field's own circle: the row keeps its shape while it is being written,
    so the text does not step left and back again as the field opens and shuts. */
 .dk-tick.ghost { box-shadow: inset 0 0 0 1.5px var(--rule-2); }
-/* The line's column, left of its text: the circle; under it the line's
- * number, the one the reader and the agents call it by, quiet until the row
- * is under the pointer, and a click copies it; and under that the line's
- * small marks -- its stage, its pictures -- on one line. The text has the
- * rest of the row. Every row is as tall as this column, one line of text or
- * two, marks or none, so the numbers fall in one rhythm, a mark that arrives
- * fills room that was there, and a row taken off holds the same room as its
- * Undo. */
-.dk-lead { flex: none; display: flex; flex-direction: column; align-items: center; width: 30px; margin-left: 1px; }
-.dk-marks { display: flex; align-items: center; justify-content: center; gap: 1px; height: 14px; margin-top: 1px; }
-.dk-lead .dk-marks > * { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; width: auto; min-width: 11px; height: 14px; margin: 0; padding: 0; border-radius: 3px; background: none; color: var(--fg-3); }
-.dk-lead .dk-marks svg { width: 11px; height: 11px; }
+/* Left of the text, the circle alone, on the text's first line. Under the
+ * text, one quiet line: the line's number, the one the reader and the agents
+ * call it by, quiet until the row is under the pointer, and a click copies
+ * it; then its small marks -- its stage in a word, its pictures. Every line
+ * has a number, so every row is its text and that line: rows of one line of
+ * text are one height, rows of two another, and a mark that arrives fills
+ * room that was there. A row taken off holds a one-line row's room. */
+.dk-lead { flex: none; display: flex; justify-content: center; width: 30px; margin-left: 1px; }
+.dk-meta { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; min-width: 0; height: 14px; margin-top: -1px; padding: 0 8px 5px 37px; }
+.dk-marks { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dk-meta .dk-marks > * { position: relative; flex: none; display: inline-flex; align-items: center; gap: 3px; width: auto; height: 14px; margin: 0; padding: 0; border-radius: 3px; background: none; font-size: var(--fs-micro); line-height: 14px; color: var(--fg-3); }
+.dk-meta .dk-marks svg { width: 11px; height: 11px; }
 /* Small to the eye, not to the hand. */
-.dk-lead .dk-marks > button::before { content: ""; position: absolute; inset: -3px -1px; }
-.dk-lead .dk-marks > button:hover { color: var(--accent); }
-.dk-lead .dk-marks > .dk-pic.back { color: var(--accent); }
-/* How many pictures is the mark's tip: the count would not fit the column. */
-.dk-lead .dk-marks > .dk-pic .c { display: none; }
-.dk-num { margin-top: 3px; padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 15px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
+.dk-meta .dk-marks > button::before { content: ""; position: absolute; inset: -3px -2px; }
+.dk-meta .dk-marks > button:hover { color: var(--accent); }
+.dk-meta .dk-marks > .dk-pic.back { color: var(--accent); }
+.dk-meta .dk-marks .c { font-variant-numeric: tabular-nums; }
+.dk-num { padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 14px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-num, .dk-num[data-said] { opacity: 1; }
 .dk-num:hover { color: var(--accent); }
 .dk-num[data-said] { color: var(--ok); }
-.dk-notes .dk-list > .dk-note { min-height: 52px; }
-.dk-notes .dk-list > .dk-note.gone { align-items: center; }
+.dk-notes .dk-list > .dk-note.gone { align-items: center; min-height: 42px; box-sizing: border-box; }
 /* A note's ✕ comes over the end of its first line under the pointer, laid
    on the row rather than given room in it: room kept for it took the text's
    width on every row, and room given only under the pointer rewrapped the
@@ -470,13 +468,14 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-stage.planned:hover { color: var(--accent); }
 .dk-stage.planned::before { content: ""; position: absolute; inset: -4px; }
 .dk-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.dk-stage.working .w { color: var(--accent); }
 .dk-stage.working.busy::before { animation: dk-breathe calc(var(--dur-moment) * 2) ease-in-out 3; }
 @keyframes dk-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dk-stage.working::before { animation: none; } }
-/* A line's pictures: one mark that opens them whole -- on a note, under its
- * number with its other marks (.dk-lead .dk-marks, the count in its tip);
- * in the note field, with their count. A fixed width, so the mark turning
- * into the Undo of one just taken off, and back, moves nothing. */
+/* A line's pictures: one mark that opens them whole -- on a note, beside its
+ * number under its text (.dk-meta .dk-marks, the count beside it); in the
+ * note field, with their count. A fixed width, so the mark turning into the
+ * Undo of one just taken off, and back, moves nothing. */
 .dk-pic { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; width: 24px; height: 18px; margin-top: 3px; padding: 0; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pic svg { width: 12px; height: 12px; }
 .dk-pic .c { font-family: var(--mono); font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; }

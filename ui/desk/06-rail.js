@@ -121,7 +121,7 @@ function rail() {
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
     return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
@@ -477,23 +477,25 @@ function noteRow(x, esc) {
   // it opens a card over the list, as tall as the text, while the row keeps
   // its own two lines underneath: nothing below it moves either way.
   const editing = noteField && noteField.kind === "edit" && noteField.id === x.id;
-  // On the left the circle, under it the line's number -- the one the reader
-  // and the agents call the line by, so a click copies it, ready to paste
-  // into a panel -- and under that the line's small marks: its stage and its
-  // pictures. Everything right of that is the text's: the ✕ comes over its
-  // end under the pointer, and what the line is in -- its thread, the panel
-  // at it -- is said in its tip, not beside it (#95: a thread's chip there
-  // left the text a letter wide). The text is clamped in a span of its own:
-  // WebKit does not clamp a <button>, and the window is WebKit.
+  // On the left the circle, on the text's first line. Under the text, one
+  // quiet line: the line's number -- the one the reader and the agents call
+  // it by, so a click copies it, ready to paste into a panel -- and its small
+  // marks, its stage and its pictures. They were stacked under the circle
+  // (1.20), which made every row as tall as that column, gaps and all (#106).
+  // The ✕ comes over the text's end under the pointer, and what the line is
+  // in -- its thread, the panel at it -- is said in its tip, not beside it
+  // (#95: a thread's chip there left the text a letter wide). The text is
+  // clamped in a span of its own: WebKit does not clamp a <button>, and the
+  // window is WebKit.
   const marks = stageMark(x, esc) + picMark(x, esc);
   const about = [stageWords(x), threadWords(x), x.done_by ? `ticked by ${x.done_by}` : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
-    `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button>` +
-    `<button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
-    `<span class="dk-marks">${marks}</span></span>` +
+    `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
+    `<span class="dk-meta"><button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
+    `<span class="dk-marks">${marks}</span></span>` +
     // A friend's line, ticked: one press tells them (pairing's second cut),
     // in the line "from Trapti" already takes, so nothing moves.
     (x.done && x.done_by ? byLine(x, esc, tell(x, esc)) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span>${tell(x, esc)}</span>` : "") +
@@ -513,7 +515,7 @@ function noteRow(x, esc) {
 /** The pictures in a paste or a drop, of the four kinds the daemon keeps. */
 const images = dt => [...(dt?.files || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
 
-/** Under the line's number: that it has pictures, and how many, in one
+/** Beside the line's number: that it has pictures, and how many, in one
  *  small mark that opens them whole. While one just taken off can still be
  *  put back, the mark is its Undo, in the same room. */
 function picMark(x, esc) {
@@ -536,14 +538,14 @@ function stageOf(x) {
   return views.get(x.stage_pane)?.status?.agent ? "working" : x.stage_doc ? "planned" : "read";
 }
 
-/** The stage's mark, first of the marks under the line's number, which sit
- *  in a column of their own: a line that is picked up does not rewrap. The
+/** The stage's mark, a dot or the plan's page and its word, beside the
+ *  line's number under its text: a line that is picked up does not rewrap. The
  *  plan's mark opens the plan; working names the panel by its number, as its
  *  tab does. */
 function stageMark(x, esc) {
   const st = stageOf(x), by = esc(x.stage_by || "an agent");
   if (st === "planned" && x.stage_doc) {
-    return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}</button>`;
+    return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned</span></button>`;
   }
   if (st === "working") {
     // The dot breathes only while that agent is at it; between its turns
@@ -551,9 +553,9 @@ function stageMark(x, esc) {
     const at = x.stage_panel ? ` in ${esc(x.stage_panel)}` : "";
     const busy = views.get(x.stage_pane)?.status?.agent === "working";
     const say = busy ? `${by} is working on it${at}` : `${by} has it${at}`;
-    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>`;
+    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"><span class="w">working</span></span>`;
   }
-  if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
+  if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"><span class="w">read</span></span>`;
   return "";
 }
 

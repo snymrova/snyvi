@@ -620,6 +620,7 @@ export function actions(el) {
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,
       { label: "Rename…", key: ctx.keyHint("f2"), moves: 1, run: () => renamePanel(v) },
+      ...threadItems(v),
       { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }
