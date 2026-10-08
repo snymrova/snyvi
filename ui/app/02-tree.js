@@ -27,6 +27,15 @@
    * a class on #trees rather than a redraw, so it survives every render and
    * costs none; it is remembered per reader. */
   const folded = saved("snyvi.fold");
+  /* The desk's rail kept its folds apart, one key a section, until its
+   * sections became these (docs/DESIGN.md §8.4): carried over once, and
+   * Resting, which starts folded, starts folded here by being put in. */
+  if (store.get("snyvi.fold.v2") !== "1") {
+    for (const [k, was] of [["panels", "panels"], ["docs", "docs"], ["notes", "notes"]]) if (store.get(`snyvi.dk.fold-${was}`) === "1") folded.add(k);
+    if (store.get("snyvi.dk.fold-threads-rest") !== "0") folded.add("rest");
+    save("snyvi.fold", folded);
+    store.set("snyvi.fold.v2", "1");
+  }
   /* A project the reader has taken out of the sidebar. Nothing is deleted --
    * snyvi deletes nothing on this path -- so the project keeps every document
    * it has, in All documents, in search and at its own URL; what changes is
@@ -65,14 +74,21 @@
   const inView = g => g.drawn && root.dataset.side !== "0";
   /** A folder just closed, whose ghost holds the Undo (`closeRoot`). */
   let shut = null;
-  const applyFolds = () => { for (const k of ["inbox", "desks", "folders"]) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
+  const LEFT_SECS = ["inbox", "desks", "folders"];
+  const applyFolds = () => { for (const k of LEFT_SECS) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
-  function toggleFold(key) {
-    if (!folded.delete(key)) folded.add(key);
+  /** Fold a section or open it, on either side: one set, one key a section,
+   *  and every head that names it told. A section of the desk's rail is a
+   *  class on its own box, there and in the set; one of the sidebar's is a
+   *  class on #trees. `fold` left out turns it over. */
+  function toggleFold(key, fold = !folded.has(key)) {
+    if (fold === folded.has(key)) return;
+    fold ? folded.add(key) : folded.delete(key);
     save("snyvi.fold", folded);
+    for (const b of document.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", !fold);
+    for (const s of document.querySelectorAll(`.sec[data-sec="${key}"]`)) s.classList.toggle("folded", fold);
+    if (!LEFT_SECS.includes(key)) return;
     applyFolds();
-    const open = !folded.has(key);
-    for (const b of treesEl.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", open);
     // A folded Desks leaves the Inbox room for more projects; the reader's
     // click is what moves the page, so the cap follows it at once.
     if (capSeen != null) { renderTree(); markActive(); }
@@ -92,6 +108,7 @@
     pen: '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/>',
     checks: '<path d="m2.5 12.5 4.5 4.5L16 8M11.5 16l1 1L21.5 8"/>',
     // The desk's own (fill, unfill, plus, play, again) come with desk.js.
+    plus: '<path d="M12 5v14M5 12h14"/>',
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
     prev: '<path d="m15 6-6 6 6 6"/>',
@@ -101,10 +118,6 @@
    *  are on a 24 grid, so the stroke is scaled to the size asked for. */
   const icon = (k, px = 16, cls = "r-ico") => `<svg class="${cls}" viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="currentColor" stroke-width="${+(36 / px).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
   const glyph = (k, px = 12) => icon(k, px, "g-ico");
-  /** A section's head, as a Mac sidebar has them: a quiet label that folds
-   *  what is under it, the same for all three, and nothing else. Whatever
-   *  opens a page is a row. The chevron shows on hover, and stays while the
-   *  section is folded so a folded one says so. */
   /** A row that folds says so after its name, in the section heads' own
    *  chevron: every row reads icon, name, chevron (app.css, .s-chev). */
   const chev = `<span class="s-chev" aria-hidden="true"></span>`;
@@ -114,10 +127,27 @@
   /** Rows on their way: two bars where the rows will be (docs/DESIGN.md
    *  §7.4), never a bare "…". They wait --sk-wait, so a fast answer shows none. */
   const skRows = `<li class="t-wait"><span class="sk-bar" style="width:62%"></span></li><li class="t-wait"><span class="sk-bar" style="width:44%"></span></li>`;
-  function secHead(key, name, tail = "") {
-    const open = !folded.has(key);
-    return `<div class="s-head" data-sec="${key}"><button type="button" class="s-link" data-fold="${key}" aria-expanded="${open}"><span class="s-nm">${name}</span>${chev}</button>${tail}</div>`;
+  /** A section's head (docs/DESIGN.md §8.4), the one both sidebars draw --
+   *  desk.js has it as ctx.secHead. A quiet label that folds what is under
+   *  it, its chevron shown on hover and while folded; then at the right, in
+   *  this order, the count and the actions. The count stays while folded,
+   *  so nothing waiting goes unseen; `tone` colours it (accent: something
+   *  waits, warn: something is blocked). The actions show on hover and on
+   *  focus, and always on an `empty` section, whose + is the way in.
+   *  `fixed` is a section that never folds: no chevron, and not a button.
+   *  `open` draws it open whatever the reader left it as (a panel's Undo
+   *  is never out of reach). Tips are raw text; this escapes them. */
+  function secHead(key, name, o = {}) {
+    const open = !!o.open || !folded.has(key);
+    const tip = (t, sub) => t ? ` data-tip="${esc(t)}"${sub ? ` data-tip-sub="${esc(sub)}"` : ""}` : "";
+    const label = `<span class="sec-nm">${name}</span>`;
+    const lead = o.fixed ? `<span class="sec-fold"${tip(o.tip, o.sub)}>${label}</span>`
+      : `<button type="button" class="sec-fold" data-fold="${key}" aria-expanded="${open}"${tip(o.tip, o.sub)}>${label}${chev}</button>`;
+    const n = o.count == null || o.count === "" ? "" : `<span class="sec-n${o.tone ? ` ${o.tone}` : ""}${o.foldOnly ? " fold-only" : ""}"${tip(o.countTip)}>${o.count}</span>`;
+    return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${n}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}</div>`;
   }
+  /** Whether a section is drawn folded: the reader's fold, unless `open`. */
+  const secFolded = (key, open) => !open && folded.has(key);
 
   /** The browse section keeps its own DOM across navigations so expanded folders stay open.
    *  Its body always ends in a quiet "open a folder" row, so reading a folder is

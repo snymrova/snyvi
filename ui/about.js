@@ -850,7 +850,7 @@ const SHOW = {
   arrives: { at: () => q("#tree a[data-id]") && (folded() ? q('#rail-nav [data-pop="tree"]') : q("#tree a[data-id]")),
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
   waiting: { at: () => q("#queue .t-queue") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#queue .t-queue")), none: "Nothing is waiting right now." },
-  desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .s-head")), none: "Desks live in the window: <code>snyvi app</code>." },
+  desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
   notes: { at: () => !q("#note")?.hidden && (folded() ? q("#rail-note") : q("#note")), none: "No aside right now." },
   keys: { at: () => q("#btn-help"), none: "" },
 };

@@ -126,6 +126,7 @@
     for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
     const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
     badge('[data-pop="inbox"]', n);
+    drawInbox(n);
     // The last one waiting was read: the one moment snyvi shows love, on the
     // mark, for as long as a face's moment lasts (§2.2).
     if (!n && waitedWas && !quiet()) { root.dataset.cleared = "1"; setTimeout(() => delete root.dataset.cleared, 2400); }
@@ -423,7 +424,7 @@
     if (!room || root.dataset.side === "0" || folded.has("inbox")) return Infinity;
     const now = Date.now() / 1000;
     const used = Math.min(USED_MAX, Math.max(USED_MIN, state.tree.filter(p => p.latest && now - p.latest <= QUIET_S).length));
-    const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect(), fh = browseEl.querySelector(".s-head");
+    const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect(), fh = browseEl.querySelector(".sec-head");
     const above = at.top - port.top + treesEl.scrollTop;
     const below = fh ? fh.getBoundingClientRect().bottom - at.bottom : 0;
     // 8: #trees' own padding at the foot; the "more" row; the removed row.
@@ -441,11 +442,21 @@
     const names = hidden.slice(0, 8).map(p => p.name).join(", ") + (hidden.length > 8 ? ` and ${hidden.length - 8} more` : "");
     return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
   }
+  /** The Inbox's head and All documents. The head says how many wait only
+   *  while the Inbox is folded: open, the waiting list says it under it.
+   *  A link, so the keyboard reaches it: a div with a click handler is a row
+   *  Tab walks straight past. Written only when it changed, as every
+   *  section is. */
+  function drawInbox(waiting = state.waiting) {
+    const total = state.tree.reduce((k, p) => k + p.docs, 0);
+    const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "" }) +
+      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
+    if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
+  }
   function renderTree() {
     // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
     window.__perf && window.__perf.renders++;
     const projects = heldTree();
-    const total = state.tree.reduce((n, p) => n + p.docs, 0);
     const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
     const put = projects.length - drawn.length;
     // A read of the page's layout that follows a write lays the sidebar out
@@ -458,19 +469,15 @@
     // The title width is measured rather than assumed, because the gutter
     // resizes the sidebar, and once per draw rather than once per row.
     if (fitCtx && treeEl.clientWidth) {
+      // At a document row's size, a Sub-row's (app.css .t-doc a), not the tree's.
       const cs = getComputedStyle(treeEl);
-      const f = `550 ${cs.fontSize} ${cs.fontFamily}`;
+      const f = `550 ${cs.getPropertyValue("--fs-small").trim() || "12px"} ${cs.fontFamily}`;
       if (f !== fitFont) {
         fitCtx.font = fitFont = f;
         if (timeCtx) timeCtx.font = `10px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
       }
       titleRoom = roomIn(treeEl.clientWidth);
     }
-    // A link, so the keyboard reaches it: a div with a click handler is a row
-    // Tab walks straight past. Written only when it changed, as every section is.
-    const inbox = secHead("inbox", "Inbox") +
-      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
-    if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
     renderQueue();
     renderBrowse();
     renderDesks();

@@ -590,7 +590,7 @@ const CSS = `
   padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
   animation: sheet-l var(--dur-quick) var(--ease-out); }
 #pop > #note { margin: 6px 0 0; }
-#pop > :first-child .s-head { margin-top: 4px; }
+#pop > :first-child .sec-head { margin-top: 4px; }
 @media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
 #ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
 @keyframes ctx-in { from { opacity: 0; transform: scale(.97); } }

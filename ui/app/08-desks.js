@@ -128,7 +128,10 @@
     if (state.desks) desksSeen = list.length;
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
-    const head = secHead("desks", "Desks", (blocked ? `<span class="s-blk" data-tip="${plural(blocked, "panel")} waiting on you">!${blocked}</span>` : "") + (capability ? `<button type="button" class="s-add" data-newdesk data-tip="New desk" aria-label="New desk">+</button>` : ""));
+    const head = secHead("desks", "Desks", {
+      count: blocked ? `!${blocked}` : "", tone: "warn", countTip: blocked ? `${plural(blocked, "panel")} waiting on you` : "",
+      acts: capability ? `<button type="button" data-newdesk data-tip="New desk" aria-label="New desk">${glyph("plus", 14)}</button>` : "",
+    });
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
         : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
     // One desk is one project; the second is when snyvi starts to earn its
@@ -195,7 +198,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {

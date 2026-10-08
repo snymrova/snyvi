@@ -78,6 +78,9 @@ const count = (text, re) => (text.match(re) || []).length;
 const ALLOW_COLOUR = [/mask(-image)?:/, /\.html-frame|iframe|srcdoc/, /xterm|cube|ansi256|256/i];
 const ALLOW_COLOUR_FILES = new Set(["boot.js", "mmd.js"]);
 
+/* The files that draw the two sidebars: the left's parts and the desk's rail. */
+const SIDES = new Set(["app/02-tree.js", "app/03-queue.js", "app/08-desks.js", "desk/06-rail.js", "desk/09-thread.js"]);
+
 const CHECKS = {
   colour: {
     what: "raw colours outside :root and themes.css",
@@ -160,6 +163,30 @@ const CHECKS = {
     what: "<button> inside <a> or <summary>",
     run(text) {
       return count(text, /<a\b[^>]*>(?:(?!<\/a>)[\s\S]){0,400}?<button\b/g) + count(text, /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S]){0,400}?<button\b/g);
+    },
+  },
+  "sec-head": {
+    what: "section heads not drawn by secHead (§8.4)",
+    run(text) {
+      // The sidebar's and the rail's own heads, as they were before there
+      // was one: a <details> section, a label made a summary.
+      return count(text, /class="(?:[^"$]*\s)?(?:s-head|dk-lab|th-rest-h)\b|<details class="dk-sec\b/g);
+    },
+  },
+  radius: {
+    what: "raw px border-radius (the --r-* scale)",
+    run(text) {
+      let n = 0;
+      for (const m of text.matchAll(/border-radius\s*:\s*([^;"`}]*)/g))
+        if (/(?:^|[\s(,])[1-9]\d*(?:\.\d+)?px/.test(m[1].replace(/var\([^)]*\)/g, ""))) n++;
+      return n;
+    },
+  },
+  "side-font": {
+    what: "raw px font sizes in the sidebars (a --fs token)",
+    run(text, file) {
+      if (!SIDES.has(file)) return 0;
+      return count(text, /font(?:-size)?\s*:\s*[^;"`}]*?\b\d+(?:\.\d+)?px/g);
     },
   },
   "toast-title": {

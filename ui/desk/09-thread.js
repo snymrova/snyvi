@@ -109,13 +109,11 @@ function restSec(d) {
   const resting = f.threads.filter(t => t.stage !== "shipped" && restOf(d, t));
   const gone = filedGone && filedGone.k === "t" && !slotOf(d, filedGone.pane) ? filedGone : null;
   if (!resting.length && !gone) return "";
-  return `<details class="dk-sec th-rest" data-sec="threads-rest" data-part="rail.threads"${restOpen() || gone ? " open" : ""}>` +
-    `<summary class="th-rest-h" data-tip="Resting" data-tip-sub="Threads no panel is moving: parked, their panel closed, or their panel took up another. Done or Remove closes one; otherwise it leaves the rail after a day, or a week if parked, and is kept">Resting<span class="n">${resting.length}</span><span class="s-chev" aria-hidden="true"></span></summary>` +
-    `<ul class="dk-threads">${resting.map(t => restRow(d, t, esc)).join("")}${gone ? goneRow("t", gone.id, gone.text, esc) : ""}</ul></details>`;
+  return sec("rest", "rail.threads", "Resting", {
+    cls: "th-rest", open: !!gone, count: resting.length,
+    tip: "Resting", sub: "Threads no panel is moving: parked, their panel closed, or their panel took up another. Done or Remove closes one; otherwise it leaves the rail after a day, or a week if parked, and is kept",
+  }, `<ul class="dk-threads">${resting.map(t => restRow(d, t, esc)).join("")}${gone ? goneRow("t", gone.id, gone.text, esc) : ""}</ul>`);
 }
-
-/** Resting is folded until the reader opens it: `folded` stores "0" for open. */
-const restOpen = () => { try { return localStorage.getItem(FOLD("threads-rest")) === "0"; } catch { return false; } };
 
 /** A resting thread: one line, its name and why it rests, and its ⋯. */
 function restRow(d, t, esc) {
@@ -137,9 +135,11 @@ function turnSec(d, f) {
   if (!waiting.length && !said.length && !gone) return "";
   const rows = waiting.map(w => turnRow(d, w, esc)).join("") + said.map(w => saidRow(d, w, esc)).join("") +
     (gone ? goneRow("w", gone.id, gone.text, esc) : "");
-  return `<div class="dk-sec dk-filed dk-turns" data-part="rail.turns">` +
-    `<div class="t-label dk-lab" data-tip="Your turn" data-tip-sub="What only you can do. Your answer goes with your next message to the panel that asked">Your turn${waiting.length ? `<span class="n"><b>${waiting.length}</b></span>` : ""}</div>` +
-    `<ul class="dk-turn-list">${rows}</ul></div>`;
+  // Fixed: it never folds, so what only the reader can do is never out of sight.
+  return sec("turn", "rail.turns", "Your turn", {
+    cls: "dk-filed dk-turns", fixed: true, count: waiting.length || "", tone: "accent",
+    tip: "Your turn", sub: "What only you can do. Your answer goes with your next message to the panel that asked",
+  }, `<ul class="dk-turn-list">${rows}</ul>`);
 }
 
 function turnRow(d, w, esc) {
@@ -211,7 +211,10 @@ function sugSec(f) {
     `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${s.kind === "desk" ? "Open desk" : "Open panel"}</button>` +
     `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
     (gone ? goneRow("s", gone.id, gone.text, esc) : "");
-  return `<div class="dk-sec dk-filed" data-part="rail.suggested"><div class="t-label dk-lab" data-tip="Suggested" data-tip-sub="Panels and desks an agent thinks the work wants. Nothing opens until you click">Suggested</div><ul class="dk-turn-list">${rows}</ul></div>`;
+  return sec("suggested", "rail.suggested", "Suggested", {
+    cls: "dk-filed", fixed: true, count: f.suggestions.length || "",
+    tip: "Suggested", sub: "Panels and desks an agent thinks the work wants. Nothing opens until you click",
+  }, `<ul class="dk-turn-list">${rows}</ul>`);
 }
 
 /** The thread a note is in, in words for the note's tip; nothing beside
@@ -446,25 +449,20 @@ async function saveField() {
 }
 
 const THREAD_CSS = `
-.dk-filed { margin-bottom: 10px; }
 .dk-threads, .dk-turn-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .dk-thread, .dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
-/* Resting: one quiet line under the panels, folded; each thread in it a row. */
-.th-rest { margin-top: 6px; }
-.th-rest-h { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: var(--fs-micro); color: var(--fg-3); }
-.th-rest-h .n { font-variant-numeric: tabular-nums; }
-.th-rest .s-chev { margin-left: 0; }
+/* Resting: a section under the panels, folded until opened; each thread in it a row. */
 .th-rest .dk-threads { gap: 2px; }
 .dk-thread.rest { padding: 3px 4px 3px 8px; background: none; border-style: dashed; }
 .dk-thread.rest .th-name { font-weight: 500; color: var(--fg-2); }
 .th-why { flex: none; font-size: var(--fs-micro); color: var(--fg-3); }
 .th-top { display: flex; align-items: center; gap: 6px; }
 .th-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.th-more { flex: none; width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; color: var(--fg-3); cursor: pointer; font: inherit; line-height: 1; }
+.th-more { flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; font: inherit; line-height: 1; }
 .th-more:hover { background: var(--rule-2); color: var(--fg); }
 /* A panel's thread: one line under its row, lined up with the panel's name,
    its ⋯ there under the cursor as a row's tools are. */
-.dk-pth { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; margin: -3px 0 2px; padding: 0 3px 0 47px; font-size: var(--fs-micro); color: var(--fg-3); min-width: 0; }
+.dk-pth { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; margin: -3px 0 2px; padding: 0 3px 0 51px; font-size: var(--fs-micro); color: var(--fg-3); min-width: 0; }
 .dk-pth .th-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-pth .th-word { color: var(--fg-2); }
 .dk-pth.shipped .th-word { color: var(--ok); }
@@ -480,11 +478,11 @@ const THREAD_CSS = `
 .tn-opt:hover { color: var(--fg); border-color: var(--accent); }
 .tn-opt.rec { border-color: var(--accent); color: var(--fg); }
 .tn-opt.quiet { border-style: dashed; }
-.tn-x { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; color: var(--fg-3); cursor: pointer; }
+.tn-x { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }
 .tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
 .dk-turn.said { border-style: dashed; }
 /* A handed-over command is shown whole: what Run types is what is read. */
 .sg-cmd.tn-cmd { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: 9em; overflow-y: auto; }
-.sg-cmd { display: block; margin-top: 4px; padding: 2px 5px; border-radius: 3px; background: var(--bg); font-family: var(--mono); font-size: 11px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sg-cmd { display: block; margin-top: 4px; padding: 2px 5px; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;

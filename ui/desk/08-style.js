@@ -80,7 +80,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-ev:hover { text-decoration: underline; }
 .dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
-.dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: 4px; }
+.dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: var(--r-xs); }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }
 /* A tab out of sight that is waiting on the reader is amber, as the rail is.
  * The one that is on wears the accent; the pane's own ⤡ says full view. */
@@ -121,7 +121,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The pen, full view and ✕, on every panel, in the grid and in full view
    alike: three slots of their own at the head's end, quiet at rest and --fg
    under the pointer, so none comes and goes nor lands on the state beside it. */
-:is(.pn-ren, .pn-full, .pn-x) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+:is(.pn-ren, .pn-full, .pn-x) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .pn-ren { margin-left: -2px; }
 .pn-x { margin-right: -4px; }
 /* Armed, the ✕ asks "Close?" over the head's end, to its left, rather than
@@ -130,7 +130,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-x[data-armed], .pn-x[data-armed]:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--bg)); }
 .pn-x[data-armed]::before { content: "Close?"; position: absolute; right: 100%; top: 0; bottom: 0; display: grid; place-items: center; padding: 0 5px; border-radius: 4px 0 0 4px; font-size: 11px; font-weight: 600; background: inherit; }
 .pn-x[data-armed] { border-radius: 0 4px 4px 0; }
-.pn-head .ren-in { flex: 1; min-width: 60px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; outline: none; }
+.pn-head .ren-in { flex: 1; min-width: 60px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: var(--r-xs); padding: 0 4px; outline: none; }
 .dk-head .icon:first-of-type { margin-left: auto; }
 .dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
 /* At the cap: the + at rest, and the count beside it in the tab strip's
@@ -147,7 +147,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-h { left: 0; right: 0; height: 8px; top: calc(var(--row) * 100% - 4px); cursor: row-resize; }
 .dk-grid:not([data-cols="2"]) .dk-v, .dk-grid:not([data-rows="2"]) .dk-h { display: none; }
 .dk-div:hover, .dk-div:focus-visible { background: var(--accent-bg); }
-.pn { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--pn-bg); overflow: hidden; }
+.pn { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--pn-bg); overflow: hidden; }
 .pn.on { border-color: var(--rule-2); box-shadow: 0 0 0 1px var(--accent-bg); }
 /* A head carried onto another pane: the one carried goes faint, the one it
    would trade places with is outlined. */
@@ -221,21 +221,21 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The offer after an unplanned stop: over the top of the panel, in the
    waiting amber, out of the way of the prompt it would type into. */
 .pn-offer { position: absolute; left: 12px; right: 12px; top: 8px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
-  background: color-mix(in srgb, var(--warn) 12%, var(--bg-raise)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: 6px; box-shadow: var(--shadow); }
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-raise)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: var(--r-sm); box-shadow: var(--shadow); }
 .pn-offer[hidden] { display: none; }
 .pn-offer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-offer button { flex: none; padding: 3px 8px; border-radius: 4px; color: var(--fg-2); }
+.pn-offer button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
 .pn-offer [data-offer="go"] { color: var(--accent); font-weight: 600; }
 .pn-offer button:hover { background: var(--rule-2); color: var(--fg); }
-.pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: var(--shadow); }
+.pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-sm); box-shadow: var(--shadow); }
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
 .pn-start .pn-resume { color: var(--fg); font-weight: 500; }
 .pn-start .pn-resume[hidden] { display: none; }
-.pn-connect { position: absolute; left: 12px; right: 12px; bottom: 60px; padding: 10px 12px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: var(--shadow); font-size: 12.5px; color: var(--fg-2); }
+.pn-connect { position: absolute; left: 12px; right: 12px; bottom: 60px; padding: 10px 12px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-sm); box-shadow: var(--shadow); font-size: 12.5px; color: var(--fg-2); }
 .pn-connect p { margin: 0 0 8px; line-height: 1.45; }
 .pn-connect p:last-child { margin: 0; }
 .pn-connect .ok { color: var(--ok); }
-.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--r-sm); padding: 5px 12px; cursor: pointer; }
 .dk-wait .dk-empty { display: flex; align-items: center; gap: 6px; }
 .dk-ask { margin: 2px 8px 6px; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
 .dk-ask q { color: var(--fg); }
@@ -245,19 +245,14 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-spin { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-3); border-right-color: transparent; animation: dk-spin 1.2s linear 3; }
 @keyframes dk-spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .dk-spin { animation: none; } }
-.pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 3px 6px; }
+.pn-start input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: var(--r-xs); padding: 3px 6px; }
 .pn-probe { position: absolute; visibility: hidden; white-space: pre; font-family: var(--pn-font); font-size: var(--pn-size); }
 /* ---------- the rail ----------
- * Three lists and a label over each, drawn the way the sidebar draws its own
- * rows: a mark at the left, the name, and one fact at the right. */
-.dk-lab { display: flex; align-items: baseline; padding-left: 8px; }
-.dk-lab .n { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.dk-lab .n i { font-style: normal; }
-.dk-lab .n b { font-weight: inherit; color: var(--accent); }
-.dk-lab .n b.blk { color: var(--warn); }
+ * Sections (app.css .sec, docs/DESIGN.md §8.4), the sidebar's own, each a
+ * head and the rows under it, drawn the way the sidebar draws its rows: a
+ * mark at the left, the name, and one fact at the right. A panel is a Row,
+ * as a desk is; a document and a note are Sub-rows. */
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; }
-/* The rail's parts, one under the other, the same distance apart. */
-.dk-rail > * + * { margin-top: 16px; }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
  * lines -- and these are rows, so both are undone at #toc's own weight. */
 #toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }
@@ -266,45 +261,36 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * keyboard, the way a sidebar row's ✕ is -- act on it. They lie over the
  * row's right end and take no room in it: room given only under the pointer
  * reflowed the title beneath it, and the list jumped as the cursor passed. */
-.dk-pane { display: flex; align-items: center; border-radius: 6px; color: var(--fg-2); transition: background var(--t), color var(--t); }
-.dk-pane:hover { background: var(--rule); color: var(--fg); }
-.dk-pane.on { background: var(--accent-bg); color: var(--accent); }
-.dk-focus { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; text-align: left; padding: 4px 8px; color: inherit; white-space: nowrap; overflow: hidden; }
+.dk-pane { display: flex; align-items: center; height: var(--row-h); border-radius: var(--r-sm); color: var(--fg); font-size: var(--fs-ui); font-weight: var(--fw-row); transition: background var(--t), color var(--t); }
+.dk-pane:hover { background: var(--rule); }
+/* The current one as the sidebar's is: a tint and a 2 px bar, the text ink. */
+.dk-pane.on { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+.dk-focus { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; align-self: stretch; text-align: left; padding: 0 8px; font: inherit; color: inherit; white-space: nowrap; overflow: hidden; }
 .dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; }
 :is(.dk-pane, .dk-doc:not(.on), .dk-row) { position: relative; }
 /* Over the end of the title, on a ground that fades in from it: the hover
    ground (--rule, see-through in the dark themes) laid over the rail's own. */
-:is(.dk-pane, .dk-doc:not(.on), .dk-row) > .dk-tools { position: absolute; top: 0; bottom: 0; right: 0; padding: 0 3px 0 14px; border-radius: 0 6px 6px 0; opacity: 0; pointer-events: none; transition: opacity var(--t);
+:is(.dk-pane, .dk-doc:not(.on), .dk-row) > .dk-tools { position: absolute; top: 0; bottom: 0; right: 0; padding: 0 3px 0 14px; border-radius: 0 var(--r-sm) var(--r-sm) 0; opacity: 0; pointer-events: none; transition: opacity var(--t);
   background: linear-gradient(90deg, transparent, var(--tools-bg, var(--rule)) 14px), linear-gradient(90deg, transparent, var(--bg-side) 14px); }
 .dk-pane.on > .dk-tools { --tools-bg: var(--accent-bg); }
 /* The desk's folder is the folder's own name, and a click opens it in the file manager. */
 .dk-folder { min-width: 0; padding: 0; text-align: left; font: inherit; color: inherit; overflow-wrap: anywhere; border-radius: 3px; }
 .dk-folder:hover { color: var(--accent); }
 :is(.dk-pane, .dk-doc, .dk-row):is(:hover, :focus-within) > .dk-tools, .dk-tools:has([data-armed]) { opacity: 1; pointer-events: auto; }
-.dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
-.dk-pane.on .dk-tools button { color: var(--accent); opacity: .8; }
+.dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+.dk-pane.on .dk-tools button { opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
-.dk-sug-tools > button:not(.dk-keep) { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); }
+.dk-sug-tools > button:not(.dk-keep) { display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--r-xs); color: var(--fg-3); }
 .dk-sug-tools > button:not(.dk-keep):hover { background: var(--rule-2); color: var(--fg); }
 .dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: var(--danger); }
 .dk-tools button[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
 .dk-panes .run .dot { color: var(--ok); }
 .dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
-/* The documents section folds. Its head is the label, made a summary: the
- * chevron the sidebar's heads carry, shown under the cursor and while
- * folded. */
-.dk-sec > summary { list-style: none; cursor: pointer; }
-.dk-sec > summary::-webkit-details-marker { display: none; }
-/* Shown the way the sidebar's are (app.css): under the cursor, and while
- * the section is folded. One chevron style across the app. */
-.dk-sec .s-chev { align-self: center; margin-left: 6px; }
-.dk-sec:not([open]) .s-chev { transform: rotate(-45deg); }
-.dk-sec > summary:hover { color: var(--fg-2); }
-.dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
-.dk-panes .on .slot { color: inherit; }
+.dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
+.dk-panes .on .slot { color: var(--accent); }
 .dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
-.dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+.dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: var(--fs-small); border-radius: var(--r-sm); }
 .dk-new:hover:not(:disabled, .dim) { color: var(--accent); }
 .dk-new:is(:disabled, .dim) { opacity: .5; cursor: default; }
 /* Said to a screen reader, not drawn: why a quiet control is quiet. */
@@ -318,14 +304,14 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* A document row: a page icon at the left, in the accent while the
  * document waits to be read, then the title, the pane it came from and its
  * age. */
-#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 6px; margin: 0; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--fg-2); line-height: 1.5; white-space: normal; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
+#toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 6px; min-height: var(--sub-row-h); box-sizing: border-box; margin: 0; padding: 3px 8px; border: 0; border-radius: var(--r-sm); color: var(--fg-2); font-size: var(--fs-small); line-height: 18px; white-space: normal; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
 .dk-docs a svg { flex: none; align-self: flex-start; margin-top: 3px; color: var(--fg-3); transition: color var(--t); }
-.dk-docs .age { flex: none; font-family: var(--mono); font-size: 10px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.dk-docs .age { flex: none; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .dk-docs a.new svg { color: var(--accent); }
 .dk-docs a.new .title { color: var(--fg); font-weight: 550; }
 /* The row, and not the link, carries the hover and the mark, so the copy
  * tool beside the link sits on the same ground. */
-.dk-doc { display: flex; align-items: center; border-radius: 6px; transition: background var(--t); }
+.dk-doc { display: flex; align-items: center; border-radius: var(--r-sm); transition: background var(--t); }
 .dk-doc:hover { background: var(--rule); }
 #toc .dk-docs li a:hover { color: var(--fg); text-decoration: none; }
 .dk-doc.on { background: var(--accent-bg); }
@@ -366,7 +352,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 #meta .dk-repo span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #meta .dk-repo .dk-out { flex: none; font-size: var(--fs-micro); }
 #meta .dk-repo:hover, #meta .dk-repo:focus-visible { color: var(--accent); }
-.dk-make { padding: 6px 12px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.dk-make { padding: 6px 12px; border-radius: var(--r-sm); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .dk-make:hover { background: var(--accent); color: var(--on-accent); }
 /* ---------- the list ----------
  * A checklist, drawn on the same row grid as the panels and the documents
@@ -379,10 +365,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * A line wraps rather than being cut. A pane's title is a name and a name that
  * does not fit can be shortened; a note is a sentence, and half of it is not a
  * smaller version of it. */
-.dk-note { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; border-radius: 6px; transition: background var(--t); }
+.dk-note { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; border-radius: var(--r-sm); transition: background var(--t); }
 .dk-note:hover { background: var(--rule); }
 .dk-note { position: relative; }
-.dk-note > .nm { flex: 1; min-width: 0; text-align: left; margin: 4px 8px 4px 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere;
+.dk-note > .nm { flex: 1; min-width: 0; text-align: left; margin: 3px 8px 3px 0; font-size: var(--fs-small); line-height: 18px; color: var(--fg-2); white-space: normal; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* A line's own text is a button, and WebKit -- the window -- does not clamp a
    button: it clamps the span inside it, and the whole line is the tip. */
@@ -409,7 +395,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-by button:hover { color: var(--accent); }
 /* The circle. A button rather than a checkbox input so it draws the same on
    every platform, with the role and the state a checkbox would have carried. */
-.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; margin-top: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
+.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; margin-top: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
 .dk-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
@@ -450,10 +436,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    row under the hand reaching for it. Over the text, it sits on the row's
    own hover colour, so the words under it fade out rather than show through. */
 .dk-tail { position: absolute; top: 3px; right: 3px; display: flex; }
-.dk-note .dk-tail button { background: var(--rule); box-shadow: -12px 0 8px -4px var(--rule); border-radius: 4px; }
+.dk-note .dk-tail button { background: var(--rule); box-shadow: -12px 0 8px -4px var(--rule); border-radius: var(--r-xs); }
 .dk-note .dk-tools { margin: 0; width: auto; padding: 0; opacity: 0; pointer-events: none; transition: opacity var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-tools, .dk-note .dk-tools:has([data-armed]) { opacity: 1; pointer-events: auto; }
-.dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; }
+.dk-note-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: var(--r-xs); }
 .dk-note-in:focus { outline: none; }
 .dk-note-in::placeholder { color: var(--fg-3); }
 /* The bar at rest: the live field's size and border width, its colour quiet,
@@ -468,26 +454,17 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-err { list-style: none; display: flex; align-items: baseline; gap: 6px; padding: 2px 8px 4px 26px; font-size: 11.5px; color: var(--danger); }
 .dk-pane.closing { opacity: .5; }
 .dk-note.gone > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: line-through; }
-.dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; color: var(--accent); }
+.dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: var(--r-xs); color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-/* The list's head carries its two actions over the right end of the
- * summary, in room the summary keeps for them, so nothing moves as they
- * come and go -- and Remove done notes' answer, with its Undo, in their place. */
-.dk-notes-part { position: relative; }
-.dk-notes > summary { padding-right: 52px; }
-.dk-notes-part.undo .dk-notes > summary .n { visibility: hidden; }
-.dk-sec-acts { position: absolute; top: 5px; right: 0; display: flex; align-items: center; gap: 2px; }
-.dk-sec-acts > button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
-.dk-sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
-.dk-act-room { width: 20px; }
-.dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: 11px; color: var(--fg-3); background: var(--bg-side); animation: dk-fade 140ms ease-out; }
+/* Remove done notes answers in the head, in the actions' place, with its Undo. */
+.dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: var(--fs-micro); color: var(--fg-3); animation: dk-fade 140ms ease-out; }
 /* How far an agent has got: at the line's right end, over its ✕, in a slot
  * every line keeps, so a line that is picked up does not rewrap. Read is a
  * small ring, planned the plan's page (it opens it), working the panel's
  * number in the accent -- the number its tab has -- which breathes three
  * times when the panel's agent takes it up: each draw of the rail is a new
  * three, and nothing paints in between. Centred on the first line. */
-.dk-stage { position: relative; flex: none; display: grid; place-items: center; width: 20px; height: 18px; margin-top: 4px; padding: 0; color: var(--fg-3); }
+.dk-stage { position: relative; flex: none; display: grid; place-items: center; width: 20px; height: 18px; margin-top: 3px; padding: 0; color: var(--fg-3); }
 .dk-stage.read::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); }
 .dk-stage.planned svg { width: 10px; height: 10px; }
 .dk-stage.planned:hover { color: var(--accent); }
@@ -500,7 +477,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * number with its other marks (.dk-lead .dk-marks, the count in its tip);
  * in the note field, with their count. A fixed width, so the mark turning
  * into the Undo of one just taken off, and back, moves nothing. */
-.dk-pic { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; width: 24px; height: 18px; margin-top: 4px; padding: 0; border-radius: 4px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.dk-pic { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; width: 24px; height: 18px; margin-top: 3px; padding: 0; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pic svg { width: 12px; height: 12px; }
 .dk-pic .c { font-family: var(--mono); font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; }
 button.dk-pic:hover { background: var(--rule-2); color: var(--fg); }
@@ -508,18 +485,18 @@ button.dk-pic:hover { background: var(--rule-2); color: var(--fg); }
 /* Pictures waiting on the new line: the same mark, in the field's row. */
 .dk-pend { flex: none; display: flex; align-items: center; gap: 1px; margin: 2px 4px 2px -4px; color: var(--fg-2); }
 .dk-pend .dk-pic { margin: 0; color: var(--fg-2); }
-.dk-pend button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; color: var(--fg-3); }
+.dk-pend button { display: grid; place-items: center; width: 18px; height: 18px; border-radius: var(--r-xs); color: var(--fg-3); }
 .dk-pend button:hover { background: var(--rule-2); color: var(--fg); }
 /* The row a dragged picture would land on. */
 .dk-note.drop { background: var(--accent-bg); box-shadow: inset 0 0 0 1px var(--accent); }
 /* A picture whole, over the page. */
 .dk-lb { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; padding: 32px; background: var(--scrim); animation: dk-fade 120ms ease-out; }
 .dk-lb figure { margin: 0; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.dk-lb img { display: block; max-width: min(1400px, calc(100vw - 64px)); max-height: calc(100vh - 120px); object-fit: contain; border-radius: 6px; background: var(--bg-raise); box-shadow: var(--shadow); }
+.dk-lb img { display: block; max-width: min(1400px, calc(100vw - 64px)); max-height: calc(100vh - 120px); object-fit: contain; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow); }
 .dk-lb figcaption { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px 6px 12px; border-radius: 8px; background: var(--bg-raise); box-shadow: var(--shadow); font-size: 12px; color: var(--fg-2); }
 .dk-lb figcaption .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 .dk-lb figcaption .k { font-family: var(--mono); font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.dk-lb figcaption button { flex: none; padding: 3px 8px; border-radius: 4px; color: var(--fg-2); }
+.dk-lb figcaption button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
 .dk-lb figcaption button:hover { background: var(--rule-2); color: var(--fg); }
 .dk-lb figcaption .lb-gone { display: flex; align-items: center; gap: 4px; color: var(--fg-3); }
 .dk-lb figcaption .lb-gone .dk-undo { color: var(--accent); }
@@ -531,7 +508,7 @@ button.dk-pic:hover { background: var(--rule-2); color: var(--fg); }
  * selection ends. And the kept points under the panels, on the list's own
  * row grid, a few lines each: a passage is quoted whole when it goes in, and
  * the rail only has to say which one it is. */
-.dk-pick { position: fixed; z-index: 30; padding: 4px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; color: var(--accent); background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2), 0 4px 14px rgb(0 0 0 / .18); animation: dk-fade 120ms ease-out; }
+.dk-pick { position: fixed; z-index: 30; padding: 4px 10px; border-radius: var(--r-sm); font-size: 12px; line-height: 1.4; color: var(--accent); background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2), 0 4px 14px rgb(0 0 0 / .18); animation: dk-fade 120ms ease-out; }
 .dk-pick:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .dk-pick:disabled { cursor: default; }
 .dk-point > .nm { padding-left: 8px; border-left: 2px solid var(--rule-2); margin-left: 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
