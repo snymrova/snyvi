@@ -743,7 +743,7 @@ async function sideRailRows(p, url, arrive) {
   const rows = [];
   await p.goto(url);
   await p.pointerAway();
-  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "pop"];
+  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "widgets-nav", "pop"];
   // The fold eases over 160 ms; the widths below are read where it lands.
   const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
   await p.press("\\");
