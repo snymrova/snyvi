@@ -27,14 +27,23 @@
    * a class on #trees rather than a redraw, so it survives every render and
    * costs none; it is remembered per reader. */
   const folded = saved("snyvi.fold");
+  /* A section that starts folded -- Resting, which a panel moving on to its
+   * next piece of work fills -- is in the set while the reader has it open:
+   * the set is what differs from where each section starts, so a reader who
+   * never folds anything stores nothing. */
+  const FOLDED_FIRST = new Set(["rest"]);
+  const isFolded = k => folded.has(k) !== FOLDED_FIRST.has(k);
   /* The desk's rail kept its folds apart, one key a section, until its
-   * sections became these (docs/DESIGN.md §8.4): carried over once, and
-   * Resting, which starts folded, starts folded here by being put in. */
-  if (store.get("snyvi.fold.v2") !== "1") {
-    for (const [k, was] of [["panels", "panels"], ["docs", "docs"], ["notes", "notes"]]) if (store.get(`snyvi.dk.fold-${was}`) === "1") folded.add(k);
-    if (store.get("snyvi.dk.fold-threads-rest") !== "0") folded.add("rest");
-    save("snyvi.fold", folded);
-    store.set("snyvi.fold.v2", "1");
+   * sections became these (docs/DESIGN.md §8.4): carried over, and the old
+   * keys taken out, so it happens once and leaves nothing behind. */
+  {
+    const old = [["panels", "panels"], ["docs", "docs"], ["notes", "notes"], ["rest", "threads-rest"]].filter(([, was]) => store.get(`snyvi.dk.fold-${was}`) != null);
+    for (const [k, was] of old) {
+      const shut = store.get(`snyvi.dk.fold-${was}`) === "1" || (k === "rest" && store.get(`snyvi.dk.fold-${was}`) !== "0");
+      if (shut !== FOLDED_FIRST.has(k)) folded.add(k);
+      store.del(`snyvi.dk.fold-${was}`);
+    }
+    if (old.length && folded.size) save("snyvi.fold", folded);
   }
   /* A project the reader has taken out of the sidebar. Nothing is deleted --
    * snyvi deletes nothing on this path -- so the project keeps every document
@@ -81,9 +90,9 @@
    *  and every head that names it told. A section of the desk's rail is a
    *  class on its own box, there and in the set; one of the sidebar's is a
    *  class on #trees. `fold` left out turns it over. */
-  function toggleFold(key, fold = !folded.has(key)) {
-    if (fold === folded.has(key)) return;
-    fold ? folded.add(key) : folded.delete(key);
+  function toggleFold(key, fold = !isFolded(key)) {
+    if (fold === isFolded(key)) return;
+    if (!folded.delete(key)) folded.add(key);
     save("snyvi.fold", folded);
     for (const b of document.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", !fold);
     for (const s of document.querySelectorAll(`.sec[data-sec="${key}"]`)) s.classList.toggle("folded", fold);
@@ -140,7 +149,7 @@
    *  `open` draws it open whatever the reader left it as (a panel's Undo
    *  is never out of reach). Tips are raw text; this escapes them. */
   function secHead(key, name, o = {}) {
-    const open = !!o.open || !folded.has(key);
+    const open = !!o.open || !isFolded(key);
     const tip = (t, sub) => t ? ` data-tip="${esc(t)}"${sub ? ` data-tip-sub="${esc(sub)}"` : ""}` : "";
     const label = `<span class="sec-nm">${name}</span>`;
     const lead = o.fixed ? `<span class="sec-fold"${tip(o.tip, o.sub)}>${label}</span>`
@@ -149,7 +158,7 @@
     return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${n}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}</div>`;
   }
   /** Whether a section is drawn folded: the reader's fold, unless `open`. */
-  const secFolded = (key, open) => !open && folded.has(key);
+  const secFolded = (key, open) => !open && isFolded(key);
 
   // ---------- the layout ----------
   /* Which sections each side has, in what order, and which are hidden

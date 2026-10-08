@@ -825,7 +825,18 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
             out.stdout.len()
         );
     }
-    match widget::Body::parse(&String::from_utf8_lossy(&out.stdout)) {
+    let printed = String::from_utf8_lossy(&out.stdout);
+    // As the runner draws it: the file's own room, unless the run said.
+    let own = |mut b: widget::Body| {
+        if !printed.trim_start().starts_with('{') {
+            b.lines = spec.lines;
+        }
+        b
+    };
+    match widget::Body::parse(&printed).map(|s| match s {
+        widget::Sent::Body(b) => widget::Sent::Body(own(b)),
+        s => s,
+    }) {
         Err(why) => anyhow::bail!("snyvi would refuse what it printed: {why}"),
         Ok(widget::Sent::Clear) => println!("(nothing: the seat would be empty)"),
         Ok(widget::Sent::Body(b)) => {

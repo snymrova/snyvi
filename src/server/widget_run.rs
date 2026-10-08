@@ -48,6 +48,10 @@ struct Runner {
     running: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<(i64, String)>>>,
     /// The line each seat was last given, so a waiting widget is said once.
     said: HashMap<(i64, String), String>,
+    /// The hash each widget last ran as allowed: one allowed anew -- by
+    /// Allow, or its own edit with Rerun my edits on -- runs at the next
+    /// look rather than at the end of its `every`, so its seat stops asking.
+    ran_as: HashMap<String, String>,
 }
 
 pub(crate) fn spawn(app: Arc<App>) {
@@ -141,6 +145,10 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                 }
                 continue;
             }
+        }
+        if r.ran_as.get(&f.name) != Some(&hash) {
+            r.last.retain(|(_, n), _| *n != f.name);
+            r.ran_as.insert(f.name.clone(), hash.clone());
         }
         for (desk, root) in seats {
             let key = (desk, f.name.clone());
