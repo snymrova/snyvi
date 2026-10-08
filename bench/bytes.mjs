@@ -60,7 +60,7 @@ const KB = 1024;
 // 1.7.1 took it back down to 52 KB, and paid for the sidebar's rail on the
 // way: look.js, note.js and the letter keys in keys.js left first paint, and
 // the diagram, game and about/reset styles went to the chunks that draw them.
-const BUDGET = 57 * KB;   // docs/BRAINSTORM.md:35; 56 until 1.23.0 (back and forward: the step on each entry and the ‹ › that read it, which have to work before the page is idle; their names, tips and list went to nav.js), 52 until 1.9.0 (the Inbox cap, the mascot faces), 54 until 1.10.0 (note stages, the foot's version, the waiting bar's ✕), 55 until 1.18.0 (a friend's snyvi: Send to…, a line, an offer; 1.17.0 left 7 B, and the narrow window's sheet went to menu.js to pay part of it)
+const BUDGET = 60 * KB;   // docs/BRAINSTORM.md:35; 57 until 1.27.0 (sections for both sidebars, their layout, and the seats widgets draw in), 56 until 1.23.0 (back and forward: the step on each entry and the ‹ › that read it, which have to work before the page is idle; their names, tips and list went to nav.js), 52 until 1.9.0 (the Inbox cap, the mascot faces), 54 until 1.10.0 (note stages, the foot's version, the waiting bar's ✕), 55 until 1.18.0 (a friend's snyvi: Send to…, a line, an offer; 1.17.0 left 7 B, and the narrow window's sheet went to menu.js to pay part of it)
 
 /* The four the page cannot start without: the document it is served, the
  * script that boots it, and the two the boot pulls in. Fonts are woff2 and
