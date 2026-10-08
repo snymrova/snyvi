@@ -2192,7 +2192,7 @@ async fn a_band_is_held_until_its_own_desk_moves() {
     );
     // A turn on this desk changes the band, and the held call answers.
     app.store
-        .threads(|c, now| {
+        .clocked(|c, now| {
             crate::thread::ask(
                 c,
                 desk.id,

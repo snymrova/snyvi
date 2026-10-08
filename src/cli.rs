@@ -356,21 +356,23 @@ pub(crate) fn run() -> Result<()> {
             Some(UpdateCmd::Off) => client::update_auto(&paths, false),
             None => client::update(&paths, client::UpdateOpts { now, to, back }),
         },
-        Cmd::Key { name } => {
-            use std::io::Write;
-            // No newline: `$(...)` would drop it anyway, and a pipe should get
-            // the value exactly.
-            let value = client::key(&paths, &name)?;
-            let mut out = std::io::stdout().lock();
-            out.write_all(value.as_bytes())?;
-            out.flush()?;
-            Ok(())
-        }
+        Cmd::Key { name } => print_key(&paths, &name),
         Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),
     }
+}
+
+/// `snyvi key NAME`: a desk key's value with no newline. `$(...)` would drop
+/// one anyway, and a pipe should get the value exactly.
+fn print_key(paths: &config::Paths, name: &str) -> Result<()> {
+    use std::io::Write;
+    let value = client::key(paths, name)?;
+    let mut out = std::io::stdout().lock();
+    out.write_all(value.as_bytes())?;
+    out.flush()?;
+    Ok(())
 }
 
 /// `--project`, or the current directory: the project a send is filed under.

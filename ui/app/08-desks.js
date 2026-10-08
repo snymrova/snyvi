@@ -426,15 +426,9 @@
     es.addEventListener("resync", () => catchUp());
 
     // An agent arrived or left: its process opened or ended a stream.
-    es.addEventListener("agents", ev => {
-      const j = parse(ev); if (!j) return;
-      setOnline(j.online);
-    });
+    es.addEventListener("agents", ev => { const j = parse(ev); if (j) setOnline(j.online); });
     // The updater's word: first on every stream, then whenever it changes.
-    es.addEventListener("update", ev => {
-      const j = parse(ev); if (!j) return;
-      setUpd(j);
-    });
+    es.addEventListener("update", ev => { const j = parse(ev); if (j) setUpd(j); });
     // An agent left a note, or a reader looked at one somewhere.
     es.addEventListener("notes", ev => {
       const j = parse(ev); if (!j) return;
@@ -516,10 +510,7 @@
       deskDocs();
     });
     // A large code file finished highlighting in the background: swap the body in place.
-    es.addEventListener("rendered", ev => {
-      const j = parse(ev); if (!j) return;
-      refreshDoc(j.id);
-    });
+    es.addEventListener("rendered", ev => { const j = parse(ev); if (j) refreshDoc(j.id); });
     // Something in a browsed folder changed on disk: the open file, or a listed folder.
     es.addEventListener("changed", ev => {
       const j = parse(ev); if (!j) return;

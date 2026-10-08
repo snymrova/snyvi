@@ -12,7 +12,7 @@ use axum::body::Bytes;
 pub(crate) fn layout_json(app: &App) -> serde_json::Value {
     let l = app
         .store
-        .widgets(|c, _| widget::layout(c))
+        .clocked(|c, _| widget::layout(c))
         .unwrap_or_default();
     serde_json::to_value(l).unwrap_or_default()
 }
@@ -21,7 +21,7 @@ pub(crate) fn layout_json(app: &App) -> serde_json::Value {
 pub(crate) fn global_seats_json(app: &App) -> serde_json::Value {
     let s = app
         .store
-        .widgets(|c, _| widget::seats(c, 0))
+        .clocked(|c, _| widget::seats(c, 0))
         .unwrap_or_default();
     serde_json::to_value(s).unwrap_or_default()
 }
@@ -36,7 +36,7 @@ pub(crate) async fn desk_widgets(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.widgets(|c, _| widget::seats(c, id)) {
+    match app.store.clocked(|c, _| widget::seats(c, id)) {
         Ok(s) => Json(json!({ "widgets": s })).into_response(),
         Err(e) => err(e),
     }
@@ -48,7 +48,7 @@ pub(crate) async fn desk_widgets(
 pub(crate) async fn list_widgets(State(app): S) -> Response {
     let found = widget::files::scan(&app.paths.config_dir);
     let desks = app.store.desks().unwrap_or_default();
-    let r = app.store.widgets(|c, _| {
+    let r = app.store.clocked(|c, _| {
         let layout = widget::layout(c)?;
         let mut files = Vec::new();
         for f in &found {
@@ -97,7 +97,7 @@ pub(crate) async fn set_layout(State(app): S, headers: HeaderMap, body: Bytes) -
         )
             .into_response();
     };
-    match app.store.widgets(|c, now| widget::set_layout(c, &l, now)) {
+    match app.store.clocked(|c, now| widget::set_layout(c, &l, now)) {
         Ok(kept) => {
             let j = serde_json::to_value(&kept).unwrap_or_default();
             emit(&app, "layout", j.clone());
@@ -207,7 +207,7 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
         widget::Sent::Clear => {
             return match app
                 .store
-                .widgets(|c, _| widget::clear(c, desk, name, w.source))
+                .clocked(|c, _| widget::clear(c, desk, name, w.source))
             {
                 Ok(was) => {
                     if was {
@@ -223,7 +223,7 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
     let html = crate::render::widget_md(&b.md);
     match app
         .store
-        .widgets(|c, now| widget::put(c, desk, name, &b, &html, w, now))
+        .clocked(|c, now| widget::put(c, desk, name, &b, &html, w, now))
     {
         Ok(widget::Put::Done) => {
             announce(app, desk, name);
@@ -293,7 +293,7 @@ pub(crate) fn announce(app: &Arc<App>, desk: i64, name: &str) {
 
 /// One widget as the pages draw it, or the word that it is gone.
 fn send_seat(app: &App, desk: i64, name: &str) {
-    match app.store.widgets(|c, _| widget::seat_of(c, desk, name)) {
+    match app.store.clocked(|c, _| widget::seat_of(c, desk, name)) {
         Ok(Some(s)) => emit(app, "widget", serde_json::to_value(s).unwrap_or_default()),
         Ok(None) => emit(
             app,
@@ -309,7 +309,7 @@ pub(crate) fn pane_widgets_ended(app: &Arc<App>, pane: &str, slot: Option<i64>) 
     let said = slot.map_or("a panel since closed".to_string(), |n| {
         format!("panel {n} closed")
     });
-    let Ok(seats) = app.store.widgets(|c, _| {
+    let Ok(seats) = app.store.clocked(|c, _| {
         let s = widget::of_pane(c, pane)?;
         widget::pane_ended(c, pane, &said)?;
         Ok(s)
@@ -371,7 +371,7 @@ pub(crate) async fn allow_widget(
     } else {
         None
     };
-    match app.store.widgets(|c, now| {
+    match app.store.clocked(|c, now| {
         widget::set_prefs(c, &name, None, None, hash.as_deref(), b.rerun_edits, now)
     }) {
         Ok(p) => Json(json!({ "ok": true, "prefs": p })).into_response(),
@@ -404,7 +404,7 @@ pub(crate) async fn widget_prefs(
         return refused(StatusCode::BAD_REQUEST, "not a widget's settings");
     };
     let settings = b.settings.map(|m| serde_json::Value::Object(m).to_string());
-    let r = app.store.widgets(|c, now| {
+    let r = app.store.clocked(|c, now| {
         let p = widget::set_prefs(c, &name, b.hidden, settings.as_deref(), None, None, now)?;
         Ok((p, widget::desks_of(c, &name)?))
     });
@@ -540,7 +540,7 @@ pub(crate) async fn pane_propose_widget(
     let desk = placed.desk_id;
     match app
         .store
-        .threads(|c, now| crate::thread::suggest(c, desk, &s, now))
+        .clocked(|c, now| crate::thread::suggest(c, desk, &s, now))
     {
         Ok(crate::thread::Suggested::Card(card)) => {
             threads_moved(&app, desk);
@@ -579,7 +579,7 @@ pub(crate) fn install_proposed(app: &App, name: &str, staged: &str) -> Result<()
     std::fs::rename(&stage, &to).map_err(|e| format!("could not move it in: {e}"))?;
     let hash = widget::files::hash(&to)?;
     app.store
-        .widgets(|c, now| widget::set_prefs(c, name, None, None, Some(&hash), None, now))
+        .clocked(|c, now| widget::set_prefs(c, name, None, None, Some(&hash), None, now))
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

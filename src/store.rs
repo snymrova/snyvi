@@ -614,9 +614,9 @@ impl Store {
         conn.execute_batch(desk::SCHEMA)?;
         // Friends, and what is on its way to or from one (`crate::peer`).
         conn.execute_batch(peer::SCHEMA)?;
-        // Threads, turns and suggested panels (`crate::thread`).
+        // Threads, turns and suggested panels (`crate::thread`), and the
+        // sidebars' layout and their widgets (`crate::widget`).
         conn.execute_batch(thread::SCHEMA)?;
-        // The sidebars' layout and their widgets (`crate::widget`).
         conn.execute_batch(widget::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
@@ -2235,16 +2235,11 @@ impl Store {
         desk::keep_note(&self.conn.lock().unwrap(), desk_id, id)
     }
 
-    /// Threads, turns and suggested panels (`crate::thread`), with the clock:
-    /// the SQL is that file's and the lock is this one's, as for the desk
-    /// calls, through one door rather than a wrapper for each of twenty.
-    pub fn threads<T>(&self, f: impl FnOnce(&mut Connection, i64) -> Result<T>) -> Result<T> {
-        f(&mut self.conn.lock().unwrap(), now())
-    }
-
-    /// The layout and the widgets (`crate::widget`), with the clock: the SQL
-    /// is that file's and the lock is this one's, as for the threads.
-    pub fn widgets<T>(&self, f: impl FnOnce(&mut Connection, i64) -> Result<T>) -> Result<T> {
+    /// Threads, turns and suggested panels (`crate::thread`), and the
+    /// sidebars' layout and widgets (`crate::widget`), with the clock: the SQL
+    /// is those files' and the lock is this one's, through one door rather
+    /// than a wrapper for each of thirty.
+    pub fn clocked<T>(&self, f: impl FnOnce(&mut Connection, i64) -> Result<T>) -> Result<T> {
         f(&mut self.conn.lock().unwrap(), now())
     }
 

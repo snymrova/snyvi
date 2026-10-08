@@ -37,7 +37,7 @@ pub(crate) async fn home(
     // behind the same gate as the desks they are on.
     let (turns, threads) = if gated {
         app.store
-            .threads(|c, now| {
+            .clocked(|c, now| {
                 Ok((
                     crate::thread::waiting(c)?,
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN, now)?,

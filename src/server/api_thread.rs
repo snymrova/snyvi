@@ -58,7 +58,7 @@ pub(crate) async fn pane_start_thread(
         pane: id,
     };
     let desk = placed.desk_id;
-    match app.store.threads(|c, now| thread::start(c, desk, &s, now)) {
+    match app.store.clocked(|c, now| thread::start(c, desk, &s, now)) {
         Ok(Started::New(t)) => {
             threads_moved(&app, desk);
             (
@@ -142,7 +142,7 @@ pub(crate) async fn pane_move_thread(
     let desk = placed.desk_id;
     let r = app
         .store
-        .threads(|c, now| thread::move_thread(c, desk, None, &m, now));
+        .clocked(|c, now| thread::move_thread(c, desk, None, &m, now));
     moved(&app, desk, r)
 }
 
@@ -239,7 +239,7 @@ async fn pane_turn(
         cmd: b.cmd,
     };
     let desk = placed.desk_id;
-    let r = app.store.threads(|c, now| thread::ask(c, desk, &a, now));
+    let r = app.store.clocked(|c, now| thread::ask(c, desk, &a, now));
     asked(&app, desk, r)
 }
 
@@ -292,7 +292,7 @@ async fn pane_suggest(
         pane: id,
     };
     let desk = placed.desk_id;
-    match app.store.threads(|c, now| thread::suggest(c, desk, &s, now)) {
+    match app.store.clocked(|c, now| thread::suggest(c, desk, &s, now)) {
         Ok(Suggested::Card(card)) => {
             threads_moved(&app, desk);
             (StatusCode::CREATED, Json(json!({ "suggestion": card }))).into_response()
@@ -345,7 +345,7 @@ pub(crate) async fn pane_seen(
     let desk = placed.desk_id;
     match app
         .store
-        .threads(|c, now| thread::seen(c, desk, &id, &b, now))
+        .clocked(|c, now| thread::seen(c, desk, &id, &b, now))
     {
         // Only a thread that moved is worth an event: the mod says what it
         // saw on every run of gh, and most runs see the same thing.
@@ -428,7 +428,7 @@ pub(crate) async fn pane_band(
 
 /// The band's JSON and its tag.
 fn band_now(app: &App, desk: i64, pane: &str) -> anyhow::Result<(serde_json::Value, String)> {
-    let (t, waiting) = app.store.threads(|c, _| {
+    let (t, waiting) = app.store.clocked(|c, _| {
         let t = thread::of_pane(c, desk, pane)?;
         // The mod's own dialog is on screen already; the band names the rest.
         let waiting = thread::waiting_on(c, desk, false)?;
@@ -519,7 +519,7 @@ pub(crate) async fn pane_wait_turn(
     let mut rx = app.events.subscribe();
     let deadline = tokio::time::Instant::now() + WAIT;
     loop {
-        match app.store.threads(|c, _| thread::turn(c, desk, turn)) {
+        match app.store.clocked(|c, _| thread::turn(c, desk, turn)) {
             Ok(Some(t)) if t.pane != id => return StatusCode::NOT_FOUND.into_response(),
             Ok(Some(t)) if t.removed_at != 0 => return StatusCode::GONE.into_response(),
             Ok(Some(t)) if t.answered_at != 0 => {
@@ -570,7 +570,7 @@ pub(crate) async fn pane_answer_turn(
         Err(no) => return *no,
     };
     let desk = placed.desk_id;
-    let r = app.store.threads(|c, now| {
+    let r = app.store.clocked(|c, now| {
         let Some(t) = thread::turn(c, desk, turn)? else {
             return Ok(false);
         };
@@ -643,7 +643,7 @@ pub(crate) async fn desk_threads(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let r = app.store.threads(|c, now| {
+    let r = app.store.clocked(|c, now| {
         Ok((
             thread::for_desk(c, id, now)?,
             thread::turns(c, id, now - ANSWERED_SHOWN)?,
@@ -680,7 +680,7 @@ pub(crate) async fn desk_move_thread(
     };
     let r = app
         .store
-        .threads(|c, now| thread::move_thread(c, id, Some(t), &m, now));
+        .clocked(|c, now| thread::move_thread(c, id, Some(t), &m, now));
     moved(&app, id, r)
 }
 
@@ -694,7 +694,7 @@ fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
     if (what, act) == ("suggestions", "open") {
         return open_suggestion(app, id, row);
     }
-    let r = app.store.threads(|c, now| {
+    let r = app.store.clocked(|c, now| {
         Ok(match (what, act) {
             ("threads", "remove") => thread::remove(c, id, row, now)?,
             ("threads", "restore") => thread::restore(c, id, row)?,
@@ -716,7 +716,7 @@ fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
 }
 
 fn open_suggestion(app: &App, id: i64, row: i64) -> Response {
-    let card = match app.store.threads(|c, _| thread::suggestion(c, id, row)) {
+    let card = match app.store.clocked(|c, _| thread::suggestion(c, id, row)) {
         Ok(Some(s)) if s.settled_at == 0 => s,
         Ok(_) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return err(e),
@@ -742,7 +742,7 @@ fn open_suggestion(app: &App, id: i64, row: i64) -> Response {
     }
     match app
         .store
-        .threads(|c, now| thread::settle(c, id, row, "opened", now))
+        .clocked(|c, now| thread::settle(c, id, row, "opened", now))
     {
         Ok(_) => {
             threads_moved(app, id);
@@ -800,7 +800,7 @@ pub(crate) async fn desk_answer_turn(
     }
     match app
         .store
-        .threads(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now))
+        .clocked(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now))
     {
         Ok(Some(turn)) => {
             threads_moved(&app, id);

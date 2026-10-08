@@ -557,8 +557,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/asides", get(asides_setting).post(set_asides_setting))
-        // Friends (`api_peer`): the reader's actions from this page or with
-        // the token, the reads open like the project list is.
         .merge(pane_routes())
         .merge(thread_routes())
         .merge(widget_routes())
@@ -570,6 +568,16 @@ fn router(app: Arc<App>) -> Router {
         // from another host, and the table test in `tests` holds that.
         .layer(axum::middleware::from_fn(host_gate))
         .with_state(app)
+}
+
+/// Where a shell moves to is where it starts next (`pane::follow_folders`).
+fn follow_cwd(app: &Arc<App>) {
+    let weak = Arc::downgrade(app);
+    app.panes.on_cwd(Box::new(move |id, cwd| {
+        if let Some(app) = weak.upgrade() {
+            let _ = app.store.set_pane_cwd(id, cwd);
+        }
+    }));
 }
 
 /// Every panel of a desk shares one socket, and its frames are already paced
@@ -656,13 +664,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // which panes come back as a conversation.
     app.panes.mark_resume(resume);
     app.panes.mark_offer(offer);
-    // Where a shell moves to is where it starts next (`pane::follow_folders`).
-    let weak = Arc::downgrade(&app);
-    app.panes.on_cwd(Box::new(move |id, cwd| {
-        if let Some(app) = weak.upgrade() {
-            let _ = app.store.set_pane_cwd(id, cwd);
-        }
-    }));
+    follow_cwd(&app);
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
     let leaving = app.clone();

@@ -79,7 +79,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     let all = app.store.desks().unwrap_or_default();
     for f in found {
         let Ok(spec) = &f.spec else { continue };
-        let Ok(prefs) = app.store.widgets(|c, _| widget::prefs(c, &f.name)) else {
+        let Ok(prefs) = app.store.clocked(|c, _| widget::prefs(c, &f.name)) else {
             continue;
         };
         if prefs.hidden {
@@ -103,21 +103,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             continue;
         }
         // Allowed, and unchanged since.
-        let stamp = files::stamp(&f.folder).unwrap_or_default();
-        let cached = r
-            .hashes
-            .get(&f.name)
-            .filter(|(s, _)| *s == stamp)
-            .map(|(_, h)| h.clone());
-        let h = match cached {
-            Some(h) => h,
-            None => {
-                let h = files::hash(&f.folder);
-                r.hashes.insert(f.name.clone(), (stamp, h.clone()));
-                h
-            }
-        };
-        let hash = match h {
+        let hash = match folder_hash(r, &f) {
             Ok(h) => h,
             Err(why) => {
                 for (desk, _) in &seats {
@@ -128,7 +114,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         };
         if prefs.trusted_hash != hash {
             if prefs.rerun_edits && !prefs.trusted_hash.is_empty() {
-                let _ = app.store.widgets(|c, now| {
+                let _ = app.store.clocked(|c, now| {
                     widget::set_prefs(c, &f.name, None, None, Some(&hash), None, now)
                 });
             } else {
@@ -194,6 +180,19 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     }
 }
 
+/// A folder's hash, read again only when a file in it was touched.
+fn folder_hash(r: &mut Runner, f: &files::Found) -> Result<String, String> {
+    let stamp = files::stamp(&f.folder).unwrap_or_default();
+    match r.hashes.get(&f.name).filter(|(s, _)| *s == stamp) {
+        Some((_, h)) => h.clone(),
+        None => {
+            let h = files::hash(&f.folder);
+            r.hashes.insert(f.name.clone(), (stamp, h.clone()));
+            h
+        }
+    }
+}
+
 /// A line in a seat instead of a run: said once, until it changes.
 fn say(app: &Arc<App>, r: &mut Runner, desk: i64, name: &str, why: &str) {
     let key = (desk, name.to_string());
@@ -203,7 +202,7 @@ fn say(app: &Arc<App>, r: &mut Runner, desk: i64, name: &str, why: &str) {
     r.said.insert(key, why.to_string());
     if app
         .store
-        .widgets(|c, now| widget::fail(c, desk, name, why, "widget file", now))
+        .clocked(|c, now| widget::fail(c, desk, name, why, "widget file", now))
         .is_ok()
     {
         announce(app, desk, name);
@@ -351,11 +350,11 @@ fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, ran: Ran) {
     let wrote = match ran {
         Ran::Failed(why) => app
             .store
-            .widgets(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
+            .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
         Ran::Printed(out) => match widget::Body::parse(&out) {
             Err(why) => app
                 .store
-                .widgets(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
+                .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
             Ok(sent) => {
                 let mut b = match sent {
                     widget::Sent::Body(b) => b,
@@ -374,7 +373,7 @@ fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, ran: Ran) {
                     b.stale_after = 0;
                 }
                 let html = crate::render::widget_md(&b.md);
-                app.store.widgets(|c, now| {
+                app.store.clocked(|c, now| {
                     widget::put(c, desk, &spec.name, &b, &html, &w, now).map(|_| ())
                 })
             }
