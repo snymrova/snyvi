@@ -1399,6 +1399,52 @@ pub fn window_is_up() -> bool {
         .unwrap_or(false)
 }
 
+/// Set or clear a widget (`snyvi widget`): on this panel's desk from inside
+/// one, unless `desk` or `global` says where, as the panel itself would --
+/// so it reads "panel 2" -- and otherwise with the token, on a desk or the
+/// left.
+pub fn widget(
+    paths: &Paths,
+    name: &str,
+    body: Value,
+    desk: Option<i64>,
+    global: bool,
+) -> Result<Value> {
+    ensure_daemon()?;
+    let pane = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|p| crate::pane::valid_id(p));
+    let mut resp = match pane {
+        Some(p) if desk.is_none() && !global => pane_post(
+            paths,
+            &format!("{p}/widget"),
+            serde_json::json!({ "name": name, "body": body }),
+        )?,
+        _ => {
+            let token = config::read_token(paths).ok_or_else(|| {
+                anyhow!(
+                    "no token at {}; is the daemon running as this user?",
+                    paths.token_path.display()
+                )
+            })?;
+            agent()
+                .post(&format!("{}/api/widgets", config::base_url()))
+                .header("Authorization", &format!("Bearer {token}"))
+                .config()
+                .timeout_global(Some(Duration::from_secs(5)))
+                .http_status_as_error(false)
+                .build()
+                .send_json(serde_json::json!({ "name": name, "body": body, "desk": desk, "writer": "snyvi widget set" }))
+                .context("asking snyvi")?
+        }
+    };
+    match resp.status().as_u16() {
+        200 => Ok(resp.body_mut().read_json()?),
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1447,38 +1493,5 @@ mod tests {
             .unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], "127.0.0.1:7777".parse().unwrap());
-    }
-}
-
-/// Set or clear a widget (`snyvi widget`): on this panel's desk from inside
-/// one, unless `desk` or `global` says where, as the panel itself would --
-/// so it reads "panel 2" -- and otherwise with the token, on a desk or the
-/// left.
-pub fn widget(paths: &Paths, name: &str, body: Value, desk: Option<i64>, global: bool) -> Result<Value> {
-    ensure_daemon()?;
-    let pane = std::env::var("SNYVI_SESSION").ok().filter(|p| crate::pane::valid_id(p));
-    let mut resp = match pane {
-        Some(p) if desk.is_none() && !global => {
-            pane_post(paths, &format!("{p}/widget"), serde_json::json!({ "name": name, "body": body }))?
-        }
-        _ => {
-            let token = config::read_token(paths).ok_or_else(|| {
-                anyhow!("no token at {}; is the daemon running as this user?", paths.token_path.display())
-            })?;
-            agent()
-                .post(&format!("{}/api/widgets", config::base_url()))
-                .header("Authorization", &format!("Bearer {token}"))
-                .config()
-                .timeout_global(Some(Duration::from_secs(5)))
-                .http_status_as_error(false)
-                .build()
-                .send_json(serde_json::json!({ "name": name, "body": body, "desk": desk, "writer": "snyvi widget set" }))
-                .context("asking snyvi")?
-        }
-    };
-    match resp.status().as_u16() {
-        200 => Ok(resp.body_mut().read_json()?),
-        400 | 404 | 409 => bail!("{}", said(&mut resp)),
-        s => bail!("snyvi answered {s}"),
     }
 }

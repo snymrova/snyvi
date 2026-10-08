@@ -62,7 +62,15 @@ pub(crate) async fn focus(State(app): S, headers: HeaderMap, body: Bytes) -> Res
                 }
             }
             let visible = b.visible.unwrap_or(focused);
-            m.insert(page, Said { seq, focused, visible, desk: b.desk.filter(|_| visible) });
+            m.insert(
+                page,
+                Said {
+                    seq,
+                    focused,
+                    visible,
+                    desk: b.desk.filter(|_| visible),
+                },
+            );
         }
     }
     if focused {
@@ -96,7 +104,8 @@ pub(crate) fn in_view(app: &App, desk: Option<i64>) -> bool {
         m.clear();
         return false;
     }
-    m.values().any(|v| v.visible && (desk.is_none() || v.desk == desk))
+    m.values()
+        .any(|v| v.visible && (desk.is_none() || v.desk == desk))
 }
 
 /// The desks some page in view shows, for the runner's round.
@@ -105,7 +114,11 @@ pub(crate) fn desks_in_view(app: &App) -> Vec<i64> {
         return Vec::new();
     }
     let m = FOCUSED.lock().unwrap();
-    let mut out: Vec<i64> = m.values().filter(|v| v.visible).filter_map(|v| v.desk).collect();
+    let mut out: Vec<i64> = m
+        .values()
+        .filter(|v| v.visible)
+        .filter_map(|v| v.desk)
+        .collect();
     out.sort_unstable();
     out.dedup();
     out

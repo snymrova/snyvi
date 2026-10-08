@@ -35,11 +35,14 @@ const OUT_MAX: u64 = 4096;
 /// Runs at once, across every widget.
 const AT_ONCE: usize = 2;
 
+/// A folder's stamp (`files::stamp`), and the hash taken at it.
+type Hashed = ((u128, u64, usize), Result<String, String>);
+
 /// What the runner keeps between rounds.
 #[derive(Default)]
 struct Runner {
     /// A folder's stamp and the hash taken at it.
-    hashes: HashMap<String, ((u128, u64, usize), Result<String, String>)>,
+    hashes: HashMap<String, Hashed>,
     /// When each (desk, name) last started, and whether it is running now.
     last: HashMap<(i64, String), Instant>,
     running: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<(i64, String)>>>,
@@ -72,7 +75,9 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     let all = app.store.desks().unwrap_or_default();
     for f in found {
         let Ok(spec) = &f.spec else { continue };
-        let Ok(prefs) = app.store.widgets(|c, _| widget::prefs(c, &f.name)) else { continue };
+        let Ok(prefs) = app.store.widgets(|c, _| widget::prefs(c, &f.name)) else {
+            continue;
+        };
         if prefs.hidden {
             continue;
         }
@@ -95,7 +100,11 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         }
         // Allowed, and unchanged since.
         let stamp = files::stamp(&f.folder).unwrap_or_default();
-        let cached = r.hashes.get(&f.name).filter(|(s, _)| *s == stamp).map(|(_, h)| h.clone());
+        let cached = r
+            .hashes
+            .get(&f.name)
+            .filter(|(s, _)| *s == stamp)
+            .map(|(_, h)| h.clone());
         let h = match cached {
             Some(h) => h,
             None => {
@@ -115,10 +124,15 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         };
         if prefs.trusted_hash != hash {
             if prefs.rerun_edits && !prefs.trusted_hash.is_empty() {
-                let _ = app.store.widgets(|c, now| widget::set_prefs(c, &f.name, None, None, Some(&hash), None, now));
+                let _ = app.store.widgets(|c, now| {
+                    widget::set_prefs(c, &f.name, None, None, Some(&hash), None, now)
+                });
             } else {
                 let why = if prefs.trusted_hash.is_empty() {
-                    format!("allow: {} wants to run {} every {} s", spec.title, spec.run.command, spec.run.every)
+                    format!(
+                        "allow: {} wants to run {} every {} s",
+                        spec.title, spec.run.command, spec.run.every
+                    )
                 } else {
                     format!("changed: {} changed since you allowed it", spec.title)
                 };
@@ -141,7 +155,10 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             if r.running.lock().unwrap().contains(&key) {
                 continue;
             }
-            if r.last.get(&key).is_some_and(|t| t.elapsed() < Duration::from_secs(spec.run.every)) {
+            if r.last
+                .get(&key)
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(spec.run.every))
+            {
                 continue;
             }
             r.last.insert(key.clone(), Instant::now());
@@ -152,7 +169,13 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                 "settings": spec.settings_with(&prefs.settings),
                 "snyvi": VERSION,
             });
-            let (app, gate, running, spec, path) = (app.clone(), gate.clone(), r.running.clone(), spec.clone(), path.to_string());
+            let (app, gate, running, spec, path) = (
+                app.clone(),
+                gate.clone(),
+                r.running.clone(),
+                spec.clone(),
+                path.to_string(),
+            );
             tokio::spawn(async move {
                 let _held = gate.acquire_owned().await;
                 let out = run_once(&spec, &cwd, &path, &stdin).await;
@@ -170,7 +193,11 @@ fn say(app: &Arc<App>, r: &mut Runner, desk: i64, name: &str, why: &str) {
         return;
     }
     r.said.insert(key, why.to_string());
-    if app.store.widgets(|c, now| widget::fail(c, desk, name, why, "widget file", now)).is_ok() {
+    if app
+        .store
+        .widgets(|c, now| widget::fail(c, desk, name, why, "widget file", now))
+        .is_ok()
+    {
         announce(app, desk, name);
     }
 }
@@ -202,7 +229,22 @@ async fn run_once(spec: &files::Spec, cwd: &Path, path: &str, stdin: &serde_json
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    for k in ["HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "USERPROFILE", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA"] {
+    for k in [
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "TMPDIR",
+        "USERPROFILE",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "APPDATA",
+        "LOCALAPPDATA",
+    ] {
         if let Some(v) = std::env::var_os(k) {
             cmd.env(k, v);
         }
@@ -225,14 +267,22 @@ async fn run_once(spec: &files::Spec, cwd: &Path, path: &str, stdin: &serde_json
     match tokio::time::timeout(Duration::from_secs(spec.run.timeout), work).await {
         Err(_) => {
             stop_group(pid);
-            Ran::Failed(format!("took longer than {} s and was stopped", spec.run.timeout))
+            Ran::Failed(format!(
+                "took longer than {} s and was stopped",
+                spec.run.timeout
+            ))
         }
         Ok((o, e, status)) => {
             if o.len() as u64 > OUT_MAX {
                 stop_group(pid);
                 return Ran::Failed(format!("printed more than {} KB", OUT_MAX / 1024));
             }
-            let first_err = String::from_utf8_lossy(&e).lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+            let first_err = String::from_utf8_lossy(&e)
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_string();
             match status {
                 Ok(s) if s.success() => Ran::Printed(String::from_utf8_lossy(&o).to_string()),
                 Ok(s) => Ran::Failed(match (s.code(), first_err.is_empty()) {
@@ -277,12 +327,27 @@ fn stop_group(pid: Option<u32>) {
 /// What a run printed, in its seat; or why it printed nothing usable, over
 /// the last good body.
 fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, ran: Ran) {
-    let who = spec.run.command.split_whitespace().next().unwrap_or("").trim_start_matches("./").to_string();
-    let w = widget::Writer { source: widget::Source::File, writer: &who, pane: "" };
+    let who = spec
+        .run
+        .command
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("./")
+        .to_string();
+    let w = widget::Writer {
+        source: widget::Source::File,
+        writer: &who,
+        pane: "",
+    };
     let wrote = match ran {
-        Ran::Failed(why) => app.store.widgets(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
+        Ran::Failed(why) => app
+            .store
+            .widgets(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
         Ran::Printed(out) => match widget::Body::parse(&out) {
-            Err(why) => app.store.widgets(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
+            Err(why) => app
+                .store
+                .widgets(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
             Ok(sent) => {
                 let mut b = match sent {
                     widget::Sent::Body(b) => b,
@@ -301,7 +366,9 @@ fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, ran: Ran) {
                     b.stale_after = 0;
                 }
                 let html = crate::render::widget_md(&b.md);
-                app.store.widgets(|c, now| widget::put(c, desk, &spec.name, &b, &html, &w, now).map(|_| ()))
+                app.store.widgets(|c, now| {
+                    widget::put(c, desk, &spec.name, &b, &html, &w, now).map(|_| ())
+                })
             }
         },
     };
@@ -318,7 +385,10 @@ async fn login_path() -> String {
     if cfg!(windows) {
         return own;
     }
-    let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into());
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/bin/sh".into());
     let ask = tokio::process::Command::new(&shell)
         .args(["-l", "-c", "printf %s \"$PATH\""])
         .stdin(std::process::Stdio::null())
@@ -328,7 +398,11 @@ async fn login_path() -> String {
     match tokio::time::timeout(Duration::from_secs(5), ask).await {
         Ok(Ok(o)) if o.status.success() => {
             let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if p.is_empty() { own } else { p }
+            if p.is_empty() {
+                own
+            } else {
+                p
+            }
         }
         _ => own,
     }
@@ -343,7 +417,11 @@ mod tests {
             name: "t".into(),
             title: "T".into(),
             scope: files::Scope::Global,
-            run: files::Run { command: command.into(), every: 5, timeout },
+            run: files::Run {
+                command: command.into(),
+                every: 5,
+                timeout,
+            },
             lines: 3,
             settings: Default::default(),
         }
@@ -352,7 +430,13 @@ mod tests {
     async fn run(command: &str, timeout: u64) -> Ran {
         let dir = std::env::temp_dir();
         let path = std::env::var("PATH").unwrap_or_default();
-        run_once(&spec(command, timeout), &dir, &path, &json!({ "settings": { "x": 1 } })).await
+        run_once(
+            &spec(command, timeout),
+            &dir,
+            &path,
+            &json!({ "settings": { "x": 1 } }),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -382,7 +466,10 @@ mod tests {
             Ran::Printed(o) => panic!("{o}"),
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
-        assert!(!mark.exists(), "the shell's child lived on past the timeout");
+        assert!(
+            !mark.exists(),
+            "the shell's child lived on past the timeout"
+        );
     }
 
     #[tokio::test]

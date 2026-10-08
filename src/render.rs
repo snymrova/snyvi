@@ -1718,9 +1718,13 @@ mod tests {
 
     #[test]
     fn widget_md_is_strict() {
-        let h = widget_md("**main** · 2 ahead <script>alert(1)</script>\n\n<div onclick=x>hi</div>");
+        let h =
+            widget_md("**main** · 2 ahead <script>alert(1)</script>\n\n<div onclick=x>hi</div>");
         assert!(h.contains("<strong>main</strong>"));
-        assert!(!h.contains("<script") && !h.contains("<div") && !h.contains("raw HTML"), "{h}");
+        assert!(
+            !h.contains("<script") && !h.contains("<div") && !h.contains("raw HTML"),
+            "{h}"
+        );
         let h = widget_md("![the build](https://x.test/a.png) and [CI](https://ci.test/1)");
         assert!(!h.contains("<img"), "{h}");
         assert!(h.contains("the build"));

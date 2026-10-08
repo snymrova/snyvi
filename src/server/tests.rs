@@ -788,8 +788,20 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("POST", "/api/widgets", Some("{}"), Gate::Token, true),
     ("GET", "/api/widgets", None, Gate::Open, true),
     ("GET", "/sidebars", None, Gate::Open, true),
-    ("POST", "/api/widgets/nope/allow", Some("{}"), Gate::Desk, true),
-    ("POST", "/api/widgets/nope/prefs", Some("{}"), Gate::Reader, true),
+    (
+        "POST",
+        "/api/widgets/nope/allow",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/widgets/nope/prefs",
+        Some("{}"),
+        Gate::Reader,
+        true,
+    ),
     (
         "POST",
         "/api/panes/nope/propose-widget",
@@ -2261,7 +2273,12 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
         .body(Body::empty())
         .unwrap();
     let resp = router.oneshot(req).await.unwrap();
-    let page = axum::body::to_bytes(resp.into_body(), 4 << 20).await.unwrap();
+    let page = axum::body::to_bytes(resp.into_body(), 4 << 20)
+        .await
+        .unwrap();
     let page = String::from_utf8_lossy(&page);
-    assert!(page.contains(r#""layout":{"left":["folders","#), "the first paint has the layout");
+    assert!(
+        page.contains(r#""layout":{"left":["folders","#),
+        "the first paint has the layout"
+    );
 }

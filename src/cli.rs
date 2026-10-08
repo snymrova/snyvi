@@ -238,9 +238,7 @@ enum WidgetCmd {
         global: bool,
     },
     /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses.
-    Check {
-        name: String,
-    },
+    Check { name: String },
 }
 
 #[derive(Subcommand)]
@@ -688,7 +686,16 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     let (name, body, desk, global) = match cmd {
         WidgetCmd::New { name, global } => return widget_new(paths, &name, global),
         WidgetCmd::Check { name } => return widget_check(paths, &name),
-        WidgetCmd::Set { name, text, desk, global, tone, count, lines, stale_after } => {
+        WidgetCmd::Set {
+            name,
+            text,
+            desk,
+            global,
+            tone,
+            count,
+            lines,
+            stale_after,
+        } => {
             let text = match text.as_deref() {
                 None | Some("-") => {
                     let mut s = String::new();
@@ -697,14 +704,20 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
                 }
                 Some(t) => t.to_string(),
             };
-            let body = if tone.is_none() && count.is_none() && lines.is_none() && stale_after.is_none() {
+            let body = if tone.is_none()
+                && count.is_none()
+                && lines.is_none()
+                && stale_after.is_none()
+            {
                 serde_json::Value::String(text)
             } else {
                 serde_json::json!({ "body": text, "tone": tone, "count": count, "lines": lines, "stale_after": stale_after })
             };
             (name, body, desk, global)
         }
-        WidgetCmd::Clear { name, desk, global } => (name, serde_json::Value::String(String::new()), desk, global),
+        WidgetCmd::Clear { name, desk, global } => {
+            (name, serde_json::Value::String(String::new()), desk, global)
+        }
     };
     let v = client::widget(paths, &name, body, desk, global)?;
     if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
@@ -723,7 +736,14 @@ fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
     if dir.exists() {
         anyhow::bail!("{} is there already", dir.display());
     }
-    let (json, script, body) = files::starter(name, if global { files::Scope::Global } else { files::Scope::Desk });
+    let (json, script, body) = files::starter(
+        name,
+        if global {
+            files::Scope::Global
+        } else {
+            files::Scope::Desk
+        },
+    );
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("widget.json"), json)?;
     std::fs::write(dir.join(script), body)?;
@@ -744,7 +764,8 @@ fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
 fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
     use crate::widget::{self, files};
     let folder = files::dir(&paths.config_dir).join(name);
-    let spec = files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
+    let spec =
+        files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
     let hash = files::hash(&folder).map_err(|why| anyhow::anyhow!(why))?;
     let cwd = match spec.scope {
         files::Scope::Global => folder.clone(),
@@ -755,7 +776,13 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
         "settings": spec.settings_with("{}"),
         "snyvi": crate::version::VERSION,
     });
-    eprintln!("{} · {} · every {} s · in {}", spec.title, spec.run.command, spec.run.every, cwd.display());
+    eprintln!(
+        "{} · {} · every {} s · in {}",
+        spec.title,
+        spec.run.command,
+        spec.run.every,
+        cwd.display()
+    );
     let mut cmd = if cfg!(windows) {
         let mut c = std::process::Command::new("cmd");
         c.arg("/C").arg(&spec.run.command);
@@ -780,28 +807,53 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
     let out = child.wait_with_output()?;
     let took = started.elapsed();
     if !out.status.success() {
-        anyhow::bail!("it exited {}: snyvi would show that over the last good body", out.status.code().unwrap_or(-1));
+        anyhow::bail!(
+            "it exited {}: snyvi would show that over the last good body",
+            out.status.code().unwrap_or(-1)
+        );
     }
     if took.as_secs() >= spec.run.timeout {
-        eprintln!("snyvi: it took {:.1} s, past its timeout of {} s: snyvi would stop it", took.as_secs_f64(), spec.run.timeout);
+        eprintln!(
+            "snyvi: it took {:.1} s, past its timeout of {} s: snyvi would stop it",
+            took.as_secs_f64(),
+            spec.run.timeout
+        );
     }
     if out.stdout.len() > 4096 {
-        anyhow::bail!("it printed {} bytes: snyvi reads 4 KB at most", out.stdout.len());
+        anyhow::bail!(
+            "it printed {} bytes: snyvi reads 4 KB at most",
+            out.stdout.len()
+        );
     }
     match widget::Body::parse(&String::from_utf8_lossy(&out.stdout)) {
         Err(why) => anyhow::bail!("snyvi would refuse what it printed: {why}"),
         Ok(widget::Sent::Clear) => println!("(nothing: the seat would be empty)"),
         Ok(widget::Sent::Body(b)) => {
-            println!("tone {} · count {} · {} lines", b.tone.as_str(), if b.count.is_empty() { "none" } else { &b.count }, b.lines);
+            println!(
+                "tone {} · count {} · {} lines",
+                b.tone.as_str(),
+                if b.count.is_empty() { "none" } else { &b.count },
+                b.lines
+            );
             println!("{}", crate::render::widget_md(&b.md));
         }
     }
     // Read only: the daemon owns the database, and opening it as the store
     // does would tidy what the daemon is in the middle of.
-    let allowed = rusqlite::Connection::open_with_flags(&paths.db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .ok()
-        .and_then(|c| widget::prefs(&c, name).ok())
-        .is_some_and(|p| p.trusted_hash == hash);
-    eprintln!("{}", if allowed { "Allowed as it is: snyvi runs it while it is in view." } else { "Not allowed as it is: Allow it in the window, in its seat or on /sidebars." });
+    let allowed = rusqlite::Connection::open_with_flags(
+        &paths.db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()
+    .and_then(|c| widget::prefs(&c, name).ok())
+    .is_some_and(|p| p.trusted_hash == hash);
+    eprintln!(
+        "{}",
+        if allowed {
+            "Allowed as it is: snyvi runs it while it is in view."
+        } else {
+            "Not allowed as it is: Allow it in the window, in its seat or on /sidebars."
+        }
+    );
     Ok(())
 }

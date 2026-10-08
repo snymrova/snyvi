@@ -21,39 +21,45 @@ before. scope desk runs it in the desk's folder on that desk's rail; global on t
 script whole (it gets the desk and settings as JSON on stdin) and a command that runs it, e.g. ./run.sh.";
 
 pub(super) fn specs() -> Vec<Value> {
-    vec![json!({
-        "name": "propose_widget", "title": "Propose a widget", "description": PROPOSE,
-        "inputSchema": { "type": "object", "properties": {
-            "name": { "type": "string", "description": "Lowercase letters, digits and dashes, at most 32." },
-            "title": { "type": "string" },
-            "scope": { "type": "string", "enum": ["desk", "global"] },
-            "command": { "type": "string", "description": "One line, run with sh -c (cmd /C on Windows) in the widget's folder or the desk's." },
-            "every": { "type": "integer", "minimum": 5, "description": "Seconds between runs (60)." },
-            "timeout": { "type": "integer", "minimum": 1, "maximum": 30 },
-            "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
-            "script_name": { "type": "string", "description": "The script's file name, e.g. run.sh." },
-            "script": { "type": "string", "description": "The script, whole, at most 16 KB." },
-            "why": { "type": "string", "description": "One sentence." }
-        }, "required": ["name", "command", "why"], "additionalProperties": false },
-        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
-    }), json!({
-        "name": "set_widget", "title": "Set a widget", "description": SET,
-        "inputSchema": { "type": "object", "properties": {
-            "name": { "type": "string", "description": "Lowercase letters, digits and dashes, at most 32." },
-            "body": { "type": "string", "description": "Markdown, at most 1500 characters. Empty clears." },
-            "tone": { "type": "string", "enum": ["ok", "warn", "bad", "none"] },
-            "count": { "type": "string", "description": "At most 8 characters: 3, !2, 3/5." },
-            "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
-            "stale_after": { "type": "integer", "minimum": 0, "description": "Seconds; 0 is never." }
-        }, "required": ["name", "body"], "additionalProperties": false },
-        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
-    })]
+    vec![
+        json!({
+            "name": "propose_widget", "title": "Propose a widget", "description": PROPOSE,
+            "inputSchema": { "type": "object", "properties": {
+                "name": { "type": "string", "description": "Lowercase letters, digits and dashes, at most 32." },
+                "title": { "type": "string" },
+                "scope": { "type": "string", "enum": ["desk", "global"] },
+                "command": { "type": "string", "description": "One line, run with sh -c (cmd /C on Windows) in the widget's folder or the desk's." },
+                "every": { "type": "integer", "minimum": 5, "description": "Seconds between runs (60)." },
+                "timeout": { "type": "integer", "minimum": 1, "maximum": 30 },
+                "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
+                "script_name": { "type": "string", "description": "The script's file name, e.g. run.sh." },
+                "script": { "type": "string", "description": "The script, whole, at most 16 KB." },
+                "why": { "type": "string", "description": "One sentence." }
+            }, "required": ["name", "command", "why"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+        }),
+        json!({
+            "name": "set_widget", "title": "Set a widget", "description": SET,
+            "inputSchema": { "type": "object", "properties": {
+                "name": { "type": "string", "description": "Lowercase letters, digits and dashes, at most 32." },
+                "body": { "type": "string", "description": "Markdown, at most 1500 characters. Empty clears." },
+                "tone": { "type": "string", "enum": ["ok", "warn", "bad", "none"] },
+                "count": { "type": "string", "description": "At most 8 characters: 3, !2, 3/5." },
+                "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
+                "stale_after": { "type": "integer", "minimum": 0, "description": "Seconds; 0 is never." }
+            }, "required": ["name", "body"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
+    ]
 }
 
 impl Session {
     pub(super) fn propose_widget(&self, args: &Value) -> Value {
         let Some(p) = self.pane.as_deref() else {
-            return said("This session is not running in a snyvi desk, so there is no one to propose it to.", true);
+            return said(
+                "This session is not running in a snyvi desk, so there is no one to propose it to.",
+                true,
+            );
         };
         let mut body = args.clone();
         body["by"] = json!(self.by());
@@ -68,7 +74,10 @@ impl Session {
 
     pub(super) fn set_widget(&self, args: &Value) -> Value {
         let Some(p) = self.pane.as_deref() else {
-            return said("This session is not running in a snyvi desk, so there is no rail to put it in.", true);
+            return said(
+                "This session is not running in a snyvi desk, so there is no rail to put it in.",
+                true,
+            );
         };
         let name = arg(args, "name");
         let mut body = json!({ "body": args.get("body").and_then(Value::as_str).unwrap_or("") });

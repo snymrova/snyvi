@@ -10,13 +10,19 @@ use axum::body::Bytes;
 
 /// The layout, as every page draws it.
 pub(crate) fn layout_json(app: &App) -> serde_json::Value {
-    let l = app.store.widgets(|c, _| widget::layout(c)).unwrap_or_default();
+    let l = app
+        .store
+        .widgets(|c, _| widget::layout(c))
+        .unwrap_or_default();
     serde_json::to_value(l).unwrap_or_default()
 }
 
 /// The global widgets' seats, for every page's first paint.
 pub(crate) fn global_seats_json(app: &App) -> serde_json::Value {
-    let s = app.store.widgets(|c, _| widget::seats(c, 0)).unwrap_or_default();
+    let s = app
+        .store
+        .widgets(|c, _| widget::seats(c, 0))
+        .unwrap_or_default();
     serde_json::to_value(s).unwrap_or_default()
 }
 
@@ -85,7 +91,11 @@ pub(crate) async fn set_layout(State(app): S, headers: HeaderMap, body: Bytes) -
         return no;
     }
     let Ok(l) = serde_json::from_slice::<Layout>(&body) else {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "not a layout" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "not a layout" })),
+        )
+            .into_response();
     };
     match app.store.widgets(|c, now| widget::set_layout(c, &l, now)) {
         Ok(kept) => {
@@ -141,7 +151,11 @@ pub(crate) async fn pane_set_widget(
         return refused(StatusCode::BAD_REQUEST, "not a widget");
     };
     let writer = format!("panel {}", placed.pane.slot);
-    let w = widget::Writer { source: widget::Source::Push, writer: &writer, pane: &id };
+    let w = widget::Writer {
+        source: widget::Source::Push,
+        writer: &writer,
+        pane: &id,
+    };
     push(&app, placed.desk_id, &b.name, &b.raw(), &w)
 }
 
@@ -155,11 +169,25 @@ pub(crate) async fn set_widget(State(app): S, headers: HeaderMap, body: Bytes) -
         return refused(StatusCode::BAD_REQUEST, "not a widget");
     };
     let desk = b.desk.unwrap_or(0);
-    if desk != 0 && !app.store.desks().map(|ds| ds.iter().any(|d| d.id == desk)).unwrap_or(false) {
+    if desk != 0
+        && !app
+            .store
+            .desks()
+            .map(|ds| ds.iter().any(|d| d.id == desk))
+            .unwrap_or(false)
+    {
         return refused(StatusCode::NOT_FOUND, format!("there is no desk {desk}"));
     }
-    let writer = if b.writer.trim().is_empty() { "a script".to_string() } else { b.writer.trim().chars().take(40).collect() };
-    let w = widget::Writer { source: widget::Source::Push, writer: &writer, pane: "" };
+    let writer = if b.writer.trim().is_empty() {
+        "a script".to_string()
+    } else {
+        b.writer.trim().chars().take(40).collect()
+    };
+    let w = widget::Writer {
+        source: widget::Source::Push,
+        writer: &writer,
+        pane: "",
+    };
     push(&app, desk, &b.name, &b.raw(), &w)
 }
 
@@ -177,7 +205,10 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
     };
     let b = match sent {
         widget::Sent::Clear => {
-            return match app.store.widgets(|c, _| widget::clear(c, desk, name, w.source)) {
+            return match app
+                .store
+                .widgets(|c, _| widget::clear(c, desk, name, w.source))
+            {
                 Ok(was) => {
                     if was {
                         announce(app, desk, name);
@@ -190,7 +221,10 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
         widget::Sent::Body(b) => b,
     };
     let html = crate::render::widget_md(&b.md);
-    match app.store.widgets(|c, now| widget::put(c, desk, name, &b, &html, w, now)) {
+    match app
+        .store
+        .widgets(|c, now| widget::put(c, desk, name, &b, &html, w, now))
+    {
         Ok(widget::Put::Done) => {
             announce(app, desk, name);
             Json(json!({ "ok": true, "desk": desk, "name": name })).into_response()
@@ -198,14 +232,22 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
         Ok(widget::Put::Full) => refused(
             StatusCode::CONFLICT,
             if desk == 0 {
-                format!("there are {} global widgets, which is all there can be", widget::GLOBAL_MAX)
+                format!(
+                    "there are {} global widgets, which is all there can be",
+                    widget::GLOBAL_MAX
+                )
             } else {
-                format!("this desk has {} widgets, which is all it can have", widget::DESK_MAX)
+                format!(
+                    "this desk has {} widgets, which is all it can have",
+                    widget::DESK_MAX
+                )
             },
         ),
         Ok(widget::Put::Owned) => refused(
             StatusCode::CONFLICT,
-            format!("a widget file is called {name}, and only it fills that seat: pick another name"),
+            format!(
+                "a widget file is called {name}, and only it fills that seat: pick another name"
+            ),
         ),
         Err(e) => err(e),
     }
@@ -215,8 +257,9 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
 /// 100 ms is drawn twice a second, the last word always.
 const COALESCE: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// When each widget was last sent, and whether a send is waiting.
-static SENT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(i64, String), (Instant, bool)>>> =
+/// When each widget -- (desk, name) -- was last sent, and whether a send is waiting.
+type Announced = std::collections::HashMap<(i64, String), (Instant, bool)>;
+static SENT: std::sync::LazyLock<std::sync::Mutex<Announced>> =
     std::sync::LazyLock::new(Default::default);
 
 /// Tell the pages a widget changed: now, or once its half second is up --
@@ -233,7 +276,9 @@ pub(crate) fn announce(app: &Arc<App>, desk: i64, name: &str) {
                 let app = app.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(wait).await;
-                    SENT.lock().unwrap().insert(key.clone(), (Instant::now(), false));
+                    SENT.lock()
+                        .unwrap()
+                        .insert(key.clone(), (Instant::now(), false));
                     send_seat(&app, key.0, &key.1);
                 });
             }
@@ -250,14 +295,20 @@ pub(crate) fn announce(app: &Arc<App>, desk: i64, name: &str) {
 fn send_seat(app: &App, desk: i64, name: &str) {
     match app.store.widgets(|c, _| widget::seat_of(c, desk, name)) {
         Ok(Some(s)) => emit(app, "widget", serde_json::to_value(s).unwrap_or_default()),
-        Ok(None) => emit(app, "widget", json!({ "desk_id": desk, "name": name, "cleared": true })),
+        Ok(None) => emit(
+            app,
+            "widget",
+            json!({ "desk_id": desk, "name": name, "cleared": true }),
+        ),
         Err(_) => {}
     }
 }
 
 /// A panel closed: what its agent pushed stays, dimmed, and says so.
 pub(crate) fn pane_widgets_ended(app: &Arc<App>, pane: &str, slot: Option<i64>) {
-    let said = slot.map_or("a panel since closed".to_string(), |n| format!("panel {n} closed"));
+    let said = slot.map_or("a panel since closed".to_string(), |n| {
+        format!("panel {n} closed")
+    });
     let Ok(seats) = app.store.widgets(|c, _| {
         let s = widget::of_pane(c, pane)?;
         widget::pane_ended(c, pane, &said)?;
@@ -283,7 +334,10 @@ pub(crate) struct AllowBody {
 
 impl Default for AllowBody {
     fn default() -> AllowBody {
-        AllowBody { allow: true, rerun_edits: None }
+        AllowBody {
+            allow: true,
+            rerun_edits: None,
+        }
     }
 }
 
@@ -317,7 +371,9 @@ pub(crate) async fn allow_widget(
     } else {
         None
     };
-    match app.store.widgets(|c, now| widget::set_prefs(c, &name, None, None, hash.as_deref(), b.rerun_edits, now)) {
+    match app.store.widgets(|c, now| {
+        widget::set_prefs(c, &name, None, None, hash.as_deref(), b.rerun_edits, now)
+    }) {
         Ok(p) => Json(json!({ "ok": true, "prefs": p })).into_response(),
         Err(e) => err(e),
     }
@@ -409,19 +465,33 @@ pub(crate) async fn pane_propose_widget(
         return refused(StatusCode::BAD_REQUEST, "not a widget");
     };
     if !widget::name_ok(&b.name) {
-        return refused(StatusCode::BAD_REQUEST, "a widget's name is lowercase letters, digits and dashes, at most 32");
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "a widget's name is lowercase letters, digits and dashes, at most 32",
+        );
     }
-    if widget::files::dir(&app.paths.config_dir).join(&b.name).exists() {
-        return refused(StatusCode::CONFLICT, format!("a widget called {} is already there", b.name));
+    if widget::files::dir(&app.paths.config_dir)
+        .join(&b.name)
+        .exists()
+    {
+        return refused(
+            StatusCode::CONFLICT,
+            format!("a widget called {} is already there", b.name),
+        );
     }
     let command = b.command.trim();
     if command.is_empty() || command.contains('\n') {
         return refused(StatusCode::BAD_REQUEST, "the command is one line");
     }
     let script_ok = b.script_name.is_empty()
-        || (!b.script_name.contains(['/', '\\']) && !b.script_name.starts_with('.') && b.script_name != "widget.json");
+        || (!b.script_name.contains(['/', '\\'])
+            && !b.script_name.starts_with('.')
+            && b.script_name != "widget.json");
     if !script_ok || b.script.len() > SCRIPT_MAX {
-        return refused(StatusCode::BAD_REQUEST, "the script is one file of at most 16 KB, named without a folder");
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "the script is one file of at most 16 KB, named without a folder",
+        );
     }
     let spec = json!({
         "name": b.name,
@@ -433,7 +503,10 @@ pub(crate) async fn pane_propose_widget(
     let stage = proposed_dir(&app).join(format!("{}-{}", crate::store::now(), b.name));
     let wrote = (|| -> std::io::Result<()> {
         std::fs::create_dir_all(&stage)?;
-        std::fs::write(stage.join("widget.json"), serde_json::to_string_pretty(&spec).unwrap_or_default() + "\n")?;
+        std::fs::write(
+            stage.join("widget.json"),
+            serde_json::to_string_pretty(&spec).unwrap_or_default() + "\n",
+        )?;
         if !b.script_name.is_empty() {
             let p = stage.join(&b.script_name);
             std::fs::write(&p, &b.script)?;
@@ -446,7 +519,10 @@ pub(crate) async fn pane_propose_widget(
         Ok(())
     })();
     if let Err(e) = wrote {
-        return refused(StatusCode::INTERNAL_SERVER_ERROR, format!("could not write it: {e}"));
+        return refused(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not write it: {e}"),
+        );
     }
     if let Err(why) = widget::files::read(&stage, &b.name) {
         let _ = std::fs::remove_dir_all(&stage);
@@ -462,14 +538,20 @@ pub(crate) async fn pane_propose_widget(
         pane: id,
     };
     let desk = placed.desk_id;
-    match app.store.threads(|c, now| crate::thread::suggest(c, desk, &s, now)) {
+    match app
+        .store
+        .threads(|c, now| crate::thread::suggest(c, desk, &s, now))
+    {
         Ok(crate::thread::Suggested::Card(card)) => {
             threads_moved(&app, desk);
             (StatusCode::CREATED, Json(json!({ "suggestion": card }))).into_response()
         }
         Ok(crate::thread::Suggested::Full) => {
             let _ = std::fs::remove_dir_all(&stage);
-            refused(StatusCode::CONFLICT, "three suggestions are waiting on this desk already")
+            refused(
+                StatusCode::CONFLICT,
+                "three suggestions are waiting on this desk already",
+            )
         }
         Ok(_) => {
             let _ = std::fs::remove_dir_all(&stage);

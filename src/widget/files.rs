@@ -104,7 +104,10 @@ impl Spec {
         let set: serde_json::Map<String, Value> = serde_json::from_str(reader).unwrap_or_default();
         let mut out = serde_json::Map::new();
         for (k, f) in &self.settings {
-            out.insert(k.clone(), set.get(k).cloned().unwrap_or_else(|| f.default.clone()));
+            out.insert(
+                k.clone(),
+                set.get(k).cloned().unwrap_or_else(|| f.default.clone()),
+            );
         }
         Value::Object(out)
     }
@@ -130,7 +133,11 @@ pub fn scan(config_dir: &Path) -> Vec<Found> {
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name_ok(&name).then(|| Found { spec: read(&e.path(), &name), name, folder: e.path() })
+            name_ok(&name).then(|| Found {
+                spec: read(&e.path(), &name),
+                name,
+                folder: e.path(),
+            })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -139,10 +146,15 @@ pub fn scan(config_dir: &Path) -> Vec<Found> {
 
 /// One folder's `widget.json`, read and bounded.
 pub fn read(folder: &Path, name: &str) -> Result<Spec, String> {
-    let text = std::fs::read_to_string(folder.join("widget.json")).map_err(|_| "it has no widget.json".to_string())?;
-    let spec: Spec = serde_json::from_str(&text).map_err(|e| format!("widget.json does not read: {e}"))?;
+    let text = std::fs::read_to_string(folder.join("widget.json"))
+        .map_err(|_| "it has no widget.json".to_string())?;
+    let spec: Spec =
+        serde_json::from_str(&text).map_err(|e| format!("widget.json does not read: {e}"))?;
     if spec.name != name {
-        return Err(format!("widget.json says \"{}\", in a folder called {name}", spec.name));
+        return Err(format!(
+            "widget.json says \"{}\", in a folder called {name}",
+            spec.name
+        ));
     }
     if spec.run.command.trim().is_empty() {
         return Err("widget.json has no run.command".into());
@@ -157,7 +169,12 @@ pub fn stamp(folder: &Path) -> Option<(u128, u64, usize)> {
     let (mut bytes, mut n) = (0u64, 0usize);
     for f in files(folder) {
         let m = std::fs::metadata(&f).ok()?;
-        let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+        let t = m
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos();
         newest = newest.max(t);
         bytes += m.len();
         n += 1;
@@ -172,7 +189,9 @@ fn files(folder: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut todo = vec![folder.to_path_buf()];
     while let Some(d) = todo.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let Ok(t) = e.file_type() else { continue };
             if t.is_dir() {
@@ -193,11 +212,18 @@ pub fn hash(folder: &Path) -> Result<String, String> {
     let mut h = blake3::Hasher::new();
     let mut total = 0u64;
     for f in files(folder) {
-        let rel = f.strip_prefix(folder).unwrap_or(&f).to_string_lossy().replace('\\', "/");
+        let rel = f
+            .strip_prefix(folder)
+            .unwrap_or(&f)
+            .to_string_lossy()
+            .replace('\\', "/");
         let bytes = std::fs::read(&f).map_err(|e| format!("could not read {rel}: {e}"))?;
         total += bytes.len() as u64;
         if total > FOLDER_MAX {
-            return Err(format!("the folder holds more than {} KB", FOLDER_MAX / 1024));
+            return Err(format!(
+                "the folder holds more than {} KB",
+                FOLDER_MAX / 1024
+            ));
         }
         h.update(rel.as_bytes());
         h.update(&[0]);
@@ -220,7 +246,11 @@ pub fn starter(name: &str, scope: Scope) -> (String, &'static str, String) {
         name: name.to_string(),
         title: super::title_of(name),
         scope,
-        run: Run { command, every: 30, timeout: 5 },
+        run: Run {
+            command,
+            every: 30,
+            timeout: 5,
+        },
         lines: 2,
         settings: BTreeMap::new(),
     };
@@ -266,9 +296,15 @@ mod tests {
         let found = scan(&cfg);
         assert_eq!(found.len(), 1);
         let s = found[0].spec.clone().unwrap();
-        assert_eq!((s.run.every, s.run.timeout, s.lines), (EVERY_MIN, TIMEOUT_MAX, LINES_MAX));
+        assert_eq!(
+            (s.run.every, s.run.timeout, s.lines),
+            (EVERY_MIN, TIMEOUT_MAX, LINES_MAX)
+        );
         assert_eq!(s.title, "Git");
-        assert_eq!(s.settings_with(r#"{"base":"dev","other":1}"#), serde_json::json!({ "base": "dev" }));
+        assert_eq!(
+            s.settings_with(r#"{"base":"dev","other":1}"#),
+            serde_json::json!({ "base": "dev" })
+        );
         assert_eq!(s.settings_with("{}"), serde_json::json!({ "base": "main" }));
         let _ = std::fs::remove_dir_all(&cfg);
     }
@@ -276,9 +312,17 @@ mod tests {
     #[test]
     fn a_folder_that_says_another_name_is_listed_with_why() {
         let cfg = folder("name");
-        std::fs::write(dir(&cfg).join("git").join("widget.json"), r#"{"name":"ci","run":{"command":"x"}}"#).unwrap();
+        std::fs::write(
+            dir(&cfg).join("git").join("widget.json"),
+            r#"{"name":"ci","run":{"command":"x"}}"#,
+        )
+        .unwrap();
         let found = scan(&cfg);
-        assert!(found[0].spec.as_ref().unwrap_err().contains("in a folder called git"));
+        assert!(found[0]
+            .spec
+            .as_ref()
+            .unwrap_err()
+            .contains("in a folder called git"));
         let _ = std::fs::remove_dir_all(&cfg);
     }
 
@@ -302,6 +346,9 @@ mod tests {
     fn a_starter_reads_back() {
         let (json, _, _) = starter("disk-free", Scope::Global);
         let s: Spec = serde_json::from_str(&json).unwrap();
-        assert_eq!((s.name.as_str(), s.title.as_str(), s.scope), ("disk-free", "Disk free", Scope::Global));
+        assert_eq!(
+            (s.name.as_str(), s.title.as_str(), s.scope),
+            ("disk-free", "Disk free", Scope::Global)
+        );
     }
 }

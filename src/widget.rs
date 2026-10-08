@@ -35,7 +35,9 @@ mod tests;
 pub fn title_of(name: &str) -> String {
     let t = name.replace('-', " ");
     let mut c = t.chars();
-    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
 }
 
 pub const SCHEMA: &str = r#"
@@ -77,7 +79,9 @@ CREATE TABLE IF NOT EXISTS widget_bodies (
 pub const LEFT: [&str; 4] = ["inbox", "desks", "folders", "widgets"];
 /// The right's, on a desk. `turn` is Your turn with Suggested under it, and
 /// is always first; `widgets` is the slot the desk's widgets sit in.
-pub const RIGHT: [&str; 7] = ["turn", "panels", "rest", "points", "docs", "notes", "widgets"];
+pub const RIGHT: [&str; 7] = [
+    "turn", "panels", "rest", "points", "docs", "notes", "widgets",
+];
 /// The one section that never moves and is never hidden.
 pub const FIXED: &str = "turn";
 
@@ -153,7 +157,11 @@ impl Layout {
                 hidden.push(h.clone());
             }
         }
-        Layout { left, right, hidden }
+        Layout {
+            left,
+            right,
+            hidden,
+        }
     }
 }
 
@@ -206,7 +214,9 @@ pub fn name_ok(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= NAME_MAX
         && !name.starts_with('-')
-        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// The colour a widget's count takes. `none` is the quiet one.
@@ -298,7 +308,8 @@ impl Body {
                 }
                 b.md = body.trim().to_string();
                 if let Some(s) = w.tone {
-                    b.tone = Tone::parse(&s).ok_or_else(|| format!("tone is ok, warn, bad or none, not \"{s}\""))?;
+                    b.tone = Tone::parse(&s)
+                        .ok_or_else(|| format!("tone is ok, warn, bad or none, not \"{s}\""))?;
                 }
                 b.count = match w.count {
                     None | Some(serde_json::Value::Null) => String::new(),
@@ -369,7 +380,8 @@ pub struct Writer<'a> {
     pub pane: &'a str,
 }
 
-const SEAT_COLS: &str = "b.desk_id, b.name, b.source, b.body_html, b.tone, b.count, b.lines, b.stale_after,
+const SEAT_COLS: &str =
+    "b.desk_id, b.name, b.source, b.body_html, b.tone, b.count, b.lines, b.stale_after,
      b.writer, b.pane, b.error, b.updated_at, COALESCE(p.hidden, 0)";
 
 fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
@@ -380,7 +392,9 @@ fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
         html: r.get(3)?,
         tone: r.get(4)?,
         count: r.get(5)?,
-        lines: r.get::<_, i64>(6)?.clamp(LINES_MIN as i64, LINES_MAX as i64) as u8,
+        lines: r
+            .get::<_, i64>(6)?
+            .clamp(LINES_MIN as i64, LINES_MAX as i64) as u8,
         stale_after: r.get(7)?,
         writer: r.get(8)?,
         pane: r.get(9)?,
@@ -428,7 +442,15 @@ pub enum Put {
 /// Keep a body for `name` on `desk_id`, drawn (`html`). A new widget past
 /// the slot's cap is refused; one a widget file owns is refused to anyone
 /// else. Its place in the slot is kept when it is rewritten.
-pub fn put(conn: &Connection, desk_id: i64, name: &str, b: &Body, html: &str, w: &Writer, now: i64) -> Result<Put> {
+pub fn put(
+    conn: &Connection,
+    desk_id: i64,
+    name: &str,
+    b: &Body,
+    html: &str,
+    w: &Writer,
+    now: i64,
+) -> Result<Put> {
     let owner: Option<String> = conn
         .query_row(
             "SELECT source FROM widget_bodies WHERE desk_id = ?1 AND name = ?2",
@@ -479,7 +501,14 @@ pub fn put(conn: &Connection, desk_id: i64, name: &str, b: &Body, html: &str, w:
 /// A widget file's run went wrong: say so in its seat, over the last good
 /// body, which stays. A widget that never ran well has a seat with only the
 /// line in it.
-pub fn fail(conn: &Connection, desk_id: i64, name: &str, why: &str, writer: &str, now: i64) -> Result<()> {
+pub fn fail(
+    conn: &Connection,
+    desk_id: i64,
+    name: &str,
+    why: &str,
+    writer: &str,
+    now: i64,
+) -> Result<()> {
     let why: String = why.chars().take(200).collect();
     conn.execute(
         "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, writer, error, updated_at)
@@ -511,7 +540,8 @@ pub fn desks_of(conn: &Connection, name: &str) -> Result<Vec<i64>> {
 /// Every seat a pane's agent pushed, for when the pane ends: they dim and
 /// say so, and stay until cleared or replaced.
 pub fn of_pane(conn: &Connection, pane: &str) -> Result<Vec<(i64, String)>> {
-    let mut st = conn.prepare("SELECT desk_id, name FROM widget_bodies WHERE pane = ?1 AND source = 'push'")?;
+    let mut st = conn
+        .prepare("SELECT desk_id, name FROM widget_bodies WHERE pane = ?1 AND source = 'push'")?;
     let rows = st.query_map([pane], |r| Ok((r.get(0)?, r.get(1)?)))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -558,12 +588,6 @@ pub fn prefs(conn: &Connection, name: &str) -> Result<Prefs> {
             settings: "{}".into(),
             ..Prefs::default()
         }))
-}
-
-pub fn all_prefs(conn: &Connection) -> Result<Vec<Prefs>> {
-    let mut st = conn.prepare("SELECT name FROM widget_prefs ORDER BY name")?;
-    let names: Vec<String> = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-    names.iter().map(|n| prefs(conn, n)).collect()
 }
 
 /// Change what the reader decided about `name`: each `Some` is set, each
