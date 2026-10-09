@@ -155,6 +155,12 @@ pub(crate) async fn pane_agent(
             pct,
             c.size.filter(|s| *s > 0),
             c.used.or(c.input),
+            // The account's windows ride on the pane's own frame too, so a
+            // desk can say what is left without a word from the app page.
+            b.limits
+                .as_ref()
+                .map(|l| [l.five_hour, l.seven_day])
+                .unwrap_or_default(),
         );
         live = changed.is_some();
         // A light event of its own, only when the figure a reader sees moved:

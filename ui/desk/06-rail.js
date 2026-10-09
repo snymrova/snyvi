@@ -344,9 +344,9 @@ function meta() {
   // The desk's name and folder are in its head, and renaming and closing it
   // are on its ⋯: this pane is the focused panel's line, and nothing twice.
   const top = "";
-  const cp = ctxPct(s);
+  const cp = ctxPct(s), us = cp == null ? "" : usageSub();
   const low = v ? `<div class="row dk-pl"><span><span class="dk-slot" data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>${s.model ? ` ${esc(s.model)}` : s.pid ? ` pid ${s.pid}` : ""}` +
-    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}">${ctxFig(s)}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
+    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
     // The folder the panel's shell is in now, when it is not the desk's own.
     ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" data-tip="${esc(s.cwd || v.pane.cwd)}" data-tip-mono>${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
   const url = repoOf(d), rn = url && repoName(url);

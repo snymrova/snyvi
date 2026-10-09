@@ -12,6 +12,18 @@ fn a_context_count_moves_when_its_figure_would() {
     assert_eq!(ctx_figure(None), None);
 }
 
+#[test]
+fn a_usage_window_moves_when_its_whole_percent_left_would() {
+    let at = |used: f64, resets_at: i64| {
+        limit_figure(Some(crate::statusline::Limit { used, resets_at }))
+    };
+    assert_eq!(at(37.6, 9), at(37.9, 9), "62% left either way");
+    assert_ne!(at(37.4, 9), at(37.6, 9), "63% is not 62%");
+    assert_ne!(at(37.6, 9), at(37.6, 10), "a new window is news");
+    assert_eq!(at(140.0, 9), at(100.0, 9), "never under 0% left");
+    assert_eq!(limit_figure(None), None);
+}
+
 /// A folder is asked about its tree once, and then only when a pane in
 /// it printed, a page began watching, or a watched folder has been quiet
 /// a minute -- never sooner than the floor however much is printed.
