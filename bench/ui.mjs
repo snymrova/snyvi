@@ -2824,6 +2824,9 @@ async function widgetBoxRows(cdp, base, tmp) {
     }
   } finally {
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+    // Opened last, this desk would be Home's Pick up for the sections after;
+    // on the shelf it is out of their way.
+    await post(`/api/desks/${desk}/park`, { next: "bench: the boxes are read" });
     rmSync(join(widgets, "wbox"), { recursive: true, force: true });
     rmSync(join(widgets, "wlong"), { recursive: true, force: true });
   }
