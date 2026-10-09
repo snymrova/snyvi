@@ -1,6 +1,7 @@
 //! On-disk store: one source and one rendered HTML file per document,
 //! plus a SQLite index with full-text search.
 
+use crate::accounts;
 use crate::config::Paths;
 use crate::desk::{self, Desk, Opened, Origin, Placed};
 use crate::peer;
@@ -528,6 +529,21 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // takes a panel's thread from it (`thread::TAKEN_COLUMN`).
     (13, thread::TAKEN_COLUMN),
     (13, thread::TAKEN_FILL),
+    // 1.30: the Claude account a desk and a panel start as
+    // (`crate::accounts::COLUMNS_1_30`).
+    (14, accounts::COLUMNS_1_30[0]),
+    (14, accounts::COLUMNS_1_30[1]),
+    (14, accounts::COLUMNS_1_30[2]),
+    // 1.30 too: the questions an agent asked as one card (#110).
+    (15, thread::GROUP_COLUMN),
+    // 1.30: widgets on the desks the reader chose, for as long as they chose,
+    // and the card that asks for one (#111).
+    (16, widget::PREFS_COLUMNS_1_30[0]),
+    (16, widget::PREFS_COLUMNS_1_30[1]),
+    (16, widget::PREFS_COLUMNS_1_30[2]),
+    (16, thread::SUGGEST_COLUMNS_1_30[0]),
+    (16, thread::SUGGEST_COLUMNS_1_30[1]),
+    (16, thread::SUGGEST_COLUMNS_1_30[2]),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -612,6 +628,8 @@ impl Store {
         // Desks live in the same database and in tables of their own; see
         // `crate::desk` for why that separation is the whole of the boundary.
         conn.execute_batch(desk::SCHEMA)?;
+        // Claude accounts by label; their tokens are in `crate::secrets`.
+        conn.execute_batch(accounts::SCHEMA)?;
         // Friends, and what is on its way to or from one (`crate::peer`).
         conn.execute_batch(peer::SCHEMA)?;
         // Threads, turns and suggested panels (`crate::thread`), and the
@@ -2130,29 +2148,6 @@ impl Store {
         desk::notes(&self.conn.lock().unwrap(), desk_id)
     }
 
-    /// A desk's keys by name: its own and the every-desk ones (`desk::keys`).
-    pub fn desk_keys(&self, desk_id: i64) -> Result<Vec<desk::DeskKey>> {
-        desk::keys(&self.conn.lock().unwrap(), desk_id)
-    }
-
-    pub fn add_desk_key(&self, desk_id: i64, name: &str, provider: &str) -> Result<()> {
-        desk::add_key(&self.conn.lock().unwrap(), desk_id, name, provider, now())
-    }
-
-    pub fn remove_desk_key(&self, desk_id: i64, name: &str) -> Result<bool> {
-        desk::remove_key(&self.conn.lock().unwrap(), desk_id, name)
-    }
-
-    pub fn touch_desk_keys(&self, keys: &[desk::DeskKey]) -> Result<()> {
-        desk::touch_keys(&self.conn.lock().unwrap(), keys, now())
-    }
-
-    /// The keys of desks `prune_desks` is about to end, taken off unless
-    /// `dry_run`; the caller forgets their values.
-    pub fn prune_desk_keys(&self, before: i64, dry_run: bool) -> Result<Vec<(i64, String)>> {
-        desk::prune_keys(&self.conn.lock().unwrap(), before, dry_run)
-    }
-
     pub fn add_desk_note(&self, desk_id: i64, text: &str) -> Result<Option<desk::DeskNote>> {
         desk::add_note(&mut self.conn.lock().unwrap(), desk_id, text, now())
     }
@@ -2315,10 +2310,17 @@ impl Store {
     /// `open` makes on a machine that has never seen snyvi. `VACUUM` gives the
     /// space back and folds the write-ahead log in, so the database file is
     /// as small as a new one and not a record of what it used to hold.
-    pub fn reset(&self) -> Result<()> {
+    ///
+    /// The keys and Claude accounts go too, every-desk ones with them: their
+    /// values are not in the database, so what it held comes back for the
+    /// caller to forget from the keychain or the file. Left there, a new
+    /// desk 1 would start with the old desk 1's keys.
+    pub fn reset(&self) -> Result<Held> {
         let conn = self.conn.lock().unwrap();
+        let held = Held::of(&conn)?;
         conn.execute_batch(
-            "DELETE FROM docs_fts; DELETE FROM docs; DELETE FROM workflows; DELETE FROM projects;",
+            "DELETE FROM docs_fts; DELETE FROM docs; DELETE FROM workflows; DELETE FROM projects;
+             DELETE FROM desk_keys; DELETE FROM claude_accounts;",
         )?;
         // Desks are not documents, and a reset still takes them: what it
         // promises is a store as `open` makes it on a machine that has never
@@ -2333,7 +2335,7 @@ impl Store {
                 let _ = fs::remove_file(e.path());
             }
         }
-        Ok(())
+        Ok(held)
     }
 }
 
@@ -2457,7 +2459,9 @@ pub fn new_id(hash: &str) -> String {
     mixed.to_hex()[..10].to_string()
 }
 
+mod keys;
 mod talk;
+pub use keys::Held;
 use talk::local_path;
 
 #[cfg(test)]

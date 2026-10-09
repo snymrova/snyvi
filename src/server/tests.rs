@@ -505,6 +505,66 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         false,
     ),
+    ("GET", "/api/accounts", None, Gate::Desk, true),
+    // Let through, it would run the real `claude setup-token`.
+    (
+        "POST",
+        "/api/accounts/signin",
+        Some(r#"{"label":"Work"}"#),
+        Gate::Desk,
+        false,
+    ),
+    ("GET", "/api/accounts/signin", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/accounts/signin/code",
+        Some(r#"{"code":"abc"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts/signin/cancel",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts",
+        Some(r#"{"label":"Work","token":"nope"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts/9/rename",
+        Some(r#"{"label":"Home"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts/9/renew",
+        Some(r#"{"token":"nope"}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/accounts/9/delete", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/account",
+        Some(r#"{"account":9}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/account",
+        Some(r#"{"account":null}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
     ("GET", "/api/desks/1/git", None, Gate::Desk, true),
     (
@@ -806,6 +866,13 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     (
         "POST",
+        "/api/widgets/nope/retry",
+        Some("{}"),
+        Gate::Reader,
+        true,
+    ),
+    (
+        "POST",
         "/api/panes/nope/propose-widget",
         Some("{}"),
         Gate::Token,
@@ -966,6 +1033,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     };
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn account_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn thread_routes(")
         + routes_in("\nfn widget_routes(")
@@ -1440,76 +1508,6 @@ fn settings_written_by_the_app_are_applied_before_first_paint() {
         );
         assert!(BOOT_JS.contains(&k), "{k} is not applied by boot.js");
     }
-}
-
-/// `snyvi key NAME` answers with the value of a key the pane's desk has --
-/// its own, or the every-desk one, its own first -- marks it used, and
-/// refuses another desk's, a name that is not one, and a key whose value is
-/// gone, saying so by name only.
-#[test]
-fn a_panel_reads_its_own_desks_keys_and_no_other_desks() {
-    let tmp = crate::store::tempdir::Dir::new("snyvi-pane-key");
-    let paths = Paths {
-        data_dir: tmp.path.join("data"),
-        config_dir: tmp.path.join("config"),
-        docs_dir: tmp.path.join("data").join("docs"),
-        db_path: tmp.path.join("data").join("snyvi.db"),
-        token_path: tmp.path.join("config").join("token"),
-    };
-    let store = Store::open(&paths).unwrap();
-    let secrets = crate::secrets::Secrets::file_only(tmp.path.join("keys.json"));
-    let a = store.create_desk("/tmp/a", Some("a")).unwrap().id;
-    let b = store.create_desk("/tmp/b", Some("b")).unwrap().id;
-    let every = crate::desk::EVERY_DESK;
-    for (desk, name, value) in [
-        (a, "ELEVENLABS_API_KEY", "a-eleven"),
-        (b, "OTHER_KEY", "b-other"),
-        (every, "GH_TOKEN", "every-gh"),
-        (a, "GH_TOKEN", "a-gh"),
-        (every, "OPENAI_API_KEY", "every-openai"),
-    ] {
-        store.add_desk_key(desk, name, "").unwrap();
-        secrets.keep(desk, name, value).unwrap();
-    }
-
-    assert_eq!(
-        desk_key(&store, &secrets, a, "ELEVENLABS_API_KEY").unwrap(),
-        "a-eleven"
-    );
-    assert_eq!(
-        desk_key(&store, &secrets, a, "GH_TOKEN").unwrap(),
-        "a-gh",
-        "its own first"
-    );
-    assert_eq!(
-        desk_key(&store, &secrets, b, "GH_TOKEN").unwrap(),
-        "every-gh"
-    );
-    assert_eq!(
-        desk_key(&store, &secrets, a, "OPENAI_API_KEY").unwrap(),
-        "every-openai"
-    );
-    assert!(
-        store
-            .desk_keys(a)
-            .unwrap()
-            .iter()
-            .any(|k| k.name == "ELEVENLABS_API_KEY" && k.used_at > 0),
-        "a read marks the key used"
-    );
-
-    let (s, why) = desk_key(&store, &secrets, a, "OTHER_KEY").unwrap_err();
-    assert_eq!(s, StatusCode::NOT_FOUND, "another desk's key");
-    assert!(
-        why.contains("OTHER_KEY") && !why.contains("b-other"),
-        "{why}"
-    );
-    let (s, _) = desk_key(&store, &secrets, a, "lower; rm").unwrap_err();
-    assert_eq!(s, StatusCode::BAD_REQUEST, "not a name");
-    secrets.forget(a, "ELEVENLABS_API_KEY");
-    let (s, why) = desk_key(&store, &secrets, a, "ELEVENLABS_API_KEY").unwrap_err();
-    assert_eq!(s, StatusCode::NOT_FOUND, "a name whose value is gone");
-    assert!(why.contains("add it again"), "{why}");
 }
 
 /// A video beside a sent document plays from `/files/`: a range at a time,
@@ -2492,3 +2490,7 @@ fn the_account_name_a_friend_sees_starts_with_a_capital() {
     assert_eq!(capitalized("McKay"), "McKay");
     assert_eq!(capitalized(""), "");
 }
+
+#[cfg(unix)]
+mod accounts;
+mod keys;

@@ -18,8 +18,9 @@ parked), and with parked the next step to pick it up by. Add a PR number or more
 work changes stage, not every turn.";
 
 const ASK: &str = "Put a decision on the user's Your turn in snyvi: a question, two to four short options, and \
-the one you recommend. It does not wait: the answer comes with the user's next message, and it is kept on \
-the thread as decided. Prefer your own question tool when the user is at this panel.";
+the one you recommend; up to four at once as questions, on one card. It does not wait: the answers come with \
+the user's next message and are kept on the thread. Your own question tool shows on Your turn too, when the \
+user is at this panel.";
 
 const HAND_OVER: &str = "Put what only the user can do on their Your turn in snyvi: try (try a change), merge (a PR), key (add a \
 key), or run (a command you were blocked from running: pass cmd, one line; their Run types it here as a \
@@ -61,10 +62,16 @@ pub(super) fn specs() -> Vec<Value> {
         json!({
             "name": "ask", "title": "Ask the user to decide", "description": ASK,
             "inputSchema": { "type": "object", "properties": {
-                "question": { "type": "string", "description": "One sentence." },
+                "question": { "type": "string", "description": "One sentence. Or pass questions instead." },
                 "options": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 4, "description": "Short labels." },
-                "recommended": { "type": "integer", "description": "The index of the option you recommend, from 0." }
-            }, "required": ["question", "options"], "additionalProperties": false },
+                "recommended": { "type": "integer", "description": "The index of the option you recommend, from 0." },
+                "questions": { "type": "array", "minItems": 1, "maxItems": 4, "description": "Several decisions at once, as one card, in place of question, options and recommended.",
+                    "items": { "type": "object", "properties": {
+                        "question": { "type": "string", "description": "One sentence." },
+                        "options": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 4, "description": "Short labels." },
+                        "recommended": { "type": "integer", "description": "The index of the option you recommend, from 0." }
+                    }, "required": ["question", "options"], "additionalProperties": false } }
+            }, "additionalProperties": false },
             "annotations": ann(false)
         }),
         json!({
@@ -180,14 +187,31 @@ impl Session {
     }
 
     pub(super) fn ask(&self, args: &Value) -> Value {
-        let body = json!({
+        let mut body = json!({
             "kind": "decide", "text": arg(args, "question"),
             "options": args.get("options").cloned().unwrap_or(json!([])),
             "recommended": args.get("recommended").and_then(Value::as_i64).unwrap_or(-1),
             "by": self.by(),
         });
+        let many = args
+            .get("questions")
+            .and_then(Value::as_array)
+            .filter(|q| !q.is_empty());
+        if let Some(q) = many {
+            body["questions"] = json!(q);
+        }
         match self.thread_call("ask", body) {
-            Ok(_) => said("Asked. It is on the user's Your turn in snyvi; the answer comes with their next message. Carry on with what does not depend on it.", false),
+            Ok(v) => {
+                let n = v.get("turns").and_then(Value::as_array).map_or(1, Vec::len);
+                said(
+                    if n > 1 {
+                        format!("Asked {n} questions, on one card on the user's Your turn in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
+                    } else {
+                        "Asked. It is on the user's Your turn in snyvi; the answer comes with their next message. Carry on with what does not depend on it.".to_string()
+                    },
+                    false,
+                )
+            }
             Err(e) => e,
         }
     }

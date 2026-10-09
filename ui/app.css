@@ -648,6 +648,8 @@ button.sec-fold:hover { color: var(--fg-2); }
 .wg-ask { display: flex; align-items: center; gap: 8px; margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
 .wg-allow { flex: none; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); color: var(--accent); font-size: var(--fs-micro); font-weight: 600; }
 .wg-allow:hover:not(:disabled) { background: var(--accent-bg); }
+.wg-ask.wg-stop { flex-wrap: wrap; color: var(--warn); }
+.wg-ask.wg-stop .wg-allow { color: var(--accent); }
 .wg-err { margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
 .wg-body { height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
 .wg-body.open { height: auto; }

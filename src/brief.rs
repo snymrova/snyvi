@@ -359,7 +359,8 @@ pub struct Changes<'a> {
     pub answers: &'a [Turn],
     /// Threads moved by someone else, or merged, since (`thread::moved_since`).
     pub threads: &'a [Thread],
-    /// Panels and desks this pane suggested that the reader opened.
+    /// Panels, desks and widgets this pane suggested that the reader opened,
+    /// a box they said Not now to, and a widget of its that stopped.
     pub opened: &'a [Suggestion],
 }
 
@@ -369,8 +370,22 @@ pub struct Changes<'a> {
 fn filed_news(c: &Changes) -> Vec<String> {
     let mut lines: Vec<String> = answer_lines(c.answers);
     for s in c.opened {
-        lines.push(if s.kind == "desk" {
+        lines.push(if !s.note.is_empty() {
+            s.note.clone()
+        } else if s.kind == "desk" {
             format!("You opened a desk for {}, as suggested.", tilde(&s.folder))
+        } else if s.kind == "widget" {
+            format!("You added the widget {}, as proposed.", cut(&s.name, 40))
+        } else if s.kind == "box" && s.outcome == "dismissed" {
+            format!(
+                "You said not now to the box {}: snyvi refuses it on this desk.",
+                cut(&s.name, 40)
+            )
+        } else if s.kind == "box" {
+            format!(
+                "You allowed the box {} on this desk: set_widget updates it from now on.",
+                cut(&s.name, 40)
+            )
         } else {
             format!(
                 "You opened the panel suggested, \"{}\" ({}).",
@@ -569,6 +584,7 @@ mod tests {
             visited_at: 0,
             parked: None,
             keys: Vec::new(),
+            account: 0,
             panes: (1..=panes as i64)
                 .map(|slot| Pane {
                     id: format!("{slot:032}"),
@@ -579,6 +595,7 @@ mod tests {
                     agent_session: String::new(),
                     resume: String::new(),
                     name: String::new(),
+                    account: None,
                 })
                 .collect(),
         }

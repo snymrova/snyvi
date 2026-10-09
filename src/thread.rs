@@ -94,6 +94,22 @@ pub const THREAD_COLUMN: &str =
 /// `store::MIGRATIONS`, never in `SCHEMA`.
 pub const CMD_COLUMN: &str = "ALTER TABLE turns ADD COLUMN cmd TEXT NOT NULL DEFAULT ''";
 
+/// 1.30: the card a `decide` turn was asked on with others (#110), as the
+/// first one's id, or 0. Version 15 of `store::MIGRATIONS`, after the
+/// accounts' 14, never in `SCHEMA`.
+pub const GROUP_COLUMN: &str = "ALTER TABLE turns ADD COLUMN ask_group INTEGER NOT NULL DEFAULT 0";
+
+/// 1.30: on a widget's card (#111), how long the agent suggests it lasts
+/// (`today`, `week`, `panel`, or nothing for until the reader turns it off)
+/// and what the card shows of it -- where, how often, the script -- as JSON;
+/// and a line the agent is told once (`take_opened`), when its widget
+/// stopped. Version 16 of `store::MIGRATIONS`, never in `SCHEMA`.
+pub const SUGGEST_COLUMNS_1_30: [&str; 3] = [
+    "ALTER TABLE desk_suggestions ADD COLUMN lasts TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE desk_suggestions ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE desk_suggestions ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+];
+
 /// 1.26: when a panel last took the thread up -- started it, or moved it
 /// from its own prompt. Which thread is "the panel's" (`of_pane`) goes by
 /// this, so a reader's click on the rail never takes a panel's thread from
@@ -101,14 +117,6 @@ pub const CMD_COLUMN: &str = "ALTER TABLE turns ADD COLUMN cmd TEXT NOT NULL DEF
 pub const TAKEN_COLUMN: &str = "ALTER TABLE threads ADD COLUMN taken_at INTEGER NOT NULL DEFAULT 0";
 /// Every thread there before 1.26 was last taken when it last moved.
 pub const TAKEN_FILL: &str = "UPDATE threads SET taken_at = moved_at WHERE taken_at = 0";
-
-/// How long a thread no panel is moving -- its panel took up another, or
-/// closed -- is listed after its last move. Kept after that, off the lists:
-/// a panel that starts it again by its name brings it back.
-pub const RESTING_SHOWN: i64 = 86400;
-/// A parked thread is listed longer: it was parked on purpose, with a next
-/// step to pick it up by.
-pub const PARKED_SHOWN: i64 = 7 * 86400;
 
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
@@ -137,6 +145,9 @@ pub const THREADS_PER_DESK: i64 = 12;
 /// Turns waiting on the reader per desk. Few, so a panel left alone cannot
 /// stack up questions while the reader is away.
 pub const TURNS_PER_DESK: i64 = 6;
+/// The most questions one `ask` puts as one card (#110): the most a plan
+/// ends on, and what Claude Code's own question dialog takes.
+pub const GROUP_MAX: usize = 4;
 
 /// Suggested panels and desks waiting per desk, as `desk::SUGGESTIONS_PER_DESK`.
 pub const SUGGESTIONS_PER_DESK: i64 = 3;
@@ -235,6 +246,10 @@ pub struct Turn {
     /// A `run` turn's command, exactly as Run types it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub cmd: String,
+    /// The questions asked together (`ask_group`) share the first one's id;
+    /// 0 for a turn on its own.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ask_group: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub answer: String,
     /// `snyvi` or `panel`: where the answer was given.
@@ -254,7 +269,8 @@ pub struct Turn {
 pub struct Suggestion {
     pub id: i64,
     pub desk_id: i64,
-    /// `panel` or `desk`.
+    /// `panel`, `desk`, `widget` (a widget file proposed) or `box` (a
+    /// panel's first `set_widget` on this desk).
     pub kind: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
@@ -275,6 +291,15 @@ pub struct Suggestion {
     /// `opened` or `dismissed`, once settled.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub outcome: String,
+    /// A widget's or a box's: how long the agent suggests it lasts.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lasts: String,
+    /// A widget's: where it runs, how often, its script (`SUGGEST_COLUMNS_1_30`).
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub detail: serde_json::Value,
+    /// What the agent is told of it next, when not that it was opened.
+    #[serde(skip)]
+    pub note: String,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -411,22 +436,19 @@ fn mark_rest(conn: &Connection, threads: &mut [Thread]) -> Result<()> {
     Ok(())
 }
 
-/// Whether a list still names a thread: one a panel holds, or shipped, always
-/// (the page and Home keep their own windows for shipped); a resting one for
-/// `RESTING_SHOWN` after its last move, a parked one for `PARKED_SHOWN`.
-fn listed(t: &Thread, now: i64) -> bool {
-    match t.rest.as_str() {
-        "" => true,
-        _ if t.stage == "shipped" => true,
-        "parked" => now - t.moved_at < PARKED_SHOWN,
-        _ => now - t.moved_at < RESTING_SHOWN,
-    }
+/// Whether a list names a thread: one a panel holds, or shipped (the page
+/// and Home keep their own windows for shipped). One no panel is moving --
+/// parked, its panel closed, or its panel took up another -- is on no list
+/// (#109): kept, and a panel that starts it again by its name brings it
+/// back.
+fn listed(t: &Thread) -> bool {
+    t.rest.is_empty() || t.stage == "shipped"
 }
 
-/// A desk's threads, the most recently moved first, each marked with why it
-/// rests. Put-away ones are left out, and resting ones once their time is
-/// up; shipped ones stay, and the page shows the last few.
-pub fn for_desk(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<Thread>> {
+/// A desk's threads, the most recently moved first: the ones its panels
+/// hold, and shipped ones, which the page shows the last few of. Put-away
+/// ones are left out, and so are the ones no panel is moving.
+pub fn for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY moved_at DESC, id DESC LIMIT 40"
@@ -435,14 +457,14 @@ pub fn for_desk(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<Thread>
         .query_map(params![desk_id], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
     mark_rest(conn, &mut v)?;
-    v.retain(|t| listed(t, now));
+    v.retain(listed);
     fill_notes(conn, &mut v)?;
     Ok(v)
 }
 
-/// Every open desk's threads, for Home, marked and left out as `for_desk`
-/// does: what is moving, what rests, and what shipped since `shipped_since`.
-pub fn across_desks(conn: &Connection, shipped_since: i64, now: i64) -> Result<Vec<Thread>> {
+/// Every open desk's threads, for Home, left out as `for_desk` does: what
+/// is moving, and what shipped since `shipped_since`.
+pub fn across_desks(conn: &Connection, shipped_since: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {} FROM threads t JOIN desks d ON d.id = t.desk_id
          WHERE t.removed_at = 0 AND d.closed_at = 0 AND (t.stage != 'shipped' OR t.shipped_at >= ?1)
@@ -457,7 +479,7 @@ pub fn across_desks(conn: &Connection, shipped_since: i64, now: i64) -> Result<V
         .query_map(params![shipped_since], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
     mark_rest(conn, &mut v)?;
-    v.retain(|t| listed(t, now));
+    v.retain(listed);
     fill_notes(conn, &mut v)?;
     Ok(v)
 }
@@ -822,7 +844,7 @@ pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> R
 
 const TURN_COLS: &str =
     "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
-     answer, answered_in, answered_at, told_at, created_at, removed_at, cmd";
+     answer, answered_in, answered_at, told_at, created_at, removed_at, cmd, ask_group";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
     let options: String = r.get(8)?;
@@ -849,6 +871,7 @@ fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
         created_at: r.get(15)?,
         removed_at: r.get(16)?,
         cmd: r.get(17)?,
+        ask_group: r.get(18)?,
     })
 }
 
@@ -929,11 +952,15 @@ pub struct Ask {
 pub enum Asked {
     /// Boxed, as `Moved::Thread`.
     Turn(Box<Turn>),
+    /// Two to four questions put as one card (`ask_group`).
+    Group(Vec<Turn>),
     Full,
     Empty,
     /// `decide` needs two to four options; the others take none.
     BadOptions,
     BadKind,
+    /// A group is two to `GROUP_MAX` questions, every one a `decide`.
+    BadGroup,
     /// `run` needs one line of command, with no control characters: it is
     /// typed into a terminal, where an escape could end the paste early and
     /// type something else.
@@ -954,12 +981,27 @@ fn command(cmd: &str) -> Option<&str> {
 /// `ask` and `hand_over`, and the mod's mirror of Claude's own question. The
 /// pane's thread, when it has one, is the thread the turn belongs to.
 pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Asked> {
+    ask_group(conn, desk_id, std::slice::from_ref(a), now)
+}
+
+/// A turn's fields once they are checked, ready for its row.
+struct Checked<'a> {
+    text: String,
+    options: Vec<String>,
+    recommended: i64,
+    cmd: &'a str,
+    link: String,
+    via: &'static str,
+    by: String,
+}
+
+fn check(a: &Ask) -> std::result::Result<Checked<'_>, Asked> {
     if !KINDS.contains(&a.kind.as_str()) {
-        return Ok(Asked::BadKind);
+        return Err(Asked::BadKind);
     }
     let text = line(&a.text, TEXT_CHARS);
     if text.is_empty() {
-        return Ok(Asked::Empty);
+        return Err(Asked::Empty);
     }
     let options: Vec<String> = a
         .options
@@ -972,7 +1014,7 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
         _ => options.is_empty(),
     };
     if !ok {
-        return Ok(Asked::BadOptions);
+        return Err(Asked::BadOptions);
     }
     let recommended = if (0..options.len() as i64).contains(&a.recommended) {
         a.recommended
@@ -980,16 +1022,40 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
         -1
     };
     let cmd = if a.kind == "run" {
-        match command(&a.cmd) {
-            Some(c) => c,
-            None => return Ok(Asked::BadCmd),
-        }
+        command(&a.cmd).ok_or(Asked::BadCmd)?
     } else {
         ""
     };
-    let link = line(&a.link, 400);
-    let via = if a.via == "dialog" { "dialog" } else { "ask" };
-    let by = line(&a.by, 60);
+    Ok(Checked {
+        text,
+        options,
+        recommended,
+        cmd,
+        link: line(&a.link, 400),
+        via: if a.via == "dialog" { "dialog" } else { "ask" },
+        by: line(&a.by, 60),
+    })
+}
+
+/// Several questions an agent needs decided before it goes on, put as one
+/// card (#110): each its own `decide` turn, answered and told as one is, and
+/// all of them sharing `ask_group`, the first one's id. One question is a
+/// turn of its own, with no group. All go in, or none: a group cut short by
+/// the desk's room for turns would be a card missing its last questions.
+pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) -> Result<Asked> {
+    if asks.is_empty() {
+        return Ok(Asked::Empty);
+    }
+    if asks.len() > GROUP_MAX || (asks.len() > 1 && asks.iter().any(|a| a.kind != "decide")) {
+        return Ok(Asked::BadGroup);
+    }
+    let mut checked = Vec::with_capacity(asks.len());
+    for a in asks {
+        match check(a) {
+            Ok(c) => checked.push(c),
+            Err(why) => return Ok(why),
+        }
+    }
     let tx = conn.transaction()?;
     if !desk_open(&tx, desk_id)? {
         return Ok(Asked::NoSuchDesk);
@@ -999,35 +1065,49 @@ pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Ask
         params![desk_id],
         |r| r.get(0),
     )?;
-    if waiting >= TURNS_PER_DESK {
+    if waiting + asks.len() as i64 > TURNS_PER_DESK {
         return Ok(Asked::Full);
     }
-    let thread = of_pane(&tx, desk_id, &a.pane)?
+    // One pane asks for the whole group, so one thread holds it.
+    let thread = of_pane(&tx, desk_id, &asks[0].pane)?
         .filter(|t| t.stage != "shipped")
         .map(|t| t.id)
         .unwrap_or(0);
-    tx.execute(
-        "INSERT INTO turns(desk_id, thread_id, pane, by, kind, via, text, options, recommended, link, created_at, cmd)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
-            desk_id,
-            thread,
-            a.pane,
-            by,
-            a.kind,
-            via,
-            text,
-            options.join("\n"),
-            recommended,
-            link,
-            now,
-            cmd
-        ],
-    )?;
-    let id = tx.last_insert_rowid();
-    let t = turn(&tx, desk_id, id)?.expect("the row just written");
+    let mut group = 0;
+    let mut turns = Vec::with_capacity(asks.len());
+    for (a, c) in asks.iter().zip(&checked) {
+        tx.execute(
+            "INSERT INTO turns(desk_id, thread_id, pane, by, kind, via, text, options, recommended, link, created_at, cmd, ask_group)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                desk_id,
+                thread,
+                a.pane,
+                c.by,
+                a.kind,
+                c.via,
+                c.text,
+                c.options.join("\n"),
+                c.recommended,
+                c.link,
+                now,
+                c.cmd,
+                group
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        if asks.len() > 1 && group == 0 {
+            group = id;
+            tx.execute("UPDATE turns SET ask_group = ?1 WHERE id = ?1", params![id])?;
+        }
+        turns.push(turn(&tx, desk_id, id)?.expect("the row just written"));
+    }
     tx.commit()?;
-    Ok(Asked::Turn(Box::new(t)))
+    Ok(if turns.len() == 1 {
+        Asked::Turn(Box::new(turns.remove(0)))
+    } else {
+        Asked::Group(turns)
+    })
 }
 
 /// Answer a turn. `in_` is `snyvi` or `panel`. A `decide` answer is one of its
@@ -1127,7 +1207,7 @@ pub fn take_untold(
 // --- suggestions -----------------------------------------------------------
 
 const SUG_COLS: &str =
-    "id, desk_id, kind, name, cmd, folder, why, by, pane, created_at, settled_at, outcome";
+    "id, desk_id, kind, name, cmd, folder, why, by, pane, created_at, settled_at, outcome, lasts, detail, note";
 
 fn row_to_suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
     Ok(Suggestion {
@@ -1143,6 +1223,9 @@ fn row_to_suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
         created_at: r.get(9)?,
         settled_at: r.get(10)?,
         outcome: r.get(11)?,
+        lasts: r.get(12)?,
+        detail: serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default(),
+        note: r.get(14)?,
     })
 }
 
@@ -1177,6 +1260,10 @@ pub struct Suggest {
     pub why: String,
     pub by: String,
     pub pane: String,
+    /// A widget's or a box's: `today`, `week`, `panel`, or nothing.
+    pub lasts: String,
+    /// A widget's: what its card shows, as JSON.
+    pub detail: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1196,6 +1283,7 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     let kind = match s.kind.as_str() {
         "desk" => "desk",
         "widget" => "widget",
+        "box" => "box",
         _ => "panel",
     };
     let name = line(&s.name, NAME_CHARS);
@@ -1209,6 +1297,7 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
         || (kind == "panel" && cmd.is_empty())
         || (kind == "desk" && folder.is_empty())
         || (kind == "widget" && (name.is_empty() || folder.is_empty()))
+        || (kind == "box" && name.is_empty())
     {
         return Ok(Suggested::Empty);
     }
@@ -1238,14 +1327,48 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
         return Ok(Suggested::Full);
     }
     tx.execute(
-        "INSERT INTO desk_suggestions(desk_id, kind, name, cmd, folder, why, by, pane, created_at)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![desk_id, kind, name, cmd, folder, why, by, s.pane, now],
+        "INSERT INTO desk_suggestions(desk_id, kind, name, cmd, folder, why, by, pane, created_at, lasts, detail)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![desk_id, kind, name, cmd, folder, why, by, s.pane, now, lasts(&s.lasts), s.detail],
     )?;
     let id = tx.last_insert_rowid();
     let card = suggestion(&tx, desk_id, id)?.expect("the row just written");
     tx.commit()?;
     Ok(Suggested::Card(Box::new(card)))
+}
+
+/// How long an agent may suggest a widget lasts; anything else is until
+/// the reader turns it off.
+pub fn lasts(s: &str) -> &'static str {
+    match s.trim() {
+        "today" => "today",
+        "week" => "week",
+        "panel" => "panel",
+        _ => "",
+    }
+}
+
+/// A box on this desk waiting on the reader already, by name.
+pub fn box_waiting(conn: &Connection, desk_id: i64, name: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM desk_suggestions WHERE desk_id = ?1 AND kind = 'box' AND name = ?2 AND settled_at = 0",
+            params![desk_id, name],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// The widget file `name` an agent proposed and the reader added stopped:
+/// the agent that proposed it is told `note`, once, with its next prompt.
+pub fn tell_widget(conn: &Connection, name: &str, note: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desk_suggestions SET note = ?2, told_at = 0
+         WHERE id = (SELECT id FROM desk_suggestions WHERE kind = 'widget' AND name = ?1
+                     AND outcome = 'opened' ORDER BY settled_at DESC LIMIT 1)",
+        params![name, note],
+    )? > 0)
 }
 
 /// The reader opened it, or put it away with ✕. Settled once.
@@ -1282,8 +1405,8 @@ pub fn unsettle(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     )? > 0)
 }
 
-/// Suggestions this pane made that the reader has opened and it has not been
-/// told of; marked told.
+/// Suggestions this pane made that the reader has opened -- or, for a box,
+/// said Not now to -- and it has not been told of; marked told.
 pub fn take_opened(
     conn: &Connection,
     desk_id: i64,
@@ -1292,7 +1415,8 @@ pub fn take_opened(
 ) -> Result<Vec<Suggestion>> {
     let mut st = conn.prepare(&format!(
         "SELECT {SUG_COLS} FROM desk_suggestions WHERE desk_id = ?1 AND pane = ?2
-         AND outcome = 'opened' AND told_at = 0 ORDER BY settled_at, id LIMIT 4"
+         AND (outcome = 'opened' OR (kind = 'box' AND outcome = 'dismissed')) AND told_at = 0
+         ORDER BY settled_at, id LIMIT 4"
     ))?;
     let v: Vec<Suggestion> = st
         .query_map(params![desk_id, pane], row_to_suggestion)?

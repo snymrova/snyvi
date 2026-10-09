@@ -20,7 +20,7 @@ let filed = { threads: [], turns: [], suggestions: [] }, filedAt = null, filedGe
 /** A row just put away, holding its Undo: { k: "t" | "w" | "s", id, text,
  *  pane }, a thread's pane when it was that panel's, so its Undo stays there. */
 let filedGone = null, filedTimer = 0;
-/** The field open on a thread or a turn: { kind: "park" | "rename" | "other" | "change", id }. */
+/** The field open on a thread or a turn: { kind: "rename" | "other" | "change", id }. */
 let thField = null, thDraft = "";
 /** Answers given here, kept for Send now until sent or the panel moves on. */
 const sendable = new Map();
@@ -32,10 +32,10 @@ function filedNow(d) {
 }
 
 /** Your turn and Suggested, above the panels. A thread is on its panel's row
- *  (`threadChip`), and one no panel is moving under the panels (`restSec`). */
+ *  (`threadChip`); one no panel is moving is on no list (#109). */
 function filedSecs(d) {
   const f = filedNow(d);
-  return turnSec(d, f) + sugSec(f);
+  return turnSec(d, f) + sugSec(f, d);
 }
 
 /** Which panel a pane is, as the reader counts them. */
@@ -70,12 +70,10 @@ function threadSub(t) {
   ].filter(Boolean).join(" · ") || `filed by ${t.by || "an agent"}`;
 }
 
-/** The ⋯ a thread's line or row has: the same menu a right-click opens. */
-const moreBtn = (t, esc) => `<button type="button" class="th-more" data-a="th-menu" data-t="${t.id}" data-tip="Done, park, rename or remove" aria-label="What to do with ${esc(t.name)}">⋯</button>`;
 
-/** The field a thread's Park… or Rename… opens, in its line or row. */
-const thInput = t => thField && thField.id === t.id && (thField.kind === "park" || thField.kind === "rename")
-  ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "park" ? "The next step, to pick it up by" : "The thread's name"}" aria-label="${thField.kind === "park" ? "The next step" : "A new name"}" spellcheck="false">` : "";
+/** The field a thread's Rename… opens, in its line. */
+const thInput = t => thField && thField.id === t.id && thField.kind === "rename"
+  ? `<input class="th-in" data-for="rename" placeholder="The thread's name" aria-label="A new name" spellcheck="false">` : "";
 
 /** A panel's thread, on the panel's own row: its stage, as a small chip
  *  beside the name, and the rest -- the thread's name, the PR, the checks
@@ -99,7 +97,7 @@ function threadChip(d, pane, esc) {
 }
 
 /** Under a panel's row, only for a moment: a thread just removed, with its
- *  Undo, or the field its Park… or Rename… opened. */
+ *  Undo, or the field its Rename… opened. */
 function threadLine(d, pane, esc) {
   const gone = filedGone && filedGone.k === "t" && filedGone.pane === pane ? filedGone : null;
   if (gone) return goneRow("t", gone.id, gone.text, esc);
@@ -107,32 +105,6 @@ function threadLine(d, pane, esc) {
   if (!t) return "";
   const field = thInput(t);
   return (field ? `<li class="th-edit" data-t="${t.id}">${field}</li>` : "") + errLine(`t${t.id}`, esc);
-}
-
-/** Under the panels, folded to one line: the threads no panel is moving --
- *  parked, their panel closed, or their panel took up another -- so a panel
- *  that goes from one piece of work to the next leaves nothing to tidy. Done
- *  or Remove closes one; left alone, it goes by itself, kept: the daemon
- *  lists a resting thread for a day, a parked one for a week (src/thread.rs
- *  `RESTING_SHOWN`, `PARKED_SHOWN`). */
-function restSec(d) {
-  const { esc } = ctx, f = filedNow(d);
-  const resting = f.threads.filter(t => t.stage !== "shipped" && restOf(d, t));
-  const gone = filedGone && filedGone.k === "t" && !slotOf(d, filedGone.pane) ? filedGone : null;
-  if (!resting.length && !gone) return "";
-  return sec("rest", "rail.threads", "Resting", {
-    cls: "th-rest", open: !!gone, count: resting.length,
-    tip: "Resting", sub: "Threads no panel is moving: parked, their panel closed, or their panel took up another. Done or Remove closes one; otherwise it leaves the rail after a day, or a week if parked, and is kept",
-  }, `<ul class="dk-threads">${resting.map(t => restRow(d, t, esc)).join("")}${gone ? goneRow("t", gone.id, gone.text, esc) : ""}</ul>`);
-}
-
-/** A resting thread: one line, its name and why it rests, and its ⋯. */
-function restRow(d, t, esc) {
-  const why = t.stage === "parked" ? "parked" : restOf(d, t);
-  return `<li class="dk-thread rest" data-t="${t.id}"><div class="th-top">` +
-    `<span class="th-name" data-tip="${esc(t.name)}" data-tip-sub="${esc(t.stage)} · ${esc(why)} · ${esc(threadSub(t))}" data-tip-overflow>${esc(t.name)}</span>` +
-    `<span class="th-why">${t.stage === "parked" ? "parked" : `${esc(t.stage)} · ${esc(why)}`}</span>` +
-    moreBtn(t, esc) + `</div>${thInput(t)}</li>` + errLine(`t${t.id}`, esc);
 }
 
 /** What the turn's buttons say, by its kind. */
@@ -144,7 +116,16 @@ function turnSec(d, f) {
   const said = f.turns.filter(w => w.answered_at && sendable.has(w.id));
   const gone = filedGone && filedGone.k === "w" ? filedGone : null;
   if (!waiting.length && !said.length && !gone) return "";
-  const rows = waiting.map(w => turnRow(d, w, esc)).join("") + said.map(w => saidRow(d, w, esc)).join("") +
+  // Questions asked together are one card (#110), where its first one would
+  // be: each still a turn of its own, answered and put away on its own.
+  const drawn = new Set();
+  const card = w => {
+    if (!w.ask_group) return w.answered_at ? saidRow(d, w, esc) : turnRow(d, w, esc);
+    if (drawn.has(w.ask_group)) return "";
+    drawn.add(w.ask_group);
+    return groupCard(d, w.ask_group, f.turns.filter(x => x.ask_group === w.ask_group && (!x.answered_at || sendable.has(x.id))), esc);
+  };
+  const rows = waiting.map(card).join("") + said.map(card).join("") +
     (gone ? goneRow("w", gone.id, gone.text, esc) : "");
   // Fixed: it never folds, so what only the reader can do is never out of sight.
   return sec("turn", "rail.turns", "Your turn", {
@@ -153,14 +134,45 @@ function turnSec(d, f) {
   }, `<ul class="dk-turn-list">${rows}</ul>`);
 }
 
+/** A decide's options, the recommended one marked, and Other…. */
+const picks = (w, esc) => w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"` : ""}>${esc(o)}</button>`).join("") +
+  `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`;
+/** The field Other… or Needs changes… opens under a turn. */
+const otherIn = w => thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change")
+  ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "";
+const fromOf = (d, w) => {
+  const n = slotOf(d, w.pane);
+  return w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
+};
+
+/** Several questions an agent asked at once (#110), as one card: a row for
+ *  each, its options until it is answered and what you said after; and once
+ *  every one is answered, Send answers, which types them all into the panel
+ *  that asked as one message -- or they go with your next one. */
+function groupCard(d, g, ms, esc) {
+  if (!ms.length) return "";
+  const n = slotOf(d, ms[0].pane), v = views.get(ms[0].pane);
+  const open = ms.filter(w => !w.answered_at).length;
+  const rows = ms.map(w => w.answered_at
+    ? `<div class="tn-gq said"><p class="tn-q">${esc(w.text)}</p><p class="tn-by">You said <b>${esc(w.answer)}</b></p></div>`
+    : `<div class="tn-gq" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
+      `<div class="tn-acts">${picks(w, esc)}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="this question; nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>${otherIn(w)}</div>` + errLine(`w${w.id}`, esc)).join("");
+  const foot = open
+    ? `<span class="tn-wait">${open} of ${ms.length} to answer</span>`
+    : (idle(v)
+      ? `<button type="button" class="tn-opt rec" data-a="tn-gsend" data-g="${g}" data-tip="Send answers" data-tip-sub="Types all ${ms.length} into panel ${n} as one message and presses Enter">Send answers</button>`
+      : `<span class="tn-wait">${n ? `they go with your next message to panel ${n}` : "they go to the next panel that asks"}</span>`) +
+      `<button type="button" class="tn-x" data-a="tn-gunsend" data-g="${g}" data-tip="Leave them for the next message" aria-label="Leave them for the next message">${ico("x")}</button>`;
+  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}"><p class="tn-by">${ms.length} decisions · ${esc(fromOf(d, ms[0]))}</p>${rows}` +
+    `<div class="tn-acts tn-gfoot">${foot}</div></li>`;
+}
+
 function turnRow(d, w, esc) {
   const n = slotOf(d, w.pane);
-  const from = w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
-  const other = thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change");
+  const from = fromOf(d, w);
   if (w.kind === "run") return runRow(d, w, n, from, esc);
   const buttons = w.kind === "decide"
-    ? w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"` : ""}>${esc(o)}</button>`).join("") +
-      `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`
+    ? picks(w, esc)
     : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
       ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
       : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(o)}</button>`).join("");
@@ -168,8 +180,7 @@ function turnRow(d, w, esc) {
   return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
     `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link && !link ? ` · ${esc(w.link)}` : ""}</p>` +
     `<div class="tn-acts">${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
-    (other ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "") +
-    `</li>` + errLine(`w${w.id}`, esc);
+    otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
 }
 
 /** Whether Run can type into a panel: running, with a Claude Code session
@@ -212,24 +223,79 @@ function saidRow(d, w, esc) {
     `<div class="tn-acts">${now}<button type="button" class="tn-x" data-a="tn-unsend" data-w="${w.id}" data-tip="Leave it for the next message" aria-label="Leave it for the next message">${ico("x")}</button></div></li>`;
 }
 
-function sugSec(f) {
+/** What the reader picked on a widget's or a box's card: how long it
+ *  lasts, by card id; what Try once printed; whose script is open. */
+const sgFor = new Map(), sgTry = new Map(), sgScript = new Set();
+/** How long a widget lasts, in the card's words. `panel` only for one an
+ *  agent in a panel still open asked for. */
+const LASTS = [["", "Until I turn it off"], ["today", "For today"], ["week", "For a week"], ["panel", "While panel"]];
+/** Seconds as the card says them. */
+const every = n => n < 60 ? `${n} s` : n % 60 ? `${Math.round(n / 6) / 10} min` : `${n / 60} min`;
+/** The card's pick as the daemon keeps it: until when, and whose panel. */
+function lastsBody(s) {
+  const k = sgFor.has(s.id) ? sgFor.get(s.id) : s.lasts || "";
+  if (k === "today") { const t = new Date(); t.setHours(24, 0, 0, 0); return { until: Math.floor(t / 1000), until_pane: "" }; }
+  if (k === "week") return { until: Math.floor(Date.now() / 1000) + 7 * 86400, until_pane: "" };
+  if (k === "panel") return { until: 0, until_pane: s.pane || "" };
+  return { until: 0, until_pane: "" };
+}
+
+function sugSec(f, d) {
   const { esc } = ctx;
   const gone = filedGone && filedGone.k === "s" ? filedGone : null;
   if (!f.suggestions.length && !gone) return "";
-  // A widget is a widget file an agent wrote (propose_widget): Add puts it
-  // with the rest and allows it as it is; it runs its command on a timer
-  // while it is in view, so the command is on the card.
-  const what = s => s.kind === "desk" ? `A desk for <span class="mono">${esc(tilde(s.folder))}</span>` : s.kind === "widget" ? `A widget: ${esc(s.name)}` : esc(s.name || "A panel");
+  // A widget is a widget file an agent wrote (propose_widget): the card
+  // shows all that will run, where and how often, and can try it once; Add
+  // puts it with the rest, on this desk unless the card says otherwise, for
+  // as long as the reader picks. A box is a panel's first set_widget here:
+  // what it would show, and Allow or Not now (#111).
+  const what = s => s.kind === "desk" ? `A desk for <span class="mono">${esc(tilde(s.folder))}</span>`
+    : s.kind === "widget" ? `A widget: ${esc(s.name)}`
+    : s.kind === "box" ? `A box on this desk: ${esc(s.name)}`
+    : esc(s.name || "A panel");
+  const lastsRow = s => {
+    const n = slotOf(d, s.pane), pick = sgFor.has(s.id) ? sgFor.get(s.id) : s.lasts || "";
+    return `<p class="sg-for" role="group" aria-label="How long">` + LASTS.filter(([k]) => k !== "panel" || n).map(([k, l]) =>
+      `<button type="button" class="sg-chip" data-a="sg-for" data-s="${s.id}" data-v="${k}" aria-pressed="${pick === k}">${l}${k === "panel" ? ` ${n} is open` : ""}</button>`).join("") + `</p>`;
+  };
+  const widgetBits = s => {
+    const x = s.detail || {}, at = x.where === "global" ? "on the left, on every page, run in its own folder"
+      : x.where === "every" ? "on every desk, each run in its desk's folder"
+      : `on this desk only, run in <span class="mono">${esc(tilde(d.root || ""))}</span>`;
+    const lines = x.script ? x.script.split("\n").length : 0, open = sgScript.has(s.id), tried = sgTry.get(s.id);
+    return `<p class="tn-by">${at} · every ${every(x.every || 60)} while in view</p>` +
+      `<code class="sg-cmd" data-tip="Runs this on a timer while the widget is in view" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` +
+      (x.script ? `<button type="button" class="sg-fold" data-a="sg-script" data-s="${s.id}" aria-expanded="${open}">${open ? "Hide" : "Show"} ${esc(x.script_name || "script")} (${lines} line${lines === 1 ? "" : "s"})</button>` +
+        (open ? `<pre class="sg-script">${esc(x.script)}</pre>` : "") : "") +
+      (tried ? tried.busy ? `<p class="tn-by" role="status">Running it once…</p>`
+        : tried.error ? `<p class="wg-err sg-tried" role="status">${esc(tried.error)}</p>`
+        : `<div class="wg-body sg-tried" role="status" style="--lines:3">${tried.html || "<p>(it printed nothing)</p>"}</div>` : "");
+  };
+  const act = s => s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : s.kind === "box" ? "Allow" : "Open panel";
   const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${what(s)}</p>` +
-    (s.kind !== "desk" ? `<code class="sg-cmd" data-tip="${s.kind === "widget" ? "Runs this on a timer while the widget is in view" : "Runs exactly this"}" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` : "") +
-    `<p class="tn-by">${esc(s.why)}${s.by ? ` · ${esc(s.by)}` : ""}</p>` +
-    `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : "Open panel"}</button>` +
-    `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
+    (s.kind === "widget" ? widgetBits(s)
+      : s.kind === "box" ? (s.cmd ? `<p class="sg-box">${esc(s.cmd)}</p>` : "")
+      : s.kind !== "desk" ? `<code class="sg-cmd" data-tip="Runs exactly this" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` : "") +
+    `<p class="tn-by">${esc(s.why)}${s.by && s.kind !== "box" ? ` · ${esc(s.by)}` : ""}</p>` +
+    (s.kind === "widget" || s.kind === "box" ? lastsRow(s) : "") +
+    `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${act(s)}</button>` +
+    (s.kind === "widget" ? `<button type="button" class="tn-opt" data-a="sg-try" data-s="${s.id}" data-tip="Run it once, here" data-tip-sub="As it would run, and nothing kept"${sgTry.get(s.id)?.busy ? " disabled" : ""}>Try once</button>` : "") +
+    `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="${s.kind === "box" ? "Not now" : "Not this one"}" data-tip-sub="${s.kind === "box" ? "the panel is told, and later pushes refused" : "nothing is deleted"}" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
     (gone ? goneRow("s", gone.id, gone.text, esc) : "");
   return sec("suggested", "rail.suggested", "Suggested", {
     cls: "dk-filed", fixed: true, count: f.suggestions.length || "",
-    tip: "Suggested", sub: "Panels and desks an agent thinks the work wants. Nothing opens until you click",
+    tip: "Suggested", sub: "Panels, desks and widgets an agent thinks the work wants. Nothing opens or runs until you click",
   }, `<ul class="dk-turn-list">${rows}</ul>`);
+}
+
+/** Try once: the proposed widget run here, as it would run, and what it
+ *  printed in the card. */
+async function trySuggested(d, s) {
+  sgTry.set(s.id, { busy: true }); rail();
+  let j;
+  try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/try`, {}); }
+  catch (e) { j = { error: `Could not run it · ${ctx.sayErr(e).why}` }; }
+  sgTry.set(s.id, j); rail();
 }
 
 /** The thread a note is in, while the page holds this desk's threads. */
@@ -276,16 +342,15 @@ function putAway(k, id, text, pane = "") {
 
 const PATH = { t: "threads", w: "turns", s: "suggestions" };
 
-/** The menu on a thread, its line or its resting row: right-click, or its ⋯.
- *  What a reader does to a thread, not the agent's stages: Done, for work
- *  that shipped where the panel did not see it, and Park with a next step.
- *  The panel hears either at its next prompt. */
+/** The menu on a thread, on its panel's row: right-click, or its ⋯. What a
+ *  reader does to a thread, not the agent's stages: Done, for work that
+ *  shipped where the panel did not see it, which the panel hears at its next
+ *  prompt. No Park: a thread no panel is moving is on no list (#109). */
 function threadMenu(card) {
   const t = filed.threads.find(x => x.id === +card.dataset.t), d = current();
   if (!t || !d) return null;
   return { head: t.name, items: [
     t.stage !== "shipped" && { label: "Done", run: () => act({ dataset: { a: "th-move", t: String(t.id), stage: "shipped" } }) },
-    t.stage !== "parked" && t.stage !== "shipped" && { label: "Park…", moves: 1, run: () => { thField = { kind: "park", id: t.id }; thDraft = t.next || ""; rail(); } },
     { label: "Rename…", moves: 1, run: () => { thField = { kind: "rename", id: t.id }; thDraft = t.name; rail(); } },
     "rule",
     { label: "Remove", danger: true, run: () => act({ dataset: { a: "th-x", t: String(t.id) } }) },
@@ -299,7 +364,7 @@ function threadItems(v) {
   const d = current(), t = d && paneThread(d, v.id);
   const m = t && threadMenu({ dataset: { t: String(t.id) } });
   if (!m) return [];
-  const say = { "Done": "Thread done", "Park…": "Park thread…", "Rename…": "Rename thread…", "Remove": "Remove thread" };
+  const say = { "Done": "Thread done", "Rename…": "Rename thread…", "Remove": "Remove thread" };
   return ["rule", ...m.items.filter(Boolean).map(x => x === "rule" ? x : { ...x, label: say[x.label] || x.label }), "rule"];
 }
 
@@ -339,6 +404,27 @@ function sendNow(d, w) {
   input(v, bracket(v, `Answered in snyvi: "${w.text}" → ${w.answer}`));
   setTimeout(() => input(v, "\r"), 120);
   sendable.delete(w.id);
+  rail();
+}
+
+/** Send answers: a card's answers typed into the panel that asked as one
+ *  message, a line each, and Enter apart -- on the click alone, while that
+ *  panel is idle, as Send now. */
+function sendGroup(d, g) {
+  const ms = filed.turns.filter(w => w.ask_group === g && w.answered_at && sendable.has(w.id));
+  if (!ms.length) return;
+  const v = views.get(ms[0].pane), n = slotOf(d, ms[0].pane);
+  if (!idle(v)) {
+    clearTimeout(rowTimer);
+    rowSaid = { p: ms[0].pane, text: `Panel ${n || "?"} is busy, so nothing is typed into it. Your answers go with your next message.` };
+    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
+    rail();
+    return;
+  }
+  const text = ["Answered in snyvi:", ...ms.map(w => `"${w.text}" → ${w.answer}`)].join("\r");
+  input(v, bracket(v, text));
+  setTimeout(() => input(v, "\r"), 120);
+  for (const w of ms) sendable.delete(w.id);
   rail();
 }
 
@@ -382,10 +468,7 @@ async function filedAct(a, b, d) {
   const t = filed.threads.find(x => x.id === +b.dataset.t);
   const w = filed.turns.find(x => x.id === +b.dataset.w);
   const s = filed.suggestions.find(x => x.id === +b.dataset.s);
-  if (a === "th-menu") {
-    const card = b.closest(".dk-thread"), r = b.getBoundingClientRect();
-    if (card) ctx.menu?.(card, r.left, r.bottom + 4, false);
-  } else if (a === "th-move" && t) { if (b.dataset.stage) await moveThread(d, t, { stage: b.dataset.stage }); }
+  if (a === "th-move" && t) { if (b.dataset.stage) await moveThread(d, t, { stage: b.dataset.stage }); }
   else if (a === "th-x" && t) {
     filed.threads = filed.threads.filter(x => x !== t);
     putAway("t", t.id, t.name, restOf(d, t) ? "" : t.pane); rail();
@@ -395,6 +478,8 @@ async function filedAct(a, b, d) {
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
   else if (a === "tn-send" && w) sendNow(d, w);
+  else if (a === "tn-gsend") sendGroup(d, +b.dataset.g);
+  else if (a === "tn-gunsend") { for (const x of filed.turns) if (x.ask_group === +b.dataset.g) sendable.delete(x.id); rail(); }
   else if (a === "tn-run" && w) runHere(d, w);
   else if (a === "tn-newpanel" && w) await runNewPanel(d, w);
   else if (a === "tn-copy" && w) copySha(b, "Copied");
@@ -410,6 +495,9 @@ async function filedAct(a, b, d) {
     await told({ ...b.dataset }, `s${s.id}`, "Could not put it away", () => { filed.suggestions.push(s); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {}));
   } else if (a === "sg-open" && s) await openSuggested(d, s);
+  else if (a === "sg-try" && s) await trySuggested(d, s);
+  else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); rail(); }
+  else if (a === "sg-script" && s) { if (!sgScript.delete(s.id)) sgScript.add(s.id); rail(); }
   else if (a === "fd-back") {
     const k = b.dataset.k, id = +b.dataset.i;
     clearTimeout(filedTimer); filedGone = null; rail();
@@ -428,11 +516,14 @@ async function openSuggested(d, s) {
     if (why) return ctx.toast("Open panel", why);
   }
   let j;
-  try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/open`, {}); }
-  catch (e) { rowErr = { k: `s${s.id}`, why: s.kind === "widget" ? "Could not add it" : "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
+  const asked = s.kind === "widget" || s.kind === "box";
+  try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/open`, asked ? lastsBody(s) : {}); }
+  catch (e) { rowErr = { k: `s${s.id}`, why: s.kind === "widget" ? "Could not add it" : s.kind === "box" ? "Could not allow it" : "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
   filed.suggestions = filed.suggestions.filter(x => x !== s);
-  // Added: it runs at the runner's next look, and its seat comes with it.
-  if (s.kind === "widget") { rail(); return; }
+  sgFor.delete(s.id); sgTry.delete(s.id); sgScript.delete(s.id);
+  // Added, or allowed: it runs at the runner's next look, or its body is
+  // drawn now, and its seat comes with it.
+  if (asked) { rail(); return; }
   if (s.kind === "desk") {
     if (j.desk && j.desk.id) { await ctx.refresh(); ctx.go(j.desk.id); }
     return;
@@ -466,10 +557,7 @@ async function saveField() {
   const d = current(), f = thField, text = thDraft.trim();
   thField = null; thDraft = "";
   if (!d || !f) return;
-  if (f.kind === "park") {
-    const t = filed.threads.find(x => x.id === f.id);
-    if (t) await moveThread(d, t, { stage: "parked", next: text });
-  } else if (f.kind === "rename") {
+  if (f.kind === "rename") {
     const t = filed.threads.find(x => x.id === f.id);
     if (t && text) await moveThread(d, t, { name: text }); else rail();
   } else {
@@ -480,16 +568,7 @@ async function saveField() {
 
 const THREAD_CSS = `
 .dk-threads, .dk-turn-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.dk-thread, .dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
-/* Resting: a section under the panels, folded until opened; each thread in it a row. */
-.th-rest .dk-threads { gap: 2px; }
-.dk-thread.rest { padding: 3px 4px 3px 8px; background: none; border-style: dashed; }
-.dk-thread.rest .th-name { font-weight: 500; color: var(--fg-2); }
-.th-why { flex: none; font-size: var(--fs-micro); color: var(--fg-3); }
-.th-top { display: flex; align-items: center; gap: 6px; }
-.th-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.th-more { flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; font: inherit; line-height: 1; }
-.th-more:hover { background: var(--rule-2); color: var(--fg); }
+.dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
 /* A panel's thread: its stage, a chip on the panel's row between the name
    and the context, in the rail's quiet ink; the name gives way before it does. */
 .dk-pth { flex: none; margin-left: auto; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 500; line-height: 16px; color: var(--fg-2); }
@@ -511,7 +590,19 @@ const THREAD_CSS = `
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }
 .tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
 .dk-turn.said { border-style: dashed; }
+/* Questions asked together: one card, a row for each, ruled apart. */
+.tn-gq { padding: 6px 0 0; margin-top: 6px; border-top: 1px solid var(--rule); }
+.tn-gq .tn-acts { margin-top: 4px; }
+.tn-gq.said .tn-q { color: var(--fg-2); }
+.tn-gfoot { padding-top: 6px; border-top: 1px solid var(--rule); }
 /* A handed-over command is shown whole: what Run types is what is read. */
 .sg-cmd.tn-cmd { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: 9em; overflow-y: auto; }
+.sg-for { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
+.sg-chip { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-size: var(--fs-micro); color: var(--fg-2); }
+.sg-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sg-fold { display: block; margin-top: 4px; padding: 0; font-size: var(--fs-micro); color: var(--fg-3); text-decoration: underline dotted; }
+.sg-script { margin: 4px 0 0; padding: 4px 6px; max-height: 12em; overflow: auto; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); white-space: pre; }
+.sg-box { margin: 4px 0 0; color: var(--fg-2); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.sg-tried { margin-top: 6px; }
 .sg-cmd { display: block; margin-top: 4px; padding: 2px 5px; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;

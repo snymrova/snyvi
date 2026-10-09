@@ -27,23 +27,21 @@
    * a class on #trees rather than a redraw, so it survives every render and
    * costs none; it is remembered per reader. */
   const folded = saved("snyvi.fold");
-  /* A section that starts folded -- Resting, which a panel moving on to its
-   * next piece of work fills -- is in the set while the reader has it open:
-   * the set is what differs from where each section starts, so a reader who
-   * never folds anything stores nothing. */
-  const FOLDED_FIRST = new Set(["rest"]);
-  const isFolded = k => folded.has(k) !== FOLDED_FIRST.has(k);
+  const isFolded = k => folded.has(k);
   /* The desk's rail kept its folds apart, one key a section, until its
    * sections became these (docs/DESIGN.md §8.4): carried over, and the old
-   * keys taken out, so it happens once and leaves nothing behind. */
+   * keys taken out, so it happens once and leaves nothing behind. Resting,
+   * which started folded, is gone (#109): its key and its place in the set
+   * with it. */
   {
-    const old = [["panels", "panels"], ["docs", "docs"], ["notes", "notes"], ["rest", "threads-rest"]].filter(([, was]) => store.get(`snyvi.dk.fold-${was}`) != null);
+    const old = [["panels", "panels"], ["docs", "docs"], ["notes", "notes"]].filter(([, was]) => store.get(`snyvi.dk.fold-${was}`) != null);
     for (const [k, was] of old) {
-      const shut = store.get(`snyvi.dk.fold-${was}`) === "1" || (k === "rest" && store.get(`snyvi.dk.fold-${was}`) !== "0");
-      if (shut !== FOLDED_FIRST.has(k)) folded.add(k);
+      if (store.get(`snyvi.dk.fold-${was}`) === "1") folded.add(k);
       store.del(`snyvi.dk.fold-${was}`);
     }
-    if (old.length && folded.size) save("snyvi.fold", folded);
+    if (store.get("snyvi.dk.fold-threads-rest") != null) store.del("snyvi.dk.fold-threads-rest");
+    const rest = folded.delete("rest");
+    if (old.length || rest) save("snyvi.fold", folded);
   }
   /* A project the reader has taken out of the sidebar. Nothing is deleted --
    * snyvi deletes nothing on this path -- so the project keeps every document
@@ -226,7 +224,7 @@
    *  never a redraw of the side it is on. */
   function seatFrame(w) {
     const key = `w:${w.name}`;
-    return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}">` +
+    return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}" data-wdesk="${w.desk_id}" data-wsrc="${w.source}">` +
       secHead(key, wTitle(w.name), { tip: wTitle(w.name), sub: w.source === "file" ? "A widget file, run while it is in view" : "Set by an agent or a script" }) +
       `<div class="sec-body"></div></section>`;
   }
@@ -235,8 +233,13 @@
    *  changed since it was allowed (`changed:`) -- src/server/widget_run.rs.
    *  Its seat asks, with the button that answers; only the window can. */
   const wAsks = w => /^(allow|changed): /.test(w.error || "");
+  /** One that failed three times in a row for the same reason: stopped on
+   *  this desk until the reader says Try again (#111). Turn off here takes
+   *  it off this desk; the rest keep it. */
+  const wStopped = w => /^stopped: /.test(w.error || "");
   const seatInner = w => `<p class="wg-by">${esc(w.writer || w.source)} · <span class="wg-age" data-t="${w.updated_at}">${relShort(w.updated_at)}</span></p>` +
     (wAsks(w) ? `<p class="wg-ask" role="status">${esc(w.error.replace(/^\w+: /, ""))}<button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
+      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status">Stopped ${esc(w.error.replace(/^stopped: /, ""))}<button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>` : ""}</p>`
       : w.error ? `<p class="wg-err" role="status">${esc(w.error)}</p>` : "") +
     `<div class="wg-body" style="--lines:${w.lines}">${w.html}</div>`;
   /** The global widgets, drawn whole: on the first paint, and when one
@@ -253,6 +256,17 @@
     b.disabled = true;
     try { await deskApi(`/api/widgets/${b.dataset.wallow}/allow`, {}); b.textContent = "Allowed"; }
     catch { b.disabled = false; toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
+  }
+  /** A seat's own buttons: Try again on one that stopped, Turn off here.
+   *  Said in the seat when refused, where the click was. */
+  async function seatAct(b) {
+    const name = b.dataset.wretry || b.dataset.wnot, desk = +b.dataset.wd;
+    b.disabled = true;
+    try {
+      if (b.dataset.wretry) await deskApi(`/api/widgets/${name}/retry`, { desk });
+      else await deskApi(`/api/widgets/${name}/prefs`, { not_desk: desk });
+      b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
+    } catch { b.disabled = false; b.textContent = "Could not · again"; }
   }
   /** A global widget changed (the `widget` event): patched where it stands,
    *  or the slot drawn again when one came, went or was switched off. */

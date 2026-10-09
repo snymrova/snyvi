@@ -178,7 +178,7 @@ const CHECKS = {
     run(text) {
       // The sidebar's and the rail's own heads, as they were before there
       // was one: a <details> section, a label made a summary.
-      return count(text, /class="(?:[^"$]*\s)?(?:s-head|dk-lab|th-rest-h)\b|<details class="dk-sec\b/g);
+      return count(text, /class="(?:[^"$]*\s)?(?:s-head|dk-lab)\b|<details class="dk-sec\b/g);
     },
   },
   radius: {

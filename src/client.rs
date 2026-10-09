@@ -1099,7 +1099,8 @@ pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Res
 pub fn pane_thread(paths: &Paths, pane: &str, path: &str, body: Value) -> Result<Value> {
     let mut resp = pane_post(paths, &format!("{pane}/{path}"), body)?;
     match resp.status().as_u16() {
-        200 | 201 => Ok(resp.body_mut().read_json()?),
+        // 202: taken, and waiting on the reader (a box's first set_widget).
+        200..=202 => Ok(resp.body_mut().read_json()?),
         400 | 409 => bail!("{}", said(&mut resp)),
         404 => {
             bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
@@ -1439,7 +1440,7 @@ pub fn widget(
         }
     };
     match resp.status().as_u16() {
-        200 => Ok(resp.body_mut().read_json()?),
+        200 | 202 => Ok(resp.body_mut().read_json()?),
         400 | 404 | 409 => bail!("{}", said(&mut resp)),
         s => bail!("snyvi answered {s}"),
     }

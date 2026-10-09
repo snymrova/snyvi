@@ -1,12 +1,13 @@
 //! `snyvi reset`: back to a fresh install.
 //!
-//! What goes: every document and version, the index, the token, and the
-//! preferences every open page keeps. What stays: the agents, unless
-//! `--agents` says otherwise -- un-registering them is `uninstall-claude`'s
-//! job and touches files that are not snyvi's, and a reset that quietly did
-//! it would leave the next `send_document` failing against a tool that no
-//! longer exists. Left registered, the next send lands in an empty library,
-//! which is the fresh install working.
+//! What goes: every document and version, the index, the token, every key
+//! and Claude account with its value, and the preferences every open page
+//! keeps. What stays: the agents, unless `--agents` says otherwise --
+//! un-registering them is `uninstall-claude`'s job and touches files that
+//! are not snyvi's, and a reset that quietly did it would leave the next
+//! `send_document` failing against a tool that no longer exists. Left
+//! registered, the next send lands in an empty library, which is the fresh
+//! install working.
 //!
 //! It is the one thing snyvi does that cannot be undone, where a delete can
 //! be, so the friction is real: the sentence says what goes and what stays --
@@ -173,7 +174,7 @@ fn sentence(c: &Census, agents: bool, registered: &[crate::agents::Agent]) -> St
         k => format!("{} and {}", list[..k - 1].join(", "), list[k - 1]),
     };
     format!(
-        "This removes {} in {}, {}the index, the token and the page's preferences, and {}. Nothing can be undone.",
+        "This removes {} in {}, {}the index, the token, every key and Claude account, and the page's preferences, and {}. Nothing can be undone.",
         count(c.documents, "document", "documents"),
         count(c.projects, "project", "projects"),
         if c.desks > 0 {
@@ -231,6 +232,16 @@ fn reset_on_disk(paths: &Paths) -> Result<()> {
             Ok(())
         }
     };
+    // The keys' and accounts' values are not in the database: ask it which
+    // there are, forget each from the keychain, then the file goes whole.
+    if paths.db_path.exists() {
+        Store::open(paths)?
+            .reset()?
+            .forget(&crate::secrets::Secrets::new(
+                paths.config_dir.join("keys.json"),
+            ));
+    }
+    gone(&paths.config_dir.join("keys.json"))?;
     gone(&paths.docs_dir)?;
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut db = paths.db_path.as_os_str().to_owned();

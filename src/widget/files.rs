@@ -26,8 +26,10 @@ pub fn dir(config_dir: &Path) -> PathBuf {
     config_dir.join("widgets")
 }
 
-/// Where a widget runs: on the desk on the page, in its folder, or
-/// everywhere, in its own.
+/// Where a widget runs: on the desk on the page, in the desk's folder, or
+/// everywhere, in its own. Either way its own folder is first on PATH and
+/// in `SNYVI_WIDGET_DIR`, so a desk widget reaches its script by name
+/// (`lint`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
@@ -233,14 +235,96 @@ pub fn hash(folder: &Path) -> Result<String, String> {
     Ok(h.finalize().to_hex().to_string())
 }
 
+/// The variable a run finds its own folder in, as the shell it runs in
+/// writes it.
+const DIR_VAR: &str = if cfg!(windows) {
+    "%SNYVI_WIDGET_DIR%"
+} else {
+    "$SNYVI_WIDGET_DIR"
+};
+
+/// Whether a desk widget's command reaches the files in its own folder
+/// (#111). A desk widget runs in the desk's folder, with its own first on
+/// PATH and in `SNYVI_WIDGET_DIR`: a script of its own is named bare as the
+/// command, or through the variable. A relative path to one of its files
+/// (`./run.sh`), or its bare name as an argument (`sh run.sh`, `node x.js`),
+/// is looked for in the desk's folder, where it is not -- so the run fails
+/// on every desk, every time. Refused with how to write it. A global widget
+/// runs in its own folder, where everything reaches.
+pub fn lint(spec: &Spec, folder: &Path) -> Result<(), String> {
+    if spec.scope == Scope::Global {
+        return Ok(());
+    }
+    let ends = |w: &str| matches!(w, ";" | "&&" | "||" | "|" | "&" | "(" | "{");
+    let mut first = true;
+    for raw in spec.run.command.split_whitespace() {
+        if ends(raw) {
+            first = true;
+            continue;
+        }
+        let then_first = raw.ends_with(';') || raw.ends_with('&') || raw.ends_with('|');
+        let w = raw
+            .trim_end_matches([';', '&', '|'])
+            .trim_matches(|c| c == '"' || c == '\'');
+        let skip = w.is_empty()
+            || w.starts_with(['-', '$', '%', '~', '/', '\\'])
+            || (first && w.contains('='))
+            || w.contains("://");
+        if !skip {
+            let rel = w
+                .strip_prefix("./")
+                .or_else(|| w.strip_prefix(".\\"))
+                .unwrap_or(w);
+            let here = !rel.is_empty() && !rel.starts_with("..") && folder.join(rel).is_file();
+            let pathed = w.contains(['/', '\\']);
+            if here && (pathed || !first) {
+                let sep = if cfg!(windows) { "\\" } else { "/" };
+                return Err(format!(
+                    "{rel} is in the widget's folder, but a desk widget runs in the desk's folder, where it is not: \
+                     write \"{DIR_VAR}{sep}{rel}\" instead, or {rel} alone as the command for a script that runs by itself"
+                ));
+            }
+            if here && first && !runnable(&folder.join(rel)) {
+                return Err(format!(
+                    "{rel} is named as the command but cannot run by itself: make it executable, \
+                     or write sh \"{DIR_VAR}/{rel}\""
+                ));
+            }
+        }
+        // `LANG=C run.sh`: an assignment leaves the command still to come.
+        if !(first && w.contains('=')) {
+            first = false;
+        }
+        if then_first {
+            first = true;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a file runs by itself: executable here, and on Windows by its
+/// extension, which the shell goes by.
+fn runnable(f: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(f).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        f.extension().is_some()
+    }
+}
+
 /// A starter widget, for `snyvi widget new`: a `widget.json` and a script
 /// that prints a body, on this system's shell.
 pub fn starter(name: &str, scope: Scope) -> (String, &'static str, String) {
     let script = if cfg!(windows) { "run.ps1" } else { "run.sh" };
+    // By name, as a desk widget must (`lint`): its folder is first on PATH.
     let command = if cfg!(windows) {
-        "powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1".to_string()
+        format!("powershell -NoProfile -ExecutionPolicy Bypass -File \"{DIR_VAR}\\run.ps1\"")
     } else {
-        "./run.sh".to_string()
+        "run.sh".to_string()
     };
     let spec = Spec {
         name: name.to_string(),
@@ -264,7 +348,8 @@ pub fn starter(name: &str, scope: Scope) -> (String, &'static str, String) {
     } else {
         "#!/bin/sh\n\
          # stdin: {\"desk\":{...},\"settings\":{...},\"snyvi\":\"<version>\"}\n\
-         # cwd: the desk's folder (a desk widget) or this folder (a global one).\n\
+         # cwd: the desk's folder (a desk widget) or this folder (a global one);\n\
+         # this folder is $SNYVI_WIDGET_DIR, first on PATH.\n\
          # Print Markdown, or one JSON object: {\"body\":\"...\",\"tone\":\"ok\",\"count\":\"3\"}\n\
          printf '**%s** · %s\\n' \"$(basename \"$PWD\")\" \"$(date +%H:%M)\"\n"
             .to_string()
@@ -339,6 +424,78 @@ mod tests {
         assert_eq!(b, hash(&w).unwrap());
         std::fs::write(w.join("big"), vec![b'x'; FOLDER_MAX as usize]).unwrap();
         assert!(hash(&w).unwrap_err().contains("more than 64 KB"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[cfg(unix)]
+    fn desk_spec(command: &str) -> Spec {
+        Spec {
+            name: "git".into(),
+            title: "Git".into(),
+            scope: Scope::Desk,
+            run: Run {
+                command: command.into(),
+                every: 30,
+                timeout: 5,
+            },
+            lines: 2,
+            settings: BTreeMap::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_desk_widget_must_reach_its_own_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let cfg = folder("lint");
+        let w = dir(&cfg).join("git");
+        std::fs::write(w.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(w.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(w.join("x.js"), "1").unwrap();
+        for bad in [
+            "./run.sh",
+            "sh run.sh",
+            "node x.js",
+            "cd . && sh ./run.sh",
+            "true; node x.js",
+        ] {
+            let why = lint(&desk_spec(bad), &w).unwrap_err();
+            assert!(why.contains("$SNYVI_WIDGET_DIR/"), "{bad}: {why}");
+        }
+        for good in [
+            "run.sh",
+            "sh \"$SNYVI_WIDGET_DIR/run.sh\"",
+            "node \"$SNYVI_WIDGET_DIR/x.js\"",
+            "git status --short",
+            "LANG=C run.sh",
+            "true && run.sh",
+        ] {
+            assert_eq!(lint(&desk_spec(good), &w), Ok(()), "{good}");
+        }
+        // A script named as the command has to be able to run.
+        std::fs::set_permissions(w.join("run.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(lint(&desk_spec("run.sh"), &w)
+            .unwrap_err()
+            .contains("make it executable"));
+        // A global widget runs in its own folder: anything reaches.
+        let mut g = desk_spec("sh ./run.sh");
+        g.scope = Scope::Global;
+        assert_eq!(lint(&g, &w), Ok(()));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_starter_passes_its_own_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let cfg = folder("starter");
+        let w = dir(&cfg).join("git");
+        let (json, script, body) = starter("git", Scope::Desk);
+        std::fs::write(w.join("widget.json"), json).unwrap();
+        std::fs::write(w.join(script), body).unwrap();
+        std::fs::set_permissions(w.join(script), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let spec = read(&w, "git").unwrap();
+        assert_eq!(lint(&spec, &w), Ok(()));
         let _ = std::fs::remove_dir_all(&cfg);
     }
 

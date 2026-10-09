@@ -304,6 +304,23 @@ async function keepAll(ctx, pid, name) {
  *  to a friend…. A reader who never pairs is never offered it. */
 const booted = (() => { try { return +JSON.parse(document.getElementById("boot").textContent).friends || 0; } catch { return 0; } })();
 const friendsOf = ctx => ctx.state.friends ?? booted;
+/** A widget's box, from its head (#111): a widget file on a desk can be
+ *  kept to this desk or taken off it, and any widget turned off -- which
+ *  /sidebars turns on again (snyvi never deletes). */
+function widgetItems(ctx, sec) {
+  if (!sec) return [];
+  const name = sec.dataset.w, desk = +sec.dataset.wdesk, file = sec.dataset.wsrc === "file";
+  const set = (body, what) => async () => {
+    try { await ctx.api(`/api/widgets/${name}/prefs`, body); }
+    catch (e) { ctx.toast(`Could not ${what}`, { sub: e }); }
+  };
+  return [
+    file && desk && { label: "Only on this desk", run: set({ only_desk: desk }, "keep it to this desk") },
+    file && desk && { label: "Not on this desk", run: set({ not_desk: desk }, "take it off this desk") },
+    { label: "Turn off", run: set({ hidden: true }, "turn it off") },
+    RULE,
+  ].filter(Boolean);
+}
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
@@ -311,6 +328,7 @@ function entries(ctx, el, byKey = false) {
   if (el.matches(".nv-b")) return { head: "Where you've been", items: ctx.navList() };
   // A section's head, on either side: where they are arranged.
   if (el.matches(".sec-head")) return { head: el.querySelector(".sec-nm")?.textContent || "Sidebars", items: [
+    ...widgetItems(ctx, el.closest("section.wg")),
     { label: "Arrange sidebars…", moves: 1, run: () => ctx.showSidebars(true) },
   ] };
   // snyvi's own mark: the one setting that is about snyvi itself.
