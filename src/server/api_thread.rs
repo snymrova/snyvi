@@ -157,6 +157,17 @@ pub(crate) struct AskBody {
     via: String,
     by: String,
     cmd: String,
+    /// `ask` with several questions, as one card (#110): each one's text,
+    /// options and recommended, in place of the body's own.
+    questions: Vec<QuestionBody>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct QuestionBody {
+    question: String,
+    options: Vec<String>,
+    recommended: Option<i64>,
 }
 
 fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
@@ -165,6 +176,21 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
             threads_moved(app, desk);
             (StatusCode::CREATED, Json(json!({ "turn": t }))).into_response()
         }
+        Ok(Asked::Group(ts)) => {
+            threads_moved(app, desk);
+            (
+                StatusCode::CREATED,
+                Json(json!({ "turn": ts[0], "turns": ts })),
+            )
+                .into_response()
+        }
+        Ok(Asked::BadGroup) => refused(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "questions are one to {}, each with two to four options",
+                thread::GROUP_MAX
+            ),
+        ),
         Ok(Asked::Empty) => refused(StatusCode::BAD_REQUEST, "it needs one sentence"),
         Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run"),
         Ok(Asked::BadCmd) => refused(
@@ -239,6 +265,26 @@ async fn pane_turn(
         cmd: b.cmd,
     };
     let desk = placed.desk_id;
+    // Several questions are one card; a hand-over has no questions to put.
+    if !b.questions.is_empty() {
+        if !decide {
+            return refused(StatusCode::BAD_REQUEST, "only a question takes questions");
+        }
+        let asks: Vec<Ask> = b
+            .questions
+            .into_iter()
+            .map(|q| Ask {
+                text: q.question,
+                options: q.options,
+                recommended: q.recommended.unwrap_or(-1),
+                ..a.clone()
+            })
+            .collect();
+        let r = app
+            .store
+            .clocked(|c, now| thread::ask_group(c, desk, &asks, now));
+        return asked(&app, desk, r);
+    }
     let r = app.store.clocked(|c, now| thread::ask(c, desk, &a, now));
     asked(&app, desk, r)
 }

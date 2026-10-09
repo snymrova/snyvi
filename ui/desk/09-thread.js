@@ -116,7 +116,16 @@ function turnSec(d, f) {
   const said = f.turns.filter(w => w.answered_at && sendable.has(w.id));
   const gone = filedGone && filedGone.k === "w" ? filedGone : null;
   if (!waiting.length && !said.length && !gone) return "";
-  const rows = waiting.map(w => turnRow(d, w, esc)).join("") + said.map(w => saidRow(d, w, esc)).join("") +
+  // Questions asked together are one card (#110), where its first one would
+  // be: each still a turn of its own, answered and put away on its own.
+  const drawn = new Set();
+  const card = w => {
+    if (!w.ask_group) return w.answered_at ? saidRow(d, w, esc) : turnRow(d, w, esc);
+    if (drawn.has(w.ask_group)) return "";
+    drawn.add(w.ask_group);
+    return groupCard(d, w.ask_group, f.turns.filter(x => x.ask_group === w.ask_group && (!x.answered_at || sendable.has(x.id))), esc);
+  };
+  const rows = waiting.map(card).join("") + said.map(card).join("") +
     (gone ? goneRow("w", gone.id, gone.text, esc) : "");
   // Fixed: it never folds, so what only the reader can do is never out of sight.
   return sec("turn", "rail.turns", "Your turn", {
@@ -125,14 +134,45 @@ function turnSec(d, f) {
   }, `<ul class="dk-turn-list">${rows}</ul>`);
 }
 
+/** A decide's options, the recommended one marked, and Other…. */
+const picks = (w, esc) => w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"` : ""}>${esc(o)}</button>`).join("") +
+  `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`;
+/** The field Other… or Needs changes… opens under a turn. */
+const otherIn = w => thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change")
+  ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "";
+const fromOf = (d, w) => {
+  const n = slotOf(d, w.pane);
+  return w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
+};
+
+/** Several questions an agent asked at once (#110), as one card: a row for
+ *  each, its options until it is answered and what you said after; and once
+ *  every one is answered, Send answers, which types them all into the panel
+ *  that asked as one message -- or they go with your next one. */
+function groupCard(d, g, ms, esc) {
+  if (!ms.length) return "";
+  const n = slotOf(d, ms[0].pane), v = views.get(ms[0].pane);
+  const open = ms.filter(w => !w.answered_at).length;
+  const rows = ms.map(w => w.answered_at
+    ? `<div class="tn-gq said"><p class="tn-q">${esc(w.text)}</p><p class="tn-by">You said <b>${esc(w.answer)}</b></p></div>`
+    : `<div class="tn-gq" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
+      `<div class="tn-acts">${picks(w, esc)}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="this question; nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>${otherIn(w)}</div>` + errLine(`w${w.id}`, esc)).join("");
+  const foot = open
+    ? `<span class="tn-wait">${open} of ${ms.length} to answer</span>`
+    : (idle(v)
+      ? `<button type="button" class="tn-opt rec" data-a="tn-gsend" data-g="${g}" data-tip="Send answers" data-tip-sub="Types all ${ms.length} into panel ${n} as one message and presses Enter">Send answers</button>`
+      : `<span class="tn-wait">${n ? `they go with your next message to panel ${n}` : "they go to the next panel that asks"}</span>`) +
+      `<button type="button" class="tn-x" data-a="tn-gunsend" data-g="${g}" data-tip="Leave them for the next message" aria-label="Leave them for the next message">${ico("x")}</button>`;
+  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}"><p class="tn-by">${ms.length} decisions · ${esc(fromOf(d, ms[0]))}</p>${rows}` +
+    `<div class="tn-acts tn-gfoot">${foot}</div></li>`;
+}
+
 function turnRow(d, w, esc) {
   const n = slotOf(d, w.pane);
-  const from = w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
-  const other = thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change");
+  const from = fromOf(d, w);
   if (w.kind === "run") return runRow(d, w, n, from, esc);
   const buttons = w.kind === "decide"
-    ? w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"` : ""}>${esc(o)}</button>`).join("") +
-      `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`
+    ? picks(w, esc)
     : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
       ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
       : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(o)}</button>`).join("");
@@ -140,8 +180,7 @@ function turnRow(d, w, esc) {
   return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
     `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link && !link ? ` · ${esc(w.link)}` : ""}</p>` +
     `<div class="tn-acts">${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
-    (other ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "") +
-    `</li>` + errLine(`w${w.id}`, esc);
+    otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
 }
 
 /** Whether Run can type into a panel: running, with a Claude Code session
@@ -313,6 +352,27 @@ function sendNow(d, w) {
   rail();
 }
 
+/** Send answers: a card's answers typed into the panel that asked as one
+ *  message, a line each, and Enter apart -- on the click alone, while that
+ *  panel is idle, as Send now. */
+function sendGroup(d, g) {
+  const ms = filed.turns.filter(w => w.ask_group === g && w.answered_at && sendable.has(w.id));
+  if (!ms.length) return;
+  const v = views.get(ms[0].pane), n = slotOf(d, ms[0].pane);
+  if (!idle(v)) {
+    clearTimeout(rowTimer);
+    rowSaid = { p: ms[0].pane, text: `Panel ${n || "?"} is busy, so nothing is typed into it. Your answers go with your next message.` };
+    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
+    rail();
+    return;
+  }
+  const text = ["Answered in snyvi:", ...ms.map(w => `"${w.text}" → ${w.answer}`)].join("\r");
+  input(v, bracket(v, text));
+  setTimeout(() => input(v, "\r"), 120);
+  for (const w of ms) sendable.delete(w.id);
+  rail();
+}
+
 /** Run: `! <cmd>` pasted into the panel that asked and Enter pressed apart,
  *  as Send now does, on the reader's click and never otherwise. Pasted text
  *  that starts with `!` puts Claude Code's prompt in shell mode; mid-turn it
@@ -363,6 +423,8 @@ async function filedAct(a, b, d) {
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
   else if (a === "tn-send" && w) sendNow(d, w);
+  else if (a === "tn-gsend") sendGroup(d, +b.dataset.g);
+  else if (a === "tn-gunsend") { for (const x of filed.turns) if (x.ask_group === +b.dataset.g) sendable.delete(x.id); rail(); }
   else if (a === "tn-run" && w) runHere(d, w);
   else if (a === "tn-newpanel" && w) await runNewPanel(d, w);
   else if (a === "tn-copy" && w) copySha(b, "Copied");
@@ -467,6 +529,11 @@ const THREAD_CSS = `
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }
 .tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
 .dk-turn.said { border-style: dashed; }
+/* Questions asked together: one card, a row for each, ruled apart. */
+.tn-gq { padding: 6px 0 0; margin-top: 6px; border-top: 1px solid var(--rule); }
+.tn-gq .tn-acts { margin-top: 4px; }
+.tn-gq.said .tn-q { color: var(--fg-2); }
+.tn-gfoot { padding-top: 6px; border-top: 1px solid var(--rule); }
 /* A handed-over command is shown whole: what Run types is what is read. */
 .sg-cmd.tn-cmd { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: 9em; overflow-y: auto; }
 .sg-cmd { display: block; margin-top: 4px; padding: 2px 5px; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

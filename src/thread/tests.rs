@@ -271,6 +271,70 @@ fn a_desks_waiting_turns_are_its_own() {
     assert_eq!(waiting(&conn).unwrap().len(), 30, "Home's cap, as before");
 }
 
+/// Several questions an agent needs decided are one card (#110): all of
+/// them in, sharing the first one's id, or none of them; and each is still
+/// a turn answered on its own.
+#[test]
+fn questions_asked_together_are_one_card() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = |text: &str, options: &[&str]| Ask {
+        kind: "decide".into(),
+        text: text.into(),
+        options: options.iter().map(|s| s.to_string()).collect(),
+        recommended: 0,
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let three = [
+        q("SF6 as the reference?", &["Yes", "No"]),
+        q("Input buffer off first?", &["Off", "On"]),
+        q("Throws or drills first?", &["Throws", "Drills"]),
+    ];
+    let Asked::Group(ts) = ask_group(&mut conn, d, &three, 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!(ts.len(), 3);
+    assert!(ts
+        .iter()
+        .all(|t| t.ask_group == ts[0].id && t.kind == "decide"));
+    assert_eq!(turns(&conn, d, 0).unwrap().len(), 3);
+    // Answered one at a time, as any turn.
+    assert!(answer(&conn, d, ts[1].id, "Off", "snyvi", 2)
+        .unwrap()
+        .is_some());
+    // One question alone has no group.
+    let Asked::Turn(one) = ask_group(&mut conn, d, &three[..1], 3).unwrap() else {
+        panic!()
+    };
+    assert_eq!(one.ask_group, 0);
+    // A bad question refuses the whole card, and so does no room for it all:
+    // 3 waiting, and 6 the most, leaves no room for four.
+    let bad = [q("Fine?", &["Yes", "No"]), q("Lonely?", &["Only one"])];
+    assert_eq!(ask_group(&mut conn, d, &bad, 4).unwrap(), Asked::BadOptions);
+    let four = [&three[..], &three[..1]].concat();
+    assert_eq!(ask_group(&mut conn, d, &four, 5).unwrap(), Asked::Full);
+    let five = [&three[..], &three[..2]].concat();
+    assert_eq!(ask_group(&mut conn, d, &five, 6).unwrap(), Asked::BadGroup);
+    // A group is questions; a hand-over is not one of them.
+    let merge = Ask {
+        kind: "merge".into(),
+        text: "Merge PR 57".into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let mixed = [three[0].clone(), merge];
+    assert_eq!(ask_group(&mut conn, d, &mixed, 7).unwrap(), Asked::BadGroup);
+    assert_eq!(
+        turns(&conn, d, 0)
+            .unwrap()
+            .iter()
+            .filter(|t| t.answered_at == 0)
+            .count(),
+        3
+    );
+}
+
 /// A decide takes two to four options; the first answer stands, wherever it
 /// was given; an answer from snyvi is told once, to the pane that asked.
 #[test]

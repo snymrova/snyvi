@@ -534,6 +534,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, accounts::COLUMNS_1_30[0]),
     (14, accounts::COLUMNS_1_30[1]),
     (14, accounts::COLUMNS_1_30[2]),
+    // 1.30 too: the questions an agent asked as one card (#110).
+    (15, thread::GROUP_COLUMN),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

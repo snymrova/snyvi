@@ -373,14 +373,24 @@ const freshest = k => {
 /** What is left of a window, as Home's bars say it: one past its reset is
  *  full again until a Claude answers and a new reading comes. */
 const leftOf = l => (l.resets_at <= Date.now() / 1000 ? 100 : Math.round(100 - Math.max(0, Math.min(100, l.used))));
-/** "Usage left: 5 h 62% · resets in 2 h · 7 d 80%", the context hover's
- *  second line; nothing for an account Claude Code gives no windows to. */
+/** When a window resets, as the hover says it: in minutes or hours inside
+ *  a day, and past that the day and the time -- "resets Mon 9:30" -- since
+ *  "in 70 h" is a sum to do. Nothing for one already past. */
+function resetsIn(l) {
+  const s = l.resets_at - Date.now() / 1000;
+  if (s <= 0) return "";
+  if (s < 3600) return ` · resets in ${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 86400) return ` · resets in ${Math.round(s / 3600)} h`;
+  const at = new Date(l.resets_at * 1000);
+  return ` · resets ${at.toLocaleDateString(undefined, { weekday: "short" })} ${at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+/** "Usage left: 5 h 62% · resets in 2 h · 7 d 80% · resets Mon 9:30", the
+ *  context hover's second line; nothing for an account Claude Code gives no
+ *  windows to. */
 function usageSub() {
   const f = freshest("five_hour"), w = freshest("seven_day");
   if (!f && !w) return "";
-  const s = f ? f.resets_at - Date.now() / 1000 : 0;
-  const when = s <= 0 ? "" : ` · resets in ${s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : `${Math.round(s / 3600)} h`}`;
-  return "Usage left: " + [f ? `5 h ${leftOf(f)}%${when}` : "", w ? `7 d ${leftOf(w)}%` : ""].filter(Boolean).join(" · ");
+  return "Usage left: " + [f ? `5 h ${leftOf(f)}%${resetsIn(f)}` : "", w ? `7 d ${leftOf(w)}%${resetsIn(w)}` : ""].filter(Boolean).join(" · ");
 }
 /** The second line on every panel head's context figure: a reading from
  *  one panel is news for all of them. Written only where it differs. */

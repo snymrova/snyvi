@@ -1049,7 +1049,8 @@ the top.
   line: its number, then its small marks -- the stage in a word, the
   pictures.
 - **Your turn** is what only you can do: a decision (`ask`, with two to four
-  options and the one Claude recommends), or a hand-over (`hand_over`): try
+  options and the one Claude recommends -- several asked at once are one
+  card, a row each, with **Send answers** once all are answered), or a hand-over (`hand_over`): try
   it, merge it, add a key, or **run** a command Claude was blocked from
   running. A run card shows the whole command; **Run in panel N** types it
   into the panel that asked as a `!` command, so its output lands in that
