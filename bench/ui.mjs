@@ -2947,6 +2947,19 @@ async function panelRows(cdp, base, token) {
     rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && /87(\.4)?%/.test(ctxLook.title) && ctxLook.row === "87%",
       told.status !== 204 ? `the route answered ${told.status}` : !ctxShown ? "the head never showed it" : !ctxLook.hot ? "87% is not amber" : !ctxLook.row ? "the rail's row does not show it" : `"${ctxLook.title}", amber, and in the rail`]);
 
+    // 1.29.0 (#107): the same hover says what is left of the account, from
+    // the freshest panel -- a reading from the other panel is news here too.
+    const now = Math.floor(Date.now() / 1000);
+    const said = (id, five) => fetch(`${base}/api/panes/${id}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: id === pa ? 87.4 : 10, size: 200000, input: id === pa ? 174800 : 20000 }, limits: { five_hour: { used: five, resets_at: now + 7200 }, seven_day: { used: 20, resets_at: now + 5 * 86400 } } }) });
+    const subOf = `document.querySelector('${P(pa)} .pn-ctx')?.dataset.tipSub || ""`;
+    await said(pa, 37.6);
+    const usage1 = await until(`(${subOf}) === "Usage left: 5 h 62% · resets in 2 h · 7 d 80%"`, 30) && await q.ev(subOf);
+    await said(pb, 50);
+    const usage2 = await until(`(${subOf}).startsWith("Usage left: 5 h 50%")`, 30);
+    rows.push(["the context hover says how much usage is left", !!usage1 && usage2,
+      !usage1 ? `the hover's second line read "${await q.ev(subOf)}"` : !usage2 ? "a fresher reading from the other panel did not reach it" : `"${usage1}", and the other panel's newer reading`]);
+
     // Full view, from the head's button, and back by the key.
     await q.hoverOn(`${P(pa)} .pn-head`);
     await q.clickOn(`${P(pa)} .pn-full`);

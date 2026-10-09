@@ -275,7 +275,8 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-arr-all a:hover { color: var(--fg); text-decoration: underline; }
 /* A friend, one line: their name, then Note… and ⋯ (Mute, Remove). */
 .hm-friend { position: relative; gap: 10px; }
-.hm-friend > .hm-kn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-friend > .hm-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg); }
+.hm-friend > .hm-ren { flex: 1; min-width: 0; font: inherit; font-weight: 500; line-height: inherit; padding: 0 4px; margin: 0 0 0 -5px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 /* Keys, folded like the week. */
 .hm-keys > summary { list-style: none; cursor: pointer; }
 .hm-keys > summary::-webkit-details-marker { display: none; }
@@ -1101,13 +1102,16 @@ function friendRow(f, j) {
     [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
   const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
   const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
-  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-kn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${sentLine(f)}${outbox(f)}${where}` +
+  // One state at a time: what is still waiting to go says so in place of
+  // what became of the last thing that went.
+  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-fn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${outbox(f) || sentLine(f)}${where}` +
     (more
-      ? `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
+      ? `<button type="button" class="hm-link" data-hm="fren" data-k="${f.id}" data-tip="The one name they have here" data-tip-sub="their row in the sidebar follows">Rename…</button>` +
+        `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
         `<button type="button" class="hm-link" data-hm="freceipts" data-k="${f.id}" data-tip="${f.read_receipts ? `${esc(f.name)} is told when you open what they sent` : `${esc(f.name)} hears only that it arrived`}">${f.read_receipts ? "Stop telling reads" : "Tell them when read"}</button>` +
         `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" data-tip="Remove ${esc(f.name)}" data-tip-sub="keys kept; Restore brings them back">Remove</button>`
       : `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>`) +
-    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Mute or remove"}">⋯</button>${list}</li>`;
+    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Rename, mute, read receipts or remove"}">⋯</button>${list}</li>`;
 }
 
 /** What became of the last thing that went to a friend, in their row: sent,
@@ -1129,7 +1133,8 @@ function outbox(f) {
   if (!mine.length) return "";
   const stopped = mine.find(o => o.stopped);
   if (stopped) return `<span class="hm-s" data-tip="${esc(stopped.what || "A frame")} did not go" data-tip-sub="${esc(stopped.error || "it stopped trying")}">${mine.filter(o => o.stopped).length} stopped</span><button type="button" class="hm-link" data-hm="fretry" data-k="${f.id}" data-f="${esc(stopped.id)}">Retry</button>`;
-  return `<span class="hm-s" data-tip="${esc(mine[0].what || "A frame")} is waiting to go" data-tip-sub="${esc(mine[0].error || "it goes when the relay can be reached")}">${mine.length} waiting to go</span>`;
+  const why = mine[0].error || "it goes when they or the relay can be reached";
+  return `<span class="hm-s" data-tip="${esc(mine[0].what || "A frame")} is waiting to go" data-tip-sub="${esc(why.replace(/^they are offline; /, ""))}">${mine.length} waiting ${/^they are offline/.test(why) ? "(offline)" : "to go"}</span>`;
 }
 
 /* ---------- Arrived ---------- */
@@ -1453,12 +1458,41 @@ function wire() {
   });
 }
 
+/** Rename… in a friend's ⋯: the name becomes a field in its place, Enter
+ *  keeps it, Escape gives up. Their one name: the sidebar's From row and
+ *  every head follow (src/server/api_peer.rs `peer_row_follows`). */
+function friendRename(id) {
+  const f = friendsOf().find(x => x.id === id), nm = c.docEl.querySelector(`.hm-friend[data-peer="${id}"] > .hm-fn`);
+  if (!f || !nm) return;
+  const input = Object.assign(document.createElement("input"), { className: "hm-ren", value: f.name, maxLength: 60, spellcheck: false, autocomplete: "off" });
+  input.setAttribute("aria-label", `Name for ${f.name}`);
+  nm.replaceWith(input); input.focus(); input.select();
+  let done = false;
+  const finish = async keep => {
+    if (done) return;
+    done = true;
+    const next = input.value.trim();
+    if (keep && next && next !== f.name) {
+      const r = await fetch(`/api/peers/${id}/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) }).catch(() => null);
+      if (r?.ok) f.name = next; else c.peerCtx.toast(`Could not rename ${f.name}`);
+    }
+    friendMore = 0; draw(last);
+    c.docEl.querySelector(`[data-hm=fmore][data-k="${id}"]`)?.focus({ preventScroll: true });
+  };
+  input.addEventListener("keydown", e => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
 /** Friends and Arrived: the sheets are peer.js's; the rows' own actions are
  *  here. Out of `wire` so that stays a screen (bench/size.mjs). */
 async function friendClick(k, id, b) {
   if (await arrivedClick(k, id, b)) return;
   if (k === "pair") c.peerCtx.peer().then(m => m.pair(c.peerCtx), () => c.peerCtx.toast("Could not open the pairing sheet"));
   else if (k === "fnote") { const f = friendsOf().find(x => x.id === id); if (f) c.peerCtx.peer().then(m => m.note(c.peerCtx, id, f.name), () => {}); }
+  else if (k === "fren") friendRename(id);
   else if (k === "fmore") { friendMore = friendMore === id ? 0 : id; draw(last); c.docEl.querySelector(`[data-hm=fmore][data-k="${id}"]`)?.focus({ preventScroll: true }); }
   else if (k === "fdesk") { deskOpen = deskOpen === id ? 0 : id; draw(last); c.docEl.querySelector(deskOpen ? `[data-hm=fdeskto][data-k="${id}"][aria-checked=true]` : `[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true }); }
   else if (k === "fdeskto") {

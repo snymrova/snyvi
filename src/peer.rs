@@ -33,6 +33,7 @@
 //! -- its address, its messages, its backoff, the table that keeps a frame
 //! from being brought in twice -- are here with the HTTP client.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -61,6 +62,10 @@ pub const KEY_NAME: &str = "SNYVI_PEER_KEY";
 
 /// A code is spoken once and dies in ten minutes.
 pub const CODE_TTL: i64 = 10 * 60;
+/// How long one side waits for the other's hello once their SPAKE2 message
+/// is in. A live other side sends it within seconds; one that cancelled, or
+/// closed, never does, and this is how soon the joiner hears so.
+pub const HELLO_WAIT: i64 = 90;
 /// The frame version this daemon writes and the only one it reads.
 const VERSION: u8 = 1;
 /// What SPAKE2 binds the exchange to: the same on both sides, by design --
@@ -217,13 +222,15 @@ fn check(words: &str) -> String {
         .collect()
 }
 
-/// A fresh code: `ocean-ladder-fish-kpm`.
+/// A fresh code: `ocean-ladder-fish-kpm`. A word with a `-` in it
+/// (`yo-yo`) is never picked: said aloud it is two words, and a code
+/// made before 1.29 with it still joins through `normalize_code`.
 pub fn mint_code() -> Result<String> {
-    let list = words();
+    let list: Vec<&str> = words().into_iter().filter(|w| !w.contains('-')).collect();
     let mut r = [0u8; 8];
     getrandom::fill(&mut r).map_err(|e| anyhow!("reading random bytes for the code: {e}"))?;
     let n = u64::from_le_bytes(r);
-    // Sixteen bits a word over 1,296: the bias is one part in a thousand.
+    // Sixteen bits a word over 1,295: the bias is one part in a thousand.
     let pick = |i: u32| list[((n >> (i * 16)) & 0xffff) as usize % list.len()];
     let w = format!("{}-{}-{}", pick(0), pick(1), pick(2));
     let c = check(&w);
@@ -239,10 +246,25 @@ pub fn normalize_code(typed: &str) -> std::result::Result<String, &'static str> 
         .filter(|p| !p.is_empty())
         .map(str::to_string)
         .collect();
+    let list = words();
+    // `yo yo` and `yo-yo` both split in two: join neighbours back into a
+    // listed word that holds a `-` before counting them.
+    let mut joined: Vec<String> = Vec::with_capacity(parts.len());
+    for p in parts {
+        let glue = joined
+            .last()
+            .is_some_and(|last| list.contains(&format!("{last}-{p}").as_str()));
+        if let (true, Some(last)) = (glue, joined.last_mut()) {
+            last.push('-');
+            last.push_str(&p);
+        } else {
+            joined.push(p);
+        }
+    }
+    let parts = joined;
     if parts.len() != 4 {
         return Err("a code is three words and three letters, like ocean-ladder-fish-kpm");
     }
-    let list = words();
     if !parts[..3].iter().all(|p| list.contains(&p.as_str())) {
         return Err("one of the words is not one a code is made of; ask for it again");
     }
@@ -572,6 +594,30 @@ pub enum PairState {
     Failed {
         why: String,
     },
+    /// Withdrawn on this side: no hello goes, nothing is pinned.
+    Cancelled,
+}
+
+/// Until when the hello is waited for, from `now`, and whether that is
+/// sooner than the code's own end (so a late hello means they left).
+pub fn hello_by(now: i64, until: i64) -> (i64, bool) {
+    let by = now + HELLO_WAIT;
+    if by < until {
+        (by, true)
+    } else {
+        (until, false)
+    }
+}
+
+const RAN_OUT: &str = "the code ran out before the other side typed it";
+const THEY_LEFT: &str = "they cancelled the code, or their snyvi closed";
+const CANCELLED: &str = "the code was cancelled";
+
+fn go_on(stop: &AtomicBool) -> Result<()> {
+    if stop.load(Ordering::Relaxed) {
+        bail!(CANCELLED);
+    }
+    Ok(())
 }
 
 /// The HTTP client the relay is spoken to with. Blocking, like `client.rs`'s:
@@ -595,8 +641,16 @@ fn http() -> ureq::Agent {
 
 /// One side of a pairing, start to finish. Symmetric: whoever minted the code
 /// and whoever typed it run the same steps. Returns the hello the other side
-/// sent, verified to open under the SPAKE2 key, and the emoji.
-pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Peer, String)> {
+/// sent, verified to open under the SPAKE2 key, and the emoji. `stop` set
+/// (the reader cancelled) ends it at the next turn of a wait, before any
+/// hello goes.
+pub fn pair(
+    me: &Identity,
+    code: &str,
+    my_name: &str,
+    until: i64,
+    stop: &AtomicBool,
+) -> Result<(Peer, String)> {
     use spake2::{Ed25519Group, Identity as SpakeId, Password, Spake2};
     let room = room_of(code);
     let mut side = [0u8; 16];
@@ -609,7 +663,10 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
         &Password::new(code.as_bytes()),
         &SpakeId::new(SPAKE_ID),
     );
-    let theirs = exchange(&agent, &base, &room, "spake", &side, &msg, until)?;
+    let theirs = exchange(
+        &agent, &base, &room, "spake", &side, &msg, until, RAN_OUT, stop,
+    )?;
+    go_on(stop)?;
     let key = state
         .finish(&theirs)
         .map_err(|_| anyhow!("the other side had a different code"))?;
@@ -635,7 +692,12 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
             )
             .map_err(|_| anyhow!("sealing the hello"))?,
     );
-    let theirs = exchange(&agent, &base, &room, "hello", &side, &sealed, until)?;
+    go_on(stop)?;
+    let (by, sooner) = hello_by(crate::store::now(), until);
+    let late = if sooner { THEY_LEFT } else { RAN_OUT };
+    let theirs = exchange(
+        &agent, &base, &room, "hello", &side, &sealed, by, late, stop,
+    )?;
     if theirs.len() < 24 + 16 {
         bail!("the other side's hello is not one");
     }
@@ -683,7 +745,8 @@ pub fn pair(me: &Identity, code: &str, my_name: &str, until: i64) -> Result<(Pee
 }
 
 /// Leave `mine` in the room's `stage` and wait for the other side's, until
-/// the code's time is up.
+/// `until`, when it fails with `late`; or until `stop` is set.
+#[allow(clippy::too_many_arguments)]
 fn exchange(
     agent: &ureq::Agent,
     base: &str,
@@ -692,6 +755,8 @@ fn exchange(
     side: &str,
     mine: &[u8],
     until: i64,
+    late: &'static str,
+    stop: &AtomicBool,
 ) -> Result<Vec<u8>> {
     let url = format!("{base}/room/{room}/{stage}");
     let mut resp = agent
@@ -710,9 +775,10 @@ fn exchange(
     // a proxy that drops WebSockets) the wait is a long poll instead.
     let mut bell = true;
     loop {
+        go_on(stop)?;
         let left = until - crate::store::now();
         if left <= 0 {
-            bail!("the code ran out before the other side typed it");
+            bail!(late);
         }
         let wait = if bell {
             match ring_wait(base, room, stage, side, left.min(25)) {
@@ -1213,8 +1279,24 @@ impl Peer {
     pub fn project_root(&self) -> String {
         format!("peer:{}", self.sign_key)
     }
+    /// Their row in the sidebar: `From Trapti`, always from their one name.
     pub fn project_name(&self) -> String {
-        format!("From {}", self.name)
+        from_name(&self.name)
+    }
+}
+
+/// `From Trapti`: the one place a friend's row is spelled.
+pub fn from_name(name: &str) -> String {
+    format!("From {name}")
+}
+
+/// What the reader meant as the friend's name when they renamed the row:
+/// one leading `From ` is the row's, not theirs.
+pub fn name_from_project(row: &str) -> &str {
+    let row = row.trim();
+    match row.get(..5) {
+        Some(p) if p.eq_ignore_ascii_case("from ") => row[5..].trim(),
+        _ => row,
     }
 }
 
@@ -1467,6 +1549,18 @@ pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<bool> {
         "UPDATE peers SET name = ?2 WHERE id = ?1",
         params![id, name],
     )? > 0)
+}
+
+/// A friend's row takes their name, whatever it was labelled: one name
+/// everywhere. The project's id, for the `renamed` event, if it has one.
+pub fn rename_project(conn: &Connection, root: &str, name: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "UPDATE projects SET name = ?2, renamed = 0 WHERE root = ?1 RETURNING id",
+            params![root, name],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 pub fn mute(conn: &Connection, id: i64, muted: bool) -> Result<bool> {

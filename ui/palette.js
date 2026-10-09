@@ -131,6 +131,8 @@ const COMMANDS = [
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
   { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
   { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
+  { cmd: "pair", t: "Pair with a friend…", s: "Make a code to say to them", k: "code friends" },
+  { cmd: "join", t: "Join a friend's code…", s: "They made one and told you", k: "pair friends" },
   { cmd: "sidebars", t: "Arrange sidebars", s: "Which sections each side has, in what order, and the widgets" },
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
@@ -143,7 +145,15 @@ function commandItems(q) {
   const m = /^\s*>\s*(.*)$/.exec(q);
   if (!m) return null;
   const l = m[1].trim().toLowerCase();
-  return COMMANDS.filter(c => (!c.window || d.capability) && (!l || c.t.toLowerCase().includes(l)));
+  return COMMANDS.filter(c => (!c.window || d.capability) && (!l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l)));
+}
+
+/** Pairing without the `>`: a search for a friend, a code or pairing finds
+ *  the two ways into it as well as any document that says so. */
+function pairItems(q) {
+  const l = q.trim().toLowerCase();
+  if (l.length < 3 || !["pair", "friend", "join", "code"].some(w => w.startsWith(l) || l.startsWith(w))) return [];
+  return COMMANDS.filter(c => c.cmd === "pair" || c.cmd === "join");
 }
 
 /** The keyboard's way to the `+` beside Folders. */
@@ -196,7 +206,7 @@ async function search(q) {
   // Theme rows are each drawn in their theme, so the sheet has to be in.
   if (themeItems(q).length) await d.loadThemes();
   if (mine !== seq || pal.hidden) return;
-  items = themeItems(q).concat(deskItems(q), folderItems(q), found); sel = 0;
+  items = themeItems(q).concat(deskItems(q), folderItems(q), pairItems(q), found); sel = 0;
   list.innerHTML = items.map(row).join("") + (off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : items.length ? "" : none(q));
   pal.classList.toggle("themes", items.some(it => it.theme));
   lit();
@@ -212,6 +222,7 @@ function pick(it) {
   if (it.theme) previewing = false;
   close();
   if (it.cmd === "parts") { parts(); return; }
+  if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {
     const c = it.cmd;
     c === "home" ? d.showHome(true) : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)

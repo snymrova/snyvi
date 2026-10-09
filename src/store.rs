@@ -1444,12 +1444,9 @@ impl Store {
         Ok(rows)
     }
 
-    pub fn rename_project_by_root(&self, root: &str, name: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.execute(
-            "UPDATE projects SET name = ?2 WHERE root = ?1 AND renamed = 0",
-            params![root, name],
-        )? > 0)
+    /// A friend's row takes their name (`peer::rename_project`).
+    pub fn rename_peer_project(&self, root: &str, name: &str) -> Result<Option<i64>> {
+        peer::rename_project(&self.conn.lock().unwrap(), root, name)
     }
 
     pub fn rename_workflow(&self, id: i64, title: &str) -> Result<bool> {

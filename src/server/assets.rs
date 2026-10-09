@@ -324,7 +324,7 @@ pub(crate) fn shell(
         o.insert("notes".into(), json!(app.asides.list()));
         // Whether there is a friend, so a menu offers Send to a friend… only
         // then; the menu asks again as it opens (`ui/menu.js`).
-        o.insert("friends".into(), json!(has_friends(app)));
+        o.insert("friends".into(), json!(friend_count(app)));
         // The sidebars' order, so the first paint draws them in it.
         o.insert("layout".into(), layout_json(app));
         // And the global widgets in it, drawn: no widget waits on a request.
@@ -376,27 +376,40 @@ pub(crate) struct Talk {
     pub(crate) replies: Vec<crate::peer::Reply>,
     /// A friend's document from 1.23 on: their name, for Reply to Trapti….
     pub(crate) reply_to: Option<String>,
+    /// A friend's document: their name as it is now, not as it was when it
+    /// came (one name everywhere). None falls back to the sender it names.
+    pub(crate) from: Option<String>,
 }
 
 /// The talk for `doc`, from the store.
 pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
-    let reply_to = (doc.origin == "peer")
+    let frame = (doc.origin == "peer")
         .then(|| app.store.peer_frame(&doc.id).ok())
-        .flatten()
-        .filter(|(_, _, re)| !re.is_empty())
-        .and_then(|(key, _, _)| app.store.peer_by_key(&key).ok().flatten())
+        .flatten();
+    let friend = frame
+        .as_ref()
+        .and_then(|(key, _, _)| app.store.peer_by_key(key).ok().flatten());
+    let reply_to = friend
+        .as_ref()
         .filter(|p| p.removed_at == 0)
-        .map(|p| p.name);
+        .filter(|_| frame.as_ref().is_some_and(|(_, _, re)| !re.is_empty()))
+        .map(|p| p.name.clone());
     let replies = if doc.origin == "peer" {
         Vec::new()
     } else {
         app.store.peer_replies(&doc.id).unwrap_or_default()
     };
-    Talk { replies, reply_to }
+    Talk {
+        replies,
+        reply_to,
+        from: friend.map(|p| p.name),
+    }
 }
 
-/// Server-side document markup, mirrored by `renderDoc` in app.js.
-pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> String {
+/// Server-side document markup. `friends` is how many friends there are:
+/// Send to… shows on the reader's own documents from one, and on a friend's
+/// from two, since the one there is is who sent it.
+pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> String {
     let e = html_escape::encode_text;
     // What goes inside a quoted attribute: a friend names themselves and
     // their documents, and a `"` there must stay a character.
@@ -405,10 +418,14 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> Str
     // only way a document gets `peer` as its origin is through a frame that
     // opened under a pinned key (`crate::peer::open`).
     let theirs = doc.origin == "peer" && !doc.sender.is_empty();
+    // Who, by the one name they have now; the name it came under if the
+    // friend is gone.
+    let who = talk.from.as_ref().unwrap_or(&doc.sender);
     let mut sub = if theirs {
         // In one of the reader's folders -- filed there because both have
         // the repository, or kept there -- it says which; on a desk, which
-        // desk. The workflow is theirs either way.
+        // desk. The workflow is theirs either way, and left out when it only
+        // says again who sent it.
         let filed = if doc.filed {
             format!(" · in {}", e(&doc.project))
         } else {
@@ -420,10 +437,14 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> Str
             .filter(|d| !doc.filed || d.name != doc.project)
             .map(|d| format!(" · on {}", e(&d.name)))
             .unwrap_or_default();
+        let flow = if doc.workflow_title == format!("Sent by {}", doc.sender) {
+            String::new()
+        } else {
+            format!(" · {}", e(&doc.workflow_title))
+        };
         format!(
-            "from {} · verified{filed}{on} · {}",
-            e(&doc.sender),
-            e(&doc.workflow_title)
+            "from {} · <span data-tip=\"Signed with the key you paired with\">verified</span>{filed}{on}{flow}",
+            e(who)
         )
     } else {
         format!("{} · {}", e(&doc.project), e(&doc.workflow_title))
@@ -432,51 +453,74 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> Str
         sub.push_str(&format!(" · <span class=\"branch\">{}</span>", e(b)));
     }
     sub.push_str(&format!(" · {}", fmt_time(doc.received_at)));
-    // A friend's document: Keep on a desk…, and once it is on one, Save into
-    // the folder. The page wires both (`ui/peer.js`), and the daemon asks
-    // for the window's capability, since both name a desk.
-    if theirs {
-        let (act, label) = if doc.desk.is_some() {
-            ("save", "Save into the folder")
-        } else {
-            ("keep", "Keep on a desk…")
-        };
+    let send = |sub: &mut String, sep: &str| {
         sub.push_str(&format!(
-            " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"{act}\" data-send=\"{}\" data-send-title=\"{}\">{label}</button>",
+            "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
             q(&doc.id),
             q(&doc.title)
-        ));
-        // And the way back to the friend's own row, every version with it.
-        if doc.filed {
-            sub.push_str(&format!(
-                " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Back to From {}\" data-tip-sub=\"with every version; nothing on disk moves\">Move to From {}</button>",
-                q(&doc.id),
-                q(&doc.title),
-                q(&doc.sender),
-                e(&doc.sender)
-            ));
+        ))
+    };
+    // The reader's own document: Send to…, once there is a friend to send
+    // to, in the sub line, so the head is the same height with it and
+    // without. The page wires the click (`ui/peer.js`).
+    if !theirs {
+        if friends > 0 {
+            send(&mut sub, " · ");
         }
+        return head(doc, body, &sub, "", talk);
+    }
+    // A friend's document: what can be done with it, in a row of its own
+    // under who sent it. The row is there whichever buttons it holds, so
+    // the head never changes height as one comes or goes; its look is
+    // inline, so the first paint's stylesheet carries nothing for it.
+    let mut acts = String::new();
+    // Keep on a desk…, and once it is on one, Save into the folder. The
+    // page wires both (`ui/peer.js`), and the daemon asks for the window's
+    // capability, since both name a desk.
+    let (act, label) = if doc.desk.is_some() {
+        ("save", "Save into the folder")
+    } else {
+        ("keep", "Keep on a desk…")
+    };
+    acts.push_str(&format!(
+        "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"{act}\" data-send=\"{}\" data-send-title=\"{}\">{label}</button>",
+        q(&doc.id),
+        q(&doc.title)
+    ));
+    // And the way back to the friend's own row, every version with it.
+    if doc.filed {
+        let row = crate::peer::from_name(who);
+        acts.push_str(&format!(
+            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Back to {}\" data-tip-sub=\"with every version; nothing on disk moves\">Move to {}</button>",
+            q(&doc.id),
+            q(&doc.title),
+            q(&row),
+            e(&row)
+        ));
     }
     // One line back to them, in a box the page opens (`ui/peer.js`).
     if let Some(to) = &talk.reply_to {
-        sub.push_str(&format!(
-            " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"reply\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\">Reply to {}…</button>",
+        acts.push_str(&format!(
+            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"reply\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\">Reply to {}…</button>",
             q(&doc.id),
             q(&doc.title),
             q(to),
             e(to)
         ));
     }
-    // Send to…, only once there is a friend to send to: the page wires the
-    // click (`ui/peer.js`). In the sub line, so the head is the same height
-    // with it and without.
-    if friends {
-        sub.push_str(&format!(
-            " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
-            q(&doc.id),
-            q(&doc.title)
-        ));
+    if friends >= 2 {
+        send(&mut acts, "");
     }
+    let acts = format!(
+        "<div class=\"doc-acts\" style=\"display:flex;flex-wrap:wrap;gap:2px 18px;margin:6px 0 0;font-size:var(--fs-ui);color:var(--fg-3)\">{acts}</div>"
+    );
+    head(doc, body, &sub, &acts, talk)
+}
+
+/// The head and the article around it: the title, the sub line, a friend's
+/// document's actions, and the replies.
+fn head(doc: &Doc, body: &str, sub: &str, acts: &str, talk: &Talk) -> String {
+    let e = html_escape::encode_text;
     // What friends said back, under the head, oldest first: part of the
     // page as it is drawn, so nothing arrives under the reader's eyes.
     let replies: String = talk
@@ -497,7 +541,7 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> Str
         format!("<ul class=\"doc-replies\">{replies}</ul>")
     };
     format!(
-        "<header class=\"doc-head\"><h1 class=\"doc-title\">{}</h1><p class=\"doc-sub\">{}</p>{}</header><article class=\"prose kind-{}\">{}</article>",
+        "<header class=\"doc-head\"><h1 class=\"doc-title\">{}</h1><p class=\"doc-sub\">{}</p>{acts}{}</header><article class=\"prose kind-{}\">{}</article>",
         e(&doc.title),
         sub,
         replies,
@@ -506,13 +550,13 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: bool, talk: &Talk) -> Str
     )
 }
 
-/// Is there a friend to send a document to? What decides whether a head
-/// grows Send to….
-pub(crate) fn has_friends(app: &App) -> bool {
+/// How many friends there are, removed ones left out: what decides whether
+/// a head grows Send to… (`doc_html`), and `boot.friends` for the menus.
+pub(crate) fn friend_count(app: &App) -> usize {
     app.store
         .peers()
-        .map(|ps| ps.iter().any(|p| p.removed_at == 0))
-        .unwrap_or(false)
+        .map(|ps| ps.iter().filter(|p| p.removed_at == 0).count())
+        .unwrap_or(0)
 }
 
 /// `/`: Home, the page the mark opens -- what needs the reader, the desks,
@@ -601,8 +645,8 @@ pub(crate) async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response
         &app,
         boot,
         &{
-            let friends = has_friends(&app);
-            let talk = if friends {
+            let friends = friend_count(&app);
+            let talk = if friends > 0 {
                 talk(&app, &doc)
             } else {
                 Talk::default()

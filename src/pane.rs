@@ -226,6 +226,13 @@ pub struct Status {
     pub ctx_used: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_at: Option<i64>,
+    /// The account's rate-limit windows, as the same status line said them:
+    /// one account in every panel, so the desk shows the freshest. Absent
+    /// for an account Claude Code gives none to, and before the first reply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub five_hour: Option<crate::statusline::Limit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seven_day: Option<crate::statusline::Limit>,
     /// When snyvi last spoke to the agent in this pane about its desk: the
     /// brief at a start, or the changes at a prompt (`crate::brief::changes`).
     /// What the next prompt's changes are counted from. The daemon's own, not
@@ -241,6 +248,20 @@ fn clear_context(s: &mut Status) {
     s.ctx_size = None;
     s.ctx_used = None;
     s.ctx_at = None;
+    s.five_hour = None;
+    s.seven_day = None;
+}
+
+/// A rate-limit window as the page writes it: the whole percent left and
+/// when it resets. A reply moves the share used by a fraction of a point,
+/// and that alone sends no frame.
+fn limit_figure(l: Option<crate::statusline::Limit>) -> Option<(i64, i64)> {
+    l.map(|l| {
+        (
+            (100.0 - l.used.clamp(0.0, 100.0)).round() as i64,
+            l.resets_at,
+        )
+    })
 }
 
 /// A token count as the page writes it, reduced to what would change the
@@ -967,7 +988,9 @@ impl Panes {
     /// said them. `None` when the pane is not running; otherwise whether what
     /// the reader sees changed. Only such a change is sent on: the line runs
     /// after every reply, and most replies move the percentage by less than
-    /// one and the count by less than its figure shows (`ctx_figure`).
+    /// one and the count by less than its figure shows (`ctx_figure`), and
+    /// the account's windows (`[five_hour, seven_day]`) by less than a point
+    /// (`limit_figure`).
     pub fn set_context(
         &self,
         id: &str,
@@ -975,25 +998,33 @@ impl Panes {
         pct: Option<u8>,
         size: Option<u64>,
         used: Option<u64>,
+        limits: [Option<crate::statusline::Limit>; 2],
     ) -> Option<bool> {
         let l = self.live.lock().unwrap().get(id).cloned()?;
         let mut i = l.inner.lock().unwrap();
         if !i.status.running {
             return None;
         }
+        let [five_hour, seven_day] = limits;
         let st = &i.status;
         if st.model == model
             && st.ctx_pct == pct
             && st.ctx_size == size
             && ctx_figure(st.ctx_used) == ctx_figure(used)
+            && limit_figure(st.five_hour) == limit_figure(five_hour)
+            && limit_figure(st.seven_day) == limit_figure(seven_day)
         {
             i.status.ctx_used = used;
+            i.status.five_hour = five_hour;
+            i.status.seven_day = seven_day;
             return Some(false);
         }
         i.status.model = model.to_string();
         i.status.ctx_pct = pct;
         i.status.ctx_size = size;
         i.status.ctx_used = used;
+        i.status.five_hour = five_hour;
+        i.status.seven_day = seven_day;
         i.status.ctx_at = Some(crate::store::now());
         let s = i.status.clone();
         drop(i);

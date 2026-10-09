@@ -148,6 +148,23 @@ fn a_code_is_three_words_a_check_and_ten_minutes_of_room() {
 }
 
 #[test]
+fn yo_yo_is_never_minted_and_joins_however_it_is_typed() {
+    for _ in 0..20_000 {
+        assert!(!mint_code().unwrap().contains("yo-yo"));
+    }
+    // A code a 1.28 maker could still print, with yo-yo first and in the middle.
+    for w in ["yo-yo-ocean-acorn", "ocean-yo-yo-acorn"] {
+        let code = format!("{w}-{}", check(w));
+        assert_eq!(normalize_code(&code).unwrap(), code);
+        assert_eq!(normalize_code(&code.replace('-', " ")).unwrap(), code);
+        assert_eq!(
+            normalize_code(&code.replace('-', " ").to_uppercase()).unwrap(),
+            code
+        );
+    }
+}
+
+#[test]
 fn the_emoji_are_four_and_the_same_from_either_side() {
     let (a, b) = two();
     let x = emoji(
@@ -776,4 +793,22 @@ fn a_frame_goes_down_the_line_in_pieces_and_comes_back_whole() {
         until_of("whatever") > now && until_of("whatever") <= now + 86_400,
         "midnight when it names none"
     );
+}
+
+#[test]
+fn the_hello_is_waited_for_ninety_seconds_never_past_the_code() {
+    // Plenty of the code left: ninety seconds, and a late hello means they left.
+    assert_eq!(hello_by(1000, 1000 + CODE_TTL), (1000 + HELLO_WAIT, true));
+    // Less than that left: the code's own end, and it simply ran out.
+    assert_eq!(hello_by(1000, 1030), (1030, false));
+}
+
+#[test]
+fn a_rows_from_is_the_rows_and_the_rest_is_their_name() {
+    assert_eq!(name_from_project("From Trapti"), "Trapti");
+    assert_eq!(name_from_project("from  Trapti "), "Trapti");
+    assert_eq!(name_from_project("Trapti"), "Trapti");
+    assert_eq!(name_from_project("Fromage"), "Fromage");
+    assert_eq!(name_from_project("From From"), "From", "only one");
+    assert_eq!(from_name("Trapti"), "From Trapti");
 }

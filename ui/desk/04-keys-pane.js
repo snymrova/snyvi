@@ -340,6 +340,37 @@ const ctxUsed = s => s.ctx_used ?? (s.ctx_pct != null && s.ctx_size ? Math.round
  *  when there is no count yet rather than an old one. */
 const ctxFig = s => { const u = ctxUsed(s); return s.ctx_size ? `${u == null ? "—" : kTok(u)} / ${kTok(s.ctx_size)}` : `${s.ctx_pct}%`; };
 const ctxTip = s => `${s.model ? s.model + " · " : ""}${ctxFig(s)} in its context window · ${s.ctx_pct}%`;
+/** The account's window `k` (five_hour, seven_day) as the freshest panel
+ *  here said it (#107). It is one account in every panel, and within a
+ *  window the share used only grows: the latest window's highest share is
+ *  the newest reading, with no clock to compare. */
+const freshest = k => {
+  let b = null;
+  for (const v of views.values()) { const l = v.status && v.status[k]; if (l && (!b || l.resets_at > b.resets_at || (l.resets_at === b.resets_at && l.used > b.used))) b = l; }
+  return b;
+};
+/** What is left of a window, as Home's bars say it: one past its reset is
+ *  full again until a Claude answers and a new reading comes. */
+const leftOf = l => (l.resets_at <= Date.now() / 1000 ? 100 : Math.round(100 - Math.max(0, Math.min(100, l.used))));
+/** "Usage left: 5 h 62% · resets in 2 h · 7 d 80%", the context hover's
+ *  second line; nothing for an account Claude Code gives no windows to. */
+function usageSub() {
+  const f = freshest("five_hour"), w = freshest("seven_day");
+  if (!f && !w) return "";
+  const s = f ? f.resets_at - Date.now() / 1000 : 0;
+  const when = s <= 0 ? "" : ` · resets in ${s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : `${Math.round(s / 3600)} h`}`;
+  return "Usage left: " + [f ? `5 h ${leftOf(f)}%${when}` : "", w ? `7 d ${leftOf(w)}%` : ""].filter(Boolean).join(" · ");
+}
+/** The second line on every panel head's context figure: a reading from
+ *  one panel is news for all of them. Written only where it differs. */
+function paintUsage() {
+  const sub = usageSub();
+  for (const v of views.values()) {
+    const cx = v.el && v.el.querySelector(".pn-ctx"), on = sub && ctxPct(v.status) != null ? sub : "";
+    if (!cx || (cx.dataset.tipSub || "") === on) continue;
+    if (on) cx.dataset.tipSub = on; else delete cx.dataset.tipSub;
+  }
+}
 /** The conversation this pane last had, when there is one and Claude is not
  *  in the pane now. Checked here too: it is about to be a command line. */
 /** Who sent a document on the rail: the panel in that slot by the name it
@@ -390,6 +421,7 @@ function header(v) {
   const cls = "pn-ctx " + (cp == null ? "" : "kept " + ctxCls(cp));
   if (cx.className !== cls) cx.className = cls;
   tipOf(cx, cp == null ? "" : ctxTip(s));
+  paintUsage();
   if (s.agent) heardFrom(v);
   put($(".pn-state"), s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped");
   // Said once, to a reader who cannot see the dot: a panel that needs the

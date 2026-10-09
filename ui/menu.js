@@ -298,12 +298,12 @@ async function keepAll(ctx, pid, name) {
   if (!ids.length) return;
   ctx.peerCtx.peer().then(m => m.keepOn(ctx.peerCtx, ids, `everything from ${name.replace(/^From /, "")}`), () => ctx.toast("Could not open that"));
 }
-/** Is there a friend to send to? The page was told when it was served
- *  (`boot.friends`), and each menu asks again for the next one: a reader
- *  who never pairs is never offered Send to a friend…. */
-let friends = (() => { try { return !!JSON.parse(document.getElementById("boot").textContent).friends; } catch { return false; } })();
-const askFriends = () => fetch("/api/peers").then(r => r.ok ? r.json() : null).then(j => { if (j) friends = (j.friends || []).some(f => !f.removed_at); }, () => {});
-askFriends();
+/** How many friends there are to send to: what the page was told when it
+ *  was served (`boot.friends`), then what each `peers` event says
+ *  (`state.friends`), so the first menu after pairing already offers Send
+ *  to a friend…. A reader who never pairs is never offered it. */
+const booted = (() => { try { return +JSON.parse(document.getElementById("boot").textContent).friends || 0; } catch { return 0; } })();
+const friendsOf = ctx => ctx.state.friends ?? booted;
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
@@ -363,7 +363,8 @@ function entries(ctx, el, byKey = false) {
     // here: no Copy path, no file manager.
     const pid = +el.closest(".t-proj")?.dataset.pid, theirs = !!ctx.state.tree.find(x => x.id === pid)?.friend || d?.origin === "peer";
     const path = d && (d.local_path || (!theirs && d.source_path));
-    askFriends();
+    // On a friend's document the one friend there is sent it (D3).
+    const friends = friendsOf(ctx) >= (theirs ? 2 : 1);
     return { head: d ? d.title : el.querySelector(".title")?.textContent || "Document", items: [
       { label: "Open", moves: 1, run: () => ctx.open(id) },
       { label: d && d.pinned ? "Unpin" : "Pin", key: "p", run: at => pin(ctx, id, at) },

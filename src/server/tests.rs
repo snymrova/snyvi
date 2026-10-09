@@ -6,11 +6,12 @@ use super::{
     LOOK_JS, MENU_JS, MMD_JS, NAV_JS, NOTE_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
 };
 use super::{
-    new_app, router, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
+    new_app, router, App, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
     NOT_THIS_ORIGIN, WINDOW_HEADER,
 };
 use crate::capability::Capabilities;
 use axum::http::{header, HeaderMap, HeaderValue};
+use std::sync::Arc;
 use tower::ServiceExt;
 
 /// A file opens the folder it sits in; a folder opens itself.
@@ -542,6 +543,7 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("POST", "/api/peers/pair", Some("{}"), Gate::Reader, false),
     ("POST", "/api/peers/join", Some("{}"), Gate::Reader, false),
     ("GET", "/api/peers/pair/nope", None, Gate::Open, true),
+    ("DELETE", "/api/peers/pair/nope", None, Gate::Reader, true),
     (
         "POST",
         "/api/peers/1/rename",
@@ -907,6 +909,15 @@ fn gated_router_with(
     name: &str,
     prep: impl FnOnce(&Store),
 ) -> (crate::store::tempdir::Dir, Router, Leaves) {
+    let (tmp, _app, router, leaves) = gated_app_with(name, prep);
+    (tmp, router, leaves)
+}
+
+/// The same, with the app kept too, for a test that reaches into its state.
+fn gated_app_with(
+    name: &str,
+    prep: impl FnOnce(&Store),
+) -> (crate::store::tempdir::Dir, Arc<App>, Router, Leaves) {
     let tmp = crate::store::tempdir::Dir::new(name);
     let paths = Paths {
         data_dir: tmp.path.join("data"),
@@ -930,7 +941,7 @@ fn gated_router_with(
         cap,
         window,
     };
-    (tmp, router(app), leaves)
+    (tmp, app.clone(), router(app), leaves)
 }
 
 /// A gate helps only if every route is behind it, and a route added later
@@ -2281,4 +2292,203 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
         page.contains(r#""layout":{"left":["folders","#),
         "the first paint has the layout"
     );
+}
+
+/// Cancel withdraws a code at once: it stops counting toward the few that
+/// may wait, so Make → Cancel can go round as often as the reader likes,
+/// and its thread is told to stop. Make while a code of its own waits
+/// gives that code back rather than a second one. No relay: the waiting
+/// codes are put in by hand, as `start_pairing` leaves them.
+#[tokio::test]
+async fn cancel_withdraws_a_code_and_make_gives_back_the_one_waiting() {
+    use super::api_peer::Pairing;
+    use crate::peer::PairState;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (_tmp, app, router, leaves) = gated_app_with("snyvi-pair-cancel", |_| {});
+    let send = |method: &str, path: String, body: Option<&str>| {
+        let mut req = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin);
+        let body = match body {
+            Some(b) => {
+                req = req.header("content-type", "application/json");
+                Body::from(b.to_string())
+            }
+            None => Body::empty(),
+        };
+        router.clone().oneshot(req.body(body).unwrap())
+    };
+    let wait = |made: Option<&str>| Pairing {
+        state: PairState::Waiting,
+        until: crate::store::now() + crate::peer::CODE_TTL,
+        stop: Arc::new(AtomicBool::new(false)),
+        made: made.map(str::to_string),
+    };
+    // Six rounds, one more than may wait at once.
+    for i in 0..6 {
+        let code = format!("code-{i}");
+        app.peers
+            .pairings
+            .lock()
+            .unwrap()
+            .insert(code.clone(), wait(None));
+        let r = send("DELETE", format!("/api/peers/pair/{code}"), None)
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let all = app.peers.pairings.lock().unwrap();
+        assert_eq!(all[&code].state, PairState::Cancelled);
+        assert!(
+            all[&code].stop.load(Ordering::Relaxed),
+            "its thread is told"
+        );
+    }
+    let r = send("GET", "/api/peers/pair/code-5".into(), None)
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(r.into_body(), 4096).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["pairing"]["state"], "cancelled", "{v}");
+    assert_eq!(
+        send("DELETE", "/api/peers/pair/nope".into(), None)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // A code this snyvi made, waiting under the same name: Make gives it back.
+    app.peers
+        .pairings
+        .lock()
+        .unwrap()
+        .insert("mine".into(), wait(Some("Sunny")));
+    let r = send(
+        "POST",
+        "/api/peers/pair".into(),
+        Some(r#"{"name":"Sunny"}"#),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(r.into_body(), 4096).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["code"], "mine", "{v}");
+    assert_eq!(
+        app.peers.pairings.lock().unwrap().len(),
+        7,
+        "no second code"
+    );
+}
+
+/// One name everywhere (1.29): a friend's From row is their name. Renaming
+/// the row renames them, a leading `From ` taken as the row's; renaming
+/// them from ⋯ moves the row, even one labelled by hand before 1.29.
+#[tokio::test]
+async fn a_friends_row_and_their_name_are_one_name() {
+    let (_tmp, app, router, leaves) = gated_app_with("snyvi-one-name", |store| {
+        store
+            .insert(
+                "abcdef0001",
+                crate::store::NewDoc {
+                    project_root: "peer:KEY",
+                    project_name: "From trapti",
+                    workflow_key: "sent",
+                    workflow_title: "Sent by trapti",
+                    title: "Seed list",
+                    kind: crate::render::Kind::Markdown,
+                    lang: None,
+                    source_path: Some("docs/seeds.md"),
+                    branch: None,
+                    origin: "peer",
+                    sender: "trapti",
+                    desk: None,
+                    source: b"# Seeds",
+                    staged: None,
+                    search_body: "",
+                    html: "<p>Seeds</p>",
+                },
+            )
+            .unwrap();
+        store
+            .pin_peer(&crate::peer::Peer {
+                sign_key: "KEY".into(),
+                box_key: "BOX".into(),
+                name: "trapti".into(),
+                ..Default::default()
+            })
+            .unwrap();
+    });
+    let post = |path: String, body: &str| {
+        router.clone().oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("host", &leaves.host)
+                .header("origin", &leaves.origin)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+    };
+    let row = || {
+        app.store
+            .projects()
+            .unwrap()
+            .into_iter()
+            // The tree hides a friend's `peer:` root and marks the row.
+            .find(|p| p.friend)
+            .unwrap()
+    };
+    let friend = || app.store.peer_by_key("KEY").unwrap().unwrap();
+    let pid = row().id;
+
+    // The row renamed, with its From: the friend is Trapti.
+    let r = post(
+        format!("/api/projects/{pid}/rename"),
+        r#"{"name":"From Trapti"}"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(friend().name, "Trapti");
+    assert_eq!(row().name, "From Trapti");
+    // Without it: the friend is T, and the row still says From.
+    post(format!("/api/projects/{pid}/rename"), r#"{"name":"T"}"#)
+        .await
+        .unwrap();
+    assert_eq!(friend().name, "T");
+    assert_eq!(row().name, "From T");
+    assert_eq!(row().name, friend().project_name(), "one spelling");
+
+    // A row labelled by hand under 1.28 (`renamed = 1`) joins up at the
+    // next rename from ⋯.
+    app.store.rename_project(pid, "Trapti's stuff").unwrap();
+    let r = post(
+        format!("/api/peers/{}/rename", friend().id),
+        r#"{"name":"Tee"}"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert_eq!(row().name, "From Tee");
+    // And it keeps following.
+    post(
+        format!("/api/peers/{}/rename", friend().id),
+        r#"{"name":"Trapti"}"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(row().name, "From Trapti");
+}
+
+#[test]
+fn the_account_name_a_friend_sees_starts_with_a_capital() {
+    use super::api_peer::capitalized;
+    assert_eq!(capitalized("sunny"), "Sunny");
+    assert_eq!(capitalized("éva"), "Éva");
+    assert_eq!(capitalized("McKay"), "McKay");
+    assert_eq!(capitalized(""), "");
 }
