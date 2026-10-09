@@ -1353,9 +1353,13 @@ pub(crate) struct StartBody {
     /// command is built here, from the id the pane kept, never from the page.
     #[serde(default)]
     pub(crate) resume: bool,
-    /// The resume is the page's own, after a restart, not a click: honoured
-    /// only while this daemon still holds the pane's mark. A mark that lapsed
-    /// while its panel sat unshown starts `cmd`, with the conversation offered.
+    /// The start is the page's own, after a restart, not a click. A resume is
+    /// honoured only while this daemon still holds the pane's mark. A pane
+    /// whose conversation is on offer -- the mark lapsed while its panel sat
+    /// unshown, or the last daemon stopped unplanned -- starts the shell,
+    /// whatever `cmd` says, with the conversation offered (#108): a `claude`
+    /// started there would be a new, empty conversation, and its first hook
+    /// would put its id over the one on offer.
     #[serde(default)]
     pub(crate) marked: bool,
     #[serde(default = "default_cols")]
@@ -1393,9 +1397,12 @@ pub(crate) async fn start_pane(
         return StatusCode::NOT_FOUND.into_response();
     };
     let lapsed = b.resume && b.marked && !app.panes.marked(&id);
-    let offer = lapsed && app.panes.offered(&id);
+    let offer = b.marked && (lapsed || !b.resume) && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
-    let cmd = if b.resume && !lapsed {
+    // So is the shell an offer comes back as.
+    let cmd = if offer {
+        String::new()
+    } else if b.resume && !lapsed {
         // Built from the pane's kept id (`desk::row_to_pane`), never from
         // the page: empty when there is nothing to go back to.
         if placed.pane.resume.is_empty() {

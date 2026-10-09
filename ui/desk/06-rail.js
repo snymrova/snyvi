@@ -1100,20 +1100,31 @@ function put(v) {
  *  are put -- not run, so Enter is the reader's -- and only where points
  *  would be let in. A refusal is said under the pane's own row. */
 function again(v) {
+  const why = resumeHere(v, false);
+  if (!why) return;
+  clearTimeout(rowTimer);
+  rowSaid = { p: v.id, text: why };
+  rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
+  rail();
+}
+
+/** The resume itself, for the rail's ↻ and for the strip over a pane
+ *  (#108): empty when it went, or why it did not, for the caller to say
+ *  where the click was. `enter` presses Enter after it, apart from the text
+ *  as Send now does -- the strip's button is the reader's Enter, since a
+ *  click on "Resume conversation" that leaves a line waiting reads as
+ *  nothing happening. */
+function resumeHere(v, enter) {
   const n = v.pane.slot;
-  if (!talked(v) || !v.pane.resume) return;
-  if (!v.status.running) { run(v, "", false, true); return; }
+  if (!talked(v) || !v.pane.resume) return "";
+  if (!v.status.running) { run(v, "", false, true); return ""; }
   const why = !v.mode[1] ? `Panel ${n} is not at a prompt, so nothing is typed into it.`
     : Date.now() - (v.typed || 0) < TYPED_MS ? `You are typing in panel ${n}.` : "";
-  if (why) {
-    clearTimeout(rowTimer);
-    rowSaid = { p: v.id, text: why };
-    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
-    rail();
-    return;
-  }
+  if (why) return why;
   input(v, bracket(v, v.pane.resume));
+  if (enter) setTimeout(() => input(v, "\r"), 120);
   if (reading != null) ctx.go(deskId, true, n); else focusPane(v.id);
+  return "";
 }
 
 /** Leaving a desk hides its points and keeps them: they are the reader's,

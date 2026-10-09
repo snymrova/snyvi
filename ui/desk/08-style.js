@@ -238,6 +238,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
   background: color-mix(in srgb, var(--warn) 12%, var(--bg-raise)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: var(--r-sm); box-shadow: var(--shadow); }
 .pn-offer[hidden] { display: none; }
 .pn-offer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-offer > span.why { color: var(--warn); }
 .pn-offer button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
 .pn-offer [data-offer="go"] { color: var(--accent); font-weight: 600; }
 .pn-offer button:hover { background: var(--rule-2); color: var(--fg); }

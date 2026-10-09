@@ -84,7 +84,7 @@ function makeView(p) {
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
-    `<div class="pn-offer" hidden role="status"><span>Claude was open here when snyvi stopped</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
+    `<div class="pn-offer" hidden role="status"><span>${OFFER_SAYS}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden data-tip="Resume conversation" data-tip-sub="claude --resume, the one this panel last had">↻ Resume conversation</button></form>`;
   // A new project desk's first panel, holding `claude` for the reader's Enter.
@@ -179,13 +179,17 @@ function makeView(p) {
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
   start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
-  // The offer types `claude --resume <id>` at the prompt, without Enter (`again`),
-  // in the folder the shell came back in. Nothing is typed until it is clicked.
+  // The offer runs `claude --resume <id>` at the prompt of the shell the pane
+  // came back as, in its folder. Nothing is typed until it is clicked, and a
+  // click that cannot go says why in the strip, which stays (#108).
   el.querySelector(".pn-offer").addEventListener("click", e => {
     const b = e.target.closest("[data-offer]");
     if (!b) return;
-    v.offered = false; header(v);
-    if (b.dataset.offer === "go") again(v); else body.focus();
+    if (b.dataset.offer === "go") {
+      const why = resumeHere(v, true);
+      if (why) { offerSay(v, why); return; }
+    } else body.focus();
+    v.offered = false; v.offerSpent = true; header(v);
   });
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
@@ -266,8 +270,9 @@ function fit(v) {
  *  says `resume` too: that one comes back as the conversation, the way the
  *  ↻ button brings it, rather than as the shell. One that went without
  *  planning to -- `snyvi stop`, a signal, a reboot -- says `offer`: the shell
- *  comes back in the folder it was in, and the strip over it offers the
- *  conversation with one click, which types the resume and never runs it. */
+ *  comes back in the folder it was in -- the daemon starts the shell, not
+ *  what the pane ran, for a pane on offer -- and the strip over it offers
+ *  the conversation with one click, which runs the resume there (#108). */
 function resume(v) {
   if (v.resumed || v.starting || !v.size) return;
   if (v.status.running || v.status.exit != null) {
@@ -275,6 +280,18 @@ function resume(v) {
     return;
   }
   run(v, v.status.cmd || v.pane.cmd || "", true, !!v.status.resume);
+}
+
+/** What the strip over a pane says, and for five seconds instead of it
+ *  whatever kept its button from going. */
+const OFFER_SAYS = "Claude was open here when snyvi stopped";
+function offerSay(v, why) {
+  const t = v.el.querySelector(".pn-offer > span");
+  if (!t) return;
+  t.textContent = why;
+  t.classList.add("why");
+  clearTimeout(v.offerTimer);
+  v.offerTimer = setTimeout(() => { t.textContent = OFFER_SAYS; t.classList.remove("why"); }, 5000);
 }
 
 /** The accent this window wears, as CSS resolved it, for the prompt the shell
@@ -302,7 +319,7 @@ async function run(v, cmd, quiet, again) {
     // the daemon holds to it only while the mark does, and past it starts
     // `cmd` with the conversation offered -- a panel unshown for minutes.
     const was = document.activeElement;
-    const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, marked: !!quiet, cmd, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
+    const j = await ctx.api(`/api/panes/${v.id}/start`, { ...(again ? { resume: true } : {}), marked: !!quiet, cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
     // The account picked is not the one running: its token is gone, or a
     // key Claude Code ranks above it is set.
@@ -457,7 +474,9 @@ function header(v) {
   const again = v.start.querySelector(".pn-resume");
   again.hidden = !talked(v);
   if (talked(v)) again.dataset.tipSub = `${resumeWord(v)}, the one this panel last had`;
-  if (s.offer) v.offered = true;
+  // The status keeps saying `offer` until the pane's next start; a strip the
+  // reader answered stays answered in this window.
+  if (s.offer && !v.offerSpent) v.offered = true;
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
   cursor(v);

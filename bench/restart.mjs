@@ -234,11 +234,25 @@ async function main() {
       await loaded2;
       const ev = async expr => (await browser2.cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true }, s2)).result.value;
       const strip = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer:not([hidden])')`), 60);
-      const cmdNow = ((((await desks()).find(x => x.id === desk) || {}).panes || []).find(p => p.id === wander) || {}).status?.cmd || "";
-      await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="x"]')?.click(); 1`);
-      const away = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer[hidden]')`), 20);
-      row("the window offers it with a strip, and runs nothing it was not asked to", !!strip && !!away && !/--resume/.test(cmdNow),
-        !strip ? "no strip on the panel" : /--resume/.test(cmdNow) ? `the panel started ${cmdNow}` : !away ? "✕ did not put it away" : `the shell came back (${JSON.stringify(cmdNow)}), the strip offered, ✕ put it away`);
+      const paneNow = ((((await desks()).find(x => x.id === desk) || {}).panes || []).find(p => p.id === wander) || {});
+      const cmdNow = paneNow.status?.cmd ?? "?";
+      // #108: it comes back as the shell -- not its command run again, whose
+      // `claude` would be a new conversation over the one on offer -- and
+      // keeps that command for Start.
+      row("an offered panel comes back as its shell and keeps its command", cmdNow === "" && /exec sleep 300/.test(paneNow.cmd || ""),
+        `started ${JSON.stringify(cmdNow)}, Start keeps ${JSON.stringify(paneNow.cmd)}`);
+      // Its button does something to see: the resume goes in and the strip
+      // with it, or the strip stays and says why where the click was.
+      await sleep(1500);
+      await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="go"]')?.click(); 1`);
+      const went = await until(() => ev(`(() => { const o = document.querySelector('.pn[data-id="${wander}"] .pn-offer'); return o && (o.hidden ? "went" : o.querySelector("span.why") ? o.querySelector("span").textContent : ""); })()`), 20);
+      let away = went === "went";
+      if (went && !away) {
+        await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="x"]')?.click(); 1`);
+        away = await until(() => ev(`!!document.querySelector('.pn[data-id="${wander}"] .pn-offer[hidden]')`), 20);
+      }
+      row("the strip offers it, and its Resume is answered where it was clicked", !!strip && !!went && !!away,
+        !strip ? "no strip on the panel" : !went ? "Resume did nothing to see" : went === "went" ? "the resume went in, the strip with it" : !away ? `said "${went}", then ✕ did not put it away` : `said "${went}" in the strip, ✕ put it away`);
       killTree(browser2.proc);
     }
   } finally {
