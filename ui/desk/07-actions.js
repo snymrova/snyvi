@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && await filedAct(a, b, d)) return;
+    if (d && (await filedAct(a, b, d) || keysAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -133,16 +133,6 @@ async function act(b, byKey) {
     else if (a === "note-tell") await tellNote(d, b);
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
-    else if (a === "keys") keysSheet(d);
-    else if (a === "key-x") keyRemove(d, b.dataset.n, !!b.dataset.every);
-    else if (a === "key-back") keyBack(d);
-    else if (a === "acc-x") accRemove(d, +b.dataset.n);
-    else if (a === "acc-back") accBack(d);
-    else if (a === "acc-renew") accRenewing(d, +b.dataset.n);
-    else if (a === "acc-in") accSignIn(d);
-    else if (a === "acc-in-x") accSignCancel();
-    else if (a === "acc-in-code") accSignCode();
-    else if (a === "acc-in-open") { if (signing && /^https:\/\//.test(signing.url || "")) openLink(signing.url); }
     else if (a === "note-x") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) {

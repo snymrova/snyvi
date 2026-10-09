@@ -338,6 +338,23 @@ async function accAdd(d, e) {
 /** The desk's account. Panels that follow it and are running keep what they
  *  started as, and are offered the switch: it restarts each into its
  *  conversation, so it is asked, never done. */
+/** The keys sheet's buttons, its keys' and its accounts': whether `a` was
+ *  one of them (`act` asks). */
+function keysAct(a, b, d) {
+  if (a === "keys") keysSheet(d);
+  else if (a === "key-x") keyRemove(d, b.dataset.n, !!b.dataset.every);
+  else if (a === "key-back") keyBack(d);
+  else if (a === "acc-x") accRemove(d, +b.dataset.n);
+  else if (a === "acc-back") accBack(d);
+  else if (a === "acc-renew") accRenewing(d, +b.dataset.n);
+  else if (a === "acc-in") accSignIn(d);
+  else if (a === "acc-in-x") accSignCancel();
+  else if (a === "acc-in-code") accSignCode();
+  else if (a === "acc-in-open") { if (signing && /^https:\/\//.test(signing.url || "")) openLink(signing.url); }
+  else return false;
+  return true;
+}
+
 async function accPick(d, account) {
   let j;
   try { j = await ctx.api(`/api/desks/${d.id}/account`, { account }); }

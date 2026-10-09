@@ -1563,15 +1563,14 @@ impl Live {
             // blanking it would flicker the header on every start.
             branch: i.status.branch.clone(),
             dirty: i.status.dirty,
-            agent: "",
-            agent_since: None,
             // Whatever this start is, the mark is spent: a window that chose
             // the shell over the conversation has chosen.
             resume: false,
             offer: s.offer,
             cwd: s.cwd.to_string(),
             account: s.account,
-            // A new process has told nothing yet about any model.
+            // A new process has told nothing yet about any model, and no
+            // agent is in it yet.
             ..Status::default()
         };
         i.wrote = Instant::now();

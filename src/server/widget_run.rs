@@ -100,18 +100,7 @@ pub(crate) fn spawn(app: Arc<App>) {
 /// One look: every widget folder, what each needs, and the runs that are due.
 fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, path: &str) {
     let live = |p: &str| app.panes.is_running(p);
-    // Boxes allowed for a while whose while is up.
-    if let Ok(ended) = app.store.clocked(|c, now| {
-        let due = widget::asks_ending(c, now, live)?;
-        for (d, n) in &due {
-            widget::clear(c, *d, n, widget::Source::Push)?;
-        }
-        Ok(due)
-    }) {
-        for (d, n) in ended {
-            announce(app, d, &n);
-        }
-    }
+    end_asks(app);
     let found = files::scan(&app.paths.config_dir);
     if found.is_empty() {
         return;
@@ -212,59 +201,92 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             }
             r.ran_as.insert(f.name.clone(), hash.clone());
         }
-        for (desk, root) in seats {
-            let key = (desk, f.name.clone());
-            let cwd = match &root {
-                None => f.folder.clone(),
-                Some(root) if root.is_empty() || !Path::new(root).is_dir() => {
-                    say(app, r, desk, &f.name, "this desk has no folder");
-                    continue;
-                }
-                Some(root) => PathBuf::from(root),
-            };
-            if r.running.lock().unwrap().contains(&key) {
-                continue;
-            }
-            if r.last
-                .get(&key)
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(spec.run.every))
-            {
-                continue;
-            }
-            // Stopped after failing: until the reader says Try again.
-            let stopped = app
-                .store
-                .clocked(|c, _| widget::seat_of(c, desk, &f.name))
-                .ok()
-                .flatten()
-                .is_some_and(|s| s.error.starts_with(widget::STOPPED));
-            if stopped {
-                continue;
-            }
-            r.last.insert(key.clone(), Instant::now());
-            r.said.remove(&key);
-            r.running.lock().unwrap().insert(key.clone());
-            let stdin = json!({
-                "desk": all.iter().find(|d| d.id == desk).map(|d| json!({ "id": d.id, "name": d.name, "folder": d.root })),
-                "settings": spec.settings_with(&prefs.settings),
-                "snyvi": VERSION,
-            });
-            let (app, gate, running, fails, spec, folder, path) = (
-                app.clone(),
-                gate.clone(),
-                r.running.clone(),
-                r.fails.clone(),
-                spec.clone(),
-                f.folder.clone(),
-                path.to_string(),
-            );
-            tokio::spawn(async move {
-                let _held = gate.acquire_owned().await;
-                let out = run_once(&spec, &folder, &cwd, &path, &stdin).await;
-                land(&app, desk, &spec, &cwd, &fails, out);
-                running.lock().unwrap().remove(&(desk, spec.name.clone()));
-            });
+        start_seats(app, r, gate, path, &f, spec, &prefs, &all, seats);
+    }
+}
+
+/// Boxes allowed for a while whose while is up: taken off, and said.
+fn end_asks(app: &Arc<App>) {
+    let live = |p: &str| app.panes.is_running(p);
+    if let Ok(ended) = app.store.clocked(|c, now| {
+        let due = widget::asks_ending(c, now, live)?;
+        for (d, n) in &due {
+            widget::clear(c, *d, n, widget::Source::Push)?;
         }
+        Ok(due)
+    }) {
+        for (d, n) in ended {
+            announce(app, d, &n);
+        }
+    }
+}
+
+/// A widget allowed and unchanged, run on each of its seats that is due:
+/// not running already, its time since the last run up, not stopped.
+#[allow(clippy::too_many_arguments)]
+fn start_seats(
+    app: &Arc<App>,
+    r: &mut Runner,
+    gate: &Arc<tokio::sync::Semaphore>,
+    path: &str,
+    f: &files::Found,
+    spec: &files::Spec,
+    prefs: &widget::Prefs,
+    all: &[crate::desk::Desk],
+    seats: Vec<(i64, Option<String>)>,
+) {
+    for (desk, root) in seats {
+        let key = (desk, f.name.clone());
+        let cwd = match &root {
+            None => f.folder.clone(),
+            Some(root) if root.is_empty() || !Path::new(root).is_dir() => {
+                say(app, r, desk, &f.name, "this desk has no folder");
+                continue;
+            }
+            Some(root) => PathBuf::from(root),
+        };
+        if r.running.lock().unwrap().contains(&key) {
+            continue;
+        }
+        if r.last
+            .get(&key)
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(spec.run.every))
+        {
+            continue;
+        }
+        // Stopped after failing: until the reader says Try again.
+        let stopped = app
+            .store
+            .clocked(|c, _| widget::seat_of(c, desk, &f.name))
+            .ok()
+            .flatten()
+            .is_some_and(|s| s.error.starts_with(widget::STOPPED));
+        if stopped {
+            continue;
+        }
+        r.last.insert(key.clone(), Instant::now());
+        r.said.remove(&key);
+        r.running.lock().unwrap().insert(key.clone());
+        let stdin = json!({
+            "desk": all.iter().find(|d| d.id == desk).map(|d| json!({ "id": d.id, "name": d.name, "folder": d.root })),
+            "settings": spec.settings_with(&prefs.settings),
+            "snyvi": VERSION,
+        });
+        let (app, gate, running, fails, spec, folder, path) = (
+            app.clone(),
+            gate.clone(),
+            r.running.clone(),
+            r.fails.clone(),
+            spec.clone(),
+            f.folder.clone(),
+            path.to_string(),
+        );
+        tokio::spawn(async move {
+            let _held = gate.acquire_owned().await;
+            let out = run_once(&spec, &folder, &cwd, &path, &stdin).await;
+            land(&app, desk, &spec, &cwd, &fails, out);
+            running.lock().unwrap().remove(&(desk, spec.name.clone()));
+        });
     }
 }
 
