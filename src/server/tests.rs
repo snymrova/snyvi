@@ -1680,7 +1680,9 @@ async fn a_sign_in_keeps_the_token_it_reads_and_shows_none_of_it() {
 /// A Claude account added from a pasted token is listed by its label only:
 /// the token is in no answer, the desk and the panel take the account, a
 /// panel's own wins over its desk's, and taking the account away puts both
-/// back on `/login` and forgets the token.
+/// back on `/login` and forgets the token. Unix only: the panel is a shell
+/// line that writes what it was given.
+#[cfg(unix)]
 #[tokio::test]
 async fn an_account_token_goes_in_once_and_never_comes_back_out() {
     let mut ids = (0, String::new());
