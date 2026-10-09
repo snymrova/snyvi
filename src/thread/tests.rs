@@ -184,6 +184,54 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     assert_eq!((t.branch.as_str(), changed), ("claude/b", false));
 }
 
+/// The first sight of the merge ticks the thread's open notes, by "merged",
+/// with the merge and the PR; a note outside the thread stays open, and one
+/// the reader unticks is not ticked again by the same merge seen again.
+#[test]
+fn a_merge_ticks_the_threads_notes() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &n[..2]);
+    let open = |c: &Connection| {
+        crate::desk::notes(c, d)
+            .unwrap()
+            .into_iter()
+            .filter(|x| !x.done)
+            .count()
+    };
+    let pr = Seen {
+        pr: "https://github.com/o/r/pull/67".into(),
+        ci: "passing".into(),
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &pr, 2).unwrap();
+    assert_eq!(open(&conn), 3, "a PR alone ticks nothing");
+    let m = Seen {
+        merged: "B6E235B".into(),
+        ..pr
+    };
+    let (_, changed) = seen(&mut conn, d, "p1", &m, 3).unwrap().unwrap();
+    assert!(changed);
+    let notes = crate::desk::notes(&conn, d).unwrap();
+    let done: Vec<_> = notes.iter().filter(|x| x.done).collect();
+    assert_eq!(done.len(), 2);
+    for x in &done {
+        assert!(n[..2].contains(&x.id));
+        assert_eq!(
+            (
+                x.done_by.as_str(),
+                x.done_commit.as_str(),
+                x.done_evidence.as_str()
+            ),
+            ("merged", "b6e235b", "https://github.com/o/r/pull/67")
+        );
+    }
+    conn.execute("UPDATE desk_notes SET done_at = 0 WHERE id = ?1", [n[0]])
+        .unwrap();
+    seen(&mut conn, d, "p1", &m, 4).unwrap();
+    assert_eq!(open(&conn), 2);
+}
+
 /// A desk's turns are its own: thirty-one waiting on another desk do not
 /// push this desk's one out of its band or its brief, and the band leaves
 /// out the mod's dialog turns while the brief keeps them.

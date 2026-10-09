@@ -5,7 +5,7 @@
     const a = e.target.closest("a[data-id], a[data-browse], a[data-desk], [data-nav]");
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
     e.preventDefault();
-    if (a.dataset.nav === "inbox") showInbox(true);
+    if (a.dataset.nav === "inbox") showInbox(true, a.getAttribute("href") === "/inbox?recent");
     else if (a.dataset.nav === "home") showHome(true);
     else if (a.dataset.nav === "connect") showConnect(true);
     else if (a.dataset.nav === "start") showStart(true, a.hash || "");
@@ -52,7 +52,7 @@
     const b = u.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
     if (b) { e.preventDefault(); showBrowse(b[1], decodeURIComponent(b[2] || ""), true); return; }
     if (u.pathname === "/") { e.preventDefault(); showHome(true); return; }
-    if (u.pathname === "/inbox") { e.preventDefault(); showInbox(true); return; }
+    if (u.pathname === "/inbox") { e.preventDefault(); showInbox(true, u.search === "?recent"); return; }
     if (u.pathname === "/connect") { e.preventDefault(); showConnect(true); return; }
     if (u.pathname === "/sidebars") { e.preventDefault(); showSidebars(true); return; }
     e.preventDefault();
@@ -132,7 +132,7 @@
     if (location.pathname === "/welcome") return showWelcome(false);
     const k = location.pathname.match(/^\/desk\/(\d+)$/);
     if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
-    if (location.pathname === "/inbox") return showInbox(false);
+    if (location.pathname === "/inbox") return showInbox(false, location.search === "?recent");
     showHome(false);
   });
 

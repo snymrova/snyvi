@@ -376,16 +376,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-note > button.nm > .nm-t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* The card a line is rewritten in: over the row's text, the same left edge,
    laid over the lines below rather than pushing them. */
-.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 36px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
-.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 36px; right: 4px; }
+.dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 27px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 27px; right: 4px; }
 .dk-note:hover > .nm { color: var(--fg); }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
 .dk-note.done > .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-3); }
-/* A line an agent ticked says which agent, and where the work went, on a
-   line of its own under the text, lined up with it: the reader can untick
-   it like any other. */
-.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 37px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
+/* A friend's open line says whose it is, on a line of its own under the
+   text, lined up with it. */
+.dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 28px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
 .dk-by > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
 .dk-sha { padding: 0 3px; background: var(--rule); }
@@ -413,8 +412,11 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * has a number, so every row is its text and that line: rows of one line of
  * text are one height, rows of two another, and a mark that arrives fills
  * room that was there. A row taken off holds a one-line row's room. */
-.dk-lead { flex: none; display: flex; justify-content: center; width: 30px; margin-left: 1px; }
-.dk-meta { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; min-width: 0; height: 14px; margin-top: -1px; padding: 0 8px 5px 37px; }
+/* The circle stands where a document row's icon does (8 px in, 14 wide),
+   so the notes' text starts where the documents' does, one list over the
+   other in the same rail. */
+.dk-lead { flex: none; display: flex; justify-content: center; width: 22px; padding-left: 8px; box-sizing: border-box; }
+.dk-meta { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; min-width: 0; height: 14px; margin-top: -1px; padding: 0 8px 5px 28px; }
 .dk-marks { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dk-meta .dk-marks > * { position: relative; flex: none; display: inline-flex; align-items: center; gap: 3px; width: auto; height: 14px; margin: 0; padding: 0; border-radius: 3px; background: none; font-size: var(--fs-micro); line-height: 14px; color: var(--fg-3); }
 .dk-meta .dk-marks svg { width: 11px; height: 11px; }
@@ -423,6 +425,16 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > button:hover { color: var(--accent); }
 .dk-meta .dk-marks > .dk-pic.back { color: var(--accent); }
 .dk-meta .dk-marks .c { font-variant-numeric: tabular-nums; }
+/* A ticked line's marks: where the work went, on the same line, and the
+   last of them gives way to an ellipsis before the row is wider. */
+.dk-meta .dk-marks { overflow: hidden; }
+.dk-meta .dk-marks > .dk-sha { padding: 0 3px; background: var(--rule); font-family: var(--mono); }
+.dk-meta .dk-marks > .dk-sha[data-said] { color: var(--ok); }
+.dk-meta .dk-marks > :is(.dk-ev, .dk-stage.pr):last-child { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+/* In a PR: its number and its checks, the checks' colour only when they
+   have something to say. */
+.dk-meta .dk-marks > .dk-stage.pr.pass { color: var(--ok); }
+.dk-meta .dk-marks > .dk-stage.pr.fail { color: var(--warn); }
 .dk-num { padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 14px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-num, .dk-num[data-said] { opacity: 1; }
 .dk-num:hover { color: var(--accent); }
