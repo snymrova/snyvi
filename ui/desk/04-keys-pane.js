@@ -304,6 +304,10 @@ async function run(v, cmd, quiet, again) {
     const was = document.activeElement;
     const j = await ctx.api(`/api/panes/${v.id}/start`, again ? { resume: true, marked: !!quiet, cmd, cols: c, rows: r, accent: accent() } : { cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
+    // The account picked is not the one running: its token is gone, or a
+    // key Claude Code ranks above it is set.
+    if (j.account_missing) ctx.toast(`Panel ${v.pane.slot} started as your login`, "its account's token is missing: add it again in Keys");
+    else if (j.outranked) ctx.toast(`Panel ${v.pane.slot} runs on ${j.outranked[0]}`, "Claude Code takes that over the account picked");
     // The panel takes the keys -- unless the reader went somewhere else, a
     // note, a name, while the daemon was starting it.
     if (!quiet && (document.activeElement === was || document.activeElement === document.body)) v.body.focus();
@@ -395,10 +399,21 @@ function announce(text) {
   if (el) { el.textContent = ""; el.textContent = text; }
 }
 
+/** The account a panel is on (`crate::accounts`), as `{ id, label }`. */
+function accountOf(v) {
+  const id = v.status.running ? v.status.account || 0 : v.pane.account ?? current()?.account ?? 0;
+  return accounts().find(a => a.id === id) || accounts()[0];
+}
+
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
   const sl = $(".pn-slot");
-  if (sl.textContent !== `[${v.pane.slot}]`) { sl.textContent = `[${v.pane.slot}]`; sl.dataset.tip = `Panel ${v.pane.slot}`; sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
+  if (sl.textContent !== `[${v.pane.slot}]`) { sl.textContent = `[${v.pane.slot}]`; sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
+  // Which Claude account, once there is more than one: what a running panel
+  // started as, or what a stopped one will start as.
+  const acc = (ctx.desks.accounts || []).length ? accountOf(v) : null;
+  const st = `Panel ${v.pane.slot}${acc ? ` · Claude as ${acc.label}` : ""}`;
+  if (sl.dataset.tip !== st) sl.dataset.tip = st;
   const c = $(".pn-cmd");
   // Its title as the rail writes it: Claude Code puts its spinner's frame at
   // the front (◑, ✳), and the state beside it already says it is working.

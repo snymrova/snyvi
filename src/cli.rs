@@ -132,7 +132,7 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Back to a fresh install: every document, the index, the token and the page's preferences go; the agents stay registered.
+    /// Back to a fresh install: every document, the index, the token, every key and Claude account, and the page's preferences go; the agents stay registered.
     Reset {
         /// Do not ask. Without it the number of documents has to be typed back, at a terminal.
         #[arg(long)]

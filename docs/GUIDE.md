@@ -568,6 +568,29 @@ that agent runs can ask `snyvi key` or see the variable the way they see
 you would hand to anything you run on that desk. On Linux the file it
 rests in is readable by your user alone, as snyvi's own token is.
 
+The same sheet holds your Claude accounts, so one desk can run on your work
+plan and another on your own without a `/logout` between them. Under *Add a
+Claude account*, *Sign in…* opens Claude's sign-in page in your browser:
+approve as the other account, paste the code if the page shows one, and the
+account is added. snyvi runs `claude setup-token` out of sight for this and
+keeps the token it prints the way a key's value is; the page never sees it.
+A token from running `claude setup-token` yourself can be pasted in the same
+place instead. Your `/login` account is always there as
+*your login*, and the one picked is what the desk's panels start as. A
+panel can have its own: right-click it for *Run as…*, or *Continue as…* to
+restart it as the other account, back into the same conversation. Panels
+already running keep the account they started as, and changing the desk's
+offers to switch the ones with Claude open. Everything else under
+`~/.claude` -- settings, hooks, MCP servers, memory, the conversations
+`--resume` finds -- is shared by every account. A token lasts a year: the
+row says until when, in bold in its last month, and *Renew* signs in again
+for a new one. A desk key named `ANTHROPIC_API_KEY` or
+`ANTHROPIC_AUTH_TOKEN` wins over any account,
+so the sheet says so when a desk has one. A token can't use claude.ai's
+connectors or Remote Control, which want the `/login` account. snyvi never
+switches an account on its own, and ✕ on an account puts its desks and
+panels back on your login and forgets the token, with Undo first.
+
 The server also offers four prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
 finished and checked and says where the work was left, `plan` writes the

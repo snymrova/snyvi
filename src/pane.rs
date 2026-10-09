@@ -233,12 +233,22 @@ pub struct Status {
     pub five_hour: Option<crate::statusline::Limit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seven_day: Option<crate::statusline::Limit>,
+    /// The Claude account this process started as (`crate::accounts`): 0
+    /// for the `/login` one, which is every panel until a reader adds
+    /// another. Kept after the process ends, for "Continue as…": the panel
+    /// ran as it last.
+    #[serde(skip_serializing_if = "is_login")]
+    pub account: i64,
     /// When snyvi last spoke to the agent in this pane about its desk: the
     /// brief at a start, or the changes at a prompt (`crate::brief::changes`).
     /// What the next prompt's changes are counted from. The daemon's own, not
     /// the page's; 0 is "never", and a pane at 0 is told nothing but stamped.
     #[serde(skip)]
     pub told_at: i64,
+}
+
+fn is_login(account: &i64) -> bool {
+    *account == crate::accounts::DEFAULT
 }
 
 /// The session is over: what it said about its model goes with it.
@@ -509,6 +519,8 @@ pub struct Start<'a> {
     /// The desk's keys, `NAME=value`, for the child's environment and nowhere
     /// else: not in the status, not in the text, not in a frame.
     pub env: &'a [(String, String)],
+    /// The Claude account whose token is in `env`, or 0: for the status.
+    pub account: i64,
 }
 
 /// Told a panel's id and the folder its shell is now in.
@@ -1558,6 +1570,7 @@ impl Live {
             resume: false,
             offer: s.offer,
             cwd: s.cwd.to_string(),
+            account: s.account,
             // A new process has told nothing yet about any model.
             ..Status::default()
         };

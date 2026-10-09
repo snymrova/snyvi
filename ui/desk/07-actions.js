@@ -136,6 +136,13 @@ async function act(b, byKey) {
     else if (a === "keys") keysSheet(d);
     else if (a === "key-x") keyRemove(d, b.dataset.n, !!b.dataset.every);
     else if (a === "key-back") keyBack(d);
+    else if (a === "acc-x") accRemove(d, +b.dataset.n);
+    else if (a === "acc-back") accBack(d);
+    else if (a === "acc-renew") accRenewing(d, +b.dataset.n);
+    else if (a === "acc-in") accSignIn(d);
+    else if (a === "acc-in-x") accSignCancel();
+    else if (a === "acc-in-code") accSignCode();
+    else if (a === "acc-in-open") { if (signing && /^https:\/\//.test(signing.url || "")) openLink(signing.url); }
     else if (a === "note-x") {
       const x = noteList.find(y => y.id === +b.dataset.n);
       if (x) {
@@ -582,6 +589,57 @@ export function textSize(step) {
 /** The focused panel alone, or the grid again: what the width control means
  *  on a desk. How many panels there are, so it can say when one already fills
  *  it. */
+/** The Claude accounts, the `/login` one first (`crate::accounts`). */
+const accounts = () => [{ id: 0, label: "your login" }, ...(ctx.desks.accounts || [])];
+/** Claude open in a running panel, with a conversation to go back to: a
+ *  switch restarts it into that conversation. A shell is not restarted. */
+const continuable = v => v.status.running && v.pane.resume && (v.status.agent_in || talked(v));
+
+/** A panel's "Run as" entries, one an account, and only once a second
+ *  account exists. Claude open in it, with a conversation to go back to:
+ *  "Continue as", which restarts it into that conversation. Anything else:
+ *  "Run as", which a stopped panel starts as and a running shell takes at
+ *  its next start. The desk's own account is picked by following it. */
+function accountItems(v, d) {
+  const all = accounts();
+  if (all.length < 2) return [];
+  const s = v.status, on = v.pane.account ?? d.account;
+  const cont = continuable(v);
+  const was = cont ? s.account || 0 : on;
+  return [...all.filter(a => a.id !== was).map(a => ({ label: `${cont ? "Continue" : "Run"} as ${a.label}`, run: () => runAs(v, d, a, cont) })), "rule"];
+}
+
+/** A panel as another account: `a` picked from its menu, the desk's own
+ *  picked by following it. */
+async function runAs(v, d, a, cont) {
+  const account = a.id === d.account ? null : a.id;
+  if (!v.status.running) {
+    await ctx.api(`/api/panes/${v.id}/account`, { account });
+    v.pane.account = account;
+    return run(v, v.start.querySelector("input").value);
+  }
+  if (!cont) {
+    await ctx.api(`/api/panes/${v.id}/account`, { account });
+    v.pane.account = account;
+    return ctx.toast(`Panel ${v.pane.slot} runs as ${a.label}`, "from its next start");
+  }
+  return switchPanel(v, account, a.label);
+}
+
+/** A running panel restarted as `account` (null: its desk's), back into its
+ *  conversation. The daemon keeps the choice and refuses while Claude is
+ *  answering; the stop and the start are this page's, as a restart's resume
+ *  is, since it holds the panel's size. */
+async function switchPanel(v, account, label) {
+  const cmd = v.status.cmd || v.pane.cmd || "";
+  const j = await ctx.api(`/api/panes/${v.id}/account`, { account, switch: true });
+  v.pane.account = account;
+  if (!j.restart) return;
+  v.onStop = () => run(v, cmd, false, j.resume);
+  try { await ctx.api(`/api/panes/${v.id}/stop`, {}); } catch (e) { v.onStop = null; throw e; }
+  announce(`Panel ${v.pane.slot} continues as ${label}`);
+}
+
 /** What the context menu offers on this desk's surfaces (menu.js asks, with
  *  the element under the pointer or the focus): a panel, from its rail row,
  *  its head or its body; a document in the rail; a note; a point. Each entry
@@ -616,6 +674,7 @@ export function actions(el) {
       s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
       !s.running && talked(v) && { label: "Resume conversation", run: () => run(v, "", false, true) },
       R,
+      ...accountItems(v, d),
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,

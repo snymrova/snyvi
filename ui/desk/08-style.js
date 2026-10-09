@@ -70,6 +70,20 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-keys-w button { margin-left: auto; padding: 2px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--accent); cursor: pointer; }
 .dk-keys-w button:disabled { opacity: .5; cursor: default; }
 .dk-keys-say { margin: 0; color: var(--fg-3); font-size: var(--fs-micro); }
+.dk-acc label { flex: none; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.dk-acc .dk-key-n { font-family: inherit; font-size: inherit; }
+.dk-key-m b { font-weight: 600; color: var(--warn); }
+.dk-acc-renew { flex: none; padding: 0 2px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
+.dk-acc-more { padding: 6px 2px 0; }
+.dk-acc-more > summary { color: var(--fg-3); font-weight: 600; cursor: pointer; }
+.dk-acc-more + .dk-keys-h { margin-top: 10px; }
+.dk-acc-add label button { padding: 2px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--accent); cursor: pointer; }
+.dk-acc-add label button:disabled { opacity: .5; cursor: default; }
+.dk-acc-live { display: grid; gap: 6px; color: var(--fg-2); font-size: var(--fs-small); }
+.dk-acc-live > button { justify-self: start; padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
+.dk-acc-live label button + button { border-color: var(--rule-2); color: var(--fg-3); }
+.dk-acc-link { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+:is(.dk-keys-say, .dk-key-m) code { font-family: var(--mono); }
 /* An agent's suggestion: a ghost row, quieter than a line of the reader's,
    with its two answers always shown. */
 .dk-sug .nm { color: var(--fg-3); font-style: italic; }

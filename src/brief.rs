@@ -569,6 +569,7 @@ mod tests {
             visited_at: 0,
             parked: None,
             keys: Vec::new(),
+            account: 0,
             panes: (1..=panes as i64)
                 .map(|slot| Pane {
                     id: format!("{slot:032}"),
@@ -579,6 +580,7 @@ mod tests {
                     agent_session: String::new(),
                     resume: String::new(),
                     name: String::new(),
+                    account: None,
                 })
                 .collect(),
         }

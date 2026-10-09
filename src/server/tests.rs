@@ -505,6 +505,66 @@ const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         false,
     ),
+    ("GET", "/api/accounts", None, Gate::Desk, true),
+    // Let through, it would run the real `claude setup-token`.
+    (
+        "POST",
+        "/api/accounts/signin",
+        Some(r#"{"label":"Work"}"#),
+        Gate::Desk,
+        false,
+    ),
+    ("GET", "/api/accounts/signin", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/accounts/signin/code",
+        Some(r#"{"code":"abc"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts/signin/cancel",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts",
+        Some(r#"{"label":"Work","token":"nope"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts/9/rename",
+        Some(r#"{"label":"Home"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/accounts/9/renew",
+        Some(r#"{"token":"nope"}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/accounts/9/delete", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/account",
+        Some(r#"{"account":9}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/account",
+        Some(r#"{"account":null}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
     ("GET", "/api/desks/1/git", None, Gate::Desk, true),
     (
@@ -966,6 +1026,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     };
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn account_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn thread_routes(")
         + routes_in("\nfn widget_routes(")
@@ -1510,6 +1571,287 @@ fn a_panel_reads_its_own_desks_keys_and_no_other_desks() {
     let (s, why) = desk_key(&store, &secrets, a, "ELEVENLABS_API_KEY").unwrap_err();
     assert_eq!(s, StatusCode::NOT_FOUND, "a name whose value is gone");
     assert!(why.contains("add it again"), "{why}");
+}
+
+/// *Sign in…*: `claude setup-token` in a hidden terminal (here a script that
+/// draws what it draws), the sign-in page's address handed to the page, the
+/// code the page shows typed back, and the token kept the moment the line
+/// after it is on the screen -- with the token in no answer on the way.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_sign_in_keeps_the_token_it_reads_and_shows_none_of_it() {
+    let (_tmp, app, router, l) = gated_app_with("snyvi-signin", |_| {});
+    let token = format!("sk-ant-oat01-{}", "Yw8_k-".repeat(16));
+    *crate::accounts::signin::TEST_SCRIPT.lock().unwrap() = Some(format!(
+        "printf '\\033[1mBrowser did not open? Use the url below to sign in\\033[0m\\r\\n  https://claude.ai/oauth/authorize?code=true&state=t\\r\\nPaste code here if prompted > '; \
+         read c; [ \"$c\" = abc-123 ] || exit 3; \
+         printf 'Your OAuth token (valid for 1 year):\\r\\n\\r\\n%s\\r\\n\\r\\nStore this token securely.\\r\\n' '{token}'; sleep 30"
+    ));
+    let page = [
+        ("host", l.host.as_str()),
+        ("origin", l.origin.as_str()),
+        (CAPABILITY_HEADER, l.cap.as_str()),
+    ];
+    let call = |method: &'static str, path: &'static str, body: Option<String>| {
+        let router = router.clone();
+        async move {
+            let mut req = axum::http::Request::builder().method(method).uri(path);
+            for (k, v) in page {
+                req = req.header(k, v);
+            }
+            let req = match body {
+                Some(b) => req
+                    .header("content-type", "application/json")
+                    .body(Body::from(b))
+                    .unwrap(),
+                None => req.body(Body::empty()).unwrap(),
+            };
+            let resp = router.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+    let mut seen = String::new();
+    let mut until = async |want: &str| -> serde_json::Value {
+        for _ in 0..100 {
+            let (s, t) = call("GET", "/api/accounts/signin", None).await;
+            assert_eq!(s, StatusCode::OK, "{t}");
+            seen.push_str(&t);
+            let j: serde_json::Value = serde_json::from_str(&t).unwrap();
+            if j["signin"]["phase"] == want {
+                return j["signin"].clone();
+            }
+            assert_ne!(j["signin"]["phase"], "failed", "{t}");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("never {want}");
+    };
+
+    let (s, t) = call(
+        "POST",
+        "/api/accounts/signin",
+        Some(serde_json::json!({ "label": "Work" }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    let waiting = until("waiting").await;
+    assert_eq!(
+        waiting["url"],
+        "https://claude.ai/oauth/authorize?code=true&state=t"
+    );
+    let (s, t) = call(
+        "POST",
+        "/api/accounts/signin/code",
+        Some(serde_json::json!({ "code": "abc-123" }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    let done = until("done").await;
+    let id = done["account"].as_i64().unwrap();
+    assert_eq!(app.store.claude_account(id).unwrap().unwrap().label, "Work");
+    assert_eq!(
+        app.secrets.claude_value(id).as_deref(),
+        Some(token.as_str())
+    );
+    assert!(!seen.contains(&token[13..30]), "the token is in no answer");
+    // Nothing open to cancel now; a code has nowhere to go.
+    let (_, t) = call("POST", "/api/accounts/signin/cancel", Some("{}".into())).await;
+    assert!(t.contains("\"cancelled\":false"), "{t}");
+    let (s, _) = call(
+        "POST",
+        "/api/accounts/signin/code",
+        Some(serde_json::json!({ "code": "abc-123" }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    *crate::accounts::signin::TEST_SCRIPT.lock().unwrap() = None;
+}
+
+/// A Claude account added from a pasted token is listed by its label only:
+/// the token is in no answer, the desk and the panel take the account, a
+/// panel's own wins over its desk's, and taking the account away puts both
+/// back on `/login` and forgets the token.
+#[tokio::test]
+async fn an_account_token_goes_in_once_and_never_comes_back_out() {
+    let mut ids = (0, String::new());
+    let (tmp, app, router, l) = gated_app_with("snyvi-accounts", |store| {
+        let d = store.create_desk("/tmp", Some("a")).unwrap().id;
+        let crate::desk::Opened::Pane(p) = store.open_pane(d, "/tmp", "").unwrap() else {
+            panic!("no pane");
+        };
+        ids = (d, p.id);
+    });
+    let (desk, pane) = ids;
+    let token = format!("sk-ant-oat01-{}", "Zq9_x-".repeat(16));
+    let page = [
+        ("host", l.host.as_str()),
+        ("origin", l.origin.as_str()),
+        (CAPABILITY_HEADER, l.cap.as_str()),
+    ];
+    let call = |method: &'static str, path: String, body: Option<String>| {
+        let router = router.clone();
+        async move {
+            let mut req = axum::http::Request::builder().method(method).uri(path);
+            for (k, v) in page {
+                req = req.header(k, v);
+            }
+            let req = match body {
+                Some(b) => req
+                    .header("content-type", "application/json")
+                    .body(Body::from(b))
+                    .unwrap(),
+                None => req.body(Body::empty()).unwrap(),
+            };
+            let resp = router.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+
+    let (s, t) = call(
+        "POST",
+        "/api/accounts".into(),
+        Some(serde_json::json!({ "label": " Work ", "token": token }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    assert!(
+        !t.contains(&token[13..30]),
+        "the token is not in the answer: {t}"
+    );
+    let id = serde_json::from_str::<serde_json::Value>(&t).unwrap()["account"]["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        app.secrets.claude_value(id).as_deref(),
+        Some(token.as_str())
+    );
+
+    let (s, t) = call(
+        "POST",
+        "/api/accounts".into(),
+        Some(serde_json::json!({ "token": "sk-ant-api03-not-this" }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        t.contains("ANTHROPIC_API_KEY"),
+        "an API key is sent to Keys: {t}"
+    );
+
+    let (s, t) = call("GET", "/api/accounts".into(), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(t.contains("\"Work\"") && !t.contains(&token[13..30]), "{t}");
+
+    let (s, _) = call(
+        "POST",
+        format!("/api/desks/{desk}/account"),
+        Some(serde_json::json!({ "account": id }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        app.store.pane(&pane).unwrap().unwrap().account(),
+        id,
+        "the panel follows its desk"
+    );
+    let (s, _) = call(
+        "POST",
+        format!("/api/panes/{pane}/account"),
+        Some(serde_json::json!({ "account": 0 }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        app.store.pane(&pane).unwrap().unwrap().account(),
+        0,
+        "its own wins"
+    );
+    let (s, _) = call(
+        "POST",
+        format!("/api/desks/{desk}/account"),
+        Some(serde_json::json!({ "account": id + 7 }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "no such account");
+
+    let (s, t) = call("GET", "/api/desks".into(), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        !t.contains(&token[13..30]),
+        "the desks list has no token either"
+    );
+    assert!(t.contains("\"Work\""), "but it names the account: {t}");
+
+    // Started, the panel has its desk's account's token, and only there.
+    let (s, _) = call(
+        "POST",
+        format!("/api/panes/{pane}/account"),
+        Some(serde_json::json!({ "account": null }).to_string()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let seen = tmp.path.join("seen");
+    let start = serde_json::json!({
+        "cmd": format!("printf %s \"$CLAUDE_CODE_OAUTH_TOKEN\" > '{}'", seen.display()),
+    })
+    .to_string();
+    let ran = |want: bool| {
+        let (app, pane, seen) = (app.clone(), pane.clone(), seen.clone());
+        async move {
+            for _ in 0..200 {
+                if !app.panes.status(&pane).running && seen.exists() == want {
+                    return std::fs::read_to_string(&seen).unwrap_or_default();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            panic!("the panel did not run");
+        }
+    };
+    let (s, t) = call(
+        "POST",
+        format!("/api/panes/{pane}/start"),
+        Some(start.clone()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    assert!(
+        !t.contains(&token[13..30]) && !t.contains("account_missing"),
+        "{t}"
+    );
+    assert_eq!(
+        ran(true).await,
+        token,
+        "the token is in the panel's environment"
+    );
+    assert_eq!(
+        app.panes.status(&pane).account,
+        id,
+        "and the panel says as whom"
+    );
+    assert!(app.store.claude_account(id).unwrap().unwrap().used_at > 0);
+    // A token that is nowhere starts the panel on /login, and says so.
+    std::fs::remove_file(&seen).unwrap();
+    app.secrets.forget_claude(id);
+    let (s, t) = call("POST", format!("/api/panes/{pane}/start"), Some(start)).await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    assert!(t.contains("\"account_missing\":true"), "{t}");
+    assert_ne!(ran(true).await, token, "no token, so /login");
+    assert_eq!(app.panes.status(&pane).account, 0);
+
+    let (s, _) = call("POST", format!("/api/accounts/{id}/delete"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(app.secrets.claude_value(id), None, "the token is forgotten");
+    assert_eq!(app.store.desk(desk).unwrap().unwrap().account, 0);
+    let keys =
+        std::fs::read_to_string(tmp.path.join("config").join("keys.json")).unwrap_or_default();
+    assert!(!keys.contains(&token[13..30]));
 }
 
 /// A video beside a sent document plays from `/files/`: a range at a time,

@@ -383,7 +383,9 @@ function named(v) {
   if (!b) return;
   const here = v.status.cwd || v.pane.cwd;
   b.dataset.tip = what(v);
-  if (here) b.dataset.tipSub = tilde(here); else delete b.dataset.tipSub;
+  const acc = (ctx.desks.accounts || []).length ? `Claude as ${accountOf(v).label}` : "";
+  const sub = [here && tilde(here), acc].filter(Boolean).join(" · ");
+  if (sub) b.dataset.tipSub = sub; else delete b.dataset.tipSub;
   b.querySelector(".nm").textContent = short(v);
   const cp = ctxPct(v.status);
   let c = b.querySelector(".ctx");

@@ -372,6 +372,11 @@ pub(crate) async fn desks(
             "home": dirs::home_dir(),
             "panes": panes,
             "per_desk": crate::desk::PER_DESK,
+            // The Claude accounts, for the keys sheet, a panel's "Run as"
+            // and its tip: names and dates, no token, which no answer carries.
+            "accounts": app.store.claude_accounts().unwrap_or_default().iter()
+                .map(super::api_accounts::shown)
+                .collect::<Vec<_>>(),
         }))
         .into_response(),
         (Err(e), _) | (_, Err(e)) => err(e),
@@ -1444,6 +1449,42 @@ pub(crate) async fn start_pane(
             crate::claude_mod::plugin_dirs(&crate::claude_mod::dir(&app.paths)),
         ));
     }
+    // The panel's Claude account (`crate::accounts`): its token, off the
+    // keychain the way a key's value is, as `CLAUDE_CODE_OAUTH_TOKEN` -- in
+    // place of a desk key by that name, since the account was picked over
+    // it. The `/login` account sets nothing. A token that is nowhere starts
+    // the panel on `/login`, and the answer says so rather than the panel
+    // quietly running as someone else.
+    let mut account = placed.account();
+    let mut account_missing = false;
+    if account != crate::accounts::DEFAULT {
+        let secrets = app.secrets.clone();
+        let token = tokio::task::spawn_blocking(move || secrets.claude_value(account))
+            .await
+            .ok()
+            .flatten();
+        match token {
+            Some(token) => {
+                env.retain(|(name, _)| name != crate::accounts::TOKEN_VAR);
+                env.push((crate::accounts::TOKEN_VAR.into(), token));
+                let _ = app.store.touch_claude_account(account);
+            }
+            None => {
+                account_missing = true;
+                account = crate::accounts::DEFAULT;
+            }
+        }
+    }
+    // What Claude Code takes over that token, by name only: a desk key, or
+    // the daemon's own environment, which a panel inherits.
+    let outranked: Vec<&str> = if account == crate::accounts::DEFAULT {
+        Vec::new()
+    } else {
+        crate::accounts::OUTRANKS
+            .into_iter()
+            .filter(|n| env.iter().any(|(k, _)| k == n) || std::env::var_os(n).is_some())
+            .collect()
+    };
     let start = crate::pane::Start {
         cwd,
         root: &placed.root,
@@ -1455,9 +1496,19 @@ pub(crate) async fn start_pane(
         accent: &b.accent,
         offer,
         env: &env,
+        account,
     };
     match live.start(start, &app.panes) {
-        Ok(status) => Json(json!({ "status": status })).into_response(),
+        Ok(status) => {
+            let mut said = json!({ "status": status });
+            if account_missing {
+                said["account_missing"] = json!(true);
+            }
+            if !outranked.is_empty() {
+                said["outranked"] = json!(outranked);
+            }
+            Json(said).into_response()
+        }
         Err(e) => (
             StatusCode::CONFLICT,
             Json(json!({ "error": e.to_string() })),
