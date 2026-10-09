@@ -536,6 +536,14 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, accounts::COLUMNS_1_30[2]),
     // 1.30 too: the questions an agent asked as one card (#110).
     (15, thread::GROUP_COLUMN),
+    // 1.31: widgets on the desks the reader chose, for as long as they chose,
+    // and the card that asks for one (#111).
+    (16, widget::PREFS_COLUMNS_1_31[0]),
+    (16, widget::PREFS_COLUMNS_1_31[1]),
+    (16, widget::PREFS_COLUMNS_1_31[2]),
+    (16, thread::SUGGEST_COLUMNS_1_31[0]),
+    (16, thread::SUGGEST_COLUMNS_1_31[1]),
+    (16, thread::SUGGEST_COLUMNS_1_31[2]),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

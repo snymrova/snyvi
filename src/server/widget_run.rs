@@ -17,9 +17,19 @@
 //!   not run.
 //! - **Cheaply, and bounded.** The login shell's `PATH` is read once (a
 //!   daemon started by systemd has almost none), and each run is `sh -c`
-//!   (`cmd /C` on Windows) with that, a scrubbed environment, the run's JSON
-//!   on stdin, at most two at a time, at most 4 KB read, in a process group
-//!   of its own that a timeout ends whole.
+//!   (`cmd /C` on Windows) with that -- the widget's own folder first on it,
+//!   and in `SNYVI_WIDGET_DIR` -- a scrubbed environment, the run's JSON on
+//!   stdin, at most two at a time, at most 4 KB read, in a process group of
+//!   its own that a timeout ends whole.
+//! - **Where the reader put it, while they want it** (#111). A desk widget
+//!   runs on the desks its prefs list (none is every desk); one past its
+//!   time, or whose panel closed, is switched off -- not removed -- and its
+//!   seats go. A pushed box allowed for a while is cleared the same way.
+//! - **Reachable, and not forever failing.** A desk widget whose command
+//!   cannot reach its own files (`files::lint`) is not run, and its seat
+//!   says how to write it. One that fails `FAILS_TO_STOP` times in a row
+//!   for the same reason stops on that desk, says so, and the agent that
+//!   proposed it is told; Try again, Allow or an edit runs it again.
 
 use super::*;
 use crate::widget::{self, files};
@@ -38,6 +48,22 @@ const AT_ONCE: usize = 2;
 /// A folder's stamp (`files::stamp`), and the hash taken at it.
 type Hashed = ((u128, u64, usize), Result<String, String>);
 
+/// The login shell's PATH, once the runner has read it: Try once on a card
+/// runs with the same.
+static LOGIN_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The PATH a run is given: the login shell's, or the daemon's own before
+/// the runner has read it.
+pub(crate) fn path_now() -> String {
+    LOGIN_PATH
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default())
+}
+
+/// Failures in a row, by (desk, name), and the reason the last one gave.
+type Fails = std::sync::Arc<std::sync::Mutex<HashMap<(i64, String), (u8, String)>>>;
+
 /// What the runner keeps between rounds.
 #[derive(Default)]
 struct Runner {
@@ -52,6 +78,7 @@ struct Runner {
     /// Allow, or its own edit with Rerun my edits on -- runs at the next
     /// look rather than at the end of its `every`, so its seat stops asking.
     ran_as: HashMap<String, String>,
+    fails: Fails,
 }
 
 pub(crate) fn spawn(app: Arc<App>) {
@@ -59,6 +86,7 @@ pub(crate) fn spawn(app: Arc<App>) {
         let gate = Arc::new(tokio::sync::Semaphore::new(AT_ONCE));
         let mut r = Runner::default();
         let path = login_path().await;
+        let _ = LOGIN_PATH.set(path.clone());
         loop {
             tokio::time::sleep(ROUND).await;
             if app.pages.load(Ordering::Relaxed) == 0 {
@@ -71,6 +99,19 @@ pub(crate) fn spawn(app: Arc<App>) {
 
 /// One look: every widget folder, what each needs, and the runs that are due.
 fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, path: &str) {
+    let live = |p: &str| app.panes.is_running(p);
+    // Boxes allowed for a while whose while is up.
+    if let Ok(ended) = app.store.clocked(|c, now| {
+        let due = widget::asks_ending(c, now, live)?;
+        for (d, n) in &due {
+            widget::clear(c, *d, n, widget::Source::Push)?;
+        }
+        Ok(due)
+    }) {
+        for (d, n) in ended {
+            announce(app, d, &n);
+        }
+    }
     let found = files::scan(&app.paths.config_dir);
     if found.is_empty() {
         return;
@@ -85,6 +126,23 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         if prefs.hidden {
             continue;
         }
+        // Its time is up: off, as the reader's switch would have it, with
+        // `until` kept for /sidebars to say when.
+        if prefs.ended(crate::store::now(), live) {
+            let off = widget::Change {
+                hidden: Some(true),
+                ..Default::default()
+            };
+            if let Ok(ds) = app.store.clocked(|c, now| {
+                widget::set_prefs(c, &f.name, &off, now)?;
+                widget::desks_of(c, &f.name)
+            }) {
+                for d in ds {
+                    announce(app, d, &f.name);
+                }
+            }
+            continue;
+        }
         // Where it would run now.
         let seats: Vec<(i64, Option<String>)> = match spec.scope {
             files::Scope::Global => {
@@ -95,11 +153,20 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             }
             files::Scope::Desk => desks
                 .iter()
+                .filter(|id| prefs.on_desk(**id))
                 .filter_map(|id| all.iter().find(|d| d.id == *id))
                 .map(|d| (d.id, Some(d.root.clone())))
                 .collect(),
         };
         if seats.is_empty() {
+            continue;
+        }
+        // A command that cannot reach its own script fails on every desk,
+        // every time: not run, and the seat says how to write it.
+        if let Err(why) = files::lint(spec, &f.folder) {
+            for (desk, _) in &seats {
+                say(app, r, *desk, &f.name, &why);
+            }
             continue;
         }
         // Allowed, and unchanged since.
@@ -114,9 +181,13 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         };
         if prefs.trusted_hash != hash {
             if prefs.rerun_edits && !prefs.trusted_hash.is_empty() {
-                let _ = app.store.clocked(|c, now| {
-                    widget::set_prefs(c, &f.name, None, None, Some(&hash), None, now)
-                });
+                let took = widget::Change {
+                    trusted_hash: Some(&hash),
+                    ..Default::default()
+                };
+                let _ = app
+                    .store
+                    .clocked(|c, now| widget::set_prefs(c, &f.name, &took, now));
             } else {
                 let why = if prefs.trusted_hash.is_empty() {
                     format!(
@@ -133,7 +204,12 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             }
         }
         if r.ran_as.get(&f.name) != Some(&hash) {
+            // Allowed anew, or edited: whatever stopped it may be fixed.
             r.last.retain(|(_, n), _| *n != f.name);
+            r.fails.lock().unwrap().retain(|(_, n), _| *n != f.name);
+            if r.ran_as.contains_key(&f.name) {
+                let _ = app.store.clocked(|c, _| widget::unstop(c, &f.name, None));
+            }
             r.ran_as.insert(f.name.clone(), hash.clone());
         }
         for (desk, root) in seats {
@@ -155,6 +231,16 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             {
                 continue;
             }
+            // Stopped after failing: until the reader says Try again.
+            let stopped = app
+                .store
+                .clocked(|c, _| widget::seat_of(c, desk, &f.name))
+                .ok()
+                .flatten()
+                .is_some_and(|s| s.error.starts_with(widget::STOPPED));
+            if stopped {
+                continue;
+            }
             r.last.insert(key.clone(), Instant::now());
             r.said.remove(&key);
             r.running.lock().unwrap().insert(key.clone());
@@ -163,17 +249,19 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                 "settings": spec.settings_with(&prefs.settings),
                 "snyvi": VERSION,
             });
-            let (app, gate, running, spec, path) = (
+            let (app, gate, running, fails, spec, folder, path) = (
                 app.clone(),
                 gate.clone(),
                 r.running.clone(),
+                r.fails.clone(),
                 spec.clone(),
+                f.folder.clone(),
                 path.to_string(),
             );
             tokio::spawn(async move {
                 let _held = gate.acquire_owned().await;
-                let out = run_once(&spec, &cwd, &path, &stdin).await;
-                land(&app, desk, &spec, out);
+                let out = run_once(&spec, &folder, &cwd, &path, &stdin).await;
+                land(&app, desk, &spec, &cwd, &fails, out);
                 running.lock().unwrap().remove(&(desk, spec.name.clone()));
             });
         }
@@ -210,15 +298,28 @@ fn say(app: &Arc<App>, r: &mut Runner, desk: i64, name: &str, why: &str) {
 }
 
 /// What came of a run.
-enum Ran {
+pub(crate) enum Ran {
     Printed(String),
     Failed(String),
 }
 
-/// Run a widget's command once: in `cwd`, with the run's JSON on stdin, and
-/// only the reader's PATH, home and language from the daemon's environment
-/// -- not the token, not snyvi's own variables, not a desk's keys.
-async fn run_once(spec: &files::Spec, cwd: &Path, path: &str, stdin: &serde_json::Value) -> Ran {
+/// Run a widget's command once: in `cwd`, with the run's JSON on stdin, its
+/// own `folder` first on PATH and in `SNYVI_WIDGET_DIR`, and only the
+/// reader's PATH, home and language from the daemon's environment -- not the
+/// token, not snyvi's own variables, not a desk's keys.
+pub(crate) async fn run_once(
+    spec: &files::Spec,
+    folder: &Path,
+    cwd: &Path,
+    path: &str,
+    stdin: &serde_json::Value,
+) -> Ran {
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path = if path.is_empty() {
+        folder.to_string_lossy().to_string()
+    } else {
+        format!("{}{sep}{path}", folder.to_string_lossy())
+    };
     let mut cmd = if cfg!(windows) {
         let mut c = tokio::process::Command::new("cmd");
         c.arg("/C").arg(&spec.run.command);
@@ -230,8 +331,9 @@ async fn run_once(spec: &files::Spec, cwd: &Path, path: &str, stdin: &serde_json
     };
     cmd.current_dir(cwd)
         .env_clear()
-        .env("PATH", path)
+        .env("PATH", &path)
         .env("SNYVI_WIDGET", &spec.name)
+        .env("SNYVI_WIDGET_DIR", folder)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -332,8 +434,50 @@ fn stop_group(pid: Option<u32>) {
 }
 
 /// What a run printed, in its seat; or why it printed nothing usable, over
-/// the last good body.
-fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, ran: Ran) {
+/// the last good body. The `FAILS_TO_STOP`th failure in a row for the same
+/// reason stops it on this desk, says where it ran, and tells the agent that
+/// proposed it.
+fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, cwd: &Path, fails: &Fails, ran: Ran) {
+    let key = (desk, spec.name.clone());
+    let ran = match ran {
+        Ran::Printed(out) => match widget::Body::parse(&out) {
+            Err(why) => Ran::Failed(why),
+            Ok(_) => Ran::Printed(out),
+        },
+        failed => failed,
+    };
+    let ran = match ran {
+        Ran::Printed(out) => {
+            fails.lock().unwrap().remove(&key);
+            Ran::Printed(out)
+        }
+        Ran::Failed(why) => {
+            let n = {
+                let mut m = fails.lock().unwrap();
+                let e = m.entry(key).or_insert((0, String::new()));
+                if e.1 != why {
+                    *e = (0, why.clone());
+                }
+                e.0 = e.0.saturating_add(1);
+                e.0
+            };
+            if n >= widget::FAILS_TO_STOP {
+                let at = crate::text::tilde(cwd);
+                let line = format!("{}after {n} failures, {why} (in {at})", widget::STOPPED);
+                let note = format!(
+                    "Your widget {} stopped after {n} failures in a row: {why}, run in {at}. \
+                     Fix it, and the reader's Try again on its box runs it again.",
+                    spec.name
+                );
+                let _ = app
+                    .store
+                    .clocked(|c, _| crate::thread::tell_widget(c, &spec.name, &note).map(|_| ()));
+                Ran::Failed(line)
+            } else {
+                Ran::Failed(why)
+            }
+        }
+    };
     let who = spec
         .run
         .command
@@ -440,6 +584,7 @@ mod tests {
         run_once(
             &spec(command, timeout),
             &dir,
+            &dir,
             &path,
             &json!({ "settings": { "x": 1 } }),
         )
@@ -480,6 +625,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_desk_widget_finds_its_script_by_name_from_the_desk() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("snyvi-widget-reach-{}", std::process::id()));
+        let (own, desk) = (base.join("own"), base.join("desk"));
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::create_dir_all(&desk).unwrap();
+        let script = own.join("count.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"in $(basename \"$PWD\")\"\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        match run_once(&spec("count.sh", 5), &own, &desk, &path, &json!({})).await {
+            Ran::Printed(o) => assert_eq!(o.trim(), "in desk"),
+            Ran::Failed(w) => panic!("{w}"),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
     async fn more_than_four_kilobytes_is_refused() {
         match run("head -c 10000 /dev/zero | tr '\\0' x", 5).await {
             Ran::Failed(w) => assert!(w.contains("more than 4 KB"), "{w}"),
@@ -494,6 +657,7 @@ mod tests {
             Ran::Printed(o) => {
                 assert!(!o.contains("SNYVI_TOKEN_TEST_LEAK"));
                 assert!(o.contains("SNYVI_WIDGET=t"));
+                assert!(o.contains("SNYVI_WIDGET_DIR="));
             }
             Ran::Failed(w) => panic!("{w}"),
         }

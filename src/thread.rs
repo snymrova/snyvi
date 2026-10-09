@@ -99,6 +99,17 @@ pub const CMD_COLUMN: &str = "ALTER TABLE turns ADD COLUMN cmd TEXT NOT NULL DEF
 /// never in `SCHEMA`.
 pub const GROUP_COLUMN: &str = "ALTER TABLE turns ADD COLUMN ask_group INTEGER NOT NULL DEFAULT 0";
 
+/// 1.31: on a widget's card (#111), how long the agent suggests it lasts
+/// (`today`, `week`, `panel`, or nothing for until the reader turns it off)
+/// and what the card shows of it -- where, how often, the script -- as JSON;
+/// and a line the agent is told once (`take_opened`), when its widget
+/// stopped. Version 16 of `store::MIGRATIONS`, never in `SCHEMA`.
+pub const SUGGEST_COLUMNS_1_31: [&str; 3] = [
+    "ALTER TABLE desk_suggestions ADD COLUMN lasts TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE desk_suggestions ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE desk_suggestions ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+];
+
 /// 1.26: when a panel last took the thread up -- started it, or moved it
 /// from its own prompt. Which thread is "the panel's" (`of_pane`) goes by
 /// this, so a reader's click on the rail never takes a panel's thread from
@@ -258,7 +269,8 @@ pub struct Turn {
 pub struct Suggestion {
     pub id: i64,
     pub desk_id: i64,
-    /// `panel` or `desk`.
+    /// `panel`, `desk`, `widget` (a widget file proposed) or `box` (a
+    /// panel's first `set_widget` on this desk).
     pub kind: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
@@ -279,6 +291,15 @@ pub struct Suggestion {
     /// `opened` or `dismissed`, once settled.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub outcome: String,
+    /// A widget's or a box's: how long the agent suggests it lasts.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lasts: String,
+    /// A widget's: where it runs, how often, its script (`SUGGEST_COLUMNS_1_31`).
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub detail: serde_json::Value,
+    /// What the agent is told of it next, when not that it was opened.
+    #[serde(skip)]
+    pub note: String,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -1186,7 +1207,7 @@ pub fn take_untold(
 // --- suggestions -----------------------------------------------------------
 
 const SUG_COLS: &str =
-    "id, desk_id, kind, name, cmd, folder, why, by, pane, created_at, settled_at, outcome";
+    "id, desk_id, kind, name, cmd, folder, why, by, pane, created_at, settled_at, outcome, lasts, detail, note";
 
 fn row_to_suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
     Ok(Suggestion {
@@ -1202,6 +1223,9 @@ fn row_to_suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
         created_at: r.get(9)?,
         settled_at: r.get(10)?,
         outcome: r.get(11)?,
+        lasts: r.get(12)?,
+        detail: serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default(),
+        note: r.get(14)?,
     })
 }
 
@@ -1236,6 +1260,10 @@ pub struct Suggest {
     pub why: String,
     pub by: String,
     pub pane: String,
+    /// A widget's or a box's: `today`, `week`, `panel`, or nothing.
+    pub lasts: String,
+    /// A widget's: what its card shows, as JSON.
+    pub detail: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1255,6 +1283,7 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     let kind = match s.kind.as_str() {
         "desk" => "desk",
         "widget" => "widget",
+        "box" => "box",
         _ => "panel",
     };
     let name = line(&s.name, NAME_CHARS);
@@ -1268,6 +1297,7 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
         || (kind == "panel" && cmd.is_empty())
         || (kind == "desk" && folder.is_empty())
         || (kind == "widget" && (name.is_empty() || folder.is_empty()))
+        || (kind == "box" && name.is_empty())
     {
         return Ok(Suggested::Empty);
     }
@@ -1297,14 +1327,48 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
         return Ok(Suggested::Full);
     }
     tx.execute(
-        "INSERT INTO desk_suggestions(desk_id, kind, name, cmd, folder, why, by, pane, created_at)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![desk_id, kind, name, cmd, folder, why, by, s.pane, now],
+        "INSERT INTO desk_suggestions(desk_id, kind, name, cmd, folder, why, by, pane, created_at, lasts, detail)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![desk_id, kind, name, cmd, folder, why, by, s.pane, now, lasts(&s.lasts), s.detail],
     )?;
     let id = tx.last_insert_rowid();
     let card = suggestion(&tx, desk_id, id)?.expect("the row just written");
     tx.commit()?;
     Ok(Suggested::Card(Box::new(card)))
+}
+
+/// How long an agent may suggest a widget lasts; anything else is until
+/// the reader turns it off.
+pub fn lasts(s: &str) -> &'static str {
+    match s.trim() {
+        "today" => "today",
+        "week" => "week",
+        "panel" => "panel",
+        _ => "",
+    }
+}
+
+/// A box on this desk waiting on the reader already, by name.
+pub fn box_waiting(conn: &Connection, desk_id: i64, name: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM desk_suggestions WHERE desk_id = ?1 AND kind = 'box' AND name = ?2 AND settled_at = 0",
+            params![desk_id, name],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// The widget file `name` an agent proposed and the reader added stopped:
+/// the agent that proposed it is told `note`, once, with its next prompt.
+pub fn tell_widget(conn: &Connection, name: &str, note: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desk_suggestions SET note = ?2, told_at = 0
+         WHERE id = (SELECT id FROM desk_suggestions WHERE kind = 'widget' AND name = ?1
+                     AND outcome = 'opened' ORDER BY settled_at DESC LIMIT 1)",
+        params![name, note],
+    )? > 0)
 }
 
 /// The reader opened it, or put it away with ✕. Settled once.
@@ -1341,8 +1405,8 @@ pub fn unsettle(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     )? > 0)
 }
 
-/// Suggestions this pane made that the reader has opened and it has not been
-/// told of; marked told.
+/// Suggestions this pane made that the reader has opened -- or, for a box,
+/// said Not now to -- and it has not been told of; marked told.
 pub fn take_opened(
     conn: &Connection,
     desk_id: i64,
@@ -1351,7 +1415,8 @@ pub fn take_opened(
 ) -> Result<Vec<Suggestion>> {
     let mut st = conn.prepare(&format!(
         "SELECT {SUG_COLS} FROM desk_suggestions WHERE desk_id = ?1 AND pane = ?2
-         AND outcome = 'opened' AND told_at = 0 ORDER BY settled_at, id LIMIT 4"
+         AND (outcome = 'opened' OR (kind = 'box' AND outcome = 'dismissed')) AND told_at = 0
+         ORDER BY settled_at, id LIMIT 4"
     ))?;
     let v: Vec<Suggestion> = st
         .query_map(params![desk_id, pane], row_to_suggestion)?

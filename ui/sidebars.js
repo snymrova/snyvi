@@ -7,7 +7,8 @@
  * on the right, never off. Every change is saved as it is made, and the
  * real sidebar moves with it (the `layout` event). Under them the widgets:
  * each widget file with what it runs, whether it is allowed, its switch,
- * its settings and Rerun my edits; then what agents and scripts pushed.
+ * its settings and Rerun my edits, the desks it is on and how long it lasts
+ * (#111); then what agents and scripts pushed.
  * Nothing on the lists is ever removed: off is a switch, and on again is the
  * same switch (snyvi never deletes). Drawn with the sidebars' own Section
  * and Rows (docs/DESIGN.md §8.4), so the page follows the system it sets. */
@@ -126,7 +127,18 @@ function filesBox() {
   const files = data.files || [];
   const one = f => {
     if (!f.command) return `<div class="sb-w"><div class="sb-w-head"><b>${esc(f.name)}</b><span class="sb-w-meta"></span></div><p class="sb-w-err">${esc(f.error || "")}</p><p class="sb-folder">${esc(f.folder)}</p></div>`;
-    const state = f.allowed ? ["Allowed", "ok"] : f.changed ? ["Changed · needs Allow", "warn"] : ["Needs Allow", "warn"];
+    const now = Date.now() / 1000, ended = f.hidden && ((f.until > 0 && f.until <= now) || !!f.until_pane);
+    const state = ended ? [`Ended ${f.until ? new Date(f.until * 1000).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) : "with its panel"}`, ""]
+      : f.allowed ? ["Allowed", "ok"] : f.changed ? ["Changed · needs Allow", "warn"] : ["Needs Allow", "warn"];
+    const ds = data.desks || [], every = !(f.desks || []).length;
+    const where = f.scope === "global" ? "" : `<div class="sb-w-acts sb-desks" role="group" aria-label="Desks it is on"><span>On</span>` +
+      `<label><input type="checkbox" data-wdesks="${esc(f.name)}" data-d="all"${every ? " checked" : ""}>every desk</label>` +
+      ds.map(d => `<label><input type="checkbox" data-wdesks="${esc(f.name)}" data-d="${d.id}"${!every && f.desks.includes(d.id) ? " checked" : ""}${every ? " disabled" : ""}>${esc(d.name)}</label>`).join("") + `</div>`;
+    const pick = f.until_pane ? "panel" : f.until > now ? (f.until - now > 86400 ? "week" : "today") : "";
+    const lasts = `<div class="sb-w-acts" role="group" aria-label="How long"><span>Lasts</span>` +
+      [["", "Until I turn it off"], ["today", "For today"], ["week", "For a week"]].map(([k, l]) =>
+        `<button type="button" class="sb-btn${pick === k ? " primary" : ""}" data-wlast="${esc(f.name)}" data-v="${k}" aria-pressed="${pick === k}">${l}</button>`).join("") +
+      (pick === "panel" ? `<span>while its panel is open</span>` : f.until > now ? `<span>until ${esc(new Date(f.until * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }))}</span>` : "") + `</div>`;
     const fields = Object.entries(f.fields || {});
     return `<div class="sb-w" data-w="${esc(f.name)}"><div class="sb-w-head"><b>${esc(f.title || f.name)}</b>` +
       `<span class="sb-w-meta">${f.scope === "global" ? "global" : "desk"} · <code>${esc(f.command)}</code> · every ${f.every} s</span>` +
@@ -134,7 +146,8 @@ function filesBox() {
       `<button type="button" class="sb-sw" role="switch" aria-checked="${!f.hidden}" data-wsw="${esc(f.name)}" aria-label="${f.hidden ? "Off" : "On"}: ${esc(f.title || f.name)}"></button></div>` +
       (f.error ? `<p class="sb-w-err">${esc(f.error)}</p>` : "") +
       `<div class="sb-w-acts">` + (f.allowed ? "" : `<button type="button" class="sb-btn primary" data-allow="${esc(f.name)}" data-tip="Allow it to run" data-tip-sub="As its folder is now. Only the snyvi window can allow">Allow</button>`) +
-      `<label data-tip="Rerun my edits" data-tip-sub="A change to its folder runs without asking again. For a widget you are writing yourself"><input type="checkbox" data-rerun="${esc(f.name)}"${f.rerun_edits ? " checked" : ""}>Rerun my edits</label></div>` +
+      `<label data-tip="Rerun my edits" data-tip-sub="A change to its folder runs without asking again. For a widget you are writing yourself"><input type="checkbox" data-rerun="${esc(f.name)}"${f.rerun_edits ? " checked" : ""}>Rerun my edits</label>` +
+      (ended ? `<button type="button" class="sb-btn primary" data-won="${esc(f.name)}">Turn on again</button>` : "") + `</div>` + where + lasts +
       (fields.length ? `<div class="sb-set">` + fields.map(([k, d]) => {
         const v = f.settings[k], id = `sb-${f.name}-${k}`, lab = `<label for="${id}">${esc(d.label || k)}</label>`, at = `id="${id}" data-set="${esc(f.name)}" data-k="${esc(k)}"`;
         if (d.type === "boolean" || d.type === "bool") return lab + `<span><input type="checkbox" ${at}${v ? " checked" : ""}></span>`;
@@ -195,6 +208,15 @@ async function click(e) {
     const on = wsw.getAttribute("aria-checked") === "true";
     return prefs(wsw.dataset.wsw, { hidden: on });
   }
+  const wl = e.target.closest("[data-wlast]");
+  if (wl) {
+    const k = wl.dataset.v, t = new Date();
+    t.setHours(24, 0, 0, 0);
+    const until = k === "today" ? Math.floor(t / 1000) : k === "week" ? Math.floor(Date.now() / 1000) + 7 * 86400 : 0;
+    return prefs(wl.dataset.wlast, { until, until_pane: "" });
+  }
+  const wo = e.target.closest("[data-won]");
+  if (wo) return prefs(wo.dataset.won, { hidden: false, until: 0, until_pane: "" });
   const al = e.target.closest("[data-allow]");
   if (al) {
     al.disabled = true;
@@ -211,6 +233,13 @@ async function changed(e) {
     try { await c.deskApi(`/api/widgets/${t.dataset.rerun}/allow`, { allow: false, rerun_edits: t.checked }); }
     catch { t.checked = !t.checked; c.toast("Rerun my edits is set in the snyvi window"); }
     return;
+  }
+  if (t.dataset.wdesks) {
+    const name = t.dataset.wdesks;
+    if (t.dataset.d === "all") return prefs(name, { desks: t.checked ? [] : (data.desks || []).map(d => d.id) });
+    const ids = [...c.docEl.querySelectorAll(`input[data-wdesks="${CSS.escape(name)}"]:not([data-d="all"]):checked`)].map(x => +x.dataset.d);
+    // Off every desk is off: the switch says so, and the ticks stay.
+    return prefs(name, ids.length ? { desks: ids } : { hidden: true });
   }
   if (t.dataset.set) {
     const f = (data.files || []).find(x => x.name === t.dataset.set);

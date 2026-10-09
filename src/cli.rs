@@ -722,7 +722,11 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
         }
     };
     let v = client::widget(paths, &name, body, desk, global)?;
-    if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
+    if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
+        eprintln!(
+            "snyvi: {name} waits for your yes on this desk's Your turn; it shows once you allow it"
+        );
+    } else if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
         eprintln!("snyvi: there was no widget called {name} there");
     }
     Ok(())
@@ -769,6 +773,7 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
     let spec =
         files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
     let hash = files::hash(&folder).map_err(|why| anyhow::anyhow!(why))?;
+    files::lint(&spec, &folder).map_err(|why| anyhow::anyhow!("snyvi would not run it: {why}"))?;
     let cwd = match spec.scope {
         files::Scope::Global => folder.clone(),
         files::Scope::Desk => std::env::current_dir()?,
@@ -794,8 +799,14 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
         c.arg("-c").arg(&spec.run.command);
         c
     };
+    // As the runner gives it: its own folder first on PATH, and named.
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path = std::env::var("PATH").unwrap_or_default();
     let mut child = cmd
         .current_dir(&cwd)
+        .env("PATH", format!("{}{sep}{path}", folder.display()))
+        .env("SNYVI_WIDGET", name)
+        .env("SNYVI_WIDGET_DIR", &folder)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())

@@ -410,6 +410,7 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/sidebars", get(shell_sidebars))
         .route("/api/widgets/{name}/allow", post(allow_widget))
         .route("/api/widgets/{name}/prefs", post(widget_prefs))
+        .route("/api/widgets/{name}/retry", post(retry_widget))
         .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
 }
 

@@ -16,8 +16,14 @@
 //! widget is under its desk, a global one under desk 0. An empty body clears.
 //!
 //! What the reader decided about a widget -- hidden, its settings, the hash
-//! of the folder they allowed to run, whether their own edits rerun -- is
-//! `widget_prefs`, by name, and nothing a writer sends changes it.
+//! of the folder they allowed to run, whether their own edits rerun, the
+//! desks it is on and until when -- is `widget_prefs`, by name, and nothing
+//! a writer sends changes it.
+//!
+//! **An agent asks first** (#111). A widget file it proposes is a card on Your
+//! turn, and so is the first box a panel pushes onto a desk: `widget_asks`
+//! keeps the reader's answer per desk and name -- waiting, yes, not now, or
+//! ended -- and the body that waits behind the card.
 //!
 //! Nothing is deleted on the reader's account: hiding is a flag, and a body
 //! cleared by its writer is the writer's to clear.
@@ -70,7 +76,35 @@ CREATE TABLE IF NOT EXISTS widget_bodies (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (desk_id, name)
 );
+CREATE TABLE IF NOT EXISTS widget_asks (
+  desk_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  answer TEXT NOT NULL DEFAULT '',
+  pane TEXT NOT NULL DEFAULT '',
+  writer TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  until INTEGER NOT NULL DEFAULT 0,
+  until_pane TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (desk_id, name)
+);
 "#;
+
+/// 1.31: the desks a widget file is on (ids, comma-separated; none is every
+/// desk), and until when it is on: a time (0 is until the reader turns it
+/// off) or a panel's life. Version 16 of `store::MIGRATIONS`, never in
+/// `SCHEMA`.
+pub const PREFS_COLUMNS_1_31: [&str; 3] = [
+    "ALTER TABLE widget_prefs ADD COLUMN desks TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE widget_prefs ADD COLUMN until INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE widget_prefs ADD COLUMN until_pane TEXT NOT NULL DEFAULT ''",
+];
+
+/// The line a widget file's seat says once it has failed `FAILS_TO_STOP`
+/// times in a row for the same reason, and does not run again until the
+/// reader says Try again, allows it, or its folder changes.
+pub const STOPPED: &str = "stopped: ";
+pub const FAILS_TO_STOP: u8 = 3;
 
 // --- the layout -----------------------------------------------------------
 
@@ -563,12 +597,39 @@ pub struct Prefs {
     pub settings: String,
     pub trusted_hash: String,
     pub rerun_edits: bool,
+    /// The desks a desk widget is on; none is every desk.
+    pub desks: Vec<i64>,
+    /// When it turns itself off; 0 is when the reader does.
+    pub until: i64,
+    /// The panel whose life it lasts; none is not one.
+    pub until_pane: String,
+}
+
+impl Prefs {
+    /// Whether a desk widget is on desk `id`.
+    pub fn on_desk(&self, id: i64) -> bool {
+        self.desks.is_empty() || self.desks.contains(&id)
+    }
+    /// Whether its time is up: past `until`, or its panel `live` no more.
+    pub fn ended(&self, now: i64, live: impl Fn(&str) -> bool) -> bool {
+        (self.until > 0 && self.until <= now)
+            || (!self.until_pane.is_empty() && !live(&self.until_pane))
+    }
+}
+
+fn desks_text(ids: &[i64]) -> String {
+    ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+}
+
+fn desks_read(s: &str) -> Vec<i64> {
+    s.split(',').filter_map(|x| x.trim().parse().ok()).collect()
 }
 
 pub fn prefs(conn: &Connection, name: &str) -> Result<Prefs> {
     Ok(conn
         .query_row(
-            "SELECT name, hidden, settings, trusted_hash, rerun_edits FROM widget_prefs WHERE name = ?1",
+            "SELECT name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane
+             FROM widget_prefs WHERE name = ?1",
             [name],
             |r| {
                 Ok(Prefs {
@@ -577,6 +638,9 @@ pub fn prefs(conn: &Connection, name: &str) -> Result<Prefs> {
                     settings: r.get(2)?,
                     trusted_hash: r.get(3)?,
                     rerun_edits: r.get::<_, i64>(4)? != 0,
+                    desks: desks_read(&r.get::<_, String>(5)?),
+                    until: r.get(6)?,
+                    until_pane: r.get(7)?,
                 })
             },
         )
@@ -588,31 +652,203 @@ pub fn prefs(conn: &Connection, name: &str) -> Result<Prefs> {
         }))
 }
 
-/// Change what the reader decided about `name`: each `Some` is set, each
-/// `None` left as it was.
-pub fn set_prefs(
-    conn: &Connection,
-    name: &str,
-    hidden: Option<bool>,
-    settings: Option<&str>,
-    trusted_hash: Option<&str>,
-    rerun_edits: Option<bool>,
-    now: i64,
-) -> Result<Prefs> {
+/// A change to what the reader decided: each `Some` is set, each `None`
+/// left as it was.
+#[derive(Default)]
+pub struct Change<'a> {
+    pub hidden: Option<bool>,
+    pub settings: Option<&'a str>,
+    pub trusted_hash: Option<&'a str>,
+    pub rerun_edits: Option<bool>,
+    pub desks: Option<&'a [i64]>,
+    pub until: Option<i64>,
+    pub until_pane: Option<&'a str>,
+}
+
+/// Change what the reader decided about `name`.
+pub fn set_prefs(conn: &Connection, name: &str, ch: &Change, now: i64) -> Result<Prefs> {
     let was = prefs(conn, name)?;
     conn.execute(
-        "INSERT INTO widget_prefs (name, hidden, settings, trusted_hash, rerun_edits, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO widget_prefs (name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(name) DO UPDATE SET hidden = excluded.hidden, settings = excluded.settings,
-           trusted_hash = excluded.trusted_hash, rerun_edits = excluded.rerun_edits, updated_at = excluded.updated_at",
+           trusted_hash = excluded.trusted_hash, rerun_edits = excluded.rerun_edits, desks = excluded.desks,
+           until = excluded.until, until_pane = excluded.until_pane, updated_at = excluded.updated_at",
         params![
             name,
-            hidden.unwrap_or(was.hidden) as i64,
-            settings.unwrap_or(&was.settings),
-            trusted_hash.unwrap_or(&was.trusted_hash),
-            rerun_edits.unwrap_or(was.rerun_edits) as i64,
+            ch.hidden.unwrap_or(was.hidden) as i64,
+            ch.settings.unwrap_or(&was.settings),
+            ch.trusted_hash.unwrap_or(&was.trusted_hash),
+            ch.rerun_edits.unwrap_or(was.rerun_edits) as i64,
+            desks_text(ch.desks.unwrap_or(&was.desks)),
+            ch.until.unwrap_or(was.until),
+            ch.until_pane.unwrap_or(&was.until_pane),
             now
         ],
     )?;
     prefs(conn, name)
+}
+
+/// A widget file's seats on desks it is no longer on: what its runs printed
+/// there, which a run makes again if it comes back. The desks it left.
+pub fn off_desks(conn: &Connection, name: &str, desks: &[i64]) -> Result<Vec<i64>> {
+    if desks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let gone: Vec<i64> = desks_of(conn, name)?
+        .into_iter()
+        .filter(|d| *d != 0 && !desks.contains(d))
+        .collect();
+    for d in &gone {
+        conn.execute(
+            "DELETE FROM widget_bodies WHERE desk_id = ?1 AND name = ?2 AND source = 'file'",
+            params![d, name],
+        )?;
+    }
+    Ok(gone)
+}
+
+/// Let a stopped widget file run again: on one desk, or on all. The desks
+/// whose seat it was.
+pub fn unstop(conn: &Connection, name: &str, desk: Option<i64>) -> Result<Vec<i64>> {
+    let mut st = conn.prepare(
+        "SELECT desk_id FROM widget_bodies WHERE name = ?1 AND source = 'file'
+         AND substr(error, 1, length(?2)) = ?2 AND (?3 IS NULL OR desk_id = ?3)",
+    )?;
+    let ds: Vec<i64> = st
+        .query_map(params![name, STOPPED, desk], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for d in &ds {
+        conn.execute(
+            "UPDATE widget_bodies SET error = '' WHERE desk_id = ?1 AND name = ?2",
+            params![d, name],
+        )?;
+    }
+    Ok(ds)
+}
+
+// --- an agent's box, asked for ---------------------------------------------
+
+/// The reader's answer to a panel's box on a desk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Ask {
+    pub desk_id: i64,
+    pub name: String,
+    /// `""` waiting on the card, `yes`, `no` (Not now), or `ended`.
+    pub answer: String,
+    pub pane: String,
+    pub writer: String,
+    /// What waits behind the card, as the panel last sent it.
+    pub body: String,
+    pub until: i64,
+    pub until_pane: String,
+}
+
+pub fn ask_of(conn: &Connection, desk_id: i64, name: &str) -> Result<Option<Ask>> {
+    Ok(conn
+        .query_row(
+            "SELECT desk_id, name, answer, pane, writer, body, until, until_pane FROM widget_asks
+             WHERE desk_id = ?1 AND name = ?2",
+            params![desk_id, name],
+            |r| {
+                Ok(Ask {
+                    desk_id: r.get(0)?,
+                    name: r.get(1)?,
+                    answer: r.get(2)?,
+                    pane: r.get(3)?,
+                    writer: r.get(4)?,
+                    body: r.get(5)?,
+                    until: r.get(6)?,
+                    until_pane: r.get(7)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// A panel's body waits behind its card: the newest one sent is the one
+/// shown on yes.
+pub fn ask_wait(
+    conn: &Connection,
+    desk_id: i64,
+    name: &str,
+    pane: &str,
+    writer: &str,
+    body: &str,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO widget_asks (desk_id, name, answer, pane, writer, body, updated_at)
+         VALUES (?1, ?2, '', ?3, ?4, ?5, ?6)
+         ON CONFLICT(desk_id, name) DO UPDATE SET answer = '', pane = excluded.pane,
+           writer = excluded.writer, body = excluded.body, updated_at = excluded.updated_at",
+        params![desk_id, name, pane, writer, body, now],
+    )?;
+    Ok(())
+}
+
+/// The reader's answer: `yes` with how long, `no`, `ended`, or `""` again
+/// (the Undo of a Not now).
+pub fn ask_answer(
+    conn: &Connection,
+    desk_id: i64,
+    name: &str,
+    answer: &str,
+    until: i64,
+    until_pane: &str,
+    now: i64,
+) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE widget_asks SET answer = ?3, until = ?4, until_pane = ?5, updated_at = ?6
+         WHERE desk_id = ?1 AND name = ?2",
+        params![desk_id, name, answer, until, until_pane, now],
+    )? > 0)
+}
+
+/// A box that was there before boxes were asked for is taken as allowed:
+/// the reader has been looking at it. Whether it was.
+pub fn ask_grandfather(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "INSERT INTO widget_asks (desk_id, name, answer, pane, writer, updated_at)
+         SELECT desk_id, name, 'yes', pane, writer, ?3 FROM widget_bodies
+         WHERE desk_id = ?1 AND name = ?2 AND source = 'push'
+         ON CONFLICT(desk_id, name) DO NOTHING",
+        params![desk_id, name, now],
+    )? > 0)
+}
+
+/// Allowed boxes whose time is up -- past `until`, or their panel not
+/// `live` -- marked ended; the (desk, name) of each, to clear.
+pub fn asks_ending(
+    conn: &Connection,
+    now: i64,
+    live: impl Fn(&str) -> bool,
+) -> Result<Vec<(i64, String)>> {
+    let mut st = conn.prepare(
+        "SELECT desk_id, name, until, until_pane FROM widget_asks
+         WHERE answer = 'yes' AND (until > 0 OR until_pane != '')",
+    )?;
+    let due: Vec<(i64, String)> = st
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, _, until, pane)| {
+            (*until > 0 && *until <= now) || (!pane.is_empty() && !live(pane))
+        })
+        .map(|(d, n, _, _)| (d, n))
+        .collect();
+    for (d, n) in &due {
+        conn.execute(
+            "UPDATE widget_asks SET answer = 'ended', updated_at = ?3 WHERE desk_id = ?1 AND name = ?2",
+            params![d, n, now],
+        )?;
+    }
+    Ok(due)
 }

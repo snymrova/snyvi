@@ -10,6 +10,10 @@ fn db() -> Connection {
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(CMD_COLUMN).unwrap();
     conn.execute_batch(TAKEN_COLUMN).unwrap();
+    conn.execute_batch(GROUP_COLUMN).unwrap();
+    for c in SUGGEST_COLUMNS_1_31 {
+        conn.execute_batch(c).unwrap();
+    }
     for c in crate::peer::COLUMNS_1_23
         .iter()
         .filter(|c| c.starts_with("ALTER TABLE desk_notes"))
@@ -655,4 +659,57 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
         Started::Again(_)
     ));
     assert_eq!(of_pane(&conn, d, "p1").unwrap().unwrap().name, "D");
+}
+
+#[test]
+fn a_box_is_one_card_and_its_answer_is_told() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let b = Suggest {
+        kind: "box".into(),
+        name: "deploy".into(),
+        cmd: "**3/5**".into(),
+        why: "panel 1 wants a box on this desk".into(),
+        pane: "p1".into(),
+        lasts: "panel".into(),
+        ..Suggest::default()
+    };
+    let Suggested::Card(c) = suggest(&mut conn, d, &b, 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!((c.kind.as_str(), c.lasts.as_str()), ("box", "panel"));
+    assert!(box_waiting(&conn, d, "deploy").unwrap());
+    // Not now is told to the panel, as an opened card is.
+    settle(&conn, d, c.id, "dismissed", 2).unwrap();
+    assert!(!box_waiting(&conn, d, "deploy").unwrap());
+    let told = take_opened(&conn, d, "p1", 3).unwrap();
+    assert_eq!((told.len(), told[0].outcome.as_str()), (1, "dismissed"));
+    // Anything else the agent suggests lasts until the reader says.
+    assert_eq!(lasts("forever"), "");
+}
+
+#[test]
+fn a_stopped_widget_is_told_to_the_agent_that_proposed_it() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let w = Suggest {
+        kind: "widget".into(),
+        name: "arena".into(),
+        cmd: "arena-status.sh".into(),
+        folder: "/cfg/widgets/.proposed/1-arena".into(),
+        why: "the queue at a glance".into(),
+        pane: "p1".into(),
+        detail: r#"{"where":"here","every":120}"#.into(),
+        ..Suggest::default()
+    };
+    let Suggested::Card(c) = suggest(&mut conn, d, &w, 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!(c.detail["every"], 120);
+    settle(&conn, d, c.id, "opened", 2).unwrap();
+    assert!(take_opened(&conn, d, "p1", 3).unwrap()[0].note.is_empty());
+    assert!(tell_widget(&conn, "arena", "Your widget arena stopped").unwrap());
+    let again = take_opened(&conn, d, "p1", 4).unwrap();
+    assert_eq!(again[0].note, "Your widget arena stopped");
+    assert!(take_opened(&conn, d, "p1", 5).unwrap().is_empty());
 }

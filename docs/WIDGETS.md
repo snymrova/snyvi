@@ -28,9 +28,9 @@ widget file snyvi runs on a timer.
 
 | Way | Who | Lives |
 |---|---|---|
-| MCP `set_widget` | an agent in a desk's panel | on that desk until cleared; dims after `stale_after` (30 min), and says "panel 2 closed" when its panel closes |
+| MCP `set_widget` | an agent in a desk's panel, **after your yes** on Your turn | on that desk until cleared, or for as long as you said on the card; dims after `stale_after` (30 min), and says "panel 2 closed" when its panel closes |
 | `snyvi widget set` | scripts, git hooks, cron, CI | until cleared; on a desk with `--desk ID`, global otherwise (or the panel's desk, run inside one) |
-| a widget file | you, or an agent through `propose_widget` | while it is switched on, run while it is in view |
+| a widget file | you, or an agent through `propose_widget` (a card, Add) | while it is switched on, on the desks you chose, for as long as you chose; run while it is in view |
 
 All three send the same thing: **Markdown**, or **one JSON object**:
 
@@ -69,7 +69,7 @@ snyvi widget clear backups
   "name": "git",
   "title": "Git",
   "scope": "desk",
-  "run": { "command": "./run.sh", "every": 30, "timeout": 5 },
+  "run": { "command": "run.sh", "every": 30, "timeout": 5 },
   "lines": 2,
   "settings": {
     "base": { "type": "string", "label": "Compare against", "default": "main" }
@@ -80,7 +80,8 @@ snyvi widget clear backups
 ```sh
 #!/bin/sh
 # stdin: {"desk":{"id":3,"name":"snyvi","folder":"/home/you/snyvi"},"settings":{"base":"main"},"snyvi":"1.27.0"}
-# cwd: the desk's folder (a desk widget), or this folder (a global one)
+# cwd: the desk's folder (a desk widget), or this folder (a global one);
+# this folder is $SNYVI_WIDGET_DIR, and first on PATH
 base=$(sed -n 's/.*"base":"\([^"]*\)".*/\1/p')
 ahead=$(git rev-list --count "${base:-main}"..HEAD 2>/dev/null || echo 0)
 dirty=$(git status --porcelain | wc -l | tr -d ' ')
@@ -94,12 +95,22 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   snyvi would draw, or why it wouldn't.
 - **scope** `desk` runs it in the folder of each desk on a page you can see,
   on that desk's rail; `global` runs it in its own folder, on the left.
+- **Name the script bare** in `command` (`run.sh`, not `./run.sh` or
+  `sh run.sh`). Every run has the widget's own folder first on `PATH` and in
+  `SNYVI_WIDGET_DIR`, so `run.sh` is found from any desk's folder, and
+  `node "$SNYVI_WIDGET_DIR/count.js"` reaches a file that isn't the command.
+  A desk widget whose command names one of its own files by a relative path
+  is refused, with how to write it: it would look in the desk's folder,
+  where the file is not, and fail on every desk.
 - **settings** are drawn by snyvi on `/sidebars` as rows: `string`,
   `number`, `choice` (with `choices`) or `boolean`. The run gets them on
   stdin. A widget never draws its own settings.
 - A failure (a non-zero exit, a timeout, more than 4 KB, a body snyvi
   refuses) is one dim line in its seat, over the last good body, and the rest
-  of the sidebar draws as ever.
+  of the sidebar draws as ever. **Three in a row for the same reason stop it
+  on that desk**: the seat says why and where it ran, with **Try again** and
+  **Turn off here**, and the agent that proposed it is told. An edit or an
+  Allow runs it again too.
 - A widget that keeps a file between runs keeps it outside its folder
   (`$TMPDIR`): a change to the folder asks for Allow again.
 
@@ -108,6 +119,14 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 - **Only while in view.** A desk widget runs while a page you can see shows
   its desk; a global one while any page can be seen. A widget switched off,
   a run still going, and a desk with no folder don't run.
+- **On the desks you chose.** A desk widget is on every desk until you say
+  otherwise: its box's menu has **Only on this desk** and **Not on this
+  desk**, and `/sidebars` ticks the desks. One added from an agent's card is
+  on that desk only, unless the card said every desk.
+- **For as long as you chose.** Until you turn it off, **for today**, **for a
+  week**, or (an agent's) **while its panel is open**. When the time is up it
+  is switched off, not removed: `/sidebars` says when it ended, with **Turn
+  on again**.
 - `sh -c <command>` (`cmd /C` on Windows), with your login shell's `PATH`
   read once when snyvi starts, your home and language, and nothing else
   from snyvi's environment: not its token, not a desk's keys.
@@ -118,7 +137,7 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 ### Allow, honestly
 
 Nothing in a widget file runs until you **Allow** it. The seat asks
-("*Git wants to run ./run.sh every 30 s · Allow*"), and so does `/sidebars`.
+("*Git wants to run run.sh every 30 s · Allow*"), and so does `/sidebars`.
 Allow takes the **whole folder** as it is now; a change to any file in it
 asks again ("changed"), unless you switch **Rerun my edits** on for that
 widget, which is for one you are writing yourself.
@@ -131,12 +150,25 @@ like anything in your shell. Agents in a desk's panels have a shell as you
 too, so they could write into the widgets folder. That is why every widget
 file needs Allow whoever wrote it, and why a changed one asks again.
 
-### An agent proposing one
+### An agent asks first
 
-`propose_widget` writes the folder where proposals wait
-(`widgets/.proposed/`, where nothing runs) and puts a card on Your turn
-with its command. **Add** moves it in with the rest and allows it as it is.
-**Not now** leaves it be.
+**An agent never puts anything in your sidebars without a yes on Your turn.**
+
+`propose_widget` is checked first (a command that can't reach its script
+goes back to the agent with the fix), then written where proposals wait
+(`widgets/.proposed/`, where nothing runs), and a card on Your turn shows
+**where it runs, how often, the command and the script**. **Try once** runs
+it here, as it would run, and shows what it printed in the card. You pick
+how long it lasts (the agent may suggest one). **Add** moves it in with the
+rest, on this desk only unless the card says every desk, and allows it as it
+is. **Not now** leaves it be.
+
+`set_widget` asks the same way, once per desk and name: the panel's first
+push is a card, *"A box on this desk: deploy"* with what it would show,
+**Allow** or **Not now**. Its updates wait behind the card; after Allow they
+go straight in. After Not now, a push of that name on that desk is refused,
+and the agent is told why. `snyvi widget set` run inside a panel asks the
+same; from a plain shell, a hook or cron it doesn't -- those are yours.
 
 ```mermaid
 sequenceDiagram
@@ -145,7 +177,7 @@ sequenceDiagram
   participant D as snyvi
   U->>A: make me a widget for the worker's error rate
   A->>D: propose_widget (widget.json, the script)
-  D-->>U: Your turn card · errors · runs ./run.sh every 60 s · Add or Not now
+  D-->>U: Your turn card · errors · this desk · every 1 min · the script · Try once · Add or Not now
   U->>D: Add (the window)
   D->>D: moves it into widgets/errors/, allows it as it is
   D-->>U: Errors appears on the desk's rail at the next run

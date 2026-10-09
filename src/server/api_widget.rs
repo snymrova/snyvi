@@ -60,8 +60,9 @@ pub(crate) async fn list_widgets(State(app): S) -> Response {
                     "every": s.run.every, "folder": f.folder, "lines": s.lines,
                     "allowed": !p.trusted_hash.is_empty() && hash.as_deref().ok() == Some(p.trusted_hash.as_str()),
                     "changed": !p.trusted_hash.is_empty() && hash.as_deref().ok() != Some(p.trusted_hash.as_str()),
-                    "error": hash.err(), "rerun_edits": p.rerun_edits, "hidden": p.hidden,
+                    "error": widget::files::lint(s, &f.folder).err().or(hash.err()), "rerun_edits": p.rerun_edits, "hidden": p.hidden,
                     "fields": s.settings, "settings": s.settings_with(&p.settings),
+                    "desks": p.desks, "until": p.until, "until_pane": p.until_pane,
                 }),
                 Err(why) => json!({ "name": f.name, "folder": f.folder, "error": why, "hidden": p.hidden }),
             });
@@ -75,7 +76,11 @@ pub(crate) async fn list_widgets(State(app): S) -> Response {
                 }
             }
         }
-        Ok(json!({ "layout": layout, "files": files, "pushed": pushed }))
+        let open: Vec<serde_json::Value> = desks
+            .iter()
+            .map(|d| json!({ "id": d.id, "name": d.name }))
+            .collect();
+        Ok(json!({ "layout": layout, "files": files, "pushed": pushed, "desks": open }))
     });
     match r {
         Ok(j) => Json(j).into_response(),
@@ -120,6 +125,9 @@ pub(crate) struct PushBody {
     body: serde_json::Value,
     desk: Option<i64>,
     writer: String,
+    /// A panel's box: how long it suggests the box lasts, on the card.
+    #[serde(rename = "for")]
+    lasts: String,
 }
 
 impl PushBody {
@@ -156,7 +164,99 @@ pub(crate) async fn pane_set_widget(
         writer: &writer,
         pane: &id,
     };
-    push(&app, placed.desk_id, &b.name, &b.raw(), &w)
+    let desk = placed.desk_id;
+    if !widget::name_ok(&b.name) {
+        return push(&app, desk, &b.name, "", &w);
+    }
+    // The reader says yes to a panel's box once per desk and name (#111):
+    // until then it waits behind a card on Your turn, and nothing is drawn.
+    let raw = b.raw();
+    let ask = app.store.clocked(|c, now| {
+        widget::ask_grandfather(c, desk, &b.name, now)?;
+        widget::ask_of(c, desk, &b.name)
+    });
+    match ask {
+        Err(e) => err(e),
+        Ok(Some(a)) if a.answer == "yes" => push(&app, desk, &b.name, &raw, &w),
+        Ok(Some(a)) if a.answer == "no" => refused(
+            StatusCode::CONFLICT,
+            format!(
+                "the user said not now to the box {} on this desk: leave it, or say in your reply why it would help",
+                b.name
+            ),
+        ),
+        Ok(_) => ask_for_box(&app, desk, &id, &writer, &b, &raw),
+    }
+}
+
+/// A panel's box the reader has not said yes to: its body waits, and the
+/// card that asks is on Your turn -- one per desk and name, however often
+/// the panel sends meanwhile. A clear while it waits takes the body back.
+fn ask_for_box(
+    app: &Arc<App>,
+    desk: i64,
+    pane: &str,
+    writer: &str,
+    b: &PushBody,
+    raw: &str,
+) -> Response {
+    let cleared = matches!(widget::Body::parse(raw), Ok(widget::Sent::Clear));
+    if let Err(why) = widget::Body::parse(raw) {
+        return refused(StatusCode::BAD_REQUEST, why);
+    }
+    let preview: String = widget::Body::parse(raw)
+        .ok()
+        .and_then(|s| match s {
+            widget::Sent::Body(b) => Some(b.md),
+            widget::Sent::Clear => None,
+        })
+        .unwrap_or_default();
+    let r = app.store.clocked(|c, now| {
+        widget::ask_wait(
+            c,
+            desk,
+            &b.name,
+            pane,
+            writer,
+            if cleared { "" } else { raw },
+            now,
+        )?;
+        if cleared || crate::thread::box_waiting(c, desk, &b.name)? {
+            return Ok(None);
+        }
+        let s = crate::thread::Suggest {
+            kind: "box".into(),
+            name: b.name.clone(),
+            cmd: preview.clone(),
+            why: format!("{writer} wants a box on this desk"),
+            by: writer.to_string(),
+            pane: pane.to_string(),
+            lasts: b.lasts.clone(),
+            ..Default::default()
+        };
+        crate::thread::suggest(c, desk, &s, now).map(Some)
+    });
+    match r {
+        Ok(None) => (
+            StatusCode::ACCEPTED,
+            Json(json!({ "waiting": true, "name": b.name, "cleared": cleared })),
+        )
+            .into_response(),
+        Ok(Some(crate::thread::Suggested::Card(card))) => {
+            threads_moved(app, desk);
+            (
+                StatusCode::ACCEPTED,
+                Json(json!({ "waiting": true, "name": b.name, "suggestion": card })),
+            )
+                .into_response()
+        }
+        Ok(Some(crate::thread::Suggested::Full)) => refused(
+            StatusCode::CONFLICT,
+            "three suggestions are waiting on this desk already: the box can be asked for once the user answers one",
+        ),
+        Ok(Some(_)) => refused(StatusCode::BAD_REQUEST, "not a box"),
+        Err(e) => err(e),
+    }
 }
 
 /// Anything with the token sets a widget: a script, a git hook, cron, CI
@@ -304,13 +404,35 @@ fn send_seat(app: &App, desk: i64, name: &str) {
     }
 }
 
-/// A panel closed: what its agent pushed stays, dimmed, and says so.
+/// A panel closed: a box allowed for its life goes, and so does a widget
+/// file the reader kept only while it was open -- switched off, not removed.
+/// What else its agent pushed stays, dimmed, and says so.
 pub(crate) fn pane_widgets_ended(app: &Arc<App>, pane: &str, slot: Option<i64>) {
     let said = slot.map_or("a panel since closed".to_string(), |n| {
         format!("panel {n} closed")
     });
-    let Ok(seats) = app.store.clocked(|c, _| {
-        let s = widget::of_pane(c, pane)?;
+    let found = widget::files::scan(&app.paths.config_dir);
+    let Ok(seats) = app.store.clocked(|c, now| {
+        let mut s = widget::asks_ending(c, now, |p| p != pane)?;
+        for (d, n) in &s {
+            widget::clear(c, *d, n, widget::Source::Push)?;
+        }
+        for f in &found {
+            let p = widget::prefs(c, &f.name)?;
+            if p.until_pane == pane && !p.hidden {
+                let off = widget::Change {
+                    hidden: Some(true),
+                    ..Default::default()
+                };
+                widget::set_prefs(c, &f.name, &off, now)?;
+                s.extend(
+                    widget::desks_of(c, &f.name)?
+                        .into_iter()
+                        .map(|d| (d, f.name.clone())),
+                );
+            }
+        }
+        s.extend(widget::of_pane(c, pane)?);
         widget::pane_ended(c, pane, &said)?;
         Ok(s)
     }) else {
@@ -360,8 +482,14 @@ pub(crate) async fn allow_widget(
     }
     let b: AllowBody = serde_json::from_slice(&body).unwrap_or_default();
     let folder = widget::files::dir(&app.paths.config_dir).join(&name);
-    if let Err(why) = widget::files::read(&folder, &name) {
-        return refused(StatusCode::NOT_FOUND, why);
+    let spec = match widget::files::read(&folder, &name) {
+        Ok(s) => s,
+        Err(why) => return refused(StatusCode::NOT_FOUND, why),
+    };
+    if b.allow {
+        if let Err(why) = widget::files::lint(&spec, &folder) {
+            return refused(StatusCode::BAD_REQUEST, why);
+        }
     }
     let hash = if b.allow {
         match widget::files::hash(&folder) {
@@ -371,10 +499,58 @@ pub(crate) async fn allow_widget(
     } else {
         None
     };
+    let ch = widget::Change {
+        trusted_hash: hash.as_deref(),
+        rerun_edits: b.rerun_edits,
+        ..Default::default()
+    };
     match app.store.clocked(|c, now| {
-        widget::set_prefs(c, &name, None, None, hash.as_deref(), b.rerun_edits, now)
+        let p = widget::set_prefs(c, &name, &ch, now)?;
+        let ds = if b.allow {
+            widget::unstop(c, &name, None)?
+        } else {
+            Vec::new()
+        };
+        Ok((p, ds))
     }) {
-        Ok(p) => Json(json!({ "ok": true, "prefs": p })).into_response(),
+        Ok((p, ds)) => {
+            for d in ds {
+                announce(&app, d, &name);
+            }
+            Json(json!({ "ok": true, "prefs": p })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct RetryBody {
+    desk: Option<i64>,
+}
+
+/// Try again, on a widget file that stopped after failing: it runs at the
+/// runner's next look, on that desk (or every desk it stopped on).
+pub(crate) async fn retry_widget(
+    State(app): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    body: Bytes,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    if !widget::name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let b: RetryBody = serde_json::from_slice(&body).unwrap_or_default();
+    match app.store.clocked(|c, _| widget::unstop(c, &name, b.desk)) {
+        Ok(ds) => {
+            for d in &ds {
+                announce(&app, *d, &name);
+            }
+            Json(json!({ "ok": true, "desks": ds })).into_response()
+        }
         Err(e) => err(e),
     }
 }
@@ -384,10 +560,21 @@ pub(crate) async fn allow_widget(
 pub(crate) struct PrefsBody {
     hidden: Option<bool>,
     settings: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The desks it is on; none is every desk.
+    desks: Option<Vec<i64>>,
+    /// On this desk alone, from its box's menu.
+    only_desk: Option<i64>,
+    /// Off this desk, from its box's menu: the rest keep it.
+    not_desk: Option<i64>,
+    /// When it turns itself off (0: when the reader does), and the panel
+    /// whose life it lasts.
+    until: Option<i64>,
+    until_pane: Option<String>,
 }
 
-/// Switch a widget off or on, or change its settings: the reader's, from
-/// /sidebars. Its seats say so to every page.
+/// Switch a widget off or on, change its settings, the desks it is on, or
+/// how long it lasts: the reader's, from /sidebars and its box's menu. Its
+/// seats say so to every page. Off the last desk it was on is off.
 pub(crate) async fn widget_prefs(
     State(app): S,
     headers: HeaderMap,
@@ -404,9 +591,58 @@ pub(crate) async fn widget_prefs(
         return refused(StatusCode::BAD_REQUEST, "not a widget's settings");
     };
     let settings = b.settings.map(|m| serde_json::Value::Object(m).to_string());
+    let open: Vec<i64> = app
+        .store
+        .desks()
+        .unwrap_or_default()
+        .iter()
+        .map(|d| d.id)
+        .collect();
     let r = app.store.clocked(|c, now| {
-        let p = widget::set_prefs(c, &name, b.hidden, settings.as_deref(), None, None, now)?;
-        Ok((p, widget::desks_of(c, &name)?))
+        let was = widget::prefs(c, &name)?;
+        let before = widget::desks_of(c, &name)?;
+        let mut hidden = b.hidden;
+        let desks: Option<Vec<i64>> = match (b.only_desk, b.not_desk, &b.desks) {
+            (Some(d), _, _) => Some(vec![d]),
+            (_, Some(d), _) => {
+                let from = if was.desks.is_empty() {
+                    open.clone()
+                } else {
+                    was.desks.clone()
+                };
+                let left: Vec<i64> = from.into_iter().filter(|x| *x != d).collect();
+                if left.is_empty() {
+                    hidden = Some(true);
+                    None
+                } else {
+                    Some(left)
+                }
+            }
+            (_, _, Some(ds)) => Some(ds.iter().copied().filter(|d| open.contains(d)).collect()),
+            _ => None,
+        };
+        // On again, by its switch, after its time was up: on until the
+        // reader says, or the runner would switch it off at its next look.
+        let back = hidden == Some(false) && was.ended(now, |p| app.panes.is_running(p));
+        let until = b.until.map(|u| u.max(0)).or(back.then_some(0));
+        let until_pane = b.until_pane.as_deref().or(back.then_some(""));
+        let ch = widget::Change {
+            hidden,
+            settings: settings.as_deref(),
+            desks: desks.as_deref(),
+            until,
+            until_pane,
+            ..Default::default()
+        };
+        let p = widget::set_prefs(c, &name, &ch, now)?;
+        let off = widget::off_desks(c, &name, &p.desks)?;
+        let mut told = before;
+        for d in off {
+            if !told.contains(&d) {
+                told.push(d);
+            }
+        }
+        Ok((p, told))
     });
     match r {
         Ok((p, desks)) => {
@@ -436,6 +672,9 @@ pub(crate) struct ProposeBody {
     script: String,
     why: String,
     by: String,
+    /// How long the agent suggests it lasts: `today`, `week`, `panel`.
+    #[serde(rename = "for")]
+    lasts: String,
 }
 
 /// The longest script a proposal may carry.
@@ -493,10 +732,17 @@ pub(crate) async fn pane_propose_widget(
             "the script is one file of at most 16 KB, named without a folder",
         );
     }
+    // Where it goes: this desk alone, unless the agent asks for every desk
+    // and the card says so; or the left, everywhere.
+    let place = match b.scope.trim() {
+        "global" => "global",
+        "every desk" | "every" | "all" | "all desks" => "every",
+        _ => "here",
+    };
     let spec = json!({
         "name": b.name,
         "title": b.title.trim(),
-        "scope": if b.scope == "global" { "global" } else { "desk" },
+        "scope": if place == "global" { "global" } else { "desk" },
         "run": { "command": command, "every": if b.every == 0 { widget::files::EVERY_DEFAULT } else { b.every }, "timeout": if b.timeout == 0 { widget::files::TIMEOUT_DEFAULT } else { b.timeout } },
         "lines": if b.lines == 0 { widget::LINES_DEFAULT } else { b.lines },
     });
@@ -524,10 +770,24 @@ pub(crate) async fn pane_propose_widget(
             format!("could not write it: {e}"),
         );
     }
-    if let Err(why) = widget::files::read(&stage, &b.name) {
-        let _ = std::fs::remove_dir_all(&stage);
-        return refused(StatusCode::BAD_REQUEST, why);
-    }
+    // Checked before the reader sees it: a command that cannot reach its own
+    // script goes back to the agent with how to write it (#111).
+    let read = widget::files::read(&stage, &b.name)
+        .and_then(|s| widget::files::lint(&s, &stage).map(|_| s));
+    let spec = match read {
+        Ok(s) => s,
+        Err(why) => {
+            let _ = std::fs::remove_dir_all(&stage);
+            return refused(StatusCode::BAD_REQUEST, why);
+        }
+    };
+    let detail = json!({
+        "where": place,
+        "every": spec.run.every,
+        "lines": spec.lines,
+        "script_name": b.script_name,
+        "script": b.script,
+    });
     let s = crate::thread::Suggest {
         kind: "widget".into(),
         name: b.name.clone(),
@@ -536,6 +796,8 @@ pub(crate) async fn pane_propose_widget(
         why: b.why,
         by: b.by,
         pane: id,
+        lasts: b.lasts,
+        detail: detail.to_string(),
     };
     let desk = placed.desk_id;
     match app
@@ -564,9 +826,25 @@ pub(crate) async fn pane_propose_widget(
     }
 }
 
+/// How long the reader said a widget lasts, from the card: until when, and
+/// the panel whose life it lasts.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct Lasts {
+    pub(crate) until: i64,
+    pub(crate) until_pane: String,
+}
+
 /// The reader added a proposed widget: its folder moves in with the rest,
-/// and is allowed as it is. Refused if a widget took the name meanwhile.
-pub(crate) fn install_proposed(app: &App, name: &str, staged: &str) -> Result<(), String> {
+/// allowed as it is, on the desk the card was on unless the card said every
+/// desk, for as long as the reader chose. Refused if a widget took the name
+/// meanwhile.
+pub(crate) fn install_proposed(
+    app: &App,
+    card: &crate::thread::Suggestion,
+    lasts: &Lasts,
+) -> Result<(), String> {
+    let (name, staged) = (card.name.as_str(), card.folder.as_str());
     let stage = std::path::PathBuf::from(staged);
     if !stage.starts_with(proposed_dir(app)) || !stage.is_dir() {
         return Err("the proposal is not there any more".into());
@@ -575,11 +853,107 @@ pub(crate) fn install_proposed(app: &App, name: &str, staged: &str) -> Result<()
     if to.exists() {
         return Err(format!("a widget called {name} is already there"));
     }
-    widget::files::read(&stage, name)?;
+    let spec = widget::files::read(&stage, name)?;
+    widget::files::lint(&spec, &stage)?;
     std::fs::rename(&stage, &to).map_err(|e| format!("could not move it in: {e}"))?;
     let hash = widget::files::hash(&to)?;
+    let every = card.detail.get("where").and_then(|w| w.as_str()) != Some("here");
+    let desks: Vec<i64> = if every {
+        Vec::new()
+    } else {
+        vec![card.desk_id]
+    };
+    let ch = widget::Change {
+        hidden: Some(false),
+        trusted_hash: Some(&hash),
+        desks: Some(&desks),
+        until: Some(lasts.until.max(0)),
+        until_pane: Some(&lasts.until_pane),
+        ..Default::default()
+    };
     app.store
-        .clocked(|c, now| widget::set_prefs(c, name, None, None, Some(&hash), None, now))
+        .clocked(|c, now| widget::set_prefs(c, name, &ch, now))
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// The reader allowed a panel's box: what waits behind the card is drawn,
+/// and from now on the panel's updates go straight in -- until when the
+/// reader said.
+pub(crate) fn allow_box(
+    app: &Arc<App>,
+    card: &crate::thread::Suggestion,
+    lasts: &Lasts,
+) -> Result<(), String> {
+    let (desk, name) = (card.desk_id, card.name.as_str());
+    let ask = app
+        .store
+        .clocked(|c, now| {
+            widget::ask_answer(
+                c,
+                desk,
+                name,
+                "yes",
+                lasts.until.max(0),
+                &lasts.until_pane,
+                now,
+            )?;
+            widget::ask_of(c, desk, name)
+        })
+        .map_err(|e| e.to_string())?
+        .ok_or("the box is not there any more")?;
+    if ask.body.trim().is_empty() {
+        return Ok(());
+    }
+    let w = widget::Writer {
+        source: widget::Source::Push,
+        writer: &ask.writer,
+        pane: &ask.pane,
+    };
+    let r = push(app, desk, name, &ask.body, &w);
+    if r.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("snyvi answered {}", r.status()))
+    }
+}
+
+/// What Try once printed, drawn, or why it printed nothing usable.
+pub(crate) async fn try_proposed(app: &App, card: &crate::thread::Suggestion) -> serde_json::Value {
+    let stage = std::path::PathBuf::from(&card.folder);
+    if !stage.starts_with(proposed_dir(app)) || !stage.is_dir() {
+        return json!({ "error": "the proposal is not there any more" });
+    }
+    let spec = match widget::files::read(&stage, &card.name)
+        .and_then(|s| widget::files::lint(&s, &stage).map(|_| s))
+    {
+        Ok(s) => s,
+        Err(why) => return json!({ "error": why }),
+    };
+    let desk = app.store.desk(card.desk_id).ok().flatten();
+    let cwd = match (spec.scope, &desk) {
+        (widget::files::Scope::Global, _) => stage.clone(),
+        (_, Some(d)) if !d.root.is_empty() && std::path::Path::new(&d.root).is_dir() => {
+            std::path::PathBuf::from(&d.root)
+        }
+        _ => return json!({ "error": "this desk has no folder to run it in" }),
+    };
+    let stdin = json!({
+        "desk": desk.as_ref().map(|d| json!({ "id": d.id, "name": d.name, "folder": d.root })),
+        "settings": spec.settings_with("{}"),
+        "snyvi": VERSION,
+    });
+    let path = super::widget_run::path_now();
+    match super::widget_run::run_once(&spec, &stage, &cwd, &path, &stdin).await {
+        super::widget_run::Ran::Failed(why) => {
+            json!({ "error": format!("{why} (in {})", crate::text::tilde(&cwd)) })
+        }
+        super::widget_run::Ran::Printed(out) => match widget::Body::parse(&out) {
+            Err(why) => json!({ "error": why }),
+            Ok(widget::Sent::Clear) => json!({ "html": "", "empty": true }),
+            Ok(widget::Sent::Body(b)) => json!({
+                "html": crate::render::widget_md(&b.md), "count": b.count, "tone": b.tone.as_str(),
+            }),
+        },
+    }
 }

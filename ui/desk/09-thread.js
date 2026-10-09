@@ -35,7 +35,7 @@ function filedNow(d) {
  *  (`threadChip`); one no panel is moving is on no list (#109). */
 function filedSecs(d) {
   const f = filedNow(d);
-  return turnSec(d, f) + sugSec(f);
+  return turnSec(d, f) + sugSec(f, d);
 }
 
 /** Which panel a pane is, as the reader counts them. */
@@ -223,24 +223,79 @@ function saidRow(d, w, esc) {
     `<div class="tn-acts">${now}<button type="button" class="tn-x" data-a="tn-unsend" data-w="${w.id}" data-tip="Leave it for the next message" aria-label="Leave it for the next message">${ico("x")}</button></div></li>`;
 }
 
-function sugSec(f) {
+/** What the reader picked on a widget's or a box's card: how long it
+ *  lasts, by card id; what Try once printed; whose script is open. */
+const sgFor = new Map(), sgTry = new Map(), sgScript = new Set();
+/** How long a widget lasts, in the card's words. `panel` only for one an
+ *  agent in a panel still open asked for. */
+const LASTS = [["", "Until I turn it off"], ["today", "For today"], ["week", "For a week"], ["panel", "While panel"]];
+/** Seconds as the card says them. */
+const every = n => n < 60 ? `${n} s` : n % 60 ? `${Math.round(n / 6) / 10} min` : `${n / 60} min`;
+/** The card's pick as the daemon keeps it: until when, and whose panel. */
+function lastsBody(s) {
+  const k = sgFor.has(s.id) ? sgFor.get(s.id) : s.lasts || "";
+  if (k === "today") { const t = new Date(); t.setHours(24, 0, 0, 0); return { until: Math.floor(t / 1000), until_pane: "" }; }
+  if (k === "week") return { until: Math.floor(Date.now() / 1000) + 7 * 86400, until_pane: "" };
+  if (k === "panel") return { until: 0, until_pane: s.pane || "" };
+  return { until: 0, until_pane: "" };
+}
+
+function sugSec(f, d) {
   const { esc } = ctx;
   const gone = filedGone && filedGone.k === "s" ? filedGone : null;
   if (!f.suggestions.length && !gone) return "";
-  // A widget is a widget file an agent wrote (propose_widget): Add puts it
-  // with the rest and allows it as it is; it runs its command on a timer
-  // while it is in view, so the command is on the card.
-  const what = s => s.kind === "desk" ? `A desk for <span class="mono">${esc(tilde(s.folder))}</span>` : s.kind === "widget" ? `A widget: ${esc(s.name)}` : esc(s.name || "A panel");
+  // A widget is a widget file an agent wrote (propose_widget): the card
+  // shows all that will run, where and how often, and can try it once; Add
+  // puts it with the rest, on this desk unless the card says otherwise, for
+  // as long as the reader picks. A box is a panel's first set_widget here:
+  // what it would show, and Allow or Not now (#111).
+  const what = s => s.kind === "desk" ? `A desk for <span class="mono">${esc(tilde(s.folder))}</span>`
+    : s.kind === "widget" ? `A widget: ${esc(s.name)}`
+    : s.kind === "box" ? `A box on this desk: ${esc(s.name)}`
+    : esc(s.name || "A panel");
+  const lastsRow = s => {
+    const n = slotOf(d, s.pane), pick = sgFor.has(s.id) ? sgFor.get(s.id) : s.lasts || "";
+    return `<p class="sg-for" role="group" aria-label="How long">` + LASTS.filter(([k]) => k !== "panel" || n).map(([k, l]) =>
+      `<button type="button" class="sg-chip" data-a="sg-for" data-s="${s.id}" data-v="${k}" aria-pressed="${pick === k}">${l}${k === "panel" ? ` ${n} is open` : ""}</button>`).join("") + `</p>`;
+  };
+  const widgetBits = s => {
+    const x = s.detail || {}, at = x.where === "global" ? "on the left, on every page, run in its own folder"
+      : x.where === "every" ? "on every desk, each run in its desk's folder"
+      : `on this desk only, run in <span class="mono">${esc(tilde(d.root || ""))}</span>`;
+    const lines = x.script ? x.script.split("\n").length : 0, open = sgScript.has(s.id), tried = sgTry.get(s.id);
+    return `<p class="tn-by">${at} · every ${every(x.every || 60)} while in view</p>` +
+      `<code class="sg-cmd" data-tip="Runs this on a timer while the widget is in view" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` +
+      (x.script ? `<button type="button" class="sg-fold" data-a="sg-script" data-s="${s.id}" aria-expanded="${open}">${open ? "Hide" : "Show"} ${esc(x.script_name || "script")} (${lines} line${lines === 1 ? "" : "s"})</button>` +
+        (open ? `<pre class="sg-script">${esc(x.script)}</pre>` : "") : "") +
+      (tried ? tried.busy ? `<p class="tn-by" role="status">Running it once…</p>`
+        : tried.error ? `<p class="wg-err sg-tried" role="status">${esc(tried.error)}</p>`
+        : `<div class="wg-body sg-tried" role="status" style="--lines:3">${tried.html || "<p>(it printed nothing)</p>"}</div>` : "");
+  };
+  const act = s => s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : s.kind === "box" ? "Allow" : "Open panel";
   const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${what(s)}</p>` +
-    (s.kind !== "desk" ? `<code class="sg-cmd" data-tip="${s.kind === "widget" ? "Runs this on a timer while the widget is in view" : "Runs exactly this"}" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` : "") +
-    `<p class="tn-by">${esc(s.why)}${s.by ? ` · ${esc(s.by)}` : ""}</p>` +
-    `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : "Open panel"}</button>` +
-    `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
+    (s.kind === "widget" ? widgetBits(s)
+      : s.kind === "box" ? (s.cmd ? `<p class="sg-box">${esc(s.cmd)}</p>` : "")
+      : s.kind !== "desk" ? `<code class="sg-cmd" data-tip="Runs exactly this" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` : "") +
+    `<p class="tn-by">${esc(s.why)}${s.by && s.kind !== "box" ? ` · ${esc(s.by)}` : ""}</p>` +
+    (s.kind === "widget" || s.kind === "box" ? lastsRow(s) : "") +
+    `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${act(s)}</button>` +
+    (s.kind === "widget" ? `<button type="button" class="tn-opt" data-a="sg-try" data-s="${s.id}" data-tip="Run it once, here" data-tip-sub="As it would run, and nothing kept"${sgTry.get(s.id)?.busy ? " disabled" : ""}>Try once</button>` : "") +
+    `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="${s.kind === "box" ? "Not now" : "Not this one"}" data-tip-sub="${s.kind === "box" ? "the panel is told, and later pushes refused" : "nothing is deleted"}" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
     (gone ? goneRow("s", gone.id, gone.text, esc) : "");
   return sec("suggested", "rail.suggested", "Suggested", {
     cls: "dk-filed", fixed: true, count: f.suggestions.length || "",
-    tip: "Suggested", sub: "Panels and desks an agent thinks the work wants. Nothing opens until you click",
+    tip: "Suggested", sub: "Panels, desks and widgets an agent thinks the work wants. Nothing opens or runs until you click",
   }, `<ul class="dk-turn-list">${rows}</ul>`);
+}
+
+/** Try once: the proposed widget run here, as it would run, and what it
+ *  printed in the card. */
+async function trySuggested(d, s) {
+  sgTry.set(s.id, { busy: true }); rail();
+  let j;
+  try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/try`, {}); }
+  catch (e) { j = { error: `Could not run it: ${e.message}` }; }
+  sgTry.set(s.id, j); rail();
 }
 
 /** The thread a note is in, while the page holds this desk's threads. */
@@ -440,6 +495,9 @@ async function filedAct(a, b, d) {
     await told({ ...b.dataset }, `s${s.id}`, "Could not put it away", () => { filed.suggestions.push(s); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {}));
   } else if (a === "sg-open" && s) await openSuggested(d, s);
+  else if (a === "sg-try" && s) await trySuggested(d, s);
+  else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); rail(); }
+  else if (a === "sg-script" && s) { if (!sgScript.delete(s.id)) sgScript.add(s.id); rail(); }
   else if (a === "fd-back") {
     const k = b.dataset.k, id = +b.dataset.i;
     clearTimeout(filedTimer); filedGone = null; rail();
@@ -458,11 +516,14 @@ async function openSuggested(d, s) {
     if (why) return ctx.toast("Open panel", why);
   }
   let j;
-  try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/open`, {}); }
-  catch (e) { rowErr = { k: `s${s.id}`, why: s.kind === "widget" ? "Could not add it" : "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
+  const asked = s.kind === "widget" || s.kind === "box";
+  try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/open`, asked ? lastsBody(s) : {}); }
+  catch (e) { rowErr = { k: `s${s.id}`, why: s.kind === "widget" ? "Could not add it" : s.kind === "box" ? "Could not allow it" : "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
   filed.suggestions = filed.suggestions.filter(x => x !== s);
-  // Added: it runs at the runner's next look, and its seat comes with it.
-  if (s.kind === "widget") { rail(); return; }
+  sgFor.delete(s.id); sgTry.delete(s.id); sgScript.delete(s.id);
+  // Added, or allowed: it runs at the runner's next look, or its body is
+  // drawn now, and its seat comes with it.
+  if (asked) { rail(); return; }
   if (s.kind === "desk") {
     if (j.desk && j.desk.id) { await ctx.refresh(); ctx.go(j.desk.id); }
     return;
@@ -536,5 +597,12 @@ const THREAD_CSS = `
 .tn-gfoot { padding-top: 6px; border-top: 1px solid var(--rule); }
 /* A handed-over command is shown whole: what Run types is what is read. */
 .sg-cmd.tn-cmd { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: 9em; overflow-y: auto; }
+.sg-for { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
+.sg-chip { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-size: var(--fs-micro); color: var(--fg-2); }
+.sg-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sg-fold { display: block; margin-top: 4px; padding: 0; font-size: var(--fs-micro); color: var(--fg-3); text-decoration: underline dotted; }
+.sg-script { margin: 4px 0 0; padding: 4px 6px; max-height: 12em; overflow: auto; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); white-space: pre; }
+.sg-box { margin: 4px 0 0; color: var(--fg-2); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.sg-tried { margin-top: 6px; }
 .sg-cmd { display: block; margin-top: 4px; padding: 2px 5px; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
