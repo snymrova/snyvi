@@ -178,6 +178,7 @@ function makeView(p) {
   body.addEventListener("keyup", e => { if (e.key === "Control") hover(v, null); });
   body.addEventListener("wheel", e => wheel(v, e), { passive: false });
   body.addEventListener("paste", e => { e.preventDefault(); paste(v, e.clipboardData); });
+  dropOn(v);
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
   start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
