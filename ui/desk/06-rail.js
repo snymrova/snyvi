@@ -487,8 +487,8 @@ function noteRow(x, esc) {
   // (#95: a thread's chip there left the text a letter wide). The text is
   // clamped in a span of its own: WebKit does not clamp a <button>, and the
   // window is WebKit.
-  const marks = stageMark(x, esc) + picMark(x, esc);
-  const about = [stageWords(x), threadWords(x), x.done_by ? `ticked by ${x.done_by}` : ""].filter(Boolean);
+  const marks = x.done ? picMark(x, esc) + doneMarks(x, esc) + tell(x, esc) : stageMark(x, esc) + picMark(x, esc);
+  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
@@ -496,9 +496,9 @@ function noteRow(x, esc) {
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     `<span class="dk-meta"><button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
     `<span class="dk-marks">${marks}</span></span>` +
-    // A friend's line, ticked: one press tells them (pairing's second cut),
-    // in the line "from Trapti" already takes, so nothing moves.
-    (x.done && x.done_by ? byLine(x, esc, tell(x, esc)) : x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span>${tell(x, esc)}</span>` : "") +
+    // A friend's open line says whose it is, on a line of its own; ticked,
+    // its "Tell Trapti ✓" is one of the marks above.
+    (!x.done && x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }
@@ -544,6 +544,14 @@ function stageOf(x) {
  *  tab does. */
 function stageMark(x, esc) {
   const st = stageOf(x), by = esc(x.stage_by || "an agent");
+  // In review: past its plan, so the PR says where it is, not "planned" --
+  // which is what a working line falls back to once its chat ends, and read
+  // as if the work had gone backwards. The merge ticks it (thread.rs `seen`).
+  const t = !x.done && st !== "working" ? threadOf(x) : null;
+  if (t && t.pr && !t.merged) {
+    const ci = t.ci ? ` · ${esc(t.ci)}` : "", tone = /fail|error/i.test(t.ci) ? " fail" : /pass|success/i.test(t.ci) ? " pass" : "";
+    return `<span class="dk-stage pr${tone}" role="img" data-tip="In PR #${esc(t.pr)}${ci}" data-tip-sub="merging it ticks this note" aria-label="In PR #${esc(t.pr)}${ci}"><span class="w">PR #${esc(t.pr)}${ci}</span></span>`;
+  }
   if (st === "planned" && x.stage_doc) {
     return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned</span></button>`;
   }
@@ -561,7 +569,8 @@ function stageMark(x, esc) {
 
 /** The stage in words, for the line's tip: who has it and where. */
 function stageWords(x) {
-  const st = stageOf(x), by = x.stage_by || "an agent";
+  const st = stageOf(x), by = x.stage_by || "an agent", t = !x.done && st !== "working" ? threadOf(x) : null;
+  if (t && t.pr && !t.merged) return `in PR #${t.pr}`;
   if (st === "working") {
     const slot = views.get(x.stage_pane)?.pane?.slot;
     return `${by} is on it${slot != null ? ` in panel ${slot}` : ""}`;
@@ -736,10 +745,6 @@ function copySha(b, said = "copied") {
   setTimeout(() => { if (b.isConnected) { b.textContent = was; delete b.dataset.said; } }, 1200);
 }
 
-/** Under a line an agent ticked: who, and where the work went when it said --
- *  the commit (a click copies the whole hash, and says so in its own place)
- *  and the document it sent (a click opens it). A line of its own, so a long
- *  note keeps the rail's width and nothing beside it moves. */
 /** A friend's line, ticked: one press tells them (pairing's second cut),
  *  at the end of the line under it, so nothing moves. */
 function tell(x, esc) {
@@ -748,15 +753,32 @@ function tell(x, esc) {
     : `<button type="button" data-a="note-tell" data-n="${x.id}" data-tip="Tell ${esc(x.sent_by)} it is done" data-tip-sub="${esc(x.done_commit ? `with ${x.done_commit.slice(0, 7)}` : "one line back to them")}">Tell ${esc(x.sent_by)} ✓</button>`;
 }
 
-function byLine(x, esc, more = "") {
+/** Where a ticked line's work went, as marks on the line under its text,
+ *  after its number: the commit (a click copies the whole hash, and says so
+ *  in its own place), the document sent about it (a click opens it), and
+ *  where it can be seen. They were a third line of their own with the
+ *  ticker's name, and the link wrapped in it; who ticked it is the line's
+ *  tip now. */
+function doneMarks(x, esc) {
   const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" data-tip="Copy commit" data-tip-sub="${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
   const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" data-tip="Open the document" data-tip-sub="What ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
-  // Where the finished work can be seen -- a PR, a deploy -- by its host.
-  let host = "";
-  try { host = x.done_evidence ? new URL(x.done_evidence).host.replace(/^www\./, "") : ""; } catch { host = ""; }
-  const ev = host ? `<button type="button" class="dk-ev" data-a="note-ev" data-u="${esc(x.done_evidence)}" data-tip="${esc(x.done_evidence)}" data-tip-sub="where the work can be seen">${esc(host)} ↗</button>` : "";
-  return `<span class="dk-by"><span data-tip="Ticked by" data-tip-sub="${esc(x.done_by)}">${esc(x.done_by)}</span>${sha}${doc}${ev}${more}</span>`;
+  const say = evSay(x.done_evidence);
+  const ev = say ? `<button type="button" class="dk-ev" data-a="note-ev" data-u="${esc(x.done_evidence)}" data-tip="${esc(x.done_evidence)}" data-tip-sub="where the work can be seen">${esc(say)} ↗</button>` : "";
+  return sha + doc + ev;
 }
+
+/** Where the finished work can be seen, in a word: a GitHub pull request or
+ *  issue by its number, anything else by its host. */
+function evSay(u) {
+  if (!u) return "";
+  try {
+    const url = new URL(u), m = /(^|\.)github\.com$/.test(url.host) && url.pathname.match(/^\/[^/]+\/[^/]+\/(pull|issues)\/(\d+)/);
+    return m ? `${m[1] === "pull" ? "PR " : ""}#${m[2]}` : url.host.replace(/^www\./, "");
+  } catch { return ""; }
+}
+
+/** Who ticked a line, for its tip. */
+const tickedBy = x => x.done_by === "merged" ? "ticked by the merge" : `ticked by ${x.done_by}`;
 
 /** A desk with nothing sent yet waits for its first document, and says how
  *  to get one: the sentence to give Claude, with its Copy. After five

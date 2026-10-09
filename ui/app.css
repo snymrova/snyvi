@@ -660,7 +660,7 @@ button.sec-fold:hover { color: var(--fg-2); }
    off by the next; each section is opaque and above the one before, so it
    slides over the Inbox's head rather than under it. The Inbox's projects
    are a sibling of its head (the rail's popovers move them apart), so the
-   Inbox's head and All documents stick as one, at #trees' top, until Desks
+   Inbox's head and its two rows stick as one, at #trees' top, until Desks
    covers them. flow-root keeps each head's margin inside its section, so
    the section's background covers the gap too. Only at home in #trees: in a
    rail popover each section is on its own. */
@@ -698,6 +698,24 @@ button.sec-fold:hover { color: var(--fg-2); }
 summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
 summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
 details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
+/* The Inbox's two rows. Waiting folds the waiting list in place, with a
+   row's chevron, kept at rest while it is folded; at nought it stays, quiet,
+   so the Inbox never changes height. Its count and icon are the accent while
+   something waits. Its list says "Waiting" itself only in the rail's
+   popover, where the row is not over it. */
+.t-wait { width: 100%; text-align: left; }
+.t-wait > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
+.t-wait:is(:hover, :focus-visible) > .s-chev, .t-wait[aria-expanded="false"] > .s-chev { opacity: 1; }
+.t-wait[aria-expanded="false"] > .s-chev { transform: rotate(-45deg); }
+.t-wait:not(.new) { color: var(--fg-2); }
+.t-wait.new > .r-ico, .t-wait.new > .n { color: var(--accent); font-weight: 600; }
+#trees:not(.wait-open) > #queue { display: none; }
+#trees > #queue .t-queue > .t-label { display: none; }
+/* All, at the Inbox head's right edge: the whole library, and its size. */
+.sec-all { flex: none; display: flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 600; line-height: 22px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.sec-all .n { font-weight: 400; font-variant-numeric: tabular-nums; }
+.sec-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+.sec-all.active { color: var(--accent); }
 /* The ladder: each level's icons hang under its parent's name, 32px in,
    as .b-tree next door compounds it. It was once six a level -- and the
    font grew with depth, so the deepest rows were the largest and the least

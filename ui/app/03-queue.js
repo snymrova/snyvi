@@ -413,7 +413,7 @@
   }
   /** How many projects the Inbox shows before its "more" row: the ones heard
    *  from this week, between USED_MIN and USED_MAX, and no more than fit
-   *  between what stands above the projects (the head, All documents, the
+   *  between what stands above the projects (the head, Recent, Waiting, the
    *  waiting list) and what must stay on screen below them (all of Desks,
    *  and the Folders head). Measured, because each of those changes it;
    *  never fewer than three. The whole list while the Inbox is folded or the
@@ -447,17 +447,34 @@
     const names = hidden.slice(0, 8).map(p => p.name).join(", ") + (hidden.length > 8 ? ` and ${hidden.length - 8} more` : "");
     return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
   }
-  /** The Inbox's head and All documents. The head says how many wait only
-   *  while the Inbox is folded: open, the waiting list says it under it.
-   *  A link, so the keyboard reaches it: a div with a click handler is a row
-   *  Tab walks straight past. Written only when it changed, as every
-   *  section is. */
+  /** The Inbox's head, with All and the library's size at its right edge,
+   *  and two rows under it: Recent, the newest first, saying how long ago the
+   *  last one came, and Waiting, which unfolds the waiting list in place.
+   *  Waiting stands at nought too, quiet, so the Inbox is the same height
+   *  whatever arrives; it starts folded, and stays as the reader left it.
+   *  Links and a button, so the keyboard reaches them. The head says how
+   *  many wait only while the Inbox is folded. Written only when it changed,
+   *  as every section is. */
+  let waitOpen = store.get("snyvi.waiting") === "1";
+  treesEl.classList.toggle("wait-open", waitOpen);
   function drawInbox(waiting = state.waiting) {
     const total = state.tree.reduce((k, p) => k + p.docs, 0);
-    const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "" }) +
-      `<a class="t-inbox s-row" href="/inbox" data-nav="inbox">${icon("inbox")}<span class="title">All documents</span><span class="n">${total}</span></a>`;
+    const last = state.tree.reduce((k, p) => Math.max(k, p.latest || 0), 0);
+    const all = `<a class="sec-all" href="/inbox" data-nav="inbox" data-tip="All documents" data-tip-sub="what waits, then every project, newest first">All<span class="n">${total}</span></a>`;
+    const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "", end: all }) +
+      `<a class="t-inbox s-row" href="/inbox?recent" data-nav="inbox">${icon("clock")}<span class="title">Recent</span><span class="n">${last ? relShort(last) : ""}</span></a>` +
+      `<button type="button" class="t-wait s-row${waiting ? " new" : ""}" data-wait aria-expanded="${waitOpen}"${waiting ? "" : " data-tip=\"Nothing waiting\" data-tip-sub=\"what an agent sends waits here until you read it\""}>${icon("wait")}<span class="title">Waiting</span>${chev}<span class="n">${waiting || ""}</span></button>`;
     if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
   }
+  inboxRowEl.addEventListener("click", e => {
+    if (!e.target.closest("[data-wait]")) return;
+    waitOpen = !waitOpen;
+    store.set("snyvi.waiting", waitOpen ? "1" : "0");
+    treesEl.classList.toggle("wait-open", waitOpen);
+    drawInbox();
+    // The list under it grew or shrank: the projects' cap is measured again.
+    renderTree();
+  });
   function renderTree() {
     // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
     window.__perf && window.__perf.renders++;

@@ -755,6 +755,25 @@ pub fn seen(
             now
         ],
     )?;
+    // The first sight of the merge ticks the thread's open notes: merging is
+    // the reader's own yes to the work, and a note left open after it is a
+    // tick an agent forgot (#103-#106 stood a day that way). By "merged",
+    // with the merge and the PR, so the row says where the work went; the
+    // reader unticks one the merge did not finish. A suggestion is not
+    // theirs yet. The merge changes the thread too, so the event that tells
+    // the page goes out.
+    if was.merged.is_empty() && !merged.is_empty() {
+        let evidence = if crate::desk::evidence_ok(s.pr.trim()) {
+            s.pr.trim()
+        } else {
+            ""
+        };
+        tx.execute(
+            "UPDATE desk_notes SET done_at = ?3, done_by = 'merged', done_commit = ?4, done_doc = '', done_evidence = ?5, done_pane = ?6
+             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+            params![desk_id, t.id, now, merged, evidence, pane],
+        )?;
+    }
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
     let changed = (&t.branch, t.commits, &t.pr, &t.ci, &t.merged, &t.stage)

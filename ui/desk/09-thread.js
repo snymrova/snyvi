@@ -232,11 +232,13 @@ function sugSec(f) {
   }, `<ul class="dk-turn-list">${rows}</ul>`);
 }
 
+/** The thread a note is in, while the page holds this desk's threads. */
+const threadOf = x => (x.thread && filedAt === deskId && filed.threads.find(y => y.id === x.thread)) || null;
+
 /** The thread a note is in, in words for the note's tip; nothing beside
  *  the note, whose text has the row (#95). */
 function threadWords(x) {
-  if (!x.thread || filedAt !== deskId) return "";
-  const t = filed.threads.find(y => y.id === x.thread);
+  const t = threadOf(x);
   return t ? `in the thread ${t.name} (${t.stage})` : "";
 }
 

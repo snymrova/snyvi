@@ -22,6 +22,6 @@
   else if (state.view === "welcome") { history.replaceState({ welcome: true }, "", "/welcome"); showWelcome(false); }
   else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
   else if (state.view === "home") { history.replaceState({ home: true }, "", "/"); showHome(false); }
-  else { showInbox(false); history.replaceState({ inbox: true }, "", location.pathname === "/" ? "/" : "/inbox"); }
+  else { const recent = location.pathname === "/inbox" && location.search === "?recent"; showInbox(false, recent); history.replaceState({ inbox: true }, "", location.pathname === "/" ? "/" : recent ? "/inbox?recent" : "/inbox"); }
   connect();
   loadDesks();

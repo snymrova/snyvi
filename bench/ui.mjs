@@ -62,6 +62,9 @@ function prelude() {
   // What the page counts of itself: app.js adds one to `renders` per draw
   // of the sidebar when this object is there, and nothing when it is not.
   window.__perf = { renders: 0 };
+  // The sections here read the waiting list's rows, which the Inbox's
+  // Waiting row folds away until a reader opens it; this reader has.
+  try { if (localStorage.getItem("snyvi.waiting") == null) localStorage.setItem("snyvi.waiting", "1"); } catch {}
   window.__ui = {
     vis(s) {
       const el = q(s);
@@ -1068,6 +1071,33 @@ async function queueRows(p, url, arrive) {
   rows.push(["still waiting after a reload", /^1\/12/.test(kept.bar || "") && kept.side.length === 6,
     `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", ${kept.side.length} rows in the sidebar`]);
 
+  // 1.28.0: the Inbox head is All at its edge, then Recent and Waiting. The
+  // Waiting row folds the list in place and keeps how it was left; Recent is
+  // the newest-first list without the waiting half; All is the whole Inbox.
+  const head = () => p.ev(`({ n: document.querySelector("#inbox-row .t-wait .n")?.textContent || "", open: getComputedStyle(document.querySelector("#queue")).display !== "none",
+    h: document.querySelector("#inbox-row").offsetHeight, all: document.querySelector("#inbox-row .sec-all .n")?.textContent || "" })`);
+  const shut0 = await head();
+  await p.clickOn("#inbox-row .t-wait");
+  await sleep(300);
+  const shut1 = await head();
+  await p.reload();
+  const shut2 = await head();
+  await p.clickOn("#inbox-row .t-wait");
+  await sleep(300);
+  const shut3 = await head();
+  rows.push(["Waiting folds its list in place, and keeps it", shut0.open && shut0.n === "12" && !shut1.open && !shut2.open && shut3.open && shut1.h === shut0.h,
+    !shut0.open ? "the list was not open to start with" : shut0.n !== "12" ? `the Waiting row reads "${shut0.n}"` : shut1.open ? "a click did not fold the list" : shut1.h !== shut0.h ? `the head moved: ${shut0.h} px, then ${shut1.h} px`
+      : shut2.open ? "a reload unfolded it" : !shut3.open ? "a second click did not open it" : `Waiting 12 folds and opens, stays folded over a reload, the head ${shut0.h} px throughout`]);
+  await p.clickOn("#inbox-row .t-inbox");
+  const recent = await until(`location.search === "?recent" && document.querySelector("#doc h1")?.textContent === "Recent"`);
+  const half = await p.ev(`!!document.querySelector("#doc .inbox.waiting")`);
+  await p.clickOn("#inbox-row .sec-all");
+  const whole = await until(`location.search === "" && document.querySelector("#doc h1")?.textContent === "Inbox" && !!document.querySelector("#doc .inbox.waiting")`);
+  rows.push(["Recent is newest first; All is the whole Inbox", recent && !half && whole,
+    !recent ? "Recent did not open /inbox?recent" : half ? "Recent shows the waiting list too" : !whole ? "All did not open the Inbox with what waits" : `Recent at /inbox?recent, All (${shut0.all}) at /inbox with what waits`]);
+  await p.goto(url);
+  await until(`!document.querySelector("#queue-bar").hidden`);
+
   // ‹ › step the bar through what waits, round the ends, and open nothing (#100).
   await p.clickOn("#queue-bar [data-q=step]");
   await sleep(200);
@@ -1446,7 +1476,7 @@ async function lossRows(p, base, token, arrive, browsed) {
   await p.goto(`${origin}/`);
   await p.pointerAway();
   await refuse(p, "GET", /^\/api\/inbox$/);
-  await p.clickOn(".t-inbox");
+  await p.clickOn(".sec-all");
   await sleep(500);
   const inbox = await p.ev(`({ line: document.querySelector("#doc .no-reach")?.textContent || null, welcome: (document.querySelector("#doc h1")?.textContent || "") !== "Inbox", list: !!document.querySelector("#doc ul.inbox") })`);
   if (inbox.line) await p.clickOn("#doc .no-reach [data-retry]");
@@ -2708,7 +2738,7 @@ async function projectDeskRows(cdp, base, token, tmp) {
         !panel ? "the desk shows no panel" : `${clicks} click${clicks === 1 ? "" : "s"} from the + beside Desks to a desk with its first panel`]);
 
       const glyph = `.t-proj[data-pid="${proj.id}"] > summary > .b-new.has`;
-      await p.clickOn(".t-inbox");
+      await p.clickOn(".sec-all");
       const lit = await until(`!!document.querySelector(${JSON.stringify(glyph)})`);
       if (lit) await p.clickOn(glyph);
       const back = lit && made && await until(`location.pathname === "/desk/${made.id}"`), one = (await desks()).length === before + 1;
@@ -2994,10 +3024,15 @@ async function panelRows(cdp, base, token) {
     const tickBy = body => fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
     const wrong = await tickBy({ by: "bench-agent", commit: "main" });
     const tk = await tickBy({ by: "bench-agent", commit: "90F09D6aa" });
-    const byAgent = tk.ok && await until(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-by > span')?.textContent === "bench-agent"`, 40);
+    const byAgent = tk.ok && await until(`(document.querySelector('.dk-note.done:has([data-n="${n2}"]) > .nm')?.dataset.tipSub || "").includes("ticked by bench-agent")`, 40);
     const sha = await q.ev(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-sha')?.textContent || ""`);
     rows.push(["an agent's tick carries its commit, and a branch name is refused", wrong.status === 400 && sha === "90f09d6",
       wrong.status !== 400 ? `"main" as a commit answered ${wrong.status}` : `the row shows "${sha}"`]);
+    // The commit sits on the number's line, and who ticked it is the tip:
+    // no third line under a ticked note.
+    const oneLine = await q.ev(`(() => { const li = document.querySelector('.dk-note.done:has([data-n="${n2}"])'); return li ? { meta: !!li.querySelector(".dk-meta .dk-sha"), by: !!li.querySelector(".dk-by") } : null; })()`);
+    rows.push(["a ticked note says where it went on its number's line", byAgent && oneLine?.meta && !oneLine.by,
+      !byAgent ? "the tip does not say who ticked it" : JSON.stringify(oneLine)]);
     const named = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "bench named" }) });
     const headSays = named.ok && await until(`document.querySelector('${P(pa)} .pn-head')?.textContent.includes("bench named")`, 40);
     const unnamed = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "" }) });

@@ -244,9 +244,13 @@
     landLine: n => { history.replaceState(history.state, "", `${location.pathname}#L${n}`); jumpToHash(); } }), e => { pathsLoading = null; throw e; }));
   addEventListener("keydown", e => { if (e.key === "Control" && capability && !pathsLoading) pathsUse().catch(() => {}); });
 
-  async function showInbox(push = true) {
+  /** The Inbox's page: what waits, then everything newest first -- or, as
+   *  Recent (`/inbox?recent`, the row under the Inbox's head), only the
+   *  newest first. A redraw in place keeps whichever it is. */
+  async function showInbox(push = true, recent = push ? false : !!state.recent) {
     if (push) leave();
     offDesk();
+    state.recent = recent;
     state.view = "inbox"; state.doc = null; state.previous = null; state.browseRoot = null;
     const hm = homeUse().catch(() => null);
     let items = boot.inbox;
@@ -266,12 +270,14 @@
       if (!capability || !(state.desks && state.desks.desks.length)) welcomeHtml = await welcomePage();
     }
     document.title = "snyvi";
-    if (push) history.pushState({ inbox: true }, "", "/inbox");
+    if (push) history.pushState({ inbox: true }, "", recent ? "/inbox?recent" : "/inbox");
     const m = welcomeHtml == null && await hm;
     if (state.view !== "inbox") return;
     if (welcomeHtml == null && !m) { homeLoading = null; welcomeHtml = `<div class="inbox-head"><h1>Inbox</h1>${noReach("inbox")}</div>`; }
     docEl.innerHTML = welcomeHtml != null ? welcomeHtml : inboxHtml(items, m);
-    if (push) swapIn();
+    // Opened, it starts at its head, wherever the page before it was scrolled;
+    // drawn again in place, it stays where the reader is.
+    if (push) { swapIn(); main.scrollTo({ top: 0, behavior: "instant" }); }
     afterRender();
     if (items?.length) removedLine(push);
     // The inbox lists every waiting row, and the page opened with the oldest
@@ -287,7 +293,7 @@
 
   /** The Inbox's list is home.js's (`inboxHtml`), the chunk for the pages
    *  that list, fetched alongside the list itself. */
-  const inboxHtml = (items, m) => m.inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown });
+  const inboxHtml = (items, m) => m.inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent: state.recent });
 
   /* After the Undo has gone: "N removed · Show" at the foot of the Inbox,
    * drawn by home.js (`removedLine`), the chunk for the pages that list. */

@@ -47,7 +47,7 @@
   }
   /* A project the reader has taken out of the sidebar. Nothing is deleted --
    * snyvi deletes nothing on this path -- so the project keeps every document
-   * it has, in All documents, in search and at its own URL; what changes is
+   * it has, in All, in search and at its own URL; what changes is
    * that it stops taking a row here. It comes back the moment anything lands
    * in it, and the row under the tree brings them all back by hand. Per
    * reader, as the folds are: it is a view, not a fact about the library. */
@@ -121,6 +121,8 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     widgets: '<rect x="3.5" y="3.5" width="17" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.8"/>',
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    wait: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/>',
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
     prev: '<path d="m15 6-6 6 6 6"/>',
     next: '<path d="m9 6 6 6-6 6"/>',
@@ -155,7 +157,7 @@
     const lead = o.fixed ? `<span class="sec-fold"${tip(o.tip, o.sub)}>${label}</span>`
       : `<button type="button" class="sec-fold" data-fold="${key}" aria-expanded="${open}"${tip(o.tip, o.sub)}>${label}${chev}</button>`;
     const n = o.count == null || o.count === "" ? "" : `<span class="sec-n${o.tone ? ` ${o.tone}` : ""}${o.foldOnly ? " fold-only" : ""}"${tip(o.countTip)}>${o.count}</span>`;
-    return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${n}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}</div>`;
+    return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${n}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}${o.end || ""}</div>`;
   }
   /** Whether a section is drawn folded: the reader's fold, unless `open`. */
   const secFolded = (key, open) => !open && isFolded(key);
@@ -303,7 +305,7 @@
   function markActive() {
     onPlace();
     for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
-    const on = state.view === "inbox" ? inboxRowEl.querySelector(".t-inbox")
+    const on = state.view === "inbox" ? inboxRowEl.querySelector(state.recent ? ".t-inbox" : ".sec-all")
       : state.view === "desk" && state.deskId != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskId}"]`)
       // A document read over a desk is still the desk: the desk keeps the
       // mark, and the rail marks the document.
