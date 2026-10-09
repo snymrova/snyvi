@@ -18,10 +18,9 @@ parked), and with parked the next step to pick it up by. Add a PR number or more
 work changes stage, not every turn.";
 
 const ASK: &str = "Put a decision on the user's Your turn in snyvi: a question, two to four short options, and \
-the one you recommend. Several decisions you need before going on go in one call as questions (up to four), \
-which the user answers on one card. It does not wait: the answers come with the user's next message, and \
-they are kept on the thread as decided. Your own question tool is fine too when the user is at this panel: \
-it shows on Your turn as well.";
+the one you recommend; up to four at once as questions, on one card. It does not wait: the answers come with \
+the user's next message and are kept on the thread. Your own question tool shows on Your turn too, when the \
+user is at this panel.";
 
 const HAND_OVER: &str = "Put what only the user can do on their Your turn in snyvi: try (try a change), merge (a PR), key (add a \
 key), or run (a command you were blocked from running: pass cmd, one line; their Run types it here as a \

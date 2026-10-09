@@ -2949,7 +2949,7 @@ async function panelRows(cdp, base, token) {
 
     // 1.29.0 (#107): the same hover says what is left of the account, from
     // the freshest panel -- a reading from the other panel is news here too;
-    // 1.31.0, and when the week's window resets.
+    // 1.30.0, and when the week's window resets.
     const now = Math.floor(Date.now() / 1000);
     const said = (id, five) => fetch(`${base}/api/panes/${id}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: id === pa ? 87.4 : 10, size: 200000, input: id === pa ? 174800 : 20000 }, limits: { five_hour: { used: five, resets_at: now + 7200 }, seven_day: { used: 20, resets_at: now + 5 * 86400 } } }) });

@@ -94,11 +94,19 @@ const OLD_1_25: &str = "DROP INDEX IF EXISTS peer_outbox_unsent;
 /// And of 1.26's: when a panel last took a thread up, which step 13 adds.
 const OLD_1_26: &str = "ALTER TABLE threads DROP COLUMN taken_at;";
 
-/// And of 1.30's: the Claude account a desk and a panel start as, which
-/// step 14 adds.
+/// And of 1.30's: the Claude account a desk and a panel start as (step 14),
+/// the card a turn was asked on (15), and a widget's desks, its time and
+/// what its card said (16).
 const OLD_1_30: &str = "ALTER TABLE desks DROP COLUMN account;
      ALTER TABLE panes DROP COLUMN account;
-     ALTER TABLE panes_closed DROP COLUMN account;";
+     ALTER TABLE panes_closed DROP COLUMN account;
+     ALTER TABLE turns DROP COLUMN ask_group;
+     ALTER TABLE desk_suggestions DROP COLUMN lasts;
+     ALTER TABLE desk_suggestions DROP COLUMN detail;
+     ALTER TABLE desk_suggestions DROP COLUMN note;
+     ALTER TABLE widget_prefs DROP COLUMN desks;
+     ALTER TABLE widget_prefs DROP COLUMN until;
+     ALTER TABLE widget_prefs DROP COLUMN until_pane;";
 
 #[test]
 fn insert_get_previous_search() {

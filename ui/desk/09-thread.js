@@ -294,7 +294,7 @@ async function trySuggested(d, s) {
   sgTry.set(s.id, { busy: true }); rail();
   let j;
   try { j = await ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/try`, {}); }
-  catch (e) { j = { error: `Could not run it: ${e.message}` }; }
+  catch (e) { j = { error: `Could not run it · ${ctx.sayErr(e).why}` }; }
   sgTry.set(s.id, j); rail();
 }
 

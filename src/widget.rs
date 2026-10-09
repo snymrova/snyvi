@@ -90,11 +90,11 @@ CREATE TABLE IF NOT EXISTS widget_asks (
 );
 "#;
 
-/// 1.31: the desks a widget file is on (ids, comma-separated; none is every
+/// 1.30: the desks a widget file is on (ids, comma-separated; none is every
 /// desk), and until when it is on: a time (0 is until the reader turns it
 /// off) or a panel's life. Version 16 of `store::MIGRATIONS`, never in
 /// `SCHEMA`.
-pub const PREFS_COLUMNS_1_31: [&str; 3] = [
+pub const PREFS_COLUMNS_1_30: [&str; 3] = [
     "ALTER TABLE widget_prefs ADD COLUMN desks TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE widget_prefs ADD COLUMN until INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE widget_prefs ADD COLUMN until_pane TEXT NOT NULL DEFAULT ''",

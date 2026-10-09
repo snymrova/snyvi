@@ -35,13 +35,11 @@ fn unprocessable(why: &str) -> Response {
 }
 
 /// Keep a token for an account, off the async threads.
-async fn keep_token(app: &App, id: i64, token: String) -> Result<crate::secrets::Kept, Response> {
+async fn keep_token(app: &App, id: i64, token: String) -> anyhow::Result<crate::secrets::Kept> {
     let secrets = app.secrets.clone();
-    match tokio::task::spawn_blocking(move || secrets.keep_claude(id, &token)).await {
-        Ok(Ok(kept)) => Ok(kept),
-        Ok(Err(e)) => Err(err(e)),
-        Err(e) => Err(err(anyhow::anyhow!("keeping the token: {e}"))),
-    }
+    tokio::task::spawn_blocking(move || secrets.keep_claude(id, &token))
+        .await
+        .map_err(|e| anyhow::anyhow!("keeping the token: {e}"))?
 }
 
 /// Every account but `/login`, which is always there and has no row.
@@ -92,9 +90,9 @@ pub(crate) async fn add_account(
     };
     let kept = match keep_token(&app, account.id, token).await {
         Ok(kept) => kept,
-        Err(no) => {
+        Err(e) => {
             let _ = app.store.remove_claude_account(account.id);
-            return no;
+            return err(e);
         }
     };
     accounts_moved(&app);
@@ -258,7 +256,7 @@ pub(crate) async fn renew_account(
     }
     let kept = match keep_token(&app, id, token).await {
         Ok(kept) => kept,
-        Err(no) => return no,
+        Err(e) => return err(e),
     };
     let _ = app.store.renewed_claude_account(id);
     accounts_moved(&app);

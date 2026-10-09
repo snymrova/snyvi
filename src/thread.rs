@@ -95,16 +95,16 @@ pub const THREAD_COLUMN: &str =
 pub const CMD_COLUMN: &str = "ALTER TABLE turns ADD COLUMN cmd TEXT NOT NULL DEFAULT ''";
 
 /// 1.30: the card a `decide` turn was asked on with others (#110), as the
-/// first one's id, or 0. Version 15 of `store::MIGRATIONS`, after the accounts' 14,
-/// never in `SCHEMA`.
+/// first one's id, or 0. Version 15 of `store::MIGRATIONS`, after the
+/// accounts' 14, never in `SCHEMA`.
 pub const GROUP_COLUMN: &str = "ALTER TABLE turns ADD COLUMN ask_group INTEGER NOT NULL DEFAULT 0";
 
-/// 1.31: on a widget's card (#111), how long the agent suggests it lasts
+/// 1.30: on a widget's card (#111), how long the agent suggests it lasts
 /// (`today`, `week`, `panel`, or nothing for until the reader turns it off)
 /// and what the card shows of it -- where, how often, the script -- as JSON;
 /// and a line the agent is told once (`take_opened`), when its widget
 /// stopped. Version 16 of `store::MIGRATIONS`, never in `SCHEMA`.
-pub const SUGGEST_COLUMNS_1_31: [&str; 3] = [
+pub const SUGGEST_COLUMNS_1_30: [&str; 3] = [
     "ALTER TABLE desk_suggestions ADD COLUMN lasts TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE desk_suggestions ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE desk_suggestions ADD COLUMN note TEXT NOT NULL DEFAULT ''",
@@ -294,7 +294,7 @@ pub struct Suggestion {
     /// A widget's or a box's: how long the agent suggests it lasts.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub lasts: String,
-    /// A widget's: where it runs, how often, its script (`SUGGEST_COLUMNS_1_31`).
+    /// A widget's: where it runs, how often, its script (`SUGGEST_COLUMNS_1_30`).
     #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     pub detail: serde_json::Value,
     /// What the agent is told of it next, when not that it was opened.

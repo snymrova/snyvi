@@ -11,7 +11,7 @@ fn db() -> Connection {
     conn.execute_batch(CMD_COLUMN).unwrap();
     conn.execute_batch(TAKEN_COLUMN).unwrap();
     conn.execute_batch(GROUP_COLUMN).unwrap();
-    for c in SUGGEST_COLUMNS_1_31 {
+    for c in SUGGEST_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
     for c in crate::peer::COLUMNS_1_23

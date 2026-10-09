@@ -3,7 +3,7 @@ use super::*;
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(SCHEMA).unwrap();
-    for c in PREFS_COLUMNS_1_31 {
+    for c in PREFS_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
     conn
@@ -70,7 +70,7 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
 #[test]
 fn a_section_from_a_later_version_lands_in_its_place() {
     // A layout saved before `points` existed, naming `rest`, which went in
-    // 1.31 (#109): the one arrives in its place, the other is dropped.
+    // 1.30 (#109): the one arrives in its place, the other is dropped.
     let l = Layout {
         left: ids(&LEFT),
         right: ids(&["turn", "docs", "panels", "rest", "notes", "widgets"]),
