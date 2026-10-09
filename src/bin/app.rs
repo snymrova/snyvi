@@ -366,6 +366,12 @@ fn window(app: &tauri::App, parsed: tauri::Url, home: &str) -> tauri::Result<Web
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true),
     };
+    // On Windows the runtime's own file-drop handler swallows every drop
+    // before WebView2 hands it to the page, so a picture dropped on a panel
+    // or a note never arrived. Nothing here listens for the runtime's drop
+    // event; the page's own `drop` handlers take it.
+    #[cfg(windows)]
+    let builder = builder.disable_drag_drop_handler();
     let w = builder
         // The web belongs in a browser. This window has no address bar
         // and no Back button -- Back is the page's own key handler, and
