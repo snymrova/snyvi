@@ -616,6 +616,14 @@ function onYou(j) {
   if (!turns.length && !answeredHere.size) return "";
   const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
   const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
+  // Questions asked together (#110) say which of how many each is: one card
+  // on the desk, a row each here, side by side as they were asked.
+  const all = j.turns || [];
+  const ofGroup = w => {
+    if (!w.ask_group) return "";
+    const g = all.filter(x => x.ask_group === w.ask_group);
+    return ` · ${g.indexOf(w) + 1} of ${g.length}`;
+  };
   const row = w => {
     // A command is run on its desk, where Run types it into the panel that
     // asked: Home has no panel to type into.
@@ -624,7 +632,7 @@ function onYou(j) {
     const n = slot(w.desk_id, w.pane);
     return `<li class="hm-turn"><span class="hm-pw"><span class="hm-t hm-tq" data-tip="${esc(w.text)}" data-tip-overflow>${esc(w.text)}</span>` +
       (w.kind === "run" ? `<code class="hm-t hm-cmd">${esc(w.cmd)}</code>` : "") +
-      `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}</span></span>` +
+      `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}${ofGroup(w)}</span></span>` +
       `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
       (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""} data-tip="${esc(more)}" data-tip-sub="${w.kind === "run" ? `Run types it into ${n ? `panel ${n}` : "the panel that asked"}, on its desk` : "answer in your own words on the desk"}">${esc(more)}</a>` : "") + `</span></li>`;
   };
@@ -634,13 +642,13 @@ function onYou(j) {
     `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
 }
 
-/** A thread a panel is moving: not shipped, and not resting -- parked, its
- *  panel closed, or its panel took up another (src/thread.rs `mark_rest`). */
+/** A thread a panel is moving: not shipped. One no panel is moving --
+ *  parked, its panel closed, or its panel took up another -- the daemon
+ *  lists nowhere (#109). */
 const isMoving = t => t.stage !== "shipped" && !t.rest;
 
-/** The threads, by where they are: what is moving, what rests (parked with
- *  its next step, or left by its panel), and what shipped this week. The
- *  daemon lists a resting one for a day, a parked one for a week. */
+/** The threads, by where they are: what is moving, and what shipped this
+ *  week. */
 function threadsList(j) {
   const { esc } = c, ts = j.threads || [];
   const name = id => j.desks?.find(d => d.id === id)?.name || "";
@@ -649,7 +657,6 @@ function threadsList(j) {
     `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.rest && t.stage !== "parked" ? `${t.stage} · ${t.rest}` : t.stage)}</span></li>`;
   const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
   return group("Moving", ts.filter(isMoving)) +
-    group("Resting", ts.filter(t => t.stage !== "shipped" && t.rest)) +
     group("Shipped this week", ts.filter(t => t.stage === "shipped"));
 }
 

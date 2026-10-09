@@ -568,6 +568,29 @@ that agent runs can ask `snyvi key` or see the variable the way they see
 you would hand to anything you run on that desk. On Linux the file it
 rests in is readable by your user alone, as snyvi's own token is.
 
+The same sheet holds your Claude accounts, so one desk can run on your work
+plan and another on your own without a `/logout` between them. Under *Add a
+Claude account*, *Sign in…* opens Claude's sign-in page in your browser:
+approve as the other account, paste the code if the page shows one, and the
+account is added. snyvi runs `claude setup-token` out of sight for this and
+keeps the token it prints the way a key's value is; the page never sees it.
+A token from running `claude setup-token` yourself can be pasted in the same
+place instead. Your `/login` account is always there as
+*your login*, and the one picked is what the desk's panels start as. A
+panel can have its own: right-click it for *Run as…*, or *Continue as…* to
+restart it as the other account, back into the same conversation. Panels
+already running keep the account they started as, and changing the desk's
+offers to switch the ones with Claude open. Everything else under
+`~/.claude` -- settings, hooks, MCP servers, memory, the conversations
+`--resume` finds -- is shared by every account. A token lasts a year: the
+row says until when, in bold in its last month, and *Renew* signs in again
+for a new one. A desk key named `ANTHROPIC_API_KEY` or
+`ANTHROPIC_AUTH_TOKEN` wins over any account,
+so the sheet says so when a desk has one. A token can't use claude.ai's
+connectors or Remote Control, which want the `/login` account. snyvi never
+switches an account on its own, and ✕ on an account puts its desks and
+panels back on your login and forgets the token, with Undo first.
+
 The server also offers four prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
 finished and checked and says where the work was left, `plan` writes the
@@ -1015,21 +1038,19 @@ the top.
   PR, the checks or the merge as they come, the folder, the branch and its
   commits, and *Decided*: the questions you answered on it. A
   shipped thread shows ✓ until its panel takes up another, or for 12 hours.
-  When a panel starts a new thread, or closes, the one it had **rests**:
-  folded under the panels as *Resting*, saying why -- *moved on*, *panel
-  closed*, *parked*. Nothing needs tidying: a resting thread leaves the rail
-  after a day, a parked one after a week, and both are kept; a panel that
-  starts one again by its name brings it back. Right-click a thread -- its
-  chip, a resting one's row or ⋯, or the panel's row, where the same four
-  are named as the thread's -- for **Done** (work that shipped where the panel did not see it),
-  **Park…** with a next step, **Rename…** or **Remove**; the panel hears a
-  Done or a Park at its next prompt, and ✕ leaves its Undo in the row, as
-  everywhere. A note's tip says which thread it is in and who has it; the
+  When a panel starts a new thread, or closes, the one it had is filed
+  away: on no list, so nothing needs tidying, and kept -- a panel that
+  starts it again by its name brings it back. Right-click a thread -- its
+  chip, or the panel's row, where the same three are named as the
+  thread's -- for **Done** (work that shipped where the panel did not see
+  it), **Rename…** or **Remove**; the panel hears a Done at its next
+  prompt, and ✕ leaves its Undo in the row, as everywhere. A note's tip says which thread it is in and who has it; the
   note itself keeps its row for its own two lines, and under them one quiet
   line: its number, then its small marks -- the stage in a word, the
   pictures.
 - **Your turn** is what only you can do: a decision (`ask`, with two to four
-  options and the one Claude recommends), or a hand-over (`hand_over`): try
+  options and the one Claude recommends -- several asked at once are one
+  card, a row each, with **Send answers** once all are answered), or a hand-over (`hand_over`): try
   it, merge it, add a key, or **run** a command Claude was blocked from
   running. A run card shows the whole command; **Run in panel N** types it
   into the panel that asked as a `!` command, so its output lands in that

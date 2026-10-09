@@ -79,7 +79,9 @@ impl Secrets {
     pub fn new(file: PathBuf) -> Self {
         Self {
             file,
-            keychain: true,
+            // A test's daemon keeps its values in its temp dir: a route test
+            // that adds a key or a token never writes the machine's keychain.
+            keychain: !cfg!(test),
         }
     }
 
@@ -93,6 +95,13 @@ impl Secrets {
 
     fn account(desk: i64, name: &str) -> String {
         format!("{desk}/{name}")
+    }
+
+    /// A Claude account's token (`crate::accounts`): beside the desk keys,
+    /// under a name no desk key can have, since a key's account starts with
+    /// a desk id.
+    fn claude_account(id: i64) -> String {
+        format!("claude/{id}")
     }
 
     #[cfg(any(target_os = "macos", windows))]
@@ -112,7 +121,34 @@ impl Secrets {
     /// Keep a value: the keychain if there is one and it answers, the file
     /// otherwise.
     pub fn keep(&self, desk: i64, name: &str, value: &str) -> Result<Kept> {
-        let account = Self::account(desk, name);
+        self.keep_at(Self::account(desk, name), value)
+    }
+
+    /// The value, from wherever it was kept; `None` when it is nowhere.
+    pub fn value(&self, desk: i64, name: &str) -> Option<String> {
+        self.value_at(&Self::account(desk, name))
+    }
+
+    /// Forget a value, wherever it was. Nothing to say when there was none.
+    pub fn forget(&self, desk: i64, name: &str) {
+        self.forget_at(&Self::account(desk, name))
+    }
+
+    /// Keep a Claude account's token, on the same terms as a key's value.
+    pub fn keep_claude(&self, id: i64, token: &str) -> Result<Kept> {
+        self.keep_at(Self::claude_account(id), token)
+    }
+
+    /// A Claude account's token, for a panel's environment and nothing else.
+    pub fn claude_value(&self, id: i64) -> Option<String> {
+        self.value_at(&Self::claude_account(id))
+    }
+
+    pub fn forget_claude(&self, id: i64) {
+        self.forget_at(&Self::claude_account(id))
+    }
+
+    fn keep_at(&self, account: String, value: &str) -> Result<Kept> {
         if let Some(e) = self.entry(&account) {
             if e.set_password(value).is_ok() {
                 // A copy the file held from a day the keychain was away is a
@@ -129,25 +165,21 @@ impl Secrets {
         Ok(Kept::File)
     }
 
-    /// The value, from wherever it was kept; `None` when it is nowhere.
-    pub fn value(&self, desk: i64, name: &str) -> Option<String> {
-        let account = Self::account(desk, name);
-        if let Some(e) = self.entry(&account) {
+    fn value_at(&self, account: &str) -> Option<String> {
+        if let Some(e) = self.entry(account) {
             if let Ok(v) = e.get_password() {
                 return Some(v);
             }
         }
-        self.read().remove(&account)
+        self.read().remove(account)
     }
 
-    /// Forget a value, wherever it was. Nothing to say when there was none.
-    pub fn forget(&self, desk: i64, name: &str) {
-        let account = Self::account(desk, name);
-        if let Some(e) = self.entry(&account) {
+    fn forget_at(&self, account: &str) {
+        if let Some(e) = self.entry(account) {
             let _ = e.delete_credential();
         }
         let _ = self.edit(|m| {
-            m.remove(&account);
+            m.remove(account);
         });
     }
 
@@ -270,6 +302,21 @@ mod tests {
         s.forget(0, "GH_TOKEN");
         assert!(!file.exists());
         s.forget(0, "GH_TOKEN");
+    }
+
+    #[test]
+    fn a_claude_token_lives_beside_the_keys_and_never_under_a_keys_name() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-claude-tokens");
+        let s = Secrets::file_only(dir.path.join("keys.json"));
+        assert_eq!(s.claude_value(1), None);
+        s.keep(1, "GH_TOKEN", "ghp_one").unwrap();
+        assert_eq!(s.keep_claude(1, "sk-ant-oat01-one").unwrap(), Kept::File);
+        assert_eq!(s.claude_value(1).as_deref(), Some("sk-ant-oat01-one"));
+        assert_eq!(s.value(1, "GH_TOKEN").as_deref(), Some("ghp_one"));
+        assert_eq!(s.claude_value(2), None);
+        s.forget_claude(1);
+        assert_eq!(s.claude_value(1), None);
+        assert_eq!(s.value(1, "GH_TOKEN").as_deref(), Some("ghp_one"));
     }
 
     #[test]

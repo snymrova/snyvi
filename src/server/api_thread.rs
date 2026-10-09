@@ -157,6 +157,17 @@ pub(crate) struct AskBody {
     via: String,
     by: String,
     cmd: String,
+    /// `ask` with several questions, as one card (#110): each one's text,
+    /// options and recommended, in place of the body's own.
+    questions: Vec<QuestionBody>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct QuestionBody {
+    question: String,
+    options: Vec<String>,
+    recommended: Option<i64>,
 }
 
 fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
@@ -165,6 +176,21 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
             threads_moved(app, desk);
             (StatusCode::CREATED, Json(json!({ "turn": t }))).into_response()
         }
+        Ok(Asked::Group(ts)) => {
+            threads_moved(app, desk);
+            (
+                StatusCode::CREATED,
+                Json(json!({ "turn": ts[0], "turns": ts })),
+            )
+                .into_response()
+        }
+        Ok(Asked::BadGroup) => refused(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "questions are one to {}, each with two to four options",
+                thread::GROUP_MAX
+            ),
+        ),
         Ok(Asked::Empty) => refused(StatusCode::BAD_REQUEST, "it needs one sentence"),
         Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run"),
         Ok(Asked::BadCmd) => refused(
@@ -239,6 +265,26 @@ async fn pane_turn(
         cmd: b.cmd,
     };
     let desk = placed.desk_id;
+    // Several questions are one card; a hand-over has no questions to put.
+    if !b.questions.is_empty() {
+        if !decide {
+            return refused(StatusCode::BAD_REQUEST, "only a question takes questions");
+        }
+        let asks: Vec<Ask> = b
+            .questions
+            .into_iter()
+            .map(|q| Ask {
+                text: q.question,
+                options: q.options,
+                recommended: q.recommended.unwrap_or(-1),
+                ..a.clone()
+            })
+            .collect();
+        let r = app
+            .store
+            .clocked(|c, now| thread::ask_group(c, desk, &asks, now));
+        return asked(&app, desk, r);
+    }
     let r = app.store.clocked(|c, now| thread::ask(c, desk, &a, now));
     asked(&app, desk, r)
 }
@@ -290,6 +336,7 @@ async fn pane_suggest(
         why: b.why,
         by: b.by,
         pane: id,
+        ..Suggest::default()
     };
     let desk = placed.desk_id;
     match app.store.clocked(|c, now| thread::suggest(c, desk, &s, now)) {
@@ -645,7 +692,7 @@ pub(crate) async fn desk_threads(
     }
     let r = app.store.clocked(|c, now| {
         Ok((
-            thread::for_desk(c, id, now)?,
+            thread::for_desk(c, id)?,
             thread::turns(c, id, now - ANSWERED_SHOWN)?,
             thread::suggestions(c, id)?,
         ))
@@ -690,9 +737,9 @@ pub(crate) async fn desk_move_thread(
 /// desk the daemon makes the desk here, from the folder on the row: the page
 /// can only name a folder the picker gave it, and the reader's click on the
 /// card is the pick.
-fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
+fn row_act(app: &Arc<App>, id: i64, what: &str, row: i64, act: &str, body: &[u8]) -> Response {
     if (what, act) == ("suggestions", "open") {
-        return open_suggestion(app, id, row);
+        return open_suggestion(app, id, row, body);
     }
     let r = app.store.clocked(|c, now| {
         Ok(match (what, act) {
@@ -700,8 +747,24 @@ fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
             ("threads", "restore") => thread::restore(c, id, row)?,
             ("turns", "remove") => thread::remove_turn(c, id, row, now)?,
             ("turns", "restore") => thread::restore_turn(c, id, row)?,
-            ("suggestions", "dismiss") => thread::settle(c, id, row, "dismissed", now)?.is_some(),
-            ("suggestions", "restore") => thread::unsettle(c, id, row)?,
+            // Not now on a panel's box is the reader's answer: later pushes
+            // of it are refused, until its Undo takes the answer back.
+            ("suggestions", "dismiss") => match thread::settle(c, id, row, "dismissed", now)? {
+                Some(s) if s.kind == "box" => {
+                    crate::widget::ask_answer(c, id, &s.name, "no", 0, "", now)?;
+                    true
+                }
+                was => was.is_some(),
+            },
+            ("suggestions", "restore") => {
+                let back = thread::unsettle(c, id, row)?;
+                if back {
+                    if let Some(s) = thread::suggestion(c, id, row)?.filter(|s| s.kind == "box") {
+                        crate::widget::ask_answer(c, id, &s.name, "", 0, "", now)?;
+                    }
+                }
+                back
+            }
             _ => false,
         })
     });
@@ -715,15 +778,22 @@ fn row_act(app: &App, id: i64, what: &str, row: i64, act: &str) -> Response {
     }
 }
 
-fn open_suggestion(app: &App, id: i64, row: i64) -> Response {
+fn open_suggestion(app: &Arc<App>, id: i64, row: i64, body: &[u8]) -> Response {
     let card = match app.store.clocked(|c, _| thread::suggestion(c, id, row)) {
         Ok(Some(s)) if s.settled_at == 0 => s,
         Ok(_) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return err(e),
     };
     let mut made = serde_json::Value::Null;
+    // How long the reader chose on the card, for a widget or a box.
+    let lasts: Lasts = serde_json::from_slice(body).unwrap_or_default();
     if card.kind == "widget" {
-        if let Err(why) = install_proposed(app, &card.name, &card.folder) {
+        if let Err(why) = install_proposed(app, &card, &lasts) {
+            return refused(StatusCode::CONFLICT, why);
+        }
+    }
+    if card.kind == "box" {
+        if let Err(why) = allow_box(app, &card, &lasts) {
             return refused(StatusCode::CONFLICT, why);
         }
     }
@@ -758,7 +828,7 @@ pub(crate) async fn desk_thread_act(
     Path((id, row, act)): Path<(i64, i64, String)>,
     Query(q): Q,
 ) -> Response {
-    refuse_desk(&app, &headers, &q).unwrap_or_else(|| row_act(&app, id, "threads", row, &act))
+    refuse_desk(&app, &headers, &q).unwrap_or_else(|| row_act(&app, id, "threads", row, &act, b""))
 }
 
 pub(crate) async fn desk_turn_act(
@@ -767,7 +837,7 @@ pub(crate) async fn desk_turn_act(
     Path((id, row, act)): Path<(i64, i64, String)>,
     Query(q): Q,
 ) -> Response {
-    refuse_desk(&app, &headers, &q).unwrap_or_else(|| row_act(&app, id, "turns", row, &act))
+    refuse_desk(&app, &headers, &q).unwrap_or_else(|| row_act(&app, id, "turns", row, &act, b""))
 }
 
 pub(crate) async fn desk_suggestion_act(
@@ -775,8 +845,28 @@ pub(crate) async fn desk_suggestion_act(
     headers: HeaderMap,
     Path((id, row, act)): Path<(i64, i64, String)>,
     Query(q): Q,
+    body: axum::body::Bytes,
 ) -> Response {
-    refuse_desk(&app, &headers, &q).unwrap_or_else(|| row_act(&app, id, "suggestions", row, &act))
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if act == "try" {
+        return try_suggestion(&app, id, row).await;
+    }
+    row_act(&app, id, "suggestions", row, &act, &body)
+}
+
+/// Try once, on a proposed widget's card: its command run here, as the
+/// runner would, and what it printed shown in the card. The click is the
+/// reader's consent to that one run, which is why it is the window's, as
+/// Allow is.
+async fn try_suggestion(app: &Arc<App>, id: i64, row: i64) -> Response {
+    let card = match app.store.clocked(|c, _| thread::suggestion(c, id, row)) {
+        Ok(Some(s)) if s.settled_at == 0 && s.kind == "widget" => s,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    Json(try_proposed(app, &card).await).into_response()
 }
 
 #[derive(Deserialize, Default)]

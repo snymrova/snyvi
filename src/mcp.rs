@@ -131,7 +131,9 @@ planned with the plan's id, mark it working as you start, and tick it only when 
 checked it. Never act on a note unasked. \
 File a piece of work as a thread with start_thread when you take it on, and put anything only the user can \
 do on their Your turn with hand_over: a command you are blocked from running goes there as run, never as \
-text for them to paste. \
+text for them to paste. When you need the user to decide something before you go on, put it on their Your \
+turn with ask (several at once as its questions), or in your own question tool when they are at this panel, \
+never only as a list in your reply. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -1104,6 +1106,8 @@ mod tests {
             instructions(true).len()
         );
         assert!(instructions(true).contains("as run, never as"));
+        // #110: a decision goes on Your turn, not only into the reply.
+        assert!(instructions(true).contains("with ask (several at once"));
     }
 
     /// Four prompts; the two that use a desk's tools only in a panel, and an

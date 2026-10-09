@@ -94,6 +94,20 @@ const OLD_1_25: &str = "DROP INDEX IF EXISTS peer_outbox_unsent;
 /// And of 1.26's: when a panel last took a thread up, which step 13 adds.
 const OLD_1_26: &str = "ALTER TABLE threads DROP COLUMN taken_at;";
 
+/// And of 1.30's: the Claude account a desk and a panel start as (step 14),
+/// the card a turn was asked on (15), and a widget's desks, its time and
+/// what its card said (16).
+const OLD_1_30: &str = "ALTER TABLE desks DROP COLUMN account;
+     ALTER TABLE panes DROP COLUMN account;
+     ALTER TABLE panes_closed DROP COLUMN account;
+     ALTER TABLE turns DROP COLUMN ask_group;
+     ALTER TABLE desk_suggestions DROP COLUMN lasts;
+     ALTER TABLE desk_suggestions DROP COLUMN detail;
+     ALTER TABLE desk_suggestions DROP COLUMN note;
+     ALTER TABLE widget_prefs DROP COLUMN desks;
+     ALTER TABLE widget_prefs DROP COLUMN until;
+     ALTER TABLE widget_prefs DROP COLUMN until_pane;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -359,6 +373,43 @@ fn a_desk_is_not_a_document_and_a_reset_still_takes_it() {
     // A store again: the next desk is the first.
     let again = s.create_desk("/home/p/snyvi", None).unwrap();
     assert_eq!(again.name, "snyvi");
+}
+
+/// A key's or an account's value is not in the database, so a reset hands
+/// back what it held for the caller to forget -- and takes the rows, or the
+/// next desk 1 would start with the last desk 1's keys.
+#[test]
+fn a_reset_takes_the_keys_and_accounts_and_says_which_to_forget() {
+    let (s, _d) = temp_store();
+    let desk = s.create_desk("/home/p/snyvi", None).unwrap();
+    s.add_desk_key(desk.id, "GH_TOKEN", "github").unwrap();
+    s.add_desk_key(0, "OPENROUTER_API_KEY", "").unwrap();
+    let work = s.add_claude_account("Work").unwrap();
+
+    let mut held = s.reset().unwrap();
+    held.keys.sort();
+    assert_eq!(
+        held,
+        Held {
+            keys: vec![
+                (0, "OPENROUTER_API_KEY".into()),
+                (desk.id, "GH_TOKEN".into())
+            ],
+            accounts: vec![work.id],
+        }
+    );
+    assert!(s.claude_accounts().unwrap().is_empty());
+    let again = s.create_desk("/home/p/snyvi", None).unwrap();
+    assert_eq!(again.id, desk.id, "the id comes round again");
+    assert!(
+        s.desk_keys(again.id).unwrap().is_empty(),
+        "without its keys"
+    );
+    assert_eq!(
+        s.reset().unwrap(),
+        Held::default(),
+        "nothing the second time"
+    );
 }
 
 /// A moved pane takes what it sent with it: the document pane 1 sent says
@@ -861,6 +912,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
+         {OLD_1_30}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
@@ -1145,6 +1197,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
+         {OLD_1_30}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}

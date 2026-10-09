@@ -3,6 +3,9 @@ use super::*;
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(SCHEMA).unwrap();
+    for c in PREFS_COLUMNS_1_30 {
+        conn.execute_batch(c).unwrap();
+    }
     conn
 }
 
@@ -58,7 +61,7 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
     // Your turn is first whatever was sent.
     assert_eq!(
         l.right,
-        ids(&["turn", "notes", "widgets", "panels", "rest", "points", "docs"])
+        ids(&["turn", "notes", "widgets", "panels", "points", "docs"])
     );
     // Your turn can't be hidden, a bare `widgets` names no side.
     assert_eq!(l.hidden, ids(&["folders", "left:widgets"]));
@@ -66,7 +69,8 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
 
 #[test]
 fn a_section_from_a_later_version_lands_in_its_place() {
-    // A layout saved before `points` existed.
+    // A layout saved before `points` existed, naming `rest`, which went in
+    // 1.30 (#109): the one arrives in its place, the other is dropped.
     let l = Layout {
         left: ids(&LEFT),
         right: ids(&["turn", "docs", "panels", "rest", "notes", "widgets"]),
@@ -75,7 +79,7 @@ fn a_section_from_a_later_version_lands_in_its_place() {
     .normalize();
     assert_eq!(
         l.right,
-        ids(&["turn", "docs", "panels", "rest", "points", "notes", "widgets"])
+        ids(&["turn", "docs", "panels", "points", "notes", "widgets"])
     );
 }
 
@@ -244,17 +248,18 @@ fn a_panes_seats_dim_when_it_ends() {
 fn prefs_change_only_what_is_given() {
     let c = db();
     assert_eq!(prefs(&c, "git").unwrap().settings, "{}");
-    set_prefs(&c, "git", Some(true), None, Some("abc"), None, 1).unwrap();
-    let p = set_prefs(
-        &c,
-        "git",
-        None,
-        Some(r#"{"base":"dev"}"#),
-        None,
-        Some(true),
-        2,
-    )
-    .unwrap();
+    let first = Change {
+        hidden: Some(true),
+        trusted_hash: Some("abc"),
+        ..Change::default()
+    };
+    set_prefs(&c, "git", &first, 1).unwrap();
+    let then = Change {
+        settings: Some(r#"{"base":"dev"}"#),
+        rerun_edits: Some(true),
+        ..Change::default()
+    };
+    let p = set_prefs(&c, "git", &then, 2).unwrap();
     assert!(p.hidden && p.rerun_edits);
     assert_eq!(
         (p.trusted_hash.as_str(), p.settings.as_str()),
@@ -263,4 +268,71 @@ fn prefs_change_only_what_is_given() {
     // Hidden reaches the seat.
     put(&c, 0, "git", &body("x"), "", &FILE, 1).unwrap();
     assert!(seats(&c, 0).unwrap()[0].hidden);
+}
+
+#[test]
+fn a_widget_lives_on_the_desks_and_for_the_time_the_reader_chose() {
+    let c = db();
+    let p = prefs(&c, "ci").unwrap();
+    assert!(p.on_desk(1) && p.on_desk(2), "no desks is every desk");
+    let ch = Change {
+        desks: Some(&[2]),
+        until: Some(100),
+        ..Change::default()
+    };
+    let p = set_prefs(&c, "ci", &ch, 1).unwrap();
+    assert!(!p.on_desk(1) && p.on_desk(2));
+    assert!(!p.ended(99, |_| true) && p.ended(100, |_| true));
+    // What its runs printed on a desk it left goes; the desk it is on keeps it.
+    put(&c, 1, "ci", &body("x"), "", &FILE, 1).unwrap();
+    put(&c, 2, "ci", &body("y"), "", &FILE, 1).unwrap();
+    assert_eq!(off_desks(&c, "ci", &p.desks).unwrap(), vec![1]);
+    assert!(seat_of(&c, 1, "ci").unwrap().is_none() && seat_of(&c, 2, "ci").unwrap().is_some());
+    // A panel's life.
+    let ch = Change {
+        until: Some(0),
+        until_pane: Some("p1"),
+        ..Change::default()
+    };
+    let p = set_prefs(&c, "ci", &ch, 2).unwrap();
+    assert!(!p.ended(5, |x| x == "p1") && p.ended(5, |_| false));
+}
+
+#[test]
+fn a_stopped_widget_runs_again_on_try_again() {
+    let c = db();
+    fail(
+        &c,
+        3,
+        "ci",
+        &format!("{STOPPED}after 3 failures, exit 2"),
+        "run.sh",
+        1,
+    )
+    .unwrap();
+    fail(&c, 4, "ci", "exit 2", "run.sh", 1).unwrap();
+    assert_eq!(unstop(&c, "ci", None).unwrap(), vec![3]);
+    assert_eq!(seat_of(&c, 3, "ci").unwrap().unwrap().error, "");
+    assert_eq!(seat_of(&c, 4, "ci").unwrap().unwrap().error, "exit 2");
+}
+
+#[test]
+fn a_box_waits_for_yes_and_ends_with_its_time() {
+    let c = db();
+    assert!(ask_of(&c, 1, "deploy").unwrap().is_none());
+    ask_wait(&c, 1, "deploy", "p1", "panel 1", "**3/5**", 1).unwrap();
+    let a = ask_of(&c, 1, "deploy").unwrap().unwrap();
+    assert_eq!((a.answer.as_str(), a.body.as_str()), ("", "**3/5**"));
+    ask_answer(&c, 1, "deploy", "yes", 50, "", 2).unwrap();
+    assert!(asks_ending(&c, 49, |_| true).unwrap().is_empty());
+    assert_eq!(
+        asks_ending(&c, 50, |_| true).unwrap(),
+        vec![(1, "deploy".to_string())]
+    );
+    assert_eq!(ask_of(&c, 1, "deploy").unwrap().unwrap().answer, "ended");
+    // One there before boxes were asked for is taken as allowed.
+    put(&c, 1, "tests", &body("ok"), "", &PUSH, 1).unwrap();
+    assert!(ask_grandfather(&c, 1, "tests", 3).unwrap());
+    assert_eq!(ask_of(&c, 1, "tests").unwrap().unwrap().answer, "yes");
+    assert!(!ask_grandfather(&c, 1, "nothing", 3).unwrap());
 }

@@ -719,7 +719,7 @@ function resetArm(d) {
 }
 
 /** The documents and the desks both, because the daemon checks both. */
-const resetSentence = (c, plural) => `This deletes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panels, " : ""}the index, the token and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
+const resetSentence = (c, plural) => `This deletes ${plural(c.documents, "document")} in ${plural(c.projects, "project")}, ${c.desks ? plural(c.desks, "desk") + " and their panels, " : ""}the index, the token, every key and Claude account, and this page's preferences. Agents stay connected: the next document they send lands in an empty library. Nothing can be undone.`;
 
 async function openReset(d) {
   const { $, openDialog, closeDialog, help, resetDlg, plural } = d;

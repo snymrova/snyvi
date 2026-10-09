@@ -7,10 +7,10 @@
     "src/pane.rs::start": 124,
     "src/screen.rs::csi_dispatch": 209,
     "src/server/mod.rs::router": 121,
-    "src/server/mod.rs::run": 128,
+    "src/server/mod.rs::run": 124,
     "src/strip.rs::strip": 150,
-    "ui/app/08-desks.js::connect": 188,
-    "ui/desk/07-actions.js::act": 185,
+    "ui/app/08-desks.js::connect": 184,
+    "ui/desk/07-actions.js::act": 182,
     "ui/look.js::init": 241,
     "ui/note.js::init": 209
   }

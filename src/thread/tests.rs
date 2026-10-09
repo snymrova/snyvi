@@ -10,6 +10,10 @@ fn db() -> Connection {
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(CMD_COLUMN).unwrap();
     conn.execute_batch(TAKEN_COLUMN).unwrap();
+    conn.execute_batch(GROUP_COLUMN).unwrap();
+    for c in SUGGEST_COLUMNS_1_30 {
+        conn.execute_batch(c).unwrap();
+    }
     for c in crate::peer::COLUMNS_1_23
         .iter()
         .filter(|c| c.starts_with("ALTER TABLE desk_notes"))
@@ -271,6 +275,70 @@ fn a_desks_waiting_turns_are_its_own() {
     assert_eq!(waiting(&conn).unwrap().len(), 30, "Home's cap, as before");
 }
 
+/// Several questions an agent needs decided are one card (#110): all of
+/// them in, sharing the first one's id, or none of them; and each is still
+/// a turn answered on its own.
+#[test]
+fn questions_asked_together_are_one_card() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = |text: &str, options: &[&str]| Ask {
+        kind: "decide".into(),
+        text: text.into(),
+        options: options.iter().map(|s| s.to_string()).collect(),
+        recommended: 0,
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let three = [
+        q("SF6 as the reference?", &["Yes", "No"]),
+        q("Input buffer off first?", &["Off", "On"]),
+        q("Throws or drills first?", &["Throws", "Drills"]),
+    ];
+    let Asked::Group(ts) = ask_group(&mut conn, d, &three, 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!(ts.len(), 3);
+    assert!(ts
+        .iter()
+        .all(|t| t.ask_group == ts[0].id && t.kind == "decide"));
+    assert_eq!(turns(&conn, d, 0).unwrap().len(), 3);
+    // Answered one at a time, as any turn.
+    assert!(answer(&conn, d, ts[1].id, "Off", "snyvi", 2)
+        .unwrap()
+        .is_some());
+    // One question alone has no group.
+    let Asked::Turn(one) = ask_group(&mut conn, d, &three[..1], 3).unwrap() else {
+        panic!()
+    };
+    assert_eq!(one.ask_group, 0);
+    // A bad question refuses the whole card, and so does no room for it all:
+    // 3 waiting, and 6 the most, leaves no room for four.
+    let bad = [q("Fine?", &["Yes", "No"]), q("Lonely?", &["Only one"])];
+    assert_eq!(ask_group(&mut conn, d, &bad, 4).unwrap(), Asked::BadOptions);
+    let four = [&three[..], &three[..1]].concat();
+    assert_eq!(ask_group(&mut conn, d, &four, 5).unwrap(), Asked::Full);
+    let five = [&three[..], &three[..2]].concat();
+    assert_eq!(ask_group(&mut conn, d, &five, 6).unwrap(), Asked::BadGroup);
+    // A group is questions; a hand-over is not one of them.
+    let merge = Ask {
+        kind: "merge".into(),
+        text: "Merge PR 57".into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let mixed = [three[0].clone(), merge];
+    assert_eq!(ask_group(&mut conn, d, &mixed, 7).unwrap(), Asked::BadGroup);
+    assert_eq!(
+        turns(&conn, d, 0)
+            .unwrap()
+            .iter()
+            .filter(|t| t.answered_at == 0)
+            .count(),
+        3
+    );
+}
+
 /// A decide takes two to four options; the first answer stands, wherever it
 /// was given; an answer from snyvi is told once, to the pane that asked.
 #[test]
@@ -505,8 +573,8 @@ fn a_pr_is_a_number() {
 }
 
 /// A panel holds one thread, the one it last took up; the rest rest, each
-/// saying why, and leave the lists when their time is up. A reader's click
-/// on an old one does not take the panel's thread from it.
+/// marked with why, and are on no list (#109). A reader's click on an old
+/// one does not take the panel's thread from it.
 #[test]
 fn a_panel_holds_one_thread_and_the_rest_rest() {
     let mut conn = db();
@@ -527,8 +595,25 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
         ..Move::default()
     };
     move_thread(&mut conn, d, None, &park, 10).unwrap();
-    let rest = |conn: &Connection, now: i64| -> Vec<(String, String, String)> {
-        let mut v: Vec<_> = for_desk(conn, d, now)
+    // Every thread, marked as the lists mark them, and what the lists keep.
+    let all = |conn: &Connection| -> Vec<(String, String, String)> {
+        let mut st = conn
+            .prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0"
+            ))
+            .unwrap();
+        let mut v: Vec<Thread> = st
+            .query_map(params![d], row_to_thread)
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        mark_rest(conn, &mut v).unwrap();
+        let mut v: Vec<_> = v.into_iter().map(|t| (t.name, t.stage, t.rest)).collect();
+        v.sort();
+        v
+    };
+    let rest = |conn: &Connection| -> Vec<(String, String, String)> {
+        let mut v: Vec<_> = for_desk(conn, d)
             .unwrap()
             .into_iter()
             .map(|t| (t.name, t.stage, t.rest))
@@ -538,7 +623,7 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
     };
     let row = |n: &str, s: &str, r: &str| (n.to_string(), s.to_string(), r.to_string());
     assert_eq!(
-        rest(&conn, 20),
+        all(&conn),
         [
             row("A", "planned", "moved on"),
             row("B", "planned", ""),
@@ -546,34 +631,85 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
             row("D", "planned", "panel closed"),
         ]
     );
+    // Only the one a panel holds is listed.
+    assert_eq!(rest(&conn), [row("B", "planned", "")]);
     // Done on the rail, for work that shipped somewhere the panel did not see.
     let done = Move {
         stage: "shipped".into(),
         reader: true,
         ..Move::default()
     };
-    let a = for_desk(&conn, d, 20)
-        .unwrap()
-        .into_iter()
-        .find(|t| t.name == "A")
+    let a = conn
+        .query_row(
+            "SELECT id FROM threads WHERE desk_id = ?1 AND name = 'A'",
+            params![d],
+            |r| r.get::<_, i64>(0),
+        )
         .unwrap();
-    move_thread(&mut conn, d, Some(a.id), &done, 30).unwrap();
+    move_thread(&mut conn, d, Some(a), &done, 30).unwrap();
     assert_eq!(of_pane(&conn, d, "p1").unwrap().unwrap().name, "B");
-    assert_eq!(rest(&conn, 40)[0], row("A", "shipped", "moved on"));
-    // A day on, the resting one has left the list; parked and shipped stay.
+    // Shipped, it is listed again, as shipped ones are.
     assert_eq!(
-        rest(&conn, 30 + RESTING_SHOWN),
-        [
-            row("A", "shipped", "moved on"),
-            row("B", "planned", ""),
-            row("C", "parked", "parked"),
-        ]
+        rest(&conn),
+        [row("A", "shipped", "moved on"), row("B", "planned", "")]
     );
-    // A week on, the parked one has too. Kept: started again, it is back.
-    assert_eq!(rest(&conn, 10 + PARKED_SHOWN).len(), 2);
+    // Kept off the lists: started again by its name, it is back.
     assert!(matches!(
         start_as(&mut conn, d, "D", "p1", &[]),
         Started::Again(_)
     ));
     assert_eq!(of_pane(&conn, d, "p1").unwrap().unwrap().name, "D");
+}
+
+#[test]
+fn a_box_is_one_card_and_its_answer_is_told() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let b = Suggest {
+        kind: "box".into(),
+        name: "deploy".into(),
+        cmd: "**3/5**".into(),
+        why: "panel 1 wants a box on this desk".into(),
+        pane: "p1".into(),
+        lasts: "panel".into(),
+        ..Suggest::default()
+    };
+    let Suggested::Card(c) = suggest(&mut conn, d, &b, 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!((c.kind.as_str(), c.lasts.as_str()), ("box", "panel"));
+    assert!(box_waiting(&conn, d, "deploy").unwrap());
+    // Not now is told to the panel, as an opened card is.
+    settle(&conn, d, c.id, "dismissed", 2).unwrap();
+    assert!(!box_waiting(&conn, d, "deploy").unwrap());
+    let told = take_opened(&conn, d, "p1", 3).unwrap();
+    assert_eq!((told.len(), told[0].outcome.as_str()), (1, "dismissed"));
+    // Anything else the agent suggests lasts until the reader says.
+    assert_eq!(lasts("forever"), "");
+}
+
+#[test]
+fn a_stopped_widget_is_told_to_the_agent_that_proposed_it() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let w = Suggest {
+        kind: "widget".into(),
+        name: "arena".into(),
+        cmd: "arena-status.sh".into(),
+        folder: "/cfg/widgets/.proposed/1-arena".into(),
+        why: "the queue at a glance".into(),
+        pane: "p1".into(),
+        detail: r#"{"where":"here","every":120}"#.into(),
+        ..Suggest::default()
+    };
+    let Suggested::Card(c) = suggest(&mut conn, d, &w, 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!(c.detail["every"], 120);
+    settle(&conn, d, c.id, "opened", 2).unwrap();
+    assert!(take_opened(&conn, d, "p1", 3).unwrap()[0].note.is_empty());
+    assert!(tell_widget(&conn, "arena", "Your widget arena stopped").unwrap());
+    let again = take_opened(&conn, d, "p1", 4).unwrap();
+    assert_eq!(again[0].note, "Your widget arena stopped");
+    assert!(take_opened(&conn, d, "p1", 5).unwrap().is_empty());
 }

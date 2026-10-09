@@ -9,6 +9,7 @@
 //! This file holds what they share: the `App`, the router, `run`, and the
 //! one way a document is told to every page.
 
+mod api_accounts;
 mod api_agent;
 mod api_browse;
 mod api_desk;
@@ -26,6 +27,7 @@ mod tests;
 mod widget_run;
 mod ws;
 
+use api_accounts::*;
 use api_agent::*;
 use api_browse::*;
 use api_desk::*;
@@ -83,6 +85,8 @@ pub struct App {
     /// The desks' key values: the keychain, or the 0600 file beside the
     /// token when no keychain answers. Names are the store's.
     pub secrets: crate::secrets::Secrets,
+    /// The one Claude account sign-in that may be open (`accounts::signin`).
+    pub signins: Arc<crate::accounts::signin::SignIns>,
     /// Behind a lock because a reset replaces it: the old token is dead from
     /// that moment, which is the point of replacing it.
     pub token: std::sync::RwLock<String>,
@@ -306,6 +310,7 @@ fn new_app(
         browse: Browser::load(paths.config_dir.join("folders.json")),
         paths: paths.clone(),
         secrets: crate::secrets::Secrets::new(paths.config_dir.join("keys.json")),
+        signins: Default::default(),
         token: std::sync::RwLock::new(token),
         window,
         events: tx,
@@ -405,7 +410,23 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/sidebars", get(shell_sidebars))
         .route("/api/widgets/{name}/allow", post(allow_widget))
         .route("/api/widgets/{name}/prefs", post(widget_prefs))
+        .route("/api/widgets/{name}/retry", post(retry_widget))
         .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
+}
+
+/// Claude accounts (`api_accounts`): the list, adding one with its token,
+/// and which one a desk or a panel starts as. The page's, on the desk gate.
+fn account_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/accounts", get(list_accounts).post(add_account))
+        .route("/api/accounts/signin", get(signin_now).post(signin_start))
+        .route("/api/accounts/signin/code", post(signin_code))
+        .route("/api/accounts/signin/cancel", post(signin_cancel))
+        .route("/api/accounts/{id}/rename", post(rename_account))
+        .route("/api/accounts/{id}/renew", post(renew_account))
+        .route("/api/accounts/{id}/delete", post(remove_account))
+        .route("/api/desks/{id}/account", post(set_desk_account))
+        .route("/api/panes/{id}/account", post(set_pane_account))
 }
 
 /// Threads, Your turn and suggested panels (`api_thread`): the agent's and
@@ -561,6 +582,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/asides", get(asides_setting).post(set_asides_setting))
         .merge(pane_routes())
+        .merge(account_routes())
         .merge(thread_routes())
         .merge(widget_routes())
         .merge(peer_routes())

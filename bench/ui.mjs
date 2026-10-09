@@ -2948,13 +2948,15 @@ async function panelRows(cdp, base, token) {
       told.status !== 204 ? `the route answered ${told.status}` : !ctxShown ? "the head never showed it" : !ctxLook.hot ? "87% is not amber" : !ctxLook.row ? "the rail's row does not show it" : `"${ctxLook.title}", amber, and in the rail`]);
 
     // 1.29.0 (#107): the same hover says what is left of the account, from
-    // the freshest panel -- a reading from the other panel is news here too.
+    // the freshest panel -- a reading from the other panel is news here too;
+    // 1.30.0, and when the week's window resets.
     const now = Math.floor(Date.now() / 1000);
     const said = (id, five) => fetch(`${base}/api/panes/${id}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: id === pa ? 87.4 : 10, size: 200000, input: id === pa ? 174800 : 20000 }, limits: { five_hour: { used: five, resets_at: now + 7200 }, seven_day: { used: 20, resets_at: now + 5 * 86400 } } }) });
     const subOf = `document.querySelector('${P(pa)} .pn-ctx')?.dataset.tipSub || ""`;
     await said(pa, 37.6);
-    const usage1 = await until(`(${subOf}) === "Usage left: 5 h 62% · resets in 2 h · 7 d 80%"`, 30) && await q.ev(subOf);
+    // The week's reset, days away, is a day and a time, not "in 120 h".
+    const usage1 = await until(`(${subOf}).startsWith("Usage left: 5 h 62% · resets in 2 h · 7 d 80% · resets ") && !(${subOf}).includes("· resets in 120")`, 30) && await q.ev(subOf);
     await said(pb, 50);
     const usage2 = await until(`(${subOf}).startsWith("Usage left: 5 h 50%")`, 30);
     rows.push(["the context hover says how much usage is left", !!usage1 && usage2,
@@ -3079,23 +3081,49 @@ async function panelRows(cdp, base, token) {
         `${lay.h} px tall against ${lay.bare}, text ${Math.round(lay.w)} of ${Math.round(lay.row)} px in ${lay.lines} lines, ${lay.beside} beside it, ${lay.marks} marks, tip "${lay.tip}"`]);
 
     // #105: a panel's thread is a chip on its row, not a line under it; a
-    // second thread the panel starts rests the first, and the chip's menu is
-    // what a reader does -- Done, Park, Rename, Remove -- not stages.
+    // second thread the panel starts rests the first, which is then on no
+    // list (#109: no Resting), and the chip's menu is what a reader does --
+    // Done, Rename, Remove -- not stages, and no Park.
     const thLine = `.dk-pth[data-tip="bench thread with a long name"]`;
     const thOnRow = threaded.ok && await until(`!!document.querySelector('${thLine}')?.closest(".dk-pane") && !document.querySelector(".dk-pane + li.dk-pth")`, 40);
     await agent("thread", { name: "bench second thread", by: "bench-agent" });
     const thRested = await until(`!!document.querySelector('.dk-pane .dk-pth[data-tip="bench second thread"]') && !document.querySelector('${thLine}')
-      && [...document.querySelectorAll('.th-rest .dk-thread.rest .th-name')].some(e => e.textContent === "bench thread with a long name")`, 40);
-    const thWhy = await q.ev(`[...document.querySelectorAll('.th-rest .dk-thread.rest')].find(e => e.querySelector(".th-name")?.textContent === "bench thread with a long name")?.querySelector(".th-why")?.textContent || ""`);
+      && !document.querySelector('[data-part="rail.threads"]')`, 40);
+    const thListed = (await (await fetch(`${base}/api/desks/${desk}/threads`, { headers: H })).json().catch(() => ({}))).threads?.map(t => t.name) || [];
     await rightOn('.dk-pth[data-tip="bench second thread"]');
     const thMenu = await q.ev(menu);
     const thSaid = thMenu ? thMenu.items.join(" · ") : "";
     if (thMenu) await pick("Done");
     const thDone = !!thMenu && await until(`document.querySelector('.dk-pth[data-tip="bench second thread"] .th-word')?.textContent === "✓ shipped"`, 40);
-    rows.push(["a panel's thread is a chip on its row; the next one rests it; Done ships it",
-      thOnRow && thRested && thWhy.endsWith("moved on") && !!thMenu && !/Move to/.test(thSaid) && thSaid.startsWith("Done") && thDone,
-      !thOnRow ? "no chip on the panel's row, or a line under it" : !thRested ? "the second thread did not take the line, or the first did not rest" : !thWhy.endsWith("moved on") ? `the first rests as "${thWhy}"` :
-        !thMenu ? "no menu on the line" : /Move to|^(?!Done)/.test(thSaid) ? `the menu: ${thSaid}` : !thDone ? "Done left it unshipped" : `rests "${thWhy}"; menu ${thSaid}; ✓ shipped`]);
+    rows.push(["a panel's thread is a chip on its row; the next one files the first away, on no list; Done ships it",
+      thOnRow && thRested && !thListed.includes("bench thread with a long name") && !!thMenu && !/Move to|Park/.test(thSaid) && thSaid.startsWith("Done") && thDone,
+      !thOnRow ? "no chip on the panel's row, or a line under it" : !thRested ? "the second thread did not take the line, or a Resting section is drawn" : thListed.includes("bench thread with a long name") ? `the first is still listed: ${thListed.join(", ")}` :
+        !thMenu ? "no menu on the line" : /Move to|Park|^(?!Done)/.test(thSaid) ? `the menu: ${thSaid}` : !thDone ? "Done left it unshipped" : `off the lists; menu ${thSaid}; ✓ shipped`]);
+
+    // #110: decisions asked together are one card: a row each, the
+    // recommended option marked; the card counts down as they are answered,
+    // and only with all of them answered does it offer to send them.
+    const grouped = await (await agent("ask", { by: "bench-agent", questions: [
+      { question: "bench: reference game?", options: ["SF6", "SF2"], recommended: 0 },
+      { question: "bench: buffer off first?", options: ["Off", "On"], recommended: 0 },
+      { question: "bench: throws or drills?", options: ["Throws", "Drills"] },
+    ] })).json().catch(() => ({}));
+    const gIds = (grouped.turns || []).map(t => t.id);
+    const gCard = gIds.length === 3 && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gq').length === 3`, 40);
+    const gRec = gCard && await q.ev(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-opt.rec').length`);
+    const steps = [];
+    for (const [i, v] of [[0, "SF6"], [1, "Off"], [2, "Drills"]]) {
+      if (!gCard) break;
+      steps.push(await q.ev(`document.querySelector('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gfoot')?.textContent || ""`));
+      await q.clickOn(`.dk-turn.grp[data-g="${gIds[0]}"] .tn-gq[data-w="${gIds[i]}"] [data-v="${v}"]`);
+      await until(`!document.querySelector('.tn-gq[data-w="${gIds[i]}"]')`, 30);
+    }
+    const gFoot = gCard && await until(`(() => { const f = document.querySelector('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gfoot'); return f && (f.querySelector('[data-a="tn-gsend"]') || /next message/.test(f.textContent)); })()`, 40);
+    rows.push(["questions asked together are one card that counts down to Send answers",
+      gCard && gRec === 2 && /3 of 3/.test(steps[0] || "") && /1 of 3/.test(steps[2] || "") && !!gFoot,
+      gIds.length !== 3 ? `ask with questions answered ${JSON.stringify(grouped).slice(0, 120)}` : !gCard ? "no card with three rows" : gRec !== 2 ? `${gRec} recommended options marked, not 2` :
+        !gFoot ? `the foot never offered to send: ${steps.join(" / ")}` : `${steps.join(" → ")} → send`]);
+    if (gCard) await q.ev(`document.querySelector('[data-a="tn-gunsend"][data-g="${gIds[0]}"]')?.click(); 1`);
 
     // #95: a command handed over is a card with the whole command; one that
     // could close the paste early is refused at the door; Run types it into

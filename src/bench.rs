@@ -509,7 +509,10 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// to matter; the feature is what the half megabyte buys. 18 held in
 /// 1.20.0, whose threads took the musl build from 17.65 to 18.02 MB (axum's
 /// handlers 110 KB of it), by building the bundled SQLite for size: 17.13.
-const BINARY_MB: f64 = 18.0;
+/// 18 until 1.30.0: several Claude accounts (signing in through a hidden
+/// terminal, their routes) and widgets that run on the desks chosen, with
+/// their cards, took the musl build from 17.9 to 18.2 MB.
+const BINARY_MB: f64 = 18.5;
 
 /// Returns whether any row was over budget.
 ///

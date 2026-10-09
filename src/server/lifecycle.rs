@@ -858,10 +858,11 @@ pub(crate) struct ResetBody {
 }
 
 /// Back to a fresh install: every document and version, the index, the token,
-/// and -- by the event this ends with -- the preferences every open page keeps.
-/// The daemon stays up and the agents stay registered, so the next send lands
-/// in an empty library. The one action here that cannot be undone, and the one
-/// that asks for a number rather than a click.
+/// every key and Claude account with its value, and -- by the event this ends
+/// with -- the preferences every open page keeps. The daemon stays up and the
+/// agents stay registered, so the next send lands in an empty library. The one
+/// action here that cannot be undone, and the one that asks for a number
+/// rather than a click.
 ///
 /// A same-origin POST is accepted beside the token, as `refuse_reader` explains:
 /// the page has no token, and the dialog is the page's.
@@ -915,8 +916,15 @@ pub(crate) async fn reset(State(app): S, headers: HeaderMap, Json(b): Json<Reset
     // The wipe and the VACUUM are disk work, and on a disk under pressure
     // they take as long as they take: off the runtime, so the other pages'
     // requests -- and the reload they are about to make -- are still answered.
+    // A sign-in half done would keep its token in a store just emptied.
+    app.signins.cancel();
+    // The keychain is blocking work too, so the values go on the same thread.
     let app2 = app.clone();
-    match tokio::task::spawn_blocking(move || app2.store.reset()).await {
+    match tokio::task::spawn_blocking(move || {
+        app2.store.reset().map(|held| held.forget(&app2.secrets))
+    })
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return err(e),
         Err(e) => return err(anyhow::anyhow!("reset task: {e}")),

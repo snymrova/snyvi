@@ -231,6 +231,7 @@ async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_lapses() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         };
         let status = panes.get(late).start(s, &panes).unwrap();
         assert!(!status.resume);
@@ -299,6 +300,7 @@ async fn a_pane_runs_a_process_and_its_output_arrives_as_frames() {
             accent: "",
             offer: false,
             env: &[("SNYVI_T".to_string(), "x".to_string())],
+            account: 0,
         },
         &panes,
     )
@@ -482,6 +484,7 @@ async fn a_verbatim_folder_starts_the_panel_in_that_folder() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         },
         &panes,
     )
@@ -590,6 +593,7 @@ async fn an_unwatched_pane_is_caught_up_when_a_page_attaches() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         },
         &panes,
     )
@@ -634,6 +638,7 @@ async fn a_folder_through_a_link_is_not_a_move() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         },
         &panes,
     )
@@ -685,6 +690,7 @@ async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         },
         &panes,
     )
@@ -752,6 +758,7 @@ async fn an_agent_is_in_from_its_start_to_its_end() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         },
         &panes,
     )
@@ -798,6 +805,7 @@ async fn a_new_title_reaches_the_desk_and_not_the_sidebar() {
             accent: "",
             offer: false,
             env: &[],
+            account: 0,
         },
         &panes,
     )

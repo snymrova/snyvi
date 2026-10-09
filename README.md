@@ -207,6 +207,15 @@ inbox under its project. Desks are for when you want the agents in view.
 </details>
 
 <details>
+<summary><b>Can each desk use a different Claude account?</b></summary>
+
+Yes. Sign in to another account from a desk's keys sheet, and that desk's
+panels start as that account. Right-click a panel to run it as
+another, back into the same conversation. Your settings, hooks and history
+stay shared. [How](docs/GUIDE.md#claude-code).
+</details>
+
+<details>
 <summary><b>Windows says it "protected your PC".</b></summary>
 
 The Windows installer isn't signed yet, so SmartScreen asks once: *More

@@ -179,6 +179,9 @@ pub struct Desk {
     /// The keys its panels start with, by name only: the desk's own and the
     /// ones kept for every desk. Values live in the keychain (`crate::secrets`).
     pub keys: Vec<DeskKey>,
+    /// The Claude account its panels start as, or 0 for `/login`
+    /// (`crate::accounts`).
+    pub account: i64,
     pub panes: Vec<Pane>,
 }
 
@@ -417,6 +420,9 @@ pub struct Pane {
     pub resume: String,
     /// What the reader called it, or empty for the title its program sets.
     pub name: String,
+    /// Its own Claude account, or `None` to start as its desk's
+    /// (`crate::accounts::effective`).
+    pub account: Option<i64>,
 }
 
 /// Where a document came from, when it came from a pane: the desk and the
@@ -439,6 +445,16 @@ pub struct Placed {
     pub desk_id: i64,
     pub desk_name: String,
     pub root: String,
+    /// The desk's Claude account, which the pane starts as unless it has its
+    /// own (`crate::accounts::effective`).
+    pub desk_account: i64,
+}
+
+impl Placed {
+    /// The Claude account this pane starts as.
+    pub fn account(&self) -> i64 {
+        crate::accounts::effective(self.desk_account, self.pane.account)
+    }
 }
 
 /// What came of asking for a pane.
@@ -467,7 +483,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
         .query_map([], row_to_desk)?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
-        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name FROM panes ORDER BY desk_id, slot",
+        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes ORDER BY desk_id, slot",
     )?;
     let panes: Vec<(i64, Pane)> = stmt
         .query_map([], |r| Ok((r.get(0)?, row_to_pane(r, 1)?)))?
@@ -510,7 +526,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name FROM panes WHERE desk_id = ?1 ORDER BY slot",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes WHERE desk_id = ?1 ORDER BY slot",
     )?;
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
@@ -553,6 +569,7 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         visited_at: 0,
         parked: None,
         keys: Vec::new(),
+        account: 0,
         panes: Vec::new(),
     })
 }
@@ -693,8 +710,8 @@ pub fn close(conn: &mut Connection, id: i64, now: i64) -> Result<Option<Vec<Stri
     // they were written, which puts each where it was.
     for p in &ids {
         tx.execute(
-            "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, created_at, closed_at)
-             SELECT id, desk_id, cwd, cmd, name, agent_session, created_at, ?2 FROM panes WHERE id = ?1",
+            "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, account, created_at, closed_at)
+             SELECT id, desk_id, cwd, cmd, name, agent_session, account, created_at, ?2 FROM panes WHERE id = ?1",
             params![p, now],
         )?;
     }
@@ -729,8 +746,8 @@ pub fn reopen(conn: &mut Connection, id: i64) -> Result<bool> {
         .collect::<rusqlite::Result<_>>()?;
     for (i, p) in back.iter().enumerate() {
         tx.execute(
-            "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, created_at)
-             SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, created_at FROM panes_closed WHERE id = ?1",
+            "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, account, created_at)
+             SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
             params![p, i as i64 + 1],
         )?;
         tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![p])?;
@@ -912,6 +929,7 @@ pub fn open_pane(
         agent_session: String::new(),
         resume: String::new(),
         name: String::new(),
+        account: None,
     }))
 }
 
@@ -978,8 +996,8 @@ pub fn close_pane(tx: &rusqlite::Transaction, id: &str, now: i64) -> Result<Opti
         return Ok(None);
     };
     tx.execute(
-        "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, created_at, closed_at)
-         SELECT id, desk_id, cwd, cmd, name, agent_session, created_at, ?2 FROM panes WHERE id = ?1",
+        "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, account, created_at, closed_at)
+         SELECT id, desk_id, cwd, cmd, name, agent_session, account, created_at, ?2 FROM panes WHERE id = ?1",
         params![id, now],
     )?;
     tx.execute("DELETE FROM panes WHERE id = ?1", params![id])?;
@@ -1029,13 +1047,13 @@ pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
         return Ok(Restored::DeskFull);
     };
     tx.execute(
-        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, created_at)
-         SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, created_at FROM panes_closed WHERE id = ?1",
+        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, account, created_at)
+         SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
         params![id, slot],
     )?;
     tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![id])?;
     let pane = tx.query_row(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name FROM panes WHERE id = ?1",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes WHERE id = ?1",
         params![id],
         |r| row_to_pane(r, 0),
     )?;
@@ -1096,15 +1114,16 @@ pub fn rename_pane(conn: &Connection, id: &str, name: &str) -> Result<bool> {
 pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
     Ok(conn
         .query_row(
-            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, d.id, d.name, d.root
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, d.id, d.name, d.root, d.account
              FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
             params![id],
             |r| {
                 Ok(Placed {
                     pane: row_to_pane(r, 0)?,
-                    desk_id: r.get(7)?,
-                    desk_name: r.get(8)?,
-                    root: r.get(9)?,
+                    desk_id: r.get(8)?,
+                    desk_name: r.get(9)?,
+                    root: r.get(10)?,
+                    desk_account: r.get(11)?,
                 })
             },
         )
@@ -1839,7 +1858,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -1871,6 +1890,7 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
             }),
         },
         keys: Vec::new(),
+        account: r.get(15)?,
         panes: Vec::new(),
     })
 }
@@ -1890,6 +1910,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
         agent_session: session,
         resume,
         name: r.get(at + 6)?,
+        account: r.get(at + 7)?,
     })
 }
 
