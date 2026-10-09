@@ -306,7 +306,7 @@
   const peerUse = () => import(`/assets/peer.js${boot.v ? `?v=${boot.v}` : ""}`);
   // Saved into a folder: Copy path has a file here to give now (#99).
   const savedHere = (id, path) => { state.cache.delete(id); if (state.doc && state.doc.id === id) { state.doc.local_path = path; renderMeta(); } };
-  const peerCtx = { esc, rel, sayErr, toast, saved: savedHere, peer: peerUse, home: () => showHome(true) };
+  const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true) };
   const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------

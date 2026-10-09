@@ -14,6 +14,7 @@
 use super::*;
 use crate::peer::{self, Content, Identity, PairState, Peer, Waiting};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 
 /// What the daemon holds in memory for its friends: its own keys once read,
 /// the pairings under way, and the link's wake-up.
@@ -78,6 +79,11 @@ pub(crate) struct Pairing {
     pub state: PairState,
     /// When the code dies; the entry is forgotten a while after.
     pub until: i64,
+    /// Set by Cancel: the pairing's thread stops at its next turn.
+    pub stop: Arc<AtomicBool>,
+    /// This snyvi minted the code (rather than typed a friend's), and the
+    /// name it will tell them: what lets Make give the same code back.
+    pub made: Option<String>,
 }
 
 /// How many pairings may wait at once. One is the case; a few is a reader
@@ -85,6 +91,8 @@ pub(crate) struct Pairing {
 const PAIRINGS_MAX: usize = 5;
 /// A finished pairing stays readable this long after its code died.
 const PAIRING_KEPT: i64 = 600;
+/// Make gives back a code it is already waiting on if it has this long left.
+const REUSE_LEFT: i64 = 180;
 /// A frame that fails this many times is left in the outbox, not retried.
 const TRIES_MAX: i64 = 20;
 /// How many of what went to each friend their row lists.
@@ -115,7 +123,8 @@ pub(crate) fn identity_if_any(app: &App) -> Option<Identity> {
 }
 
 /// The name a friend sees this snyvi as. What the reader typed when pairing,
-/// kept in one file; the account's name until then.
+/// kept in one file, exactly as typed; until then the account's name with
+/// its first letter made a capital, since `sunny` is nobody's name for a friend.
 pub(crate) fn my_name(paths: &Paths) -> String {
     std::fs::read_to_string(paths.config_dir.join("peer-name"))
         .ok()
@@ -125,9 +134,19 @@ pub(crate) fn my_name(paths: &Paths) -> String {
             std::env::var("USER")
                 .or_else(|_| std::env::var("USERNAME"))
                 .ok()
-                .filter(|s| !s.trim().is_empty())
+                .map(|s| capitalized(s.trim()))
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "a friend".to_string())
         })
+}
+
+/// `sunny` → `Sunny`; the rest left as it is.
+pub(crate) fn capitalized(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().chain(c).collect(),
+        None => String::new(),
+    }
 }
 
 fn set_my_name(paths: &Paths, name: &str) {
@@ -139,8 +158,10 @@ fn set_my_name(paths: &Paths, name: &str) {
     let _ = std::fs::write(paths.config_dir.join("peer-name"), name);
 }
 
+/// The friends changed. The count rides along, so a menu knows whether to
+/// offer Send to a friend… without asking (`boot.friends` before the first).
 pub(crate) fn peers_moved(app: &App) {
-    emit(app, "peers", json!({}));
+    emit(app, "peers", json!({ "friends": friend_count(app) }));
 }
 
 /// `GET /api/peers`: the friends, the lines waiting, the offers open, and
@@ -203,6 +224,27 @@ pub(crate) async fn pair_start(
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
+    set_my_name(&app.paths, &b.name);
+    let name = my_name(&app.paths);
+    // A code this snyvi is already waiting on, under the same name, comes
+    // back: a window closed mid-wait sent no Cancel, and a second code
+    // would only be a second one to say.
+    let now = crate::store::now();
+    let waiting = app
+        .peers
+        .pairings
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, p)| {
+            p.state == PairState::Waiting
+                && p.made.as_deref() == Some(name.as_str())
+                && p.until - now >= REUSE_LEFT
+        })
+        .map(|(c, p)| (c.clone(), p.until));
+    if let Some((code, until)) = waiting {
+        return Json(json!({ "code": code, "until": until })).into_response();
+    }
     if too_many(&app) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -214,8 +256,7 @@ pub(crate) async fn pair_start(
         Ok(c) => c,
         Err(e) => return err(e),
     };
-    set_my_name(&app.paths, &b.name);
-    let until = start_pairing(&app, code.clone(), my_name(&app.paths));
+    let until = start_pairing(&app, code.clone(), name, true);
     Json(json!({ "code": code, "until": until })).into_response()
 }
 
@@ -253,8 +294,36 @@ pub(crate) async fn pair_join(
             .into_response();
     }
     set_my_name(&app.paths, &b.name);
-    let until = start_pairing(&app, code.clone(), my_name(&app.paths));
+    let until = start_pairing(&app, code.clone(), my_name(&app.paths), false);
     Json(json!({ "code": code, "until": until })).into_response()
+}
+
+/// `DELETE /api/peers/pair/{code}`: Cancel. The code stops counting toward
+/// the few that may wait at once there and then; its thread puts no hello
+/// and pins nothing. A pairing already over is left as it ended.
+pub(crate) async fn pair_cancel(
+    State(app): S,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    let mut all = app.peers.pairings.lock().unwrap();
+    let Some(p) = all.get_mut(&code) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if p.state == PairState::Waiting {
+        p.stop.store(true, Ordering::Relaxed);
+        p.state = PairState::Cancelled;
+        drop(all);
+        emit(
+            &app,
+            "pairing",
+            json!({ "code": code, "pairing": PairState::Cancelled }),
+        );
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// `GET /api/peers/pair/{code}`: where it has got to.
@@ -267,25 +336,34 @@ pub(crate) async fn pair_state(State(app): S, Path(code): Path<String>) -> Respo
 }
 
 /// One side of a pairing, on a thread of its own, from the code to the
-/// pinned row. Returns when the code dies.
-fn start_pairing(app: &Arc<App>, code: String, name: String) -> i64 {
+/// pinned row. Returns when the code dies. `made`: this snyvi minted it.
+fn start_pairing(app: &Arc<App>, code: String, name: String, made: bool) -> i64 {
     let until = crate::store::now() + peer::CODE_TTL;
+    let stop = Arc::new(AtomicBool::new(false));
     app.peers.pairings.lock().unwrap().insert(
         code.clone(),
         Pairing {
             state: PairState::Waiting,
             until,
+            stop: stop.clone(),
+            made: made.then(|| name.clone()),
         },
     );
     let app = app.clone();
     tokio::spawn(async move {
         let app2 = app.clone();
         let c = code.clone();
+        let halt = stop.clone();
         let r = tokio::task::spawn_blocking(move || -> anyhow::Result<(Peer, String)> {
             let me = identity_blocking(&app2)?;
-            peer::pair(&me, &c, &name, until)
+            peer::pair(&me, &c, &name, until, &halt)
         })
         .await;
+        // Cancelled while the last message was on its way: nothing is pinned,
+        // and the state Cancel set stands.
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
         let state = match r {
             Ok(Ok((p, emoji))) => match app.store.pin_peer(&p) {
                 Ok(pinned) => {
@@ -330,19 +408,25 @@ pub(crate) async fn peer_rename(
     }
     match app.store.rename_peer(id, &b.name) {
         Ok(true) => {
-            // The friend's project row follows their name, unless the reader
-            // named that themselves.
-            if let Ok(Some(p)) = app.store.peer(id) {
-                let _ = app
-                    .store
-                    .rename_project_by_root(&p.project_root(), &p.project_name());
-            }
-            peers_moved(&app);
+            peer_row_follows(&app, id);
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
+}
+
+/// One name everywhere: after a friend is renamed, from ⋯ or from their
+/// row, the row reads `From <name>` again, even one labelled by hand before
+/// 1.29, and everything showing either name is told. The name it ended as.
+pub(crate) fn peer_row_follows(app: &App, id: i64) -> Option<String> {
+    let p = app.store.peer(id).ok().flatten()?;
+    let row = p.project_name();
+    if let Ok(Some(project)) = app.store.rename_peer_project(&p.project_root(), &row) {
+        emit(app, "renamed", json!({ "project": project, "name": row }));
+    }
+    peers_moved(app);
+    Some(p.name)
 }
 
 #[derive(Deserialize, Default)]
@@ -993,8 +1077,8 @@ fn leave(
 }
 
 /// Why a frame to a friend on a line waits: this daemon's line to them is
-/// not open.
-const LINE_DOWN: &str = "the line to them is not open";
+/// not open. Their Home row says "waiting (offline)" from the word.
+const LINE_DOWN: &str = "they are offline; it goes when they or the relay can be reached";
 
 /// Why a reply or a done waits in the outbox: the friend's snyvi does not
 /// read it yet. It goes the first time a frame from them says it would.
@@ -1241,8 +1325,15 @@ fn arrived(
     frame: &str,
     via_line: bool,
 ) -> anyhow::Result<()> {
-    // "From them … ago" is what they sent, not what their snyvi said back.
-    if matches!(content, Content::Document { .. } | Content::Note { .. }) {
+    // "From them … ago" is what they sent or wrote back, not what their
+    // snyvi said back by itself (a receipt).
+    if matches!(
+        content,
+        Content::Document { .. }
+            | Content::Note { .. }
+            | Content::Reply { .. }
+            | Content::Done { .. }
+    ) {
         let _ = app.store.touch_peer(p.id, true);
     }
     // They are there: whatever waits for them is due now.

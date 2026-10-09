@@ -85,8 +85,8 @@ pub(crate) async fn doc_json(State(app): S, Path(id): Path<String>) -> Response 
             // Sent as `content` with `lang: "html"`, it is a page all the same.
             let preview = render::preview_kind(&doc_ext(&doc));
             // Replies and Reply… only where there is a friend to have them.
-            let friends = has_friends(&app);
-            let talk = if friends {
+            let friends = friend_count(&app);
+            let talk = if friends > 0 {
                 talk(&app, &doc)
             } else {
                 Talk::default()
@@ -368,6 +368,32 @@ pub(crate) async fn rename_project(
         )
             .into_response();
     };
+    // A friend's row is their name, not a label of its own (one name
+    // everywhere): renaming it renames them, and the row follows.
+    let friend = app
+        .store
+        .project_root(id)
+        .and_then(|root| root.strip_prefix("peer:").map(str::to_string))
+        .and_then(|key| app.store.peer_by_key(&key).ok().flatten());
+    if let Some(p) = friend {
+        let theirs = crate::peer::name_from_project(&name);
+        if theirs.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "a name cannot be empty" })),
+            )
+                .into_response();
+        }
+        return match app.store.rename_peer(p.id, theirs) {
+            Ok(_) => match super::api_peer::peer_row_follows(&app, p.id) {
+                Some(n) => {
+                    Json(json!({ "ok": true, "name": crate::peer::from_name(&n) })).into_response()
+                }
+                None => StatusCode::NOT_FOUND.into_response(),
+            },
+            Err(e) => err(e),
+        };
+    }
     match app.store.rename_project(id, &name) {
         Ok(true) => {
             emit(&app, "renamed", json!({ "project": id, "name": name }));

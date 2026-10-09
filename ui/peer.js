@@ -23,7 +23,8 @@ const CSS = `
 #peer h2 .pr-x:hover { color: var(--fg); }
 #peer p { margin: 0 0 10px; color: var(--fg-2); font-size: var(--fs-ui); line-height: 1.45; }
 #peer .pr-quiet { color: var(--fg-3); }
-#peer .pr-code { font-family: var(--mono); font-size: var(--fs-h2); letter-spacing: 0.02em; text-align: center; padding: 14px 10px; margin: 8px 0 10px; border: 1px dashed var(--rule-2); border-radius: var(--r-md); user-select: all; }
+#peer .pr-code { font-family: var(--mono); font-size: clamp(var(--fs-read), 5.4vw, var(--fs-h2)); letter-spacing: 0.02em; text-align: center; padding: 14px 10px; margin: 8px 0 6px; border: 1px dashed var(--rule-2); border-radius: var(--r-md); user-select: all; overflow-wrap: anywhere; }
+#peer .pr-url { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); overflow-wrap: anywhere; }
 #peer .pr-emoji { font-size: 34px; text-align: center; padding: 10px 0 6px; letter-spacing: 0.25em; }
 #peer .pr-row { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; }
 #peer input { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
@@ -45,6 +46,14 @@ const CSS = `
 `;
 
 let box = null, opener = null, poll = 0, styled = false;
+/** The code this snyvi is waiting on, while the pairing sheet shows it:
+ *  whatever takes the sheet away withdraws it on the daemon. */
+let waiting = "";
+function withdraw() {
+  if (!waiting) return;
+  fetch(`/api/peers/pair/${encodeURIComponent(waiting)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  waiting = "";
+}
 /** The open box's own listeners: dropped when another box takes its place,
  *  so a sheet opened twice does not answer one click twice. */
 let wired = null;
@@ -66,7 +75,7 @@ function ensure() {
 function open(title, html) {
   const el = ensure();
   if (el.hidden) opener = document.activeElement;
-  clearInterval(poll); poll = 0;
+  clearInterval(poll); poll = 0; withdraw();
   wired?.abort(); wired = new AbortController();
   el.innerHTML = `<div class="pr-box"><h2>${title}<button type="button" class="pr-x pr-link" data-pr="close" aria-label="Close">✕</button></h2>${html}</div>`;
   el.hidden = false;
@@ -77,14 +86,26 @@ function open(title, html) {
 
 export function close() {
   if (!box || box.hidden) return false;
-  clearInterval(poll); poll = 0;
+  clearInterval(poll); poll = 0; withdraw();
   box.hidden = true;
   if (opener && opener.isConnected && opener !== document.body) opener.focus({ preventScroll: true });
   opener = null;
   return true;
 }
 
-const say = (s, err = false) => { const el = box?.querySelector(".pr-said"); if (el) { el.textContent = s || ""; el.classList.toggle("err", !!err); } };
+/** A line in the sheet. An error the daemon wrote in lower case, as its
+ *  messages are, reads as a sentence. */
+const say = (s, err = false) => {
+  const el = box?.querySelector(".pr-said");
+  if (!el) return;
+  if (err && s) s = s[0].toUpperCase() + s.slice(1) + (/[.!?…]$/.test(s) ? "" : ".");
+  el.textContent = s || ""; el.classList.toggle("err", !!err);
+};
+/** Copy, said on the button for a moment. */
+async function copy(text, b) {
+  try { await navigator.clipboard.writeText(text); } catch { say("Could not copy it; select the code and copy it by hand", true); return; }
+  b.textContent = "Copied"; setTimeout(() => { if (b.isConnected) b.textContent = "Copy"; }, 1200);
+}
 
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -101,65 +122,85 @@ async function friends() {
 
 /* ---------- pairing ---------- */
 
+const INTRO = `<p>One of you makes a code and says it to the other: over a call, a message, in the room. The relay never sees the code; what passes through it is sealed with it.</p>`;
+const nameRow = (esc, me) => `<div class="pr-row"><label class="pr-quiet" for="pr-name">Your name, as they will see it</label></div>` +
+  `<div class="pr-row"><input id="pr-name" maxlength="60" value="${esc(me)}" autocomplete="off"></div>`;
+
 /** The pairing sheet. `code` is a friend's code to start with, from a
- *  snyvi://pair/… link or Home's field. */
-export async function pair(ctx, code = "") {
+ *  snyvi://pair/… link; `mode` "join" opens on the field for one (Ctrl K's
+ *  Join a friend's code…). Otherwise it asks which of the two the reader is:
+ *  the one making the code, or the one who was told it. */
+export async function pair(ctx, code = "", mode = "") {
   const { esc } = ctx;
   let me = "";
   try { me = (await friends()).me.name || ""; } catch {}
-  open("Pair with a friend",
-    `<p>Both of you run snyvi. One makes a code and says it to the other -- over a call, a message, in the room. Nothing but the code leaves either machine until both have typed it.</p>` +
-    `<div class="pr-row"><label class="pr-quiet" for="pr-name">Your name, as they will see it</label></div>` +
-    `<div class="pr-row"><input id="pr-name" maxlength="60" value="${esc(me)}" autocomplete="off"></div>` +
-    `<div class="pr-row"><button type="button" class="pr-go" data-pr="make">Make a code</button><span class="pr-quiet">or</span>` +
-    `<input id="pr-code" placeholder="type their code" value="${esc(code)}" autocomplete="off" spellcheck="false" aria-label="A friend's code"><button type="button" data-pr="join">Join</button></div>` +
+  if (code || mode === "join") return have(ctx, me, code);
+  open("Pair with a friend", INTRO + nameRow(esc, me) +
+    `<div class="pr-foot"><button type="button" data-pr="have">I have a code</button><button type="button" class="pr-go" data-pr="make">I'll make a code</button></div>` +
     `<div class="pr-said" aria-live="polite"></div>`);
   const name = () => box.querySelector("#pr-name")?.value.trim() || me;
   box.querySelector("[data-pr=make]").addEventListener("click", () => start(ctx, "/api/peers/pair", { name: name() }));
-  const join = () => { const c = box.querySelector("#pr-code").value.trim(); if (c) start(ctx, "/api/peers/join", { name: name(), code: c }); else box.querySelector("#pr-code").focus(); };
+  box.querySelector("[data-pr=have]").addEventListener("click", () => have(ctx, name(), ""));
+  box.querySelector("[data-pr=make]").focus({ preventScroll: true });
+}
+
+/** The friend who was told a code: the field for it, and Join. */
+function have(ctx, me, code) {
+  const { esc } = ctx;
+  open("Join a friend's code", `<p>Type the code they made: three words and three letters.</p>` + nameRow(esc, me) +
+    `<div class="pr-row"><input id="pr-code" placeholder="ocean-ladder-acorn-kpm" value="${esc(code)}" autocomplete="off" spellcheck="false" aria-label="Their code"><button type="button" class="pr-go" data-pr="join">Join</button></div>` +
+    `<div class="pr-said" aria-live="polite"></div>`);
+  const field = box.querySelector("#pr-code");
+  const join = () => { const c = field.value.trim(); if (c) start(ctx, "/api/peers/join", { name: box.querySelector("#pr-name")?.value.trim() || me, code: c }); else field.focus(); };
   box.querySelector("[data-pr=join]").addEventListener("click", join);
-  box.querySelector("#pr-code").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); join(); } });
-  if (code) box.querySelector("[data-pr=join]").focus();
+  box.querySelector("#pr-name").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); join(); } });
+  field.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); join(); } });
+  (code ? box.querySelector("[data-pr=join]") : field).focus({ preventScroll: true });
 }
 
 async function start(ctx, url, body) {
   const { esc } = ctx;
-  for (const b of box.querySelectorAll("button.pr-go, [data-pr=join]")) b.disabled = true;
+  const busy = on => { for (const b of box.querySelectorAll("button.pr-go, [data-pr=have]")) b.disabled = on; };
+  busy(true);
   say("Asking the relay…");
   let r;
   try { r = await post(url, body); }
-  catch (e) { say(ctx.sayErr(e).why, true); for (const b of box.querySelectorAll("button.pr-go, [data-pr=join]")) b.disabled = false; return; }
+  catch (e) { say(ctx.sayErr(e).why, true); busy(false); return; }
   const made = url.endsWith("/pair");
   open("Pair with a friend",
     (made
       ? `<p>Say this to your friend, or send it. It works once, for ten minutes.</p><div class="pr-code" aria-label="Your code">${esc(r.code)}</div>` +
-        `<p class="pr-quiet">They type it under <b>Pair with a friend…</b> at the foot of their Home, or open <span style="font-family:var(--mono)">snyvi://pair/${esc(r.code)}</span>.</p>`
+        `<p class="pr-quiet">They press <b>I have a code</b> under <b>Pair with a friend…</b> (at the foot of their Home, or in ${/Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K"}), or open</p><p class="pr-url">snyvi://pair/${esc(r.code)}</p>`
       : `<p>Waiting for <span style="font-family:var(--mono)">${esc(r.code)}</span> to meet its other half…</p>`) +
-    `<div class="pr-emoji" aria-live="polite"></div><div class="pr-said" aria-live="polite">Waiting for the other side…</div>` +
-    `<div class="pr-foot"><button type="button" data-pr="close">Cancel</button></div>`);
+    `<div class="pr-said" aria-live="polite">Waiting for the other side…</div>` +
+    `<div class="pr-foot"><button type="button" data-pr="close">Cancel</button>${made ? `<button type="button" class="pr-go" data-pr="copy">Copy</button>` : ""}</div>`);
+  waiting = r.code;
+  const cp = box.querySelector("[data-pr=copy]");
+  if (cp) { cp.addEventListener("click", () => copy(r.code, cp)); cp.focus({ preventScroll: true }); }
   const until = r.until * 1000;
+  const over = why => {
+    clearInterval(poll); poll = 0; waiting = "";
+    say(why, true);
+    box.querySelector(".pr-foot").innerHTML = `<button type="button" data-pr="close">Close</button><button type="button" class="pr-go" data-pr="again">Try again</button>`;
+    box.querySelector("[data-pr=again]").addEventListener("click", () => pair(ctx));
+    box.querySelector("[data-pr=again]").focus({ preventScroll: true });
+  };
   poll = setInterval(async () => {
     let s;
     try { s = await (await fetch(`/api/peers/pair/${encodeURIComponent(r.code)}`)).json(); } catch { return; }
     const p = s.pairing || {};
     if (p.state === "done") {
-      clearInterval(poll); poll = 0;
-      box.querySelector(".pr-emoji").textContent = p.emoji;
-      say(`Paired with ${p.name}. Ask them: do you see these same four? If not, remove them from Home and pair again.`);
-      box.querySelector(".pr-foot").innerHTML = `<button type="button" class="pr-go" data-pr="close">Done</button>`;
-      box.querySelector(".pr-go").focus();
-      ctx.toast(`Paired with ${p.name}`, { sub: "their documents will show under From " + p.name });
-    } else if (p.state === "failed") {
-      clearInterval(poll); poll = 0;
-      say(p.why || "The pairing did not finish", true);
-      box.querySelector(".pr-foot").innerHTML = `<button type="button" data-pr="again">Try again</button><button type="button" data-pr="close">Close</button>`;
-      box.querySelector("[data-pr=again]").addEventListener("click", () => pair(ctx));
-    } else if (Date.now() > until) {
-      clearInterval(poll); poll = 0;
-      say("The code ran out. Make a new one.", true);
-      box.querySelector(".pr-foot").innerHTML = `<button type="button" data-pr="again">Try again</button><button type="button" data-pr="close">Close</button>`;
-      box.querySelector("[data-pr=again]").addEventListener("click", () => pair(ctx));
-    } else {
+      waiting = "";
+      // The whole box is drawn again: what it said while waiting is over.
+      open(`Paired with ${esc(p.name)}`,
+        `<div class="pr-emoji" aria-label="Four emoji">${esc(p.emoji)}</div>` +
+        `<p>Ask them: do you see these same four? If not, remove ${esc(p.name)} from Home and pair again.</p>` +
+        `<div class="pr-foot"><button type="button" class="pr-go" data-pr="close">Done</button></div>`);
+      ctx.toast(`Paired with ${p.name}`, { sub: `what they send shows under From ${p.name}` });
+    } else if (p.state === "failed") over(p.why || "the pairing did not finish");
+    else if (p.state === "cancelled") over("the code was cancelled");
+    else if (Date.now() > until) over("the code ran out. Make a new one");
+    else {
       const left = Math.max(0, Math.round((until - Date.now()) / 60000));
       say(`Waiting for the other side… ${left ? `${left} min left` : "less than a minute left"}`);
     }
@@ -177,7 +218,7 @@ export async function send(ctx, docId, title = "") {
   open(`Send <span class="pr-title">${esc(title || "this document")}</span> to…`,
     (list.length
       ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
-        `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; they see it under <b>From ${esc(j.me.name)}</b>. The relay holds it seven days at most, unread or not.</p>`
+        `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; it shows on their Home, under Arrived. The relay holds it seven days at most, unread or not.</p>`
       : `<p>No friends yet. <b>Pair with a friend…</b> at the foot of Home makes one.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
   on("click", async e => {
@@ -188,8 +229,13 @@ export async function send(ctx, docId, title = "") {
     try {
       const r = await post(`/api/docs/${encodeURIComponent(docId)}/send`, { peer: +b.dataset.peer });
       say(r.sent ? `Sent to ${r.to}.` : `Queued for ${r.to}; the relay could not be reached, so it goes when it can.`);
+      // Its row says so, and its button is spent; the others can still go.
+      const t = b.closest("li")?.querySelector(".pr-t");
+      if (t) t.textContent = r.sent ? "sent just now" : "waiting to go";
+      for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = x === b;
+      b.textContent = "✓"; b.setAttribute("aria-label", r.sent ? "Sent" : "Queued");
       box.querySelector(".pr-foot").innerHTML = `<button type="button" class="pr-go" data-pr="close">Done</button>`;
-      box.querySelector(".pr-go").focus();
+      box.querySelector(".pr-foot .pr-go").focus();
     } catch (err) {
       say(ctx.sayErr(err).why, true);
       for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = false;
@@ -304,7 +350,7 @@ export async function keepOn(ctx, ids, title) {
     (desks.length
       ? `<ul>${desks.map(d => `<li><span class="pr-nm">${esc(d.name)}</span><span class="pr-t">${d.parked ? "parked" : ""}</span><button type="button" class="pr-go" data-desk="${d.id}">Keep here</button></li>`).join("")}</ul>` +
         `<p class="pr-quiet" style="margin-top:10px">${ids.length > 1 ? `All ${ids.length} move` : "It moves"} into the desk's documents, every version, and still ${ids.length > 1 ? "say" : "says"} who sent ${ids.length > 1 ? "them" : "it"}. Nothing is written into the desk's folder until you press <b>Save into the folder</b>.</p>`
-      : `<p>No desk yet. <b>+ New desk</b> in the sidebar makes one.</p>`) +
+      : `<p>No desk yet. <b>New desk here</b>, on a project's menu in the sidebar, makes one; then keep it there.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
   on("click", async e => {
     const b = e.target.closest("button[data-desk]");
@@ -351,7 +397,14 @@ export async function save(ctx, id, b) {
 export function event(ctx, j) {
   if (j.offer != null) offer(ctx, j);
   else if (j.done && !j.quiet) ctx.toast(`${j.from} ticked your line`, { sub: j.done + (j.commit ? ` · ${String(j.commit).slice(0, 7)}` : ""), kind: "news", go: ctx.home });
-  else if (j.reply && !j.quiet) ctx.toast(`${j.from} replied`, { sub: j.reply, kind: "news" });
+  else if (j.reply) {
+    // The reply is in the head the next time the document is drawn; the
+    // copy kept from before it is not. Open now, it is drawn again only
+    // when the reader asks: the page does not move under their eyes.
+    const open = ctx.state?.doc?.id === j.doc;
+    if (!open) ctx.refreshDoc?.(j.doc);
+    if (!j.quiet) ctx.toast(`${j.from} replied`, { sub: j.reply, kind: "news", action: open && { label: "Show it", run: () => ctx.refreshDoc(j.doc) } });
+  }
   else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: j.desk ? `a suggestion on ${j.desk}` : "waiting on Home, under Arrived", kind: "news", go: ctx.home });
 }
 

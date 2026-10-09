@@ -301,7 +301,7 @@ fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
     if let Some(fp) = &p.peer {
         return (
             format!("peer:{}", fp.sign_key),
-            format!("From {}", fp.name),
+            crate::peer::from_name(&fp.name),
             None,
         );
     }

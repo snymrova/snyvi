@@ -570,6 +570,7 @@
       renderDesks();
     });
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);
+    es.addEventListener("peers", ev => { const j = parse(ev); if (j && j.friends != null) state.friends = j.friends; });
     for (const ev of HOME_EVENTS) es.addEventListener(ev, homeTick);
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {

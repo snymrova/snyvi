@@ -345,7 +345,10 @@ fn peer_routes() -> Router<Arc<App>> {
         .route("/api/peers", get(peers_list))
         .route("/api/peers/pair", post(pair_start))
         .route("/api/peers/join", post(pair_join))
-        .route("/api/peers/pair/{code}", get(pair_state))
+        .route(
+            "/api/peers/pair/{code}",
+            get(pair_state).delete(pair_cancel),
+        )
         .route("/api/peers/{id}/rename", post(peer_rename))
         .route("/api/peers/{id}/mute", post(peer_mute))
         .route("/api/peers/{id}/remove", post(peer_remove))

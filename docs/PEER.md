@@ -69,6 +69,16 @@ and a wrong code fails the exchange rather than pairing with a stranger.
 Both sides then compare four emoji derived from the two public keys; a
 mismatch means the room had a third party, and the row is removed.
 
+A word with a hyphen in it (`yo-yo`, the list's only one) is never minted,
+since said aloud it is two words; a code with it from before 1.29 still
+joins, typed `yo yo` or `yo-yo`. Cancel, Escape, ✕ or a click outside the
+sheet withdraws a waiting code (`DELETE /api/peers/pair/{code}`): it stops
+counting toward the five that may wait at once, and its side puts no hello
+and pins nothing. Make, while a code of its own waits with three minutes
+left, gives that code back. Once the other side's SPAKE2 message is in, a
+side waits ninety seconds for its hello, never past the code's end, so the
+one who typed a code the maker cancelled hears so within a minute and a half.
+
 ## A frame
 
 ```
@@ -95,7 +105,12 @@ A document goes through `receive::receive` like every document, with
 snyvi runs, and already in the Inbox when the window opens after a night. The sidebar gains one project row
 per friend and nothing else, sent to the page as `friend` and with no root:
 it is no folder, so it has no desk glyph, no New desk here, no Copy path
-and no file manager, only Rename and Remove. The head says *from Trapti · verified*. A
+and no file manager, only Rename and Remove. A friend has one name: the
+row is always **From** and it (`Peer::project_name`), renaming the row
+renames the friend (a leading `From ` is the row's), and renaming the friend
+from Home's ⋯ moves the row, even one labelled by hand before 1.29. The head
+says *from Trapti · verified*, by the name they have now, with what can be
+done with it in a row of its own under that. A
 second send of the same file is a version of the same row. A muted
 friend's documents arrive read.
 
